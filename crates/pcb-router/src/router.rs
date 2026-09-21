@@ -11,7 +11,7 @@
 //! conflicts remain. Pads, keepouts and the outline are never negotiable.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::board::{Board, NetId, NetRoute, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
@@ -33,6 +33,8 @@ pub struct Config {
     pub max_iterations: usize,
     /// Minimum search window margin around a net's terminals.
     pub window_margin: f64,
+    /// Values above 1 trade path optimality for search speed.
+    pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
     pub verbose: bool,
 }
@@ -49,6 +51,7 @@ impl Default for Config {
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
+            heuristic_weight: 1.0,
             verbose: false,
         }
     }
@@ -123,6 +126,31 @@ fn well_inside(shape: &crate::geometry::Shape, point: crate::geometry::Point) ->
             .all(|(dx, dy)| shape.contains([point[0] + dx, point[1] + dy]))
 }
 
+/// Maps every node that can host a junction to the kept branch owning it.
+/// A branch's own junction end belongs to its host, not to itself.
+fn junction_hosts(branches: &[Branch], keep: &[bool]) -> HashMap<Node, usize> {
+    let mut hosts = HashMap::new();
+    for (index, branch) in branches.iter().enumerate() {
+        if !keep[index] {
+            continue;
+        }
+        let first = (branch.start_terminal == NO_TERMINAL) as usize;
+        let last = branch.nodes.len() - (branch.end_terminal == NO_TERMINAL) as usize;
+        for node in &branch.nodes[first..last] {
+            hosts.entry(*node).or_insert(index);
+        }
+    }
+    hosts
+}
+
+fn find(parent: &mut [usize], mut element: usize) -> usize {
+    while parent[element] != element {
+        parent[element] = parent[parent[element]];
+        element = parent[element];
+    }
+    element
+}
+
 fn disc(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     let reach = (radius / pitch).ceil() as i32;
     let mut offsets = Vec::new();
@@ -163,6 +191,8 @@ pub struct Router<'a> {
     generation: u32,
     expansions: u64,
     searches: u64,
+    search_seconds: f64,
+    stamp_seconds: f64,
 }
 
 impl<'a> Router<'a> {
@@ -265,6 +295,8 @@ impl<'a> Router<'a> {
             generation: 0,
             expansions: 0,
             searches: 0,
+            search_seconds: 0.0,
+            stamp_seconds: 0.0,
             grid,
         };
         router.nets = (0..board.nets.len())
@@ -337,12 +369,69 @@ impl<'a> Router<'a> {
         }
     }
 
-    fn rip_up(&mut self, net: NetId) {
+    fn unstamp(&mut self, net: NetId) {
         let state = &mut self.nets[net as usize];
         for (map, cell) in state.stamped.drain(..) {
             self.occupancy[map as usize][cell as usize] -= 1;
         }
+    }
+
+    fn rip_up(&mut self, net: NetId) {
+        self.unstamp(net);
+        let state = &mut self.nets[net as usize];
         state.branches.clear();
+        state.connected.fill(false);
+        state.complete = false;
+    }
+
+    /// Removes only the branches of `net` that are in conflict, plus any
+    /// branch left dangling at a junction on a removed branch.
+    fn rip_up_conflicted(&mut self, net: NetId) {
+        let class = self.board.nets[net as usize].class;
+        let layers = self.board.layer_count;
+        let branches = std::mem::take(&mut self.nets[net as usize].branches);
+        let mut keep: Vec<bool> = branches
+            .iter()
+            .map(|branch| {
+                !branch.nodes.iter().enumerate().any(|(index, node)| {
+                    let is_via = index > 0
+                        && branch.nodes[index - 1].cell == node.cell
+                        && branch.nodes[index - 1].layer != node.layer;
+                    self.occupancy[self.map_index(class, node.layer as usize)]
+                        [node.cell as usize]
+                        > 1
+                        || (is_via
+                            && self.occupancy[self.map_index(class, layers)][node.cell as usize]
+                                > 1)
+                })
+            })
+            .collect();
+        loop {
+            let hosts = junction_hosts(&branches, &keep);
+            let mut changed = false;
+            for (index, branch) in branches.iter().enumerate() {
+                if !keep[index] {
+                    continue;
+                }
+                let dangling = (branch.start_terminal == NO_TERMINAL
+                    && !hosts.contains_key(&branch.nodes[0]))
+                    || (branch.end_terminal == NO_TERMINAL
+                        && !hosts.contains_key(branch.nodes.last().unwrap()));
+                if dangling {
+                    keep[index] = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self.unstamp(net);
+        let mut keep = keep.into_iter();
+        let mut branches = branches;
+        branches.retain(|_| keep.next().unwrap());
+        let state = &mut self.nets[net as usize];
+        state.branches = branches;
         state.connected.fill(false);
         state.complete = false;
     }
@@ -437,32 +526,112 @@ impl<'a> Router<'a> {
             .unwrap_or((0, 0, self.grid.nx - 1, self.grid.ny - 1))
     }
 
-    /// Grows a tree over all terminals of `net`. With `hard`, nodes claimed
-    /// by other nets are impassable and a partial tree may be kept.
+    /// Connects all terminals of `net` into one tree, reusing any branches
+    /// the net still has. With `hard`, nodes claimed by other nets are
+    /// impassable and a partial result may be kept.
     fn route_net(&mut self, net: NetId, present: f32, hard: bool, window_growth: f64) {
         let terminal_count = self.board.nets[net as usize].terminals.len();
+        let retained = self.nets[net as usize].branches.clone();
+        let keep = vec![true; retained.len()];
+        let hosts = junction_hosts(&retained, &keep);
+
+        // Elements are terminals followed by retained branches.
+        let mut parent: Vec<usize> = (0..terminal_count + retained.len()).collect();
+        for (index, branch) in retained.iter().enumerate() {
+            let element = terminal_count + index;
+            let ends = [
+                (branch.start_terminal, branch.nodes[0]),
+                (branch.end_terminal, *branch.nodes.last().unwrap()),
+            ];
+            for (terminal, node) in ends {
+                let other = if terminal != NO_TERMINAL {
+                    terminal as usize
+                } else {
+                    terminal_count + hosts[&node]
+                };
+                let (a, b) = (find(&mut parent, element), find(&mut parent, other));
+                parent[a] = b;
+            }
+        }
+        let component: Vec<usize> = (0..parent.len())
+            .map(|element| find(&mut parent, element))
+            .collect();
+
         self.generation += 1;
         let tree_generation = self.generation;
         let mut tree: Vec<Node> = Vec::new();
-        let add_terminal = |router: &mut Self, tree: &mut Vec<Node>, terminal: usize| {
-            for node in router.nets[net as usize].terminal_nodes[terminal].clone() {
-                let state = router.state(node);
-                router.tree_mark[state] = tree_generation;
-                router.tree_terminal[state] = terminal as u16;
-                tree.push(node);
+        let mut in_tree = vec![false; parent.len()];
+        let absorb = |router: &mut Self,
+                          tree: &mut Vec<Node>,
+                          in_tree: &mut Vec<bool>,
+                          root: usize| {
+            for element in 0..component.len() {
+                if component[element] != root || in_tree[element] {
+                    continue;
+                }
+                in_tree[element] = true;
+                if element < terminal_count {
+                    for node in router.nets[net as usize].terminal_nodes[element].clone() {
+                        let state = router.state(node);
+                        router.tree_mark[state] = tree_generation;
+                        router.tree_terminal[state] = element as u16;
+                        tree.push(node);
+                    }
+                    router.nets[net as usize].connected[element] = true;
+                } else {
+                    for node in &retained[element - terminal_count].nodes {
+                        let state = router.state(*node);
+                        if router.tree_mark[state] != tree_generation {
+                            router.tree_mark[state] = tree_generation;
+                            router.tree_terminal[state] = NO_TERMINAL;
+                            tree.push(*node);
+                        }
+                    }
+                }
             }
-            router.nets[net as usize].connected[terminal] = true;
         };
-        add_terminal(self, &mut tree, 0);
-        let mut remaining = terminal_count - 1;
-        while remaining > 0 {
+        absorb(self, &mut tree, &mut in_tree, component[0]);
+
+        let pitch = self.grid.pitch as f32;
+        loop {
+            let mut targets: Vec<(Node, u16)> = Vec::new();
+            let mut points: Vec<(i32, i32, f32)> = Vec::new();
+            let mut exact_points = true;
+            for element in 0..component.len() {
+                if in_tree[element] {
+                    continue;
+                }
+                if element < terminal_count {
+                    for node in &self.nets[net as usize].terminal_nodes[element] {
+                        targets.push((*node, element as u16));
+                    }
+                    let anchor = self.board.nets[net as usize].terminals[element].anchor;
+                    points.push((
+                        ((anchor[0] - self.grid.origin[0]) / self.grid.pitch).round() as i32,
+                        ((anchor[1] - self.grid.origin[1]) / self.grid.pitch).round() as i32,
+                        // Rounding the anchor to a node costs at most one pitch.
+                        self.nets[net as usize].terminal_reach[element] + pitch,
+                    ));
+                } else {
+                    exact_points = false;
+                    for node in &retained[element - terminal_count].nodes {
+                        targets.push((*node, element as u16));
+                    }
+                }
+            }
+            if targets.is_empty() {
+                break;
+            }
+            let points = (exact_points && points.len() <= 12).then_some(points);
             let windowed = self.window(net, window_growth);
             let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
             let path = self
-                .search(net, &tree, present, hard, windowed)
+                .search(net, &tree, &targets, points.as_deref(), present, hard, windowed)
                 .or_else(|| {
                     (windowed != full)
-                        .then(|| self.search(net, &tree, present, hard, full))
+                        .then(|| {
+                            self.search(net, &tree, &targets, points.as_deref(), present, hard, full)
+                        })
                         .flatten()
                 });
             let Some(path) = path else {
@@ -471,7 +640,7 @@ impl<'a> Router<'a> {
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
             let start_terminal = self.tree_terminal[first];
-            let end_terminal = self.target_terminal[last];
+            let reached = self.target_terminal[last] as usize;
             for node in &path[1..] {
                 let state = self.state(*node);
                 if self.tree_mark[state] != tree_generation {
@@ -480,24 +649,31 @@ impl<'a> Router<'a> {
                     tree.push(*node);
                 }
             }
-            add_terminal(self, &mut tree, end_terminal as usize);
+            absorb(self, &mut tree, &mut in_tree, component[reached]);
             self.nets[net as usize].branches.push(Branch {
                 nodes: path,
                 start_terminal,
-                end_terminal,
+                end_terminal: if reached < terminal_count {
+                    reached as u16
+                } else {
+                    NO_TERMINAL
+                },
             });
-            remaining -= 1;
         }
-        self.nets[net as usize].complete = remaining == 0;
-        if !hard && remaining > 0 {
+        let complete = in_tree.iter().all(|inside| *inside);
+        self.nets[net as usize].complete = complete;
+        if !hard && !complete {
             self.nets[net as usize].blocked = true;
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn search(
         &mut self,
         net: NetId,
         sources: &[Node],
+        targets: &[(Node, u16)],
+        points: Option<&[(i32, i32, f32)]>,
         present: f32,
         hard: bool,
         window: (usize, usize, usize, usize),
@@ -509,47 +685,89 @@ impl<'a> Router<'a> {
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
         let nx = self.grid.nx;
-        let pitch = self.grid.pitch as f32;
         let via_cost = self.config.via_cost as f32;
         let bend_cost = self.config.bend_cost as f32;
+        let weight = self.config.heuristic_weight as f32 * 0.999;
 
-        let mut target_points: Vec<(i32, i32, f32)> = Vec::new();
-        let mut any_target = false;
-        for terminal in 0..self.nets[net as usize].connected.len() {
-            if self.nets[net as usize].connected[terminal] {
-                continue;
-            }
-            for index in 0..self.nets[net as usize].terminal_nodes[terminal].len() {
-                let node = self.nets[net as usize].terminal_nodes[terminal][index];
-                let state = self.state(node);
-                self.target_mark[state] = generation;
-                self.target_terminal[state] = terminal as u16;
-                any_target = true;
-            }
-            let anchor = self.board.nets[net as usize].terminals[terminal].anchor;
-            target_points.push((
-                ((anchor[0] - self.grid.origin[0]) / self.grid.pitch).round() as i32,
-                ((anchor[1] - self.grid.origin[1]) / self.grid.pitch).round() as i32,
-                // Rounding the anchor to a node costs at most one pitch.
-                self.nets[net as usize].terminal_reach[terminal] + pitch,
-            ));
+        for (node, element) in targets {
+            let state = self.state(*node);
+            self.target_mark[state] = generation;
+            self.target_terminal[state] = *element;
         }
-        if !any_target {
-            return None;
-        }
-        let use_heuristic = target_points.len() <= 12;
-        let heuristic = |x: i32, y: i32| -> f32 {
-            if !use_heuristic {
-                return 0.0;
+
+        // Without a short list of target points, guide the search with an
+        // exact octile distance transform over coarse blocks.
+        const BLOCK: usize = 8;
+        let blocks_x = nx.div_ceil(BLOCK);
+        let blocks_y = self.grid.ny.div_ceil(BLOCK);
+        let coarse: Vec<f32> = if points.is_some() {
+            Vec::new()
+        } else {
+            let mut distance = vec![f32::INFINITY; blocks_x * blocks_y];
+            for (node, _) in targets {
+                let (x, y) = self.grid.xy(node.cell as usize);
+                distance[(y / BLOCK) * blocks_x + x / BLOCK] = 0.0;
             }
+            let diagonal = std::f32::consts::SQRT_2;
+            let mut relax = |x: usize, y: usize, dx: i64, dy: i64, distance: &mut Vec<f32>| {
+                let sx = x as i64 + dx;
+                let sy = y as i64 + dy;
+                if sx < 0 || sy < 0 || sx >= blocks_x as i64 || sy >= blocks_y as i64 {
+                    return;
+                }
+                let step = if dx != 0 && dy != 0 { diagonal } else { 1.0 };
+                let candidate = distance[sy as usize * blocks_x + sx as usize] + step;
+                if candidate < distance[y * blocks_x + x] {
+                    distance[y * blocks_x + x] = candidate;
+                }
+            };
+            for y in 0..blocks_y {
+                for x in 0..blocks_x {
+                    for (dx, dy) in [(-1, 0), (-1, -1), (0, -1), (1, -1)] {
+                        relax(x, y, dx, dy, &mut distance);
+                    }
+                }
+            }
+            for y in (0..blocks_y).rev() {
+                for x in (0..blocks_x).rev() {
+                    for (dx, dy) in [(1, 0), (1, 1), (0, 1), (-1, 1)] {
+                        relax(x, y, dx, dy, &mut distance);
+                    }
+                }
+            }
+            distance
+        };
+        let minimum = |direction: usize| {
+            self.direction_cost
+                .iter()
+                .map(|costs| costs[direction])
+                .fold(f32::INFINITY, f32::min)
+        };
+        let (any_horizontal, any_diagonal, any_vertical) = (minimum(0), minimum(1), minimum(2));
+        let direction_cost = self.direction_cost.clone();
+        let heuristic = |layer: usize, x: i32, y: i32| -> f32 {
+            let Some(points) = points else {
+                let blocks = coarse[(y as usize / BLOCK) * blocks_x + x as usize / BLOCK];
+                return (blocks - std::f32::consts::SQRT_2).max(0.0)
+                    * BLOCK as f32
+                    * any_horizontal.min(any_vertical)
+                    * weight;
+            };
+            let costs = &direction_cost[layer];
             let mut best = f32::INFINITY;
-            for (tx, ty, reach) in &target_points {
+            for (tx, ty, reach) in points {
                 let dx = (x - tx).abs() as f32;
                 let dy = (y - ty).abs() as f32;
-                let octile = dx.max(dy) + (std::f32::consts::SQRT_2 - 1.0) * dx.min(dy);
-                best = best.min(octile * pitch - reach);
+                let both = dx.min(dy);
+                // Stay on this layer, or pay a via for the cheapest mix.
+                let same_layer = both * costs[1] + (dx - both) * costs[0] + (dy - both) * costs[2];
+                let any_layer = via_cost
+                    + both * any_diagonal
+                    + (dx - both) * any_horizontal
+                    + (dy - both) * any_vertical;
+                best = best.min(same_layer.min(any_layer) - reach * 2.0);
             }
-            best.max(0.0) * 0.999
+            best.max(0.0) * weight
         };
 
         let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
@@ -559,7 +777,10 @@ impl<'a> Router<'a> {
             self.seen[state] = generation;
             self.cost[state] = 0.0;
             self.parent[state] = PARENT_SOURCE;
-            heap.push(Reverse((heuristic(x as i32, y as i32).to_bits(), state as u32)));
+            heap.push(Reverse((
+                heuristic(node.layer as usize, x as i32, y as i32).to_bits(),
+                state as u32,
+            )));
         }
 
         let statics = &self.statics[class];
@@ -628,7 +849,7 @@ impl<'a> Router<'a> {
                     self.seen[target_state] = generation;
                     self.cost[target_state] = total;
                     self.parent[target_state] = direction as u8;
-                    let estimate = total + heuristic(tx as i32, ty as i32);
+                    let estimate = total + heuristic(layer, tx as i32, ty as i32);
                     heap.push(Reverse((estimate.to_bits(), target_state as u32)));
                 }
             }
@@ -657,7 +878,7 @@ impl<'a> Router<'a> {
                         self.seen[target_state] = generation;
                         self.cost[target_state] = total;
                         self.parent[target_state] = 8 + layer as u8;
-                        let estimate = total + heuristic(x as i32, y as i32);
+                        let estimate = total + heuristic(target_layer, x as i32, y as i32);
                         heap.push(Reverse((estimate.to_bits(), target_state as u32)));
                     }
                 }
@@ -716,9 +937,13 @@ impl<'a> Router<'a> {
             iterations = iteration + 1;
             let growth = 1.0 + iteration as f64 / 6.0;
             for net in &pending {
-                self.rip_up(*net);
+                let search_started = std::time::Instant::now();
+                self.rip_up_conflicted(*net);
                 self.route_net(*net, present, false, growth);
+                self.search_seconds += search_started.elapsed().as_secs_f64();
+                let stamp_started = std::time::Instant::now();
                 self.stamp(*net);
+                self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
             }
             let mut conflicted = Vec::new();
             for net in &order {
@@ -735,10 +960,14 @@ impl<'a> Router<'a> {
             }
             if self.config.verbose {
                 eprintln!(
-                    "iteration {iteration}: rerouted {}, conflicted {}, present {present:.2}, {:.2}s",
+                    "iteration {iteration}: rerouted {}, conflicted {}, present {present:.2}, {:.2}s (search {:.2}s, stamp {:.2}s, {} searches, {}M expansions)",
                     pending.len(),
                     conflicted.len(),
-                    started.elapsed().as_secs_f64()
+                    started.elapsed().as_secs_f64(),
+                    self.search_seconds,
+                    self.stamp_seconds,
+                    self.searches,
+                    self.expansions / 1_000_000
                 );
             }
             if conflicted.is_empty() {
@@ -909,8 +1138,12 @@ impl<'a> Router<'a> {
         let junctions: HashSet<Node> = state
             .branches
             .iter()
-            .filter(|branch| branch.start_terminal == NO_TERMINAL)
-            .map(|branch| branch.nodes[0])
+            .flat_map(|branch| {
+                let start = (branch.start_terminal == NO_TERMINAL).then(|| branch.nodes[0]);
+                let end = (branch.end_terminal == NO_TERMINAL)
+                    .then(|| *branch.nodes.last().unwrap());
+                start.into_iter().chain(end)
+            })
             .collect();
         for branch in &state.branches {
             let first = branch.nodes[0];
