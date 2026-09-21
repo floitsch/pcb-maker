@@ -33,6 +33,11 @@ pub struct Config {
     pub max_iterations: usize,
     /// Minimum search window margin around a net's terminals.
     pub window_margin: f64,
+    /// Passes of per-net shortening after the board is conflict free.
+    pub cleanup_passes: usize,
+    /// Via cost while cleaning up. The existing route is always a fallback
+    /// there, so a high value removes vias without risking completion.
+    pub cleanup_via_cost: f64,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -51,6 +56,8 @@ impl Default for Config {
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
+            cleanup_passes: 4,
+            cleanup_via_cost: 25.0,
             heuristic_weight: 1.0,
             verbose: false,
         }
@@ -179,6 +186,8 @@ pub struct Router<'a> {
     stamps: Vec<Vec<Stamps>>,
     nets: Vec<NetState>,
     direction_cost: Vec<[f32; 8]>,
+    /// Cleanup routes by pure geometry: no history, no preferred axes.
+    cleanup: bool,
 
     cost: Vec<f32>,
     seen: Vec<u32>,
@@ -284,6 +293,7 @@ impl<'a> Router<'a> {
             stamps,
             nets: Vec::new(),
             direction_cost,
+            cleanup: false,
             cost: vec![0.0; states],
             seen: vec![0; states],
             closed: vec![0; states],
@@ -685,7 +695,11 @@ impl<'a> Router<'a> {
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
         let nx = self.grid.nx;
-        let via_cost = self.config.via_cost as f32;
+        let via_cost = if self.cleanup {
+            self.config.cleanup_via_cost
+        } else {
+            self.config.via_cost
+        } as f32;
         let bend_cost = self.config.bend_cost as f32;
         let weight = self.config.heuristic_weight as f32 * 0.999;
 
@@ -737,14 +751,23 @@ impl<'a> Router<'a> {
             }
             distance
         };
+        let direction_cost: Vec<[f32; 8]> = if self.cleanup {
+            let pitch = self.grid.pitch as f32;
+            let mut costs = [pitch; 8];
+            for direction in [1, 3, 5, 7] {
+                costs[direction] = pitch * std::f32::consts::SQRT_2;
+            }
+            vec![costs; layers]
+        } else {
+            self.direction_cost.clone()
+        };
         let minimum = |direction: usize| {
-            self.direction_cost
+            direction_cost
                 .iter()
                 .map(|costs| costs[direction])
                 .fold(f32::INFINITY, f32::min)
         };
         let (any_horizontal, any_diagonal, any_vertical) = (minimum(0), minimum(1), minimum(2));
-        let direction_cost = self.direction_cost.clone();
         let heuristic = |layer: usize, x: i32, y: i32| -> f32 {
             let Some(points) = points else {
                 let blocks = coarse[(y as usize / BLOCK) * blocks_x + x as usize / BLOCK];
@@ -772,6 +795,13 @@ impl<'a> Router<'a> {
 
         let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
         for node in sources {
+            // A hard route may not even start inside another net's zone.
+            if hard
+                && self.occupancy[self.map_index(class, node.layer as usize)][node.cell as usize]
+                    > 0
+            {
+                continue;
+            }
             let state = self.state(*node);
             let (x, y) = self.grid.xy(node.cell as usize);
             self.seen[state] = generation;
@@ -837,9 +867,13 @@ impl<'a> Router<'a> {
                 if hard && occupied > 0.0 {
                     continue;
                 }
-                let mut step = self.direction_cost[layer][direction]
-                    * (1.0 + self.history[layer][target_cell])
-                    * (1.0 + present * occupied);
+                let history = if self.cleanup {
+                    0.0
+                } else {
+                    self.history[layer][target_cell]
+                };
+                let mut step =
+                    direction_cost[layer][direction] * (1.0 + history) * (1.0 + present * occupied);
                 if (arrived as usize) < 8 {
                     let turn = (direction as i32 - arrived as i32).rem_euclid(8);
                     step += bend_cost * turn.min(8 - turn) as f32;
@@ -857,7 +891,12 @@ impl<'a> Router<'a> {
             let via_occupied = self.occupancy[via_map][cell] as f32;
             if layers > 1 && !statics.via_blocked[cell] && !(hard && via_occupied > 0.0) {
                 let occupied = via_occupied;
-                let step = via_cost * (1.0 + self.history[layers][cell]) * (1.0 + present * occupied);
+                let history = if self.cleanup {
+                    0.0
+                } else {
+                    self.history[layers][cell]
+                };
+                let step = via_cost * (1.0 + history) * (1.0 + present * occupied);
                 for target_layer in 0..layers {
                     if target_layer == layer {
                         continue;
@@ -987,6 +1026,14 @@ impl<'a> Router<'a> {
         }
 
         self.resolve_remaining(&order);
+        let cleanup_started = std::time::Instant::now();
+        let improved = self.clean_up(&order);
+        if self.config.verbose {
+            eprintln!(
+                "cleanup: {improved} improvements, {:.2}s",
+                cleanup_started.elapsed().as_secs_f64()
+            );
+        }
 
         let status = (0..self.board.nets.len())
             .map(|net| {
@@ -1054,6 +1101,59 @@ impl<'a> Router<'a> {
             searches: self.searches,
             grid: self.grid,
         }
+    }
+
+    /// Length plus via cost of a net's branches, in millimetres.
+    fn geometric_cost(&self, net: NetId) -> f64 {
+        let nx = self.grid.nx as i64;
+        let mut cost = 0.0;
+        for branch in &self.nets[net as usize].branches {
+            for pair in branch.nodes.windows(2) {
+                if pair[0].cell == pair[1].cell {
+                    cost += self.config.cleanup_via_cost;
+                } else {
+                    let dx = (pair[0].cell as i64 % nx - pair[1].cell as i64 % nx).abs();
+                    let dy = (pair[0].cell as i64 / nx - pair[1].cell as i64 / nx).abs();
+                    cost += self.grid.pitch * ((dx * dx + dy * dy) as f64).sqrt();
+                }
+            }
+        }
+        cost
+    }
+
+    /// Reroutes each complete net alone against all other copper and keeps
+    /// the result when it is strictly cheaper. Returns the improvements.
+    fn clean_up(&mut self, order: &[NetId]) -> usize {
+        self.cleanup = true;
+        let mut improvements = 0;
+        for _ in 0..self.config.cleanup_passes {
+            let mut improved = false;
+            for net in order {
+                if !self.nets[*net as usize].complete {
+                    continue;
+                }
+                let before = self.geometric_cost(*net);
+                let saved = self.nets[*net as usize].branches.clone();
+                self.rip_up(*net);
+                self.route_net(*net, 0.0, true, 1.0);
+                let state = &self.nets[*net as usize];
+                if state.complete && self.geometric_cost(*net) < before - 1.0e-6 {
+                    improved = true;
+                    improvements += 1;
+                } else {
+                    let state = &mut self.nets[*net as usize];
+                    state.branches = saved;
+                    state.connected.fill(true);
+                    state.complete = true;
+                }
+                self.stamp(*net);
+            }
+            if !improved {
+                break;
+            }
+        }
+        self.cleanup = false;
+        improvements
     }
 
     /// Makes the board conflict free: nets still in conflict are ripped up

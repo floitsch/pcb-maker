@@ -8,6 +8,12 @@
 The router may move components, placement changes may invalidate routing, and
 both systems return evidence to a coordinator instead of hiding failed work.
 
+**Routing a complete KiCad board** now goes through the in-memory
+negotiated-congestion router in `crates/pcb-router`
+(`cargo run --release -- route-kicad-board ...`); see
+[docs/router.md](docs/router.md) for results and design. The per-net
+sequential/adaptive router described further below is superseded.
+
 The current priority is a reusable pipeline for placing and routing complete
 boards across varied projects. See [current status](docs/current-status.md).
 Local via/length refinements are preserved as

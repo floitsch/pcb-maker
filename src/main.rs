@@ -2408,6 +2408,15 @@ fn run() -> Result<(), String> {
                 result.native_verification_seconds,
                 result.native.as_ref().map(|native| native.complete).unwrap_or(false),
             );
+            if !result.internal_violations.is_empty() {
+                return Err(format!(
+                    "{} internal clearance violation(s); see board-router.json",
+                    result.internal_violations.len()
+                ));
+            }
+            if result.native.as_ref().is_some_and(|native| !native.complete) {
+                return Err("native KiCad verification is not complete".into());
+            }
             Ok(())
         }
         "route-kicad-board-freerouting" => {

@@ -113,6 +113,10 @@ configs as the way behaviour is selected.
 
 ## Proposed rebuild order
 
+> **Update, same day:** step 1 is implemented as the `pcb-router` crate and
+> meets its gate (Interf-U complete and native-clean in 22 s; all four corpus
+> boards complete). See [the router notes](../router.md).
+
 1. **Router core (`pcb-router`, new).** Parse once into an in-memory board;
    persistent per-layer occupancy grid with per-cell owners and incremental
    add/remove of a net; internal exact clearance check as inner-loop authority;
