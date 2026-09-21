@@ -13,6 +13,7 @@ fn chain(parts: usize) -> Problem {
         body_center: [0.0, 0.0],
         body_size: [4.0, 10.0],
         round: false,
+        halo: 0.0,
         pins: vec![Pin {
             offset: [0.0, 0.0],
             net,
@@ -37,6 +38,8 @@ fn chain(parts: usize) -> Problem {
             body_center: [0.0, 0.0],
             body_size: [6.0, 3.0],
             round: false,
+            halo: 0.0,
+        halo: 0.0,
             pins: vec![
                 Pin {
                     offset: [-2.0, 0.0],

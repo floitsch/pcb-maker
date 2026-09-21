@@ -16,9 +16,10 @@ struct Rect {
 
 fn rect(problem: &Problem, index: usize, pose: Pose) -> Rect {
     let component = &problem.components[index];
+    let half = component.half_extent(pose.angle);
     Rect {
         center: component.center(pose),
-        half: component.half_extent(pose.angle),
+        half: [half[0] + component.halo, half[1] + component.halo],
         round: component.round,
     }
 }
@@ -75,8 +76,17 @@ fn inside_outline(problem: &Problem, body: Rect) -> bool {
     true
 }
 
+fn bare(problem: &Problem, index: usize, pose: Pose) -> Rect {
+    let component = &problem.components[index];
+    Rect {
+        center: component.center(pose),
+        half: component.half_extent(pose.angle),
+        round: component.round,
+    }
+}
+
 pub fn body_inside_outline(problem: &Problem, index: usize, pose: Pose) -> bool {
-    inside_outline(problem, rect(problem, index, pose))
+    inside_outline(problem, bare(problem, index, pose))
 }
 
 /// Whether component `index` at `pose` is inside the board and clear of all
@@ -89,7 +99,7 @@ pub fn is_legal(
     others: impl Iterator<Item = usize>,
 ) -> bool {
     let body = rect(problem, index, pose);
-    if !problem.components[index].fixed && !inside_outline(problem, body) {
+    if !problem.components[index].fixed && !inside_outline(problem, bare(problem, index, pose)) {
         return false;
     }
     let side = problem.components[index].side;

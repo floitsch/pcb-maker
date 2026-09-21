@@ -36,6 +36,9 @@ pub struct Component {
     pub body_size: Point,
     /// The body is a disc of diameter `body_size[0]` instead of a rectangle.
     pub round: bool,
+    /// Extra room kept free around the body for escape routing. It counts
+    /// as body area for density and adds to the spacing towards neighbours.
+    pub halo: f64,
     pub pins: Vec<Pin>,
     pub side: Side,
     pub fixed: bool,

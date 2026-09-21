@@ -127,6 +127,12 @@ pub struct KiCadBoardRouterResult {
     pub internal_violations: Vec<KiCadBoardRouterViolation>,
     pub native: Option<VerificationReport>,
     pub nets: Vec<KiCadBoardRouterNet>,
+    /// Congestion history on the routing lattice (row major), for placement
+    /// feedback. Not serialized.
+    #[serde(skip)]
+    pub congestion: Vec<f32>,
+    #[serde(skip)]
+    pub grid_origin: [f64; 2],
 }
 
 fn shape(geometry: &ObstacleGeometry) -> core::Shape {
@@ -516,6 +522,8 @@ pub fn route_kicad_board(
             .collect(),
         native,
         nets,
+        congestion: result.congestion.clone(),
+        grid_origin: result.grid.origin,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

@@ -8,6 +8,11 @@
 The router may move components, placement changes may invalidate routing, and
 both systems return evidence to a coordinator instead of hiding failed work.
 
+**Automatic layout** (placement plus routing) of a KiCad board is
+`cargo run --release -- layout-kicad-board ...`, built on the electrostatic
+placer in `crates/pcb-placer` ([docs/placer.md](docs/placer.md)) and the router
+below.
+
 **Routing a complete KiCad board** now goes through the in-memory
 negotiated-congestion router in `crates/pcb-router`
 (`cargo run --release -- route-kicad-board ...`); see

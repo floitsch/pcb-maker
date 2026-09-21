@@ -78,6 +78,9 @@ pub enum NetStatus {
 #[derive(Clone, Debug)]
 pub struct RoutingResult {
     pub grid: Grid,
+    /// Per lattice node: accumulated congestion history over all layers and
+    /// vias. It is large where nets kept fighting for space.
+    pub congestion: Vec<f32>,
     pub routes: Vec<NetRoute>,
     pub status: Vec<NetStatus>,
     pub iterations: usize,
@@ -1093,7 +1096,14 @@ impl<'a> Router<'a> {
                 }
             }
         }
+        let mut congestion = vec![0.0f32; self.grid.cells()];
+        for layer in &self.history {
+            for (total, value) in congestion.iter_mut().zip(layer) {
+                *total += value;
+            }
+        }
         RoutingResult {
+            congestion,
             routes,
             status,
             iterations,

@@ -18,7 +18,19 @@ pub struct KiCadBoardPlacerConfig {
     pub fixed: Vec<String>,
     /// References that may move even though a default rule would fix them.
     pub free: Vec<String>,
-    pub target_density: f64,
+    /// Share of the whitespace taken by filler charge: 1 packs the parts as
+    /// tightly as halos allow, 0 spreads them over the whole board.
+    pub whitespace_fill: f64,
+    /// Every footprint keeps a halo of `pins / pins_per_halo_track` tracks
+    /// (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its
+    /// courtyard so its pins can escape.
+    pub track_pitch_mm: f64,
+    pub pins_per_halo_track: f64,
+    pub maximum_halo_mm: f64,
+    /// Per-reference halos replacing the pin-count rule (routing feedback).
+    pub halo_overrides_mm: BTreeMap<String, f64>,
+    /// Share of the free board that bodies, halos and spacing may claim.
+    pub maximum_utilization: f64,
     pub seed: u64,
 }
 
@@ -30,7 +42,12 @@ impl Default for KiCadBoardPlacerConfig {
             keep_rotation: false,
             fixed: Vec::new(),
             free: Vec::new(),
-            target_density: 0.75,
+            whitespace_fill: 0.6,
+            track_pitch_mm: 0.65,
+            pins_per_halo_track: 8.0,
+            maximum_halo_mm: 4.0,
+            halo_overrides_mm: BTreeMap::new(),
+            maximum_utilization: 0.6,
             seed: 1,
         }
     }
@@ -40,6 +57,11 @@ impl Default for KiCadBoardPlacerConfig {
 pub struct KiCadPlacedFootprint {
     pub reference: String,
     pub fixed: bool,
+    /// Halo requested for this footprint, before fitting to the board.
+    pub halo_mm: f64,
+    /// Final body centre and half extents on the board.
+    pub body_center: [f64; 2],
+    pub body_half: [f64; 2],
     pub source_at: [f64; 3],
     pub at: [f64; 3],
 }
@@ -237,6 +259,14 @@ fn lower_placement(
             body_center,
             body_size,
             round,
+            halo: if let Some(halo) = config.halo_overrides_mm.get(&reference) {
+                *halo
+            } else if config.pins_per_halo_track > 0.0 {
+                ((pins.len() as f64 / config.pins_per_halo_track).ceil() * config.track_pitch_mm)
+                    .min(config.maximum_halo_mm)
+            } else {
+                0.0
+            },
             pins,
             side,
             fixed: false,
@@ -299,7 +329,8 @@ pub fn place_kicad_board(
     let mut pcb = parse(&source)?;
     let lowered = lower_placement(&pcb, config)?;
     let mut placer_config = core::Config::new();
-    placer_config.global.target_density = config.target_density;
+    placer_config.global.whitespace_fill = config.whitespace_fill;
+    placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
     let placement = core::place(&lowered.problem, &placer_config);
 
@@ -341,6 +372,9 @@ pub fn place_kicad_board(
         footprints.push(KiCadPlacedFootprint {
             reference: lowered.references[index].clone(),
             fixed: lowered.problem.components[index].fixed,
+            halo_mm: lowered.problem.components[index].halo,
+            body_center: lowered.problem.components[index].center(pose),
+            body_half: lowered.problem.components[index].half_extent(pose.angle),
             source_at,
             at,
         });

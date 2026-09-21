@@ -2372,6 +2372,67 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
+        "layout-kicad-board" => {
+            let usage = "usage: pcb-maker layout-kicad-board <source-directory> <board-id> <output-directory> <router-config.json> [layout-config.json]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let router_path = arguments.next().ok_or_else(|| usage.to_string())?;
+            let router = pcb_kicad::KiCadBoardRouterConfig::from_json(
+                serde_json::from_str(
+                    &std::fs::read_to_string(&router_path)
+                        .map_err(|error| format!("failed to read {router_path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {router_path}: {error}"))?,
+            )?;
+            let config: pcb_kicad::KiCadBoardLayoutConfig = match arguments.next() {
+                Some(path) => serde_json::from_str(
+                    &std::fs::read_to_string(&path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {path}: {error}"))?,
+                None => Default::default(),
+            };
+            let result = pcb_kicad::layout_kicad_board(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &config,
+                &router,
+            )?;
+            for round in &result.rounds {
+                println!(
+                    "round {}: wirelength {:.0} mm, routed {} ({} unconnected), {} vias, {:.0} mm, place {:.1}s route {:.1}s, congested {:?}",
+                    round.round,
+                    round.wirelength_mm,
+                    round.routed_connections,
+                    round.unconnected_terminals,
+                    round.vias,
+                    round.length_mm,
+                    round.placement_seconds,
+                    round.routing_seconds,
+                    round
+                        .most_congested
+                        .iter()
+                        .take(3)
+                        .map(|(reference, _)| reference.as_str())
+                        .collect::<Vec<_>>(),
+                );
+            }
+            println!(
+                "selected round {}: routed {}/{} connections, {} vias, {:.1} mm, native complete={}",
+                result.selected_round,
+                result.routed.routed_connections,
+                result.routed.routable_connections,
+                result.routed.vias,
+                result.routed.length_mm,
+                result.routed.native.as_ref().map(|native| native.complete).unwrap_or(false),
+            );
+            if result.routed.unconnected_terminals > 0 || !result.routed.internal_violations.is_empty() {
+                return Err("layout is not electrically complete".into());
+            }
+            Ok(())
+        }
         "place-kicad-board" => {
             let usage = "usage: pcb-maker place-kicad-board <source-directory> <board-id> <output-directory> [config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

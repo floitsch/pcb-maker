@@ -9,17 +9,21 @@
 //! a distance and points towards free space instead of only between touching
 //! neighbours. Wirelength is the smooth weighted-average model on true pin
 //! positions. Nesterov's method minimizes `wirelength + lambda * density`
-//! while lambda ramps up until the density overflow target is met. Fixed
-//! parts and everything outside the outline are immovable charge; filler
-//! charges keep the parts from spreading further than the target density.
+//! while lambda ramps up until bodies no longer overlap. Fixed parts and
+//! everything outside the outline are immovable charge. On a PCB every part
+//! is large compared to a density bin, so bodies are mutually exclusive at
+//! density 1; routing room comes from per-part halos, and filler charges
+//! decide how much of the remaining whitespace stays between the parts.
 
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 
 #[derive(Clone, Debug)]
 pub struct GlobalConfig {
     pub bins: usize,
-    /// Fraction of free area that may be covered by bodies.
-    pub target_density: f64,
+    /// Fraction of the whitespace (free area not needed by bodies and their
+    /// halos) that is occupied by filler charge. 1 lets wirelength pull the
+    /// parts into a compact cluster; 0 spreads them over the whole board.
+    pub whitespace_fill: f64,
     pub stop_overflow: f64,
     pub max_iterations: usize,
     /// Growth of the density weight per iteration.
@@ -36,8 +40,8 @@ impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
             bins: 64,
-            target_density: 0.75,
-            stop_overflow: 0.08,
+            whitespace_fill: 0.6,
+            stop_overflow: 0.04,
             max_iterations: 1500,
             lambda_growth: 1.03,
             rotation_interval: 15,
@@ -257,9 +261,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     for (index, component) in problem.components.iter().enumerate() {
         if component.fixed {
             let pose = poses[index];
+            let half = component.half_extent(pose.angle);
             field.overlap(
                 component.center(pose),
-                component.half_extent(pose.angle),
+                [half[0] + component.halo, half[1] + component.halo],
                 |bin, area| fixed[bin] += area,
             );
         }
@@ -285,9 +290,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .iter()
         .map(|index| {
             let component = &problem.components[*index];
+            let half = component.half_extent(poses[*index].angle);
             Body {
                 component: Some(*index),
-                half: component.half_extent(poses[*index].angle),
+                half: [half[0] + component.halo, half[1] + component.halo],
                 pins: component.pins.len() as f64,
             }
         })
@@ -299,7 +305,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let filler_side = (trimmed.iter().sum::<f64>() / trimmed.len() as f64)
         .sqrt()
         .max(field.bin[0].min(field.bin[1]));
-    let filler_area = (config.target_density * free_area - movable_area).max(0.0);
+    let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (free_area - movable_area).max(0.0);
     let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
     for _ in 0..filler_count {
         bodies.push(Body {
@@ -414,9 +420,6 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         iterations = iteration + 1;
         // Density of all charges at the reference solution.
         density.copy_from_slice(&field.fixed);
-        for value in &mut density {
-            *value *= config.target_density;
-        }
         let mut real = vec![0.0; n * n];
         for (body, center) in bodies.iter().zip(&reference) {
             let (half, scale) = field.smoothed(body.half);
@@ -430,7 +433,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         overflow = real
             .iter()
             .zip(&field.fixed)
-            .map(|(real, fixed)| (real - config.target_density * (bin_area - fixed)).max(0.0))
+            .map(|(real, fixed)| (real - (bin_area - fixed)).max(0.0))
             .sum::<f64>()
             / movable_area;
         field.solve(&density);
@@ -583,7 +586,9 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         {
             offsets = pin_offsets(&poses);
             for (body, index) in movable.iter().enumerate() {
-                bodies[body].half = problem.components[*index].half_extent(poses[*index].angle);
+                let component = &problem.components[*index];
+                let half = component.half_extent(poses[*index].angle);
+                bodies[body].half = [half[0] + component.halo, half[1] + component.halo];
                 poses[*index].position = problem.components[*index]
                     .position_for_center(major[body], poses[*index].angle);
             }
