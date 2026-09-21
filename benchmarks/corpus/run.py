@@ -23,8 +23,9 @@ def finding_key(violation):
     return (violation["type"], tuple(sorted(i.get("description", "") for i in violation.get("items", []))))
 
 
-def drc_summary(directory, baseline=frozenset()):
-    """Copper findings that the stripped source did not already have."""
+def drc_summary(directory, baseline=frozenset(), reference=None):
+    """Copper findings that the stripped source did not already have, beyond
+    what the designer's own routed board has of the same type."""
     path = directory / "drc.json"
     if not path.exists():
         return None
@@ -33,6 +34,9 @@ def drc_summary(directory, baseline=frozenset()):
         v["type"] for v in report.get("violations", [])
         if not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
     )
+    for kind, allowed in (reference or {}).items():
+        errors[kind] = max(0, errors.get(kind, 0) - allowed)
+    errors = +errors
     cosmetic = sum(1 for v in report.get("violations", []) if COSMETIC.match(v["type"]))
     return {
         "unconnected": len(report.get("unconnected_items", [])),
@@ -110,6 +114,22 @@ def main():
                 finding_key(v)
                 for v in json.loads((baseline_directory / "drc.json").read_text()).get("violations", []))
         row["baseline_findings"] = len(baseline)
+        # The designer's routed board sets the bar for each kind of finding.
+        reference_directory = work / "reference"
+        shutil.copytree(directory, reference_directory, ignore=shutil.ignore_patterns(
+            ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+        try:
+            subprocess.run(["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
+                            "-o", "drc.json", f"{board_id}.kicad_pcb"], cwd=reference_directory,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        reference = {}
+        if (reference_directory / "drc.json").exists():
+            reference = dict(Counter(
+                v["type"] for v in json.loads((reference_directory / "drc.json").read_text()).get("violations", [])
+                if not COSMETIC.match(v["type"])))
+        row["reference_findings"] = reference
 
         code, seconds = run(arguments.binary, ["route-kicad-board", source, board_id, work / "routed", "auto"],
                             work / "route.log", arguments.timeout)
@@ -123,7 +143,7 @@ def main():
                 "pours": result.get("pours", "none"),
                 "routing_seconds": round(result["routing_seconds"], 2),
                 "internal_violations": len(result["internal_violations"]),
-                "native": drc_summary(work / "routed", baseline),
+                "native": drc_summary(work / "routed", baseline, reference),
             }
         else:
             row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code}
@@ -143,7 +163,7 @@ def main():
                     "pours": routed.get("pours", "none"),
                     "seconds": round(seconds, 1),
                     "internal_violations": len(routed["internal_violations"]),
-                    "native": drc_summary(work / "layout/result", baseline),
+                    "native": drc_summary(work / "layout/result", baseline, reference),
                 }
             else:
                 row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code}

@@ -138,6 +138,9 @@ struct NetState {
     plane: Vec<Vec<bool>>,
     /// Terminals that touch a pour and therefore need no tracks.
     on_plane: Vec<bool>,
+    /// Terminal nodes outside their (too narrow) pad, with the lattice
+    /// nodes sampled along the straight stub from the pad centre.
+    escapes: HashMap<Node, Vec<u32>>,
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
@@ -148,6 +151,10 @@ struct NetState {
 }
 
 struct Stamps {
+    /// Like `trace_to_*`, grown by the error of snapping an off-lattice
+    /// stub sample to its nearest node.
+    stub_to_trace: Vec<(i32, i32)>,
+    stub_to_via: Vec<(i32, i32)>,
     trace_to_trace: Vec<(i32, i32)>,
     trace_to_via: Vec<(i32, i32)>,
     via_to_trace: Vec<(i32, i32)>,
@@ -273,7 +280,20 @@ impl<'a> Router<'a> {
                             // Both polylines contribute one chord sagitta.
                             radius + SAFETY + step * step / (4.0 * radius)
                         };
+                        let snap = grid.pitch * 0.75;
                         Stamps {
+                            stub_to_trace: disc(
+                                with_margin(
+                                    own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
+                                ) + snap,
+                                grid.pitch,
+                            ),
+                            stub_to_via: disc(
+                                with_margin(
+                                    own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance,
+                                ) + snap,
+                                grid.pitch,
+                            ),
                             trace_to_trace: disc(
                                 with_margin(
                                     own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
@@ -394,6 +414,95 @@ impl<'a> Router<'a> {
         class * (self.board.layer_count + 1) + layer
     }
 
+    /// Access for a pad too narrow to hold a lattice node: nearby legal
+    /// nodes that a straight stub from the pad centre reaches without coming
+    /// too close to any fixed copper of another net.
+    fn escape_nodes(
+        &self,
+        net: NetId,
+        terminal: &crate::board::Terminal,
+        nodes: &mut Vec<Node>,
+        escapes: &mut HashMap<Node, Vec<u32>>,
+    ) {
+        const REACH: f64 = 1.2;
+        const WANTED: usize = 12;
+        let statics = &self.statics[self.board.nets[net as usize].class];
+        let bounds = crate::geometry::Aabb {
+            minimum: terminal.anchor,
+            maximum: terminal.anchor,
+        }
+        .inflated(REACH);
+        let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) else {
+            return;
+        };
+        for layer in 0..self.board.layer_count {
+            if terminal.layers & (1 << layer) == 0 {
+                continue;
+            }
+            let mut candidates: Vec<(f64, usize)> = Vec::new();
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let cell = self.grid.index(x, y);
+                    let distance =
+                        crate::geometry::distance(terminal.anchor, self.grid.center(x, y));
+                    if distance <= REACH && statics.trace_allowed(layer, cell, net) {
+                        candidates.push((distance, cell));
+                    }
+                }
+            }
+            candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let mut found = 0;
+            for (distance, cell) in candidates.into_iter().take(400) {
+                let center = self.grid.center_of(cell);
+                if !self.stub_is_clear(net, layer, terminal.anchor, center) {
+                    continue;
+                }
+                let samples = (distance / (self.grid.pitch / 2.0)).ceil().max(1.0) as usize;
+                let mut cells: Vec<u32> = (0..=samples)
+                    .filter_map(|index| {
+                        let t = index as f64 / samples as f64;
+                        self.grid.nearest_node([
+                            terminal.anchor[0] + t * (center[0] - terminal.anchor[0]),
+                            terminal.anchor[1] + t * (center[1] - terminal.anchor[1]),
+                        ])
+                    })
+                    .map(|cell| cell as u32)
+                    .collect();
+                cells.dedup();
+                let node = Node {
+                    layer: layer as u8,
+                    cell: cell as u32,
+                };
+                escapes.insert(node, cells);
+                nodes.push(node);
+                found += 1;
+                if found == WANTED {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Whether the stub behind escape node `node` is free of other nets.
+    fn escape_is_free(&self, net: NetId, node: Node) -> bool {
+        let state = &self.nets[net as usize];
+        let Some(cells) = state.escapes.get(&node) else {
+            return true;
+        };
+        let map = self.map_index(self.board.nets[net as usize].class, node.layer as usize);
+        let nx = self.grid.nx as i64;
+        cells.iter().all(|cell| {
+            (-1..=1).all(|dy| {
+                (-1..=1).all(|dx| {
+                    let target = *cell as i64 + dy * nx + dx;
+                    target < 0
+                        || target as usize >= self.grid.cells()
+                        || self.occupancy[map][target as usize] == 0
+                })
+            })
+        })
+    }
+
     /// Nodes around pads that connect to a pour of their net on that layer.
     fn thermal_guards(&self) -> Vec<Vec<u32>> {
         let mut guard = vec![Vec::new(); self.board.layer_count];
@@ -434,6 +543,7 @@ impl<'a> Router<'a> {
         let statics = &self.statics[description.class];
         let mut terminal_nodes = Vec::new();
         let mut terminal_reach = Vec::new();
+        let mut escapes: HashMap<Node, Vec<u32>> = HashMap::new();
         for terminal in &description.terminals {
             let pad = &self.board.obstacles[terminal.pad];
             let mut nodes = Vec::new();
@@ -456,6 +566,9 @@ impl<'a> Router<'a> {
                         }
                     }
                 }
+            }
+            if nodes.is_empty() {
+                self.escape_nodes(net, terminal, &mut nodes, &mut escapes);
             }
             let reach = nodes
                 .iter()
@@ -515,12 +628,15 @@ impl<'a> Router<'a> {
             })
             .collect();
         let has_plane = !plane.is_empty();
-        let routable = (description.terminals.len() >= 2 || has_plane)
-            && terminal_nodes
-                .iter()
-                .zip(&on_plane)
-                .all(|(nodes, on_plane)| *on_plane || !nodes.is_empty());
+        // Pads without any access are reported; the rest is still routed.
+        let live = terminal_nodes
+            .iter()
+            .zip(&on_plane)
+            .filter(|(nodes, on_plane)| **on_plane || !nodes.is_empty())
+            .count();
+        let routable = live >= 2 || (has_plane && live >= 1);
         NetState {
+            escapes,
             plane,
             plane_class,
             on_plane,
@@ -613,6 +729,7 @@ impl<'a> Router<'a> {
         let nx = self.grid.nx as i64;
         let ny = self.grid.ny as i64;
         let branches = std::mem::take(&mut self.nets[net as usize].branches);
+        let escapes = std::mem::take(&mut self.nets[net as usize].escapes);
         for querying in 0..self.board.classes.len() {
             let stamps = &self.stamps[class][querying];
             let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)]| {
@@ -639,6 +756,14 @@ impl<'a> Router<'a> {
             };
             let base = querying * (layers + 1);
             for branch in &branches {
+                for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
+                    if let Some(cells) = escapes.get(&end) {
+                        for cell in cells {
+                            apply(base + end.layer as usize, *cell, &stamps.stub_to_trace);
+                            apply(base + layers, *cell, &stamps.stub_to_via);
+                        }
+                    }
+                }
                 for (index, node) in branch.nodes.iter().enumerate() {
                     apply(base + node.layer as usize, node.cell, &stamps.trace_to_trace);
                     apply(base + layers, node.cell, &stamps.trace_to_via);
@@ -656,6 +781,7 @@ impl<'a> Router<'a> {
         }
         let state = &mut self.nets[net as usize];
         state.branches = branches;
+        state.escapes = escapes;
         state.stamped = stamped;
     }
 
@@ -665,6 +791,16 @@ impl<'a> Router<'a> {
         let layers = self.board.layer_count;
         let mut result = Vec::new();
         for branch in &self.nets[net as usize].branches {
+            for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
+                if let Some(cells) = self.nets[net as usize].escapes.get(&end) {
+                    let map = self.map_index(class, end.layer as usize);
+                    for cell in cells {
+                        if self.occupancy[map][*cell as usize] > 1 {
+                            result.push((end.layer as usize, *cell));
+                        }
+                    }
+                }
+            }
             for (index, node) in branch.nodes.iter().enumerate() {
                 let map = self.map_index(class, node.layer as usize);
                 if self.occupancy[map][node.cell as usize] > 1 {
@@ -782,7 +918,10 @@ impl<'a> Router<'a> {
             self.connect_to_plane(net, &retained, &component, plane_element, present, hard);
             return;
         }
-        absorb(self, &mut tree, &mut in_tree, component[0]);
+        let first_live = (0..terminal_count)
+            .find(|terminal| !self.nets[net as usize].terminal_nodes[*terminal].is_empty())
+            .unwrap_or(0);
+        absorb(self, &mut tree, &mut in_tree, component[first_live]);
 
         let pitch = self.grid.pitch as f32;
         loop {
@@ -1168,6 +1307,9 @@ impl<'a> Router<'a> {
         };
 
         for (node, element) in targets {
+            if hard && !self.escape_is_free(net, *node) {
+                continue;
+            }
             let state = self.state(*node);
             self.target_mark[state] = generation;
             self.target_terminal[state] = *element;
@@ -1265,8 +1407,10 @@ impl<'a> Router<'a> {
         for node in sources {
             // A hard route may not even start inside another net's zone.
             if hard
-                && self.occupancy[self.map_index(class, node.layer as usize)][node.cell as usize]
+                && (self.occupancy[self.map_index(class, node.layer as usize)]
+                    [node.cell as usize]
                     > 0
+                    || !self.escape_is_free(net, *node))
             {
                 continue;
             }
@@ -1483,8 +1627,8 @@ impl<'a> Router<'a> {
             let mut conflicted = Vec::new();
             for net in &order {
                 let conflicts = self.conflicts(*net);
-                if self.nets[*net as usize].blocked
-                    || (conflicts.is_empty() && self.nets[*net as usize].complete)
+                if conflicts.is_empty()
+                    && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
                 {
                     continue;
                 }
@@ -2076,7 +2220,9 @@ impl<'a> Router<'a> {
                 if crate::geometry::distance(anchor, center) > 1.0e-7
                     && self.stub_is_clear(net, node.layer as usize, anchor, center)
                 {
-                    stubs.push(route.segments.len());
+                    if !state.escapes.contains_key(&node) {
+                        stubs.push(route.segments.len());
+                    }
                     route.segments.push(Segment {
                         layer: node.layer as usize,
                         start: anchor,
