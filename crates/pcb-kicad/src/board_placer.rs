@@ -292,6 +292,56 @@ fn lower_placement(
         source_at.push(at);
     }
 
+    // Copper-layer text and graphics are part of the board: parts must not
+    // be placed on top of them. They follow the footprints, so footprint
+    // indices stay aligned with the board file.
+    for item in pcb.children() {
+        let Some(layer) = form_atom(item, "layer", 1).and_then(copper_layer_index) else {
+            continue;
+        };
+        if !matches!(
+            item.head(),
+            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
+        ) {
+            continue;
+        }
+        let Some(bounds) = board_router::copper_graphic_shapes(item)?
+            .iter()
+            .map(pcb_router::Shape::aabb)
+            .reduce(pcb_router::geometry::Aabb::union)
+        else {
+            continue;
+        };
+        components.push(core::Component {
+            name: "copper graphic".into(),
+            body_center: [0.0, 0.0],
+            body_size: [
+                bounds.maximum[0] - bounds.minimum[0],
+                bounds.maximum[1] - bounds.minimum[1],
+            ],
+            round: false,
+            halo: 0.0,
+            pins: Vec::new(),
+            side: if layer == 0 {
+                core::Side::Front
+            } else {
+                core::Side::Back
+            },
+            fixed: true,
+            angle_options: vec![0.0],
+        });
+        poses.push(core::Pose {
+            position: [
+                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+            ],
+            angle: 0.0,
+        });
+        references.push("copper graphic".into());
+        source_at.push([0.0; 3]);
+        locked.push(true);
+    }
+
     let mut pin_counts = vec![0usize; net_ids.len()];
     for component in &components {
         for pin in &component.pins {

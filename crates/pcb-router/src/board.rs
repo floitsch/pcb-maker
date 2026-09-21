@@ -75,6 +75,12 @@ pub struct Plane {
     pub polygon: Vec<Point>,
     /// Regions filled by other pours with a higher priority.
     pub excluded: Vec<Vec<Point>>,
+    /// Whether pads may connect through the pour. If not, the net is routed
+    /// with tracks and the pour only fills (its pads are still guarded).
+    pub connect: bool,
+    /// Other nets are discouraged from coming this close to pads that
+    /// connect to the pour, so their thermal spokes survive. 0 disables.
+    pub thermal_reach: f64,
 }
 
 #[derive(Clone, Debug)]

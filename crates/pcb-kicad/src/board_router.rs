@@ -419,7 +419,7 @@ fn lower(
             label: "board cutout".into(),
         });
     }
-    let pours = if connect_pours { pours(pcb)? } else { Vec::new() };
+    let pours = pours(pcb)?;
     let mut planes = Vec::new();
     for pour in &pours {
         // A pour without pads has nothing to connect.
@@ -455,6 +455,8 @@ fn lower(
                     })
                     .map(|other| other.polygon.clone())
                     .collect(),
+                connect: connect_pours,
+                thermal_reach: pour.thermal_reach,
             });
         }
     }
@@ -518,7 +520,7 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
 
 /// Copper-layer graphics as obstacle shapes. Text becomes its (generous)
 /// bounding box.
-fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
     let width = item
         .child("stroke")
         .and_then(|stroke| form_f64(stroke, "width", 1).ok())
@@ -647,6 +649,7 @@ struct Pour {
     priority: i64,
     clearance: f64,
     min_thickness: f64,
+    thermal_reach: f64,
     polygon: Vec<[f64; 2]>,
 }
 
@@ -682,6 +685,13 @@ fn pours(pcb: &Expr) -> Result<Vec<Pour>, String> {
                 .and_then(|form| form_f64(form, "clearance", 1).ok())
                 .unwrap_or(0.0),
             min_thickness: form_f64(zone, "min_thickness", 1).unwrap_or(0.25),
+            thermal_reach: zone
+                .child("fill")
+                .map(|fill| {
+                    form_f64(fill, "thermal_gap", 1).unwrap_or(0.5)
+                        + form_f64(fill, "thermal_bridge_width", 1).unwrap_or(0.5)
+                })
+                .unwrap_or(1.0),
             polygon: rule_area_polygon_points(zone)?,
         });
     }

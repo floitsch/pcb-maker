@@ -184,6 +184,8 @@ fn pour_connects_pads_with_stub_vias_only() {
         layer: 1,
         polygon: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         excluded: Vec::new(),
+        connect: true,
+        thermal_reach: 0.0,
     });
     let result = route(&builder.board, &config());
     assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);

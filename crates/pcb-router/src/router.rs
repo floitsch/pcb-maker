@@ -45,6 +45,9 @@ pub struct Config {
     /// Via cost when connecting to a copper pour: a short stub and a via is
     /// the preferred connection, not a long track to another pad.
     pub plane_via_cost: f64,
+    /// Plan every connection on a coarse tile graph first and search the
+    /// lattice only inside that corridor (widening it on failure).
+    pub corridors: bool,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -67,6 +70,7 @@ impl Default for Config {
             cleanup_passes: 4,
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
+            corridors: true,
             heuristic_weight: 1.0,
             verbose: false,
         }
@@ -107,6 +111,8 @@ const NO_TERMINAL: u16 = u16::MAX;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 const PARENT_SOURCE: u8 = 255;
+/// Side of a coarse tile, in lattice nodes (a power of two).
+const TILE: usize = 16;
 
 #[derive(Clone, Debug)]
 struct Branch {
@@ -132,6 +138,9 @@ struct NetState {
     plane: Vec<Vec<bool>>,
     /// Terminals that touch a pour and therefore need no tracks.
     on_plane: Vec<bool>,
+    /// How often negotiation had to reroute this net; stubborn nets get
+    /// wider corridors and finally none.
+    reroutes: usize,
     /// Per layer: the rule class describing the pour there.
     plane_class: Vec<usize>,
     /// When set, only these pour nodes (the main piece) are valid targets.
@@ -210,6 +219,21 @@ pub struct Router<'a> {
     direction_cost: Vec<[f32; 8]>,
     /// Cleanup routes by pure geometry: no history, no preferred axes.
     cleanup: bool,
+    /// Coarse tiles of `TILE` x `TILE` nodes, per occupancy map: how many
+    /// nodes are currently claimed, and (per class and layer) how many are
+    /// routable at all.
+    tiles_x: usize,
+    tiles_y: usize,
+    tile_claimed: Vec<Vec<u32>>,
+    tile_routable: Vec<Vec<u32>>,
+    /// Per layer (last entry: vias): where conflicts kept happening, so the
+    /// corridor planner learns to send some nets another way.
+    tile_history: Vec<Vec<f32>>,
+    /// When set, searches only enter these tiles.
+    corridor: Option<Vec<bool>>,
+    /// Per layer and node: the pour net (as `owner`) whose pad needs the
+    /// surrounding copper for its thermal spokes; other nets pay to pass.
+    guard: Vec<Vec<u32>>,
 
     cost: Vec<f32>,
     seen: Vec<u32>,
@@ -304,6 +328,19 @@ impl<'a> Router<'a> {
             })
             .collect();
         let states = cells * layers;
+        let tiles_x = grid.nx.div_ceil(TILE);
+        let tiles_y = grid.ny.div_ceil(TILE);
+        let mut tile_routable = vec![vec![0u32; tiles_x * tiles_y]; board.classes.len() * layers];
+        for class in 0..board.classes.len() {
+            for layer in 0..layers {
+                let counts = &mut tile_routable[class * layers + layer];
+                for (cell, value) in statics[class].trace[layer].iter().enumerate() {
+                    if *value != crate::grid::BLOCKED {
+                        counts[(cell / grid.nx / TILE) * tiles_x + (cell % grid.nx) / TILE] += 1;
+                    }
+                }
+            }
+        }
         let mut router = Self {
             board,
             config,
@@ -316,6 +353,13 @@ impl<'a> Router<'a> {
             nets: Vec::new(),
             direction_cost,
             cleanup: false,
+            tiles_x,
+            tiles_y,
+            tile_claimed: vec![vec![0; tiles_x * tiles_y]; maps],
+            tile_routable,
+            tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
+            corridor: None,
+            guard: vec![Vec::new(); layers],
             cost: vec![0.0; states],
             seen: vec![0; states],
             closed: vec![0; states],
@@ -334,6 +378,7 @@ impl<'a> Router<'a> {
         router.nets = (0..board.nets.len())
             .map(|net| router.prepare_net(net as NetId))
             .collect();
+        router.guard = router.thermal_guards();
         router
     }
 
@@ -347,6 +392,40 @@ impl<'a> Router<'a> {
 
     fn map_index(&self, class: usize, layer: usize) -> usize {
         class * (self.board.layer_count + 1) + layer
+    }
+
+    /// Nodes around pads that connect to a pour of their net on that layer.
+    fn thermal_guards(&self) -> Vec<Vec<u32>> {
+        let mut guard = vec![Vec::new(); self.board.layer_count];
+        for plane in &self.board.planes {
+            if plane.thermal_reach <= 0.0 {
+                continue;
+            }
+            if guard[plane.layer].is_empty() {
+                guard[plane.layer] = vec![0; self.grid.cells()];
+            }
+            for terminal in &self.board.nets[plane.net as usize].terminals {
+                if terminal.layers & (1 << plane.layer) == 0
+                    || !crate::geometry::point_in_polygon(terminal.anchor, &plane.polygon)
+                {
+                    continue;
+                }
+                let shape = &self.board.obstacles[terminal.pad].shape;
+                let Some((x0, y0, x1, y1)) =
+                    self.grid.node_range(shape.aabb().inflated(plane.thermal_reach))
+                else {
+                    continue;
+                };
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        if shape.distance_to_point(self.grid.center(x, y)) < plane.thermal_reach {
+                            guard[plane.layer][self.grid.index(x, y)] = crate::grid::owner(plane.net);
+                        }
+                    }
+                }
+            }
+        }
+        guard
     }
 
     /// The legal lattice nodes inside each terminal's pad copper.
@@ -392,7 +471,7 @@ impl<'a> Router<'a> {
         }
         let mut plane: Vec<Vec<bool>> = Vec::new();
         let mut plane_class = vec![description.class; self.board.layer_count];
-        for pour in self.board.planes.iter().filter(|pour| pour.net == net) {
+        for pour in self.board.planes.iter().filter(|pour| pour.net == net && pour.connect) {
             if plane.is_empty() {
                 plane = vec![Vec::new(); self.board.layer_count];
             }
@@ -457,6 +536,11 @@ impl<'a> Router<'a> {
         let state = &mut self.nets[net as usize];
         for (map, cell) in state.stamped.drain(..) {
             self.occupancy[map as usize][cell as usize] -= 1;
+            if self.occupancy[map as usize][cell as usize] == 0 {
+                let cell = cell as usize;
+                let tile = (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE;
+                self.tile_claimed[map as usize][tile] -= 1;
+            }
         }
     }
 
@@ -544,6 +628,11 @@ impl<'a> Router<'a> {
                     if self.stamp_mark[map][target] != generation {
                         self.stamp_mark[map][target] = generation;
                         self.occupancy[map][target] += 1;
+                        if self.occupancy[map][target] == 1 {
+                            let tile = (target / self.grid.nx / TILE) * self.tiles_x
+                                + (target % self.grid.nx) / TILE;
+                            self.tile_claimed[map][tile] += 1;
+                        }
                         stamped.push((map as u32, target as u32));
                     }
                 }
@@ -728,8 +817,38 @@ impl<'a> Router<'a> {
             let points = (exact_points && points.len() <= 12).then_some(points);
             let windowed = self.window(net, window_growth);
             let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
-            let path = self
-                .search(net, &tree, &targets, points.as_deref(), false, present, hard, windowed)
+            // Two-level search: a corridor from the tile graph first, wider
+            // on failure, and only then the plain window and the full board.
+            let mut planned = None;
+            let reroutes = self.nets[net as usize].reroutes;
+            if self.config.corridors && !self.cleanup {
+                let margin = (1 + reroutes / 3).min(10);
+                for margin in [margin, margin + 3] {
+                    let Some(corridor) = self.plan_corridor(net, &tree, &targets, hard, margin)
+                    else {
+                        break;
+                    };
+                    self.corridor = Some(corridor);
+                    planned = self.search(
+                        net,
+                        &tree,
+                        &targets,
+                        points.as_deref(),
+                        false,
+                        present,
+                        hard,
+                        full,
+                    );
+                    self.corridor = None;
+                    if planned.is_some() {
+                        break;
+                    }
+                }
+            }
+            let path = planned.or_else(|| {
+                self.search(net, &tree, &targets, points.as_deref(), false, present, hard, windowed)
+            });
+            let path = path
                 .or_else(|| {
                     (windowed != full)
                         .then(|| {
@@ -906,6 +1025,112 @@ impl<'a> Router<'a> {
         if !hard && !complete {
             self.nets[net as usize].blocked = true;
         }
+    }
+
+    /// Plans a connection on the tile graph: Dijkstra over (layer, tile)
+    /// from the source tiles to any target tile, where a tile costs more the
+    /// fuller it is. Returns the tiles on the path, grown by `margin` tiles.
+    fn plan_corridor(
+        &self,
+        net: NetId,
+        sources: &[Node],
+        targets: &[(Node, u16)],
+        hard: bool,
+        margin: usize,
+    ) -> Option<Vec<bool>> {
+        let class = self.board.nets[net as usize].class;
+        let layers = self.board.layer_count;
+        let tiles = self.tiles_x * self.tiles_y;
+        let tile_of = |cell: u32| {
+            (cell as usize / self.grid.nx / TILE) * self.tiles_x + (cell as usize % self.grid.nx) / TILE
+        };
+        let mut is_target = vec![false; tiles * layers];
+        let mut endpoint = vec![false; tiles];
+        for (node, _) in targets {
+            is_target[node.layer as usize * tiles + tile_of(node.cell)] = true;
+            endpoint[tile_of(node.cell)] = true;
+        }
+        let tile_mm = (TILE as f64 * self.grid.pitch) as f32;
+        let mut cost = vec![f32::INFINITY; tiles * layers];
+        let mut from = vec![u32::MAX; tiles * layers];
+        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        for node in sources {
+            let state = node.layer as usize * tiles + tile_of(node.cell);
+            endpoint[tile_of(node.cell)] = true;
+            if cost[state] > 0.0 {
+                cost[state] = 0.0;
+                heap.push(Reverse((0, state as u32)));
+            }
+        }
+        // How expensive a tile is: free tiles cost their size; a full tile
+        // is nearly a wall (a real wall when routing hard).
+        let enter = |layer: usize, tile: usize| -> Option<f32> {
+            let routable = self.tile_routable[class * layers + layer][tile];
+            if routable == 0 && !endpoint[tile] {
+                return None;
+            }
+            let claimed = self.tile_claimed[self.map_index(class, layer)][tile];
+            let fill = (claimed as f32 / routable.max(1) as f32).min(1.0);
+            if hard && fill >= 1.0 && !endpoint[tile] {
+                return None;
+            }
+            Some((1.0 + 12.0 * fill * fill * fill) * (1.0 + self.tile_history[layer][tile]))
+        };
+        let mut reached = None;
+        while let Some(Reverse((bits, state))) = heap.pop() {
+            let state = state as usize;
+            let here = f32::from_bits(bits);
+            if here > cost[state] {
+                continue;
+            }
+            if is_target[state] {
+                reached = Some(state);
+                break;
+            }
+            let (layer, tile) = (state / tiles, state % tiles);
+            let (x, y) = (tile % self.tiles_x, tile / self.tiles_x);
+            let mut relax = |next: usize, step: f32, heap: &mut BinaryHeap<Reverse<(u32, u32)>>| {
+                let total = here + step;
+                if total < cost[next] {
+                    cost[next] = total;
+                    from[next] = state as u32;
+                    heap.push(Reverse((total.to_bits(), next as u32)));
+                }
+            };
+            for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
+                let (tx, ty) = (x as i64 + *dx as i64, y as i64 + *dy as i64);
+                if tx < 0 || ty < 0 || tx >= self.tiles_x as i64 || ty >= self.tiles_y as i64 {
+                    continue;
+                }
+                let next_tile = ty as usize * self.tiles_x + tx as usize;
+                let Some(factor) = enter(layer, next_tile) else {
+                    continue;
+                };
+                let step = self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm;
+                relax(layer * tiles + next_tile, step * factor, &mut heap);
+            }
+            for other in (0..layers).filter(|other| *other != layer) {
+                if let Some(factor) = enter(other, tile) {
+                    relax(other * tiles + tile, self.config.via_cost as f32 * factor, &mut heap);
+                }
+            }
+        }
+        let mut state = reached?;
+        let mut corridor = vec![false; tiles];
+        loop {
+            let tile = state % tiles;
+            let (x, y) = (tile % self.tiles_x, tile / self.tiles_x);
+            for ty in y.saturating_sub(margin)..=(y + margin).min(self.tiles_y - 1) {
+                for tx in x.saturating_sub(margin)..=(x + margin).min(self.tiles_x - 1) {
+                    corridor[ty * self.tiles_x + tx] = true;
+                }
+            }
+            if from[state] == u32::MAX {
+                break;
+            }
+            state = from[state] as usize;
+        }
+        Some(corridor)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1113,6 +1338,11 @@ impl<'a> Router<'a> {
                 if blocked_edges & (1 << direction) != 0 {
                     continue;
                 }
+                if let Some(corridor) = &self.corridor
+                    && !corridor[(ty as usize / TILE) * self.tiles_x + tx as usize / TILE]
+                {
+                    continue;
+                }
                 let target_cell = ty as usize * nx + tx as usize;
                 let allowed = statics.trace[layer][target_cell];
                 if allowed != crate::grid::FREE && allowed != own {
@@ -1133,6 +1363,12 @@ impl<'a> Router<'a> {
                 };
                 let mut step =
                     direction_cost[layer][direction] * (1.0 + history) * (1.0 + present * occupied);
+                if !self.guard[layer].is_empty() {
+                    let guarded = self.guard[layer][target_cell];
+                    if guarded != 0 && guarded != own {
+                        step *= 4.0;
+                    }
+                }
                 if (arrived as usize) < 8 {
                     let turn = (direction as i32 - arrived as i32).rem_euclid(8);
                     step += bend_cost * turn.min(8 - turn) as f32;
@@ -1238,6 +1474,7 @@ impl<'a> Router<'a> {
                 let search_started = std::time::Instant::now();
                 self.rip_up_conflicted(*net);
                 self.route_net(*net, present, false, growth);
+                self.nets[*net as usize].reroutes += 1;
                 self.search_seconds += search_started.elapsed().as_secs_f64();
                 let stamp_started = std::time::Instant::now();
                 self.stamp(*net);
@@ -1251,8 +1488,17 @@ impl<'a> Router<'a> {
                 {
                     continue;
                 }
+                let mut tiles_hit: HashSet<(usize, usize)> = HashSet::new();
                 for (layer, cell) in conflicts {
                     self.history[layer][cell as usize] += self.config.history_increment as f32;
+                    let cell = cell as usize;
+                    tiles_hit.insert((
+                        layer,
+                        (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE,
+                    ));
+                }
+                for (layer, tile) in tiles_hit {
+                    self.tile_history[layer][tile] += self.config.history_increment as f32;
                 }
                 conflicted.push(*net);
             }
