@@ -86,7 +86,7 @@ mod project_rules;
 pub use project_rules::resolve_project_rules;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult,
-    KiCadBoardRouterViolation, route_kicad_board,
+    KiCadBoardRouterViolation, route_kicad_board, write_kicad_board_without_tracks,
 };
 mod semantic_template;
 mod sequential_order_search;

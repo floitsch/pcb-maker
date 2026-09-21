@@ -12,11 +12,13 @@
 pub mod board;
 pub mod geometry;
 pub mod grid;
+pub mod pour;
 pub mod router;
 pub mod verify;
 
 pub use board::{
-    Board, ClassId, LayerMask, Net, NetId, NetRoute, Obstacle, ObstacleKind, RuleClass, Segment,
+    Board, ClassId, LayerMask, Net, NetId, NetRoute, Obstacle, ObstacleKind, Plane, RuleClass,
+    Segment,
     Terminal, Via,
 };
 pub use geometry::{Point, Shape};

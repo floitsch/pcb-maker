@@ -2258,6 +2258,17 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "strip-kicad-tracks" => {
+            let usage = "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            pcb_kicad::write_kicad_board_without_tracks(Path::new(&source), Path::new(&output))?;
+            println!("wrote {output} without tracks and vias; copper pours kept");
+            Ok(())
+        }
         "strip-kicad-copper" => {
             let usage = "usage: pcb-maker strip-kicad-copper <source.kicad_pcb> <output.kicad_pcb> [report.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
@@ -6183,12 +6194,24 @@ fn board_router_config(
             &Path::new(source).join(format!("{board_id}.kicad_pro")),
             &Path::new(source).join(format!("{board_id}.kicad_pcb")),
         ),
-        Some(path) => pcb_kicad::KiCadBoardRouterConfig::from_json(
-            serde_json::from_str(
-                &std::fs::read_to_string(path)
-                    .map_err(|error| format!("failed to read {path}: {error}"))?,
-            )
-            .map_err(|error| format!("failed to parse {path}: {error}"))?,
-        ),
+        Some(path) => {
+            let mut config = pcb_kicad::KiCadBoardRouterConfig::from_json(
+                serde_json::from_str(
+                    &std::fs::read_to_string(path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {path}: {error}"))?,
+            )?;
+            // A file that only tunes the router takes its rules from the project.
+            if config.connection_rules.is_empty() && config.default_rules.is_none() {
+                let project = board_router_config(None, source, board_id)?;
+                config.connection_rules = project.connection_rules;
+                config.default_rules = project.default_rules;
+                config.edge_clearance_mm = project.edge_clearance_mm;
+                config.hole_clearance_mm = project.hole_clearance_mm;
+                config.hole_to_hole_clearance_mm = project.hole_to_hole_clearance_mm;
+            }
+            Ok(config)
+        }
     }
 }

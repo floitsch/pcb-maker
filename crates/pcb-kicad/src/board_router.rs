@@ -32,6 +32,12 @@ pub struct KiCadBoardRouterConfig {
     pub maximum_iterations: Option<usize>,
     #[serde(default)]
     pub grid_pitches_mm: Option<Vec<f64>>,
+    /// Above 1, negotiation searches trade optimality for speed; the
+    /// cleanup pass always searches exactly.
+    #[serde(default)]
+    pub heuristic_weight: Option<f64>,
+    #[serde(default)]
+    pub present_cap: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -374,6 +380,31 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
             label: "board cutout".into(),
         });
     }
+    let pours = pours(pcb)?;
+    let mut planes = Vec::new();
+    for pour in &pours {
+        // A pour without pads has nothing to connect.
+        let Some(net) = net_ids_lookup(&nets, &pour.net) else {
+            continue;
+        };
+        for layer in 0..2 {
+            if !pour.layers[layer] {
+                continue;
+            }
+            planes.push(core::Plane {
+                net,
+                layer,
+                polygon: pour.polygon.clone(),
+                excluded: pours
+                    .iter()
+                    .filter(|other| {
+                        other.net != pour.net && other.layers[layer] && other.priority > pour.priority
+                    })
+                    .map(|other| other.polygon.clone())
+                    .collect(),
+            });
+        }
+    }
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
@@ -387,8 +418,80 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
             classes,
             obstacles,
             nets,
+            planes,
         },
     })
+}
+
+fn net_ids_lookup(nets: &[core::Net], name: &str) -> Option<core::NetId> {
+    nets.iter()
+        .position(|net| net.name == name)
+        .map(|index| index as core::NetId)
+}
+
+/// Copies `source` to `destination` without tracks, vias and stale pour
+/// fills. Unlike the cold-board strip, copper pours themselves are kept:
+/// where copper is poured is a design decision like the placement, and the
+/// router connects to pours instead of replacing them by tracks.
+pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(source)
+        .map_err(|error| format!("failed to read {}: {error}", source.display()))?;
+    let mut pcb = parse(&text)?;
+    let Expr::List(items) = &mut pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+    for zone in items.iter_mut().filter(|item| item.head() == Some("zone")) {
+        if let Expr::List(children) = zone {
+            children.retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
+        }
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(destination, format!("{}\n", encode(&pcb)))
+        .map_err(|error| format!("failed to write {}: {error}", destination.display()))
+}
+
+struct Pour {
+    net: String,
+    layers: [bool; 2],
+    priority: i64,
+    polygon: Vec<[f64; 2]>,
+}
+
+fn pours(pcb: &Expr) -> Result<Vec<Pour>, String> {
+    let mut result = Vec::new();
+    for zone in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("zone") && !is_rule_area(item))
+    {
+        let Some(net) = form_atom(zone, "net_name", 1)
+            .or_else(|| node_net(zone))
+            .map(normalize_net)
+            .filter(|net| routable_net(net))
+        else {
+            continue;
+        };
+        if form_atom(zone, "fill", 1) == Some("no") {
+            continue;
+        }
+        let Ok(layers) = rule_area_layer_mask(zone) else {
+            // Pours on inner layers are outside the two-layer adapter.
+            continue;
+        };
+        result.push(Pour {
+            net: net.to_string(),
+            layers,
+            priority: form_atom(zone, "priority", 1)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+            polygon: rule_area_polygon_points(zone)?,
+        });
+    }
+    Ok(result)
 }
 
 fn nanometres(point: [f64; 2]) -> [f64; 2] {
@@ -427,6 +530,12 @@ pub fn route_kicad_board(
     }
     if let Some(pitches) = &config.grid_pitches_mm {
         router_config.pitches = pitches.clone();
+    }
+    if let Some(weight) = config.heuristic_weight {
+        router_config.heuristic_weight = weight;
+    }
+    if let Some(cap) = config.present_cap {
+        router_config.present_cap = cap;
     }
     let routing_started = std::time::Instant::now();
     let result = core::route(&board, &router_config);

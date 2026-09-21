@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Runs the board corpus: strip copper, route the designer's placement, and
+"""Runs the board corpus: strip tracks and vias (pours stay), route the designer's placement, and
 place plus route automatically. Judges copper only: native unconnected items
 and native DRC errors other than silkscreen/library cosmetics, compared with
 what the stripped source already had."""
@@ -83,9 +83,15 @@ def main():
         shutil.copytree(directory, source, ignore=shutil.ignore_patterns(
             ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
         row = {"name": board["name"]}
+        # The cold strip only provides the reference statistics; the board
+        # that is routed keeps its copper pours.
         code, _ = run(arguments.binary, ["strip-kicad-copper", directory / f"{board_id}.kicad_pcb",
-                                         source / f"{board_id}.kicad_pcb", work / "strip.json"],
+                                         work / "cold.kicad_pcb", work / "strip.json"],
                       work / "strip.log", 300)
+        if code == 0:
+            code, _ = run(arguments.binary, ["strip-kicad-tracks", directory / f"{board_id}.kicad_pcb",
+                                             source / f"{board_id}.kicad_pcb"],
+                          work / "strip-tracks.log", 300)
         if code != 0:
             row["error"] = "strip failed: " + (work / "strip.log").read_text()[-300:]
             rows.append(row)

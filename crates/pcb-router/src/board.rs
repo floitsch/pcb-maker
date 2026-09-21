@@ -63,6 +63,17 @@ pub struct Net {
     pub terminals: Vec<Terminal>,
 }
 
+/// A copper pour: the net's copper fills `polygon` on `layer` wherever no
+/// other copper is in the way. Terminals touching it need no tracks.
+#[derive(Clone, Debug)]
+pub struct Plane {
+    pub net: NetId,
+    pub layer: usize,
+    pub polygon: Vec<Point>,
+    /// Regions filled by other pours with a higher priority.
+    pub excluded: Vec<Vec<Point>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Board {
     pub layer_count: usize,
@@ -75,6 +86,7 @@ pub struct Board {
     pub obstacles: Vec<Obstacle>,
     /// Indexed by `NetId`.
     pub nets: Vec<Net>,
+    pub planes: Vec<Plane>,
 }
 
 impl Board {

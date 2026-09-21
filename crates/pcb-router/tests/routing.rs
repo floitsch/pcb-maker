@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use pcb_router::{
+    Plane,
     Board, Config, Net, NetStatus, Obstacle, ObstacleKind, RuleClass, Shape, Terminal, route,
     verify,
 };
@@ -32,6 +33,7 @@ impl Builder {
                 classes: vec![class()],
                 obstacles: Vec::new(),
                 nets: Vec::new(),
+                planes: Vec::new(),
             },
         }
     }
@@ -160,3 +162,39 @@ fn multi_terminal_net_forms_one_tree() {
     let violations = verify(&builder.board, &result.routes);
     assert!(violations.is_empty(), "{violations:?}");
 }
+
+#[test]
+fn pour_connects_pads_with_stub_vias_only() {
+    // A ground pour on the back. Through-hole ground pads touch it and need
+    // nothing; front-only ground pads need one short stub and a via each.
+    let mut builder = Builder::new(30.0, 20.0, 2);
+    builder.net(
+        "GND",
+        &[
+            ([3.0, 3.0], 0b11),
+            ([27.0, 17.0], 0b11),
+            ([10.0, 10.0], 0b01),
+            ([20.0, 10.0], 0b01),
+        ],
+    );
+    builder.net("SIG", &[([3.0, 10.0], 0b01), ([27.0, 10.0], 0b01)]);
+    builder.board.planes.push(Plane {
+        net: 0,
+        layer: 1,
+        polygon: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        excluded: Vec::new(),
+    });
+    let result = route(&builder.board, &config());
+    assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    let ground = &result.routes[0];
+    assert_eq!(ground.vias.len(), 2);
+    let length: f64 = ground
+        .segments
+        .iter()
+        .map(|s| ((s.start[0] - s.end[0]).powi(2) + (s.start[1] - s.end[1]).powi(2)).sqrt())
+        .sum();
+    assert!(length < 6.0, "ground stubs are {length} mm long");
+}
+
