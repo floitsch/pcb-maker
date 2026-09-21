@@ -1,5 +1,9 @@
 # Competitive survey and roadmap
 
+> **Trust warning (2026-09-21):** the capability claims below were not
+> confirmed by a fresh audit. Read
+> [the trust audit](reviews/2026-09-21-trust-audit.md) first; it supersedes this document where they disagree.
+
 Status: strategy baseline, 2026-09-03.
 
 ## Current execution priority (2026-09-08)

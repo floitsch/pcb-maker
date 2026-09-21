@@ -1,5 +1,9 @@
 # Current placer/router status
 
+> **Trust warning (2026-09-21):** the capability claims below were not
+> confirmed by a fresh audit. Read
+> [the trust audit](reviews/2026-09-21-trust-audit.md) first; it supersedes this document where they disagree.
+
 ## Active priorities
 
 Following the research-direction checkpoint, fresh unattended runs of a frozen

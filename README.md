@@ -1,5 +1,9 @@
 # pcb-maker
 
+> **Trust warning (2026-09-21):** the capability claims below were not
+> confirmed by a fresh audit. Read
+> [the trust audit](docs/reviews/2026-09-21-trust-audit.md) first; it supersedes this document where they disagree.
+
 `pcb-maker` is a Rust research project for coupled PCB placement and routing.
 The router may move components, placement changes may invalidate routing, and
 both systems return evidence to a coordinator instead of hiding failed work.
