@@ -17,6 +17,10 @@ use crate::geometry::{
 #[derive(Clone, Debug)]
 pub struct Violation {
     pub net: NetId,
+    /// Index into the net's segments, or `None` for one of its vias.
+    pub segment: Option<usize>,
+    /// The other routed segment involved, if any.
+    pub other_segment: Option<(NetId, usize)>,
     pub other: String,
     pub layer: usize,
     pub at: Point,
@@ -89,10 +93,19 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
     }
 
     let mut violations = Vec::new();
-    let mut report = |net: NetId, other: String, layer: usize, at: Point, required: f64, actual: f64| {
+    let mut report = |net: NetId,
+                      segment: Option<usize>,
+                      other_segment: Option<(NetId, usize)>,
+                      other: String,
+                      layer: usize,
+                      at: Point,
+                      required: f64,
+                      actual: f64| {
         if actual + TOLERANCE < required {
             violations.push(Violation {
                 net,
+                segment,
+                other_segment,
                 other,
                 layer,
                 at,
@@ -106,27 +119,33 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
         let net = net as NetId;
         let class = board.classes[board.nets[net as usize].class];
         // A routed item is described as a centreline plus a copper radius.
-        let mut items: Vec<(Point, Point, f64, Option<usize>, Option<f64>)> = route
+        let mut items: Vec<(Point, Point, f64, Option<usize>, Option<f64>, Option<usize>)> = route
             .segments
             .iter()
-            .map(|segment| {
+            .enumerate()
+            .map(|(index, segment)| {
                 (
                     segment.start,
                     segment.end,
                     segment.width / 2.0,
                     Some(segment.layer),
                     None,
+                    Some(index),
                 )
             })
             .collect();
-        items.extend(
-            route
-                .vias
-                .iter()
-                .map(|via| (via.at, via.at, via.diameter / 2.0, None, Some(via.drill / 2.0))),
-        );
+        items.extend(route.vias.iter().map(|via| {
+            (
+                via.at,
+                via.at,
+                via.diameter / 2.0,
+                None,
+                Some(via.drill / 2.0),
+                None,
+            )
+        }));
 
-        for (start, end, radius, layer, drill) in items {
+        for (start, end, radius, layer, drill, own_segment) in items {
             let at = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
             let layer_mask = layer.map_or(board.all_layers(), |layer| 1 << layer);
             let report_layer = layer.unwrap_or(0);
@@ -138,6 +157,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                 .fold(f64::INFINITY, f64::min);
             report(
                 net,
+                own_segment,
+                None,
                 "board edge".into(),
                 report_layer,
                 at,
@@ -171,12 +192,14 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             }
                             let distance = obstacle.shape.distance_to_segment(start, end);
                             let required = match obstacle.kind {
-                                ObstacleKind::Copper => class.clearance.max(obstacle.clearance),
+                                ObstacleKind::Copper => board.copper_clearance(&class, obstacle),
                                 ObstacleKind::Keepout => 0.0,
                                 ObstacleKind::Hole => board.hole_clearance,
                             };
                             report(
                                 net,
+                                own_segment,
+                                None,
                                 obstacle.label.clone(),
                                 report_layer,
                                 at,
@@ -186,6 +209,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             if let (Some(drill), ObstacleKind::Hole) = (drill, obstacle.kind) {
                                 report(
                                     net,
+                                    own_segment,
+                                    None,
                                     format!("{} (hole to hole)", obstacle.label),
                                     report_layer,
                                     at,
@@ -209,6 +234,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 segment_segment_distance(start, end, segment.start, segment.end);
                             report(
                                 net,
+                                own_segment,
+                                Some((other, index)),
                                 board.nets[other as usize].name.clone(),
                                 segment.layer,
                                 at,
@@ -231,6 +258,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             };
                             report(
                                 net,
+                                own_segment,
+                                None,
                                 format!("via of {}", board.nets[other as usize].name),
                                 report_layer,
                                 at,
@@ -240,6 +269,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             if let Some(drill) = drill {
                                 report(
                                     net,
+                                    own_segment,
+                                    None,
                                     format!("via hole of {}", board.nets[other as usize].name),
                                     report_layer,
                                     at,

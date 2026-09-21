@@ -249,7 +249,7 @@ impl StaticMaps {
         for obstacle in &board.obstacles {
             let (trace_reach, via_reach) = match obstacle.kind {
                 ObstacleKind::Copper => {
-                    let clearance = rules.clearance.max(obstacle.clearance);
+                    let clearance = board.copper_clearance(&rules, obstacle);
                     (half_width + clearance, via_radius + clearance)
                 }
                 ObstacleKind::Keepout => (half_width, via_radius),

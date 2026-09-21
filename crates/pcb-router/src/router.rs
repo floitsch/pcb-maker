@@ -113,6 +113,16 @@ struct Stamps {
     via_to_via: Vec<(i32, i32)>,
 }
 
+/// KiCad connects a track to a pad when the track ends inside the pad's
+/// copper. Require a little depth so rounding cannot move it outside.
+fn well_inside(shape: &crate::geometry::Shape, point: crate::geometry::Point) -> bool {
+    const DEPTH: f64 = 0.02;
+    shape.contains(point)
+        && [(DEPTH, 0.0), (-DEPTH, 0.0), (0.0, DEPTH), (0.0, -DEPTH)]
+            .iter()
+            .all(|(dx, dy)| shape.contains([point[0] + dx, point[1] + dy]))
+}
+
 fn disc(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     let reach = (radius / pitch).ceil() as i32;
     let mut offsets = Vec::new();
@@ -293,7 +303,7 @@ impl<'a> Router<'a> {
                         for x in x0..=x1 {
                             let cell = self.grid.index(x, y);
                             if statics.trace_allowed(layer, cell, net)
-                                && pad.shape.contains(self.grid.center(x, y))
+                                && well_inside(&pad.shape, self.grid.center(x, y))
                             {
                                 nodes.push(Node {
                                     layer: layer as u8,
@@ -769,9 +779,44 @@ impl<'a> Router<'a> {
                 }
             })
             .collect();
-        let routes = (0..self.board.nets.len() as NetId)
-            .map(|net| self.materialize(net))
-            .collect();
+        let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) =
+            (0..self.board.nets.len() as NetId)
+                .map(|net| self.materialize(net))
+                .unzip();
+        // Stubs were only checked against fixed objects; drop any that comes
+        // too close to routed copper of another net.
+        loop {
+            let mut offending: Vec<(usize, usize)> = Vec::new();
+            for violation in crate::verify::verify(self.board, &routes) {
+                let involved = violation
+                    .segment
+                    .map(|segment| (violation.net as usize, segment))
+                    .into_iter()
+                    .chain(
+                        violation
+                            .other_segment
+                            .map(|(net, segment)| (net as usize, segment)),
+                    );
+                for (net, segment) in involved {
+                    if stubs[net].contains(&segment) && !offending.contains(&(net, segment)) {
+                        offending.push((net, segment));
+                    }
+                }
+            }
+            if offending.is_empty() {
+                break;
+            }
+            offending.sort_by(|left, right| right.cmp(left));
+            for (net, segment) in offending {
+                routes[net].segments.remove(segment);
+                stubs[net].retain(|stub| *stub != segment);
+                for stub in &mut stubs[net] {
+                    if *stub > segment {
+                        *stub -= 1;
+                    }
+                }
+            }
+        }
         RoutingResult {
             routes,
             status,
@@ -813,11 +858,54 @@ impl<'a> Router<'a> {
         }
     }
 
-    fn materialize(&self, net: NetId) -> NetRoute {
+    /// A pad-centre stub is cosmetic (the track already ends inside the pad),
+    /// so it is only emitted when it is exactly legal against fixed objects.
+    fn stub_is_clear(
+        &self,
+        net: NetId,
+        layer: usize,
+        start: crate::geometry::Point,
+        end: crate::geometry::Point,
+    ) -> bool {
+        let class = self.board.classes[self.board.nets[net as usize].class];
+        let half_width = class.trace_width / 2.0;
+        self.board.obstacles.iter().all(|obstacle| {
+            if obstacle.net == Some(net)
+                || obstacle.layers & (1 << layer) == 0
+                || !obstacle.blocks_tracks
+            {
+                return true;
+            }
+            let required = half_width
+                + SAFETY
+                + match obstacle.kind {
+                    crate::board::ObstacleKind::Copper => {
+                        self.board.copper_clearance(&class, obstacle)
+                    }
+                    crate::board::ObstacleKind::Keepout => 0.0,
+                    crate::board::ObstacleKind::Hole => self.board.hole_clearance,
+                };
+            let bounds = obstacle.shape.aabb().inflated(required);
+            let reaches = |point: crate::geometry::Point| {
+                point[0] >= bounds.minimum[0]
+                    && point[0] <= bounds.maximum[0]
+                    && point[1] >= bounds.minimum[1]
+                    && point[1] <= bounds.maximum[1]
+            };
+            // Stubs are shorter than a pad, so an end-point test is a
+            // sufficient broad phase.
+            (!reaches(start) && !reaches(end))
+                || obstacle.shape.distance_to_segment(start, end) >= required
+        })
+    }
+
+    /// The copper of `net` and the indices of its cosmetic pad-centre stubs.
+    fn materialize(&self, net: NetId) -> (NetRoute, Vec<usize>) {
         let description = &self.board.nets[net as usize];
         let rules = self.board.classes[description.class];
         let state = &self.nets[net as usize];
         let mut route = NetRoute::default();
+        let mut stubs = Vec::new();
         let junctions: HashSet<Node> = state
             .branches
             .iter()
@@ -833,7 +921,10 @@ impl<'a> Router<'a> {
                 }
                 let anchor = description.terminals[terminal as usize].anchor;
                 let center = self.grid.center_of(node.cell as usize);
-                if crate::geometry::distance(anchor, center) > 1.0e-7 {
+                if crate::geometry::distance(anchor, center) > 1.0e-7
+                    && self.stub_is_clear(net, node.layer as usize, anchor, center)
+                {
+                    stubs.push(route.segments.len());
                     route.segments.push(Segment {
                         layer: node.layer as usize,
                         start: anchor,
@@ -863,7 +954,7 @@ impl<'a> Router<'a> {
                 run_start = index;
             }
         }
-        route
+        (route, stubs)
     }
 
     fn emit_run(

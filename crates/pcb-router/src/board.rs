@@ -81,6 +81,15 @@ impl Board {
     pub fn all_layers(&self) -> LayerMask {
         (1u32 << self.layer_count) - 1
     }
+
+    /// Clearance between copper of `class` and `obstacle`: the largest of
+    /// both nets' class clearances and the obstacle's local floor.
+    pub fn copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
+        let obstacle_class = obstacle
+            .net
+            .map_or(0.0, |net| self.classes[self.nets[net as usize].class].clearance);
+        class.clearance.max(obstacle.clearance).max(obstacle_class)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
