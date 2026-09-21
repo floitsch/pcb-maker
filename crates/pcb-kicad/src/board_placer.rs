@@ -31,6 +31,9 @@ pub struct KiCadBoardPlacerConfig {
     pub halo_overrides_mm: BTreeMap<String, f64>,
     /// Share of the free board that bodies, halos and spacing may claim.
     pub maximum_utilization: f64,
+    /// Distance movable courtyards keep from the board edge (at least the
+    /// copper-to-edge clearance, since pads may reach the courtyard).
+    pub edge_margin_mm: f64,
     pub seed: u64,
 }
 
@@ -48,6 +51,7 @@ impl Default for KiCadBoardPlacerConfig {
             maximum_halo_mm: 4.0,
             halo_overrides_mm: BTreeMap::new(),
             maximum_utilization: 0.6,
+            edge_margin_mm: 0.5,
             seed: 1,
         }
     }
@@ -157,9 +161,18 @@ fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool), String> {
                 let size = form_xy(child, "size").unwrap_or([0.0, 0.0]);
                 // Pad angles are absolute; bring the pad box into the local frame.
                 let (sin, cos) = (-(at[2] - footprint_angle)).to_radians().sin_cos();
+                // Copper must keep a hole's local clearance, so no other
+                // part's pads may come that close either.
+                let keep_away = if child.children().get(2).and_then(Expr::atom)
+                    == Some("np_thru_hole")
+                {
+                    local_clearance::pad_clearance(child, footprint)?
+                } else {
+                    0.0
+                };
                 let half = [
-                    (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
-                    (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0,
+                    (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
+                    (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
                 ];
                 for corner in [[-1.0, -1.0], [1.0, 1.0]] {
                     include(
@@ -297,6 +310,7 @@ fn lower_placement(
         poses,
         spacing: config.spacing_mm,
         grid: config.grid_mm,
+        edge_margin: config.edge_margin_mm,
     };
     for index in 0..problem.components.len() {
         let reference = &references[index];

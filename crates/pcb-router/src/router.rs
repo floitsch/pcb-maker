@@ -1222,7 +1222,9 @@ impl<'a> Router<'a> {
                         self.board.copper_clearance(&class, obstacle)
                     }
                     crate::board::ObstacleKind::Keepout => 0.0,
-                    crate::board::ObstacleKind::Hole => self.board.hole_clearance,
+                    crate::board::ObstacleKind::Hole => {
+                        self.board.hole_clearance.max(obstacle.clearance)
+                    }
                 };
             let bounds = obstacle.shape.aabb().inflated(required);
             let reaches = |point: crate::geometry::Point| {

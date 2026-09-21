@@ -170,7 +170,8 @@ pub fn resolve_project_rules(
     Ok(KiCadBoardRouterConfig {
         connection_rules,
         default_rules: Some(classes["Default"].clone()),
-        edge_clearance_mm: minimum("min_copper_edge_clearance"),
+        // KiCad's built-in board setup applies when the project is silent.
+        edge_clearance_mm: rules["min_copper_edge_clearance"].as_f64().unwrap_or(0.5),
         hole_clearance_mm: rules["min_hole_clearance"].as_f64().unwrap_or(0.25),
         hole_to_hole_clearance_mm: rules["min_hole_to_hole"].as_f64().unwrap_or(0.25),
         ..KiCadBoardRouterConfig::default()

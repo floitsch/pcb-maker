@@ -253,11 +253,13 @@ impl StaticMaps {
                     (half_width + clearance, via_radius + clearance)
                 }
                 ObstacleKind::Keepout => (half_width, via_radius),
-                ObstacleKind::Hole => (
-                    half_width + board.hole_clearance,
-                    (via_radius + board.hole_clearance)
-                        .max(rules.via_drill / 2.0 + board.hole_to_hole),
-                ),
+                ObstacleKind::Hole => {
+                    let clearance = board.hole_clearance.max(obstacle.clearance);
+                    (
+                        half_width + clearance,
+                        (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_to_hole),
+                    )
+                }
             };
             let trace_reach = trace_reach + SAFETY;
             let via_reach = via_reach + SAFETY;

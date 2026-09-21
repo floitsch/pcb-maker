@@ -66,6 +66,8 @@ pub struct Problem {
     pub spacing: f64,
     /// Component origins are snapped to multiples of this.
     pub grid: f64,
+    /// Movable bodies keep this distance from the board edge.
+    pub edge_margin: f64,
 }
 
 pub fn rotate(local: Point, angle_degrees: f64) -> Point {

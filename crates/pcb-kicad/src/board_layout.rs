@@ -112,6 +112,7 @@ pub fn layout_kicad_board(
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
     let mut placer = config.placer.clone();
+    placer.edge_margin_mm = placer.edge_margin_mm.max(router.edge_clearance_mm);
     let mut probe = router.clone();
     probe.skip_native_verification = true;
     probe.maximum_iterations = Some(config.probe_iterations);

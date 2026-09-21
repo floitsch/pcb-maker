@@ -19,13 +19,19 @@ ROOT = Path(__file__).resolve().parents[2]
 COSMETIC = re.compile(r"^(silk_|nonmirrored_text|lib_footprint|text_|footprint_type_mismatch|missing_courtyard|isolated_copper)")
 
 
-def drc_summary(directory):
+def finding_key(violation):
+    return (violation["type"], tuple(sorted(i.get("description", "") for i in violation.get("items", []))))
+
+
+def drc_summary(directory, baseline=frozenset()):
+    """Copper findings that the stripped source did not already have."""
     path = directory / "drc.json"
     if not path.exists():
         return None
     report = json.loads(path.read_text())
     errors = Counter(
-        v["type"] for v in report.get("violations", []) if not COSMETIC.match(v["type"])
+        v["type"] for v in report.get("violations", [])
+        if not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
     )
     cosmetic = sum(1 for v in report.get("violations", []) if COSMETIC.match(v["type"]))
     return {
@@ -88,6 +94,17 @@ def main():
         row["reference"] = {"segments": strip.get("removed_segments"), "vias": strip.get("removed_vias"),
                             "zones": strip.get("removed_copper_zones")}
 
+        # Findings the designer's own placement already has are not ours.
+        baseline_directory = work / "baseline"
+        shutil.copytree(source, baseline_directory)
+        run(arguments.binary, ["verify-kicad-rung", baseline_directory, board_id], work / "baseline.log", 600)
+        baseline = frozenset()
+        if (baseline_directory / "drc.json").exists():
+            baseline = frozenset(
+                finding_key(v)
+                for v in json.loads((baseline_directory / "drc.json").read_text()).get("violations", []))
+        row["baseline_findings"] = len(baseline)
+
         code, seconds = run(arguments.binary, ["route-kicad-board", source, board_id, work / "routed", "auto"],
                             work / "route.log", arguments.timeout)
         report = work / "routed/board-router.json"
@@ -99,7 +116,7 @@ def main():
                 "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
                 "routing_seconds": round(result["routing_seconds"], 2),
                 "internal_violations": len(result["internal_violations"]),
-                "native": drc_summary(work / "routed"),
+                "native": drc_summary(work / "routed", baseline),
             }
         else:
             row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code}
@@ -118,7 +135,7 @@ def main():
                     "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
                     "seconds": round(seconds, 1),
                     "internal_violations": len(routed["internal_violations"]),
-                    "native": drc_summary(work / "layout/result"),
+                    "native": drc_summary(work / "layout/result", baseline),
                 }
             else:
                 row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code}

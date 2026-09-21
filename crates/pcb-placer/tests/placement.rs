@@ -39,7 +39,6 @@ fn chain(parts: usize) -> Problem {
             body_size: [6.0, 3.0],
             round: false,
             halo: 0.0,
-        halo: 0.0,
             pins: vec![
                 Pin {
                     offset: [-2.0, 0.0],
@@ -67,6 +66,7 @@ fn chain(parts: usize) -> Problem {
         poses,
         spacing: 0.5,
         grid: 0.5,
+        edge_margin: 0.0,
     }
 }
 

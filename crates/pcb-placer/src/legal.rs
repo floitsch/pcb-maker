@@ -76,17 +76,20 @@ fn inside_outline(problem: &Problem, body: Rect) -> bool {
     true
 }
 
-fn bare(problem: &Problem, index: usize, pose: Pose) -> Rect {
+/// The body alone, grown by `margin`, for tests against the board edge.
+fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
     let component = &problem.components[index];
+    let half = component.half_extent(pose.angle);
     Rect {
         center: component.center(pose),
-        half: component.half_extent(pose.angle),
+        half: [half[0] + margin, half[1] + margin],
         round: component.round,
     }
 }
 
+/// Whether the body itself (without any margin) lies inside the outline.
 pub fn body_inside_outline(problem: &Problem, index: usize, pose: Pose) -> bool {
-    inside_outline(problem, bare(problem, index, pose))
+    inside_outline(problem, bare(problem, index, pose, 0.0))
 }
 
 /// Whether component `index` at `pose` is inside the board and clear of all
@@ -99,7 +102,7 @@ pub fn is_legal(
     others: impl Iterator<Item = usize>,
 ) -> bool {
     let body = rect(problem, index, pose);
-    if !problem.components[index].fixed && !inside_outline(problem, bare(problem, index, pose)) {
+    if !problem.components[index].fixed && !inside_outline(problem, bare(problem, index, pose, problem.edge_margin)) {
         return false;
     }
     let side = problem.components[index].side;

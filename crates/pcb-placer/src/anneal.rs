@@ -91,7 +91,7 @@ impl State<'_> {
         }
         // Leaving the board is as bad as overlapping something.
         let component = &self.problem.components[index];
-        let margin = component.halo + self.problem.spacing / 2.0;
+        let margin = component.halo + self.problem.spacing / 2.0 - self.problem.edge_margin;
         let bare = [rect.half[0] - margin, rect.half[1] - margin];
         let outside_x = (self.bounds[0] - (rect.center[0] - bare[0])).max(0.0)
             + ((rect.center[0] + bare[0]) - self.bounds[2]).max(0.0);

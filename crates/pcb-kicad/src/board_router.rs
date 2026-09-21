@@ -249,7 +249,7 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
                                 layers: 0b11,
                                 kind: core::ObstacleKind::Hole,
                                 net: None,
-                                clearance: 0.0,
+                                clearance: local_clearance::pad_clearance(pad, item)?,
                                 blocks_tracks: true,
                                 blocks_vias: true,
                                 label: format!("{label} hole"),

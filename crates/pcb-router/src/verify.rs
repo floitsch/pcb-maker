@@ -194,7 +194,7 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             let required = match obstacle.kind {
                                 ObstacleKind::Copper => board.copper_clearance(&class, obstacle),
                                 ObstacleKind::Keepout => 0.0,
-                                ObstacleKind::Hole => board.hole_clearance,
+                                ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
                             report(
                                 net,
