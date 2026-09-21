@@ -197,8 +197,7 @@ fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
 ) -> Result<LoweredPlacement, String> {
-    let outline = board_outline(pcb)?
-        .ok_or_else(|| "the board placer requires one closed Edge.Cuts outline".to_string())?;
+    let loops = outline::board_loops(pcb)?;
     let mut net_ids = BTreeMap::<String, usize>::new();
     let mut components = Vec::new();
     let mut poses = Vec::new();
@@ -292,7 +291,7 @@ fn lower_placement(
         .map(|pins| (3.0 / (*pins as f64 - 1.0).max(1.0)).min(1.0))
         .collect();
     let mut problem = core::Problem {
-        outline: outline.points.clone(),
+        outline: loops.outline.clone(),
         components,
         net_weights,
         poses,

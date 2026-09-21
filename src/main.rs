@@ -2373,18 +2373,11 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "layout-kicad-board" => {
-            let usage = "usage: pcb-maker layout-kicad-board <source-directory> <board-id> <output-directory> <router-config.json> [layout-config.json]";
+            let usage = "usage: pcb-maker layout-kicad-board <source-directory> <board-id> <output-directory> [router-config.json|auto] [layout-config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let router_path = arguments.next().ok_or_else(|| usage.to_string())?;
-            let router = pcb_kicad::KiCadBoardRouterConfig::from_json(
-                serde_json::from_str(
-                    &std::fs::read_to_string(&router_path)
-                        .map_err(|error| format!("failed to read {router_path}: {error}"))?,
-                )
-                .map_err(|error| format!("failed to parse {router_path}: {error}"))?,
-            )?;
+            let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             let config: pcb_kicad::KiCadBoardLayoutConfig = match arguments.next() {
                 Some(path) => serde_json::from_str(
                     &std::fs::read_to_string(&path)
@@ -2473,20 +2466,14 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "route-kicad-board" => {
-            let usage = "usage: pcb-maker route-kicad-board <source-directory> <board-id> <output-directory> <config.json>";
+            let usage = "usage: pcb-maker route-kicad-board <source-directory> <board-id> <output-directory> [config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let config_path = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             if arguments.next().is_some() {
                 return Err(usage.into());
             }
-            let config_source = std::fs::read_to_string(&config_path)
-                .map_err(|error| format!("failed to read {config_path}: {error}"))?;
-            let config = pcb_kicad::KiCadBoardRouterConfig::from_json(
-                serde_json::from_str(&config_source)
-                    .map_err(|error| format!("failed to parse {config_path}: {error}"))?,
-            )?;
             let result = pcb_kicad::route_kicad_board(
                 Path::new(&source),
                 &board_id,
@@ -6181,5 +6168,27 @@ mod tests {
             ranked_semantic_kicad_order_trial_indices(&trials),
             vec![2, 1, 3, 0]
         );
+    }
+}
+
+/// A router configuration from a file, or resolved from the KiCad project
+/// when the path is absent or `auto`.
+fn board_router_config(
+    path: Option<&str>,
+    source: &str,
+    board_id: &str,
+) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
+    match path {
+        None | Some("auto") => pcb_kicad::resolve_project_rules(
+            &Path::new(source).join(format!("{board_id}.kicad_pro")),
+            &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+        ),
+        Some(path) => pcb_kicad::KiCadBoardRouterConfig::from_json(
+            serde_json::from_str(
+                &std::fs::read_to_string(path)
+                    .map_err(|error| format!("failed to read {path}: {error}"))?,
+            )
+            .map_err(|error| format!("failed to parse {path}: {error}"))?,
+        ),
     }
 }

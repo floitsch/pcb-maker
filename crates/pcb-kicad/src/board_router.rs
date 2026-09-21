@@ -175,9 +175,7 @@ struct Lowered {
 }
 
 fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String> {
-    let outline = board_outline(pcb)?.ok_or_else(|| {
-        "the board router requires one closed Edge.Cuts outline".to_string()
-    })?;
+    let loops = outline::board_loops(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
     let mut nets: Vec<core::Net> = Vec::new();
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
@@ -362,13 +360,27 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
             _ => {}
         }
     }
+    for cutout in &loops.cutouts {
+        obstacles.push(core::Obstacle {
+            shape: core::Shape::Polygon {
+                points: cutout.clone(),
+            },
+            layers: 0b11,
+            kind: core::ObstacleKind::Hole,
+            net: None,
+            clearance: 0.0,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "board cutout".into(),
+        });
+    }
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
     Ok(Lowered {
         board: core::Board {
             layer_count: 2,
-            outline: outline.points.clone(),
+            outline: loops.outline.clone(),
             edge_clearance: config.edge_clearance_mm,
             hole_clearance: config.hole_clearance_mm,
             hole_to_hole: config.hole_to_hole_clearance_mm,

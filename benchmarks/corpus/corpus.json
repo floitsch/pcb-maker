@@ -1,0 +1,75 @@
+{
+  "comment": "Boards are copied, stripped of all tracks, vias and copper zones, then routed on the designer's placement and re-placed plus routed automatically. Paths are relative to the repository root unless absolute; missing boards are skipped.",
+  "boards": [
+    {
+      "name": "ecc83",
+      "directory": "benchmarks/real/external/kicad-ecc83-pp",
+      "board_id": "ecc83-pp"
+    },
+    {
+      "name": "hierarchy",
+      "directory": "benchmarks/real/external/kicad-complex-hierarchy",
+      "board_id": "complex_hierarchy"
+    },
+    {
+      "name": "pic",
+      "directory": "benchmarks/real/external/kicad-pic-programmer",
+      "board_id": "pic_programmer"
+    },
+    {
+      "name": "interf-u",
+      "directory": "benchmarks/real/external/kicad-interf-u",
+      "board_id": "interf_u"
+    },
+    {
+      "name": "olimex-c3",
+      "directory": "benchmarks/real/external/olimex-esp32-c3-rev-c",
+      "board_id": "ESP32-C3-DevKit-Lipo_Rev_C"
+    },
+    {
+      "name": "dut-c3",
+      "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-c3",
+      "board_id": "esp32-c3"
+    },
+    {
+      "name": "dut-c6",
+      "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-c6",
+      "board_id": "esp32-c6"
+    },
+    {
+      "name": "dut-s2",
+      "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-s2",
+      "board_id": "esp32-s2"
+    },
+    {
+      "name": "dut-s3",
+      "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-s3",
+      "board_id": "esp32-s3"
+    },
+    {
+      "name": "dut-esp32",
+      "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-esp32",
+      "board_id": "esp32-esp32"
+    },
+    {
+      "name": "ngdevkit",
+      "directory": "/home/flo/programming/ngdevkit-linker/layouts/default",
+      "board_id": "default"
+    },
+    {
+      "name": "sonde-xilinx",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/sonde xilinx",
+      "board_id": "sonde xilinx"
+    },
+    {
+      "name": "multichannel",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/multichannel",
+      "board_id": "multichannel_mixer"
+    },
+    {
+      "name": "stickhub",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/stickhub",
+      "board_id": "StickHub"
+    }
+  ]
+}

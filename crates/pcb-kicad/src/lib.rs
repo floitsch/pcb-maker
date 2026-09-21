@@ -81,6 +81,9 @@ pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadPlacedFootprint, place_kicad_board,
 };
 mod board_router;
+mod outline;
+mod project_rules;
+pub use project_rules::resolve_project_rules;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult,
     KiCadBoardRouterViolation, route_kicad_board,
