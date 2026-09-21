@@ -2372,6 +2372,44 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
+        "route-kicad-board" => {
+            let usage = "usage: pcb-maker route-kicad-board <source-directory> <board-id> <output-directory> <config.json>";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config_path = arguments.next().ok_or_else(|| usage.to_string())?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let config_source = std::fs::read_to_string(&config_path)
+                .map_err(|error| format!("failed to read {config_path}: {error}"))?;
+            let config = pcb_kicad::KiCadBoardRouterConfig::from_json(
+                serde_json::from_str(&config_source)
+                    .map_err(|error| format!("failed to parse {config_path}: {error}"))?,
+            )?;
+            let result = pcb_kicad::route_kicad_board(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &config,
+            )?;
+            println!(
+                "routed {}/{} connections ({} unconnected terminals), {} vias, {:.1} mm, {} iterations; lowering {:.2}s routing {:.2}s internal check {:.2}s ({} violations) native {:.2}s complete={}",
+                result.routed_connections,
+                result.routable_connections,
+                result.unconnected_terminals,
+                result.vias,
+                result.length_mm,
+                result.iterations,
+                result.lowering_seconds,
+                result.routing_seconds,
+                result.internal_verification_seconds,
+                result.internal_violations.len(),
+                result.native_verification_seconds,
+                result.native.as_ref().map(|native| native.complete).unwrap_or(false),
+            );
+            Ok(())
+        }
         "route-kicad-board-freerouting" => {
             let usage = "usage: pcb-maker route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

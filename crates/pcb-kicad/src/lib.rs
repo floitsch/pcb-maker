@@ -72,6 +72,11 @@ pub use native_report::{drc_design_issues, is_library_metadata_warning};
 pub use silkscreen::repair_kicad_silkscreen;
 pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunities};
 mod adaptive_routing;
+mod board_router;
+pub use board_router::{
+    KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult,
+    KiCadBoardRouterViolation, route_kicad_board,
+};
 mod semantic_template;
 mod sequential_order_search;
 mod sequential_resume;
@@ -11834,6 +11839,81 @@ fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
     }
 }
 
+struct LoweredPad {
+    center: [f64; 2],
+    layers: [bool; 2],
+    geometry: ObstacleGeometry,
+}
+
+/// Board-space copper of one footprint pad, as KiCad's effective shape.
+fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad, String> {
+    let pad_at = form_at(pad)?;
+    // KiCad's board coordinates have Y pointing down: positive footprint
+    // angles therefore rotate local pad coordinates clockwise.
+    let center_offset = rotate_vector([pad_at[0], pad_at[1]], -footprint_at[2]);
+    let center = [
+        footprint_at[0] + center_offset[0],
+        footprint_at[1] + center_offset[1],
+    ];
+    let layers = pad_copper_layers(pad);
+    let size = form_xy(pad, "size")?;
+    let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
+    // KiCad's drill offset displaces copper relative to the drill/pad
+    // anchor. Pad angles in board files are absolute, and Y points down.
+    let copper_offset = match pad.child("drill").and_then(|d| d.child("offset")) {
+        Some(offset) => rotate_vector(
+            [
+                expression_coordinate(offset, 1, "pad copper offset x")?,
+                expression_coordinate(offset, 2, "pad copper offset y")?,
+            ],
+            -pad_at[2],
+        ),
+        None => [0.0, 0.0],
+    };
+    let copper_center = [center[0] + copper_offset[0], center[1] + copper_offset[1]];
+    let anchor_geometry = match shape {
+        "roundrect" => roundrect_pad::geometry(pad, copper_center, size, -pad_at[2])?,
+        "circle" => ObstacleGeometry::Circle {
+            center: copper_center,
+            radius: size[0].max(size[1]) / 2.0,
+        },
+        "oval" => {
+            // Pad angles in a board file are already absolute, rather
+            // than relative to the footprint angle.
+            let angle = -pad_at[2];
+            let (half_length, radius, local_end) = if size[0] >= size[1] {
+                ((size[0] - size[1]) / 2.0, size[1] / 2.0, [1.0, 0.0])
+            } else {
+                ((size[1] - size[0]) / 2.0, size[0] / 2.0, [0.0, 1.0])
+            };
+            let offset = rotate_vector(
+                [local_end[0] * half_length, local_end[1] * half_length],
+                angle,
+            );
+            ObstacleGeometry::Segment {
+                start: [copper_center[0] - offset[0], copper_center[1] - offset[1]],
+                end: [copper_center[0] + offset[0], copper_center[1] + offset[1]],
+                radius,
+            }
+        }
+        _ => ObstacleGeometry::Rectangle {
+            center: copper_center,
+            half_size: [size[0] / 2.0, size[1] / 2.0],
+            angle_degrees: -pad_at[2],
+        },
+    };
+    let geometry = if shape == "custom" {
+        custom_pad_geometry(pad, copper_center, pad_at[2], anchor_geometry)?
+    } else {
+        anchor_geometry
+    };
+    Ok(LoweredPad {
+        center,
+        layers,
+        geometry,
+    })
+}
+
 fn collect_footprint_copper(
     footprint: &Expr,
     connection: &str,
@@ -11851,65 +11931,11 @@ fn collect_footprint_copper(
         .filter(|item| item.head() == Some("pad"))
     {
         let pad_at = form_at(pad)?;
-        // KiCad's board coordinates have Y pointing down: positive footprint
-        // angles therefore rotate local pad coordinates clockwise.
-        let center_offset = rotate_vector([pad_at[0], pad_at[1]], -footprint_at[2]);
-        let center = [
-            footprint_at[0] + center_offset[0],
-            footprint_at[1] + center_offset[1],
-        ];
-        let layers = pad_copper_layers(pad);
-        let size = form_xy(pad, "size")?;
-        let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
-        // KiCad's drill offset displaces copper relative to the drill/pad
-        // anchor. Pad angles in board files are absolute, and Y points down.
-        let copper_offset = match pad.child("drill").and_then(|d| d.child("offset")) {
-            Some(offset) => rotate_vector(
-                [
-                    expression_coordinate(offset, 1, "pad copper offset x")?,
-                    expression_coordinate(offset, 2, "pad copper offset y")?,
-                ],
-                -pad_at[2],
-            ),
-            None => [0.0, 0.0],
-        };
-        let copper_center = [center[0] + copper_offset[0], center[1] + copper_offset[1]];
-        let anchor_geometry = match shape {
-            "roundrect" => roundrect_pad::geometry(pad, copper_center, size, -pad_at[2])?,
-            "circle" => ObstacleGeometry::Circle {
-                center: copper_center,
-                radius: size[0].max(size[1]) / 2.0,
-            },
-            "oval" => {
-                // Pad angles in a board file are already absolute, rather
-                // than relative to the footprint angle.
-                let angle = -pad_at[2];
-                let (half_length, radius, local_end) = if size[0] >= size[1] {
-                    ((size[0] - size[1]) / 2.0, size[1] / 2.0, [1.0, 0.0])
-                } else {
-                    ((size[1] - size[0]) / 2.0, size[0] / 2.0, [0.0, 1.0])
-                };
-                let offset = rotate_vector(
-                    [local_end[0] * half_length, local_end[1] * half_length],
-                    angle,
-                );
-                ObstacleGeometry::Segment {
-                    start: [copper_center[0] - offset[0], copper_center[1] - offset[1]],
-                    end: [copper_center[0] + offset[0], copper_center[1] + offset[1]],
-                    radius,
-                }
-            }
-            _ => ObstacleGeometry::Rectangle {
-                center: copper_center,
-                half_size: [size[0] / 2.0, size[1] / 2.0],
-                angle_degrees: -pad_at[2],
-            },
-        };
-        let geometry = if shape == "custom" {
-            custom_pad_geometry(pad, copper_center, pad_at[2], anchor_geometry)?
-        } else {
-            anchor_geometry
-        };
+        let LoweredPad {
+            center,
+            layers,
+            geometry,
+        } = lower_pad(pad, footprint_at)?;
         let net = node_net(pad).map(normalize_net).map(str::to_owned);
         if net.as_deref() == Some(connection) {
             terminals.push(center);

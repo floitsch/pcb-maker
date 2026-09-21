@@ -11,6 +11,7 @@ layout-trace-model = { path = "../layout-trace-model" }
 pcb-core = { path = "../pcb-core" }
 pcb-engine = { path = "../pcb-engine" }
 pcb-grid-router = { path = "../pcb-grid-router" }
+pcb-router = { path = "../pcb-router" }
 serde = { version = "1.0", features = ["derive"] }
 # Candidate coordinates must parse identically in standalone library consumers
 # and the main executable, without relying on workspace feature unification.
