@@ -72,6 +72,10 @@ pub use native_report::{drc_design_issues, is_library_metadata_warning};
 pub use silkscreen::repair_kicad_silkscreen;
 pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunities};
 mod adaptive_routing;
+mod board_placer;
+pub use board_placer::{
+    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadPlacedFootprint, place_kicad_board,
+};
 mod board_router;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult,

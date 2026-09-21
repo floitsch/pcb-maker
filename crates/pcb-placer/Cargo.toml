@@ -1,0 +1,9 @@
+[package]
+name = "pcb-placer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Electrostatic global placement, legalization and detailed placement for pcb-maker"
+publish = false
+
+[dependencies]

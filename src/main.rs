@@ -2372,6 +2372,45 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
+        "place-kicad-board" => {
+            let usage = "usage: pcb-maker place-kicad-board <source-directory> <board-id> <output-directory> [config.json]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config: pcb_kicad::KiCadBoardPlacerConfig = match arguments.next() {
+                Some(path) => serde_json::from_str(
+                    &std::fs::read_to_string(&path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {path}: {error}"))?,
+                None => Default::default(),
+            };
+            let result = pcb_kicad::place_kicad_board(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &config,
+            )?;
+            println!(
+                "placed {} of {} components ({} nets): wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
+                result.movable,
+                result.components,
+                result.nets,
+                result.wirelength_source_mm,
+                result.wirelength_global_mm,
+                result.wirelength_legal_mm,
+                result.wirelength_final_mm,
+                result.global_iterations,
+                result.global_overflow,
+                result.unplaced,
+                result.illegal,
+                result.seconds,
+            );
+            if !result.unplaced.is_empty() || !result.illegal.is_empty() {
+                return Err("placement is not legal".into());
+            }
+            Ok(())
+        }
         "route-kicad-board" => {
             let usage = "usage: pcb-maker route-kicad-board <source-directory> <board-id> <output-directory> <config.json>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

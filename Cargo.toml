@@ -18,6 +18,7 @@ members = [
     "crates/pcb-kicad",
     "crates/pcb-pipeline",
     "crates/pcb-placement",
+    "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-routing",
     "crates/pcb-validate",
