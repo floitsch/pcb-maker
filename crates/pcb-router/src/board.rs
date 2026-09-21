@@ -68,6 +68,9 @@ pub struct Net {
 #[derive(Clone, Debug)]
 pub struct Plane {
     pub net: NetId,
+    /// The pour as a brush: `trace_width` is its minimum width and
+    /// `clearance` what it keeps from other copper.
+    pub class: ClassId,
     pub layer: usize,
     pub polygon: Vec<Point>,
     /// Regions filled by other pours with a higher priority.

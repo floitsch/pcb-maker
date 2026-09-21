@@ -180,6 +180,7 @@ fn pour_connects_pads_with_stub_vias_only() {
     builder.net("SIG", &[([3.0, 10.0], 0b01), ([27.0, 10.0], 0b01)]);
     builder.board.planes.push(Plane {
         net: 0,
+        class: 0,
         layer: 1,
         polygon: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         excluded: Vec::new(),

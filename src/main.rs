@@ -2492,10 +2492,11 @@ fn run() -> Result<(), String> {
                 &config,
             )?;
             println!(
-                "routed {}/{} connections ({} unconnected terminals), {} vias, {:.1} mm, {} iterations; lowering {:.2}s routing {:.2}s internal check {:.2}s ({} violations) native {:.2}s complete={}",
+                "routed {}/{} connections ({} unconnected terminals), pours {}, {} vias, {:.1} mm, {} iterations; lowering {:.2}s routing {:.2}s internal check {:.2}s ({} violations) native {:.2}s complete={}",
                 result.routed_connections,
                 result.routable_connections,
                 result.unconnected_terminals,
+                result.pours,
                 result.vias,
                 result.length_mm,
                 result.iterations,

@@ -41,6 +41,22 @@ pub struct KiCadBoardRouterConfig {
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
+    /// How nets with copper pours are connected.
+    #[serde(default)]
+    pub pours: KiCadPourMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadPourMode {
+    /// Connect through the pours; if the result is not clean, route the
+    /// pour nets as tracks instead and keep the better board.
+    #[default]
+    Auto,
+    /// Pads connect to their pour; only stubs, vias and stitching are added.
+    Connect,
+    /// Pour nets are routed like any other net; the pour merely fills.
+    Tracks,
 }
 
 fn default_hole_clearance() -> f64 {
@@ -132,6 +148,8 @@ pub struct KiCadBoardRouterResult {
     pub native_verification_seconds: f64,
     pub internal_violations: Vec<KiCadBoardRouterViolation>,
     pub native: Option<VerificationReport>,
+    /// `connect`, `tracks`, or `none` when the board has no pours.
+    pub pours: String,
     pub nets: Vec<KiCadBoardRouterNet>,
     /// Congestion history on the routing lattice (row major), for placement
     /// feedback. Not serialized.
@@ -180,7 +198,11 @@ struct Lowered {
     board: core::Board,
 }
 
-fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String> {
+fn lower(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<Lowered, String> {
     let loops = outline::board_loops(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
     let mut nets: Vec<core::Net> = Vec::new();
@@ -337,6 +359,23 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
             Some("arc") => {
                 return Err("the board router does not yet lower existing arc tracks".into());
             }
+            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
+                if form_atom(item, "layer", 1).and_then(copper_layer_index).is_some() =>
+            {
+                let layer = form_atom(item, "layer", 1).and_then(copper_layer_index).unwrap();
+                for shape in copper_graphic_shapes(item)? {
+                    obstacles.push(core::Obstacle {
+                        shape,
+                        layers: 1 << layer,
+                        kind: core::ObstacleKind::Copper,
+                        net: None,
+                        clearance: 0.0,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: format!("copper {}", item.head().unwrap_or("graphic")),
+                    });
+                }
+            }
             Some("zone") if is_rule_area(item) => {
                 let allowed = |kind: &str| {
                     item.child("keepout")
@@ -380,19 +419,33 @@ fn lower(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Lowered, String>
             label: "board cutout".into(),
         });
     }
-    let pours = pours(pcb)?;
+    let pours = if connect_pours { pours(pcb)? } else { Vec::new() };
     let mut planes = Vec::new();
     for pour in &pours {
         // A pour without pads has nothing to connect.
         let Some(net) = net_ids_lookup(&nets, &pour.net) else {
             continue;
         };
+        let net_class = classes[nets[net as usize].class];
+        let brush = core::RuleClass {
+            trace_width: pour.min_thickness.max(0.05),
+            clearance: pour.clearance.max(net_class.clearance),
+            ..net_class
+        };
+        let class = classes
+            .iter()
+            .position(|existing| *existing == brush)
+            .unwrap_or_else(|| {
+                classes.push(brush);
+                classes.len() - 1
+            });
         for layer in 0..2 {
             if !pour.layers[layer] {
                 continue;
             }
             planes.push(core::Plane {
                 net,
+                class,
                 layer,
                 polygon: pour.polygon.clone(),
                 excluded: pours
@@ -437,10 +490,19 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
     let text = fs::read_to_string(source)
         .map_err(|error| format!("failed to read {}: {error}", source.display()))?;
     let mut pcb = parse(&text)?;
+    let board_area = polygon_area(&outline::board_loops(&pcb)?.outline);
     let Expr::List(items) = &mut pcb else {
         return Err("PCB root is not a list".into());
     };
     items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+    // Small filled zones are hand-drawn copper, i.e. routing; only pours
+    // covering a good part of the board are kept.
+    items.retain(|item| {
+        item.head() != Some("zone")
+            || is_rule_area(item)
+            || rule_area_polygon_points(item)
+                .is_ok_and(|points| polygon_area(&points) >= POUR_SHARE * board_area)
+    });
     for zone in items.iter_mut().filter(|item| item.head() == Some("zone")) {
         if let Expr::List(children) = zone {
             children.retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
@@ -454,10 +516,137 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
         .map_err(|error| format!("failed to write {}: {error}", destination.display()))
 }
 
+/// Copper-layer graphics as obstacle shapes. Text becomes its (generous)
+/// bounding box.
+fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    let width = item
+        .child("stroke")
+        .and_then(|stroke| form_f64(stroke, "width", 1).ok())
+        .or_else(|| form_f64(item, "width", 1).ok())
+        .unwrap_or(0.1);
+    let capsule = |start: [f64; 2], end: [f64; 2]| core::Shape::Capsule {
+        start,
+        end,
+        radius: width / 2.0,
+    };
+    Ok(match item.head() {
+        Some("gr_line") => vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)],
+        Some("gr_arc") => outline::arc_points(
+            form_xy(item, "start")?,
+            form_xy(item, "mid")?,
+            form_xy(item, "end")?,
+        )
+        .windows(2)
+        .map(|pair| capsule(pair[0], pair[1]))
+        .collect(),
+        Some("gr_rect") => {
+            let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
+            let corners = [a, [b[0], a[1]], b, [a[0], b[1]]];
+            let mut shapes: Vec<_> = (0..4)
+                .map(|index| capsule(corners[index], corners[(index + 1) % 4]))
+                .collect();
+            if !matches!(form_atom(item, "fill", 1), None | Some("none" | "no")) {
+                shapes.push(core::Shape::Polygon {
+                    points: corners.to_vec(),
+                });
+            }
+            shapes
+        }
+        Some("gr_circle") => {
+            let center = form_xy(item, "center")?;
+            let radius = distance_squared(center, form_xy(item, "end")?).sqrt();
+            vec![core::Shape::Circle {
+                center,
+                radius: radius + width / 2.0,
+            }]
+        }
+        Some("gr_poly") => vec![core::Shape::Polygon {
+            points: rule_area_like_points(item)?,
+        }],
+        Some("gr_text") => {
+            let at = form_at(item)?;
+            let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
+            let font = item.child("effects").and_then(|effects| effects.child("font"));
+            let size = font
+                .and_then(|font| form_xy(font, "size").ok())
+                .unwrap_or([1.0, 1.0]);
+            let thickness = font
+                .and_then(|font| form_f64(font, "thickness", 1).ok())
+                .unwrap_or(0.15);
+            let lines = text.split("\\n").count().max(1) as f64;
+            let longest = text
+                .split("\\n")
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0) as f64;
+            let half = [
+                longest * size[1] * 0.55 + thickness,
+                lines * size[0] * 0.85 + thickness,
+            ];
+            let justify: Vec<&str> = item
+                .child("effects")
+                .and_then(|effects| effects.child("justify"))
+                .map(|justify| justify.children().iter().skip(1).filter_map(Expr::atom).collect())
+                .unwrap_or_default();
+            let shift = if justify.contains(&"left") {
+                half[0]
+            } else if justify.contains(&"right") {
+                -half[0]
+            } else {
+                0.0
+            };
+            let shift = if justify.contains(&"mirror") { -shift } else { shift };
+            let offset = rotate_vector([shift, 0.0], -at[2]);
+            vec![core::Shape::rectangle(
+                [at[0] + offset[0], at[1] + offset[1]],
+                half,
+                -at[2],
+            )]
+        }
+        _ => Vec::new(),
+    })
+}
+
+fn rule_area_like_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
+    let mut points = Vec::new();
+    for point in item
+        .child("pts")
+        .map(Expr::children)
+        .unwrap_or_default()
+        .iter()
+        .filter(|point| point.head() == Some("xy"))
+    {
+        points.push([
+            expression_coordinate(point, 1, "polygon x")?,
+            expression_coordinate(point, 2, "polygon y")?,
+        ]);
+    }
+    if points.len() < 3 {
+        return Err("copper polygon has fewer than three points".into());
+    }
+    Ok(points)
+}
+
+/// A zone is a pour when it covers at least this share of the board.
+const POUR_SHARE: f64 = 0.1;
+
+fn polygon_area(points: &[[f64; 2]]) -> f64 {
+    (0..points.len())
+        .map(|index| {
+            let (a, b) = (points[index], points[(index + 1) % points.len()]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum::<f64>()
+        .abs()
+        / 2.0
+}
+
 struct Pour {
     net: String,
     layers: [bool; 2],
     priority: i64,
+    clearance: f64,
+    min_thickness: f64,
     polygon: Vec<[f64; 2]>,
 }
 
@@ -488,6 +677,11 @@ fn pours(pcb: &Expr) -> Result<Vec<Pour>, String> {
             priority: form_atom(zone, "priority", 1)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
+            clearance: zone
+                .child("connect_pads")
+                .and_then(|form| form_f64(form, "clearance", 1).ok())
+                .unwrap_or(0.0),
+            min_thickness: form_f64(zone, "min_thickness", 1).unwrap_or(0.25),
             polygon: rule_area_polygon_points(zone)?,
         });
     }
@@ -506,13 +700,69 @@ pub fn route_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardRouterResult, String> {
+    let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let source = fs::read_to_string(&source_board)
+        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    let has_pours = !pours(&parse(&source)?)?.is_empty();
+    let connect = has_pours && config.pours != KiCadPourMode::Tracks;
+    let mut result =
+        route_kicad_board_once(source_directory, board_id, output_directory, config, connect)?;
+    result.pours = if !has_pours {
+        "none"
+    } else if connect {
+        "connect"
+    } else {
+        "tracks"
+    }
+    .into();
+    // Unconnected items as the router and, when asked, KiCad see them.
+    let open = |result: &KiCadBoardRouterResult| {
+        result.unconnected_terminals
+            + result.internal_violations.len()
+            + result
+                .native
+                .as_ref()
+                .map_or(0, |native| native.selected_net_unconnected_items)
+    };
+    if connect && config.pours == KiCadPourMode::Auto && open(&result) > 0 {
+        let fallback_directory = output_directory.with_extension("tracks");
+        if fallback_directory.exists() {
+            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+        }
+        let mut fallback =
+            route_kicad_board_once(source_directory, board_id, &fallback_directory, config, false)?;
+        fallback.pours = "tracks".into();
+        if open(&fallback) < open(&result) {
+            fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+            fs::rename(&fallback_directory, output_directory).map_err(|error| error.to_string())?;
+            result = fallback;
+        } else {
+            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+        }
+    }
+    let report_path = output_directory.join("board-router.json");
+    fs::write(
+        &report_path,
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+    Ok(result)
+}
+
+fn route_kicad_board_once(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<KiCadBoardRouterResult, String> {
     let started = std::time::Instant::now();
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
     let copper_net_names = unambiguous_pad_net_names(&pcb)?;
-    let Lowered { board } = lower(&pcb, config)?;
+    let Lowered { board } = lower(&pcb, config, connect_pours)?;
     let lowering_seconds = started.elapsed().as_secs_f64();
 
     let mut router_config = core::Config {
@@ -642,6 +892,7 @@ pub fn route_kicad_board(
             })
             .collect(),
         native,
+        pours: String::new(),
         nets,
         congestion: result.congestion.clone(),
         grid_origin: result.grid.origin,

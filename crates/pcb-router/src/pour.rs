@@ -11,9 +11,8 @@
 
 use crate::grid::Grid;
 
-/// Per layer and node: copper of the pour's net may be here (`free`), and
-/// the node and its eight neighbours all are (`solid`). Only solid nodes
-/// carry connectivity, so necks thinner than about two pitches do not count.
+/// Per layer and node: the pour's brush (its minimum width, keeping the pour's
+/// clearance) fits here, so there is solid pour copper.
 pub struct PourMap {
     pub solid: Vec<Vec<bool>>,
     /// Per layer and node: piece label, 0 for none. Labels are shared
@@ -25,22 +24,15 @@ pub struct PourMap {
 impl PourMap {
     pub fn build(grid: &Grid, free: &[Vec<bool>]) -> Self {
         let (nx, ny) = (grid.nx, grid.ny);
+        // `free` already says that the pour's brush fits, so every free node
+        // is solid copper; the rim is left out to keep neighbour access safe.
         let mut solid = Vec::new();
         for layer in free {
             let mut result = vec![false; layer.len()];
             if !layer.is_empty() {
                 for y in 1..ny.saturating_sub(1) {
                     for x in 1..nx.saturating_sub(1) {
-                        let cell = y * nx + x;
-                        result[cell] = layer[cell]
-                            && layer[cell - 1]
-                            && layer[cell + 1]
-                            && layer[cell - nx]
-                            && layer[cell + nx]
-                            && layer[cell - nx - 1]
-                            && layer[cell - nx + 1]
-                            && layer[cell + nx - 1]
-                            && layer[cell + nx + 1];
+                        result[y * nx + x] = layer[y * nx + x];
                     }
                 }
             }

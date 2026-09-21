@@ -14,7 +14,7 @@ pub(super) struct BoardLoops {
 /// Longest chord error accepted when flattening arcs.
 const ARC_TOLERANCE: f64 = 0.005;
 
-fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
+pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // Circle through three points.
     let d = 2.0
         * (start[0] * (mid[1] - end[1]) + mid[0] * (end[1] - start[1]) + end[0] * (start[1] - mid[1]));

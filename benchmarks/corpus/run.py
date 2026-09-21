@@ -120,6 +120,7 @@ def main():
                 "routed": result["routed_connections"], "connections": result["routable_connections"],
                 "unconnected_terminals": result["unconnected_terminals"],
                 "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
+                "pours": result.get("pours", "none"),
                 "routing_seconds": round(result["routing_seconds"], 2),
                 "internal_violations": len(result["internal_violations"]),
                 "native": drc_summary(work / "routed", baseline),
@@ -139,6 +140,7 @@ def main():
                     "routed": routed["routed_connections"], "connections": routed["routable_connections"],
                     "unconnected_terminals": routed["unconnected_terminals"],
                     "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
+                    "pours": routed.get("pours", "none"),
                     "seconds": round(seconds, 1),
                     "internal_violations": len(routed["internal_violations"]),
                     "native": drc_summary(work / "layout/result", baseline),
@@ -168,7 +170,7 @@ def main():
         verdict = "clean" if not problems else "; ".join(problems)
         seconds = entry.get("routing_seconds", entry.get("seconds"))
         return (f"{entry['routed']}/{entry['connections']}, {entry['vias']} vias, "
-                f"{entry['length_mm']:.0f} mm, {seconds} s — {verdict}")
+                f"{entry['length_mm']:.0f} mm, {seconds} s, pours {entry.get('pours', 'none')} — {verdict}")
 
     for row in rows:
         reference = row.get("reference", {})
