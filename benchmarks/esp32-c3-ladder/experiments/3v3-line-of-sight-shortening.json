@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "superseded_by": "3v3-route-graph-projected-tension.json",
+  "measurement_warning": "Lengths in this historical record are stored track-object sums. The canonical physical-copper audit in sequence 023 shows the future-aware proposal is 0.268131 mm worse and now rolls back.",
+  "connection": "3V3_DUT",
+  "source_candidate": "../candidates/3v3-dut-rung41.json",
+  "algorithm": "conservative-line-of-sight-v1",
+  "fixture": "rung 41 with rung 42 copper used as future-aware obstacles",
+  "before": {
+    "length_mm": 294.3815988418941,
+    "segments": 61,
+    "vias": 12,
+    "branch_bends": 53,
+    "branch_points": 117
+  },
+  "after": {
+    "length_mm": 290.54617660907434,
+    "segments": 40,
+    "vias": 12,
+    "branch_bends": 22,
+    "branch_points": 86
+  },
+  "search": {
+    "attempted_shortcuts": 74,
+    "accepted_shortcuts": 24,
+    "removed_branch_points": 31
+  },
+  "exact_validation": {
+    "rung_41": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    },
+    "rung_42": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    }
+  },
+  "control": {
+    "fixture": "rung 41 copper only",
+    "after_length_mm": 289.976855962419,
+    "after_segments": 39,
+    "after_vias": 12,
+    "after_branch_bends": 21,
+    "rung_41_result": "pass",
+    "rung_42_result": "fail",
+    "rung_42_design_drc": 2,
+    "failure": "one new 3V3_DUT shortcut shorts a GND track and via near (80.625, 28.125)"
+  },
+  "reproduction": "cargo test --test kicad_ladder future_aware_shortening_improves_3v3_and_keeps_later_rungs_valid -- --nocapture",
+  "interpretation": "Local geometric shortening works, but prefix-only obstacles are insufficient. Future-aware obstacles preserve most of the improvement and keep both complete rungs valid. This is a shortening baseline, not topology-action search or proof that greedy shortening is the preferred strategy."
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-power-capacitor-comparison",
+  "route_benchmark": "power-capacitor-freerouting.json",
+  "pcb_maker": {"insertion_config": "insertion-0p45-0p2.json", "verification_cache_directory": "../../../build/cache/kicad-verification", "maximum_seconds": 60}
+}

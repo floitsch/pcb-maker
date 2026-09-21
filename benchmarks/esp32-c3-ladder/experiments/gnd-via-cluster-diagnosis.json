@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "connection": "GND",
+  "source_candidate": "../candidates/gnd-rung42.json",
+  "quality": {
+    "length_mm": 1711.8737198930523,
+    "segments": 412,
+    "vias": 128,
+    "branch_via_transitions": 128,
+    "maximum_branch_vias": 6,
+    "branch_bends": 2056,
+    "branch_points": 2392,
+    "via_cluster_threshold_mm": 1.0,
+    "minimum_via_spacing_mm": 0.9013878188659973,
+    "close_via_pairs": 85,
+    "clustered_vias": 91
+  },
+  "tester_cluster": {
+    "bounds_mm": [32.0, 39.0, 39.0, 47.0],
+    "via_count": 10,
+    "branches": [0, 1, 2, 3, 4],
+    "finish_terminals": [
+      [37.08, 53.75],
+      [31.11, 42.1],
+      [31.11, 43.5],
+      [31.11, 44.9],
+      [29.71, 42.1]
+    ],
+    "vias": [
+      [38.125, 43.375],
+      [34.125, 42.125],
+      [37.375, 44.125],
+      [34.625, 41.375],
+      [38.125, 44.625],
+      [33.375, 41.375],
+      [36.875, 44.875],
+      [35.375, 40.875],
+      [37.625, 45.375],
+      [32.875, 40.625]
+    ],
+    "net_identity": "all vias and intervening candidate segments are GND",
+    "kicad_design_drc": 0,
+    "diagnosis": "Five independently routed rooted-star branches repeat a similar B.Cu-to-F.Cu-to-B.Cu maneuver. Same-net overlaps are electrically legal and are merged in the flat copper, but the result is not a canonical shared tree.",
+    "classification": "redundant same-net topology; no observed cross-net intersection"
+  },
+  "next_experiment": "Grow adjacent GND terminals from existing GND copper, materialize explicit junctions, prune cycles/redundant layer transitions, and require exact KiCad validity plus fewer clustered vias. Do not use the final GND net as the first tuning case; reproduce the five-pad fanout as a reduced fixture first.",
+  "ground_plane_policy": "Deferred. Explicit routing remains the connectivity proof. F.Cu/B.Cu GND zones and later plane-space pressure are separate stages."
+}

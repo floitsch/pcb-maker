@@ -1,0 +1,15 @@
+[package]
+name = "layout-trace-model"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Stable input model, geometry, and topology primitives for layout-trace"
+publish = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+approx = "0.5"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+

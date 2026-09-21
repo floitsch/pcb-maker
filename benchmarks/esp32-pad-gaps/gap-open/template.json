@@ -1,0 +1,14 @@
+{
+  "board_id": "esp32-pad-gap",
+  "connection_order": [
+    "CROSS_ROW"
+  ],
+  "board_origin_mm": [
+    10.0,
+    10.0
+  ],
+  "board_edge_margin_mm": 1.0,
+  "courtyard_clearance_mm": 0.0,
+  "copper_clearance_mm": 0.1,
+  "minimum_trace_width_mm": 0.1
+}

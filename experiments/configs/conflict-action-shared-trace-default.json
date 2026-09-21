@@ -1,0 +1,15 @@
+{
+  "action": {
+    "maximum_actions": 6,
+    "detour_clearance_mm": 2.5,
+    "detour_span_mm": 2.0,
+    "via_offset_mm": 3.0,
+    "via_penalty_mm": 20.0,
+    "unresolved_conflict_penalty_mm": 100.0
+  },
+  "post_action": { "strategy": "none" },
+  "maximum_expanded_states": 128,
+  "maximum_generated_states": 256,
+  "maximum_depth": 2,
+  "maximum_conflicts_per_state": 2
+}

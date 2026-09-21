@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "sequence": 25,
+  "connection": "T_LOCAL_COMM0",
+  "source_length_mm": 19.61758793710999,
+  "question": "Can generic body/body projection let trace tension move R1 freely without producing a KiCad-invalid board?",
+  "stages": [
+    {
+      "stage": 1,
+      "name": "translation_disabled",
+      "placement_clearance": "disabled",
+      "route_length_mm": 18.191331185761815,
+      "translation_mm": 0.23696794165766255,
+      "rotation_degrees": 0.0,
+      "body_body_pairs": 0,
+      "native_kicad_complete": false,
+      "native_failure": "R1 F.Silkscreen segment violates clearance to the R2 reference field"
+    },
+    {
+      "stage": 2,
+      "name": "all_footprints_preserve_initial_prototype",
+      "placement_clearance": "preserve_initial_courtyard",
+      "route_length_mm": 18.398286974246748,
+      "translation_mm": 0.0,
+      "rotation_degrees": 0.0,
+      "body_body_pairs": 32,
+      "native_kicad_complete": true,
+      "evaluation": "Safe but rejected architecturally: preserving distance to every footprint freezes an interior component."
+    },
+    {
+      "stage": 3,
+      "name": "translation_nearby_courtyards",
+      "placement_clearance": "preserve_initial_courtyard",
+      "route_length_mm": 18.173811516437603,
+      "translation_mm": 0.22971725464659026,
+      "rotation_degrees": 0.0,
+      "body_body_pairs": 2,
+      "placement_clearance_bodies": 3,
+      "native_kicad_complete": true,
+      "final_constraint_residual_mm": 0.000003814697265625
+    },
+    {
+      "stage": 4,
+      "name": "free_disabled",
+      "placement_clearance": "disabled",
+      "route_length_mm": 18.218362539221065,
+      "translation_mm": 0.2249856143652625,
+      "rotation_degrees": 1.7674922343103958,
+      "body_body_pairs": 0,
+      "native_kicad_complete": false,
+      "native_failure": "R1 F.Silkscreen segment violates clearance to the R2 reference field"
+    },
+    {
+      "stage": 5,
+      "name": "free_nearby_courtyards",
+      "placement_clearance": "preserve_initial_courtyard",
+      "route_length_mm": 18.174383665359084,
+      "translation_mm": 0.23043443035459318,
+      "rotation_degrees": 0.0030576838007903007,
+      "body_body_pairs": 3,
+      "placement_clearance_bodies": 4,
+      "native_kicad_complete": true,
+      "final_constraint_residual_mm": 0.0001544952392578125
+    },
+    {
+      "stage": 6,
+      "name": "horizontal_only_control",
+      "placement_clearance": "disabled",
+      "route_length_mm": 18.17381788166479,
+      "translation_mm": 0.22971725463867188,
+      "rotation_degrees": 0.0,
+      "body_body_pairs": 0,
+      "native_kicad_complete": true
+    }
+  ],
+  "conclusion": {
+    "translation": "Nearby courtyard preservation recovers unrestricted X/Y configuration safety and matches the horizontal control within 0.000007 mm of route length.",
+    "rotation": "The board passes, but the nearby constraints reduce rotation from 1.767492 degrees to 0.003058 degrees. This rung does not establish useful free rotation.",
+    "architecture": "Retain generic oriented body/body constraints and motion-envelope broad phase. Do not retain the all-footprint pair construction.",
+    "known_limit": "Courtyards do not include reference text. Native KiCad remains the acceptance authority; future placement geometry should model silkscreen/reference envelopes or support independent reference relocation."
+  },
+  "progress_image_prefix": "build/progress/025-placement-clearance-stage-"
+}

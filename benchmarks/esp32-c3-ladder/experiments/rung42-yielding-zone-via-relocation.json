@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-yielding-zone-via-relocation",
+  "question": "Can 3V3_DUT topology actions coexist with declared GND zones without treating the complete zone polygon as a hard obstacle?",
+  "model": {
+    "yielding_objects": ["foreign-net KiCad zones"],
+    "hard_objects": ["foreign-net pads", "foreign-net tracks", "retained foreign-net stitching vias"],
+    "acceptance": "KiCad refills zones around proposed signal copper, then ERC, DRC, parity, and connectivity gate the complete board."
+  },
+  "source": {
+    "connection": "3V3_DUT",
+    "physical_length_mm": 236.745909,
+    "vias": 12,
+    "gnd_zones": 2,
+    "gnd_stitching_vias": 32,
+    "native_complete": true
+  },
+  "attempts": [
+    {
+      "index": 0,
+      "action": "relocate branch-8 via to first 0.5 mm lattice site",
+      "physical_length_mm": 237.1138220025717,
+      "native_complete": true,
+      "selected": false
+    },
+    {
+      "index": 1,
+      "action": "relocate branch-8 via to second 0.5 mm lattice site",
+      "physical_length_mm": 236.6054305284383,
+      "native_complete": true,
+      "selected": true
+    }
+  ],
+  "conclusion": "Both relocation boards pass after native zone refill, whereas the routed-GND regression admitted only one of these two actions. The selected action improves physical 3V3_DUT copper by about 0.140478 mm. Ignoring the zone polygon is safe only because its non-yielding pads and vias remain obstacles and KiCad refill is mandatory before commit.",
+  "limitations": [
+    "This is one bounded two-action portfolio, not evidence that every signal edit preserves useful GND-plane connectivity.",
+    "The router does not score lost plane area, narrow necks, island area, or return-current quality.",
+    "Target-net zones are not imported as explicit route graphs."
+  ],
+  "progress_sequence": "build/progress/040-yielding-gnd-zone-via-relocation-stage-*"
+}

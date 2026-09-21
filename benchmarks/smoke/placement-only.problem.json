@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": { "min": { "x": 0.0, "y": 0.0 }, "max": { "x": 10.0, "y": 10.0 } },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.2, "via_diameter": 0.8, "via_drill": 0.4 },
+  "components": [
+    {
+      "id": "U1",
+      "position": { "x": 5.0, "y": 5.0 },
+      "size": { "x": 2.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "free" },
+      "pins": []
+    }
+  ]
+}

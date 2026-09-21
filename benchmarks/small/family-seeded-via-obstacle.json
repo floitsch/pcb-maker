@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 0.0, "y": 0.0 },
+      "max": { "x": 20.0, "y": 12.0 }
+    },
+    "layers": [
+      { "id": "top" },
+      { "id": "bottom" }
+    ]
+  },
+  "rules": {
+    "clearance": 0.2,
+    "via_diameter": 0.8,
+    "via_drill": 0.4
+  },
+  "components": [
+    {
+      "id": "A",
+      "position": { "x": 2.0, "y": 6.0 },
+      "size": { "x": 0.4, "y": 0.4 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "p",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "top", "shape": { "kind": "circle", "diameter": 0.5 } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "BLOCK",
+      "position": { "x": 10.0, "y": 6.0 },
+      "size": { "x": 3.0, "y": 3.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": true,
+      "pins": []
+    },
+    {
+      "id": "B",
+      "position": { "x": 18.0, "y": 6.0 },
+      "size": { "x": 0.4, "y": 0.4 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "p",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "bottom", "shape": { "kind": "circle", "diameter": 0.5 } }
+          ]
+        }
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "id": "LINK",
+      "width": 0.3,
+      "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "A", "pin": "p" },
+      "to": { "component": "B", "pin": "p" },
+      "seed_route": [
+        { "x": 2.0, "y": 6.0 },
+        { "x": 10.0, "y": 6.0 },
+        { "x": 18.0, "y": 6.0 }
+      ]
+    }
+  ]
+}

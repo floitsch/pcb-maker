@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-remove-via-then-bounded-local-reroute",
+  "sequence": 35,
+  "question": "Can the testing-esp32-duts single-layer A* kernel repair a layout-trace-style transactional via removal, and can its failure evidence distinguish a necessary layer excursion from a broken repair mechanism?",
+  "fixture": {
+    "connection": "3V3_DUT",
+    "source_length_mm": 236.74590919347608,
+    "source_physical_vias": 12,
+    "via_penalty_mm": 3.0,
+    "source_score_mm": 272.7459091934761,
+    "source_candidate_sha256": "ca1db79bfde74c761170a3f4040d9e310ab5c785435a898e0daeb142ea72c858"
+  },
+  "architecture": {
+    "topology_edit": "layout-trace-style atomic remove/merge across every occurrence of one physical via",
+    "repair_kernel": "testing-esp32-duts-bounded-single-layer-astar-v1",
+    "transaction": "remove first, reroute each newly merged maximal same-layer run, rebuild canonical segments/vias, then native-gate the full KiCad rung",
+    "search_dimensions": ["merge layer", "grid resolution", "window margin"],
+    "current_limit": "the repair adds no vias and searches one copper layer; a layer-changing repair is deliberately not misreported as via reduction"
+  },
+  "branch8_long_corridor_negative": {
+    "target_via": [63.125, 30.875],
+    "affected_branches": [8],
+    "direct_front_result": "two vias removed, but the replacement chord produces 19 native DRC findings",
+    "direct_back_result": "one physical via removed, but the merged route produces 28 native DRC findings",
+    "window_4mm_no_path_expansions": {
+      "F.Cu": {"0.5": 4230, "0.25": 19126, "0.125": 81794},
+      "B.Cu": {"0.5": 2219, "0.25": 10788, "0.125": 47942}
+    },
+    "window_12mm_no_path_expansions": {
+      "F.Cu": {"0.5": 5488, "0.25": 26784, "0.125": 116122},
+      "B.Cu": {"0.5": 2789, "0.25": 14522, "0.125": 65596}
+    },
+    "interpretation": "expanding the window by 8 mm and refining to 0.125 mm still finds no zero-new-via same-layer path, so window clipping is not the main failure; this particular excursion is topologically useful under the present routing field",
+    "window_4mm_evidence": "build/experiments/035-via-removal-local-reroute/window-4mm-portfolio/portfolio.json",
+    "window_12mm_evidence": "build/experiments/035-via-removal-local-reroute/portfolio/portfolio.json"
+  },
+  "branch9_private_excursion_positive": {
+    "target_via": [65.125, 25.625],
+    "affected_branches": [9],
+    "removed_physical_vias": 2,
+    "direct_front_drc_findings": 11,
+    "direct_back_drc_findings": 24,
+    "front_layer_repairs": [
+      {"resolution_mm": 0.5, "expansions": 4108, "local_path_length_mm": 31.33531993246813, "whole_tree_length_mm": 249.11199512609917, "native_complete": true},
+      {"resolution_mm": 0.25, "expansions": 18088, "local_path_length_mm": 30.13606558568534, "whole_tree_length_mm": 232.73076026397692, "native_complete": true, "selected": true},
+      {"resolution_mm": 0.125, "expansions": 77085, "local_path_length_mm": 30.01966372286768, "whole_tree_length_mm": 236.17133891649874, "native_complete": true}
+    ],
+    "back_layer_no_path_expansions": {"0.5": 3065, "0.25": 15740, "0.125": 71004},
+    "selected": {
+      "resolution_mm": 0.25,
+      "whole_tree_length_improvement_mm": 4.015148929499163,
+      "physical_via_reduction": 2,
+      "score_improvement_mm": 10.015148929499192,
+      "grid_size": [123, 56],
+      "searches": 1,
+      "expansions": 18088,
+      "exact_edge_retries": 0,
+      "candidate_sha256": "d1fa385d177badfa55c2270b579068ea914e81ce26c60bd3e00e32a5f3840e23"
+    },
+    "authoritative_evidence": "build/experiments/035-via-removal-local-reroute/branch9-private-portfolio/portfolio.json"
+  },
+  "native_acceptance": {
+    "selected_complete": true,
+    "erc_findings": 0,
+    "drc_findings": 0,
+    "parity_findings": 0,
+    "selected_net_unconnected": 0,
+    "real_board_regression": "tests/kicad_ladder.rs"
+  },
+  "critical_evaluation": {
+    "worked": [
+      "the combined topology-edit/repair seam removes two real vias where either direct replacement chord is illegal",
+      "all three front-layer resolutions produce native-complete boards, proving the branch-8 failure is fixture-specific rather than a dead integration seam",
+      "the selected 0.25 mm action improves both canonical whole-tree length and via count",
+      "bounded search work and the exact native gate are retained per materialized action"
+    ],
+    "surprises": [
+      "the finest grid has the shortest local replacement path but not the shortest canonical whole-tree copper",
+      "the 0.25 mm path is selected because its geometry reuses the existing physical tree more effectively; local A* cost alone is not the correct multi-terminal objective",
+      "the coarse route is valid but makes the whole tree 12.366086 mm longer, so passing DRC is insufficient for action selection"
+    ],
+    "did_not_establish": [
+      "one successful private excursion does not imply arbitrary vias are removable",
+      "the current local search cannot add a compensating via pair, move components, or negotiate other nets",
+      "unsupported searches retain expansion counts in their detail but not yet a materialized diagnostic path/frontier overlay",
+      "CPU grid-search work is not a GPU performance result"
+    ],
+    "next": "make failed local searches retain structured grid/frontier evidence and a board overlay, then expose the action as one replaceable producer inside a broader topology search rather than scanning or deleting vias greedily"
+  },
+  "progress_image_prefix": "build/progress/035-via-removal-local-reroute-stage-",
+  "progress_png_count": 30,
+  "image_policy": "each materialized source/action has a front/back pair; no-path actions retain an explicitly named unchanged-source pair because no candidate board exists"
+}

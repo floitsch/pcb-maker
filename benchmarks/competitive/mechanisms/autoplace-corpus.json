@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-autoplace",
+  "cases": [
+    {"id": "anchored-resistor-autoplace", "comparison": "anchored-resistor-autoplace-comparison.json"}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "esp32-pad-gap-profiles",
+  "cases": [
+    {
+      "id": "gap-blocked",
+      "comparison": "gap-blocked/comparison.json"
+    },
+    {
+      "id": "gap-open",
+      "comparison": "gap-open/comparison.json"
+    },
+    {
+      "id": "dual-prefix03-blocked",
+      "comparison": "dual-prefix03-blocked/comparison.json"
+    },
+    {
+      "id": "dual-prefix03-open",
+      "comparison": "dual-prefix03-open/comparison.json"
+    }
+  ]
+}

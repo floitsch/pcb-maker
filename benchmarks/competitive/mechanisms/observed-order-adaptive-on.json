@@ -1,0 +1,32 @@
+{
+  "sequential": {
+    "connection_order": [
+      "H",
+      "V"
+    ],
+    "routing_portfolio": [
+      {
+        "resolution_mm": 0.25,
+        "trace_width_mm": 0.2,
+        "clearance_mm": 0.2,
+        "edge_clearance_mm": 0.2,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 0.6,
+        "via_drill_mm": 0.3,
+        "max_expansions": 100000,
+        "multi_terminal_routing": "shared_copper_tree",
+        "tree_attachment_search": "multi_source",
+        "tree_attachment_objective": "router_cost",
+        "terminal_contact_policy": "first_pad_contact"
+      }
+    ],
+    "ripup": null
+  },
+  "maximum_passes": 2,
+  "demand_strengths": [],
+  "forecast_via_costs_mm": [
+    null
+  ],
+  "maximum_forecasts_per_net": 1,
+  "retry_observed_failures_before_forecasts": true
+}

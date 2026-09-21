@@ -1,0 +1,25 @@
+{
+  "target_at": [63.125, 30.875],
+  "target_layers": ["F.Cu", "B.Cu"],
+  "removal_layers": ["F.Cu", "B.Cu"],
+  "relocation_radius_mm": 0.0,
+  "relocation_step_mm": 0.0,
+  "maximum_relocation_candidates": 0,
+  "local_reroute": {
+    "merged_layers": ["F.Cu", "B.Cu"],
+    "resolutions_mm": [0.25],
+    "window_margin_mm": 4.0,
+    "maximum_grid_states": 500000,
+    "maximum_expansions": 2000000,
+    "maximum_exact_edge_retries": 256,
+    "blocker_cut": {
+      "maximum_ranked_blockers": 9,
+      "maximum_cut_size": 2,
+      "maximum_trials": 60
+    }
+  },
+  "maximum_actions": 4,
+  "maximum_affected_branches": 1,
+  "via_penalty_mm": 3.0,
+  "minimum_score_improvement_mm": 0.000001
+}

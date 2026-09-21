@@ -1,0 +1,28 @@
+{
+  "strategy": "projected_trace_tension",
+  "broad_phase": "exhaustive",
+  "shared_copper": "independent_branches",
+  "branch_indices": [0],
+  "steps": 8,
+  "timestep": 0.05,
+  "projection_iterations": 8,
+  "trace_tension_strength": 4.0,
+  "maximum_trace_tension_step_mm": 0.1,
+  "constraint_guard_mm": 0.001,
+  "broad_phase_cell_size_mm": 2.0,
+  "broad_phase_motion_margin_mm": 1.0,
+  "maximum_constraint_pairs": 100000,
+  "minimum_length_improvement_mm": 0.000001,
+  "movable_footprints": [
+    {
+      "reference": "R1",
+      "translate_x": true,
+      "translate_y": true,
+      "rotate": true,
+      "inverse_mass": 1.0,
+      "rotation_mobility": 1.0,
+      "maximum_translation_mm": 2.0,
+      "maximum_rotation_degrees": 45.0
+    }
+  ]
+}

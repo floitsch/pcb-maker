@@ -1,0 +1,8 @@
+{
+  "maximum_actions": 6,
+  "detour_clearance_mm": 2.5,
+  "detour_span_mm": 2.0,
+  "via_offset_mm": 3.0,
+  "via_penalty_mm": 5.0,
+  "unresolved_conflict_penalty_mm": 100.0
+}

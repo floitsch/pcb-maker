@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": { "min": { "x": 0.0, "y": 0.0 }, "max": { "x": 40.0, "y": 30.0 } },
+    "layers": [{ "id": "top" }, { "id": "bottom" }]
+  },
+  "rules": {
+    "clearance": 0.35,
+    "via_diameter": 1.0,
+    "via_drill": 0.45,
+    "allow_via_in_pad": true
+  },
+  "components": [
+    { "id": "A", "position": { "x": 4.0, "y": 5.0 }, "size": { "x": 3.0, "y": 3.0 }, "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false, "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }] },
+    { "id": "B", "position": { "x": 36.0, "y": 25.0 }, "size": { "x": 3.0, "y": 3.0 }, "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false, "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }] },
+    { "id": "C", "position": { "x": 4.0, "y": 25.0 }, "size": { "x": 3.0, "y": 3.0 }, "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false, "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }] },
+    { "id": "D", "position": { "x": 36.0, "y": 5.0 }, "size": { "x": 3.0, "y": 3.0 }, "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false, "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }] }
+  ],
+  "nets": [
+    { "id": "DIAGONAL_NE", "width": 0.45, "layer": "top", "allowed_layers": ["top", "bottom"], "from": { "component": "A", "pin": "1" }, "to": { "component": "B", "pin": "1" }, "seed_route": [{ "x": 4.0, "y": 5.0 }, { "x": 36.0, "y": 25.0 }] },
+    { "id": "DIAGONAL_SE", "width": 0.45, "layer": "top", "allowed_layers": ["top", "bottom"], "from": { "component": "C", "pin": "1" }, "to": { "component": "D", "pin": "1" }, "seed_route": [{ "x": 4.0, "y": 25.0 }, { "x": 36.0, "y": 5.0 }] }
+  ],
+  "solver": { "particles_per_trace": 12 }
+}
+

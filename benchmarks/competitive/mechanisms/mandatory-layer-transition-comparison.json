@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-mandatory-layer-transition-comparison",
+  "route_benchmark": "mandatory-layer-transition-freerouting.json",
+  "pcb_maker": {"insertion_config": "insertion-0p4-0p3.json", "verification_cache_directory": "../../../build/cache/kicad-verification", "maximum_seconds": 60}
+}

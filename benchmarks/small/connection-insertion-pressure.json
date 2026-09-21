@@ -1,0 +1,66 @@
+{
+  "local_candidate_cap": 1,
+  "local_routing_portfolio": [
+    {
+      "grid_mm": 0.5,
+      "retry_grid_mm": [
+        0.25,
+        0.1
+      ],
+      "max_expansions_per_search": 5000000,
+      "maximum_exact_edge_retries": 64,
+      "straight_cost": 1000,
+      "diagonal_cost": 1414,
+      "bend_cost": 100,
+      "via_cost": 8000,
+      "allow_vias": true,
+      "route_order": "width_descending",
+      "priority_branches": [],
+      "raster_safety": "exact_centerline",
+      "multi_terminal_routing": "terminal_mst",
+      "terminal_junction_slack_mm": null,
+      "maximum_terminal_junction_searches": 32,
+      "maximum_tree_attachment_searches": 1,
+      "tree_attachment_minimum_spacing_mm": 0.0,
+      "tree_attachment_portfolio_objective": "retained_length"
+    }
+  ],
+  "global_routing": {
+    "grid_mm": 0.5,
+    "retry_grid_mm": [
+      0.25,
+      0.1
+    ],
+    "max_expansions_per_search": 5000000,
+    "maximum_exact_edge_retries": 64,
+    "straight_cost": 1000,
+    "diagonal_cost": 1414,
+    "bend_cost": 100,
+    "via_cost": 8000,
+    "allow_vias": true,
+    "route_order": "width_descending",
+    "priority_branches": [],
+    "raster_safety": "exact_centerline",
+    "multi_terminal_routing": "terminal_mst",
+    "terminal_junction_slack_mm": null,
+    "maximum_terminal_junction_searches": 32,
+    "maximum_tree_attachment_searches": 1,
+    "tree_attachment_minimum_spacing_mm": 0.0,
+    "tree_attachment_portfolio_objective": "retained_length"
+  },
+  "global_pressure": {
+    "direction_policy": "frontier_centroid",
+    "push_propagation": "single_component",
+    "maximum_components_per_push": 1,
+    "push_step_mm": 0.5,
+    "step_scales": [
+      1.0,
+      2.0
+    ],
+    "maximum_iterations": 2,
+    "maximum_blocking_components": 4,
+    "maximum_candidates_per_iteration": 16,
+    "maximum_total_attempts": 32,
+    "stop_on_complete": true
+  }
+}

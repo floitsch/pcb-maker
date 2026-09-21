@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 0.0, "y": 0.0 },
+      "max": { "x": 60.0, "y": 40.0 }
+    }
+  },
+  "rules": {
+    "clearance": 0.6
+  },
+  "components": [
+    {
+      "id": "J_LEFT",
+      "position": { "x": 5.0, "y": 20.0 },
+      "size": { "x": 5.0, "y": 12.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "pins": [
+        { "id": "1", "offset": { "x": 2.5, "y": -2.5 } },
+        { "id": "2", "offset": { "x": 2.5, "y": 2.5 } }
+      ]
+    },
+    {
+      "id": "J_RIGHT",
+      "position": { "x": 55.0, "y": 20.0 },
+      "size": { "x": 5.0, "y": 12.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "pins": [
+        { "id": "1", "offset": { "x": -2.5, "y": -2.5 } },
+        { "id": "2", "offset": { "x": -2.5, "y": 2.5 } }
+      ]
+    },
+    {
+      "id": "R_MOVABLE",
+      "position": { "x": 30.0, "y": 18.0 },
+      "size": { "x": 8.0, "y": 4.0 },
+      "constraints": {
+        "movement": "free",
+        "rotation": "free",
+        "region": {
+          "min": { "x": 20.0, "y": 10.0 },
+          "max": { "x": 40.0, "y": 30.0 }
+        }
+      },
+      "pins": []
+    }
+  ],
+  "nets": [
+    {
+      "id": "UPPER",
+      "width": 1.0,
+      "from": { "component": "J_LEFT", "pin": "1" },
+      "to": { "component": "J_RIGHT", "pin": "1" },
+      "seed_route": [
+        { "x": 7.5, "y": 17.5 },
+        { "x": 20.0, "y": 15.0 },
+        { "x": 40.0, "y": 15.0 },
+        { "x": 52.5, "y": 17.5 }
+      ]
+    },
+    {
+      "id": "LOWER",
+      "width": 1.0,
+      "from": { "component": "J_LEFT", "pin": "2" },
+      "to": { "component": "J_RIGHT", "pin": "2" },
+      "seed_route": [
+        { "x": 7.5, "y": 22.5 },
+        { "x": 20.0, "y": 22.5 },
+        { "x": 40.0, "y": 22.5 },
+        { "x": 52.5, "y": 22.5 }
+      ]
+    }
+  ],
+  "solver": {
+    "width_stages": [0.0, 0.1, 0.25, 0.5, 0.75, 1.0],
+    "iterations_per_stage": 350,
+    "particles_per_trace": 10,
+    "step_size": 0.04,
+    "smoothing": 0.35,
+    "repulsion": 1.4,
+    "component_mobility": 0.25,
+    "rotation_mobility": 0.002
+  }
+}
+

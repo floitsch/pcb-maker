@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-local-via-reroute-semantic-blockers",
+  "sequence": 37,
+  "question": "Which semantic objects own the blocked frontier of the real branch-8 remove-then-reroute failure, and are those identities stable enough to drive later mixed placement/routing actions?",
+  "fixture": {
+    "connection": "3V3_DUT",
+    "branch": 8,
+    "target_via": [63.125, 30.875],
+    "window_margin_mm": 4.0,
+    "resolutions_mm": [0.5, 0.25, 0.125],
+    "layers": ["F.Cu", "B.Cu"]
+  },
+  "implementation": {
+    "portfolio_schema_version": 5,
+    "algorithm": "native-kicad-layout-trace-via-action-portfolio-v5",
+    "ported_from": "testing-esp32-duts semantic blocked-frontier classification",
+    "blocker_kinds": ["footprint_pad", "foreign_net_copper"],
+    "identity_rules": {
+      "footprint_pad": "group all matching pad obstacles by stable footprint reference and retain the union of their foreign nets",
+      "foreign_net_copper": "group segments and vias by normalized KiCad net name",
+      "component_mobility": "true only when the owning footprint declares Router_Movable=yes"
+    },
+    "counting_rule": "one blocker receives at most one hit per blocked frontier cell even if several of its pad/track primitives cover that cell",
+    "diagnostic_overlay": "the twelve highest-hit blockers are labeled at their frontier centroids; movable pads are green, fixed pads orange, and foreign nets violet",
+    "transaction_rule": "semantic diagnostics do not make the invalid topology-only candidate selectable"
+  },
+  "real_board_results": [
+    {"layer": "F.Cu", "resolution_mm": 0.5, "frontier_states": 170, "attributed_states": 170, "unattributed_states": 0, "blocker_count": 9, "top": {"kind": "footprint_pad", "object": "J4", "hits": 46, "component_movable": false}, "movable_components": ["C4", "R19"], "foreign_nets": ["D_EN", "D_LOCAL_COMM0", "D_BOOT", "GND", "T_SERVICE_TX"]},
+    {"layer": "F.Cu", "resolution_mm": 0.25, "frontier_states": 361, "attributed_states": 361, "unattributed_states": 0, "blocker_count": 9, "top": {"kind": "footprint_pad", "object": "J4", "hits": 99, "component_movable": false}, "movable_components": ["C4", "R19"], "foreign_nets": ["D_EN", "D_LOCAL_COMM0", "D_BOOT", "GND", "T_SERVICE_TX"]},
+    {"layer": "F.Cu", "resolution_mm": 0.125, "frontier_states": 813, "attributed_states": 813, "unattributed_states": 0, "blocker_count": 9, "top": {"kind": "footprint_pad", "object": "J4", "hits": 224, "component_movable": false}, "movable_components": ["C4", "R19"], "foreign_nets": ["D_EN", "D_LOCAL_COMM0", "D_BOOT", "GND", "T_SERVICE_TX"]},
+    {"layer": "B.Cu", "resolution_mm": 0.5, "frontier_states": 141, "attributed_states": 141, "unattributed_states": 0, "blocker_count": 6, "top": {"kind": "foreign_net_copper", "object": "T_EN", "hits": 53, "component_movable": false}, "movable_components": [], "foreign_nets": ["T_EN", "GND", "T_BUS_RELAY0", "T_LOCAL_FLEX1", "T_PROBE_XDATA_0", "T_BUS_RELAY1"]},
+    {"layer": "B.Cu", "resolution_mm": 0.25, "frontier_states": 293, "attributed_states": 293, "unattributed_states": 0, "blocker_count": 5, "top": {"kind": "foreign_net_copper", "object": "T_EN", "hits": 111, "component_movable": false}, "movable_components": [], "foreign_nets": ["T_EN", "GND", "T_BUS_RELAY0", "T_LOCAL_FLEX1", "T_PROBE_XDATA_0"]},
+    {"layer": "B.Cu", "resolution_mm": 0.125, "frontier_states": 818, "attributed_states": 818, "unattributed_states": 0, "blocker_count": 7, "top": {"kind": "foreign_net_copper", "object": "T_EN", "hits": 251, "component_movable": false}, "movable_components": [], "foreign_nets": ["T_EN", "GND", "T_BUS_RELAY0", "T_LOCAL_FLEX1", "T_PROBE_XDATA_0", "T_PROBE_XDATA_1", "T_LOCAL_FLEX0"]}
+  ],
+  "cross_resolution_interpretation": {
+    "front": "all three resolutions identify the same nine blockers in the same leading structure: fixed J4 first, then D_EN and D_LOCAL_COMM0; movable C4 and R19 are visible but cannot explain the whole cut",
+    "back": "T_EN and GND are the two leading blockers at every resolution, followed by T_BUS_RELAY0 and T_LOCAL_FLEX1; low-hit tail nets vary with raster resolution",
+    "coverage": "all 2596 frontier cells across the six searches were attributed to at least one semantic owner"
+  },
+  "critical_evaluation": {
+    "worked": [
+      "the KiCad adapter no longer discards obstacle identity when rasterizing pads, tracks, and vias",
+      "frontier ownership is complete on the real control and stable for the dominant blockers across all three resolutions",
+      "component mobility comes from the existing board declaration instead of being inferred from geometry",
+      "the reduced regression proves per-cell deduplication, movable-component attribution, serialization, and visible SVG labels; the real-board regression checks J4, C4, and D_EN"
+    ],
+    "limits": [
+      "frontier-hit count measures encountered boundary pressure, not a causal minimum cut; removing the highest-hit object alone is not proven sufficient",
+      "foreign copper is grouped by net because the generated KiCad board has no durable per-branch identity for those nets",
+      "the set of low-hit back-layer blockers changes with raster resolution, so mixed-action generation should prioritize cross-resolution persistence rather than raw fine-grid count alone",
+      "GND is treated as ordinary routed copper for now; future ground zones will materially change its geometry and action policy",
+      "this step diagnoses mixed actions but does not yet generate, evaluate, or commit them"
+    ],
+    "next": "add a replaceable mixed-action producer that uses persistent semantic blockers to try bounded foreign-net rip-up/reroute and declared component motion before re-running the target local repair, while preserving the source as the always-valid fallback"
+  },
+  "authoritative_evidence": "build/experiments/037-via-reroute-semantic-blockers/portfolio/portfolio.json",
+  "authoritative_sha256": "0c9f1839070f92f9cf6e801e03dc225a48e53515585f8c439db57c86607b3dd2",
+  "progress_image_prefix": "build/progress/037-via-reroute-semantic-blockers-stage-",
+  "progress_png_count": 18,
+  "progress_svg_count": 12
+}

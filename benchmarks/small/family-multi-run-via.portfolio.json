@@ -1,0 +1,135 @@
+{
+  "schema_version": "layout-trace.route-family-portfolio/v5",
+  "feasibility_mode": "fixed_full_width_witness_pairwise",
+  "portfolio_id": "pcb-maker-route-families",
+  "placement_revision": 1,
+  "geometry_revision": 1,
+  "corridor_epochs": [
+    {
+      "layer": "bottom",
+      "corridor_revision": 2,
+      "semantic_fingerprint": "r:bottom|board&component:pad:B:p|0|p:bottom|board&component:pad:B:p|0<->bottom|board&component:pad:B:p|0|board&component:pad:B:p|generator[7:pad:B:p]",
+      "cut_basis_fingerprint": "vertical-cut-forest-exact/v2|structural=156:vertical-cut-forest/v2|components=C20:forbidden[7:pad:B:p]H0:20:generator[7:pad:B:p]|parents=P20:forbidden[7:pad:B:p]>B|anchor-order=20:generator[7:pad:B:p]|beams=E20:generator[7:pad:B:p]:40323bf28335b025:4014517f34ee5912:40323bf28335b025:4024000000000000",
+      "cut_basis_complete": true
+    },
+    {
+      "layer": "top",
+      "corridor_revision": 1,
+      "semantic_fingerprint": "r:top|board&component:pad:A:p|0|p:top|board&component:pad:A:p|0<->top|board&component:pad:A:p|0|board&component:pad:A:p|generator[7:pad:A:p]",
+      "cut_basis_fingerprint": "vertical-cut-forest-exact/v2|structural=156:vertical-cut-forest/v2|components=C20:forbidden[7:pad:A:p]H0:20:generator[7:pad:A:p]|parents=P20:forbidden[7:pad:A:p]>B|anchor-order=20:generator[7:pad:A:p]|beams=E20:generator[7:pad:A:p]:3ffed66690027025:4014f133718db64c:3ffed66690027025:4024000000000000",
+      "cut_basis_complete": true
+    }
+  ],
+  "family_generation": {
+    "method": "bounded_clearance_offset_visibility_dijkstra/raw_k=8/k3_or_exhaustive/v3",
+    "max_families_per_variable": 3,
+    "search_complete": true,
+    "budget_exhausted": false
+  },
+  "passage_certificates": [],
+  "variables": [
+    {
+      "branch": "LINK",
+      "electrical_net": "LINK",
+      "required_width": 0.3,
+      "required_clearance": 0.2,
+      "families": [
+        {
+          "family_id": "family:83946c45eef590c6111ab53079fccc54a05fefa487613900444c2e4770ecc285",
+          "placement_revision": 1,
+          "complete_route": true,
+          "cost": 16.0,
+          "runs": [
+            {
+              "run_id": "family:83946c45eef590c6111ab53079fccc54a05fefa487613900444c2e4770ecc285:run:0",
+              "run_index": 0,
+              "layer": "top",
+              "start_point": 0,
+              "end_point": 1,
+              "corridor_revision": 1,
+              "transition_from_previous": null,
+              "witness": {
+                "polyline": [
+                  { "x": 2.0, "y": 5.0 },
+                  { "x": 10.0, "y": 5.0 }
+                ],
+                "placement_revision": 1,
+                "realizable": true,
+                "clearance_certified": true,
+                "clearance_model": "exact_polyline_against_polygonal_obstacles",
+                "minimum_clearance": 2.0,
+                "required_width": 0.3
+              },
+              "cut_word_certificate": {
+                "cut_basis_fingerprint": "vertical-cut-forest-exact/v2|structural=156:vertical-cut-forest/v2|components=C20:forbidden[7:pad:A:p]H0:20:generator[7:pad:A:p]|parents=P20:forbidden[7:pad:A:p]>B|anchor-order=20:generator[7:pad:A:p]|beams=E20:generator[7:pad:A:p]:3ffed66690027025:4014f133718db64c:3ffed66690027025:4024000000000000",
+                "basis_complete": true,
+                "verified": true,
+                "word": []
+              },
+              "semantic_passage_keys": [],
+              "passage_mapping_complete": true
+            },
+            {
+              "run_id": "family:83946c45eef590c6111ab53079fccc54a05fefa487613900444c2e4770ecc285/run-1",
+              "run_index": 1,
+              "layer": "bottom",
+              "start_point": 1,
+              "end_point": 2,
+              "corridor_revision": 2,
+              "transition_from_previous": {
+                "kind": "via",
+                "position": { "x": 10.0, "y": 5.0 },
+                "certified": true,
+                "via": {
+                  "diameter": 0.8,
+                  "drill": 0.4,
+                  "clearance_model": "exact_point_against_polygonal_obstacles/v1",
+                  "minimum_clearance": 5.0
+                }
+              },
+              "witness": {
+                "polyline": [
+                  { "x": 10.0, "y": 5.0 },
+                  { "x": 18.0, "y": 5.0 }
+                ],
+                "placement_revision": 1,
+                "realizable": true,
+                "clearance_certified": true,
+                "clearance_model": "exact_polyline_against_polygonal_obstacles",
+                "minimum_clearance": 2.0,
+                "required_width": 0.3
+              },
+              "cut_word_certificate": {
+                "cut_basis_fingerprint": "vertical-cut-forest-exact/v2|structural=156:vertical-cut-forest/v2|components=C20:forbidden[7:pad:B:p]H0:20:generator[7:pad:B:p]|parents=P20:forbidden[7:pad:B:p]>B|anchor-order=20:generator[7:pad:B:p]|beams=E20:generator[7:pad:B:p]:40323bf28335b025:4014517f34ee5912:40323bf28335b025:4024000000000000",
+                "basis_complete": true,
+                "verified": true,
+                "word": []
+              },
+              "semantic_passage_keys": [],
+              "passage_mapping_complete": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "fixed_context": {
+    "method": "exhaustive_fixed_context_serialized_runs/v1",
+    "placement_revision": 1,
+    "geometry_revision": 1,
+    "fixed_context_fingerprint": "3b280f3ed4231699f236548c6838162869928ea83ff93f63796e51eff160ebf1",
+    "search_complete": true,
+    "runs": []
+  },
+  "pair_analysis": {
+    "method": "exhaustive_fixed_full_width_serialized_runs/v1",
+    "placement_revision": 1,
+    "corridor_epoch_fingerprint": "7a61160e05df5d2dcda8117b01be56750f886f329d1f1a572cf3c6f4c9d483f1",
+    "candidate_set_fingerprint": "aa43f7b8171567de509c9a25ea5fdaff1181a3685e83f8ba0840a81e446121cb",
+    "search_complete": true,
+    "analyzed_family_pairs": 0,
+    "fixed_context_fingerprint": "3b280f3ed4231699f236548c6838162869928ea83ff93f63796e51eff160ebf1",
+    "analyzed_family_context_pairs": 0,
+    "conflicts": []
+  }
+}

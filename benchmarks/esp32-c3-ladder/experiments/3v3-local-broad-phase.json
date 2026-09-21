@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "superseded_measurements_by": "3v3-route-graph-projected-tension.json",
+  "measurement_warning": "The exhaustive/local equivalence and culling conclusion remains valid, but historical lengths use the superseded stored-track metric. The corrected branch-0 rerun spends 787,584 versus 19,712 projection rows and improves canonical physical copper from 238.146317 mm to 237.552374 mm.",
+  "connection": "3V3_DUT",
+  "source_experiment": "3v3-projected-tension.json",
+  "algorithm": "uniform-grid-obstacle-broad-phase-v1",
+  "fixture": "via-free branch 0 with rung 42 copper used as future-aware obstacles",
+  "hypothesis": "A conservative per-layer uniform grid and explicit motion envelope can remove remote obstacle constraints without changing the exhaustive projected-tension result.",
+  "configuration": {
+    "cell_size_mm": 2.0,
+    "motion_margin_mm": 1.0,
+    "constraint_guard_mm": 0.001
+  },
+  "exhaustive": {
+    "status": "accepted",
+    "candidate_sha256": "95f8863b502a04ff25235499d36c9561d34f966515b97db1c8f31e4e92543169",
+    "proposal_sha256": "0033650740fa12e3da06f25e9bbf4d329002ef9f25f9e2b9a14104b2382efc2d",
+    "layer_relevant_obstacle_pairs": 879,
+    "retained_obstacle_pairs": 879,
+    "constraint_projections": 337536
+  },
+  "uniform_grid": {
+    "status": "accepted",
+    "candidate_sha256": "95f8863b502a04ff25235499d36c9561d34f966515b97db1c8f31e4e92543169",
+    "proposal_sha256": "0033650740fa12e3da06f25e9bbf4d329002ef9f25f9e2b9a14104b2382efc2d",
+    "broad_phase_cells": 1426,
+    "broad_phase_cell_references": 5786,
+    "broad_phase_cell_queries": 46,
+    "layer_relevant_obstacle_pairs": 879,
+    "grid_candidate_pairs": 36,
+    "retained_obstacle_pairs": 22,
+    "culled_obstacle_pairs": 857,
+    "constraint_projections": 8448,
+    "length_mm": 289.7960512119631,
+    "maximum_point_motion_mm": 0.6577041687043552
+  },
+  "tight_envelope_control": {
+    "motion_margin_mm": 0.1,
+    "status": "invalid_proposal",
+    "maximum_point_motion_mm": 0.9966500120168722,
+    "proposal_length_mm": 289.6845299531092,
+    "retained_obstacle_pairs": 12,
+    "analytic_blockers": 2,
+    "native_kicad_drc_findings": 4,
+    "interpretation": "The small envelope omits the rectangular obstacle that should redirect the trace. The shorter raw proposal is not admissible and is rolled back."
+  },
+  "exact_validation": {
+    "rung_41": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    },
+    "rung_42": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    }
+  },
+  "visual_evidence": "build/progress/021-kicad-local-broad-phase-*",
+  "reproduction": "cargo test --test kicad_ladder future_aware_route_processors_improve_3v3_and_keep_later_rungs_valid -- --nocapture",
+  "outcome": "positive_scaling_experiment",
+  "interpretation": "The local broad phase removes 97.5% of layer-relevant obstacle pairs and reduces projection rows by 40x while producing byte-identical accepted copper. This is work reduction, not a measured runtime or GPU-speedup claim. The next control should move several via-free branches simultaneously."
+}

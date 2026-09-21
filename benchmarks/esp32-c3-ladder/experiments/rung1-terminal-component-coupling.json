@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-01",
+  "connection": "T_LOCAL_COMM0",
+  "rung": 1,
+  "fixture": "the first complete ESP32-C3 ladder rung; fixed U1 terminal to R1 pad 1, while R1 pad 2 remains intentionally unconnected",
+  "hypothesis": "projected trace tension can transfer through a body-local terminal attachment and move or rotate a real KiCad footprint while preserving a complete board",
+  "baselines": {
+    "existing_rung_track_length_mm": 19.242640687119284,
+    "fresh_astar_candidate_physical_length_mm": 19.61758793710999,
+    "fixed_terminal_projected_tension_mm": 18.398288237566565
+  },
+  "controls": [
+    {
+      "name": "unconstrained_translation",
+      "steps": 8,
+      "proposal_length_mm": 18.191331185761815,
+      "translation_mm": 0.23696794165766255,
+      "rotation_degrees": 0.0,
+      "native_result": "rejected",
+      "reason": "one F.Silkscreen clearance violation between R1 graphics and the R2 reference field"
+    },
+    {
+      "name": "unconstrained_translation_and_rotation",
+      "steps": 8,
+      "proposal_length_mm": 18.218362539221065,
+      "translation_mm": 0.2249856143652625,
+      "rotation_degrees": 1.7674922343103958,
+      "native_result": "rejected",
+      "reason": "one F.Silkscreen clearance violation; free rotation worked mechanically but was 0.027031 mm worse than translation-only"
+    },
+    {
+      "name": "one_step_translation",
+      "steps": 1,
+      "proposal_length_mm": 19.12878974889698,
+      "translation_mm": 0.04999993224769198,
+      "rotation_degrees": 0.0,
+      "native_result": "rejected",
+      "reason": "the source placement has effectively no positive-Y silkscreen margin, so reducing the step count did not repair the missing placement constraint"
+    },
+    {
+      "name": "horizontal_only_translation",
+      "steps": 8,
+      "proposal_length_mm": 18.17381788166479,
+      "improvement_from_fresh_astar_mm": 1.4437700554452029,
+      "improvement_from_existing_rung_tracks_mm": 1.068822805454494,
+      "translation_mm": 0.22971725463867188,
+      "rotation_degrees": 0.0,
+      "native_result": "accepted",
+      "native_gate": {
+        "erc": 0,
+        "drc": 0,
+        "schematic_parity": 0,
+        "selected_net_unconnected": 0
+      },
+      "work": {
+        "terminal_attachment_bodies": 2,
+        "terminal_attachments": 2,
+        "constraint_projections": 59968,
+        "final_constraint_residual_mm": 0.0
+      }
+    }
+  ],
+  "interpretation": "Real KiCad tracer-to-placer coupling now works for one deliberately small terminal component and persists through candidate application and ladder rematerialization. Axis-constrained motion is the only accepted control and slightly outperforms the invalid higher-freedom proposals. The failed controls show that copper-only analytic obstacles are insufficient for placement: courtyard, silkscreen, and eventually body/body constraints must enter the continuous neighborhood before arbitrary motion can be committed automatically. This is not evidence that rotation is undesirable; it proves rotation is active and exposes a missing constraint family on this fixture.",
+  "reproduction": "cargo test --test kicad_ladder trace_tension_can_move_a_real_rung_one_footprint_without_breaking_kicad -- --nocapture",
+  "images": "build/progress/024-kicad-component-coupling-stage-00..06-{front,back}.png"
+}

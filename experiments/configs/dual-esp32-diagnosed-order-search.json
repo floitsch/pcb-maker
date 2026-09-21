@@ -1,0 +1,11 @@
+{
+  "maximum_trials": 3,
+  "maximum_children_per_failure": 2,
+  "proposal_modes": [
+    "swap_positions",
+    "move_target_before_yielding"
+  ],
+  "frontier_policy": "depth_first",
+  "stop_after_first_complete": true,
+  "via_penalty_mm": 2.0
+}

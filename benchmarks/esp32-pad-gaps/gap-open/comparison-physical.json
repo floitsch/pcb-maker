@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "esp32-gap-open-comparison-physical-cost",
+  "route_benchmark": "benchmark.json",
+  "pcb_maker": {
+    "insertion_config": "routing-physical.json",
+    "verification_cache_directory": "../../../build/cache/kicad-verification",
+    "maximum_seconds": 300
+  }
+}

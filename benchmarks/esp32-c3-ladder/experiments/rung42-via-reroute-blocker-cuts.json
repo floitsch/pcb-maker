@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-conflict-guided-via-reroute-blocker-cuts",
+  "sequence": 38,
+  "question": "Which attributed semantic blockers are causally sufficient to open the real branch-8 zero-new-via local repair, and does a failed ablation expose blockers hidden behind the original frontier?",
+  "fixture": {
+    "connection": "3V3_DUT",
+    "branch": 8,
+    "target_via": [63.125, 30.875],
+    "layers": ["F.Cu", "B.Cu"],
+    "resolution_mm": 0.25,
+    "window_margin_mm": 4.0
+  },
+  "implementation": {
+    "portfolio_schema_version": 6,
+    "algorithm": "conflict-guided-semantic-blocker-cut-bfs-v1",
+    "configuration": "experiments/configs/kicad-via-actions-branch8-blocker-cuts.json",
+    "maximum_ranked_blockers_per_failure": 9,
+    "maximum_cut_size": 2,
+    "maximum_trials": 60,
+    "search_rule": "breadth-first: suppress one ranked semantic owner from the current failed frontier, rerun the exact bounded local search, and let each new failure expose children not visible at its parent frontier",
+    "semantic_actions": {
+      "footprint_pad": "remove all pad obstacles owned by the footprint; this is a conservative component-motion counterfactual because connected foreign copper remains",
+      "foreign_net_copper": "remove that foreign net's track/via obstacles while retaining its pads; this models a bounded rip-up counterfactual"
+    },
+    "transaction_rule": "all ablations are counterfactual_only=true and selectable=false; no suppressed object is removed from a native board candidate"
+  },
+  "reduced_controls": {
+    "single_wall": "one movable full-height pad wall is a sufficient size-1 cut",
+    "hidden_second_wall": "the original frontier contains only WALL_A; after suppressing it, the failed child exposes WALL_B, and WALL_A+WALL_B is the first sufficient size-2 cut"
+  },
+  "real_board_results": {
+    "front": {
+      "original_expansions": 19126,
+      "generated_cut_sets": 50,
+      "attempted_trials": 50,
+      "trials_truncated": false,
+      "found": 0,
+      "no_path": 50,
+      "minimum_sufficient_cut_size": null,
+      "counterfactual_expansions": 1063848,
+      "interpretation": "none of the conflict-guided one- or two-owner cuts generated within the per-failure rank bound opens F.Cu; component-only C4/R19 ablations and every tested pair also fail"
+    },
+    "back": {
+      "original_expansions": 10788,
+      "generated_cut_sets": 23,
+      "attempted_trials": 23,
+      "trials_truncated": false,
+      "found": 5,
+      "minimum_sufficient_cut_size": 1,
+      "minimum_sufficient_cut": ["GND"],
+      "minimum_cut_trial": 1,
+      "counterfactual_path_cost": 17677,
+      "counterfactual_path_length_mm": 44.1525432638166,
+      "counterfactual_path_points": 4,
+      "counterfactual_path_expansions": 28040,
+      "counterfactual_expansions": 413194,
+      "interpretation": "GND alone opens B.Cu; the four found GND pairs are redundant supersets and do not constitute additional minimum cuts"
+    }
+  },
+  "critical_evaluation": {
+    "worked": [
+      "the hidden-wall regression proves that child failures can discover blockers absent from the original frontier",
+      "the real B.Cu result converts GND from a high-hit correlation into a causal sufficient counterfactual",
+      "the real F.Cu result exhausts every generated size-1/2 trial under the declared rank bound instead of stopping at an arbitrary trial limit",
+      "every original failure and every counterfactual trial has a paired front/back SVG and PNG; found paths are green and suppressed obstacles disappear from the rendered model"
+    ],
+    "limits": [
+      "suppressing an object is not an implementable move: component poses, attached copper, foreign-net connectivity, and native DRC are deliberately not changed in these trials",
+      "the front conclusion is bounded to the 50 conflict-guided sets generated with nine ranked blockers per failure and cut size at most two; it is not a global minimum-cut proof",
+      "counterfactual work is expensive: 1,063,848 front and 413,194 back expansions versus 19,126 and 10,788 for the original failures",
+      "GND is still represented as routed tree copper; a future filled-zone/plane policy can change both the obstacle topology and the appropriate repair action",
+      "the 44.152543 mm B.Cu path is only proof of reachability after GND suppression, not a quality-selected or native-complete board"
+    ],
+    "next": "use the B.Cu GND result as a small plane-aware/rip-up-and-restore experiment, and generate a true mixed front action that combines foreign-net rerouting with declared component motion before retrying the target repair; do not merely increase cut size without an action model"
+  },
+  "authoritative_evidence": "build/experiments/038-via-reroute-blocker-cuts/portfolio-exhaustive/portfolio.json",
+  "authoritative_sha256": "e0e1795463d2b557ce9c0a8c1286e85001b1c04b40411b35db1e88f50e960978",
+  "progress_image_prefix": "build/progress/038-via-reroute-blocker-cuts-stage-",
+  "progress_stages": 76,
+  "progress_png_count": 152,
+  "progress_svg_count": 150
+}

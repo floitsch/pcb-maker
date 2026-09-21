@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-local-via-reroute-frontier-diagnostics",
+  "sequence": 36,
+  "question": "When remove-then-reroute reports no path, can we retain enough bounded evidence to see where the DUT A* search stopped instead of preserving only a sentence and an unchanged board?",
+  "fixture": {
+    "connection": "3V3_DUT",
+    "branch": 8,
+    "target_via": [63.125, 30.875],
+    "window_margin_mm": 4.0,
+    "source_candidate_sha256": "ca1db79bfde74c761170a3f4040d9e310ab5c785435a898e0daeb142ea72c858"
+  },
+  "implementation": {
+    "portfolio_schema_version": 4,
+    "algorithm": "native-kicad-layout-trace-via-action-portfolio-v4",
+    "retained_failure_kinds": ["no_path", "budget_exhausted"],
+    "retained_grid_fields": [
+      "branch and merged layer",
+      "start and finish",
+      "resolution and obstacle inflation",
+      "window bounds and grid origin/size",
+      "blocked-state count and exact row runs",
+      "blocked-frontier state count and exact row runs",
+      "searches, expansions, and exact-edge retries"
+    ],
+    "diagnostic_artifacts": [
+      "topology-only candidate JSON",
+      "local-reroute evidence JSON",
+      "paired top-down front/back SVG",
+      "paired top-down front/back PNG when rsvg-convert is available"
+    ],
+    "transaction_rule": "the topology-only candidate is diagnostic data and is never eligible for selection or commit"
+  },
+  "real_board_results": [
+    {"layer": "F.Cu", "resolution_mm": 0.5, "grid_size": [45, 61], "grid_states": 2745, "blocked_states": 1703, "blocked_fraction": 0.6204007285974499, "blocked_runs": 151, "frontier_states": 170, "frontier_runs": 71, "expansions": 4230},
+    {"layer": "F.Cu", "resolution_mm": 0.25, "grid_size": [89, 121], "grid_states": 10769, "blocked_states": 6092, "blocked_fraction": 0.5656978363822082, "blocked_runs": 326, "frontier_states": 361, "frontier_runs": 163, "expansions": 19126},
+    {"layer": "F.Cu", "resolution_mm": 0.125, "grid_size": [177, 241], "grid_states": 42657, "blocked_states": 22290, "blocked_fraction": 0.5225402630283423, "blocked_runs": 749, "frontier_states": 813, "frontier_runs": 369, "expansions": 81794},
+    {"layer": "B.Cu", "resolution_mm": 0.5, "grid_size": [93, 36], "grid_states": 3348, "blocked_states": 2461, "blocked_fraction": 0.7350657108721624, "blocked_runs": 178, "frontier_states": 141, "frontier_runs": 65, "expansions": 2219},
+    {"layer": "B.Cu", "resolution_mm": 0.25, "grid_size": [186, 72], "grid_states": 13392, "blocked_states": 9025, "blocked_fraction": 0.6739097968936678, "blocked_runs": 442, "frontier_states": 293, "frontier_runs": 137, "expansions": 10788},
+    {"layer": "B.Cu", "resolution_mm": 0.125, "grid_size": [371, 143], "grid_states": 53053, "blocked_states": 33864, "blocked_fraction": 0.6383050911352798, "blocked_runs": 993, "frontier_states": 818, "frontier_runs": 331, "expansions": 47942}
+  ],
+  "visual_interpretation": {
+    "front": "the two endpoints lie on opposite sides of dense horizontal and vertical occupied bands; the cyan frontier closes around the reachable upper region",
+    "back": "the reachable region leaves the western endpoint but closes against a diagonal track bundle, pads, and the surrounding occupied field before reaching the eastern endpoint",
+    "colors": {"target_copper": "blue on F.Cu and amber on B.Cu", "foreign_obstacles": "red", "rasterized_blocked_cells": "translucent red", "blocked_frontier": "cyan", "direct_chord": "white dashed", "search_window": "yellow dashed"}
+  },
+  "representation_ablation": {
+    "first_attempt": "serialized every blocked-frontier coordinate independently",
+    "problem": "the fine grid repeated long horizontal boundaries as thousands of JSON coordinate scalars",
+    "retained_for_provenance": "build/experiments/036-via-reroute-frontier-diagnostics/portfolio/portfolio.json",
+    "correction": "lossless deterministic row-run encoding for both occupied cells and frontier cells",
+    "authoritative_evidence": "build/experiments/036-via-reroute-frontier-diagnostics/portfolio-rle/portfolio.json",
+    "authoritative_sha256": "0439f02ecd0b90312bf15e602e51ac6b581839ebd445a04a28a8a0767172a4a0"
+  },
+  "critical_evaluation": {
+    "worked": [
+      "the real no-path action now says exactly which grid region and boundary were explored",
+      "failed actions retain affected branch identity and their topology-only candidate without making invalid copper selectable",
+      "front/back plan views use one coordinate orientation and make the obstruction visible while scrolling",
+      "the reduced regression covers both successful repair and a typed no-path wall; the real-board regression checks retained frontier and SVG artifacts"
+    ],
+    "limits": [
+      "frontier cells are not yet attributed to semantic owners such as a component, foreign net, or movable trace",
+      "the diagnostic view draws copper geometry and pads but not full footprint body/silkscreen detail",
+      "row-run evidence is lossless and grid-bounded, but worst-case checkerboard occupancy can still approach the configured maximum_grid_states",
+      "this is CPU diagnostic evidence, not a GPU implementation or runtime comparison"
+    ],
+    "next": "classify frontier runs by blocking obstacle owner/net and feed those typed blockers into a replaceable action producer that can choose trace displacement, component movement, via insertion, or retaining the existing excursion"
+  },
+  "progress_image_prefix": "build/progress/036-via-reroute-frontier-diagnostics-stage-",
+  "progress_png_count": 18,
+  "progress_svg_count": 12
+}

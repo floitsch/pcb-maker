@@ -1,0 +1,7 @@
+{
+  "scope": "All-free geometric repacking benchmark; no enclosure/product compatibility claim. Keep original orientations. A new rectangular outline may replace the source outline at the requested actual-area ratio.",
+  "movement": "all_free",
+  "rotation": "original_fixed",
+  "body_overhang_mm": {},
+  "outline": "free_rectangle"
+}

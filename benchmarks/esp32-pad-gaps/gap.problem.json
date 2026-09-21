@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "max": {
+        "x": 12.0,
+        "y": 8.0
+      }
+    },
+    "layers": [
+      {
+        "id": "top"
+      },
+      {
+        "id": "bottom"
+      }
+    ]
+  },
+  "rules": {
+    "clearance": 0.2,
+    "via_diameter": 0.7,
+    "via_drill": 0.3
+  },
+  "components": [
+    {
+      "id": "LEFT",
+      "position": {
+        "x": 2.0,
+        "y": 4.0
+      },
+      "size": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.8
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RIGHT",
+      "position": {
+        "x": 10.0,
+        "y": 4.0
+      },
+      "size": {
+        "x": 1.0,
+        "y": 1.0
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.8
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ESP_PAD_ROW",
+      "position": {
+        "x": 6.0,
+        "y": 4.0
+      },
+      "size": {
+        "x": 1.5,
+        "y": 2.17
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0.0,
+            "y": -0.635
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "rect",
+                "size": {
+                  "x": 1.5,
+                  "y": 0.9
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "2",
+          "offset": {
+            "x": 0.0,
+            "y": 0.635
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "rect",
+                "size": {
+                  "x": 1.5,
+                  "y": 0.9
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "id": "CROSS_ROW",
+      "width": 0.25,
+      "layer": "top",
+      "allowed_layers": [
+        "top",
+        "bottom"
+      ],
+      "from": {
+        "component": "LEFT",
+        "pin": "1"
+      },
+      "to": {
+        "component": "RIGHT",
+        "pin": "1"
+      }
+    }
+  ]
+}

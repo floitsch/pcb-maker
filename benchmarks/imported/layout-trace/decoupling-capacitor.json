@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 0.0, "y": 0.0 },
+      "max": { "x": 80.0, "y": 50.0 }
+    }
+  },
+  "rules": {
+    "clearance": 0.6
+  },
+  "components": [
+    {
+      "id": "U1",
+      "position": { "x": 10.0, "y": 25.0 },
+      "size": { "x": 12.0, "y": 20.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "pins": [
+        { "id": "VCC", "offset": { "x": 6.0, "y": -3.0 } },
+        { "id": "GND", "offset": { "x": 6.0, "y": 3.0 } }
+      ]
+    },
+    {
+      "id": "C1",
+      "position": { "x": 67.0, "y": 25.0 },
+      "size": { "x": 5.0, "y": 3.0 },
+      "rotation_degrees": 65.0,
+      "constraints": {
+        "movement": "horizontal",
+        "rotation": "free",
+        "region": {
+          "min": { "x": 56.0, "y": 8.0 },
+          "max": { "x": 74.0, "y": 43.0 }
+        }
+      },
+      "pins": [
+        { "id": "1", "offset": { "x": -2.5, "y": 0.0 } },
+        { "id": "2", "offset": { "x": 2.5, "y": 0.0 } }
+      ]
+    },
+    {
+      "id": "X_CENTER",
+      "position": { "x": 37.0, "y": 25.0 },
+      "size": { "x": 10.0, "y": 14.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "pins": []
+    },
+    {
+      "id": "X_TOP",
+      "position": { "x": 53.0, "y": 8.0 },
+      "size": { "x": 8.0, "y": 7.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "pins": []
+    }
+  ],
+  "nets": [
+    {
+      "id": "VCC_DECOUPLE",
+      "width": 1.0,
+      "tension_weight": 1.0,
+      "from": { "component": "U1", "pin": "VCC" },
+      "to": { "component": "C1", "pin": "1" },
+      "seed_route": [
+        { "x": 16.0, "y": 22.0 },
+        { "x": 28.0, "y": 17.5 },
+        { "x": 46.0, "y": 17.5 },
+        { "x": 65.943, "y": 22.734 }
+      ]
+    },
+    {
+      "id": "GND_DECOUPLE",
+      "width": 1.0,
+      "tension_weight": 0.05,
+      "from": { "component": "U1", "pin": "GND" },
+      "to": { "component": "C1", "pin": "2" },
+      "seed_route": [
+        { "x": 16.0, "y": 28.0 },
+        { "x": 28.0, "y": 32.5 },
+        { "x": 48.0, "y": 32.5 },
+        { "x": 68.057, "y": 27.266 }
+      ]
+    }
+  ],
+  "solver": {
+    "width_stages": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "iterations_per_stage": 400,
+    "particles_per_trace": 14,
+    "step_size": 0.035,
+    "smoothing": 0.4,
+    "repulsion": 8.0,
+    "clearance_influence": 0.8,
+    "component_mobility": 0.3,
+    "rotation_mobility": 0.08
+  }
+}

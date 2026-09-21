@@ -1,0 +1,11 @@
+[package]
+name = "placement-exploration"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+pcb-placement = { path = "../../crates/pcb-placement" }
+layout-trace-model = { path = "../../crates/layout-trace-model" }
+serde_json = "1"

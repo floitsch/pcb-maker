@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "sequence": 28,
+  "connection": "T_LOCAL_FLEX0",
+  "question": "Can existing KiCad copper provide a small authentic via-bearing candidate, and can the continuous engine shorten its same-layer runs without moving or duplicating either via?",
+  "source": {
+    "rung": 7,
+    "route_length_mm": 19.242640687119284,
+    "segments": 4,
+    "vias": 2,
+    "branch_points": 7,
+    "native_kicad_complete": true
+  },
+  "board_copper_import": {
+    "algorithm": "kicad-board-copper-import-v1",
+    "scope": "one uniform two-terminal segment/via chain",
+    "imported_segments": 4,
+    "imported_vias": 2,
+    "layer_runs": 3,
+    "round_trip_native_kicad_complete": true,
+    "evaluation": "The importer preserves the hand-routed F.Cu/B.Cu/F.Cu chain. It rejects branches, cycles, arcs, zones, non-uniform dimensions, and ambiguous pad contacts instead of guessing logical topology."
+  },
+  "reject_control": {
+    "via_mobility": "reject",
+    "status": "unsupported",
+    "frames": 0,
+    "detail": "selected branch 0 contains a layer transition or via"
+  },
+  "fixed_via_result": {
+    "algorithm": "projected-trace-tension-fixed-via-v2",
+    "configuration": "experiments/configs/kicad-projected-tension-fixed-vias.json",
+    "via_mobility": "fixed",
+    "status": "accepted",
+    "before_length_mm": 19.242640687119284,
+    "after_length_mm": 18.964473578009734,
+    "improvement_mm": 0.2781671091095501,
+    "improvement_percent": 1.4455765902013142,
+    "maximum_point_motion_mm": 0.5791953918704335,
+    "segments_before": 4,
+    "segments_after": 4,
+    "vias_before": 2,
+    "vias_after": 2,
+    "initial_geometry_clear": true,
+    "proposal_geometry_clear": true,
+    "native_kicad_complete": true,
+    "native_gate": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0
+    }
+  },
+  "representation_and_work": {
+    "selected_layer_runs": 3,
+    "fixed_via_anchors": 2,
+    "fixed_via_anchor_members": 4,
+    "shared_point_groups": 2,
+    "shared_point_members": 6,
+    "engine_particles": 179,
+    "frames": 16,
+    "constraint_projections": 91648,
+    "trace_tension_edge_integrations": 64,
+    "maximum_constraint_residual_mm": 0.0000011622905731201172,
+    "evaluation": "The GPU-shaped representation keeps ordinary uniform polylines and pays for each via with one two-point fixed anchor plus a shared-point group. No component-specific or via-specific solver particle type was added. The current CPU exhaustive obstacle lowering dominates the 179-particle world and 91,648 projection rows."
+  },
+  "retained_visibility_ablation": {
+    "status": "no_improvement",
+    "visibility_tests": 5,
+    "attempted_shortcuts": 1,
+    "visible_shortcuts": 0,
+    "accepted_shortcuts": 0,
+    "route_length_mm": 19.242640687119284,
+    "evaluation": "Deleting the only front-layer bend is not geometrically clear. The continuous engine therefore found a constrained partial pull that the retained-vertex processor cannot express; this is not merely a more expensive way to delete a redundant vertex."
+  },
+  "conclusion": {
+    "outcome": "positive_mechanism_experiment",
+    "advantage": "Via-bearing routes can now participate in continuous trace shortening while every existing via remains a fixed, explicitly shared graph junction.",
+    "penalty": "A multilayer branch becomes several solver polylines and anchor groups; existing vias cannot yet move, disappear, or be inserted, and the experiment still uses the CPU reference backend with an exhaustive obstacle set.",
+    "scope": "This proves one sparse two-via chain, not dense multilayer negotiation, shared multi-terminal trees, movable-via optimization, or GPU speedup.",
+    "next": "Use the same layer-run boundary for local broad phase and then test shared via junctions or a deliberately movable-via action before approaching dense power nets."
+  },
+  "authoritative_evidence": "build/experiments/028-via-aware-relaxation/fixed-evidence.json",
+  "progress_image_prefix": "build/progress/028-via-aware-relaxation-stage-"
+}

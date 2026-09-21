@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "real-pic-programmer-comparison",
+  "route_benchmark": "freerouting.json",
+  "pcb_maker": {
+    "sequential_config": "pcb-maker-sequential.json",
+    "verification_cache_directory": "../../../build/cache/kicad-verification",
+    "maximum_seconds": 60
+  }
+}

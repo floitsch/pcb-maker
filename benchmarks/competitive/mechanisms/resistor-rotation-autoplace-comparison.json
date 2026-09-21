@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-resistor-rotation-autoplace-comparison",
+  "route_benchmark": "resistor-rotation-autoplace-freerouting.json",
+  "pcb_maker": {"insertion_config": "pcb-maker-insertion.json", "verification_cache_directory": "../../../build/cache/kicad-verification", "maximum_seconds": 60}
+}

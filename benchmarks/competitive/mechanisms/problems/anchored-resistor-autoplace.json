@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {"min": {"x": 0.0, "y": 0.0}, "max": {"x": 40.0, "y": 20.0}},
+    "layers": [{"id": "top"}, {"id": "bottom"}]
+  },
+  "rules": {"clearance": 0.3, "via_diameter": 0.8, "via_drill": 0.4},
+  "components": [
+    {
+      "id": "WEST",
+      "position": {"x": 5.0, "y": 10.0},
+      "size": {"x": 2.0, "y": 2.0},
+      "constraints": {"movement": "fixed", "rotation": "fixed"},
+      "body_is_routing_keepout": false,
+      "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.2}}]}]
+    },
+    {
+      "id": "R_FREE",
+      "position": {"x": 20.0, "y": 15.0},
+      "rotation_degrees": 90.0,
+      "size": {"x": 6.0, "y": 2.0},
+      "constraints": {
+        "movement": "free",
+        "rotation": "free",
+        "region": {"min": {"x": 14.0, "y": 5.0}, "max": {"x": 26.0, "y": 17.0}}
+      },
+      "body_is_routing_keepout": true,
+      "pins": [
+        {"id": "1", "offset": {"x": -2.5, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.2}}]},
+        {"id": "2", "offset": {"x": 2.5, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.2}}]}
+      ]
+    },
+    {
+      "id": "EAST",
+      "position": {"x": 35.0, "y": 10.0},
+      "size": {"x": 2.0, "y": 2.0},
+      "constraints": {"movement": "fixed", "rotation": "fixed"},
+      "body_is_routing_keepout": false,
+      "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.2}}]}]
+    }
+  ],
+  "nets": [
+    {"id": "WEST_R", "width": 0.4, "layer": "top", "allowed_layers": ["top", "bottom"], "from": {"component": "WEST", "pin": "1"}, "to": {"component": "R_FREE", "pin": "1"}},
+    {"id": "R_EAST", "width": 0.4, "layer": "top", "allowed_layers": ["top", "bottom"], "from": {"component": "R_FREE", "pin": "2"}, "to": {"component": "EAST", "pin": "1"}}
+  ],
+  "solver": {"particles_per_trace": 12}
+}

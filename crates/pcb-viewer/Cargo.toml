@@ -1,0 +1,11 @@
+[package]
+name = "pcb-viewer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+layout-trace-model = { path = "../layout-trace-model" }
+pcb-core = { path = "../pcb-core" }
+pcb-validate = { path = "../pcb-validate" }
+serde_json = "1.0"

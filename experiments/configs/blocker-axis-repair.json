@@ -1,0 +1,6 @@
+{
+  "maximum_blocking_components": 4,
+  "samples_per_axis": 9,
+  "maximum_attempts": 32,
+  "stop_on_complete": true
+}

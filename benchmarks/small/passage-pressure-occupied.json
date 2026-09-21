@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 20,
+        "y": 12
+      }
+    },
+    "layers": [
+      {
+        "id": "top"
+      }
+    ]
+  },
+  "rules": {
+    "clearance": 0.2
+  },
+  "components": [
+    {
+      "id": "L0",
+      "position": {
+        "x": 2,
+        "y": 2
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R0",
+      "position": {
+        "x": 18,
+        "y": 2
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L1",
+      "position": {
+        "x": 2,
+        "y": 6
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R1",
+      "position": {
+        "x": 18,
+        "y": 6
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L2",
+      "position": {
+        "x": 2,
+        "y": 10
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "position": {
+        "x": 18,
+        "y": 10
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "WALL",
+      "position": {
+        "x": 10,
+        "y": 6
+      },
+      "size": {
+        "x": 2,
+        "y": 9.7
+      },
+      "constraints": {
+        "movement": "vertical",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": true,
+      "pins": []
+    }
+  ],
+  "nets": [
+    {
+      "id": "SIGNAL0",
+      "width": 0.4,
+      "layer": "top",
+      "from": {
+        "component": "L0",
+        "pin": "1"
+      },
+      "to": {
+        "component": "R0",
+        "pin": "1"
+      },
+      "seed_route": [
+        {
+          "x": 2,
+          "y": 2
+        },
+        {
+          "x": 18,
+          "y": 2
+        }
+      ]
+    },
+    {
+      "id": "SIGNAL1",
+      "width": 0.4,
+      "layer": "top",
+      "from": {
+        "component": "L1",
+        "pin": "1"
+      },
+      "to": {
+        "component": "R1",
+        "pin": "1"
+      },
+      "seed_route": [
+        {
+          "x": 2,
+          "y": 6
+        },
+        {
+          "x": 18,
+          "y": 6
+        }
+      ]
+    },
+    {
+      "id": "SIGNAL2",
+      "width": 0.4,
+      "layer": "top",
+      "from": {
+        "component": "L2",
+        "pin": "1"
+      },
+      "to": {
+        "component": "R2",
+        "pin": "1"
+      },
+      "seed_route": [
+        {
+          "x": 2,
+          "y": 10
+        },
+        {
+          "x": 18,
+          "y": 10
+        }
+      ]
+    }
+  ]
+}

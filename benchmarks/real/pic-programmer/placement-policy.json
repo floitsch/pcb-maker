@@ -1,0 +1,16 @@
+{
+  "scope": "All-free geometric repacking benchmark with original orientations and sides; original socket, enclosure and mounting obligations are not modeled. Preserve native front/back courtyards and permit each listed body's observed reference overhang. Pads remain inside the board under native edge rules.",
+  "movement": "all_free",
+  "rotation": "original_fixed",
+  "body_overhang_mm": {
+    "J1": 8.67,
+    "P3": 15.71,
+    "P101": 0.74,
+    "P102": 0.74,
+    "P103": 0.74,
+    "P104": 0.74,
+    "P105": 0.74,
+    "P106": 0.74
+  },
+  "outline": "free_rectangle"
+}

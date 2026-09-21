@@ -1,0 +1,26 @@
+{
+  "maximum_entries": 1,
+  "maximum_trials": 2,
+  "via_penalty_mm": 2.0,
+  "entries": [
+    {
+      "id": "harmonic-random1-underanchored-long-legalization-archive",
+      "proposal_finalists": 2,
+      "placement": {
+        "policy": {
+          "kind": "harmonic_ports",
+          "iterations": 128,
+          "legalization_sweeps": 256,
+          "maximum_pair_checks": 4000000,
+          "connected_pair_spacing_floor": true,
+          "underanchored_seed": {
+            "kind": "random",
+            "attempts": 16
+          }
+        },
+        "seed": 1,
+        "projection_sweeps": 256
+      }
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 3.0, "y": 29.0 },
+      "max": { "x": 17.0, "y": 41.5 }
+    },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.2 },
+  "components": [
+    {
+      "id": "ESP_W_BANK",
+      "position": { "x": 8.125, "y": 32.75 },
+      "size": { "x": 2.5, "y": 1.6 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "GND",
+          "offset": { "x": -0.635, "y": 0.0 },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": { "kind": "rect", "size": { "x": 0.9, "y": 1.5 } }
+            }
+          ]
+        },
+        {
+          "id": "VCC",
+          "offset": { "x": 0.635, "y": 0.0 },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": { "kind": "rect", "size": { "x": 0.9, "y": 1.5 } }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "C_W_A",
+      "position": { "x": 8.1, "y": 37.0 },
+      "size": { "x": 2.0, "y": 1.25 },
+      "rotation_degrees": 180.0,
+      "constraints": { "movement": "free", "rotation": "free" },
+      "pins": [
+        { "id": "1", "offset": { "x": -1.0, "y": 0.0 } },
+        { "id": "2", "offset": { "x": 1.0, "y": 0.0 } }
+      ]
+    },
+    {
+      "id": "C_W_B",
+      "position": { "x": 12.0, "y": 36.0 },
+      "size": { "x": 2.0, "y": 1.25 },
+      "rotation_degrees": 180.0,
+      "constraints": { "movement": "free", "rotation": "free" },
+      "pins": [
+        { "id": "1", "offset": { "x": -1.0, "y": 0.0 } },
+        { "id": "2", "offset": { "x": 1.0, "y": 0.0 } }
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "id": "W_CA_V",
+      "electrical_net": "VCC",
+      "width": 0.45,
+      "layer": "top",
+      "from": { "component": "ESP_W_BANK", "pin": "VCC" },
+      "to": { "component": "C_W_A", "pin": "1" },
+      "seed_route": [
+        { "x": 8.76, "y": 32.75 },
+        { "x": 10.0, "y": 34.5 },
+        { "x": 10.0, "y": 37.0 },
+        { "x": 9.1, "y": 37.0 }
+      ]
+    },
+    {
+      "id": "W_CA_G",
+      "electrical_net": "GND",
+      "width": 0.45,
+      "tension_weight": 0.05,
+      "layer": "top",
+      "from": { "component": "C_W_A", "pin": "2" },
+      "to": { "component": "ESP_W_BANK", "pin": "GND" },
+      "seed_route": [
+        { "x": 7.1, "y": 37.0 },
+        { "x": 6.5, "y": 36.5 },
+        { "x": 7.49, "y": 32.75 }
+      ]
+    },
+    {
+      "id": "W_CB_V",
+      "electrical_net": "VCC",
+      "width": 0.45,
+      "layer": "top",
+      "from": { "component": "ESP_W_BANK", "pin": "VCC" },
+      "to": { "component": "C_W_B", "pin": "1" },
+      "seed_route": [
+        { "x": 8.76, "y": 32.75 },
+        { "x": 13.5, "y": 33.0 },
+        { "x": 13.5, "y": 36.0 },
+        { "x": 13.0, "y": 36.0 }
+      ]
+    },
+    {
+      "id": "W_CB_G",
+      "electrical_net": "GND",
+      "width": 0.45,
+      "tension_weight": 0.05,
+      "layer": "top",
+      "from": { "component": "C_W_B", "pin": "2" },
+      "to": { "component": "ESP_W_BANK", "pin": "GND" },
+      "seed_route": [
+        { "x": 11.0, "y": 36.0 },
+        { "x": 10.75, "y": 36.0 },
+        { "x": 10.75, "y": 39.0 },
+        { "x": 7.0, "y": 39.0 },
+        { "x": 7.49, "y": 32.75 }
+      ]
+    }
+  ],
+  "placement_constraints": [
+    {
+      "kind": "maximum_distance",
+      "first": { "component": "C_W_A", "pin": "1" },
+      "second": { "component": "ESP_W_BANK", "pin": "VCC" },
+      "maximum": 5.5
+    },
+    {
+      "kind": "maximum_distance",
+      "first": { "component": "C_W_B", "pin": "1" },
+      "second": { "component": "ESP_W_BANK", "pin": "VCC" },
+      "maximum": 5.5
+    }
+  ],
+  "solver": {
+    "width_stages": [0.0, 1.0],
+    "iterations_per_stage": 160,
+    "particles_per_trace": 10,
+    "step_size": 0.035,
+    "smoothing": 0.32,
+    "repulsion": 5.0,
+    "clearance_influence": 0.25,
+    "component_mobility": 0.6,
+    "rotation_mobility": 0.08
+  }
+}

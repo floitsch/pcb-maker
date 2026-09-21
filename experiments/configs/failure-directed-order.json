@@ -1,0 +1,5 @@
+{
+  "maximum_attempts": 8,
+  "maximum_routed_blockers_per_failure": 4,
+  "stop_on_complete": true
+}

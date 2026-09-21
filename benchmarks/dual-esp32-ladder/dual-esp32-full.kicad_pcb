@@ -1,0 +1,4421 @@
+(kicad_pcb
+  (version 20260206)
+  (generator "pcb-maker")
+  (generator_version "0.1")
+  (general
+    (thickness 1.6)
+    (legacy_teardrops no))
+  (paper "A4")
+  (layers
+    (0 "F.Cu" signal)
+    (2 "B.Cu" signal)
+    (9 "F.Adhes" user "F.Adhesive")
+    (11 "B.Adhes" user "B.Adhesive")
+    (13 "F.Paste" user)
+    (15 "B.Paste" user)
+    (5 "F.SilkS" user "F.Silkscreen")
+    (7 "B.SilkS" user "B.Silkscreen")
+    (1 "F.Mask" user)
+    (3 "B.Mask" user)
+    (17 "Dwgs.User" user "User.Drawings")
+    (19 "Cmts.User" user "User.Comments")
+    (21 "Eco1.User" user "User.Eco1")
+    (23 "Eco2.User" user "User.Eco2")
+    (25 "Edge.Cuts" user)
+    (27 "Margin" user)
+    (31 "F.CrtYd" user "F.Courtyard")
+    (29 "B.CrtYd" user "B.Courtyard")
+    (35 "F.Fab" user)
+    (33 "B.Fab" user))
+  (setup
+    (pad_to_mask_clearance 0)
+    (allow_soldermask_bridges_in_footprints yes)
+    (tenting front back))
+  (net 0 "")
+  (net 1 "/SIG01_W_R")
+  (net 2 "/SIG01_AFTER_LINK")
+  (net 3 "/SIG01_R_HEADER")
+  (net 4 "/SIG02_W_R")
+  (net 5 "/SIG02_AFTER_LINK")
+  (net 6 "/SIG02_R_HEADER")
+  (net 7 "/SIG03_W_R")
+  (net 8 "/SIG03_AFTER_LINK")
+  (net 9 "/SIG03_R_HEADER")
+  (net 10 "/SIG04_W_R")
+  (net 11 "/SIG04_AFTER_LINK")
+  (net 12 "/SIG04_R_HEADER")
+  (net 13 "/SIG05_W_R")
+  (net 14 "/SIG05_AFTER_LINK")
+  (net 15 "/SIG05_R_HEADER")
+  (net 16 "/SIG06_W_R")
+  (net 17 "/SIG06_R_E")
+  (net 18 "/SIG07_W_R")
+  (net 19 "/SIG07_R_E")
+  (net 20 "/SIG08_W_R")
+  (net 21 "/SIG08_R_E")
+  (net 22 "/SIG09_W_R")
+  (net 23 "/SIG09_R_E")
+  (net 24 "/SIG10_W_R")
+  (net 25 "/SIG10_R_E")
+  (net 26 "/WEST_AUX_A_R")
+  (net 27 "/WEST_AUX_A_HEADER")
+  (net 28 "/WEST_AUX_B_R")
+  (net 29 "/WEST_AUX_B_HEADER")
+  (net 30 "/WEST_AUX_C_R")
+  (net 31 "/WEST_AUX_C_HEADER")
+  (net 32 "/WEST_AUX_D_R")
+  (net 33 "/WEST_AUX_D_HEADER")
+  (net 34 "/EAST_AUX_A_R")
+  (net 35 "/EAST_AUX_A_HEADER")
+  (net 36 "/EAST_AUX_B_R")
+  (net 37 "/EAST_AUX_B_HEADER")
+  (net 38 "/EAST_AUX_C_R")
+  (net 39 "/EAST_AUX_C_HEADER")
+  (net 40 "/EAST_AUX_D_R")
+  (net 41 "/EAST_AUX_D_HEADER")
+  (net 42 "/CTRL_W_RX")
+  (net 43 "/CTRL_W_TX")
+  (net 44 "/CTRL_W_BOOT")
+  (net 45 "/CTRL_E_RX")
+  (net 46 "/CTRL_E_TX")
+  (net 47 "/CTRL_E_BOOT")
+  (net 48 "/W_EN")
+  (net 49 "/E_EN")
+  (net 50 "/LED_SERIES")
+  (net 51 "/VCC")
+  (net 52 "/GND")
+  (footprint "Generated:Semantic_ESP_W"
+    (layer "F.Cu")
+    (uuid "917e87e0-36b9-51d5-90b0-8173e0064af4")
+    (at 32.75 48.335287 270)
+    (property "Reference" "U1"
+      (at 0 -13.95 0)
+      (layer "F.SilkS")
+      (uuid "fd084dcf-c593-5a2f-bdbd-96c15fdabde5")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "ESP_W"
+      (at 0 13.95 0)
+      (layer "F.Fab")
+      (uuid "0a41f754-3b7d-5586-85e6-da7c7a9b8b12")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_ESP_W"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "ESP_W"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -9 -12.75)
+      (end 9 12.75)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "7cf9b365-9983-5609-aeba-b4cce23b4d77"))
+    (fp_rect
+      (start -9 -12.75)
+      (end 9 12.75)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "a6749162-7267-5594-ac4b-f428e3fed1f5"))
+    (pad "1" smd rect
+      (at -8.75 -5.26 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "0f163dc5-2e71-5615-b8b2-2f7292780260"))
+    (pad "2" smd rect
+      (at -8.75 -3.99 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "f11c0741-f0e7-5c2b-8c88-46536c82141e"))
+    (pad "3" smd rect
+      (at -8.75 -2.72 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/W_EN")
+      (uuid "acf459a0-9091-597e-9442-3f63656691f2"))
+    (pad "4" smd rect
+      (at -8.75 -1.45 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "eea68bd7-baeb-5128-a95f-2b860eb68a1d"))
+    (pad "5" smd rect
+      (at -8.75 -0.18 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "8235f989-7982-5c21-8b00-d0fd3d999d0e"))
+    (pad "6" smd rect
+      (at -8.75 1.09 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "1f7afa07-b05a-54a8-8bd4-1a20250bc3f4"))
+    (pad "7" smd rect
+      (at -8.75 2.36 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "e6a7cc1b-ea1f-5502-a0f6-54883c3cff9a"))
+    (pad "8" smd rect
+      (at -8.75 3.63 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_W_R")
+      (uuid "8d30091d-9380-518c-b84c-a7cedd6248d2"))
+    (pad "9" smd rect
+      (at -8.75 4.9 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_W_R")
+      (uuid "6c425bdc-d971-5a2d-8a85-3b45f133e6ab"))
+    (pad "10" smd rect
+      (at -8.75 6.17 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_W_R")
+      (uuid "ee71d5fb-57b6-5de0-ab1f-596a2b443c2f"))
+    (pad "11" smd rect
+      (at -8.75 7.44 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_W_R")
+      (uuid "958de65a-8a32-5fdb-8519-c9fdee1ba7d4"))
+    (pad "12" smd rect
+      (at -8.75 8.71 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_W_R")
+      (uuid "f540dbf8-cd04-524e-a2a5-1120d6df7c85"))
+    (pad "13" smd rect
+      (at -8.75 9.98 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG06_W_R")
+      (uuid "2e4aef66-de06-59d2-b3c4-c88b1e1ce5de"))
+    (pad "14" smd rect
+      (at -8.75 11.25 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG07_W_R")
+      (uuid "4f8c09da-655d-50d0-a291-0450b9f60cbb"))
+    (pad "15" smd rect
+      (at -5.72 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "b63f19ae-b863-57ab-9b19-4f6160087db2"))
+    (pad "16" smd rect
+      (at -4.45 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG08_W_R")
+      (uuid "ab1c964c-1cd0-523e-baf0-841c8a5429c5"))
+    (pad "17" smd rect
+      (at -3.18 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "20011c2c-e860-505f-9e54-378452b15d56"))
+    (pad "18" smd rect
+      (at -1.91 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "bc2a4c41-5d2e-59d3-8d07-dea9aa569181"))
+    (pad "19" smd rect
+      (at -0.64 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "72690b41-87f6-5b7a-aa62-1853104d76c2"))
+    (pad "20" smd rect
+      (at 0.63 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "7fa35867-97fa-5d91-9de3-c1f682db0d4b"))
+    (pad "21" smd rect
+      (at 1.9 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "099ca285-1bad-507f-8276-62d568d3d2d7"))
+    (pad "22" smd rect
+      (at 3.17 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "cbcf206c-25e2-5a63-9e72-06b2e5ebb4d9"))
+    (pad "23" smd rect
+      (at 4.44 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG09_W_R")
+      (uuid "47f978ed-d729-5066-b14e-9797249b963c"))
+    (pad "24" smd rect
+      (at 5.71 12.5 270)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG10_W_R")
+      (uuid "23442d05-85fa-55b8-ad88-d00fb0da4913"))
+    (pad "25" smd rect
+      (at 8.75 11.25 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_W_BOOT")
+      (uuid "a6738453-8d48-5a9e-a517-0160b449b6ba"))
+    (pad "26" smd rect
+      (at 8.75 9.98 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_A_R")
+      (uuid "ba8ae179-10b0-523b-9433-53cc369505bd"))
+    (pad "27" smd rect
+      (at 8.75 8.71 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "15072929-2c52-5a47-a28b-0111827d1b41"))
+    (pad "28" smd rect
+      (at 8.75 7.44 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_B_R")
+      (uuid "00f3590e-4a5e-5bf6-b4b9-110708eae555"))
+    (pad "29" smd rect
+      (at 8.75 6.17 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "aca002ed-9a0b-5ef8-b1b8-199bca2b2c95"))
+    (pad "30" smd rect
+      (at 8.75 4.9 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_C_R")
+      (uuid "959eafc7-5621-52f3-a9df-c1a2a0b55e8b"))
+    (pad "31" smd rect
+      (at 8.75 3.63 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "63ccfb72-921f-578a-9a07-799441100a28"))
+    (pad "32" smd rect
+      (at 8.75 2.36 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "c5f09360-e4c4-5434-92a8-fd24702c42f0"))
+    (pad "33" smd rect
+      (at 8.75 1.09 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_D_R")
+      (uuid "ecb84c73-e115-5bb9-913e-326cba898bf8"))
+    (pad "34" smd rect
+      (at 8.75 -0.18 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_W_RX")
+      (uuid "f8eb2cd3-146a-5c58-834f-a8dc81164d5c"))
+    (pad "35" smd rect
+      (at 8.75 -1.45 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_W_TX")
+      (uuid "da8666cd-ee96-5bc4-8448-8301ff75a5d6"))
+    (pad "36" smd rect
+      (at 8.75 -2.72 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "b254c015-4746-5ca9-8776-fcdac4cc32e9"))
+    (pad "37" smd rect
+      (at 8.75 -3.99 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "54e5a5b9-2e74-5f66-91df-b18308c3de4a"))
+    (pad "38" smd rect
+      (at 8.75 -5.26 270)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "4b63f1b3-1f47-5d35-8e55-48798470cb23"))
+    (pad "39" smd rect
+      (at -1.5 2.46 270)
+      (size 3.7 3.7)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "264e141c-73d6-5bdc-9e7a-2dc68f5598e8")))
+  (footprint "Generated:Semantic_ESP_E"
+    (layer "F.Cu")
+    (uuid "2168096f-678c-5632-b0e7-bcb4a4a036f2")
+    (at 72.25 47.02251 90)
+    (property "Reference" "U2"
+      (at 0 -13.95 0)
+      (layer "F.SilkS")
+      (uuid "eb293feb-869e-5dba-b813-fca91e10f177")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "ESP_E"
+      (at 0 13.95 0)
+      (layer "F.Fab")
+      (uuid "1a712728-06dd-5826-9384-2c930c022911")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_ESP_E"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "ESP_E"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -9 -12.75)
+      (end 9 12.75)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "f4d67173-1bbe-5aa5-9a04-2e8b86bc1d06"))
+    (fp_rect
+      (start -9 -12.75)
+      (end 9 12.75)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "bc034094-cf9a-5c7c-8b58-0f0c4362ada3"))
+    (pad "1" smd rect
+      (at -8.75 -5.26 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "6e53140d-8389-5134-8f7b-494b1c7e473c"))
+    (pad "2" smd rect
+      (at -8.75 -3.99 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "a233de29-6ebe-50e9-ba48-44bb04b46c66"))
+    (pad "3" smd rect
+      (at -8.75 -2.72 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/E_EN")
+      (uuid "81276bef-2a97-50db-ab11-33e6188b2b7d"))
+    (pad "4" smd rect
+      (at -8.75 -1.45 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "42b88a38-9273-50b9-8da6-1804b6282242"))
+    (pad "5" smd rect
+      (at -8.75 -0.18 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "05686066-51b0-5380-a481-21928f64eb22"))
+    (pad "6" smd rect
+      (at -8.75 1.09 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "59117835-5da4-5b14-b580-2737e91a811b"))
+    (pad "7" smd rect
+      (at -8.75 2.36 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "889f0747-d7f8-5eeb-b6d0-fdcaa6362dd0"))
+    (pad "8" smd rect
+      (at -8.75 3.63 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_A_R")
+      (uuid "d16c2fd6-8a13-5d90-b600-d2ad3b3f86bd"))
+    (pad "9" smd rect
+      (at -8.75 4.9 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_B_R")
+      (uuid "a767384f-b092-5396-a9c1-76ba091095f0"))
+    (pad "10" smd rect
+      (at -8.75 6.17 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_C_R")
+      (uuid "82a6f081-f724-533d-8817-3106b87fa493"))
+    (pad "11" smd rect
+      (at -8.75 7.44 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_D_R")
+      (uuid "906da159-bc6c-5508-9de0-af413e86e853"))
+    (pad "12" smd rect
+      (at -8.75 8.71 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "9b8ab9ad-3a69-57d6-8cba-76e3c2a43648"))
+    (pad "13" smd rect
+      (at -8.75 9.98 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "07d5c2cd-40a4-523d-a2f2-e626a48c8f9c"))
+    (pad "14" smd rect
+      (at -8.75 11.25 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "8d5fc897-9b5e-5025-9671-34771f162bc2"))
+    (pad "15" smd rect
+      (at -5.72 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "d2bdc6f6-65f8-553a-9215-620deed860eb"))
+    (pad "16" smd rect
+      (at -4.45 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_AFTER_LINK")
+      (uuid "5355eab0-dea1-5836-8f5e-324654603993"))
+    (pad "17" smd rect
+      (at -3.18 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "8caf13b9-1dfe-5dd7-8575-204a1995d150"))
+    (pad "18" smd rect
+      (at -1.91 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "bef482f0-a327-5b67-a532-7588557792bd"))
+    (pad "19" smd rect
+      (at -0.64 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "de240631-ffd9-545c-ae8f-d542157849cf"))
+    (pad "20" smd rect
+      (at 0.63 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "380968c8-2db7-5b37-80dc-9c2a172c27f2"))
+    (pad "21" smd rect
+      (at 1.9 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "eff4f20c-2a39-5b1e-bd7b-5f25fa361419"))
+    (pad "22" smd rect
+      (at 3.17 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "88e54f62-d7d3-56ae-8127-bd1a68db848f"))
+    (pad "23" smd rect
+      (at 4.44 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "177eb80a-e4d4-5678-8dff-c51d3be07699"))
+    (pad "24" smd rect
+      (at 5.71 12.5 90)
+      (size 0.9 1.5)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "3c880e1f-612c-525d-800f-d0f53e4fee5f"))
+    (pad "25" smd rect
+      (at 8.75 11.25 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_E_BOOT")
+      (uuid "8a5717f3-b56f-5152-a927-f0ff0d8d69e2"))
+    (pad "26" smd rect
+      (at 8.75 9.98 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_AFTER_LINK")
+      (uuid "4593e311-2099-5deb-9faf-07b91a3d53ac"))
+    (pad "27" smd rect
+      (at 8.75 8.71 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG10_R_E")
+      (uuid "41d00d75-0e98-5dd6-97ab-bcf6513d43ac"))
+    (pad "28" smd rect
+      (at 8.75 7.44 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG09_R_E")
+      (uuid "d3b662f8-0d6f-5e5c-8f75-03df99ba84a1"))
+    (pad "29" smd rect
+      (at 8.75 6.17 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG06_R_E")
+      (uuid "aa155c9c-8942-5215-a075-236251b55103"))
+    (pad "30" smd rect
+      (at 8.75 4.9 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_AFTER_LINK")
+      (uuid "fdb0f5eb-3349-5555-a50e-e77dff635b1f"))
+    (pad "31" smd rect
+      (at 8.75 3.63 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG07_R_E")
+      (uuid "b567c2fe-c564-529b-8eaa-b6257a0fcf82"))
+    (pad "32" smd rect
+      (at 8.75 2.36 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (uuid "6584b788-197a-5764-9433-b77be6734cbe"))
+    (pad "33" smd rect
+      (at 8.75 1.09 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_AFTER_LINK")
+      (uuid "4711f71e-82d9-5343-ac87-7c1d09cb7657"))
+    (pad "34" smd rect
+      (at 8.75 -0.18 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_E_RX")
+      (uuid "25d14f49-fa3b-5501-b431-06c15e19e3dc"))
+    (pad "35" smd rect
+      (at 8.75 -1.45 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/CTRL_E_TX")
+      (uuid "b18a3c75-cc00-53b5-9ae0-9f73af400ddb"))
+    (pad "36" smd rect
+      (at 8.75 -2.72 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_AFTER_LINK")
+      (uuid "393414b9-526e-5044-bf67-5a3109f05b46"))
+    (pad "37" smd rect
+      (at 8.75 -3.99 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG08_R_E")
+      (uuid "95e26b2e-7f15-55dc-bdef-d20182344e33"))
+    (pad "38" smd rect
+      (at 8.75 -5.26 90)
+      (size 1.5 0.9)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "3f7c53a1-e7f7-5eb2-ab84-f611b5537075"))
+    (pad "39" smd rect
+      (at -1.5 2.46 90)
+      (size 3.7 3.7)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "28aa61a8-f0d4-51c7-a280-def2020da6e7")))
+  (footprint "Generated:Semantic_H_NW"
+    (layer "F.Cu")
+    (uuid "087901fd-bc20-5f93-aacf-608792410507")
+    (at 23.5 23.5 0)
+    (property "Reference" "H1"
+      (at 0 -2.8 0)
+      (layer "F.SilkS")
+      (uuid "bc739548-4f6a-5514-a052-c9e2e54e4f4c")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "H_NW"
+      (at 0 2.8 0)
+      (layer "F.Fab")
+      (uuid "234f5455-0bbc-5647-9740-3dacb18c56d1")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_H_NW"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "H_NW"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr board_only exclude_from_pos_files exclude_from_bom)
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "eff95037-317c-524a-be20-6d4e6e33503d"))
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "0e37183e-74fc-5d9c-85ae-fd1f02baf4e8"))
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+      (uuid "09031136-b652-5e2d-ba5d-4806048b6333")))
+  (footprint "Generated:Semantic_H_NE"
+    (layer "F.Cu")
+    (uuid "eb6e4a69-b656-5d60-a897-7cd2985a9076")
+    (at 81.5 23.5 0)
+    (property "Reference" "H2"
+      (at 0 -2.8 0)
+      (layer "F.SilkS")
+      (uuid "b5fd9076-ce19-5389-88f1-93dfa6431386")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "H_NE"
+      (at 0 2.8 0)
+      (layer "F.Fab")
+      (uuid "1e45d1f4-c0b9-5b65-99c5-c7e6fb6ea710")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_H_NE"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "H_NE"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr board_only exclude_from_pos_files exclude_from_bom)
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "38a7c677-d32e-58c2-be7c-9da36a93891a"))
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "cec6d45f-35d1-5f5f-8092-2dc99d56da7b"))
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+      (uuid "c2160c16-8672-5168-ad54-de3cbf08d0ed")))
+  (footprint "Generated:Semantic_H_SW"
+    (layer "F.Cu")
+    (uuid "d2a84334-002b-5432-a703-9b885f862de4")
+    (at 23.5 73 0)
+    (property "Reference" "H3"
+      (at 0 -2.8 0)
+      (layer "F.SilkS")
+      (uuid "a7aed8fd-df95-5692-962b-ae5b2c80fb30")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "H_SW"
+      (at 0 2.8 0)
+      (layer "F.Fab")
+      (uuid "c39e1500-8e81-5640-bc26-29549db991ae")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_H_SW"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "H_SW"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr board_only exclude_from_pos_files exclude_from_bom)
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "774987ed-6910-50a9-b970-8fa2d7fbce79"))
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "c64779dd-a2f5-52fb-8e4e-39960e465e73"))
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+      (uuid "9b3d4f0b-62e5-5807-83fd-45acbaa4b096")))
+  (footprint "Generated:Semantic_H_SE"
+    (layer "F.Cu")
+    (uuid "701f6bd0-0510-5d27-ae85-411ace523aa1")
+    (at 81.5 73 0)
+    (property "Reference" "H4"
+      (at 0 -2.8 0)
+      (layer "F.SilkS")
+      (uuid "b7abf7dd-7627-503a-ad06-f922199b4350")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "H_SE"
+      (at 0 2.8 0)
+      (layer "F.Fab")
+      (uuid "e62010b4-7b58-54a6-894b-b7287f4d3390")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_H_SE"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "H_SE"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr board_only exclude_from_pos_files exclude_from_bom)
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "fbe210b2-ee5f-527f-87d3-7de822b86b8a"))
+    (fp_rect
+      (start -1.6 -1.6)
+      (end 1.6 1.6)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "c73d242a-4249-5fd1-ab80-2e054dc24c42"))
+    (pad "" np_thru_hole circle
+      (at 0 0)
+      (size 3.2 3.2)
+      (drill 3.2)
+      (layers "*.Cu" "*.Mask")
+      (uuid "6d422538-85cf-58db-af17-a3bbd61e19dd")))
+  (footprint "Generated:Semantic_J_POWER"
+    (layer "F.Cu")
+    (uuid "ad6cabff-461a-57a1-98c3-b643017dd2ce")
+    (at 52.5 23.5 0)
+    (property "Reference" "J1"
+      (at 0 -2.45 0)
+      (layer "F.SilkS")
+      (uuid "1e449a7c-bbbe-59b2-9a84-daa53e7d6f49")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "J_POWER"
+      (at 0 2.45 0)
+      (layer "F.Fab")
+      (uuid "ee22e78c-d632-5cdf-865e-ab903e983f6e")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_J_POWER"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "J_POWER"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -2.54 -1.25)
+      (end 2.54 1.25)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "cd4f6fda-14ec-5c4a-9ad1-bfacaa736e55"))
+    (fp_rect
+      (start -2.54 -1.25)
+      (end 2.54 1.25)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "f6b6499b-b5db-5beb-b6e7-b139206e57fc"))
+    (pad "VCC" thru_hole circle
+      (at -1.27 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/VCC")
+      (uuid "c30e1ff8-bce4-507c-ae7b-81a9341a103a"))
+    (pad "GND" thru_hole circle
+      (at 1.27 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/GND")
+      (uuid "ad64bc5e-a09b-5da7-a371-0c0742ad5742")))
+  (footprint "Generated:Semantic_J_CTRL_W"
+    (layer "F.Cu")
+    (uuid "0311845c-d08f-5296-948c-b046ea28d4e5")
+    (at 33 26 0)
+    (property "Reference" "J2"
+      (at 0 -2.45 0)
+      (layer "F.SilkS")
+      (uuid "1b9bad65-9790-5515-b2fd-0ccce4b31f10")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "J_CTRL_W"
+      (at 0 2.45 0)
+      (layer "F.Fab")
+      (uuid "727b1923-b1e9-5c4e-b9fc-181f8c0f2a98")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_J_CTRL_W"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "J_CTRL_W"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -6.35 -1.25)
+      (end 6.35 1.25)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "986ddc5b-44e6-5733-9493-e6f14867f5c4"))
+    (fp_rect
+      (start -6.35 -1.25)
+      (end 6.35 1.25)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "b8eb7332-0683-5e91-aa38-5a1ad9c5b5f3"))
+    (pad "GND" thru_hole circle
+      (at -5.08 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/GND")
+      (uuid "3763b022-ef4d-537d-a346-69015ad41b5b"))
+    (pad "VCC" thru_hole circle
+      (at -2.54 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/VCC")
+      (uuid "d4232359-9374-5acc-82c6-7f6f02fc6974"))
+    (pad "RX" thru_hole circle
+      (at 0 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_W_RX")
+      (uuid "718f47b0-eefa-552e-8a87-356eafaec25b"))
+    (pad "TX" thru_hole circle
+      (at 2.54 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_W_TX")
+      (uuid "b47f3e83-3042-59a5-98da-40f3a9446bcc"))
+    (pad "BOOT" thru_hole circle
+      (at 5.08 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_W_BOOT")
+      (uuid "87efb690-0ed4-5dd6-82f0-69ffe6e8c732")))
+  (footprint "Generated:Semantic_J_CTRL_E"
+    (layer "F.Cu")
+    (uuid "3b9f7714-52c4-56b8-abac-0d4686203e10")
+    (at 72 26 0)
+    (property "Reference" "J3"
+      (at 0 -2.45 0)
+      (layer "F.SilkS")
+      (uuid "9d2573aa-1910-5546-a648-bbca19b26fd4")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "J_CTRL_E"
+      (at 0 2.45 0)
+      (layer "F.Fab")
+      (uuid "3a3d2b50-457e-5b1d-8f48-ac0c940844f2")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_J_CTRL_E"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "J_CTRL_E"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "no"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -6.35 -1.25)
+      (end 6.35 1.25)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "8a1d867b-daea-5a41-894c-f8e972d854e0"))
+    (fp_rect
+      (start -6.35 -1.25)
+      (end 6.35 1.25)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "2fe067ff-fd06-5a93-b17e-d1cb74670d69"))
+    (pad "GND" thru_hole circle
+      (at -5.08 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/GND")
+      (uuid "a96baa92-c234-5448-9ffb-a9bce26b7baf"))
+    (pad "VCC" thru_hole circle
+      (at -2.54 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/VCC")
+      (uuid "b86232c9-db91-5aa1-807a-311ac035e23d"))
+    (pad "RX" thru_hole circle
+      (at 0 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_E_RX")
+      (uuid "e2a202a0-494d-59b1-8a4a-9e817b9e17b1"))
+    (pad "TX" thru_hole circle
+      (at 2.54 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_E_TX")
+      (uuid "a3a722c3-732a-5ae8-b5d2-acfc411cdb3e"))
+    (pad "BOOT" thru_hole circle
+      (at 5.08 0)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/CTRL_E_BOOT")
+      (uuid "d5a65394-6dc1-5605-90a4-e284d3e1c765")))
+  (footprint "Generated:Semantic_J_SOUTH"
+    (layer "F.Cu")
+    (uuid "21e63642-1e05-5926-859a-2ff8638bf7ec")
+    (at 52.5 72.75 0)
+    (property "Reference" "J4"
+      (at 0 -3.74 0)
+      (layer "F.SilkS")
+      (uuid "beed86f1-e6bb-56fa-94c1-c9f8787468c3")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "J_SOUTH"
+      (at 0 3.74 0)
+      (layer "F.Fab")
+      (uuid "e5d6ffa5-107e-58e9-8ddf-66271b77f9e3")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_J_SOUTH"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "J_SOUTH"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (fp_rect
+      (start -8.89 -2.54)
+      (end 8.89 2.54)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "7e660fe9-7cf6-5399-93de-43114a58d064"))
+    (fp_rect
+      (start -8.89 -2.54)
+      (end 8.89 2.54)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "26274474-168a-54fc-b65b-70310d0a2d5c"))
+    (pad "TAP1" thru_hole circle
+      (at -7.62 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/SIG01_R_HEADER")
+      (uuid "5a3973da-5416-56ac-bcfb-e588f5a6cc69"))
+    (pad "W_A" thru_hole circle
+      (at -5.08 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/WEST_AUX_A_HEADER")
+      (uuid "2f3d735c-d5a8-52d7-9c7b-6af6a3250bd0"))
+    (pad "TAP3" thru_hole circle
+      (at -2.54 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/SIG03_R_HEADER")
+      (uuid "a5e9e2b3-baf8-51c7-9c42-36a2979d7980"))
+    (pad "E_B" thru_hole circle
+      (at 0 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/EAST_AUX_B_HEADER")
+      (uuid "1ae1f41e-1b60-5372-9c80-bc545ffc0754"))
+    (pad "W_D" thru_hole circle
+      (at 2.54 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/WEST_AUX_D_HEADER")
+      (uuid "c9a8f011-0c79-57af-8336-ba623ec1fee6"))
+    (pad "TAP5" thru_hole circle
+      (at 5.08 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/SIG05_R_HEADER")
+      (uuid "18b6e907-366a-5782-a4a2-77ce32e910fa"))
+    (pad "E_D" thru_hole circle
+      (at 7.62 -1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/EAST_AUX_D_HEADER")
+      (uuid "577d4798-06a8-58c4-8a42-d408db491b5a"))
+    (pad "E_A" thru_hole circle
+      (at -7.62 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/EAST_AUX_A_HEADER")
+      (uuid "a3b81421-94b8-5dc3-9021-2baf87c3907d"))
+    (pad "TAP2" thru_hole circle
+      (at -5.08 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/SIG02_R_HEADER")
+      (uuid "228a2c40-3854-51a9-8c56-75a9bc49f229"))
+    (pad "W_B" thru_hole circle
+      (at -2.54 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/WEST_AUX_B_HEADER")
+      (uuid "8a2fff97-9e88-575a-9a10-14f3b2681ee0"))
+    (pad "E_C" thru_hole circle
+      (at 0 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/EAST_AUX_C_HEADER")
+      (uuid "ff020540-601a-5384-9d02-b9823576a15a"))
+    (pad "TAP4" thru_hole circle
+      (at 2.54 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/SIG04_R_HEADER")
+      (uuid "e158938a-6ece-5173-a848-ed985b254543"))
+    (pad "W_C" thru_hole circle
+      (at 5.08 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (net "/WEST_AUX_C_HEADER")
+      (uuid "962f1088-8135-51f8-a12c-c56bf4bbe835"))
+    (pad "NC" thru_hole circle
+      (at 7.62 1.27)
+      (size 1.7 1.7)
+      (drill 1.02)
+      (layers "*.Cu" "*.Mask")
+      (uuid "2c4288f1-2c07-546c-b803-81f5ed5ae0f3")))
+  (footprint "Generated:Semantic_R_LINK_01"
+    (layer "F.Cu")
+    (uuid "b0f53123-f838-5dcf-9ef4-a73b8bd6ddae")
+    (at 49 34 0)
+    (property "Reference" "R1"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "e7e5ece3-1522-5cc2-939b-ff5c13fb99e3")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_01"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "6ac0b24b-27ce-5d96-82d6-d7a293df6b4c")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_01"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_01"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "84016579-3105-5137-bd9b-d5f6680ac906"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "5c30776a-d265-5b1d-be4d-b5763ff193e2"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_W_R")
+      (uuid "74db4ee1-14c0-5267-a290-c45545525f4a"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_AFTER_LINK")
+      (uuid "e83fab76-a8cd-5beb-9959-db7f4f368b7c")))
+  (footprint "Generated:Semantic_R_LINK_02"
+    (layer "F.Cu")
+    (uuid "833422d5-f549-557a-8cc9-5a0b49e22663")
+    (at 53 37 90)
+    (property "Reference" "R2"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "b6321b41-a345-5fca-99ef-9099c455a3b1")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_02"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "bb592977-5a57-5686-bfca-1516f1f28ff1")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_02"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_02"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "71b62d57-e58c-5aa2-9a88-41e28c0bc3f0"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "3f712c07-769d-5781-8d64-d4171fdc4da2"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_W_R")
+      (uuid "7fedeae1-07de-57c0-8a2d-ca285bde0ede"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_AFTER_LINK")
+      (uuid "aaeb4947-07a1-536c-aaa7-709d1502c29a")))
+  (footprint "Generated:Semantic_R_LINK_03"
+    (layer "F.Cu")
+    (uuid "287fadb7-191b-5f28-b4a2-e2aac0b64485")
+    (at 56 40 180)
+    (property "Reference" "R3"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "415151cd-0368-5a1b-8b87-60a220cd630c")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_03"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "193ab0d4-3f92-5032-8209-45fc3eeb0c67")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_03"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_03"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "9a8c68a0-613c-5c81-9a9a-4d49521189a6"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "46273e21-9fd8-5a2e-ab03-368cc437864e"))
+    (pad "1" smd rect
+      (at -1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_W_R")
+      (uuid "e8cf0284-8fa6-5bc3-baaf-5452b1d73b5a"))
+    (pad "2" smd rect
+      (at 1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_AFTER_LINK")
+      (uuid "14324f3b-dd92-5861-9095-7b26444e29b2")))
+  (footprint "Generated:Semantic_R_LINK_04"
+    (layer "F.Cu")
+    (uuid "23dedef3-1337-546a-aadc-f8f6f6ee0fb7")
+    (at 49 43 270)
+    (property "Reference" "R4"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "cece5d94-9306-579c-b5f0-a3c8e512b22f")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_04"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "fb268950-e4e3-5986-934b-f004e0b9833b")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_04"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_04"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "36857526-651f-5511-a3a9-9cf5f9007bfd"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "9ecb78a6-2875-541b-a5bf-c07351c896ab"))
+    (pad "1" smd rect
+      (at -1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_W_R")
+      (uuid "936c425a-1050-5193-b1fd-7e558c6c556f"))
+    (pad "2" smd rect
+      (at 1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_AFTER_LINK")
+      (uuid "245665a5-8ef0-5623-b3ad-527426edb585")))
+  (footprint "Generated:Semantic_R_LINK_05"
+    (layer "F.Cu")
+    (uuid "553092f8-c4b5-56f2-aecd-54ca860fc056")
+    (at 53 46 0)
+    (property "Reference" "R5"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "7a0dc0b8-ba58-562f-b17f-fbba26d66a83")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_05"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "0eced17b-91c6-5314-8829-da573bb43dc4")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_05"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_05"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "1c25727e-269a-562d-b80b-20e3a8f1d5ae"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "c11ce068-0734-5514-bcf7-c028fda4c07b"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_W_R")
+      (uuid "00368a82-aacd-58c7-a4c4-2e95381fbd8b"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_AFTER_LINK")
+      (uuid "c3abd303-91a8-58ee-92ec-6859dc7003d3")))
+  (footprint "Generated:Semantic_R_LINK_06"
+    (layer "F.Cu")
+    (uuid "315ec35d-1fec-5591-adec-1162108b29ac")
+    (at 56 49 90)
+    (property "Reference" "R6"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "1b0e6c88-0c19-545d-8041-16192147e79b")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_06"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "2004718f-d41f-54a5-9b39-d9640087d37f")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_06"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_06"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "2141218b-488f-53a3-9c5e-1095a7cab7a3"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "6bdb688a-12f8-5a1e-8eef-1e15f785686a"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG06_W_R")
+      (uuid "2e8d4bc0-dfec-5649-8e07-a8c8edd4149e"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG06_R_E")
+      (uuid "1079b712-d4b9-5237-86a1-4c1814075ae7")))
+  (footprint "Generated:Semantic_R_LINK_07"
+    (layer "F.Cu")
+    (uuid "23e1061c-e5be-5c90-9af2-a3a2d5478e86")
+    (at 49 52 180)
+    (property "Reference" "R7"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "cae2ee2d-95a1-5d80-9b9f-561d6f7b9389")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_07"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "2bd38b5d-845b-5b88-87d7-55a2e690dd03")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_07"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_07"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "c3a62503-7687-5ad7-af8e-9f38cbb5dd5d"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "89eab73d-ed70-5bf5-9220-49723f2120fc"))
+    (pad "1" smd rect
+      (at -1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG07_W_R")
+      (uuid "dd595919-2f05-5b38-a06e-00fded309d87"))
+    (pad "2" smd rect
+      (at 1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG07_R_E")
+      (uuid "541f5449-a3ca-5bc4-8e51-e485e4d77428")))
+  (footprint "Generated:Semantic_R_LINK_08"
+    (layer "F.Cu")
+    (uuid "7529536b-c9da-5eb2-bd90-f7e1833b3bce")
+    (at 53 55 270)
+    (property "Reference" "R8"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "438426d1-9fca-57d3-adfd-6e1e40e1fed7")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_08"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "5c6763c5-f9a8-555e-825d-de2463e46482")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_08"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_08"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "32bf7c2a-5a9a-56ea-88d3-ea8afff22172"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "b76d8abf-28ed-583c-b012-3b7b360dd58a"))
+    (pad "1" smd rect
+      (at -1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG08_W_R")
+      (uuid "409025b4-199c-53f6-bd08-4a0cc4033fa1"))
+    (pad "2" smd rect
+      (at 1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG08_R_E")
+      (uuid "2630ee9a-95a7-5f7b-b331-ae5322204f4f")))
+  (footprint "Generated:Semantic_R_LINK_09"
+    (layer "F.Cu")
+    (uuid "222a9f21-ff3a-5687-901c-37a96c330dd0")
+    (at 56 58 0)
+    (property "Reference" "R9"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "7283a933-478e-5c9c-ad84-73d7b3b4e5c5")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_09"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "ba4acf4e-8d76-546b-bd58-f0d446dbb165")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_09"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_09"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "a5f1ca4c-3bb6-5142-80ef-153c0f497afe"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "8d8b614e-a516-5ea5-bdee-1147e8acb3e8"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG09_W_R")
+      (uuid "6e0b074d-c1e7-56b1-892d-7e12610641b5"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG09_R_E")
+      (uuid "fe5db13c-7f21-5209-b7ec-cf05bc2b4387")))
+  (footprint "Generated:Semantic_R_LINK_10"
+    (layer "F.Cu")
+    (uuid "8ee3b84a-75eb-556c-bb79-0d393b04f3d7")
+    (at 51 61 90)
+    (property "Reference" "R10"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "51c6805e-b4de-5876-adc1-8e68b8bbce0e")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LINK_10"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "affe17af-7eac-5d93-aabe-7fca199f420f")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LINK_10"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LINK_10"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "b5edb04a-0ba0-57ef-b92c-17a81633d70f"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "501b3e57-020a-50a8-8af7-6137c439a587"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG10_W_R")
+      (uuid "266caa2f-9793-550b-853d-c8f294943c5a"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG10_R_E")
+      (uuid "06128db7-1dc3-5824-ad56-c796943d3c0f")))
+  (footprint "Generated:Semantic_R_SOUTH_TAP1"
+    (layer "F.Cu")
+    (uuid "58e5eefc-1da9-59e5-b811-b695cd7aefce")
+    (at 64 66 0)
+    (property "Reference" "R11"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "d99c74db-87cd-516d-9aa0-c338670f85c0")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_TAP1"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "6212827c-0687-5da5-b7f4-f863a6b03185")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP1"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_TAP1"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "64989a84-5657-5964-85a0-6ee92de0616f"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "a22cdacb-29bf-57b6-8d3d-3c0a74601127"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_AFTER_LINK")
+      (uuid "ee339720-57a2-5cfa-a217-2f380f267b48"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG01_R_HEADER")
+      (uuid "a7c0acdb-8a07-5508-b8b9-17fc8957966f")))
+  (footprint "Generated:Semantic_R_SOUTH_TAP2"
+    (layer "F.Cu")
+    (uuid "5546505d-a042-54e4-bce5-e96587afe906")
+    (at 39 63 90)
+    (property "Reference" "R12"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "6c0ab471-a19a-57f3-a8a1-19831ef0c93a")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_TAP2"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "3a210ece-002f-5448-b65f-8e24acc1bccf")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP2"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_TAP2"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "b6ba4e3e-536e-57bc-a740-e6e8b44204ff"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "cd47c0bb-aca6-5a85-a947-8f4f657c786b"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_AFTER_LINK")
+      (uuid "cdff55dc-8603-5a3a-8085-7e70a3e765fe"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG02_R_HEADER")
+      (uuid "b309aeea-f265-5cc7-a410-ead986d436a6")))
+  (footprint "Generated:Semantic_R_SOUTH_TAP3"
+    (layer "F.Cu")
+    (uuid "9f84afa2-585a-5379-9d5e-cfb569ba7e6d")
+    (at 55 68 180)
+    (property "Reference" "R13"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "14d7440b-5b23-5918-8029-2da08c5ed431")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_TAP3"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "940c2c0f-cb4a-5dc6-a2f5-04286ae8a646")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP3"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_TAP3"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "18a6d192-6feb-56ad-9acb-6a5ae06b03f8"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "217f8fd9-00e4-5925-9838-0692a991766c"))
+    (pad "1" smd rect
+      (at -1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_AFTER_LINK")
+      (uuid "56401e47-cd83-5db0-9343-babf466f2070"))
+    (pad "2" smd rect
+      (at 1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG03_R_HEADER")
+      (uuid "b8a08c28-faa4-55de-8814-d876f4960c3f")))
+  (footprint "Generated:Semantic_R_SOUTH_TAP4"
+    (layer "F.Cu")
+    (uuid "c9dcf92a-159f-543e-a7c6-82bea69c5623")
+    (at 33 66 270)
+    (property "Reference" "R14"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "f2f2a9e5-e01a-530d-aacc-ef7a3f6e53a8")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_TAP4"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "b98cf4d8-fb3c-56af-b18d-ed46aed6b2b7")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP4"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_TAP4"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "6085ab16-255c-5b64-976b-f9991271c964"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "8045f19a-b241-512c-98e0-4cddb8d5b4b3"))
+    (pad "1" smd rect
+      (at -1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_AFTER_LINK")
+      (uuid "0c5d948b-38df-5585-9399-f87dcf7f2242"))
+    (pad "2" smd rect
+      (at 1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG04_R_HEADER")
+      (uuid "b41e052d-ea3e-5ef7-9ac4-659732e4210c")))
+  (footprint "Generated:Semantic_R_SOUTH_TAP5"
+    (layer "F.Cu")
+    (uuid "fc4d8053-7ef5-5ece-9e07-5337a08b93c5")
+    (at 70 62 90)
+    (property "Reference" "R15"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "15871037-dd0d-5498-ba87-5dd4f5483b7c")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_TAP5"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "f6f3bef8-005d-5020-9b32-132622801628")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP5"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_TAP5"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "fe2e95ed-0dda-54c0-b50b-87334628bc61"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "f94e90cb-77e8-5b4d-b7e4-c139caa12aca"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_AFTER_LINK")
+      (uuid "cc3d7cc6-8eb4-5b96-aecc-12e23df5101f"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/SIG05_R_HEADER")
+      (uuid "fbad68d7-246d-5ba4-aaef-e4d90eceea64")))
+  (footprint "Generated:Semantic_R_SOUTH_W_A"
+    (layer "F.Cu")
+    (uuid "4e46fcfe-8165-5556-b495-4b9b0d7b9e99")
+    (at 47 65 180)
+    (property "Reference" "R16"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "a417139f-2dde-569c-8f1c-cb5145eadcf4")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_W_A"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "ce97cfaa-c44f-540f-ae78-71b9ac805812")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_W_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "09ddac20-80ad-55d7-8cd0-f449764477b0"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "27fefd66-46b4-5330-a8ee-9d201841947b"))
+    (pad "1" smd rect
+      (at -1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_A_R")
+      (uuid "139224bb-4232-56da-bf9b-8a066309c0aa"))
+    (pad "2" smd rect
+      (at 1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_A_HEADER")
+      (uuid "49a490ec-8142-5631-92e4-0d68ade7b852")))
+  (footprint "Generated:Semantic_R_SOUTH_W_B"
+    (layer "F.Cu")
+    (uuid "5a64e182-2fae-554f-b096-819145dea0b4")
+    (at 67 68 0)
+    (property "Reference" "R17"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "7984baa8-0eba-5be4-ac9f-af76c7bb993b")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_W_B"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "0b188028-3bae-5575-a816-6e8d7dfe85c2")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_W_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "32394464-d334-5b0e-afca-ed439289ad66"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "dd4572b8-25ac-5330-b53e-08670686071b"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_B_R")
+      (uuid "a9b72232-761a-5f9c-a07e-231018092a3b"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_B_HEADER")
+      (uuid "8551184d-9264-57c9-bba8-d8f181762957")))
+  (footprint "Generated:Semantic_R_SOUTH_W_C"
+    (layer "F.Cu")
+    (uuid "ad26c238-3d8f-5c1b-8451-8810c4324003")
+    (at 42 60 270)
+    (property "Reference" "R18"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "0224de08-a1a8-5dbe-b1b9-f9e717f8e514")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_W_C"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "d67fe477-f86a-5c18-91e4-951e22da8860")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_C"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_W_C"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "ac57c443-da9c-5635-8b21-e200bb1094ed"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "d0d66874-33f9-57c2-8222-0b6971afe30b"))
+    (pad "1" smd rect
+      (at -1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_C_R")
+      (uuid "5769041b-834c-5a59-963d-39c0fbe4e090"))
+    (pad "2" smd rect
+      (at 1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_C_HEADER")
+      (uuid "f9675d3c-cff7-5260-aece-7d40134475dc")))
+  (footprint "Generated:Semantic_R_SOUTH_W_D"
+    (layer "F.Cu")
+    (uuid "ccbb7534-311d-5638-8d22-78cea3abdb10")
+    (at 58 63 90)
+    (property "Reference" "R19"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "7dc92752-b197-588a-8229-49dcc8d74714")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_W_D"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "ea9579b7-01a5-52a0-adf9-fccc55d23405")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_D"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_W_D"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "b0aa42de-ddba-5e87-9a47-39efbbc063d0"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "51a37637-3345-57fd-89aa-08d2c7589942"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_D_R")
+      (uuid "2ce119e6-b9e7-5659-bd3b-c6e724250824"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/WEST_AUX_D_HEADER")
+      (uuid "1811a17a-ec0f-5e8c-adf0-a45d54c4172c")))
+  (footprint "Generated:Semantic_R_SOUTH_E_A"
+    (layer "F.Cu")
+    (uuid "747997c5-08ad-5d01-a882-31585d11ac1c")
+    (at 36 69 180)
+    (property "Reference" "R20"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "bc629ed5-f53d-5a3f-8fab-593ab5412e42")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_E_A"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "770de747-adf2-54fb-a3ce-69b908b3a619")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_E_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "ec21c0ca-1f09-5c04-bd78-841d1a8e82cd"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "ca6e141a-8f55-512b-854e-bbac945bcd79"))
+    (pad "1" smd rect
+      (at -1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_A_R")
+      (uuid "8fcc20df-5072-5258-bf38-494360c5fa77"))
+    (pad "2" smd rect
+      (at 1 0 180)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_A_HEADER")
+      (uuid "7fc57f74-9b3e-5bf3-8db1-7a7a53d04a08")))
+  (footprint "Generated:Semantic_R_SOUTH_E_B"
+    (layer "F.Cu")
+    (uuid "5a31bd1a-e0e4-5c9d-98fc-c2d96ce3a642")
+    (at 62 60 270)
+    (property "Reference" "R21"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "c196efc3-6335-5829-ad4a-17cac2ce893a")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_E_B"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "1fb35488-a0ba-575c-8922-11cd744fd25d")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_E_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "d8974dda-eadb-5663-875f-5595b3617289"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "40c15624-cee3-59ca-98ce-6e90b7974610"))
+    (pad "1" smd rect
+      (at -1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_B_R")
+      (uuid "fb7a5da1-f5e6-58ab-96d0-687537405574"))
+    (pad "2" smd rect
+      (at 1 0 270)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_B_HEADER")
+      (uuid "62f5b6cb-4c13-553f-9ae4-623790353bb9")))
+  (footprint "Generated:Semantic_R_SOUTH_E_C"
+    (layer "F.Cu")
+    (uuid "dfe88513-2347-5c0b-ac74-1b5173b325cc")
+    (at 50 68 0)
+    (property "Reference" "R22"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "5e465955-517a-5b53-b780-686c1fefc1f0")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_E_C"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "eb0828c8-f9ba-5890-98e5-613458fc4cd4")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_C"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_E_C"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "08b61377-26f8-52ac-bc9e-df9f3f2e309c"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "0c6961f4-50db-5143-b6a8-43362af68f15"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_C_R")
+      (uuid "c1144101-f67d-53b0-81d7-6ee2f04f4b67"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_C_HEADER")
+      (uuid "10a45f26-f1bb-5335-8076-07898046ef08")))
+  (footprint "Generated:Semantic_R_SOUTH_E_D"
+    (layer "F.Cu")
+    (uuid "0d9da565-059b-59ad-a8bd-37a70c05a886")
+    (at 72 66 90)
+    (property "Reference" "R23"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "d619d2c0-27f2-5d5c-9366-21efb958b5b8")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_SOUTH_E_D"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "f81f3550-9b7d-58fc-86d5-7f477cf9b6aa")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_D"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_SOUTH_E_D"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "64ab6369-cb98-51ee-b433-fc9176d90daa"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "2c83b656-a34f-5877-aef2-726e97231731"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_D_R")
+      (uuid "d446c1ac-9fba-512c-8922-d4a5056bfae4"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/EAST_AUX_D_HEADER")
+      (uuid "2ae8f370-e906-5010-b42b-a1c8381c84c8")))
+  (footprint "Generated:Semantic_C_W_A"
+    (layer "F.Cu")
+    (uuid "cc5be321-867a-5a0c-9bc5-6fe1e003822a")
+    (at 27.5 61 0)
+    (property "Reference" "C1"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "f51ec6c6-2128-58f4-91f3-e3310c000b90")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_W_A"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "81d4a309-02d0-5767-be9f-c9d118032550")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_W_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_W_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "0686aa10-4f3e-5d83-89df-0158b5edb410"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "c03cf818-4d4f-536e-8854-c5561d756e08"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "1c74a5b2-e6b6-5e3c-9ea5-ddd177a502c1"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "17a05a7f-f7dd-531f-8b57-de607806a88d")))
+  (footprint "Generated:Semantic_C_W_B"
+    (layer "F.Cu")
+    (uuid "0d842067-36dc-548b-b408-ab595dd7ccd1")
+    (at 30.869367 63.164713 90)
+    (property "Reference" "C2"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "1dc8c6a4-b833-594d-be8d-0cb2b7ceebbb")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_W_B"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "d442d210-e758-577f-b1bb-742fdf2d3067")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_W_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_W_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "914ab474-af94-5361-bdfc-8e7b148d9ae4"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "baace684-49b7-5f61-9ff2-109b15102cfe"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "ee812607-5060-545b-a22e-d10a7a85246e"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "3d13fbf5-8f46-5480-b07d-8c8a6d6244f3")))
+  (footprint "Generated:Semantic_C_W_EN"
+    (layer "F.Cu")
+    (uuid "cd048304-ae37-5198-8f79-06d7a53b5d45")
+    (at 34.5 60.5 0)
+    (property "Reference" "C3"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "e528463d-b380-5c89-8864-addef1cdca32")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_W_EN"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "f9913a88-c439-509d-86d2-876bd43a0b92")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_W_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_W_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "9319c1fd-1e72-5960-8c8d-57ad7fe692be"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "8166a885-be38-5edc-96de-2f7f57225dc7"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/W_EN")
+      (uuid "5adf4c09-027b-5574-86c0-4888c008b8f9"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "13b6f70e-7de6-53fc-900f-17e8a07c33b7")))
+  (footprint "Generated:Semantic_R_W_EN"
+    (layer "F.Cu")
+    (uuid "0bf091ca-7a01-5584-a34b-629b62170b3b")
+    (at 31 59.5 0)
+    (property "Reference" "R24"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "45d7df39-b323-5c0b-ba40-acca2170dda7")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_W_EN"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "078751ae-bfa2-535b-abac-833f6f3fd3e4")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_W_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_W_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "84b38316-1cae-54b3-b505-8cf9ad98da93"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "51168833-d496-59b8-a5d2-89b51a9c3bfa"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "5caeb0c3-d899-5695-92d8-82dd349e2aee"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/W_EN")
+      (uuid "43d0be9e-ce57-54ff-ae3e-d4c1330a622c")))
+  (footprint "Generated:Semantic_C_E_A"
+    (layer "F.Cu")
+    (uuid "82a75ca4-8b2d-544e-bb64-2ccae7f5970f")
+    (at 77.5 35.5 0)
+    (property "Reference" "C4"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "c298cabf-48ac-5269-9c69-8fcfcce1c649")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_E_A"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "438b003a-6a14-5e80-a6e0-b2e4cedc12b9")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_E_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_E_A"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "1d837dbc-d2a5-5e1f-ad9d-ae0ea706d2e9"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "3be53def-46ee-5e7f-a0d6-3cf3f6d4c0ba"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "5e8849e5-0355-5aa5-9fc1-caa60fd1228f"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "11831d60-4c9e-51ee-a37c-89d82c49e5af")))
+  (footprint "Generated:Semantic_C_E_B"
+    (layer "F.Cu")
+    (uuid "59bf5045-f30e-5d68-b922-6fee528e63a9")
+    (at 74.34926 34.117494 90)
+    (property "Reference" "C5"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "5e91af51-3f20-595f-b50a-2bc64f0ef712")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_E_B"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "41455d54-c905-57d5-9db2-0e5883f538ab")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_E_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_E_B"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "24f85ff3-6da3-51ad-bd63-ebffe4493e08"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "60b3fc1f-9326-5d2a-b4da-0bb4ba790118"))
+    (pad "1" smd rect
+      (at -1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "f7249c79-a829-5a52-a510-f04f164ce691"))
+    (pad "2" smd rect
+      (at 1 0 90)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "648dda4f-852b-5a8f-b21c-ee069da526d6")))
+  (footprint "Generated:Semantic_C_E_EN"
+    (layer "F.Cu")
+    (uuid "4618224c-ca05-50ba-b8ec-196c9e3d65b1")
+    (at 70.880532 36.187485 0)
+    (property "Reference" "C6"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "3dc43ce6-13f8-53ff-aa94-2ad888b3499e")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "C_E_EN"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "f57df6ed-a556-52f7-81da-a06867c64217")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_C_E_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "C_E_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "13782c1a-0ffa-5771-8cad-d91048a510f1"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "c3b70737-8354-5cb7-9fc7-7e668227d27f"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/E_EN")
+      (uuid "571c9dd4-df13-5a9f-9182-3e531ef554c1"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "b75cb4d2-05f1-51a6-a8b3-3d8c2b28e364")))
+  (footprint "Generated:Semantic_R_E_EN"
+    (layer "F.Cu")
+    (uuid "0db3578b-e1bb-57b3-9345-9d9d6227e0bd")
+    (at 74.080532 36.672511 0)
+    (property "Reference" "R25"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "4a1c4859-b2c8-5e45-9e9c-e8324f8d68dc")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_E_EN"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "5a504ada-30ba-55a4-9a63-ec1ba229acf8")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_E_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_E_EN"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "463c3a81-8339-55ae-975d-873feb14df4d"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "877ef004-aba5-50e6-afc0-82a40df26d79"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "f24c411b-990b-5f8e-b4ea-f90d0c8f6c24"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/E_EN")
+      (uuid "788b45b4-b03d-50d9-a755-a63e172aa872")))
+  (footprint "Generated:Semantic_R_LED"
+    (layer "F.Cu")
+    (uuid "c0dff37f-2b50-5ab8-a391-9492e4ce5107")
+    (at 50 28 0)
+    (property "Reference" "R26"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "e5893de9-e97a-5371-a3fb-ca0cd4c12175")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "R_LED"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "7d9216fc-1174-5931-ad04-1140c80cd5d3")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_R_LED"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "R_LED"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "63ed1927-df69-530d-bf7c-61b157c3c844"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "f607e490-bdd1-5f62-8033-fdf46258255f"))
+    (pad "1" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/VCC")
+      (uuid "f48771d4-ed9d-51d1-a8e8-176a3654979a"))
+    (pad "2" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/LED_SERIES")
+      (uuid "7dd00b8f-3f26-5720-aa5d-db9c26ec3cc9")))
+  (footprint "Generated:Semantic_D_LED"
+    (layer "F.Cu")
+    (uuid "2abb3855-6cc6-5546-b64d-43e29e474971")
+    (at 54 28 0)
+    (property "Reference" "D1"
+      (at 0 -1.825 0)
+      (layer "F.Fab")
+      (uuid "e1330240-d153-5536-9c2f-ad3f1356a8ea")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Value" "D_LED"
+      (at 0 1.825 0)
+      (layer "F.Fab")
+      (uuid "fc45f418-75ab-51f1-8820-cd1405d1b9e1")
+      (effects
+        (font
+          (size 0.8 0.8)
+          (thickness 0.12))))
+    (property "Footprint" "Generated:Semantic_D_LED"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Semantic_Id" "D_LED"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (attr smd)
+    (property "Router_Movable" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_X" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Translate_Y" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (property "Router_Continuous_Rotation" "yes"
+      (at 0 0 0)
+      (hide yes)
+      (effects
+        (font
+          (size 1 1))))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.15)
+        (type solid))
+      (fill none)
+      (layer "F.Fab")
+      (uuid "a3f47863-43eb-59b9-a01b-d8bcab5b8900"))
+    (fp_rect
+      (start -1 -0.625)
+      (end 1 0.625)
+      (stroke
+        (width 0.05)
+        (type solid))
+      (fill none)
+      (layer "F.CrtYd")
+      (uuid "9c0fecae-78e2-5799-b2c0-f9cd8570049d"))
+    (pad "A" smd rect
+      (at -1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/LED_SERIES")
+      (uuid "62389a65-5cd0-5162-b167-ffb6a58e5062"))
+    (pad "K" smd rect
+      (at 1 0 0)
+      (size 1 1.3)
+      (layers "F.Cu" "F.Mask" "F.Paste")
+      (net "/GND")
+      (uuid "553f1039-fc76-5480-9365-fb01bb20360d")))
+  (gr_rect
+    (start 19 19)
+    (end 86 77.5)
+    (stroke
+      (width 0.25)
+      (type solid))
+    (fill none)
+    (layer "Edge.Cuts")
+    (uuid "1e90d60e-5283-57d6-ac4d-b8482d1f7bca"))
+  (gr_text "dual-esp32 · semantic progressive benchmark"
+    (at 52.5 75.5 0)
+    (layer "B.SilkS")
+    (uuid "9fd7d926-c996-5019-b3ee-fbb73ff78a95")
+    (effects
+      (font
+        (size 1.1 1.1)
+        (thickness 0.18))
+      (justify mirror)))
+  (zone
+    (layer "F.Cu")
+    (uuid "8c0898bb-fd35-5ce9-89a1-1f7e4f86d6df")
+    (name "ESP_W:keepout:0")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 20 57.335287)
+        (xy 20 39.335287)
+        (xy 25.94 39.335287)
+        (xy 25.94 57.335287))))
+  (zone
+    (layer "B.Cu")
+    (uuid "c60608df-7d64-537a-9950-f78a099a7482")
+    (name "ESP_W:keepout:1")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 20 57.335287)
+        (xy 20 39.335287)
+        (xy 25.94 39.335287)
+        (xy 25.94 57.335287))))
+  (zone
+    (layer "F.Cu")
+    (uuid "8e93600a-5958-5960-9edf-6a9ce913ba1d")
+    (name "ESP_E:keepout:0")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 85 38.02251)
+        (xy 85 56.02251)
+        (xy 79.06 56.02251)
+        (xy 79.06 38.02251))))
+  (zone
+    (layer "B.Cu")
+    (uuid "233efa6d-9d87-5be4-a980-bb40296a75ec")
+    (name "ESP_E:keepout:1")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 85 38.02251)
+        (xy 85 56.02251)
+        (xy 79.06 56.02251)
+        (xy 79.06 38.02251))))
+  (zone
+    (layers "F.Cu" "B.Cu")
+    (uuid "4f16a603-b700-5037-9c37-0ccf2ecba68e")
+    (name "H_NW:body")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 21.9 21.9)
+        (xy 25.1 21.9)
+        (xy 25.1 25.1)
+        (xy 21.9 25.1))))
+  (zone
+    (layers "F.Cu" "B.Cu")
+    (uuid "6f1d4377-bed7-5cb0-b13f-87a37439076b")
+    (name "H_NE:body")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 79.9 21.9)
+        (xy 83.1 21.9)
+        (xy 83.1 25.1)
+        (xy 79.9 25.1))))
+  (zone
+    (layers "F.Cu" "B.Cu")
+    (uuid "c66f5e53-6760-5292-aead-72cb3c4ffc25")
+    (name "H_SW:body")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 21.9 71.4)
+        (xy 25.1 71.4)
+        (xy 25.1 74.6)
+        (xy 21.9 74.6))))
+  (zone
+    (layers "F.Cu" "B.Cu")
+    (uuid "8e9dc670-aea7-56b5-a5f7-81658a5cee38")
+    (name "H_SE:body")
+    (hatch edge 0.5)
+    (connect_pads
+      (clearance 0))
+    (min_thickness 0.25)
+    (keepout
+      (tracks not_allowed)
+      (vias not_allowed)
+      (pads not_allowed)
+      (copperpour not_allowed))
+    (fill
+      (thermal_gap 0.3)
+      (thermal_bridge_width 0.3))
+    (polygon
+      (pts
+        (xy 79.9 71.4)
+        (xy 83.1 71.4)
+        (xy 83.1 74.6)
+        (xy 79.9 74.6))))
+  (embedded_fonts no))

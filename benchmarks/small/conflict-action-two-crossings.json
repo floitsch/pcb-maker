@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 0.0, "y": 0.0 },
+      "max": { "x": 60.0, "y": 40.0 }
+    },
+    "layers": [
+      { "id": "top" },
+      { "id": "bottom" }
+    ]
+  },
+  "rules": {
+    "clearance": 0.35,
+    "via_diameter": 1.0,
+    "via_drill": 0.45,
+    "allow_via_in_pad": false
+  },
+  "components": [
+    {
+      "id": "P1_W", "position": { "x": 4.0, "y": 12.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P1_E", "position": { "x": 26.0, "y": 12.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P1_N", "position": { "x": 15.0, "y": 6.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P1_S", "position": { "x": 15.0, "y": 18.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P2_W", "position": { "x": 34.0, "y": 28.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P2_E", "position": { "x": 56.0, "y": 28.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P2_N", "position": { "x": 45.0, "y": 22.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    },
+    {
+      "id": "P2_S", "position": { "x": 45.0, "y": 34.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }] }]
+    }
+  ],
+  "nets": [
+    {
+      "id": "P1_A_WEST_EAST", "width": 0.45, "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "P1_W", "pin": "1" },
+      "to": { "component": "P1_E", "pin": "1" },
+      "seed_route": [{ "x": 4.0, "y": 12.0 }, { "x": 26.0, "y": 12.0 }]
+    },
+    {
+      "id": "P1_B_NORTH_SOUTH", "width": 0.45, "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "P1_N", "pin": "1" },
+      "to": { "component": "P1_S", "pin": "1" },
+      "seed_route": [{ "x": 15.0, "y": 6.0 }, { "x": 15.0, "y": 18.0 }]
+    },
+    {
+      "id": "P2_A_WEST_EAST", "width": 0.45, "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "P2_W", "pin": "1" },
+      "to": { "component": "P2_E", "pin": "1" },
+      "seed_route": [{ "x": 34.0, "y": 28.0 }, { "x": 56.0, "y": 28.0 }]
+    },
+    {
+      "id": "P2_B_NORTH_SOUTH", "width": 0.45, "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "P2_N", "pin": "1" },
+      "to": { "component": "P2_S", "pin": "1" },
+      "seed_route": [{ "x": 45.0, "y": 22.0 }, { "x": 45.0, "y": 34.0 }]
+    }
+  ],
+  "solver": { "particles_per_trace": 8 }
+}

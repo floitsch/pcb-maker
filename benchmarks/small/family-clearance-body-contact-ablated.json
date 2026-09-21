@@ -1,0 +1,24 @@
+{
+  "corridor": {
+    "circle_segments": 16,
+    "placement_revision": 1,
+    "first_corridor_revision": 1,
+    "embedding_mode": "full_width"
+  },
+  "portfolio_id": "pcb-maker-route-families-body-contact-ablated",
+  "geometry_revision": 1,
+  "maximum_assignment_nodes": 100000,
+  "maximum_repair_component_branches": 6,
+  "route_repair_work_budget": null,
+  "context_correction_limits": {
+    "max_nodes": 50000,
+    "max_promoted_branches": 2
+  },
+  "continuous_obligation_repair": {
+    "steps": 8,
+    "projection_iterations": 16,
+    "maximum_segment_pairs": 100000,
+    "include_body_contacts": false,
+    "numerical_clearance_margin_nm": 1000
+  }
+}

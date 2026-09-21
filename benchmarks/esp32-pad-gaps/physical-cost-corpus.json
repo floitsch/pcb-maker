@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "esp32-pad-gap-profiles-physical-cost",
+  "cases": [
+    {
+      "id": "gap-blocked",
+      "comparison": "gap-blocked/comparison-physical.json"
+    },
+    {
+      "id": "gap-open",
+      "comparison": "gap-open/comparison-physical.json"
+    },
+    {
+      "id": "dual-prefix03-blocked",
+      "comparison": "dual-prefix03-blocked/comparison-physical.json"
+    },
+    {
+      "id": "dual-prefix03-open",
+      "comparison": "dual-prefix03-open/comparison-physical.json"
+    }
+  ]
+}

@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 10,
+        "y": 8
+      }
+    },
+    "layers": [
+      {
+        "id": "top"
+      },
+      {
+        "id": "bottom"
+      }
+    ]
+  },
+  "rules": {
+    "clearance": 0.2,
+    "via_diameter": 0.6,
+    "via_drill": 0.3
+  },
+  "components": [
+    {
+      "id": "H_L",
+      "position": {
+        "x": 1,
+        "y": 4
+      },
+      "size": {
+        "x": 1.4,
+        "y": 1.4
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 1.2
+              }
+            }
+          ]
+        }
+      ],
+      "routing_keepouts": [
+        {
+          "layer": "bottom",
+          "offset": {
+            "x": 4,
+            "y": 0
+          },
+          "shape": {
+            "kind": "rect",
+            "size": {
+              "x": 10,
+              "y": 8
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "H_R",
+      "position": {
+        "x": 9,
+        "y": 4
+      },
+      "size": {
+        "x": 1.4,
+        "y": 1.4
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 1.2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "V_T",
+      "position": {
+        "x": 5,
+        "y": 2
+      },
+      "size": {
+        "x": 1.4,
+        "y": 1.4
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 1.2
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "V_B",
+      "position": {
+        "x": 5,
+        "y": 6
+      },
+      "size": {
+        "x": 1.4,
+        "y": 1.4
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 1.2
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "id": "H",
+      "width": 0.2,
+      "layer": "top",
+      "allowed_layers": [
+        "top"
+      ],
+      "from": {
+        "component": "H_L",
+        "pin": "1"
+      },
+      "to": {
+        "component": "H_R",
+        "pin": "1"
+      }
+    },
+    {
+      "id": "V",
+      "width": 0.2,
+      "layer": "top",
+      "allowed_layers": [
+        "top"
+      ],
+      "from": {
+        "component": "V_T",
+        "pin": "1"
+      },
+      "to": {
+        "component": "V_B",
+        "pin": "1"
+      }
+    }
+  ],
+  "solver": {
+    "particles_per_trace": 12
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "direction_policy": "frontier_centroid",
+  "component_order": "failed_terminals_then_trigger_branches_then_hits",
+  "pressure_sources": "blockers_and_failed_branch_terminals",
+  "push_propagation": "relational_and_collision_chain",
+  "maximum_components_per_push": 4,
+  "beam_width": 4,
+  "retain_non_improving_states": true,
+  "selective_ripup": {
+    "maximum_attempts": 6,
+    "maximum_reroute_branches": 6,
+    "stop_on_complete": true
+  },
+  "push_step_mm": 0.5,
+  "step_scales": [
+    1.0,
+    2.0
+  ],
+  "maximum_iterations": 3,
+  "maximum_blocking_components": 4,
+  "maximum_candidates_per_iteration": 64,
+  "maximum_total_attempts": 144,
+  "stop_on_complete": true
+}

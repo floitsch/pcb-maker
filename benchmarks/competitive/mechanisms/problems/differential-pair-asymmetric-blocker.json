@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {"min": {"x": 0.0, "y": 0.0}, "max": {"x": 36.0, "y": 20.0}},
+    "layers": [{"id": "top"}, {"id": "bottom"}]
+  },
+  "rules": {"clearance": 0.2, "via_diameter": 0.7, "via_drill": 0.3},
+  "components": [
+    {"id": "P_SOURCE", "position": {"x": 5.0, "y": 8.0}, "size": {"x": 2.0, "y": 2.0}, "constraints": {"movement": "fixed", "rotation": "fixed"}, "body_is_routing_keepout": false, "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.0}}]}]},
+    {"id": "P_SINK", "position": {"x": 31.0, "y": 8.0}, "size": {"x": 2.0, "y": 2.0}, "constraints": {"movement": "fixed", "rotation": "fixed"}, "body_is_routing_keepout": false, "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.0}}]}]},
+    {"id": "N_SOURCE", "position": {"x": 5.0, "y": 12.0}, "size": {"x": 2.0, "y": 2.0}, "constraints": {"movement": "fixed", "rotation": "fixed"}, "body_is_routing_keepout": false, "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.0}}]}]},
+    {"id": "N_SINK", "position": {"x": 31.0, "y": 12.0}, "size": {"x": 2.0, "y": 2.0}, "constraints": {"movement": "fixed", "rotation": "fixed"}, "body_is_routing_keepout": false, "pins": [{"id": "1", "offset": {"x": 0.0, "y": 0.0}, "pads": [{"layer": "top", "shape": {"kind": "circle", "diameter": 1.0}}]}]},
+    {
+      "id": "P_ONLY_BLOCKER", "position": {"x": 18.0, "y": 4.0}, "size": {"x": 0.3, "y": 0.3},
+      "constraints": {"movement": "fixed", "rotation": "fixed"}, "body_is_routing_keepout": false,
+      "routing_keepouts": [
+        {"layer": "top", "offset": {"x": 0.0, "y": 4.0}, "shape": {"kind": "rect", "size": {"x": 5.0, "y": 3.0}}},
+        {"layer": "bottom", "offset": {"x": 0.0, "y": 4.0}, "shape": {"kind": "rect", "size": {"x": 5.0, "y": 3.0}}}
+      ],
+      "pins": []
+    }
+  ],
+  "nets": [
+    {"id": "USB_P", "width": 0.25, "layer": "top", "allowed_layers": ["top", "bottom"], "from": {"component": "P_SOURCE", "pin": "1"}, "to": {"component": "P_SINK", "pin": "1"}},
+    {"id": "USB_N", "width": 0.25, "layer": "top", "allowed_layers": ["top", "bottom"], "from": {"component": "N_SOURCE", "pin": "1"}, "to": {"component": "N_SINK", "pin": "1"}}
+  ],
+  "solver": {"particles_per_trace": 12}
+}

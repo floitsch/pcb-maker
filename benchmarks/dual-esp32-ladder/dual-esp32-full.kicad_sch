@@ -1,0 +1,7498 @@
+(kicad_sch
+  (version 20250114)
+  (generator "pcb-maker")
+  (generator_version "0.1")
+  (uuid "740f3fb3-3ed3-509e-a07f-f2b1daa2fb52")
+  (paper "A2")
+  (title_block
+    (title "dual-esp32 progressive routing benchmark")
+    (date "2026-09-02")
+    (rev "semantic-v1")
+    (company "Toit contributors")
+    (comment 1 "Generated from layout-trace semantic geometry"))
+  (lib_symbols
+    (symbol "Generated:Semantic_ESP_W"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "U"
+        (at -12.7 27.94 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "ESP_W"
+        (at 0 27.94 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_ESP_W_0_1"
+        (rectangle
+          (start -12.7 26.67)
+          (end 12.7 -26.67)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_ESP_W_1_1"
+        (pin passive line
+          (at -15.24 -24.13 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -21.59 0)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -19.05 0)
+          (length 2.54)
+          (name "3"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "3"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -16.51 0)
+          (length 2.54)
+          (name "4"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "4"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -13.97 0)
+          (length 2.54)
+          (name "5"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "5"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -11.43 0)
+          (length 2.54)
+          (name "6"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "6"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -8.89 0)
+          (length 2.54)
+          (name "7"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "7"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -6.35 0)
+          (length 2.54)
+          (name "8"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "8"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -3.81 0)
+          (length 2.54)
+          (name "9"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "9"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -1.27 0)
+          (length 2.54)
+          (name "10"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "10"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 1.27 0)
+          (length 2.54)
+          (name "11"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "11"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 3.81 0)
+          (length 2.54)
+          (name "12"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "12"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 6.35 0)
+          (length 2.54)
+          (name "13"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "13"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 8.89 0)
+          (length 2.54)
+          (name "14"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "14"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 11.43 0)
+          (length 2.54)
+          (name "15"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "15"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 13.97 0)
+          (length 2.54)
+          (name "16"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "16"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 16.51 0)
+          (length 2.54)
+          (name "17"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "17"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 19.05 0)
+          (length 2.54)
+          (name "18"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "18"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 21.59 0)
+          (length 2.54)
+          (name "19"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "19"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 24.13 0)
+          (length 2.54)
+          (name "20"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "20"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -22.86 180)
+          (length 2.54)
+          (name "21"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "21"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -20.32 180)
+          (length 2.54)
+          (name "22"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "22"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -17.78 180)
+          (length 2.54)
+          (name "23"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "23"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -15.24 180)
+          (length 2.54)
+          (name "24"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "24"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -12.7 180)
+          (length 2.54)
+          (name "25"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "25"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -10.16 180)
+          (length 2.54)
+          (name "26"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "26"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -7.62 180)
+          (length 2.54)
+          (name "27"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "27"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -5.08 180)
+          (length 2.54)
+          (name "28"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "28"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -2.54 180)
+          (length 2.54)
+          (name "29"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "29"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "30"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "30"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 2.54 180)
+          (length 2.54)
+          (name "31"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "31"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 5.08 180)
+          (length 2.54)
+          (name "32"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "32"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 7.62 180)
+          (length 2.54)
+          (name "33"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "33"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 10.16 180)
+          (length 2.54)
+          (name "34"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "34"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 12.7 180)
+          (length 2.54)
+          (name "35"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "35"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 15.24 180)
+          (length 2.54)
+          (name "36"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "36"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 17.78 180)
+          (length 2.54)
+          (name "37"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "37"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 20.32 180)
+          (length 2.54)
+          (name "38"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "38"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 22.86 180)
+          (length 2.54)
+          (name "39"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "39"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_ESP_E"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "U"
+        (at -12.7 27.94 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "ESP_E"
+        (at 0 27.94 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_ESP_E_0_1"
+        (rectangle
+          (start -12.7 26.67)
+          (end 12.7 -26.67)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_ESP_E_1_1"
+        (pin passive line
+          (at -15.24 -24.13 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -21.59 0)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -19.05 0)
+          (length 2.54)
+          (name "3"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "3"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -16.51 0)
+          (length 2.54)
+          (name "4"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "4"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -13.97 0)
+          (length 2.54)
+          (name "5"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "5"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -11.43 0)
+          (length 2.54)
+          (name "6"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "6"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -8.89 0)
+          (length 2.54)
+          (name "7"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "7"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -6.35 0)
+          (length 2.54)
+          (name "8"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "8"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -3.81 0)
+          (length 2.54)
+          (name "9"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "9"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -1.27 0)
+          (length 2.54)
+          (name "10"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "10"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 1.27 0)
+          (length 2.54)
+          (name "11"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "11"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 3.81 0)
+          (length 2.54)
+          (name "12"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "12"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 6.35 0)
+          (length 2.54)
+          (name "13"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "13"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 8.89 0)
+          (length 2.54)
+          (name "14"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "14"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 11.43 0)
+          (length 2.54)
+          (name "15"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "15"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 13.97 0)
+          (length 2.54)
+          (name "16"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "16"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 16.51 0)
+          (length 2.54)
+          (name "17"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "17"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 19.05 0)
+          (length 2.54)
+          (name "18"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "18"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 21.59 0)
+          (length 2.54)
+          (name "19"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "19"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 24.13 0)
+          (length 2.54)
+          (name "20"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "20"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -22.86 180)
+          (length 2.54)
+          (name "21"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "21"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -20.32 180)
+          (length 2.54)
+          (name "22"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "22"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -17.78 180)
+          (length 2.54)
+          (name "23"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "23"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -15.24 180)
+          (length 2.54)
+          (name "24"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "24"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -12.7 180)
+          (length 2.54)
+          (name "25"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "25"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -10.16 180)
+          (length 2.54)
+          (name "26"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "26"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -7.62 180)
+          (length 2.54)
+          (name "27"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "27"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -5.08 180)
+          (length 2.54)
+          (name "28"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "28"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -2.54 180)
+          (length 2.54)
+          (name "29"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "29"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "30"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "30"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 2.54 180)
+          (length 2.54)
+          (name "31"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "31"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 5.08 180)
+          (length 2.54)
+          (name "32"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "32"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 7.62 180)
+          (length 2.54)
+          (name "33"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "33"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 10.16 180)
+          (length 2.54)
+          (name "34"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "34"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 12.7 180)
+          (length 2.54)
+          (name "35"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "35"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 15.24 180)
+          (length 2.54)
+          (name "36"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "36"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 17.78 180)
+          (length 2.54)
+          (name "37"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "37"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 20.32 180)
+          (length 2.54)
+          (name "38"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "38"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 22.86 180)
+          (length 2.54)
+          (name "39"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "39"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_J_POWER"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "J"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "J_POWER"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_J_POWER_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_J_POWER_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "VCC"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "VCC"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "GND"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "GND"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_J_CTRL_W"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "J"
+        (at -12.7 6.35 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "J_CTRL_W"
+        (at 0 6.35 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_J_CTRL_W_0_1"
+        (rectangle
+          (start -12.7 5.08)
+          (end 12.7 -5.08)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_J_CTRL_W_1_1"
+        (pin passive line
+          (at -15.24 -2.54 0)
+          (length 2.54)
+          (name "GND"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "GND"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "VCC"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "VCC"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 2.54 0)
+          (length 2.54)
+          (name "RX"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "RX"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -1.27 180)
+          (length 2.54)
+          (name "TX"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TX"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 1.27 180)
+          (length 2.54)
+          (name "BOOT"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "BOOT"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_J_CTRL_E"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "J"
+        (at -12.7 6.35 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "J_CTRL_E"
+        (at 0 6.35 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_J_CTRL_E_0_1"
+        (rectangle
+          (start -12.7 5.08)
+          (end 12.7 -5.08)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_J_CTRL_E_1_1"
+        (pin passive line
+          (at -15.24 -2.54 0)
+          (length 2.54)
+          (name "GND"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "GND"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "VCC"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "VCC"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 2.54 0)
+          (length 2.54)
+          (name "RX"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "RX"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -1.27 180)
+          (length 2.54)
+          (name "TX"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TX"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 1.27 180)
+          (length 2.54)
+          (name "BOOT"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "BOOT"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_J_SOUTH"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "J"
+        (at -12.7 11.43 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "J_SOUTH"
+        (at 0 11.43 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_J_SOUTH_0_1"
+        (rectangle
+          (start -12.7 10.16)
+          (end 12.7 -10.16)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_J_SOUTH_1_1"
+        (pin passive line
+          (at -15.24 -7.62 0)
+          (length 2.54)
+          (name "TAP1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TAP1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -5.08 0)
+          (length 2.54)
+          (name "W_A"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "W_A"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 -2.54 0)
+          (length 2.54)
+          (name "TAP3"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TAP3"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "E_B"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "E_B"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 2.54 0)
+          (length 2.54)
+          (name "W_D"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "W_D"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 5.08 0)
+          (length 2.54)
+          (name "TAP5"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TAP5"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at -15.24 7.62 0)
+          (length 2.54)
+          (name "E_D"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "E_D"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -7.62 180)
+          (length 2.54)
+          (name "E_A"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "E_A"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -5.08 180)
+          (length 2.54)
+          (name "TAP2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TAP2"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 -2.54 180)
+          (length 2.54)
+          (name "W_B"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "W_B"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "E_C"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "E_C"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 2.54 180)
+          (length 2.54)
+          (name "TAP4"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "TAP4"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 5.08 180)
+          (length 2.54)
+          (name "W_C"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "W_C"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 7.62 180)
+          (length 2.54)
+          (name "NC"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "NC"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_01"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_01"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_01_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_01_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_02"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_02"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_02_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_02_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_03"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_03"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_03_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_03_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_04"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_04"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_04_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_04_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_05"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_05"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_05_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_05_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_06"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_06"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_06_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_06_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_07"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_07"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_07_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_07_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_08"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_08"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_08_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_08_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_09"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_09"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_09_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_09_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LINK_10"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LINK_10"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LINK_10_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LINK_10_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_TAP1"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_TAP1"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_TAP1_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_TAP1_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_TAP2"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_TAP2"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_TAP2_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_TAP2_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_TAP3"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_TAP3"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_TAP3_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_TAP3_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_TAP4"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_TAP4"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_TAP4_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_TAP4_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_TAP5"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_TAP5"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_TAP5_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_TAP5_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_W_A"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_W_A"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_W_A_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_W_A_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_W_B"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_W_B"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_W_B_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_W_B_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_W_C"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_W_C"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_W_C_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_W_C_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_W_D"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_W_D"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_W_D_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_W_D_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_E_A"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_E_A"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_E_A_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_E_A_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_E_B"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_E_B"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_E_B_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_E_B_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_E_C"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_E_C"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_E_C_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_E_C_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_SOUTH_E_D"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_SOUTH_E_D"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_SOUTH_E_D_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_SOUTH_E_D_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_W_A"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_W_A"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_W_A_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_W_A_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_W_B"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_W_B"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_W_B_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_W_B_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_W_EN"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_W_EN"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_W_EN_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_W_EN_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_W_EN"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_W_EN"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_W_EN_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_W_EN_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_E_A"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_E_A"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_E_A_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_E_A_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_E_B"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_E_B"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_E_B_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_E_B_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_C_E_EN"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "C"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "C_E_EN"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_C_E_EN_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_C_E_EN_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_E_EN"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_E_EN"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_E_EN_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_E_EN_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_R_LED"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "R"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "R_LED"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_R_LED_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_R_LED_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "1"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "1"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "2"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "2"
+            (effects
+              (font
+                (size 1.27 1.27)))))))
+    (symbol "Generated:Semantic_D_LED"
+      (exclude_from_sim no)
+      (in_bom yes)
+      (on_board yes)
+      (in_pos_files yes)
+      (duplicate_pin_numbers_are_jumpers no)
+      (property "Reference" "D"
+        (at -12.7 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Value" "D_LED"
+        (at 0 5.08 0)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Footprint" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (property "Datasheet" ""
+        (at 0 0 0)
+        (hide yes)
+        (effects
+          (font
+            (size 1.27 1.27))))
+      (symbol "Semantic_D_LED_0_1"
+        (rectangle
+          (start -12.7 3.81)
+          (end 12.7 -3.81)
+          (stroke
+            (width 0.254)
+            (type default))
+          (fill
+            (type background))))
+      (symbol "Semantic_D_LED_1_1"
+        (pin passive line
+          (at -15.24 0 0)
+          (length 2.54)
+          (name "A"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "A"
+            (effects
+              (font
+                (size 1.27 1.27)))))
+        (pin passive line
+          (at 15.24 0 180)
+          (length 2.54)
+          (name "K"
+            (effects
+              (font
+                (size 1.27 1.27))))
+          (number "K"
+            (effects
+              (font
+                (size 1.27 1.27))))))))
+  (symbol
+    (lib_id "Generated:Semantic_ESP_W")
+    (at 76.2 76.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "37b162be-59e0-5407-ba0f-cb9250be9468")
+    (property "Reference" "U1"
+      (at 76.2 72.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "ESP_W"
+      (at 76.2 80.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_ESP_W"
+      (at 76.2 76.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 76.2 76.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "9bb2e8c1-e22f-5f77-bd5f-cd131f010399"))
+    (pin "2"
+      (uuid "29b9af6d-83c2-5812-a77a-d3f704c239db"))
+    (pin "3"
+      (uuid "ec090639-70fe-5906-9b95-105f796032e7"))
+    (pin "4"
+      (uuid "c9450171-64af-518b-ae06-6c09429d68c1"))
+    (pin "5"
+      (uuid "787e16a8-450a-5639-98f9-2a6ee6f0269b"))
+    (pin "6"
+      (uuid "1431a202-f24f-5216-a9ad-8275c417f074"))
+    (pin "7"
+      (uuid "1d5ef3f7-703b-53bf-9350-b5e8d36294e5"))
+    (pin "8"
+      (uuid "1733d152-3778-5bca-8b28-eb29f530723d"))
+    (pin "9"
+      (uuid "11fbc5ea-a9a4-59eb-b98f-221da926485d"))
+    (pin "10"
+      (uuid "ae1690b0-3064-5ab7-8088-41c06b46188f"))
+    (pin "11"
+      (uuid "8ec73b44-9454-5b33-b26c-86a3d1259db9"))
+    (pin "12"
+      (uuid "3b63670f-91fe-5f84-ac9d-6af4b000c2e6"))
+    (pin "13"
+      (uuid "e99e363a-ba9a-5853-a8cd-8c24c1ba0630"))
+    (pin "14"
+      (uuid "eda5fa18-6432-59ba-ad7f-c601c7d6ad80"))
+    (pin "15"
+      (uuid "fffdab52-6172-54cc-b267-13b511aab31c"))
+    (pin "16"
+      (uuid "f570b27e-21f9-50ad-88dd-19259bc32c19"))
+    (pin "17"
+      (uuid "d67326f0-d573-5dee-89ed-ad2a185ccfcc"))
+    (pin "18"
+      (uuid "cae8ecb4-8436-52be-95ff-a50aceb8727e"))
+    (pin "19"
+      (uuid "38e69760-b592-584e-b45a-9f1ecf96b142"))
+    (pin "20"
+      (uuid "4d98b8a2-ee3c-536f-9cd2-1de76d6be13f"))
+    (pin "21"
+      (uuid "6fce0c58-e811-59f8-ab66-6e8e9d9b42bb"))
+    (pin "22"
+      (uuid "377beaed-a1cf-5d88-ae00-a251ed157eca"))
+    (pin "23"
+      (uuid "e0d291ef-cb26-5efd-a2f5-433405f1d120"))
+    (pin "24"
+      (uuid "12c6df98-dffa-59b9-8b20-eca6fe671ead"))
+    (pin "25"
+      (uuid "29e50438-457d-5b97-9b7a-f1ba56156a58"))
+    (pin "26"
+      (uuid "d6e7d5b9-a287-523a-be1a-c12d720d2f28"))
+    (pin "27"
+      (uuid "b525ae3c-a8e0-5247-ba56-4a57ff3df78d"))
+    (pin "28"
+      (uuid "71951884-fe28-5f50-b3f5-55d3a9861177"))
+    (pin "29"
+      (uuid "95bf4eba-9c48-510f-8300-d85f1e586813"))
+    (pin "30"
+      (uuid "a9f4413b-e127-57db-8bc4-de2879e3b5bd"))
+    (pin "31"
+      (uuid "cae21a6f-e6ba-5d65-8f56-13d4bb7cb06d"))
+    (pin "32"
+      (uuid "55b1766d-7f24-5a0f-b2be-0d02f9bf088e"))
+    (pin "33"
+      (uuid "e1b7e15a-20ba-5b72-891b-c0ef914511e5"))
+    (pin "34"
+      (uuid "ac1c81e3-60c0-5131-a2ad-00498a4aeda2"))
+    (pin "35"
+      (uuid "e10f7774-7a00-587f-a5cb-0779989b10d1"))
+    (pin "36"
+      (uuid "fef18339-7685-51a1-a609-a2893b4dcc1a"))
+    (pin "37"
+      (uuid "d6bdeab2-3a88-5f56-860f-aa770befffb8"))
+    (pin "38"
+      (uuid "1c4c3657-a136-5b9a-802d-b7e68294d9fc"))
+    (pin "39"
+      (uuid "1a8969f9-b747-59bb-b820-1137cf6465ad"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "U1")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 60.96 100.33)
+      (xy 58.42 100.33))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "010ada2d-7d79-5a61-b1b0-b3889ce61600"))
+  (label "GND"
+    (at 58.42 100.33 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "93a6aa97-e4b4-5d2e-921c-be608dd71123"))
+  (wire
+    (pts
+      (xy 60.96 97.79)
+      (xy 58.42 97.79))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "73fa265d-1268-54e5-8e98-8da19b0b9914"))
+  (label "VCC"
+    (at 58.42 97.79 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9e14f51a-c614-5bb9-962f-f74c58257ee9"))
+  (wire
+    (pts
+      (xy 60.96 95.25)
+      (xy 58.42 95.25))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "1eadfc29-69cd-59e6-9224-0f27787f7058"))
+  (label "W_EN"
+    (at 58.42 95.25 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "0ff59b54-7cba-5616-a708-814a4a9b56ef"))
+  (no_connect
+    (at 60.96 92.71)
+    (uuid "78a6b3f8-c19d-54d5-a79c-ae311eeb27f8"))
+  (no_connect
+    (at 60.96 90.17)
+    (uuid "0bb98bf2-f9ab-5183-b0b1-b1a8389151df"))
+  (no_connect
+    (at 60.96 87.63)
+    (uuid "c4cf7750-3071-5eb5-86bb-d54eab845313"))
+  (no_connect
+    (at 60.96 85.09)
+    (uuid "baabc82e-6de0-5a1d-9625-f5f821add559"))
+  (wire
+    (pts
+      (xy 60.96 82.55)
+      (xy 58.42 82.55))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a93977bd-35d2-5bab-b5fd-202da6d5019b"))
+  (label "SIG01_W_R"
+    (at 58.42 82.55 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1880e4f1-9870-58f3-bf3b-c7390505b075"))
+  (wire
+    (pts
+      (xy 60.96 80.01)
+      (xy 58.42 80.01))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b2c0c6f6-6d05-5338-bd20-e0d7724e9ddc"))
+  (label "SIG02_W_R"
+    (at 58.42 80.01 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "d286837e-f756-5143-b3b1-d8d923906cfa"))
+  (wire
+    (pts
+      (xy 60.96 77.47)
+      (xy 58.42 77.47))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "690a9588-c090-5e4c-a59e-432a3698e6cb"))
+  (label "SIG03_W_R"
+    (at 58.42 77.47 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b855455f-f3ce-5629-8254-8ed71bd26d38"))
+  (wire
+    (pts
+      (xy 60.96 74.93)
+      (xy 58.42 74.93))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a94a75dd-8996-59e0-bbe8-9ec750b66870"))
+  (label "SIG04_W_R"
+    (at 58.42 74.93 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "2e80cd86-d1ae-57d6-bb0d-a00b453b7567"))
+  (wire
+    (pts
+      (xy 60.96 72.39)
+      (xy 58.42 72.39))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "284924b7-1a68-5751-96b1-d2343e12f631"))
+  (label "SIG05_W_R"
+    (at 58.42 72.39 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "5920c773-cc2a-56fb-8c24-2b6bb08ea109"))
+  (wire
+    (pts
+      (xy 60.96 69.85)
+      (xy 58.42 69.85))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "8288f9db-f1df-53e0-95f1-34127027135e"))
+  (label "SIG06_W_R"
+    (at 58.42 69.85 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "d1f9ee39-48fe-557a-afe0-623a2d720ecd"))
+  (wire
+    (pts
+      (xy 60.96 67.31)
+      (xy 58.42 67.31))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3cac99c9-f912-5634-b4ef-2b300cc0cf9d"))
+  (label "SIG07_W_R"
+    (at 58.42 67.31 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "67f42d2f-a143-59cf-b563-171a05b5fe05"))
+  (no_connect
+    (at 60.96 64.77)
+    (uuid "70eb4820-0be0-59f7-9fd4-16cace59280e"))
+  (wire
+    (pts
+      (xy 60.96 62.23)
+      (xy 58.42 62.23))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "4d6cd996-baaa-57aa-b30e-98694d614a3b"))
+  (label "SIG08_W_R"
+    (at 58.42 62.23 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ba92cc02-2474-57b3-9e01-d66bcc43f532"))
+  (no_connect
+    (at 60.96 59.69)
+    (uuid "83c0434b-6a3f-52ec-8500-c9847ed4bd3a"))
+  (no_connect
+    (at 60.96 57.15)
+    (uuid "a852e491-8985-5c2b-a992-acc50f1d566a"))
+  (no_connect
+    (at 60.96 54.61)
+    (uuid "8e4579a2-b0a0-54e2-9485-8e2a78b6ba17"))
+  (no_connect
+    (at 60.96 52.07)
+    (uuid "548cc55c-b7a7-5558-951a-f6962a515804"))
+  (no_connect
+    (at 91.44 99.06)
+    (uuid "cb4770b8-16e4-5b82-868c-b4cd2c937a71"))
+  (no_connect
+    (at 91.44 96.52)
+    (uuid "a904f1a3-4e65-50ae-8ea4-fdd84f145252"))
+  (wire
+    (pts
+      (xy 91.44 93.98)
+      (xy 93.98 93.98))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "569d6257-4389-5f70-87f8-149b6df5c4d6"))
+  (label "SIG09_W_R"
+    (at 93.98 93.98 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8bb39878-19e6-5bba-9c86-815262e72a18"))
+  (wire
+    (pts
+      (xy 91.44 91.44)
+      (xy 93.98 91.44))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "faf81cf5-07f9-5c46-84f7-69735f8128e7"))
+  (label "SIG10_W_R"
+    (at 93.98 91.44 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "21c14261-e9cd-5676-b0fa-3479f728c203"))
+  (wire
+    (pts
+      (xy 91.44 88.9)
+      (xy 93.98 88.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "1f5516d7-6dd1-522f-b3e7-593568a75abc"))
+  (label "CTRL_W_BOOT"
+    (at 93.98 88.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "fb46619b-7882-5d6d-a33b-c32fef4de729"))
+  (wire
+    (pts
+      (xy 91.44 86.36)
+      (xy 93.98 86.36))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "013beb6a-2061-53cc-9daf-0ba8ad192f4b"))
+  (label "WEST_AUX_A_R"
+    (at 93.98 86.36 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ef6d0dcd-3d9c-572c-a06c-42e8d04fcc88"))
+  (no_connect
+    (at 91.44 83.82)
+    (uuid "c7416736-f068-534e-881a-11bf829353b2"))
+  (wire
+    (pts
+      (xy 91.44 81.28)
+      (xy 93.98 81.28))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "c9d89af5-1b74-52fd-9a99-ae7206ee44ec"))
+  (label "WEST_AUX_B_R"
+    (at 93.98 81.28 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1f9d6b17-5822-51f6-9dab-8114ab9bce3a"))
+  (no_connect
+    (at 91.44 78.74)
+    (uuid "67a47dd6-5026-5232-a50e-7171ebd35206"))
+  (wire
+    (pts
+      (xy 91.44 76.2)
+      (xy 93.98 76.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "7337cc47-6e97-5af5-89f7-93691916624f"))
+  (label "WEST_AUX_C_R"
+    (at 93.98 76.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "19c41c0a-3c85-50bd-80e5-8025b6f1f15d"))
+  (no_connect
+    (at 91.44 73.66)
+    (uuid "f2b3634d-db33-5f73-9b81-9ff03ff51f6b"))
+  (no_connect
+    (at 91.44 71.12)
+    (uuid "69fec36a-d286-5440-99c9-c2ab8b6c5a4e"))
+  (wire
+    (pts
+      (xy 91.44 68.58)
+      (xy 93.98 68.58))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "7c81c51e-c0ce-5e27-9cc2-af93617bfe71"))
+  (label "WEST_AUX_D_R"
+    (at 93.98 68.58 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ab64f560-17d5-56cb-8ffc-27361bc65ff3"))
+  (wire
+    (pts
+      (xy 91.44 66.04)
+      (xy 93.98 66.04))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "4daaf58f-d1d6-5f46-9b31-45c61dab11cb"))
+  (label "CTRL_W_RX"
+    (at 93.98 66.04 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "20cb15ea-c3be-5422-8c42-4465bb1924c8"))
+  (wire
+    (pts
+      (xy 91.44 63.5)
+      (xy 93.98 63.5))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "0ad41dc5-fd66-554a-bee4-cd132a34188f"))
+  (label "CTRL_W_TX"
+    (at 93.98 63.5 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "674de3fe-8f2b-5082-a835-566eeac07682"))
+  (no_connect
+    (at 91.44 60.96)
+    (uuid "f8ce05ed-c239-5d2b-a7c6-e9b970df84d8"))
+  (no_connect
+    (at 91.44 58.42)
+    (uuid "dcbc43d2-5891-5675-8068-52858f02f4a1"))
+  (wire
+    (pts
+      (xy 91.44 55.88)
+      (xy 93.98 55.88))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "ffe61005-a9f2-561d-970d-eef8ebe39dc1"))
+  (label "GND"
+    (at 93.98 55.88 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8acf928d-fb70-5afa-9aa7-2d08d4621f0c"))
+  (wire
+    (pts
+      (xy 91.44 53.34)
+      (xy 93.98 53.34))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b2116854-7b8b-5213-b8f8-1c7756bf8d29"))
+  (label "GND"
+    (at 93.98 53.34 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "e4735d69-1b5f-599d-8c1f-a37efca89f79"))
+  (symbol
+    (lib_id "Generated:Semantic_ESP_E")
+    (at 228.6 76.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "3ff7e612-04c4-5587-a4a3-a420c2a317de")
+    (property "Reference" "U2"
+      (at 228.6 72.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "ESP_E"
+      (at 228.6 80.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_ESP_E"
+      (at 228.6 76.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 228.6 76.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "ae970f44-eb85-585b-94e5-7dcfc9951f5c"))
+    (pin "2"
+      (uuid "54ea1f98-b6b4-53ae-8c37-1b1ec37e7284"))
+    (pin "3"
+      (uuid "f31368f6-d117-5df7-b37a-9761c93f51d4"))
+    (pin "4"
+      (uuid "05de0495-cdbe-53ad-b03a-a5aa0880ed5b"))
+    (pin "5"
+      (uuid "e0eed351-e8e0-566e-8b47-1ed7a0b2573f"))
+    (pin "6"
+      (uuid "0d571dbf-96bc-5723-88ec-8dccaf5bf7ab"))
+    (pin "7"
+      (uuid "50dbbad9-4bb7-5508-b747-ce509d1c5380"))
+    (pin "8"
+      (uuid "fb8d5dee-1eca-56bb-b162-dbb3591c32ec"))
+    (pin "9"
+      (uuid "b5928084-678e-507c-8a93-f27112bf4a38"))
+    (pin "10"
+      (uuid "6b4ed9ff-4b16-57ac-8cd8-1183a7b634c4"))
+    (pin "11"
+      (uuid "ae9fb581-145c-5125-a85d-35ddc335f70d"))
+    (pin "12"
+      (uuid "bbd918c7-0b20-5e8c-a35f-e6ff79f7e1ba"))
+    (pin "13"
+      (uuid "27676d99-baec-5137-960c-9ae2d48f4f46"))
+    (pin "14"
+      (uuid "a2c5a000-23dc-574a-b5ae-0e3121e062a2"))
+    (pin "15"
+      (uuid "be1cd745-c96e-55df-9130-b1772f77f16f"))
+    (pin "16"
+      (uuid "0cc093ff-db21-5bba-9564-c420782e3efe"))
+    (pin "17"
+      (uuid "6c0269c9-97ce-5a23-8bad-a2824c5b0ad0"))
+    (pin "18"
+      (uuid "38834f1d-b187-5841-acbd-7166fa580e46"))
+    (pin "19"
+      (uuid "0f22ee30-9a58-5f2b-aedb-3969b4675f94"))
+    (pin "20"
+      (uuid "b5016a3a-d409-5301-959a-2523eb2ddb5f"))
+    (pin "21"
+      (uuid "08e3cf0c-0162-5550-ab85-158fbe023942"))
+    (pin "22"
+      (uuid "8f9a0d43-97d7-5c1f-99d5-c6e3c702269d"))
+    (pin "23"
+      (uuid "18d0262f-2c9b-551f-812a-41afc8d6acd0"))
+    (pin "24"
+      (uuid "688e45e1-08b9-55b8-8af7-f3f43c5f380a"))
+    (pin "25"
+      (uuid "52d22f8d-55e7-5c84-a08c-f551ef4bfe18"))
+    (pin "26"
+      (uuid "70499a31-3b1f-555d-941b-57775194428d"))
+    (pin "27"
+      (uuid "a5ab8751-2041-5a6d-bf50-97dd06132744"))
+    (pin "28"
+      (uuid "00e61c24-e4e3-5c5f-9d21-8842d69e88d0"))
+    (pin "29"
+      (uuid "6071e479-e759-5d57-9fbd-4a23284f3190"))
+    (pin "30"
+      (uuid "576461b6-5037-5ef2-9ca1-59e104e2e10e"))
+    (pin "31"
+      (uuid "bc2529fa-f66b-5c1c-b2c8-fbaa8bea5f86"))
+    (pin "32"
+      (uuid "c7bcfd18-f76d-5d61-856d-06fd15f9b66d"))
+    (pin "33"
+      (uuid "2d039011-5557-5e5c-aab6-ee22c2b6d2e6"))
+    (pin "34"
+      (uuid "578d9ada-fa68-5289-9bd0-64f87a776b80"))
+    (pin "35"
+      (uuid "ac742f24-1823-5e7c-ad90-1e8a5b6fee53"))
+    (pin "36"
+      (uuid "7d676af0-5656-5504-a6e4-25365aa044f3"))
+    (pin "37"
+      (uuid "b308baf3-dfe5-5750-a08a-1854dea2cea7"))
+    (pin "38"
+      (uuid "9627ffc2-e1fc-5b4c-83b8-c8a598222272"))
+    (pin "39"
+      (uuid "1b442f3d-f03d-5360-aa4b-38f56bef8239"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "U2")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 213.36 100.33)
+      (xy 210.82 100.33))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "aa9d0a1f-ab01-51ed-9d7e-f4256d207269"))
+  (label "GND"
+    (at 210.82 100.33 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "2dd2de22-98c9-546f-8f3e-c7dbf7855387"))
+  (wire
+    (pts
+      (xy 213.36 97.79)
+      (xy 210.82 97.79))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "c784b067-7366-5558-b435-5c46dc0d9c8f"))
+  (label "VCC"
+    (at 210.82 97.79 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "c9b20d96-bad3-5e2d-a0f0-4fe618aa02c2"))
+  (wire
+    (pts
+      (xy 213.36 95.25)
+      (xy 210.82 95.25))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "963c728a-ed5a-5314-9197-4214b6886d6b"))
+  (label "E_EN"
+    (at 210.82 95.25 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "fb66e99c-60bf-5a53-b0b0-24948fe8a53a"))
+  (no_connect
+    (at 213.36 92.71)
+    (uuid "023d970d-050b-5f7e-896b-3252e82ed687"))
+  (no_connect
+    (at 213.36 90.17)
+    (uuid "2cb4b541-8101-5c6b-9c62-2909e7736055"))
+  (no_connect
+    (at 213.36 87.63)
+    (uuid "4b3c989a-441f-5fd9-b871-a37506aff3df"))
+  (no_connect
+    (at 213.36 85.09)
+    (uuid "7e71e30e-1362-59da-9d04-0927d8b3abfc"))
+  (wire
+    (pts
+      (xy 213.36 82.55)
+      (xy 210.82 82.55))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "775657f9-be00-5118-b245-7fb775ee7038"))
+  (label "EAST_AUX_A_R"
+    (at 210.82 82.55 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8f977fdc-393a-5060-af84-19d8b6f5feaf"))
+  (wire
+    (pts
+      (xy 213.36 80.01)
+      (xy 210.82 80.01))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a502016e-3db8-59cb-a604-baa0ee359f4e"))
+  (label "EAST_AUX_B_R"
+    (at 210.82 80.01 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "83b2afdb-dfff-5a5a-b09f-8024b8dc8407"))
+  (wire
+    (pts
+      (xy 213.36 77.47)
+      (xy 210.82 77.47))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "94d394ba-a866-54e3-afab-3a1205246114"))
+  (label "EAST_AUX_C_R"
+    (at 210.82 77.47 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "c1689f4c-483b-5a5b-bd5b-5501c440fc62"))
+  (wire
+    (pts
+      (xy 213.36 74.93)
+      (xy 210.82 74.93))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "2816af13-78af-5794-9eab-1ecde2c3b3d3"))
+  (label "EAST_AUX_D_R"
+    (at 210.82 74.93 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "a35c9fbd-27e4-595d-b54d-f386813152ba"))
+  (no_connect
+    (at 213.36 72.39)
+    (uuid "ed30bdb4-d26e-586a-9478-5f1dcee7593a"))
+  (no_connect
+    (at 213.36 69.85)
+    (uuid "cf875dc6-3085-5e6e-a1d4-3add64e940d1"))
+  (no_connect
+    (at 213.36 67.31)
+    (uuid "bc03eecd-4a7f-5ba2-b457-33b922e5dfc7"))
+  (no_connect
+    (at 213.36 64.77)
+    (uuid "dd4b7b72-4478-513e-88dd-6b706863d627"))
+  (wire
+    (pts
+      (xy 213.36 62.23)
+      (xy 210.82 62.23))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "472b01bf-647e-5a52-b402-c08cc6895d86"))
+  (label "SIG04_AFTER_LINK"
+    (at 210.82 62.23 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "94dcddd7-19f0-5a68-a59c-813989f0e46d"))
+  (no_connect
+    (at 213.36 59.69)
+    (uuid "c0531e9b-cfb7-5488-898a-b3ec8e7260ee"))
+  (no_connect
+    (at 213.36 57.15)
+    (uuid "2b933366-444f-5e6a-a81d-35083dbd8b5c"))
+  (no_connect
+    (at 213.36 54.61)
+    (uuid "25083bbe-c906-50e9-8e81-059289aa528d"))
+  (no_connect
+    (at 213.36 52.07)
+    (uuid "6c913f03-f5ca-5fda-becd-17e28ad60f2e"))
+  (no_connect
+    (at 243.84 99.06)
+    (uuid "70c9bc96-f143-5357-8b7d-c1a0d8fa720f"))
+  (no_connect
+    (at 243.84 96.52)
+    (uuid "07c36bb5-8850-561a-abcc-6a95dee07f12"))
+  (no_connect
+    (at 243.84 93.98)
+    (uuid "556d0504-da9e-5fa6-a94d-8f56522c95d6"))
+  (no_connect
+    (at 243.84 91.44)
+    (uuid "5d9965af-aa5f-5f53-838e-dbe9dd53a5a8"))
+  (wire
+    (pts
+      (xy 243.84 88.9)
+      (xy 246.38 88.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "5317899b-4f2c-515d-ad38-5d7462c2e7db"))
+  (label "CTRL_E_BOOT"
+    (at 246.38 88.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "77d779e5-e7bc-5aca-8c29-652db31035fe"))
+  (wire
+    (pts
+      (xy 243.84 86.36)
+      (xy 246.38 86.36))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "6bc24cc8-2d35-5171-8764-abbf5aa0381c"))
+  (label "SIG02_AFTER_LINK"
+    (at 246.38 86.36 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "602c4b00-54fe-5d89-b7fc-1f1f25900e4e"))
+  (wire
+    (pts
+      (xy 243.84 83.82)
+      (xy 246.38 83.82))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "234cc426-7589-5a63-95b9-0b6906784c72"))
+  (label "SIG10_R_E"
+    (at 246.38 83.82 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "5c54d567-a7bc-53ed-81eb-048d86b29aba"))
+  (wire
+    (pts
+      (xy 243.84 81.28)
+      (xy 246.38 81.28))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3ee65ceb-1899-59f3-b4cf-1744aca921ec"))
+  (label "SIG09_R_E"
+    (at 246.38 81.28 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "f73aa93d-a78e-53d1-a0b8-e54a6f2991e7"))
+  (wire
+    (pts
+      (xy 243.84 78.74)
+      (xy 246.38 78.74))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "287d6060-ea83-5bd3-9b1c-062441812abf"))
+  (label "SIG06_R_E"
+    (at 246.38 78.74 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "be2b8add-787e-5fe2-9ead-d3b3b1f5320b"))
+  (wire
+    (pts
+      (xy 243.84 76.2)
+      (xy 246.38 76.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b4a434e2-2590-5367-a2c5-8bac8d0e5c20"))
+  (label "SIG01_AFTER_LINK"
+    (at 246.38 76.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "800dd68b-a6ca-5d1e-a948-96f209cf8d49"))
+  (wire
+    (pts
+      (xy 243.84 73.66)
+      (xy 246.38 73.66))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "fe4ff347-498a-5f36-a5f7-beb28a50b49f"))
+  (label "SIG07_R_E"
+    (at 246.38 73.66 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "543e2b39-694e-53d3-af10-7fb3e7f6c8af"))
+  (no_connect
+    (at 243.84 71.12)
+    (uuid "9a55c023-04dd-5086-9ce8-331928edcbc5"))
+  (wire
+    (pts
+      (xy 243.84 68.58)
+      (xy 246.38 68.58))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "1d42f6e6-91c6-5c2f-8f33-163186a1e2f6"))
+  (label "SIG03_AFTER_LINK"
+    (at 246.38 68.58 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "aae6ee45-00c8-5c19-b511-ce14954db2da"))
+  (wire
+    (pts
+      (xy 243.84 66.04)
+      (xy 246.38 66.04))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "03f47582-478d-5ee2-b2ef-c9c6a4f2b989"))
+  (label "CTRL_E_RX"
+    (at 246.38 66.04 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b8beabd7-264c-565b-9da3-2144955e8014"))
+  (wire
+    (pts
+      (xy 243.84 63.5)
+      (xy 246.38 63.5))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3aa5147b-8d90-5cb6-8f37-0bfa6bfdf837"))
+  (label "CTRL_E_TX"
+    (at 246.38 63.5 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "fd34a20f-a8cd-5f6b-bbd0-bdae3f39f7d9"))
+  (wire
+    (pts
+      (xy 243.84 60.96)
+      (xy 246.38 60.96))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "92911a7c-7d38-5067-9358-143272879443"))
+  (label "SIG05_AFTER_LINK"
+    (at 246.38 60.96 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "d1624f7e-0b78-57fa-b1f3-c6eb8198b506"))
+  (wire
+    (pts
+      (xy 243.84 58.42)
+      (xy 246.38 58.42))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "d419e448-5d22-5628-8c32-6a3e8bde1c42"))
+  (label "SIG08_R_E"
+    (at 246.38 58.42 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "904bc311-75d4-50b4-8a1e-b231ddde614f"))
+  (wire
+    (pts
+      (xy 243.84 55.88)
+      (xy 246.38 55.88))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "dff86090-ab30-5b0f-904f-17f13de98036"))
+  (label "GND"
+    (at 246.38 55.88 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "c694cf14-0707-507c-ac01-b8e602ff4524"))
+  (wire
+    (pts
+      (xy 243.84 53.34)
+      (xy 246.38 53.34))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "0a9d2d20-38d1-59fa-bb4d-ef5c176d4b12"))
+  (label "GND"
+    (at 246.38 53.34 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "09f44b87-64c9-53dd-bbaa-3cf5dee70e99"))
+  (symbol
+    (lib_id "Generated:Semantic_J_POWER")
+    (at 38.1 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "18b14366-089d-5fc2-9fbf-ac3ae758a890")
+    (property "Reference" "J1"
+      (at 38.1 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "J_POWER"
+      (at 38.1 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_J_POWER"
+      (at 38.1 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "VCC"
+      (uuid "38b76901-163a-57f7-9b37-4cf340a137c9"))
+    (pin "GND"
+      (uuid "0296a384-fcba-5561-b2c7-5407815f155d"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "J1")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 139.7)
+      (xy 20.32 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "0ea4ff61-2076-5cd4-9748-efc5cca37677"))
+  (label "VCC"
+    (at 20.32 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1a789650-5114-53e8-a5b5-8461871bdff4"))
+  (wire
+    (pts
+      (xy 53.34 139.7)
+      (xy 55.88 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "f44c9e57-2212-5cc7-9680-3a511de7ca65"))
+  (label "GND"
+    (at 55.88 139.7 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "df80cab0-7517-58a1-90ba-ed4a05f179b2"))
+  (symbol
+    (lib_id "Generated:Semantic_J_CTRL_W")
+    (at 127 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "2357f9bc-f1c8-5ef4-a2c6-e398410e5c3c")
+    (property "Reference" "J2"
+      (at 127 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "J_CTRL_W"
+      (at 127 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_J_CTRL_W"
+      (at 127 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "GND"
+      (uuid "c681806d-1100-5b97-98bf-8b27ba15cfa0"))
+    (pin "VCC"
+      (uuid "0bb593eb-a8fb-5973-9204-1ffe551ff304"))
+    (pin "RX"
+      (uuid "b5bba395-658c-517f-88fd-7e23427931cc"))
+    (pin "TX"
+      (uuid "bc11e515-4f22-59a3-a831-ddcb354e34cf"))
+    (pin "BOOT"
+      (uuid "d72677e9-49b8-535c-9ef2-b045b447f0b4"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "J2")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 142.24)
+      (xy 109.22 142.24))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "656338a7-c37e-52dd-aca9-428568f7ed7a"))
+  (label "GND"
+    (at 109.22 142.24 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1b4c35f9-196d-528e-aaad-c66a3e69061b"))
+  (wire
+    (pts
+      (xy 111.76 139.7)
+      (xy 109.22 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "77996444-edf1-5b2b-97c4-cceb676a352b"))
+  (label "VCC"
+    (at 109.22 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "3e5a641f-e88a-5101-9150-8ccdbb7de1ce"))
+  (wire
+    (pts
+      (xy 111.76 137.16)
+      (xy 109.22 137.16))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "cd4ef10d-268f-5ea3-b12d-dc1846399870"))
+  (label "CTRL_W_RX"
+    (at 109.22 137.16 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "4ee7f3be-52b0-5d22-958c-b1b4bcc164cf"))
+  (wire
+    (pts
+      (xy 142.24 140.97)
+      (xy 144.78 140.97))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "fe9cc110-e198-5937-93e6-0568112524df"))
+  (label "CTRL_W_TX"
+    (at 144.78 140.97 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "08c5b27e-6f93-5bbf-8ad2-71ae8fbc1799"))
+  (wire
+    (pts
+      (xy 142.24 138.43)
+      (xy 144.78 138.43))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "011e6e9e-877c-5b53-8017-8052a0d1496d"))
+  (label "CTRL_W_BOOT"
+    (at 144.78 138.43 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "a32744ab-87c5-543b-ad80-5c866a2974b9"))
+  (symbol
+    (lib_id "Generated:Semantic_J_CTRL_E")
+    (at 215.9 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "625d57c6-6f96-540a-bdf2-55de3a3fe719")
+    (property "Reference" "J3"
+      (at 215.9 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "J_CTRL_E"
+      (at 215.9 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_J_CTRL_E"
+      (at 215.9 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "GND"
+      (uuid "a0473918-c85e-5f6a-a7fe-009248f64864"))
+    (pin "VCC"
+      (uuid "6efc4662-7923-577f-a1b8-237abb4ebff4"))
+    (pin "RX"
+      (uuid "f7dead03-ae6a-5aee-a834-6e8b866cb243"))
+    (pin "TX"
+      (uuid "e5d45e19-3092-5d87-b1f6-956ecc9f2068"))
+    (pin "BOOT"
+      (uuid "305353ce-1db0-5c77-ba37-c0ec2dcee0e3"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "J3")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 142.24)
+      (xy 198.12 142.24))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "379da8a6-d45b-592a-8456-6daa2d58285c"))
+  (label "GND"
+    (at 198.12 142.24 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9bf6b3a7-b280-5231-8250-8057809536d1"))
+  (wire
+    (pts
+      (xy 200.66 139.7)
+      (xy 198.12 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "e4e89c6c-fa68-5d15-b116-d4497d931a86"))
+  (label "VCC"
+    (at 198.12 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "3f483e06-a3e1-53a0-a6b9-8e631d0423c3"))
+  (wire
+    (pts
+      (xy 200.66 137.16)
+      (xy 198.12 137.16))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "97aae12f-ed07-503f-9c60-c6e1303cd4d6"))
+  (label "CTRL_E_RX"
+    (at 198.12 137.16 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "417ed356-0153-52af-a717-53e0dab9e8c5"))
+  (wire
+    (pts
+      (xy 231.14 140.97)
+      (xy 233.68 140.97))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "5f51d497-3113-5d19-b157-44e7eaa0b0a7"))
+  (label "CTRL_E_TX"
+    (at 233.68 140.97 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b09625e1-210d-57a0-93d9-b3e9b782e74a"))
+  (wire
+    (pts
+      (xy 231.14 138.43)
+      (xy 233.68 138.43))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "5da2bad4-b140-5c80-8843-7ddc2d39a63d"))
+  (label "CTRL_E_BOOT"
+    (at 233.68 138.43 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "915e8307-8bf5-5f18-b0d1-8e3f965c68ef"))
+  (symbol
+    (lib_id "Generated:Semantic_J_SOUTH")
+    (at 304.8 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "590996c4-ace5-52ed-9570-620250fcd9a3")
+    (property "Reference" "J4"
+      (at 304.8 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "J_SOUTH"
+      (at 304.8 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_J_SOUTH"
+      (at 304.8 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "TAP1"
+      (uuid "a27d129f-5f81-541a-b558-b86138461bb6"))
+    (pin "W_A"
+      (uuid "89d13d82-8698-5323-8431-644c8ae8c5e9"))
+    (pin "TAP3"
+      (uuid "7b7b54e1-541c-55fc-b5be-0312a10e508f"))
+    (pin "E_B"
+      (uuid "5821979a-e662-574a-9eb4-96bf983868c0"))
+    (pin "W_D"
+      (uuid "9fda7ba8-b18e-55db-bb3d-c8cc1786ed58"))
+    (pin "TAP5"
+      (uuid "d1f213f0-f86b-5bbc-a39b-09dbb3963ea2"))
+    (pin "E_D"
+      (uuid "45422b60-b395-593b-8e1b-fdcf078f795b"))
+    (pin "E_A"
+      (uuid "36065f76-66fc-5f67-bb7a-1794288234a3"))
+    (pin "TAP2"
+      (uuid "efa51973-7e25-587b-863e-e7e16b5b0ae7"))
+    (pin "W_B"
+      (uuid "ff719a3e-fa2a-560a-a4bb-b4014c80e9ed"))
+    (pin "E_C"
+      (uuid "3393f892-43b0-52ea-9fe1-12fb766fe9b0"))
+    (pin "TAP4"
+      (uuid "ba942318-817e-5cd9-8fd1-85b9b0298555"))
+    (pin "W_C"
+      (uuid "344d1d98-6352-5c45-b7dd-0a1ab2e81c45"))
+    (pin "NC"
+      (uuid "d5e5a5a9-0b64-56cf-ad43-41ec7f2eadce"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "J4")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 147.32)
+      (xy 287.02 147.32))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "f231f7c6-c229-5253-addd-cc1f713d6b8f"))
+  (label "SIG01_R_HEADER"
+    (at 287.02 147.32 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "514806e9-dcec-5c0b-8a73-c0d4da5717b1"))
+  (wire
+    (pts
+      (xy 289.56 144.78)
+      (xy 287.02 144.78))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "d4f15c07-d5ca-5e18-9243-6fa77abb46ab"))
+  (label "WEST_AUX_A_HEADER"
+    (at 287.02 144.78 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "24c9225a-ae1f-59fd-8c2c-30cfd492ef0b"))
+  (wire
+    (pts
+      (xy 289.56 142.24)
+      (xy 287.02 142.24))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "24d35170-e7ca-5400-b04c-010656641427"))
+  (label "SIG03_R_HEADER"
+    (at 287.02 142.24 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "db9297f1-860f-587a-80bf-0576ed07f7cb"))
+  (wire
+    (pts
+      (xy 289.56 139.7)
+      (xy 287.02 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3e2eecd8-b5ef-599b-b04a-0dd35ae59065"))
+  (label "EAST_AUX_B_HEADER"
+    (at 287.02 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "21f549b4-6848-5d06-8b28-9c24944bbbd0"))
+  (wire
+    (pts
+      (xy 289.56 137.16)
+      (xy 287.02 137.16))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "2410b5f9-0761-5aa8-a954-4eaa3f90b03c"))
+  (label "WEST_AUX_D_HEADER"
+    (at 287.02 137.16 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "406103cf-e692-578f-aea0-b0b449f613b7"))
+  (wire
+    (pts
+      (xy 289.56 134.62)
+      (xy 287.02 134.62))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "004a4012-f1af-52e1-9181-2c6cd600e3f7"))
+  (label "SIG05_R_HEADER"
+    (at 287.02 134.62 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "7aa119a0-5f0a-5d09-8f27-085e23b7e1d2"))
+  (wire
+    (pts
+      (xy 289.56 132.08)
+      (xy 287.02 132.08))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "2e77db31-5236-5248-908a-f92e6f3bb228"))
+  (label "EAST_AUX_D_HEADER"
+    (at 287.02 132.08 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b3cc2f32-2662-5182-b82a-9b8496e03465"))
+  (wire
+    (pts
+      (xy 320.04 147.32)
+      (xy 322.58 147.32))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "7157e462-8da4-59b3-b636-7d76b9926e48"))
+  (label "EAST_AUX_A_HEADER"
+    (at 322.58 147.32 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "441c7d08-efe9-5c01-ad5f-5be3e0af5aea"))
+  (wire
+    (pts
+      (xy 320.04 144.78)
+      (xy 322.58 144.78))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "90ab1ab2-e913-55cb-bd43-bac86efe9cb4"))
+  (label "SIG02_R_HEADER"
+    (at 322.58 144.78 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "4c22a5a8-0136-5cca-bb15-6f1ff07ef243"))
+  (wire
+    (pts
+      (xy 320.04 142.24)
+      (xy 322.58 142.24))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "01c6f161-d316-5456-a304-07bdbad58350"))
+  (label "WEST_AUX_B_HEADER"
+    (at 322.58 142.24 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "cd8a08ed-db9f-560c-9d8d-042b9445f33f"))
+  (wire
+    (pts
+      (xy 320.04 139.7)
+      (xy 322.58 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "ba120495-a3b8-5efd-849d-d7ea6356da7b"))
+  (label "EAST_AUX_C_HEADER"
+    (at 322.58 139.7 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ffd56863-6c7b-501b-8a2a-cc00261d0a1c"))
+  (wire
+    (pts
+      (xy 320.04 137.16)
+      (xy 322.58 137.16))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "4ff7f2c0-a324-5056-b812-5ee16bd9a681"))
+  (label "SIG04_R_HEADER"
+    (at 322.58 137.16 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "db67bd4a-8f5e-5966-8ee4-10816cac5c4e"))
+  (wire
+    (pts
+      (xy 320.04 134.62)
+      (xy 322.58 134.62))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "17a9d96b-e50d-51c0-aef7-db467940f0d3"))
+  (label "WEST_AUX_C_HEADER"
+    (at 322.58 134.62 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "c55e3dd0-37fa-5495-ac49-984ca74f6658"))
+  (no_connect
+    (at 320.04 132.08)
+    (uuid "5d5105dd-9c89-53ed-b94f-631bf95204b4"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_01")
+    (at 393.7 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "e69b27d8-777b-5798-bf3a-2f56559ff41f")
+    (property "Reference" "R1"
+      (at 393.7 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_01"
+      (at 393.7 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_01"
+      (at 393.7 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "b965bea6-2e07-58e2-80bf-29f4b4aaaf98"))
+    (pin "2"
+      (uuid "92a6400d-e366-5661-b6d9-6c9eaad27931"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R1")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 139.7)
+      (xy 375.92 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "988bccff-6b54-5112-a525-3a65c4d82906"))
+  (label "SIG01_W_R"
+    (at 375.92 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "fd8022ed-409f-5c6b-83d5-f85409613a23"))
+  (wire
+    (pts
+      (xy 408.94 139.7)
+      (xy 411.48 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "d9286616-454b-524d-9aaf-9a2bde818d0c"))
+  (label "SIG01_AFTER_LINK"
+    (at 411.48 139.7 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "2df8eb62-e40d-57de-a2ba-471a2920d6b8"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_02")
+    (at 482.6 139.7 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "5af73387-8397-56be-8a7d-fe62581b2d0a")
+    (property "Reference" "R2"
+      (at 482.6 135.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_02"
+      (at 482.6 143.7 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_02"
+      (at 482.6 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 139.7 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "4681599a-46b7-5ef4-83f5-240fe43730d2"))
+    (pin "2"
+      (uuid "19fd6810-2b8c-59fe-8d0f-9ddc4412523e"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R2")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 139.7)
+      (xy 464.82 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "74261056-6610-5b95-8b13-61d3b23ee744"))
+  (label "SIG02_W_R"
+    (at 464.82 139.7 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "69cd8e22-b29f-5975-8d37-f46461477a75"))
+  (wire
+    (pts
+      (xy 497.84 139.7)
+      (xy 500.38 139.7))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "00557ffe-53f8-55c5-b967-94d5001ff636"))
+  (label "SIG02_AFTER_LINK"
+    (at 500.38 139.7 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "19c45e8d-3238-5490-b1f8-264201ce92bf"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_03")
+    (at 38.1 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "dd07fc97-6d6a-545b-9012-adebaef0ff6b")
+    (property "Reference" "R3"
+      (at 38.1 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_03"
+      (at 38.1 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_03"
+      (at 38.1 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "d97af999-c7b8-524f-9cd2-2235a7fb1524"))
+    (pin "2"
+      (uuid "790a330b-5878-5db1-b725-e71d7f910326"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R3")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 177.8)
+      (xy 20.32 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "869f3eec-08fe-571e-b5ad-81309c5a8aa8"))
+  (label "SIG03_W_R"
+    (at 20.32 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "376539e7-b119-542b-ab78-0333882a6a7b"))
+  (wire
+    (pts
+      (xy 53.34 177.8)
+      (xy 55.88 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "24f89f75-79d0-5520-a67e-4814d0883cff"))
+  (label "SIG03_AFTER_LINK"
+    (at 55.88 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b940beab-9d87-5435-b151-3bfa9e581e2e"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_04")
+    (at 127 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "af87c966-b474-5e86-860f-463c6818e2da")
+    (property "Reference" "R4"
+      (at 127 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_04"
+      (at 127 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_04"
+      (at 127 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "980132a1-243b-5ed1-a270-04cb313a4b52"))
+    (pin "2"
+      (uuid "87668087-c39e-59d2-8081-05b79205d0b9"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R4")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 177.8)
+      (xy 109.22 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "39467b43-484c-5c1b-b10c-c8c046b0c0e3"))
+  (label "SIG04_W_R"
+    (at 109.22 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "a0d641cc-caa3-5a77-a5c8-e40776356b08"))
+  (wire
+    (pts
+      (xy 142.24 177.8)
+      (xy 144.78 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "64edf86c-8c72-568f-8412-1569d6e74485"))
+  (label "SIG04_AFTER_LINK"
+    (at 144.78 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8658e6a8-3ff9-5a98-93a2-0d58271494c2"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_05")
+    (at 215.9 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "bc24f06c-c3fc-5e43-b8a5-38401a2f66ed")
+    (property "Reference" "R5"
+      (at 215.9 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_05"
+      (at 215.9 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_05"
+      (at 215.9 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "2e4b8c79-3260-5a50-8a26-6b0ab9db81fe"))
+    (pin "2"
+      (uuid "9fd535cd-5408-5346-83fa-e311dd8a8ce5"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R5")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 177.8)
+      (xy 198.12 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "e5653fb7-2854-5da9-bf7b-aad6f158de11"))
+  (label "SIG05_W_R"
+    (at 198.12 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8daeda5f-2a70-50da-9c55-72028914bbb0"))
+  (wire
+    (pts
+      (xy 231.14 177.8)
+      (xy 233.68 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "4101e300-2e45-5c04-86f8-9e254b6b2660"))
+  (label "SIG05_AFTER_LINK"
+    (at 233.68 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "2c670652-d1eb-59d0-b709-54fbc977ba31"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_06")
+    (at 304.8 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "a73a6083-3ed2-5b87-a871-b5e1828737cd")
+    (property "Reference" "R6"
+      (at 304.8 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_06"
+      (at 304.8 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_06"
+      (at 304.8 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "1fae1b45-967b-5042-ad4f-e744b0bc1d17"))
+    (pin "2"
+      (uuid "dbc210d6-a5b8-5104-903e-c769b7a7ae6a"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R6")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 177.8)
+      (xy 287.02 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "91cda8cf-f9a6-5fbc-ba13-0ab2bd957332"))
+  (label "SIG06_W_R"
+    (at 287.02 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9c07e3ec-e422-58fa-b67a-8c2fdff7f9e5"))
+  (wire
+    (pts
+      (xy 320.04 177.8)
+      (xy 322.58 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "13c938eb-ae2e-53a3-8a4a-ebf0be31a70e"))
+  (label "SIG06_R_E"
+    (at 322.58 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "bb949d52-abc5-5a4d-8adf-6f75d5f11f4c"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_07")
+    (at 393.7 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "38262075-c3ae-55ea-9732-4f73023e7565")
+    (property "Reference" "R7"
+      (at 393.7 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_07"
+      (at 393.7 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_07"
+      (at 393.7 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "ecbb7aea-e959-5b8a-9422-fdffedbca5df"))
+    (pin "2"
+      (uuid "4b153b6a-7b7d-5943-85a1-2a2266ebca93"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R7")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 177.8)
+      (xy 375.92 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "c92479bc-58bc-51e8-828b-327f256c7e80"))
+  (label "SIG07_W_R"
+    (at 375.92 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "6e40a28f-e5eb-541c-aae0-6a780549848b"))
+  (wire
+    (pts
+      (xy 408.94 177.8)
+      (xy 411.48 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "80161a88-204c-516f-8273-49aa3ced6023"))
+  (label "SIG07_R_E"
+    (at 411.48 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "539e0670-1aef-5553-94ba-98225aef03ab"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_08")
+    (at 482.6 177.8 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "a375b153-3188-591b-9f4b-98d5cb00e0c6")
+    (property "Reference" "R8"
+      (at 482.6 173.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_08"
+      (at 482.6 181.8 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_08"
+      (at 482.6 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 177.8 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "5008a2b5-a7b0-5e1f-b659-544f7a44a8a5"))
+    (pin "2"
+      (uuid "6d3d230a-5c7f-5eab-ba60-2a69196d61d7"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R8")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 177.8)
+      (xy 464.82 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "98b2deac-4612-5357-be30-ca533c346ad7"))
+  (label "SIG08_W_R"
+    (at 464.82 177.8 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9abf24b2-2b96-5884-a1af-f06181e5df7e"))
+  (wire
+    (pts
+      (xy 497.84 177.8)
+      (xy 500.38 177.8))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "73467a86-189d-518d-ba65-efc8cb30783c"))
+  (label "SIG08_R_E"
+    (at 500.38 177.8 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9950b73e-26e5-57c6-8589-f8027982bfb5"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_09")
+    (at 38.1 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "5677df61-86e0-5836-a7a3-ccfdd2b962ec")
+    (property "Reference" "R9"
+      (at 38.1 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_09"
+      (at 38.1 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_09"
+      (at 38.1 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "d6f955ad-6356-5464-beda-50fe39f4b874"))
+    (pin "2"
+      (uuid "7aa18bf6-8f23-578e-88b7-bd4af0c8ae22"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R9")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 215.9)
+      (xy 20.32 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "bd20ecfd-4157-5a99-a4bb-648da1d2d7c2"))
+  (label "SIG09_W_R"
+    (at 20.32 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "c95e92db-6892-5b90-9537-1124e2b801b8"))
+  (wire
+    (pts
+      (xy 53.34 215.9)
+      (xy 55.88 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b3888bdc-d12a-5161-893f-73fe96d63fe4"))
+  (label "SIG09_R_E"
+    (at 55.88 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "9b79c852-ed7b-59d7-9cad-d104e492cc8e"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LINK_10")
+    (at 127 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "9794290f-e850-5f0b-80ce-f6c701f198b6")
+    (property "Reference" "R10"
+      (at 127 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LINK_10"
+      (at 127 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LINK_10"
+      (at 127 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "b0e7c17a-9539-502b-813a-dfe33392e023"))
+    (pin "2"
+      (uuid "2a9d896a-9568-566e-a1f6-56707b76093e"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R10")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 215.9)
+      (xy 109.22 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "beeb12b9-3937-55a9-b5b1-a1a5ee168029"))
+  (label "SIG10_W_R"
+    (at 109.22 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1cc9b8a9-a412-5981-bd81-7bf58ed835f3"))
+  (wire
+    (pts
+      (xy 142.24 215.9)
+      (xy 144.78 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "017ae60f-dfee-5c83-b424-b421e05b13c3"))
+  (label "SIG10_R_E"
+    (at 144.78 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "099381aa-b2e7-5eba-b234-2bf9f08532eb"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_TAP1")
+    (at 215.9 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "e1834b04-4e45-52c4-a24f-c1a9aa177e79")
+    (property "Reference" "R11"
+      (at 215.9 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_TAP1"
+      (at 215.9 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP1"
+      (at 215.9 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "32a112ab-763f-5966-9e0f-f1d710d4c9b1"))
+    (pin "2"
+      (uuid "4cde858f-0eb1-5c25-bc86-1395e44929cc"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R11")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 215.9)
+      (xy 198.12 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "6a190e37-4326-53b8-9c1b-984928589a3c"))
+  (label "SIG01_AFTER_LINK"
+    (at 198.12 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "6e94a657-6f50-52aa-944b-632b8a52021b"))
+  (wire
+    (pts
+      (xy 231.14 215.9)
+      (xy 233.68 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a335201b-5352-5660-98c6-effeeb3b36d6"))
+  (label "SIG01_R_HEADER"
+    (at 233.68 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "7475900c-b6b2-5894-a058-6a7f760d5779"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_TAP2")
+    (at 304.8 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "52aeb247-373e-5f2d-b211-02a0034f378f")
+    (property "Reference" "R12"
+      (at 304.8 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_TAP2"
+      (at 304.8 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP2"
+      (at 304.8 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "650dcca5-6ae5-56a9-bce2-0f145eb93c65"))
+    (pin "2"
+      (uuid "c88bdf9d-c05e-5b22-9a80-5fefe60c9b97"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R12")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 215.9)
+      (xy 287.02 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "352964fb-6b87-5482-a182-dd1f9ad87079"))
+  (label "SIG02_AFTER_LINK"
+    (at 287.02 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "b6e32d7a-1185-5652-8e3e-74e62a0afc3c"))
+  (wire
+    (pts
+      (xy 320.04 215.9)
+      (xy 322.58 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "8dcbffda-a5dc-58c4-b76e-5f476ea8ec40"))
+  (label "SIG02_R_HEADER"
+    (at 322.58 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "95fa775f-ca14-51aa-8f84-7c6c124e35bd"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_TAP3")
+    (at 393.7 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "2b8f5e7c-30b9-56fd-b261-aea29ae140b0")
+    (property "Reference" "R13"
+      (at 393.7 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_TAP3"
+      (at 393.7 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP3"
+      (at 393.7 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "1de1417a-f16f-57bf-82d9-ff651a7dd42f"))
+    (pin "2"
+      (uuid "24cfe5ab-fbd9-5ee8-97d2-1919787047aa"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R13")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 215.9)
+      (xy 375.92 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "2ded493e-5763-5138-818a-b81d5d833e01"))
+  (label "SIG03_AFTER_LINK"
+    (at 375.92 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ef2f0536-db19-5978-99d9-1bb7b9314229"))
+  (wire
+    (pts
+      (xy 408.94 215.9)
+      (xy 411.48 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "079edb43-3b62-593b-9e60-195ef7b0c75d"))
+  (label "SIG03_R_HEADER"
+    (at 411.48 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "657624b5-cadc-5baf-9665-d8684a0bc86c"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_TAP4")
+    (at 482.6 215.9 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "d32ce39e-cf22-5b3c-b8b6-fefd2887857e")
+    (property "Reference" "R14"
+      (at 482.6 211.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_TAP4"
+      (at 482.6 219.9 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP4"
+      (at 482.6 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 215.9 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "c9b74591-5082-59bb-b70c-7afbc1be3965"))
+    (pin "2"
+      (uuid "257f72fe-fed4-523b-aaaa-6b03ae5e8bfa"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R14")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 215.9)
+      (xy 464.82 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "e4a47439-b806-534d-9089-061470845caf"))
+  (label "SIG04_AFTER_LINK"
+    (at 464.82 215.9 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "e55ba52e-51ae-5c7d-8a4c-7dbf40d0fe6d"))
+  (wire
+    (pts
+      (xy 497.84 215.9)
+      (xy 500.38 215.9))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "75140420-fbbb-5da5-a6b2-5768417efede"))
+  (label "SIG04_R_HEADER"
+    (at 500.38 215.9 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "d6ed8cb7-2bb8-5ae7-b02e-ad54464b4ff7"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_TAP5")
+    (at 38.1 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "8abce288-ea1c-55cf-ba0d-688a5ed9cfa3")
+    (property "Reference" "R15"
+      (at 38.1 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_TAP5"
+      (at 38.1 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_TAP5"
+      (at 38.1 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "36119afe-138b-5f19-8292-4e26b88c68ef"))
+    (pin "2"
+      (uuid "2a17de44-c27d-50f2-b89e-2c9834247455"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R15")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 254)
+      (xy 20.32 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3a7b7412-5856-58b5-a017-1fe8a78b390b"))
+  (label "SIG05_AFTER_LINK"
+    (at 20.32 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "64e1ca88-02d3-54b8-a62c-ad505fd6394d"))
+  (wire
+    (pts
+      (xy 53.34 254)
+      (xy 55.88 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "59b8904e-8dd8-5c07-bb78-2e062dc641b4"))
+  (label "SIG05_R_HEADER"
+    (at 55.88 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "94441c2f-5a1d-5ccb-8c0f-5e228c72053a"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_W_A")
+    (at 127 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "6e6e8786-989f-5e57-9f7e-c1c9f78f4611")
+    (property "Reference" "R16"
+      (at 127 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_W_A"
+      (at 127 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_A"
+      (at 127 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "58a7d806-0277-582d-be0e-01931b7b858f"))
+    (pin "2"
+      (uuid "b81de82e-042f-5184-9337-8987702339d8"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R16")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 254)
+      (xy 109.22 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "1292b6f3-3a99-5e7e-917b-3f78e38e3922"))
+  (label "WEST_AUX_A_R"
+    (at 109.22 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "8f44819e-e29f-5a51-9cda-999c5ffec912"))
+  (wire
+    (pts
+      (xy 142.24 254)
+      (xy 144.78 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "7a711939-1cf1-52e4-9fc2-db9f887a431b"))
+  (label "WEST_AUX_A_HEADER"
+    (at 144.78 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ae82bf6c-8542-56ef-a6ea-6aa02e574857"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_W_B")
+    (at 215.9 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "4f9b2922-7457-5e29-b218-79c5724de07d")
+    (property "Reference" "R17"
+      (at 215.9 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_W_B"
+      (at 215.9 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_B"
+      (at 215.9 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "d697cf2e-3c2e-596c-93db-e6bb73a35d54"))
+    (pin "2"
+      (uuid "36bcd0e5-2092-5377-a01a-5ed953f2da02"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R17")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 254)
+      (xy 198.12 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "d8912cea-a4eb-50bc-90d8-010b801d7d76"))
+  (label "WEST_AUX_B_R"
+    (at 198.12 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "34c3ed17-70d7-591f-937c-6147fc0cd2ef"))
+  (wire
+    (pts
+      (xy 231.14 254)
+      (xy 233.68 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "7592e867-9905-5f6e-a77a-d3942cff0ad6"))
+  (label "WEST_AUX_B_HEADER"
+    (at 233.68 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "5d15e66f-aa38-5f43-b9c8-ee4e003c0dec"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_W_C")
+    (at 304.8 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "6813bc1a-4e75-568e-8c31-f5975a346d17")
+    (property "Reference" "R18"
+      (at 304.8 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_W_C"
+      (at 304.8 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_C"
+      (at 304.8 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "ff0a848b-6b34-541a-b961-4298224b0e18"))
+    (pin "2"
+      (uuid "2ae4e3fa-4490-5292-9fe3-7ba3726cd702"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R18")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 254)
+      (xy 287.02 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "bc737545-b64a-5401-9d80-873793bff88c"))
+  (label "WEST_AUX_C_R"
+    (at 287.02 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "e22e7044-ecf6-5e57-bb49-4b55eca470e5"))
+  (wire
+    (pts
+      (xy 320.04 254)
+      (xy 322.58 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a631db5f-2514-52d5-b414-895694a25d40"))
+  (label "WEST_AUX_C_HEADER"
+    (at 322.58 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "7394c0f1-2a7f-550a-9d8b-c036bfe4ed4d"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_W_D")
+    (at 393.7 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "6529661d-6c82-5872-bc83-08efdfa79f89")
+    (property "Reference" "R19"
+      (at 393.7 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_W_D"
+      (at 393.7 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_W_D"
+      (at 393.7 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "a6ba6bc9-4be8-5544-9c7c-1dec79d70c89"))
+    (pin "2"
+      (uuid "f8f2b19f-136f-5411-abbf-a0990294d837"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R19")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 254)
+      (xy 375.92 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "1f9a67c4-f57d-5a10-823f-3b9fd5e0c064"))
+  (label "WEST_AUX_D_R"
+    (at 375.92 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "77f49b30-7000-567f-be1a-90a278916b2f"))
+  (wire
+    (pts
+      (xy 408.94 254)
+      (xy 411.48 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "caf151f1-6419-5849-a806-e1ba1a8cef5b"))
+  (label "WEST_AUX_D_HEADER"
+    (at 411.48 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ef17fe8e-25e6-5a31-8116-86d17cc7f6a7"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_E_A")
+    (at 482.6 254 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "06af43f7-b19d-59ea-b64b-15e25c91638a")
+    (property "Reference" "R20"
+      (at 482.6 250 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_E_A"
+      (at 482.6 258 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_A"
+      (at 482.6 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 254 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "114c717f-2369-5e12-9c42-53e009dd61fe"))
+    (pin "2"
+      (uuid "b0995c3f-a467-5910-a25e-b6f3d5538377"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R20")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 254)
+      (xy 464.82 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "e47fb6bb-edfb-56ee-be70-77cc872cb041"))
+  (label "EAST_AUX_A_R"
+    (at 464.82 254 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "55aae08d-187d-5e00-8aed-314506820b6f"))
+  (wire
+    (pts
+      (xy 497.84 254)
+      (xy 500.38 254))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "403bc4a9-32c4-50b5-9168-bf8a584dae4d"))
+  (label "EAST_AUX_A_HEADER"
+    (at 500.38 254 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "36955c6a-569a-509e-9a21-bf77eecba34a"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_E_B")
+    (at 38.1 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "678fc72a-67c5-5b60-b9fa-8bb2427ae624")
+    (property "Reference" "R21"
+      (at 38.1 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_E_B"
+      (at 38.1 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_B"
+      (at 38.1 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "bc0e05a9-1e3e-5747-bdc2-8b1b34c03f8f"))
+    (pin "2"
+      (uuid "2425c402-e5a0-5f79-9182-9ca8790b34fa"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R21")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 292.1)
+      (xy 20.32 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "f04512c3-c638-5517-bd01-db0b4d1b6e21"))
+  (label "EAST_AUX_B_R"
+    (at 20.32 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "815eb980-454f-5576-bb6e-ddf291e4a1a6"))
+  (wire
+    (pts
+      (xy 53.34 292.1)
+      (xy 55.88 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "88a699cf-b140-58db-8267-f832b5d1246d"))
+  (label "EAST_AUX_B_HEADER"
+    (at 55.88 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "6552b811-f1e2-5b92-a1af-46a87b5ea220"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_E_C")
+    (at 127 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "8b9cfe37-66ff-5c10-b65b-62f17d02b8dd")
+    (property "Reference" "R22"
+      (at 127 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_E_C"
+      (at 127 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_C"
+      (at 127 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "3d98e835-bf2d-512d-ae65-97a08b2f5e99"))
+    (pin "2"
+      (uuid "a2107a7e-69a2-528c-ae62-4a2954394728"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R22")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 292.1)
+      (xy 109.22 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "5f7a6e3a-19ab-5a11-85ff-cfe9a332b772"))
+  (label "EAST_AUX_C_R"
+    (at 109.22 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "05b38a4f-05c4-57c4-be95-cacce8efaaeb"))
+  (wire
+    (pts
+      (xy 142.24 292.1)
+      (xy 144.78 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "cce86219-399e-5718-8e47-9db21f9daf9f"))
+  (label "EAST_AUX_C_HEADER"
+    (at 144.78 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "40aedd40-b72e-52de-9d78-2c2c8dc22608"))
+  (symbol
+    (lib_id "Generated:Semantic_R_SOUTH_E_D")
+    (at 215.9 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "8795b1c3-4a06-5f13-864c-a8bf4bfe1771")
+    (property "Reference" "R23"
+      (at 215.9 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_SOUTH_E_D"
+      (at 215.9 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_SOUTH_E_D"
+      (at 215.9 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "768da485-843e-5f30-8e55-78b5f80888ff"))
+    (pin "2"
+      (uuid "c7409a2c-6de7-5357-a36c-bd99c599596b"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R23")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 292.1)
+      (xy 198.12 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "32e857b7-a800-53db-94ac-4bcdcfb46848"))
+  (label "EAST_AUX_D_R"
+    (at 198.12 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ce6cbe7f-9564-5ba0-8645-0d9202c30309"))
+  (wire
+    (pts
+      (xy 231.14 292.1)
+      (xy 233.68 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "48dba3d4-78a0-5950-9c77-96fba672d9b6"))
+  (label "EAST_AUX_D_HEADER"
+    (at 233.68 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "5f36a998-05db-51a2-a305-dcda8f4d3263"))
+  (symbol
+    (lib_id "Generated:Semantic_C_W_A")
+    (at 304.8 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "3d502c42-2844-5367-84c8-49c8e9d57915")
+    (property "Reference" "C1"
+      (at 304.8 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_W_A"
+      (at 304.8 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_W_A"
+      (at 304.8 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "9fd0fe08-8fef-5c2b-b269-cf2c3fe92e05"))
+    (pin "2"
+      (uuid "92a62c9a-cd07-523d-9c1a-e1c8854bb69d"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C1")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 292.1)
+      (xy 287.02 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "f0a562be-e67f-5ce0-a1fa-3b7c420ec056"))
+  (label "VCC"
+    (at 287.02 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "a8b7382a-ea53-50c9-ab88-37e42db054ad"))
+  (wire
+    (pts
+      (xy 320.04 292.1)
+      (xy 322.58 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "08061eca-f28e-5d30-8bb3-1943a2409cae"))
+  (label "GND"
+    (at 322.58 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "87e9dd8c-e4db-5835-80a4-dd156281fe80"))
+  (symbol
+    (lib_id "Generated:Semantic_C_W_B")
+    (at 393.7 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "9616a009-7a7a-5d79-ad43-cc2848f75eab")
+    (property "Reference" "C2"
+      (at 393.7 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_W_B"
+      (at 393.7 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_W_B"
+      (at 393.7 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "64650cd4-29b7-526b-92ce-5011b7a19c85"))
+    (pin "2"
+      (uuid "191bdc35-70ac-5963-a0e5-518a6ff5623d"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C2")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 292.1)
+      (xy 375.92 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "97756a2d-18a8-5a9e-b95f-66e543a8a1aa"))
+  (label "VCC"
+    (at 375.92 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "e2be00b9-6ad5-5931-828f-390cbbb33fcb"))
+  (wire
+    (pts
+      (xy 408.94 292.1)
+      (xy 411.48 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "9b3010f8-e0bc-52cc-bea4-e89d3b542fea"))
+  (label "GND"
+    (at 411.48 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "e08fde11-f889-5ff6-9c61-67d599bdffd6"))
+  (symbol
+    (lib_id "Generated:Semantic_C_W_EN")
+    (at 482.6 292.1 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "b337771f-f028-51db-a656-8435febfad27")
+    (property "Reference" "C3"
+      (at 482.6 288.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_W_EN"
+      (at 482.6 296.1 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_W_EN"
+      (at 482.6 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 292.1 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "b3d0d6d8-ca04-5efa-80d6-9ff90360e715"))
+    (pin "2"
+      (uuid "a34c753d-7dee-566a-91a6-aabc17b8d00b"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C3")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 292.1)
+      (xy 464.82 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "a9afdfcf-bcab-5c5e-ab99-92d6ee1b384c"))
+  (label "W_EN"
+    (at 464.82 292.1 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ed808fe6-116f-5abc-8952-23c30f78df7b"))
+  (wire
+    (pts
+      (xy 497.84 292.1)
+      (xy 500.38 292.1))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "8b709ff9-6309-5f85-ae73-a1589dc6a4e9"))
+  (label "GND"
+    (at 500.38 292.1 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "be7c3c7e-b902-570d-be3f-dba8c2b5c19d"))
+  (symbol
+    (lib_id "Generated:Semantic_R_W_EN")
+    (at 38.1 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "ff3cdfa3-cb74-57e2-9786-d2da0f09d448")
+    (property "Reference" "R24"
+      (at 38.1 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_W_EN"
+      (at 38.1 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_W_EN"
+      (at 38.1 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "3ae37ddc-1fb2-5d8b-a111-150ad2428790"))
+    (pin "2"
+      (uuid "e274c910-1a0e-5c58-9018-4c39289fe481"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R24")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 330.2)
+      (xy 20.32 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "63a4d33c-6087-5cbc-a88e-685f2d08c399"))
+  (label "VCC"
+    (at 20.32 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "960bbc0c-7a3e-5021-8bf6-de5aa60ad79b"))
+  (wire
+    (pts
+      (xy 53.34 330.2)
+      (xy 55.88 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "12055627-a13b-5233-a82d-d7c54a6e13be"))
+  (label "W_EN"
+    (at 55.88 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "111734b8-c903-551c-9edf-343ccb5c4f90"))
+  (symbol
+    (lib_id "Generated:Semantic_C_E_A")
+    (at 127 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "c55806c7-be18-5348-8640-660be3bef2b0")
+    (property "Reference" "C4"
+      (at 127 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_E_A"
+      (at 127 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_E_A"
+      (at 127 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 127 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "6fe1ac8c-7c34-577f-99ff-3d264b24ba69"))
+    (pin "2"
+      (uuid "a0b8c82f-fdd7-5d5a-8c67-6bbc452e8361"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C4")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 111.76 330.2)
+      (xy 109.22 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "e019d3a3-843d-5335-9da9-a9d02ff7893d"))
+  (label "VCC"
+    (at 109.22 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "0b857914-5839-552b-9769-800ff2380b75"))
+  (wire
+    (pts
+      (xy 142.24 330.2)
+      (xy 144.78 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "ad3f6db1-4cbf-53b0-8603-2ec9b038772b"))
+  (label "GND"
+    (at 144.78 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "1c578a3c-8484-5e1d-817a-7c5a0cff3cf8"))
+  (symbol
+    (lib_id "Generated:Semantic_C_E_B")
+    (at 215.9 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "9334c97f-51e0-5d05-8d68-fb8af9def130")
+    (property "Reference" "C5"
+      (at 215.9 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_E_B"
+      (at 215.9 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_E_B"
+      (at 215.9 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 215.9 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "c7993566-6316-5310-8828-89c89be59cc3"))
+    (pin "2"
+      (uuid "b1d11b7d-eaf0-5c07-a631-81bcbe5c61e6"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C5")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 200.66 330.2)
+      (xy 198.12 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "dc54d36d-3bc5-5e5e-9887-ed13e64593fb"))
+  (label "VCC"
+    (at 198.12 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "f95092e2-0e3e-5d38-b62b-bfa44f292b81"))
+  (wire
+    (pts
+      (xy 231.14 330.2)
+      (xy 233.68 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "104b293c-85fd-5f77-88e2-9217c77263bc"))
+  (label "GND"
+    (at 233.68 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "ca1f433f-e0f2-5f01-a22a-801c7102299b"))
+  (symbol
+    (lib_id "Generated:Semantic_C_E_EN")
+    (at 304.8 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "cd27637c-c756-59cf-87ac-faf383475d06")
+    (property "Reference" "C6"
+      (at 304.8 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "C_E_EN"
+      (at 304.8 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_C_E_EN"
+      (at 304.8 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 304.8 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "06148bf1-5a17-5e0a-a7a1-ab343a84d2b4"))
+    (pin "2"
+      (uuid "6fef6c2d-d17c-5332-b96f-9321d662733f"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "C6")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 289.56 330.2)
+      (xy 287.02 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "3acbe54a-41be-5ba7-8193-0c34553f7881"))
+  (label "E_EN"
+    (at 287.02 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "829b60af-984b-529b-b403-5ee241d6ce3e"))
+  (wire
+    (pts
+      (xy 320.04 330.2)
+      (xy 322.58 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "d6a59f67-9410-55b6-aadf-f2646834a755"))
+  (label "GND"
+    (at 322.58 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "a6238b0f-37cd-5c61-aa37-7ffe1007ba53"))
+  (symbol
+    (lib_id "Generated:Semantic_R_E_EN")
+    (at 393.7 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "46edcea9-b609-5774-b97a-742eb76eccaf")
+    (property "Reference" "R25"
+      (at 393.7 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_E_EN"
+      (at 393.7 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_E_EN"
+      (at 393.7 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 393.7 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "8363aac7-924d-5b51-baae-7f3b04d63edf"))
+    (pin "2"
+      (uuid "92946f34-986a-5bab-baaf-f141819233c3"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R25")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 378.46 330.2)
+      (xy 375.92 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "05a5f5fc-6413-5907-99ff-f075288ce667"))
+  (label "VCC"
+    (at 375.92 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "171130e3-861a-5f25-bf6a-9e52fbf73240"))
+  (wire
+    (pts
+      (xy 408.94 330.2)
+      (xy 411.48 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b64c7f13-fddd-5088-874e-4daaa975fa75"))
+  (label "E_EN"
+    (at 411.48 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "285f1e9c-4b46-5000-aabc-5ec72eb07853"))
+  (symbol
+    (lib_id "Generated:Semantic_R_LED")
+    (at 482.6 330.2 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "ed2ef05e-c3a4-58d6-8dc6-b54dc693bfd1")
+    (property "Reference" "R26"
+      (at 482.6 326.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "R_LED"
+      (at 482.6 334.2 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_R_LED"
+      (at 482.6 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 482.6 330.2 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "1"
+      (uuid "0af276a8-ded6-515e-80dd-689c088d28aa"))
+    (pin "2"
+      (uuid "8234c06c-7596-5214-9e02-7e42a2153ed3"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "R26")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 467.36 330.2)
+      (xy 464.82 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "2fb07f9e-f686-5186-9d61-82910ae65573"))
+  (label "VCC"
+    (at 464.82 330.2 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "dc909bc0-7878-5200-8b4f-408eb6f2400e"))
+  (wire
+    (pts
+      (xy 497.84 330.2)
+      (xy 500.38 330.2))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "824cc452-6c5a-5311-b81c-2873055944d5"))
+  (label "LED_SERIES"
+    (at 500.38 330.2 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "22210457-eed3-593e-bfb8-e7fbeab9acbe"))
+  (symbol
+    (lib_id "Generated:Semantic_D_LED")
+    (at 38.1 368.3 0)
+    (unit 1)
+    (body_style 1)
+    (exclude_from_sim no)
+    (in_bom yes)
+    (on_board yes)
+    (in_pos_files yes)
+    (dnp no)
+    (uuid "4bb4b0d4-26d1-5611-bc61-1fd67bb99103")
+    (property "Reference" "D1"
+      (at 38.1 364.3 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Value" "D_LED"
+      (at 38.1 372.3 0)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Footprint" "Generated:Semantic_D_LED"
+      (at 38.1 368.3 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (property "Datasheet" ""
+      (at 38.1 368.3 0)
+      (hide yes)
+      (show_name no)
+      (do_not_autoplace no)
+      (effects
+        (font
+          (size 1.27 1.27))))
+    (pin "A"
+      (uuid "1ba34967-82eb-51b3-ab34-5239d59fdb17"))
+    (pin "K"
+      (uuid "35ec4d82-25ab-5dec-b42f-207e93740cc6"))
+    (instances
+      (project "dual-esp32"
+        (path "/740f3fb3-3ed3-509e-a07f-f2b1daa2fb52"
+          (reference "D1")
+          (unit 1)))))
+  (wire
+    (pts
+      (xy 22.86 368.3)
+      (xy 20.32 368.3))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "b1f14771-b203-5865-bff0-741bce501212"))
+  (label "LED_SERIES"
+    (at 20.32 368.3 0)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "80ec3a51-8fd2-58f4-b5ed-15c4479587e2"))
+  (wire
+    (pts
+      (xy 53.34 368.3)
+      (xy 55.88 368.3))
+    (stroke
+      (width 0)
+      (type default))
+    (uuid "fcbfdb82-e68d-5603-93a8-9ef26adb7e7d"))
+  (label "GND"
+    (at 55.88 368.3 180)
+    (effects
+      (font
+        (size 1 1)))
+    (uuid "93952a11-5f57-52fc-aa16-a7fc556398b3"))
+  (sheet_instances
+    (path "/"
+      (page "1")))
+  (embedded_fonts no))

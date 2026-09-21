@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "sequence": 33,
+  "connection": "3V3_DUT",
+  "question": "Does discrete removal or relocation of one private via improve a real routed subtree, and does a topology action give the continuous engine a better result than fixed-via relaxation alone?",
+  "port_basis": {
+    "source": "/home/flo/programming/layout-trace/src/realtime/via_edit.rs",
+    "ported_semantics": [
+      "remove a via by merging its two adjacent layer runs and removing newly redundant via points",
+      "relocate both serialized sides of a via atomically",
+      "edit every root-to-terminal occurrence of one physical via",
+      "retain every unique candidate and select only after a complete native KiCad gate"
+    ],
+    "intentional_difference": "Immutable KiCad candidates use the source coordinate and unordered layer pair as the action handle. The realtime predecessor needs generational handles because it mutates a live world in place."
+  },
+  "fixture": {
+    "source_candidate": "build/experiments/030-kicad-tree-import/imported-3v3.json",
+    "obstacle_board": "artifacts/esp32-c3-ladder/42-gnd/esp32-c3.kicad_pcb",
+    "configuration": "experiments/configs/kicad-via-actions-branch8-first-excursion.json",
+    "target_branch": 8,
+    "target_at": [63.125, 30.875],
+    "target_layers": ["F.Cu", "B.Cu"],
+    "source_length_mm": 236.74590919347608,
+    "source_vias": 12,
+    "source_sha256": "ca1db79bfde74c761170a3f4040d9e310ab5c785435a898e0daeb142ea72c858"
+  },
+  "portfolio": {
+    "generated_actions": 14,
+    "unique_actions": 14,
+    "removal_actions": 2,
+    "relocation_actions": 12,
+    "native_complete_actions": 2,
+    "analytic_and_native_classification_agreed": true,
+    "analytic_clear_native_complete": 2,
+    "analytic_blocked_native_incomplete": 12,
+    "selected_attempt": 11,
+    "selected_action": {
+      "kind": "relocate",
+      "from": [63.125, 30.875],
+      "to": [63.125, 29.875],
+      "candidate_sha256": "b3159f60607212306fcaec95b41d70d6f2ae6d20487df948f1a3d314a4e58e92",
+      "length_mm": 236.475968310978,
+      "improvement_mm": 0.269940882498094,
+      "vias": 12,
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0
+    }
+  },
+  "removal_controls": [
+    {
+      "merged_layer": "F.Cu",
+      "length_mm": 234.88934269041155,
+      "vias": 10,
+      "design_drc": 19,
+      "evaluation": "Removing the whole bottom excursion saves two vias and 1.857 mm, but creates a 24.273 mm front-layer chord across D_EN, D_LOCAL_LOG, D_LOCAL_FLEX0, D_LOCAL_COMM0, GND, and other occupied copper."
+    },
+    {
+      "merged_layer": "B.Cu",
+      "length_mm": 274.833179870563,
+      "vias": 11,
+      "design_drc": 28,
+      "evaluation": "Merging backward into the bottom run removes one physical via but grows copper by 38.087 mm and crosses the bottom-layer field."
+    }
+  ],
+  "relocation_controls": {
+    "native_complete_positions": [
+      [63.125, 30.375],
+      [63.125, 29.875]
+    ],
+    "native_incomplete_positions": 10,
+    "best_geometric_but_invalid_position": [64.125, 30.875],
+    "best_geometric_but_invalid_length_mm": 236.1492081355319,
+    "best_geometric_but_invalid_design_drc": 3,
+    "limiting_copper": "D_EN tracks and via east of the target; lower and west moves encounter additional local copper."
+  },
+  "continuous_ablation": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-branch8.json",
+    "fixed_via_control": {
+      "candidate_sha256": "bc662d14642fc3aaeaedec354f735fbbeb288778a1eb43fb188eabc53406b1c4",
+      "after_length_mm": 236.2700433170075,
+      "improvement_mm": 0.475865876468575,
+      "native_kicad_complete": true
+    },
+    "relocate_then_relax": {
+      "candidate_sha256": "46e97044f4b7461578b158805f9cd4c851a8fda35e76e5cbc8ea950a24afb3bf",
+      "after_length_mm": 236.00010243450942,
+      "total_improvement_mm": 0.745806758966657,
+      "advantage_over_fixed_via_control_mm": 0.269940882498094,
+      "native_kicad_complete": true
+    },
+    "evaluation": "The continuous pass improves both seeds by the same 0.475866 mm. This relocation adds its own 0.269941 mm but does not unlock a measurably different continuous basin on this control."
+  },
+  "conclusion": {
+    "outcome": "useful_action_seam_modest_local_gain_negative_removal_control",
+    "advantage": "The port can now test removal and relocation as explicit topology transactions, preserve failed alternatives, and native-gate them before selection. One small legal relocation improves the final fixed-via result.",
+    "penalty": "Fourteen full-board native gates find only two valid moves, and the selected action improves only 0.270 mm without reducing via count. A coarse CPU lattice is not an efficient long-term producer.",
+    "why_removal_failed": "This particular excursion exists to cross an occupied routing field. Directly merging its runs substitutes many cross-net conflicts for two vias; this is evidence about the target and chord construction, not evidence against removal after local rerouting.",
+    "scope": "The port supports two-layer remove/merge and relocate actions on acyclic imported KiCad candidates. It does not yet insert vias, reroute the chord created by removal, move multiple coupled vias, use continuous feasible regions, or operate on cyclic copper.",
+    "next": "Replace the relocation lattice with obstacle-derived feasible intervals and pair via removal with bounded local rerouting instead of a direct chord. Keep this exact portfolio as the regression."
+  },
+  "authoritative_evidence": "build/experiments/033-via-topology-actions/portfolio/portfolio.json",
+  "progress_image_prefix": "build/progress/033-via-topology-actions-stage-",
+  "reproduction": "cargo test --test kicad_ladder rung41_tree_import_and_shared_via_motion_exact_passes -- --nocapture"
+}

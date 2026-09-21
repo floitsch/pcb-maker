@@ -1,0 +1,5 @@
+{
+  "maximum_attempts": 8,
+  "maximum_reroute_branches": 4,
+  "stop_on_complete": true
+}

@@ -1,0 +1,16 @@
+{
+  "policy": {
+    "kind": "harmonic_ports",
+    "iterations": 128,
+    "legalization_sweeps": 256,
+    "maximum_pair_checks": 1000000,
+    "connected_pair_spacing_floor": true
+  },
+  "seed": 0,
+  "projection_sweeps": 512,
+  "orientation_refinement": {
+    "maximum_sweeps": 4,
+    "maximum_trials": 512,
+    "minimum_improvement": 1e-9
+  }
+}

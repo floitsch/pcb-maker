@@ -1,0 +1,5 @@
+{
+  "maximum_proposals": 32,
+  "minimum_length_improvement_mm": 0.01,
+  "stop_on_first_improvement": true
+}

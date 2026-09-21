@@ -1,0 +1,96 @@
+{
+  "local_candidate_cap": 2,
+  "local_native_admission": "score_ordered_until_complete",
+  "unrouted_target_gate": "before_fallback_or_rollback",
+  "local_routing_portfolio": [
+    {
+      "resolution_mm": 0.25,
+      "trace_width_mm": 0.25,
+      "clearance_mm": 0.2,
+      "edge_clearance_mm": 0.5,
+      "hole_to_hole_clearance_mm": 0.25,
+      "via_size_mm": 0.8,
+      "via_drill_mm": 0.4,
+      "straight_cost": 100,
+      "diagonal_cost": 141,
+      "bend_cost": 20,
+      "via_cost": 800,
+      "max_expansions": 2000000,
+      "reachability_preflight": true,
+      "multi_terminal_routing": "rooted_star",
+      "maximum_tree_attachment_searches": 1,
+      "tree_attachment_minimum_spacing_mm": 0.0,
+      "tree_attachment_objective": "length_then_vias"
+    },
+    {
+      "resolution_mm": 0.25,
+      "trace_width_mm": 0.25,
+      "clearance_mm": 0.2,
+      "edge_clearance_mm": 0.5,
+      "hole_to_hole_clearance_mm": 0.25,
+      "via_size_mm": 0.8,
+      "via_drill_mm": 0.4,
+      "straight_cost": 100,
+      "diagonal_cost": 141,
+      "bend_cost": 20,
+      "via_cost": 800,
+      "max_expansions": 2000000,
+      "reachability_preflight": true,
+      "multi_terminal_routing": "shared_copper_tree",
+      "maximum_tree_attachment_searches": 2,
+      "tree_attachment_minimum_spacing_mm": 0.0,
+      "tree_attachment_objective": "length_then_vias"
+    }
+  ],
+  "future_reachability": {
+    "maximum_connections": 3,
+    "policy": "require_all",
+    "routing": {
+      "resolution_mm": 0.25,
+      "trace_width_mm": 0.25,
+      "clearance_mm": 0.2,
+      "edge_clearance_mm": 0.5,
+      "hole_to_hole_clearance_mm": 0.25,
+      "via_size_mm": 0.8,
+      "via_drill_mm": 0.4,
+      "straight_cost": 100,
+      "diagonal_cost": 141,
+      "bend_cost": 20,
+      "via_cost": 800,
+      "max_expansions": 2000000,
+      "reachability_preflight": true,
+      "multi_terminal_routing": "rooted_star",
+      "maximum_tree_attachment_searches": 1,
+      "tree_attachment_minimum_spacing_mm": 0.0,
+      "tree_attachment_objective": "length_then_vias"
+    }
+  },
+  "single_connection_ripup": {
+    "diagnosis": {
+      "maximum_yielding_connections": 1,
+      "maximum_trials": 64,
+      "routing": {
+        "resolution_mm": 0.25,
+        "trace_width_mm": 0.25,
+        "clearance_mm": 0.2,
+        "edge_clearance_mm": 0.5,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 0.8,
+        "via_drill_mm": 0.4,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 800,
+        "max_expansions": 2000000,
+        "reachability_preflight": true,
+        "multi_terminal_routing": "rooted_star",
+        "maximum_tree_attachment_searches": 1,
+        "tree_attachment_minimum_spacing_mm": 0.0,
+        "tree_attachment_objective": "length_then_vias"
+      }
+    },
+    "via_penalty_mm": 2.0
+  },
+  "fallback": "none",
+  "via_penalty_mm": 2.0
+}

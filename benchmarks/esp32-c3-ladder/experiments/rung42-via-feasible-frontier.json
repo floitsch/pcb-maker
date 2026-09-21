@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-branch8-analytic-feasible-via-frontier",
+  "sequence": 34,
+  "question": "Can cheap geometry-aware probes replace most blind native KiCad via-relocation trials without hiding failure or collapsing the retained portfolio to one numerical boundary point?",
+  "fixture": {
+    "connection": "3V3_DUT",
+    "branch": 8,
+    "target_via": [63.125, 30.875],
+    "layers": ["F.Cu", "B.Cu"],
+    "relocation_radius_mm": 1.0,
+    "source_length_mm": 236.74590919347608,
+    "source_physical_vias": 12,
+    "source_candidate_sha256": "ca1db79bfde74c761170a3f4040d9e310ab5c785435a898e0daeb142ea72c858"
+  },
+  "preliminary_without_diversity": {
+    "result": "all four retained relocation slots passed native KiCad but converged on the same obstacle boundary within micrometres",
+    "why_rejected_as_a_portfolio": "byte-distinct boundary refinements did not represent meaningfully different actions, so four expensive native gates provided almost one action's information",
+    "retained_evidence": "build/experiments/034-via-feasible-frontier/pre-nms-portfolio/portfolio.json",
+    "corrective_change": "score-ordered geometric non-maximum suppression with 0.1 mm minimum candidate spacing"
+  },
+  "frontier": {
+    "method": "analytic-feasible-radial-frontier-v1",
+    "local_physical_length_descent_direction": [0.9206036326366183, -0.3904983374820725],
+    "angular_directions": 32,
+    "radial_samples_per_direction": 8,
+    "boundary_refinement_steps": 12,
+    "boundary_inset_mm": 0.005,
+    "minimum_candidate_spacing_mm": 0.1,
+    "analytic_probes": 646,
+    "analytically_clear_probes": 321,
+    "feasibility_transitions": 30,
+    "boundary_refinement_probes": 360,
+    "unique_improving_feasible_points_before_diversity": 152,
+    "suppressed_near_duplicates": 124,
+    "spatially_distinct_points_before_native_cap": 28,
+    "retained_relocations": 4,
+    "native_actions_including_two_removal_controls": 6,
+    "native_complete_relocations": 4,
+    "selected_position": [63.36607056474311, 30.27876356308576],
+    "selected_raw_length_mm": 236.42630344965352,
+    "selected_raw_improvement_mm": 0.3196057438225608,
+    "selected_candidate_sha256": "6c8646ed00ac5a1e3404456ecf3e143fe4ca2a51ece4fd22719287bf5977c703",
+    "authoritative_evidence": "build/experiments/034-via-feasible-frontier/portfolio/portfolio.json"
+  },
+  "comparison_to_sequence_033_lattice": {
+    "lattice_native_actions": 14,
+    "lattice_native_complete_relocations": 2,
+    "lattice_selected_raw_length_mm": 236.475968310978,
+    "frontier_native_actions": 6,
+    "frontier_native_complete_relocations": 4,
+    "native_action_reduction": 8,
+    "frontier_additional_raw_improvement_mm": 0.049664861324485665,
+    "interpretation": "the analytic filter makes the expensive portfolio more informative on this via, but 646 CPU geometry probes and one fixture do not establish a general speedup"
+  },
+  "continuous_ablation": {
+    "fixed_via_relaxation_length_mm": 236.2700433170075,
+    "sequence_033_lattice_then_relaxation_length_mm": 236.00010243450942,
+    "frontier_then_relaxation_length_mm": 235.95043757318493,
+    "frontier_continuous_improvement_mm": 0.47586587646858947,
+    "source_to_final_improvement_mm": 0.7954716202911509,
+    "conclusion": "the continuous gain is again identical to the fixed-via control, so the better seed remains an additive discrete gain rather than evidence of a new relaxation basin",
+    "relaxed_candidate_sha256": "90a0fb9d54e7cd61c40ebb445c3251511bb253bf59eb84adf20b46a2b939957a",
+    "evidence": "build/experiments/034-via-feasible-frontier/frontier-relaxed-evidence.json"
+  },
+  "native_acceptance": {
+    "selected_raw": "complete",
+    "selected_then_relaxed": "complete",
+    "erc_findings": 0,
+    "drc_findings": 0,
+    "parity_findings": 0,
+    "selected_net_unconnected": 0,
+    "relaxed_rung": "build/experiments/034-via-feasible-frontier/frontier-relaxed-rung42"
+  },
+  "critical_evaluation": {
+    "worked": [
+      "every relocation sent to native KiCad was already analytically clear and all four passed",
+      "the same one-millimetre search radius used eight fewer native board evaluations than the lattice",
+      "the selected raw and post-relaxation candidates are both modestly shorter than the lattice controls",
+      "the preliminary same-boundary collapse remains visible and directly motivated diversity suppression"
+    ],
+    "did_not_establish": [
+      "the bounded angular/radial samples are not a complete representation of the continuous feasible region",
+      "fixed 0.1 mm non-maximum suppression is scale-dependent and may discard useful nearby alternatives",
+      "the experiment did not remove a via or reduce the twelve-via physical count",
+      "the relocation still did not change the continuous relaxation basin",
+      "one branch-local via is insufficient evidence for performance or quality on the wider tree"
+    ],
+    "next": "pair remove-via actions with a bounded local rerouter so removal can detour around occupied copper instead of replacing the excursion with one illegal chord; retain direct-chord failures as controls and test the frontier on additional vias before tuning its sampling policy"
+  },
+  "progress_image_prefix": "build/progress/034-via-feasible-frontier-stage-",
+  "progress_png_count": 28
+}

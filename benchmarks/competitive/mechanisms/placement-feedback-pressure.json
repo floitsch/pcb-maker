@@ -1,0 +1,17 @@
+{
+  "direction_policy": "passage_capacity",
+  "component_order": "frontier_hits",
+  "pressure_sources": "blockers_only",
+  "push_propagation": "single_component",
+  "maximum_components_per_push": 1,
+  "beam_width": 1,
+  "retain_non_improving_states": false,
+  "selective_ripup": null,
+  "push_step_mm": 0.5,
+  "step_scales": [1.0, 2.0],
+  "maximum_iterations": 2,
+  "maximum_blocking_components": 4,
+  "maximum_candidates_per_iteration": 16,
+  "maximum_total_attempts": 32,
+  "stop_on_complete": true
+}

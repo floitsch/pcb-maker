@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "sequence": 29,
+  "connection": "T_LOCAL_FLEX0",
+  "question": "Does the existing uniform-grid obstacle broad phase remain exact-equivalent after a via-bearing branch is split into independent same-layer runs?",
+  "common_result": {
+    "status": "accepted",
+    "before_length_mm": 19.242640687119284,
+    "after_length_mm": 18.964473578009734,
+    "maximum_point_motion_mm": 0.5791953918704335,
+    "segments": 4,
+    "vias": 2,
+    "selected_layer_runs": 3,
+    "fixed_via_anchors": 2
+  },
+  "exhaustive": {
+    "configuration": "experiments/configs/kicad-projected-tension-fixed-vias.json",
+    "layer_relevant_obstacle_pairs": 497,
+    "candidate_pairs": 497,
+    "retained_pairs": 497,
+    "engine_particles": 179,
+    "constraint_projections": 91648,
+    "native_kicad_complete": true
+  },
+  "uniform_grid": {
+    "configuration": "experiments/configs/kicad-projected-tension-fixed-vias-local.json",
+    "cell_size_mm": 2.0,
+    "motion_margin_mm": 1.0,
+    "layer_relevant_obstacle_pairs": 497,
+    "candidate_pairs": 15,
+    "retained_pairs": 7,
+    "culled_pairs": 490,
+    "broad_phase_cells": 545,
+    "cell_references": 868,
+    "cell_queries": 47,
+    "engine_particles": 7,
+    "constraint_projections": 1792,
+    "broad_phase_envelope_respected": true,
+    "native_kicad_complete": true
+  },
+  "comparison": {
+    "candidate_byte_identical": true,
+    "proposal_geometry_identical": true,
+    "route_quality_identical": true,
+    "projection_row_reduction_factor": 51.142857142857146,
+    "engine_particle_reduction_factor": 25.571428571428573,
+    "retained_obstacle_fraction": 0.014084507042253521,
+    "evaluation": "Computing envelopes per same-layer run avoids treating the full multilayer branch bounding box as active on every layer. The local processor retains only seven nearby rectangular obstacles and reproduces every solved coordinate exactly."
+  },
+  "conclusion": {
+    "outcome": "positive_scaling_experiment",
+    "advantage": "Fixed-via support composes with the existing GPU-shaped spatial selection seam; the solver input shrinks substantially without changing the transaction.",
+    "penalty": "The CPU still builds a 545-cell index with 868 references for this sparse board, and the static 1 mm envelope must reject rather than silently accept motion beyond it.",
+    "scope": "This is deterministic equivalence on one three-run route, not a runtime benchmark or proof for moving vias/shared multi-branch junctions."
+  },
+  "exhaustive_evidence": "build/experiments/029-fixed-via-local-broad-phase/exhaustive-evidence.json",
+  "local_evidence": "build/experiments/029-fixed-via-local-broad-phase/local-evidence.json",
+  "progress_image_prefix": "build/progress/029-fixed-via-local-broad-phase-stage-"
+}

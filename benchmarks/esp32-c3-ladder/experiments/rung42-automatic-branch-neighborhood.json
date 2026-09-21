@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "sequence": 32,
+  "connection": "3V3_DUT",
+  "question": "Can a single seed branch discover the smallest useful shared-copper bundle automatically, without expanding through the whole rooted tree?",
+  "fixture": {
+    "source_candidate": "build/experiments/030-kicad-tree-import/imported-3v3.json",
+    "obstacle_board": "artifacts/esp32-c3-ladder/42-gnd/esp32-c3.kicad_pcb",
+    "seed_branches": [1],
+    "source_sha256": "ca1db79bfde74c761170a3f4040d9e310ab5c785435a898e0daeb142ea72c858",
+    "source_physical_length_mm": 236.74590919347608,
+    "branches": 12
+  },
+  "automatic_nearest_shared_junction": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-auto-neighborhood.json",
+    "status": "accepted",
+    "branch_selection": "nearest_shared_junction",
+    "seed_branches": [1],
+    "selected_branches": [1, 2],
+    "branch_neighborhood_hops": 1,
+    "maximum_selected_branches": 4,
+    "maximum_branch_contact_tests": 100000,
+    "branch_contact_tests": 830,
+    "candidate_sha256": "f5d6fe26853916322edc79efef60d8f88734aac2917ac0bcfb3d3f9d5ce60f62",
+    "proposal_sha256": "363446e263c956be2f99df53cb8cf00bd459d9f43a013cee2f04cf9210c9b6b0",
+    "after_length_mm": 232.76270350304452,
+    "improvement_mm": 3.9832056904315607,
+    "maximum_point_motion_mm": 2.951437932682798,
+    "engine_frames": 16,
+    "constraint_projections": 115200,
+    "native_gate": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0
+    }
+  },
+  "manual_control": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-tension.json",
+    "selected_branches": [1, 2],
+    "candidate_and_proposal_byte_identical_to_automatic": true,
+    "complete_board_byte_identical_to_automatic": true,
+    "native_kicad_complete": true,
+    "evaluation": "The selector changes only how the useful local bundle is chosen. Given the same bundle, it reproduces the manual engine input and result exactly."
+  },
+  "bounded_control": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-auto-bounded.json",
+    "status": "unsupported",
+    "maximum_selected_branches": 1,
+    "attempted_selected_branches": 2,
+    "branch_contact_tests": 830,
+    "engine_frames": 0,
+    "committed_candidate_is_source_byte_identical": true,
+    "proposal_emitted": false,
+    "native_kicad_complete": true,
+    "evaluation": "The branch-count bound is checked before lowering. An oversized neighborhood cannot partially run or silently fall back to the weaker seed-only experiment."
+  },
+  "conclusion": {
+    "outcome": "positive_local_selection_experiment",
+    "advantage": "A raw leaf seed now finds its closest physical-copper sibling bundle automatically and unlocks the same movable shared junction as manual selection.",
+    "penalty": "Selection currently compares branch segment pairs on the CPU. The real tree required 830 contact tests before the much larger relaxation pass; this is acceptable here but needs spatial indexing or graph-native storage before whole-net use.",
+    "scope": "The policy follows nearest same-layer physical contacts from leaf toward root in an acyclic root-to-terminal representation. It does not yet cover graph cycles, via-only contact, choosing seeds, or proving that one hop is the best optimization neighborhood.",
+    "next": "Use the selector to form small discriminating subtrees for bounded via-removal and via-relocation actions, retaining fixed-via relaxation as the control."
+  },
+  "authoritative_evidence": "build/experiments/032-auto-branch-neighborhood/auto-evidence.json",
+  "progress_image_prefix": "build/progress/032-auto-branch-neighborhood-stage-",
+  "reproduction": "cargo test --test kicad_ladder rung41_tree_import_and_shared_via_motion_exact_passes -- --nocapture"
+}

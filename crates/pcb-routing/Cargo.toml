@@ -1,0 +1,19 @@
+[package]
+name = "pcb-routing"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Semantic routing adapters and selectable routing strategies for pcb-maker"
+publish = false
+
+[dependencies]
+layout-trace-model = { path = "../layout-trace-model" }
+layout-trace-routing = { path = "../layout-trace-routing" }
+pcb-grid-router = { path = "../pcb-grid-router" }
+pcb-core = { path = "../pcb-core" }
+pcb-engine = { path = "../pcb-engine" }
+pcb-validate = { path = "../pcb-validate" }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { version = "1.0", features = ["float_roundtrip"] }

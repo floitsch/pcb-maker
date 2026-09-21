@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-ground-plane-stitching-freerouting",
+  "source": {
+    "kind": "semantic_kicad",
+    "problem": "problems/ground-plane-stitching.json",
+    "placement_config": "placement-declared.json",
+    "template_config": "ground-plane-stitching-template.json",
+    "connection_prefix": 1
+  },
+  "result_acceptance": {"minimum_vias": 1, "minimum_used_copper_layers": 2, "minimum_copper_zones": 2, "minimum_filled_zone_area_mm2": 1800.0},
+  "post_route_processors": [
+    {
+      "kind": "ground_zone_replacement",
+      "config": {
+        "connection": "GND",
+        "layers": ["F.Cu", "B.Cu"],
+        "board_inset_mm": 0.5,
+        "clearance_mm": 0.3,
+        "minimum_thickness_mm": 0.25,
+        "thermal_gap_mm": 0.3,
+        "thermal_bridge_width_mm": 0.25,
+        "pad_connection": "solid",
+        "retain_existing_vias": true,
+        "via_thinning_cell_size_mm": null
+      }
+    }
+  ],
+  "rules": {"trace_width_mm": 0.4, "clearance_mm": 0.3, "via_diameter_mm": 0.8, "via_drill_mm": 0.4},
+  "freerouting": {"jar": "/tmp/freerouting-2.2.4.jar", "expected_jar_sha256": "f5ed374182900ccc78e473518bbb9f6b869f4a07159495f663a76f52bb10523b", "java_executable": "/usr/lib/jvm/java-26-openjdk/bin/java", "python_executable": "python3", "maximum_seconds": 60, "maximum_passes": 100, "maximum_threads": 1},
+  "require_zero_source_copper": true,
+  "render": {"width": 1000, "height": 750, "quality": "basic", "background": "opaque", "show_copper_zones": true},
+  "journal_directory": "../../../build/progress"
+}

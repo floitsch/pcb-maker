@@ -1,0 +1,12 @@
+{
+  "board_id": "dual-esp32",
+  "semantic_components": 43,
+  "schematic_components": 39,
+  "board_only_components": 4,
+  "electrical_connections": 52,
+  "terminal_assignments": 135,
+  "schematic_template": "benchmarks/dual-esp32-ladder/dual-esp32-full.kicad_sch",
+  "pcb_template": "benchmarks/dual-esp32-ladder/dual-esp32-full.kicad_pcb",
+  "project_template": "benchmarks/dual-esp32-ladder/dual-esp32-full.kicad_pro",
+  "declaration": "benchmarks/dual-esp32-ladder/declaration.json"
+}

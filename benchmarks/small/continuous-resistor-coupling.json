@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": { "min": { "x": 0.0, "y": 0.0 }, "max": { "x": 20.0, "y": 20.0 } },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.2 },
+  "components": [
+    {
+      "id": "A",
+      "position": { "x": 3.0, "y": 10.0 },
+      "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }]
+      }]
+    },
+    {
+      "id": "R",
+      "position": { "x": 10.0, "y": 10.0 },
+      "size": { "x": 4.0, "y": 1.0 },
+      "constraints": { "movement": "free", "rotation": "free" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": { "x": -2.0, "y": 0.0 },
+          "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }]
+        },
+        {
+          "id": "2",
+          "offset": { "x": 2.0, "y": 0.0 },
+          "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }]
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "position": { "x": 17.0, "y": 10.0 },
+      "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }]
+      }]
+    }
+  ],
+  "nets": [
+    {
+      "id": "LEFT",
+      "width": 0.3,
+      "layer": "top",
+      "from": { "component": "A", "pin": "p" },
+      "to": { "component": "R", "pin": "1" },
+      "seed_route": [
+        { "x": 3.0, "y": 10.0 },
+        { "x": 4.0, "y": 10.0 },
+        { "x": 8.0, "y": 10.0 }
+      ]
+    },
+    {
+      "id": "RIGHT",
+      "width": 0.3,
+      "layer": "top",
+      "from": { "component": "R", "pin": "2" },
+      "to": { "component": "B", "pin": "p" },
+      "seed_route": [
+        { "x": 12.0, "y": 10.0 },
+        { "x": 14.0, "y": 10.0 },
+        { "x": 16.0, "y": 10.0 },
+        { "x": 17.0, "y": 10.0 }
+      ]
+    }
+  ]
+}

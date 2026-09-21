@@ -1,0 +1,12 @@
+[package]
+name = "pcb-pipeline"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Versioned pass contracts for experimental PCB placement and routing pipelines"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"

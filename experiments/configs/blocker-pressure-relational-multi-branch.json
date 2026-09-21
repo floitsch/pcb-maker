@@ -1,0 +1,16 @@
+{
+  "direction_policy": "frontier_centroid",
+  "component_order": "trigger_branches_then_hits",
+  "push_propagation": "relational_and_collision_chain",
+  "maximum_components_per_push": 4,
+  "push_step_mm": 0.5,
+  "step_scales": [
+    1.0,
+    2.0
+  ],
+  "maximum_iterations": 2,
+  "maximum_blocking_components": 4,
+  "maximum_candidates_per_iteration": 16,
+  "maximum_total_attempts": 32,
+  "stop_on_complete": true
+}

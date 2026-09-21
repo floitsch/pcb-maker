@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 0.0, "y": 0.0 },
+      "max": { "x": 40.0, "y": 30.0 }
+    },
+    "layers": [
+      { "id": "top" },
+      { "id": "bottom" }
+    ]
+  },
+  "rules": {
+    "clearance": 0.35,
+    "via_diameter": 1.0,
+    "via_drill": 0.45,
+    "allow_via_in_pad": false
+  },
+  "components": [
+    {
+      "id": "WEST",
+      "position": { "x": 4.0, "y": 15.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "EAST",
+      "position": { "x": 36.0, "y": 15.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "NORTH",
+      "position": { "x": 20.0, "y": 4.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "SOUTH",
+      "position": { "x": 20.0, "y": 26.0 },
+      "size": { "x": 2.0, "y": 2.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": { "x": 0.0, "y": 0.0 },
+          "pads": [
+            { "layer": "top", "shape": { "kind": "circle", "diameter": 1.4 } }
+          ]
+        }
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "id": "A_WEST_EAST",
+      "width": 0.45,
+      "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "WEST", "pin": "1" },
+      "to": { "component": "EAST", "pin": "1" },
+      "seed_route": [
+        { "x": 4.0, "y": 15.0 },
+        { "x": 36.0, "y": 15.0 }
+      ]
+    },
+    {
+      "id": "B_NORTH_SOUTH",
+      "width": 0.45,
+      "layer": "top",
+      "allowed_layers": ["top", "bottom"],
+      "from": { "component": "NORTH", "pin": "1" },
+      "to": { "component": "SOUTH", "pin": "1" },
+      "seed_route": [
+        { "x": 20.0, "y": 4.0 },
+        { "x": 20.0, "y": 26.0 }
+      ]
+    }
+  ],
+  "solver": { "particles_per_trace": 8 }
+}

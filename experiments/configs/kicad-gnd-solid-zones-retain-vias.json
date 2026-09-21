@@ -1,0 +1,12 @@
+{
+  "connection": "GND",
+  "layers": ["F.Cu", "B.Cu"],
+  "board_inset_mm": 0.5,
+  "clearance_mm": 0.3,
+  "minimum_thickness_mm": 0.25,
+  "thermal_gap_mm": 0.3,
+  "thermal_bridge_width_mm": 0.3,
+  "pad_connection": "solid",
+  "retain_existing_vias": true,
+  "via_thinning_cell_size_mm": null
+}

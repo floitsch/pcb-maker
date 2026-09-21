@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "whole-board-reference-v1",
+  "cases": [
+    {
+      "source": "kicad-ecc83-pp",
+      "comparison": "ecc83-pp/comparison.json",
+      "rule_scope": "Source default routing geometry; original ground pour is removed and must be reconstructed or replaced by routing.",
+      "placement_status": "experimental all-free courtyard repacking with explicit connector overhang; original product constraints remain unmodeled",
+      "placement_policy": "ecc83-pp/placement-policy.json"
+    },
+    {
+      "source": "kicad-pic-programmer",
+      "comparison": "pic-programmer/comparison.json",
+      "rule_scope": "ADAPTED: existing comparison flattens POWER to Default. This is not a source-rule completion claim.",
+      "placement_status": "Experimental all-free spectral placement with coupled recovery passes native geometry/inventory after 128 sweeps plus three joint rounds; its first routing pass connects all 34 nets. Six annotations prevent full admission; original product constraints are not modeled.",
+      "placement_policy": "pic-programmer/placement-policy.json"
+    },
+    {
+      "source": "kicad-complex-hierarchy",
+      "comparison": null,
+      "adaptive_config": "complex-hierarchy/pcb-maker-layout.json",
+      "rule_scope": "Native source classes supported. Standalone external controls audit basic classes and record explicit layer-role and edge adaptations; full exchange equivalence remains unproven.",
+      "placement_status": "Experimental all-free spectral placement connects all 50 nets at unchanged area; three annotations still prevent full layout admission. Original product constraints remain unmodeled.",
+      "placement_policy": "complex-hierarchy/placement-policy.json"
+    },
+    {
+      "source": "kicad-interf-u",
+      "comparison": null,
+      "adaptive_config": "interf-u/pcb-maker-adaptive.json",
+      "rule_scope": "Native full 110-net run terminal: passes route 55 and 52 nets; selected result has 143 opens and no design findings. Exact external zero-edge-clearance translation is unsupported; the stricter-edge external control is not an equal-rule score.",
+      "placement_status": "pending socket, connector and mounting constraints"
+    },
+    {
+      "source": "olimex-esp32-c3-rev-c",
+      "comparison": null,
+      "rule_scope": "Unsupported rule translation: pad-local mounting-hole clearance must survive both router adapters.",
+      "placement_status": "pending connector, mounting-hole, antenna and power-locality constraints"
+    }
+  ],
+  "area_track": {
+    "objective": "minimum verified complete board outline area, with unchanged components, netlist, stackup and electrical rules",
+    "target_area_ratios": [
+      1.0,
+      0.95,
+      0.9,
+      0.8,
+      0.7
+    ],
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "placement_modes": [
+      "cold_placement",
+      "reference_seeded_compaction"
+    ],
+    "candidate_status": "experimental_ecc83_cold_placement",
+    "score_incomplete_candidates": false,
+    "candidate_runner": "experiments/whole-board/area_probe.py",
+    "admission_note": "ECC83 courtyard policy plus protected silkscreen repair, native inventory audit and complete native routing. Other projects and reference-seeded compaction remain outstanding."
+  }
+}

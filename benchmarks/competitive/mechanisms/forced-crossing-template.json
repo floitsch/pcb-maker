@@ -1,0 +1,13 @@
+{
+  "board_id": "mechanism-forced-crossing",
+  "connection_order": [
+    "DIAGONAL_NE",
+    "DIAGONAL_SE"
+  ],
+  "board_origin_mm": [10.0, 10.0],
+  "board_edge_margin_mm": 1.0,
+  "courtyard_clearance_mm": 0.0,
+  "minimum_annular_ring_mm": 0.25,
+  "through_hole_drill_ratio": 0.6,
+  "implicit_pad_diameter_mm": 1.5
+}

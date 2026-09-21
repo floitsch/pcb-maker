@@ -1,0 +1,19 @@
+{
+  "target_at": [63.125, 30.875],
+  "target_layers": ["F.Cu", "B.Cu"],
+  "removal_layers": ["F.Cu", "B.Cu"],
+  "relocation_radius_mm": 1.0,
+  "relocation_step_mm": 0.0,
+  "maximum_relocation_candidates": 4,
+  "feasible_frontier": {
+    "angular_samples": 32,
+    "radial_samples": 8,
+    "boundary_refinement_steps": 12,
+    "boundary_inset_mm": 0.005,
+    "minimum_candidate_spacing_mm": 0.1
+  },
+  "maximum_actions": 6,
+  "maximum_affected_branches": 1,
+  "via_penalty_mm": 3.0,
+  "minimum_score_improvement_mm": 0.000001
+}

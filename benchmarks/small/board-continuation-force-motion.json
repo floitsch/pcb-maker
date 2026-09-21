@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": { "min": { "x": 0.0, "y": 0.0 }, "max": { "x": 20.0, "y": 12.0 } },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.25, "via_diameter": 1.0, "via_drill": 0.45 },
+  "components": [
+    {
+      "id": "LEFT", "position": { "x": 2.0, "y": 6.0 }, "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.0 } }] }]
+    },
+    {
+      "id": "RIGHT", "position": { "x": 18.0, "y": 6.0 }, "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 1.0 } }] }]
+    },
+    {
+      "id": "REFERENCE_LEFT", "position": { "x": 2.0, "y": 2.0 }, "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }] }]
+    },
+    {
+      "id": "REFERENCE_RIGHT", "position": { "x": 18.0, "y": 2.0 }, "size": { "x": 1.0, "y": 1.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" }, "body_is_routing_keepout": false,
+      "pins": [{ "id": "1", "offset": { "x": 0.0, "y": 0.0 }, "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.8 } }] }]
+    },
+    {
+      "id": "YIELDING_BLOCKER", "position": { "x": 10.0, "y": 6.6 }, "size": { "x": 4.0, "y": 0.4 },
+      "constraints": { "movement": "vertical", "rotation": "fixed" }, "body_is_routing_keepout": true,
+      "pins": []
+    }
+  ],
+  "nets": [
+    {
+      "id": "SIGNAL", "width": 0.5, "layer": "top", "allowed_layers": ["top"],
+      "from": { "component": "LEFT", "pin": "1" }, "to": { "component": "RIGHT", "pin": "1" }
+    },
+    {
+      "id": "REFERENCE", "width": 0.4, "layer": "top", "allowed_layers": ["top"],
+      "from": { "component": "REFERENCE_LEFT", "pin": "1" }, "to": { "component": "REFERENCE_RIGHT", "pin": "1" }
+    }
+  ]
+}

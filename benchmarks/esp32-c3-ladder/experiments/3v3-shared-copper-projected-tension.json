@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "superseded_by": "3v3-route-graph-projected-tension.json",
+  "measurement_warning": "This record used stored track-object length with only exact whole-segment deduplication. It mislabeled partially overlapping same-net track sum as physical copper. Sequence 023 corrects the metric and shows that this proposal worsens canonical physical copper, so the earlier acceptance conclusion is retracted.",
+  "connection": "3V3_DUT",
+  "source_experiment": "3v3-local-broad-phase.json",
+  "algorithm": "shared-copper-projected-tension-v1",
+  "fixture": "six via-free branches [0, 2, 3, 4, 6, 9] with rung 42 copper used as future-aware obstacles",
+  "hypothesis": "Simultaneous branch relaxation must represent coincident physical copper as shared particles and edges; independent branch particles will split shared trunks even if every logical branch becomes shorter.",
+  "independent_branch_control": {
+    "status": "no_improvement",
+    "candidate_sha256": "718d4f0ea9a66f10f4905949a964dd3110d47878decd083589724a4ffe7f19c6",
+    "proposal_sha256": "f021e8cfb93a5cd7ebd4393a10f2cf45d58354f70b00607f4ce6c5da1d6966e9",
+    "historical_source_track_length_mm": 290.54617660907434,
+    "historical_proposal_track_length_mm": 308.41246495095066,
+    "combined_logical_branch_improvement_mm": 4.394112937509755,
+    "constraint_projections": 2250240,
+    "shared_point_groups": 0,
+    "interpretation": "Every selected logical branch shortened, but formerly coincident trunks moved independently. Physical copper deduplication was lost, adding 17.866288342 mm, so the transaction correctly rolled back. The proposal is geometrically valid but worse."
+  },
+  "shared_exhaustive": {
+    "status": "accepted",
+    "candidate_sha256": "d4b282d26b130d824267a69d50f597f679492a3b65d0a74a897a18aaafe28a39",
+    "proposal_sha256": "1bf563b8438280b3a3d43dc9d2a4dc0b5405d1dfad3bc1a581f43e00074c2724",
+    "historical_reported_track_length_mm": 280.27040859489375,
+    "maximum_point_motion_mm": 3.118762969970703,
+    "constraint_projections": 1800192,
+    "engine_particles": 1529,
+    "shared_point_groups": 4,
+    "shared_point_members": 13,
+    "tension_edges": 16,
+    "deduplicated_tension_edges": 4,
+    "deduplicated_segment_pairs": 3024,
+    "deduplicated_segment_body_pairs": 492
+  },
+  "local_narrow_envelope_control": {
+    "motion_margin_mm": 1.0,
+    "status": "invalid_proposal",
+    "proposal_sha256": "1bf563b8438280b3a3d43dc9d2a4dc0b5405d1dfad3bc1a581f43e00074c2724",
+    "historical_reported_proposal_track_length_mm": 280.27040859489375,
+    "maximum_point_motion_mm": 3.118762969970703,
+    "constraint_projections": 39296,
+    "interpretation": "The raw proposal is byte-identical to exhaustive and geometry-clear, but it exceeds the declared neighborhood certificate. It is rolled back rather than accepted from an unproven obstacle set."
+  },
+  "local_wide_envelope": {
+    "cell_size_mm": 2.0,
+    "motion_margin_mm": 3.2,
+    "motion_margin_basis": "16 configured steps times the 0.2 mm per-step tension travel bound",
+    "status": "accepted",
+    "candidate_sha256": "d4b282d26b130d824267a69d50f597f679492a3b65d0a74a897a18aaafe28a39",
+    "proposal_sha256": "1bf563b8438280b3a3d43dc9d2a4dc0b5405d1dfad3bc1a581f43e00074c2724",
+    "historical_reported_track_length_mm": 280.27040859489375,
+    "maximum_point_motion_mm": 3.118762969970703,
+    "layer_relevant_obstacle_pairs": 5274,
+    "grid_candidate_pairs": 353,
+    "retained_obstacle_pairs": 278,
+    "culled_obstacle_pairs": 4996,
+    "constraint_projections": 101120,
+    "engine_particles": 275,
+    "shared_point_groups": 4,
+    "shared_point_members": 13,
+    "tension_edges": 16,
+    "deduplicated_tension_edges": 4,
+    "deduplicated_segment_pairs": 130,
+    "deduplicated_segment_body_pairs": 8,
+    "projection_reduction_vs_exhaustive": 17.80221518987342
+  },
+  "exact_validation": {
+    "rung_41": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    },
+    "rung_42": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    }
+  },
+  "visual_evidence": "build/progress/022-kicad-shared-copper-*",
+  "reproduction": "cargo test --test kicad_ladder future_aware_route_processors_improve_3v3_and_keep_later_rungs_valid -- --nocapture",
+  "outcome": "retracted_after_physical_copper_metric_correction",
+  "interpretation": "This experiment correctly identified duplicate exact vertices as a problem, but did not handle partially overlapping collinear subsegments and evaluated the result with an incomplete length metric. Retain it as negative provenance; do not use its accepted status as current evidence."
+}

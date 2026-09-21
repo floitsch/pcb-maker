@@ -1,0 +1,17 @@
+{
+  "board_id": "observed-order",
+  "connection_order": [
+    "H",
+    "V"
+  ],
+  "board_origin_mm": [
+    10,
+    10
+  ],
+  "board_edge_margin_mm": 0,
+  "courtyard_clearance_mm": 0,
+  "minimum_annular_ring_mm": 0.1,
+  "copper_clearance_mm": 0.2,
+  "copper_edge_clearance_mm": 0.2,
+  "minimum_trace_width_mm": 0.2
+}

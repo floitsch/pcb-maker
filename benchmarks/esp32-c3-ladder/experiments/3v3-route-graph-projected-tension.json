@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "connection": "3V3_DUT",
+  "supersedes": [
+    "3v3-retained-visibility-shortest-path.json",
+    "3v3-shared-copper-projected-tension.json"
+  ],
+  "algorithm": "shared-route-graph-projected-tension-v1",
+  "fixture": "six via-free branches [0, 2, 3, 4, 6, 9] from the original rung-41 candidate, with rung-42 copper used as future-aware obstacles",
+  "hypothesis": "A same-net route must be normalized into one physical graph before either shortening or continuous relaxation is evaluated; exact shared vertices alone do not preserve collinear trunks.",
+  "metric_correction": {
+    "canonical_physical_length_mm": 238.14631746765548,
+    "stored_track_length_mm": 294.3815988418941,
+    "overlapping_track_length_mm": 56.23528137423864,
+    "canonical_physical_segments": 61,
+    "stored_segments": 61,
+    "interpretation": "The previous length metric deduplicated only byte-identical complete track objects. It double-counted partially overlapping same-net segments and could reward a proposal for destroying overlap. Length now means the union of split, canonical physical copper; stored-track length remains separate evidence."
+  },
+  "retained_visibility_control": {
+    "status": "no_improvement",
+    "source_candidate_sha256": "b1274574cb8248fc684b2a48e7a7622521d7011c34fdcf23e0e01051b98a29a2",
+    "raw_proposal_sha256": "718d4f0ea9a66f10f4905949a964dd3110d47878decd083589724a4ffe7f19c6",
+    "source_physical_length_mm": 238.14631746765548,
+    "proposal_physical_length_mm": 238.41444862542895,
+    "source_stored_track_length_mm": 294.3815988418941,
+    "proposal_stored_track_length_mm": 238.41444862542895,
+    "interpretation": "Removing 31 branch bends and 19 stored segments looks attractive, but destroys shared physical structure and adds 0.268131 mm to canonical copper. The transaction now rolls back."
+  },
+  "exact_shared_point_control": {
+    "status": "no_improvement",
+    "raw_proposal_sha256": "e6cc8de0b20210556822844fbeba0629b93e3471dbfdc1873b3b885ee947fd4b",
+    "source_physical_length_mm": 238.14631746765548,
+    "proposal_physical_length_mm": 274.45941973826274,
+    "maximum_point_motion_mm": 3.1210174560546875,
+    "shared_point_groups": 5,
+    "route_graph_inserted_points": 0,
+    "interpretation": "Exact coincident vertices are insufficient. Different endpoints on one collinear shared trunk remain separate edges, split apart under tension, and add 36.313102 mm of physical copper."
+  },
+  "normalization_only_control": {
+    "status": "no_improvement",
+    "raw_proposal_sha256": "6f21186bf407ccbfc09d75ff949876ccbcc942b18008bb448e0bd5390826af46",
+    "maximum_point_motion_mm": 0.0,
+    "source_physical_length_mm": 238.14631746765548,
+    "proposal_physical_length_mm": 238.14631746765548,
+    "proposal_stored_track_length_mm": 238.14631746765548,
+    "route_graph_contact_points": 8,
+    "route_graph_inserted_points": 7,
+    "mixed_mobility_shared_point_groups": 1,
+    "interpretation": "Splitting and deduplicating the representation changes no physical geometry or physical length. A terminal-to-interior T contact anchors the shared particle because any fixed member fixes the physical node."
+  },
+  "graph_exhaustive": {
+    "status": "accepted",
+    "candidate_sha256": "3aa7a0d3e969b0c946763cba88fb934d4358dc673dfaefe23582c12b308b5e0f",
+    "proposal_sha256": "c16904b684b40d5e5f50c5688e1cb066ee08042b2b41b8d449f7e40ea19bad1a",
+    "physical_length_mm": 228.4649533596754,
+    "improvement_mm": 9.68136410798008,
+    "maximum_point_motion_mm": 2.9377624600552052,
+    "constraint_projections": 2812800,
+    "engine_particles": 1541,
+    "fixed_context_anchors": 3,
+    "fixed_context_anchor_members": 16,
+    "shared_point_groups": 9,
+    "shared_point_members": 33,
+    "mixed_mobility_shared_point_groups": 3,
+    "route_graph_contact_points": 9,
+    "route_graph_inserted_points": 7,
+    "tension_edges": 25,
+    "deduplicated_tension_edges": 16,
+    "deduplicated_segment_pairs": 12096,
+    "deduplicated_segment_body_pairs": 1968
+  },
+  "graph_local": {
+    "status": "accepted",
+    "candidate_sha256": "3aa7a0d3e969b0c946763cba88fb934d4358dc673dfaefe23582c12b308b5e0f",
+    "proposal_sha256": "c16904b684b40d5e5f50c5688e1cb066ee08042b2b41b8d449f7e40ea19bad1a",
+    "physical_length_mm": 228.4649533596754,
+    "constraint_projections": 169728,
+    "projection_reduction_vs_exhaustive": 16.57239819004525,
+    "layer_relevant_obstacle_pairs": 5274,
+    "grid_candidate_pairs": 346,
+    "retained_obstacle_pairs": 272,
+    "culled_obstacle_pairs": 5002,
+    "engine_particles": 279,
+    "fixed_context_anchors": 3,
+    "fixed_context_anchor_members": 16,
+    "interpretation": "The local result and raw proposal are byte-identical to exhaustive. Three exact context anchors preserve nine contacts with the unselected same-net tree; this improves the old independently lowered result without changing the selected physical topology. This is work reduction, not a runtime or GPU-speedup claim."
+  },
+  "exact_validation": {
+    "rung_41": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    },
+    "rung_42": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    }
+  },
+  "visual_evidence": "build/progress/023-kicad-route-graph-*",
+  "reproduction": "cargo test --test kicad_ladder future_aware_route_processors_improve_3v3_and_keep_later_rungs_valid -- --nocapture",
+  "outcome": "metric_correction_and_positive_route_graph_experiment",
+  "interpretation": "The central requirement is physical identity, not particle count. The route graph may add vertices for contacts, but every physical node and edge is represented once. Selected branches are also anchored at contacts with unselected same-net context. Under that model projected tension produces a real 9.681 mm improvement and the local broad phase preserves the exhaustive answer."
+}

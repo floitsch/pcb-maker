@@ -1,0 +1,10 @@
+{
+  "board_id": "mechanism-south-header-breakout",
+  "connection_order": ["A_IN", "A_OUT", "B_IN", "B_OUT", "C_IN", "C_OUT", "D_IN", "D_OUT"],
+  "board_origin_mm": [10.0, 10.0],
+  "board_edge_margin_mm": 1.0,
+  "courtyard_clearance_mm": 0.0,
+  "minimum_annular_ring_mm": 0.25,
+  "through_hole_drill_ratio": 0.6,
+  "implicit_pad_diameter_mm": 1.5
+}

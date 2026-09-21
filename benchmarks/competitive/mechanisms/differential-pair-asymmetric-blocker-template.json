@@ -1,0 +1,10 @@
+{
+  "board_id": "mechanism-differential-pair-asymmetric-blocker",
+  "connection_order": ["USB_P", "USB_N"],
+  "board_origin_mm": [10.0, 10.0],
+  "board_edge_margin_mm": 1.0,
+  "courtyard_clearance_mm": 0.0,
+  "minimum_annular_ring_mm": 0.2,
+  "through_hole_drill_ratio": 0.6,
+  "implicit_pad_diameter_mm": 1.0
+}

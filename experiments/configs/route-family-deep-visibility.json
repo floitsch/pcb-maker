@@ -1,0 +1,21 @@
+{
+  "corridor": {
+    "circle_segments": 16,
+    "placement_revision": 1,
+    "first_corridor_revision": 1,
+    "embedding_mode": "full_width"
+  },
+  "portfolio_id": "pcb-maker-route-families-deep-visibility",
+  "geometry_revision": 1,
+  "maximum_assignment_nodes": 100000,
+  "maximum_repair_component_branches": 6,
+  "route_repair_work_budget": {
+    "settled_states": 200000,
+    "visibility_pair_evaluations": 524288,
+    "visibility_geometry_units": 100000000
+  },
+  "context_correction_limits": {
+    "max_nodes": 50000,
+    "max_promoted_branches": 3
+  }
+}

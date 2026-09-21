@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "sequence": 27,
+  "connection": "T_LOCAL_COMM0",
+  "question": "Can the coordinator automatically retain, deduplicate, native-gate, and select the discrete reference-field repairs introduced in sequence 026?",
+  "source": {
+    "route_length_mm": 18.218362539221065,
+    "translation_mm": 0.2249856143652625,
+    "rotation_degrees": 1.7674922343103958,
+    "native_kicad_complete": false,
+    "drc_design_violations": 1
+  },
+  "search": {
+    "algorithm": "native-kicad-reference-action-portfolio-v1",
+    "generated_actions": 4,
+    "unique_actions": 3,
+    "native_action_gates": 3,
+    "native_complete_actions": 2,
+    "duplicate_actions": [
+      {
+        "phase": 4,
+        "duplicate_of_phase": 1
+      }
+    ],
+    "selection_rule": "native completeness, canonical route length, via count, total reference displacement, predecessor phase",
+    "selected_phase": 2
+  },
+  "attempts": [
+    {
+      "phase": 1,
+      "reference_local_at": [0.0, 2.2, 0.0],
+      "reference_displacement_mm": 4.4,
+      "route_length_mm": 18.218362539221065,
+      "native_kicad_complete": false,
+      "drc_design_violations": 1,
+      "selected": false,
+      "failure": "The relocated R2 reference overlaps the R3 reference"
+    },
+    {
+      "phase": 2,
+      "reference_local_at": [2.2, 0.0, 0.0],
+      "reference_displacement_mm": 3.111269837220809,
+      "route_length_mm": 18.218362539221065,
+      "native_kicad_complete": true,
+      "drc_design_violations": 0,
+      "selected": true
+    },
+    {
+      "phase": 3,
+      "reference_local_at": [-2.2, 0.0, 0.0],
+      "reference_displacement_mm": 3.111269837220809,
+      "route_length_mm": 18.218362539221065,
+      "native_kicad_complete": true,
+      "drc_design_violations": 0,
+      "selected": false
+    }
+  ],
+  "valid_noop_control": {
+    "candidate": "sequence-025 nearby-courtyard translation",
+    "native_kicad_complete": true,
+    "selected_source": true,
+    "generated_actions": 0,
+    "attempted_actions": 0,
+    "selected_candidate_byte_identical_to_source": true,
+    "evaluation": "A candidate that already passes the fresh native gate is returned unchanged without manufacturing repair actions."
+  },
+  "conclusion": {
+    "capability": "The previously manual repair is now a complete transactional portfolio: the coordinator regenerates the failing board, trusts its fresh native DRC, retains every unique attempt, and emits one source-checked selected candidate.",
+    "selection": "East and west have identical route quality and displacement, so the documented final tie-break selects the earlier predecessor phase. The invalid mirrored action is never eligible.",
+    "quality": "The portfolio fixes validity but does not improve the 18.218363 mm route; the sequence-025 courtyard result remains shorter at 18.174384 mm.",
+    "architecture": "Keep discrete action production separate from native acceptance and scoring. Fresh-only artifact directories prevent stale attempt evidence from being mixed into a new search.",
+    "known_limits": "This portfolio is reference-specific, sequentially runs a complete KiCad gate for each unique action, and has no text-readability objective beyond native clearance plus total displacement. It is not yet a general conflict-action coordinator."
+  },
+  "authoritative_portfolio": "build/experiments/027-reference-action-portfolio/portfolio.json",
+  "noop_control_portfolio": "build/experiments/027-reference-action-valid-control/portfolio.json",
+  "progress_image_prefix": "build/progress/027-reference-action-portfolio-stage-"
+}

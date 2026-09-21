@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "sequence": 31,
+  "connection": "3V3_DUT",
+  "question": "Can two real branches that share two fixed vias and long physical trunks move usefully as one graph, and what is gained over one-branch or independent-particle lowering?",
+  "fixture": {
+    "source_candidate": "build/experiments/030-kicad-tree-import/imported-3v3.json",
+    "future_obstacle_board": "artifacts/esp32-c3-ladder/42-gnd/esp32-c3.kicad_pcb",
+    "selected_branches": [1, 2],
+    "terminals": 13,
+    "source_physical_length_mm": 236.74590919347608,
+    "source_segments": 44,
+    "source_vias": 12,
+    "shared_selected_vias": [
+      [32.125, 47.875],
+      [56.375, 23.625]
+    ]
+  },
+  "joint_shared_graph": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-tension.json",
+    "status": "accepted",
+    "candidate_sha256": "f5d6fe26853916322edc79efef60d8f88734aac2917ac0bcfb3d3f9d5ce60f62",
+    "proposal_sha256": "363446e263c956be2f99df53cb8cf00bd459d9f43a013cee2f04cf9210c9b6b0",
+    "before_length_mm": 236.74590919347608,
+    "after_length_mm": 232.76270350304452,
+    "improvement_mm": 3.9832056904315607,
+    "improvement_percent": 1.682481316784385,
+    "maximum_point_motion_mm": 2.951437932682798,
+    "segments_before": 44,
+    "segments_after": 44,
+    "vias_before": 12,
+    "vias_after": 12,
+    "initial_geometry_clear": true,
+    "proposal_geometry_clear": true,
+    "fixed_via_anchors": 2,
+    "fixed_via_anchor_members": 8,
+    "fixed_context_anchors": 11,
+    "fixed_context_anchor_members": 22,
+    "shared_point_groups": 10,
+    "shared_point_members": 37,
+    "deduplicated_tension_edges": 9,
+    "moved_shared_junction": {
+      "before": [38.125, 20.625],
+      "after": [35.82247543334961, 22.471446990966797]
+    },
+    "moved_branch_only_bend": {
+      "before": [33.125, 20.625],
+      "after": [33.781837463378906, 22.522014617919922]
+    },
+    "native_gate": {
+      "rung_41": {
+        "erc": 0,
+        "design_drc": 0,
+        "schematic_parity": 0,
+        "selected_net_unconnected": 0
+      },
+      "rung_42": {
+        "erc": 0,
+        "design_drc": 0,
+        "schematic_parity": 0,
+        "selected_net_unconnected": 0
+      }
+    }
+  },
+  "single_branch_control": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-branch1.json",
+    "status": "accepted",
+    "candidate_sha256": "042298edc3e9f6386c3d07331062b77fb8b529d57c5a5b53bfae2a395ef51ac0",
+    "after_length_mm": 235.94337660898566,
+    "improvement_mm": 0.8025325844904216,
+    "maximum_point_motion_mm": 1.56170678196153,
+    "fixed_context_anchors": 12,
+    "constraint_projections": 85120,
+    "native_kicad_complete": true,
+    "evaluation": "Leaving branch 2 unselected fixes their common post-via junction as context, so only branch 1's private bend can move. Joint selection unlocks 3.180673 mm more physical shortening by moving the shared junction coherently."
+  },
+  "independent_particle_control": {
+    "configuration": "experiments/configs/kicad-fixed-via-shared-tree-independent.json",
+    "status": "no_improvement",
+    "committed_candidate_is_source_byte_identical": true,
+    "raw_proposal_sha256": "43b2105e154f22642fe2ffca6c087b4d4bdd41bba26f40de1ca0bced810aface",
+    "proposal_length_mm": 292.5723277668303,
+    "physical_length_regression_mm": 55.82641857335423,
+    "proposal_segments": 69,
+    "maximum_point_motion_mm": 3.1998054892072254,
+    "fixed_context_anchors": 0,
+    "shared_point_groups": 2,
+    "proposal_geometry_clear": true,
+    "native_kicad_complete": true,
+    "evaluation": "The two branches retain shared fixed-via anchors but their ordinary coincident trunks become independent polylines. Tension fans those trunks apart, adding 25 physical segments and 55.826 mm of canonical copper. KiCad still reports electrical and DRC completion, so the physical-union quality transaction is the authority that rejects this regression. More particles are acceptable only when physical node and edge identity is explicit."
+  },
+  "broad_phase_ablation": {
+    "local_configuration": "experiments/configs/kicad-fixed-via-shared-tree-tension.json",
+    "exhaustive_configuration": "experiments/configs/kicad-fixed-via-shared-tree-tension-exhaustive.json",
+    "candidate_and_proposal_byte_identical": true,
+    "local_constraint_projections": 115200,
+    "exhaustive_constraint_projections": 1298432,
+    "projection_reduction": 11.27111111111111,
+    "local_engine_particles": 622,
+    "exhaustive_engine_particles": 2010,
+    "particle_reduction": 3.2315112540192925,
+    "local_retained_obstacle_pairs": 668,
+    "local_culled_obstacle_pairs": 3798,
+    "evaluation": "The per-layer uniform grid changes only work, not the semantic result. This is preparation for data-parallel/GPU execution, not a GPU runtime claim."
+  },
+  "conclusion": {
+    "outcome": "positive_shared_via_graph_motion_experiment",
+    "advantage": "Joint graph-aware lowering can move a shared junction beyond two fixed vias, preserve the rest of a real multi-terminal tree, and find substantially more shortening than one-branch relaxation.",
+    "penalty": "Root-to-terminal branch storage repeats logical prefixes and requires shared-group and physical-edge deduplication. Fixed vias cannot move toward a better topology, and selecting too little of the tree turns useful shared junctions into context anchors.",
+    "scope": "This proves two branches, two shared fixed vias, and one movable post-via junction under future GND obstacles. It does not prove whole-tree convergence, movable vias, via insertion/removal, or GPU speedup.",
+    "next": "Grow selection by graph neighborhood rather than raw branch index, then compare fixed-via relaxation with explicit bounded via-removal and via-relocation actions on a smaller discriminating subtree."
+  },
+  "authoritative_evidence": "build/experiments/031-shared-via-motion/evidence.json",
+  "progress_image_prefix": "build/progress/031-shared-via-motion-stage-",
+  "reproduction": "cargo test --test kicad_ladder rung41_tree_import_and_shared_via_motion_exact_passes -- --nocapture"
+}

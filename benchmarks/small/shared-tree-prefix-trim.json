@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": { "x": 4.5, "y": 0.0 },
+      "max": { "x": 30.0, "y": 30.0 }
+    },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.2 },
+  "components": [
+    {
+      "id": "A",
+      "position": { "x": 5.0, "y": 5.0 },
+      "size": { "x": 0.5, "y": 0.5 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "1",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.5 } }]
+      }]
+    },
+    {
+      "id": "B",
+      "position": { "x": 5.0, "y": 25.0 },
+      "size": { "x": 0.5, "y": 0.5 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "1",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.5 } }]
+      }]
+    },
+    {
+      "id": "C",
+      "position": { "x": 25.0, "y": 15.0 },
+      "size": { "x": 0.5, "y": 0.5 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "1",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.5 } }]
+      }]
+    },
+    {
+      "id": "WALL",
+      "position": { "x": 12.75, "y": 15.0 },
+      "size": { "x": 14.5, "y": 14.0 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": true,
+      "pins": []
+    }
+  ],
+  "electrical_nets": [{
+    "id": "BUS",
+    "width": 0.3,
+    "terminals": [
+      { "component": "A", "pin": "1" },
+      { "component": "B", "pin": "1" },
+      { "component": "C", "pin": "1" }
+    ]
+  }]
+}

@@ -1,0 +1,30 @@
+{
+  "maximum_entries": 2,
+  "via_penalty_mm": 2.0,
+  "entries": [
+    {
+      "id": "declared",
+      "placement": {
+        "policy": {
+          "kind": "declared"
+        },
+        "seed": 0,
+        "projection_sweeps": 256
+      }
+    },
+    {
+      "id": "harmonic",
+      "placement": {
+        "policy": {
+          "kind": "harmonic_ports",
+          "iterations": 128,
+          "legalization_sweeps": 64,
+          "maximum_pair_checks": 1000000,
+          "connected_pair_spacing_floor": true
+        },
+        "seed": 0,
+        "projection_sweeps": 256
+      }
+    }
+  ]
+}

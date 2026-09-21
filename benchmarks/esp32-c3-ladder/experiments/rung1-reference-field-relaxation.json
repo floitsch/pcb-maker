@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "sequence": 26,
+  "connection": "T_LOCAL_COMM0",
+  "question": "Can a discrete reference-field repair retain useful component rotation without treating movable documentation as a hard component-body obstacle?",
+  "source": {
+    "name": "free_rotation_without_placement_clearance",
+    "route_length_mm": 18.218362539221065,
+    "translation_mm": 0.2249856143652625,
+    "rotation_degrees": 1.7674922343103958,
+    "native_kicad_complete": false,
+    "native_failure": "R1 F.Silkscreen segment overlaps the R2 reference field"
+  },
+  "reference_field": {
+    "reference": "R2",
+    "uuid": "658b61cc-ae9f-4df1-a70d-e2af0ae8cfbb",
+    "source_local_at": [0.0, -2.2, 0.0],
+    "imported_policy": "testing-esp32-duts relax-pcb-reference-fields",
+    "declared_alternate_actions": 4,
+    "unique_alternate_actions": 3
+  },
+  "stages": [
+    {
+      "stage": 0,
+      "name": "invalid_free_source",
+      "reference_local_at": [0.0, -2.2, 0.0],
+      "native_kicad_complete": false,
+      "drc_design_violations": 1,
+      "native_failure": "R1 F.Silkscreen segment overlaps the R2 reference field"
+    },
+    {
+      "stage": 1,
+      "name": "mirrored",
+      "iteration": 1,
+      "reference_local_at": [0.0, 2.2, 0.0],
+      "native_kicad_complete": false,
+      "drc_design_violations": 1,
+      "native_failure": "The relocated R2 reference overlaps the R3 reference"
+    },
+    {
+      "stage": 2,
+      "name": "east",
+      "iteration": 2,
+      "reference_local_at": [2.2, 0.0, 0.0],
+      "native_kicad_complete": true,
+      "drc_design_violations": 0
+    },
+    {
+      "stage": 3,
+      "name": "west",
+      "iteration": 3,
+      "reference_local_at": [-2.2, 0.0, 0.0],
+      "native_kicad_complete": true,
+      "drc_design_violations": 0
+    },
+    {
+      "stage": 4,
+      "name": "south_duplicate",
+      "iteration": 4,
+      "reference_local_at": [0.0, 2.2, 0.0],
+      "duplicate_of_iteration": 1,
+      "candidate_byte_identical_to_iteration_1": true,
+      "native_kicad_complete": false,
+      "drc_design_violations": 1,
+      "native_failure": "The relocated R2 reference overlaps the R3 reference"
+    },
+    {
+      "stage": 5,
+      "name": "translation_east_control",
+      "iteration": 2,
+      "route_length_mm": 18.191331185761815,
+      "translation_mm": 0.23696794165766255,
+      "rotation_degrees": 0.0,
+      "reference_local_at": [2.2, 0.0, 0.0],
+      "native_kicad_complete": true,
+      "drc_design_violations": 0
+    }
+  ],
+  "quality_controls": {
+    "repaired_free_route_length_mm": 18.218362539221065,
+    "nearby_courtyard_free_route_length_mm": 18.174383665359084,
+    "horizontal_only_route_length_mm": 18.17381788166479,
+    "repaired_translation_route_length_mm": 18.191331185761815,
+    "nearby_courtyard_translation_route_length_mm": 18.173811516437603
+  },
+  "conclusion": {
+    "capability": "Moving the reference field sideways makes the unrestricted 1.767492-degree R1 rotation survive the complete native KiCad gate and ladder rematerialization.",
+    "quality": "The recovered rotational freedom does not improve route length on this rung; both repaired unrestricted proposals are worse than their nearby-courtyard controls.",
+    "negative_result": "The first alternate merely moves the collision from R1 to R3, and the fourth inherited action duplicates the first for this axis-aligned source pose.",
+    "architecture": "Keep source-checked reference placements in durable candidates and enumerate/deduplicate them as discrete DRC-driven actions. Do not assume the first alternate is valid, and do not fold movable documentation into permanent body separation.",
+    "next_gap": "The CLI exposes individual actions, but a coordinator does not yet enumerate, native-gate, retain, score, and select the unique alternatives automatically."
+  },
+  "progress_image_prefix": "build/progress/026-reference-relaxation-stage-"
+}

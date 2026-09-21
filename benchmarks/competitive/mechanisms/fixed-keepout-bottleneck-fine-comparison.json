@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-fixed-keepout-bottleneck-fine-comparison",
+  "route_benchmark": "fixed-keepout-bottleneck-freerouting.json",
+  "pcb_maker": {"insertion_config": "insertion-0p4-0p3-fine.json", "verification_cache_directory": "../../../build/cache/kicad-verification", "maximum_seconds": 60}
+}

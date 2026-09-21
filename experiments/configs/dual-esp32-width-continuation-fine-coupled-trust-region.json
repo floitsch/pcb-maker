@@ -1,0 +1,43 @@
+{
+  "initial_width_scale": 0.05,
+  "width_stages": [0.1, 0.15, 0.2, 0.225, 0.25, 0.275, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 1.0],
+  "maximum_repair_rounds_per_stage": 16,
+  "routing": {
+    "grid_mm": 0.25,
+    "retry_grid_mm": [0.125],
+    "max_expansions_per_search": 2000000,
+    "maximum_exact_edge_retries": 64,
+    "straight_cost": 1000,
+    "diagonal_cost": 1414,
+    "bend_cost": 100,
+    "via_cost": 8000,
+    "allow_vias": true,
+    "route_order": "input",
+    "priority_branches": ["SIG06_W_R", "SIG07_W_R"],
+    "raster_safety": "exact_centerline",
+    "multi_terminal_routing": "shared_copper_tree",
+    "terminal_junction_slack_mm": null,
+    "maximum_terminal_junction_searches": 32,
+    "maximum_tree_attachment_searches": 2,
+    "tree_attachment_minimum_spacing_mm": 2.0,
+    "tree_attachment_portfolio_objective": "retained_length"
+  },
+  "repair": {
+    "enabled": true,
+    "steps": 1,
+    "projection_iterations": 64,
+    "maximum_segment_pairs": 2000000,
+    "numerical_clearance_margin_nm": 1000,
+    "move_trace_interiors": true,
+    "move_components": true,
+    "move_connected_components_for_trace_conflicts": true,
+    "trace_tension_strength": 0.0,
+    "maximum_trace_tension_step_mm": 0.2,
+    "trust_region": {
+      "maximum_trace_point_motion_mm": 0.05,
+      "maximum_body_translation_mm": 0.05,
+      "maximum_body_rotation_degrees": 1.0,
+      "backtracking_steps": 8
+    }
+  }
+}

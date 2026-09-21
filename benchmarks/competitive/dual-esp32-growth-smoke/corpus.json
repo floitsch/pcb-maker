@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "dual-esp32-growth-smoke",
+  "cases": [
+    {
+      "id": "dual-esp32-prefix00",
+      "comparison": "prefix00-comparison.json"
+    },
+    {
+      "id": "dual-esp32-prefix01",
+      "comparison": "prefix01-comparison.json"
+    },
+    {
+      "id": "dual-esp32-prefix02",
+      "comparison": "prefix02-comparison.json"
+    },
+    {
+      "id": "dual-esp32-prefix03",
+      "comparison": "../dual-esp32-prefix03/comparison.json"
+    }
+  ]
+}

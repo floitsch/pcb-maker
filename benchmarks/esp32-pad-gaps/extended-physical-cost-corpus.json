@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "esp32-pad-gap-prefix19-physical-cost",
+  "cases": [
+    {
+      "id": "dual-prefix19-blocked",
+      "comparison": "dual-prefix19-blocked/comparison-physical.json"
+    },
+    {
+      "id": "dual-prefix19-open",
+      "comparison": "dual-prefix19-open/comparison-physical.json"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-smoke",
+  "cases": [
+    {
+      "id": "forced-crossing",
+      "comparison": "forced-crossing-comparison.json"
+    },
+    {
+      "id": "mandatory-layer-transition",
+      "comparison": "mandatory-layer-transition-comparison.json"
+    },
+    {
+      "id": "differential-pair-straight",
+      "comparison": "differential-pair-straight-comparison.json"
+    },
+    {
+      "id": "ground-plane-stitching",
+      "comparison": "ground-plane-stitching-comparison.json"
+    },
+    {
+      "id": "multi-terminal-tree",
+      "comparison": "multi-terminal-tree-comparison.json"
+    },
+    {
+      "id": "decoupling",
+      "comparison": "decoupling-comparison.json"
+    },
+    {
+      "id": "movable-blocker",
+      "comparison": "movable-blocker-comparison.json"
+    },
+    {
+      "id": "fixed-keepout-bottleneck",
+      "comparison": "fixed-keepout-bottleneck-fine-comparison.json"
+    },
+    {
+      "id": "placement-perturbation",
+      "comparison": "placement-perturbation-comparison.json"
+    },
+    {
+      "id": "placement-feedback",
+      "comparison": "placement-feedback-comparison.json"
+    },
+    {
+      "id": "squeeze",
+      "comparison": "squeeze-comparison.json"
+    },
+    {
+      "id": "esp-pad-fanout",
+      "comparison": "esp-pad-fanout-comparison.json"
+    },
+    {
+      "id": "esp-pad-multi-contact",
+      "comparison": "esp-pad-multi-contact-comparison.json"
+    },
+    {
+      "id": "power-capacitor",
+      "comparison": "power-capacitor-comparison.json"
+    },
+    {
+      "id": "resistor-turn",
+      "comparison": "resistor-turn-comparison.json"
+    },
+    {
+      "id": "resistor-link-bundle",
+      "comparison": "resistor-link-bundle-comparison.json"
+    },
+    {
+      "id": "south-header-breakout",
+      "comparison": "south-header-breakout-comparison.json"
+    },
+    {
+      "id": "anchored-resistor-autoplace",
+      "comparison": "anchored-resistor-autoplace-comparison.json"
+    }
+  ]
+}

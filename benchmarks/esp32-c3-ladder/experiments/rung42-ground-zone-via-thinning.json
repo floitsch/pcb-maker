@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "experiment": "rung42-ground-zone-via-thinning",
+  "question": "Can the predecessor's GND-zone approach replace the clustered rooted-star GND copper while retaining only enough stitching vias for native connectivity?",
+  "source": {
+    "directory": "build/experiments/038-via-reroute-blocker-cuts/portfolio-exhaustive/source-candidate",
+    "gnd_segments": 412,
+    "gnd_vias": 128,
+    "native_complete": true
+  },
+  "method": {
+    "algorithm": "testing-esp32-duts-rectangular-ground-zone-transaction-v1",
+    "layers": ["F.Cu", "B.Cu"],
+    "zone_inset_mm": 0.5,
+    "pad_connection": "solid",
+    "via_selection": "Retain the first existing GND via in each square cell anchored at the board minimum coordinate.",
+    "acceptance_authority": "kicad-cli pcb drc --refill-zones with ERC, DRC, schematic parity, and selected-net connectivity"
+  },
+  "trials": [
+    {"cell_size_mm": null, "retained_vias": 0, "native_complete": false, "selected_net_unconnected_items": 5, "artifact": "build/experiments/039-ground-zone-transaction"},
+    {"cell_size_mm": null, "retained_vias": 128, "native_complete": true, "selected_net_unconnected_items": 0, "artifact": "build/experiments/039-ground-zone-retain-vias"},
+    {"cell_size_mm": 2.0, "retained_vias": 83, "native_complete": true, "selected_net_unconnected_items": 0, "artifact": "build/experiments/039-ground-zone-via-grid-2mm"},
+    {"cell_size_mm": 4.0, "retained_vias": 50, "native_complete": true, "selected_net_unconnected_items": 0, "artifact": "build/experiments/039-ground-zone-via-grid-4mm"},
+    {"cell_size_mm": 8.0, "retained_vias": 32, "native_complete": true, "selected_net_unconnected_items": 0, "artifact": "build/experiments/039-ground-zone-via-grid-8mm"},
+    {"cell_size_mm": 9.0, "retained_vias": 26, "native_complete": false, "selected_net_unconnected_items": 2, "artifact": "build/experiments/039-ground-zone-via-grid-9mm"},
+    {"cell_size_mm": 10.0, "retained_vias": 24, "native_complete": false, "selected_net_unconnected_items": 2, "artifact": "build/experiments/039-ground-zone-via-grid-10mm"},
+    {"cell_size_mm": 11.0, "retained_vias": 22, "native_complete": false, "selected_net_unconnected_items": 2, "artifact": "build/experiments/039-ground-zone-via-grid-11mm"},
+    {"cell_size_mm": 12.0, "retained_vias": 18, "native_complete": false, "selected_net_unconnected_items": 3, "artifact": "build/experiments/039-ground-zone-via-grid-12mm"},
+    {"cell_size_mm": 20.0, "retained_vias": 8, "native_complete": false, "selected_net_unconnected_items": 3, "artifact": "build/experiments/039-ground-zone-via-grid-20mm"},
+    {"cell_size_mm": 64.0, "retained_vias": 1, "native_complete": false, "selected_net_unconnected_items": 4, "artifact": "build/experiments/039-ground-zone-via-grid-64mm"}
+  ],
+  "selected": {
+    "cell_size_mm": 8.0,
+    "retained_gnd_vias": 32,
+    "removed_gnd_vias": 96,
+    "removed_gnd_segments": 412,
+    "added_zones": 2,
+    "whole_board_segments": 403,
+    "whole_board_vias": 100,
+    "native_complete": true,
+    "durable_directory": "build/experiments/039-ground-zone-ladder/42-gnd"
+  },
+  "conclusion": "The zone lifecycle is viable and removes the observed GND via clusters as routed meshes. The selected tested point removes every GND track and 75% of its vias while preserving native completeness. It is the sparsest passing member of this tested cell-size portfolio, not a proof of a global minimum.",
+  "limitations": [
+    "Cell selection is deterministic but order-sensitive and uses the existing rooted-star vias as a seed pool.",
+    "Changing cell size changes which vias survive, so trial results are not a monotone via-count search.",
+    "The rectangular zones may contain isolated filled islands; KiCad connectivity, not polygon presence, determines success.",
+    "Foreign filled zones now yield during signal repair, but the router does not score lost plane area, narrow necks, or island quality.",
+    "This experiment measures validity and topology reduction, not plane impedance, thermal behavior, EMC, or runtime."
+  ],
+  "progress_sequence": "build/progress/039-ground-zone-via-thinning-stage-*"
+}

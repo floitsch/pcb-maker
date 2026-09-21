@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Dense placement comparison</title>
+<style>
+body{font:16px system-ui;margin:24px;background:#17222d;color:#edf4f9}a{color:#95dafa}
+button,input,select{font:inherit}table{border-collapse:collapse}th,td{padding:7px 12px;border-bottom:1px solid #526477;text-align:right}th:first-child,td:first-child{text-align:left}
+#boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:16px}article{background:#253546;padding:12px}img{width:100%;background:white}h2{font-size:18px}#rung{width:280px}
+</style>
+<h1>Dense placement comparison</h1>
+<p id="state"></p><p>All 43 components were placed using full connectivity. Each run then starts with zero copper and routes the same first 19 connections. Placements are frozen during routing. Blocked: 0.25 mm trace / 0.20 mm clearance. Open: 0.15 mm / 0.10 mm. Playback shows committed routing steps, not continuous motion.</p>
+<p id="scope"></p>
+<table><thead><tr><th>Placement / profile</th><th>Completed</th><th>Length mm</th><th>Vias</th><th>Gap crossings</th><th>A* + preflight expansions</th><th>Status</th></tr></thead><tbody id="results"></tbody></table>
+<p><button id="play">Play / pause</button> <input id="rung" type="range" min="1" max="19" value="1"> <span id="prefix"></span></p>
+<p>Boards are shown only when they have completed the selected prefix. Failed attempts are retained in the data; the images below show native-accepted copper.</p>
+<div id="boards"></div>
+<p><a href="summary.json">Measurements and per-step evidence</a> · <a href="manifest.json">Frozen inputs and subprocess outcomes</a>DIAGNOSTICS_LINK</p>
+<script>
+const data=DATA_PLACEHOLDER;
+const slider=document.getElementById('rung');
+let playing=false;
+document.getElementById('state').textContent=data.terminal?'All '+data.cases.length+' subprocesses have terminated.':'Partial snapshot: experiments are still running. Refresh after regenerating this report.';
+document.getElementById('scope').textContent=data.scope;
+for(const r of data.cases){const tr=document.createElement('tr');for(const value of [r.id,r.final_rung===undefined?'—':r.final_rung+'/19',r.length_mm?.toFixed(3)??'—',r.vias??'—',r.pad_gap_crossings??'—',r.search_state_expansions?.toLocaleString()??'—',r.termination??r.status]){const td=document.createElement('td');td.textContent=value;tr.append(td)}document.getElementById('results').append(tr)}
+function show(){const rung=Number(slider.value);document.getElementById('prefix').textContent='Completed connections: '+rung;const boards=document.getElementById('boards');boards.replaceChildren();for(const r of data.cases){const frame=r.frames.find(f=>f.rung===rung);const card=document.createElement('article');const title=document.createElement('h2');title.textContent=r.id;card.append(title);const info=document.createElement('p');if(frame){info.textContent=frame.connection+' · '+frame.length_mm.toFixed(3)+' mm · '+frame.vias+' vias · '+frame.search_state_expansions.toLocaleString()+' search expansions';card.append(info);const a=document.createElement('a');a.href=frame.preview;const img=document.createElement('img');img.src=frame.preview;img.alt=r.id+' after '+rung+' completed connections';a.append(img);card.append(a)}else{info.textContent='No accepted board at this prefix.';card.append(info)}boards.append(card)}}
+document.getElementById('play').onclick=()=>{playing=!playing};slider.oninput=show;
+setInterval(()=>{if(playing){slider.value=Number(slider.value)%19+1;show()}},1300);
+show();
+</script>

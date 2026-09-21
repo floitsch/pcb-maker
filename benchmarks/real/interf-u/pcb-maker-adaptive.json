@@ -1,0 +1,65 @@
+{
+  "sequential": {
+    "connection_order": [],
+    "portfolio_policy": "ordered_first_admitted",
+    "routing_portfolio": [
+      {
+        "resolution_mm": 0.5,
+        "trace_width_mm": 0.4,
+        "clearance_mm": 0.254,
+        "edge_clearance_mm": 0.25,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 1.4,
+        "via_drill_mm": 0.6,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 1200,
+        "max_expansions": 2000000,
+        "reachability_preflight": true,
+        "multi_terminal_routing": "shared_copper_tree",
+        "maximum_tree_attachment_searches": 1,
+        "tree_attachment_minimum_spacing_mm": 0,
+        "tree_attachment_objective": "router_cost",
+        "terminal_contact_policy": "first_pad_contact",
+        "tree_attachment_search": "multi_source"
+      },
+      {
+        "resolution_mm": 0.125,
+        "trace_width_mm": 0.4,
+        "clearance_mm": 0.254,
+        "edge_clearance_mm": 0.25,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 1.4,
+        "via_drill_mm": 0.6,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 1200,
+        "max_expansions": 4000000,
+        "reachability_preflight": true,
+        "multi_terminal_routing": "shared_copper_tree",
+        "maximum_tree_attachment_searches": 1,
+        "tree_attachment_minimum_spacing_mm": 0,
+        "tree_attachment_objective": "router_cost",
+        "terminal_contact_policy": "first_pad_contact",
+        "tree_attachment_search": "multi_source"
+      }
+    ],
+    "maximum_connections": 10000,
+    "via_penalty_mm": 10.0,
+    "ripup": {
+      "maximum_invocations": 4,
+      "maximum_diagnosis_trials": 64,
+      "routing_config_index": 1
+    }
+  },
+  "maximum_passes": 2,
+  "demand_strengths": [
+    1.0
+  ],
+  "forecast_via_costs_mm": [
+    null
+  ],
+  "maximum_forecasts_per_net": 2
+}

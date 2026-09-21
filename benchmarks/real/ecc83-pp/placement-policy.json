@@ -1,0 +1,6 @@
+{
+  "scope": "All-free geometric repacking experiment, not an enclosure-compatible redesign. All footprints and mounting holes may move; original orientations are fixed. Native front courtyards define mechanical exclusion with no additional body margin. All four terminal-block bodies may overhang any board edge by up to 1.5 mm; their pads must remain inside. Native copper rules still apply. This is an explicit benchmark policy, not inferred product intent.",
+  "movement": "all_free",
+  "rotation": "original_fixed",
+  "body_overhang_mm": {"P1": 1.5, "P2": 1.5, "P3": 1.5, "P4": 1.5}
+}

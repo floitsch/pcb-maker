@@ -1,0 +1,4 @@
+{
+  "strategy": "visibility_shortest_path",
+  "maximum_visibility_tests": 1000000
+}

@@ -1,0 +1,78 @@
+{
+  "maximum_connections": 21,
+  "insertion": {
+    "local_candidate_cap": 3,
+    "local_native_admission": "score_ordered_until_complete",
+    "ordered_local_refinement": {
+      "minimum_portfolio_entries": 2,
+      "continue_if_score_improvement_percent_at_least": 3.0
+    },
+    "local_routing_portfolio": [
+      {
+        "resolution_mm": 0.25,
+        "trace_width_mm": 0.25,
+        "clearance_mm": 0.2,
+        "edge_clearance_mm": 0.5,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 0.8,
+        "via_drill_mm": 0.4,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 800,
+        "max_expansions": 2000000
+      },
+      {
+        "resolution_mm": 0.125,
+        "trace_width_mm": 0.25,
+        "clearance_mm": 0.2,
+        "edge_clearance_mm": 0.5,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 0.8,
+        "via_drill_mm": 0.4,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 800,
+        "max_expansions": 2000000
+      },
+      {
+        "resolution_mm": 0.1,
+        "trace_width_mm": 0.25,
+        "clearance_mm": 0.2,
+        "edge_clearance_mm": 0.5,
+        "hole_to_hole_clearance_mm": 0.25,
+        "via_size_mm": 0.8,
+        "via_drill_mm": 0.4,
+        "straight_cost": 100,
+        "diagonal_cost": 141,
+        "bend_cost": 20,
+        "via_cost": 800,
+        "max_expansions": 2000000
+      }
+    ],
+    "single_connection_ripup": {
+      "diagnosis": {
+        "maximum_yielding_connections": 1,
+        "maximum_trials": 64,
+        "routing": {
+          "resolution_mm": 0.125,
+          "trace_width_mm": 0.25,
+          "clearance_mm": 0.2,
+          "edge_clearance_mm": 0.5,
+          "hole_to_hole_clearance_mm": 0.25,
+          "via_size_mm": 0.8,
+          "via_drill_mm": 0.4,
+          "straight_cost": 100,
+          "diagonal_cost": 141,
+          "bend_cost": 20,
+          "via_cost": 800,
+          "max_expansions": 2000000
+        }
+      },
+      "via_penalty_mm": 2.0
+    },
+    "fallback": "declared_target_control",
+    "via_penalty_mm": 2.0
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "maximum_entries": 1,
+  "maximum_trials": 2,
+  "via_penalty_mm": 2.0,
+  "entries": [
+    {
+      "id": "harmonic-local-mutation-archive",
+      "proposal_finalists": 2,
+      "placement": {
+        "policy": {
+          "kind": "local_mutation",
+          "base": {
+            "kind": "harmonic_ports",
+            "iterations": 128,
+            "legalization_sweeps": 64,
+            "maximum_pair_checks": 1000000,
+            "connected_pair_spacing_floor": true,
+            "underanchored_seed": {
+              "kind": "declared"
+            }
+          },
+          "attempts": 16,
+          "step_mm": 0.5,
+          "mutations_per_proposal": 1,
+          "allow_rotation": true
+        },
+        "seed": 1,
+        "projection_sweeps": 256
+      }
+    }
+  ]
+}

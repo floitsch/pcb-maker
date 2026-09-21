@@ -1,0 +1,36 @@
+{
+  "maximum_entries": 2,
+  "via_penalty_mm": 2.0,
+  "entries": [
+    {
+      "id": "harmonic-declared-underanchored",
+      "placement": {
+        "policy": {
+          "kind": "harmonic_ports",
+          "iterations": 128,
+          "legalization_sweeps": 64,
+          "maximum_pair_checks": 1000000,
+          "connected_pair_spacing_floor": true,
+          "underanchored_seed": {"kind": "declared"}
+        },
+        "seed": 0,
+        "projection_sweeps": 256
+      }
+    },
+    {
+      "id": "harmonic-random1-underanchored",
+      "placement": {
+        "policy": {
+          "kind": "harmonic_ports",
+          "iterations": 128,
+          "legalization_sweeps": 64,
+          "maximum_pair_checks": 1000000,
+          "connected_pair_spacing_floor": true,
+          "underanchored_seed": {"kind": "random", "attempts": 16}
+        },
+        "seed": 1,
+        "projection_sweeps": 256
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-differential-pair-asymmetric-blocker-freerouting",
+  "source": {"kind": "semantic_kicad", "problem": "problems/differential-pair-asymmetric-blocker.json", "placement_config": "placement-declared.json", "template_config": "differential-pair-asymmetric-blocker-template.json", "connection_prefix": 2},
+  "result_acceptance": {"differential_pairs": [{"positive_connection": "USB_P", "negative_connection": "USB_N", "maximum_length_skew_mm": 0.5, "maximum_via_count_difference": 0}]},
+  "rules": {"trace_width_mm": 0.25, "clearance_mm": 0.2, "via_diameter_mm": 0.7, "via_drill_mm": 0.3},
+  "freerouting": {"jar": "/tmp/freerouting-2.2.4.jar", "expected_jar_sha256": "f5ed374182900ccc78e473518bbb9f6b869f4a07159495f663a76f52bb10523b", "java_executable": "/usr/lib/jvm/java-26-openjdk/bin/java", "python_executable": "python3", "maximum_seconds": 60, "maximum_passes": 100, "maximum_threads": 1},
+  "require_zero_source_copper": true,
+  "render": {"width": 1000, "height": 750, "quality": "basic", "background": "opaque"},
+  "journal_directory": "../../../build/progress"
+}

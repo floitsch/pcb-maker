@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "id": "mechanism-differential-pair-straight-comparison",
+  "route_benchmark": "differential-pair-straight-freerouting.json",
+  "pcb_maker": {"insertion_config": "pcb-maker-insertion.json", "verification_cache_directory": "../../../build/cache/kicad-verification", "maximum_seconds": 60}
+}

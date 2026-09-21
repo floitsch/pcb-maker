@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "superseded_by": "3v3-route-graph-projected-tension.json",
+  "measurement_warning": "Lengths in this historical record are stored track-object sums. The canonical physical-copper audit in sequence 023 shows this proposal is 0.268131 mm worse and now rolls back.",
+  "connection": "3V3_DUT",
+  "source_candidate": "../candidates/3v3-dut-rung41.json",
+  "algorithm": "retained-visibility-shortest-path-v1",
+  "fixture": "rung 41 with rung 42 copper used as future-aware obstacles",
+  "hypothesis": "Choosing the globally shortest visible path through the retained branch vertices improves on greedy furthest-visible shortcuts without moving vias.",
+  "work": {
+    "maximum_visibility_tests": 1000000,
+    "visibility_tests": 201,
+    "attempted_shortcuts": 116,
+    "visible_shortcuts": 39,
+    "selected_shortcuts": 24
+  },
+  "before": {
+    "length_mm": 294.3815988418941,
+    "segments": 61,
+    "vias": 12,
+    "branch_bends": 53,
+    "branch_points": 117
+  },
+  "after": {
+    "length_mm": 290.54617660907434,
+    "segments": 40,
+    "vias": 12,
+    "branch_bends": 22,
+    "branch_points": 86
+  },
+  "greedy_control": {
+    "algorithm": "conservative-line-of-sight-v1",
+    "attempted_shortcuts": 74,
+    "selected_shortcuts": 24,
+    "after_length_mm": 290.54617660907434,
+    "after_segments": 40,
+    "after_vias": 12,
+    "copper_geometry_sha256": "6ebf5ebef90ffbf7bb143bf17a563ca8a5bbc9439bb665b264c4b53b847583f7"
+  },
+  "shortest_path_copper_geometry_sha256": "6ebf5ebef90ffbf7bb143bf17a563ca8a5bbc9439bb665b264c4b53b847583f7",
+  "exact_validation": {
+    "rung_41": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    },
+    "rung_42": {
+      "erc": 0,
+      "design_drc": 0,
+      "schematic_parity": 0,
+      "selected_net_unconnected": 0,
+      "result": "pass"
+    }
+  },
+  "visual_evidence": "build/progress/019-kicad-retained-visibility-*",
+  "outcome": "negative_ablation",
+  "interpretation": "The hypothesis is rejected on this prefix. The retained shortest-path processor selects byte-identical copper geometry to greedy while performing more visibility work. The remaining quality opportunity requires moved or newly inserted vertices, via/topology edits, or component motion rather than a broader choice among the old vertices."
+}

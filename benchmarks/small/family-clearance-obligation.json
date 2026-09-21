@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": { "min": { "x": 0.0, "y": 0.0 }, "max": { "x": 12.0, "y": 8.0 } },
+    "layers": [{ "id": "top" }]
+  },
+  "rules": { "clearance": 0.25 },
+  "components": [
+    {
+      "id": "A0",
+      "position": { "x": 2.0, "y": 3.0 },
+      "size": { "x": 0.2, "y": 0.2 },
+      "constraints": { "movement": "vertical", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.3 } }]
+      }]
+    },
+    {
+      "id": "B0",
+      "position": { "x": 10.0, "y": 3.0 },
+      "size": { "x": 0.2, "y": 0.2 },
+      "constraints": { "movement": "vertical", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.3 } }]
+      }]
+    },
+    {
+      "id": "A1",
+      "position": { "x": 2.0, "y": 3.7 },
+      "size": { "x": 0.2, "y": 0.2 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.3 } }]
+      }]
+    },
+    {
+      "id": "B1",
+      "position": { "x": 10.0, "y": 3.7 },
+      "size": { "x": 0.2, "y": 0.2 },
+      "constraints": { "movement": "fixed", "rotation": "fixed" },
+      "body_is_routing_keepout": false,
+      "pins": [{
+        "id": "p",
+        "offset": { "x": 0.0, "y": 0.0 },
+        "pads": [{ "layer": "top", "shape": { "kind": "circle", "diameter": 0.3 } }]
+      }]
+    }
+  ],
+  "nets": [
+    {
+      "id": "LOWER",
+      "width": 0.5,
+      "layer": "top",
+      "from": { "component": "A0", "pin": "p" },
+      "to": { "component": "B0", "pin": "p" },
+      "seed_route": [
+        { "x": 2.0, "y": 3.0 },
+        { "x": 10.0, "y": 3.0 }
+      ]
+    },
+    {
+      "id": "UPPER",
+      "width": 0.5,
+      "layer": "top",
+      "from": { "component": "A1", "pin": "p" },
+      "to": { "component": "B1", "pin": "p" },
+      "seed_route": [
+        { "x": 2.0, "y": 3.7 },
+        { "x": 10.0, "y": 3.7 }
+      ]
+    }
+  ]
+}

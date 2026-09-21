@@ -1,0 +1,12 @@
+{
+  "target_at": [63.125, 30.875],
+  "target_layers": ["F.Cu", "B.Cu"],
+  "removal_layers": ["F.Cu", "B.Cu"],
+  "relocation_radius_mm": 1.0,
+  "relocation_step_mm": 0.5,
+  "maximum_relocation_candidates": 12,
+  "maximum_actions": 14,
+  "maximum_affected_branches": 1,
+  "via_penalty_mm": 3.0,
+  "minimum_score_improvement_mm": 0.000001
+}

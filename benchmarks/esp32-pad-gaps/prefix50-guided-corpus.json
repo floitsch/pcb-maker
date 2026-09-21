@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "esp32-pad-gap-prefix50-obstacle-guided",
+  "cases": [
+    {
+      "id": "dual-prefix50-blocked",
+      "comparison": "dual-prefix50-blocked/comparison-guided.json"
+    },
+    {
+      "id": "dual-prefix50-open",
+      "comparison": "dual-prefix50-open/comparison-guided.json"
+    }
+  ]
+}

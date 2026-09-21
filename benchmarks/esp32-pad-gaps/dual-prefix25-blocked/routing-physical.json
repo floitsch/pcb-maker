@@ -1,0 +1,25 @@
+{
+  "local_candidate_cap": 1,
+  "local_routing_portfolio": [
+    {
+      "trace_width_mm": 0.25,
+      "clearance_mm": 0.2,
+      "via_size_mm": 0.7,
+      "via_drill_mm": 0.3,
+      "reachability_preflight": true,
+      "multi_terminal_routing": "shared_copper_tree",
+      "resolution_mm": 0.05,
+      "max_expansions": 2000000,
+      "via_cost_mm": 2.0
+    }
+  ],
+  "conditional_local_candidate_cap": 0,
+  "conditional_local_routing_portfolio": [],
+  "local_native_admission": "exhaustive",
+  "unrouted_target_gate": "eager",
+  "ordered_local_refinement": null,
+  "future_reachability": null,
+  "single_connection_ripup": null,
+  "fallback": "none",
+  "via_penalty_mm": 2.0
+}

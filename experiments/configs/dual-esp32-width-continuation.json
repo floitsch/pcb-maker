@@ -1,0 +1,36 @@
+{
+  "initial_width_scale": 0.2,
+  "width_stages": [0.4, 0.6, 0.8, 1.0],
+  "maximum_repair_rounds_per_stage": 8,
+  "routing": {
+    "grid_mm": 0.25,
+    "retry_grid_mm": [0.125],
+    "max_expansions_per_search": 2000000,
+    "maximum_exact_edge_retries": 64,
+    "straight_cost": 1000,
+    "diagonal_cost": 1414,
+    "bend_cost": 100,
+    "via_cost": 8000,
+    "allow_vias": true,
+    "route_order": "input",
+    "priority_branches": [],
+    "raster_safety": "exact_centerline",
+    "multi_terminal_routing": "shared_copper_tree",
+    "terminal_junction_slack_mm": null,
+    "maximum_terminal_junction_searches": 32,
+    "maximum_tree_attachment_searches": 2,
+    "tree_attachment_minimum_spacing_mm": 2.0,
+    "tree_attachment_portfolio_objective": "retained_length"
+  },
+  "repair": {
+    "enabled": true,
+    "steps": 16,
+    "projection_iterations": 64,
+    "maximum_segment_pairs": 100000,
+    "numerical_clearance_margin_nm": 1000,
+    "move_trace_interiors": true,
+    "move_components": true,
+    "trace_tension_strength": 1.0,
+    "maximum_trace_tension_step_mm": 0.2
+  }
+}

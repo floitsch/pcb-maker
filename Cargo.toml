@@ -1,0 +1,41 @@
+[package]
+name = "pcb-maker"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "GPU-first experiments in coupled PCB placement and routing"
+
+[workspace]
+members = [
+    ".",
+    "crates/layout-trace-model",
+    "crates/layout-trace-routing",
+    "crates/pcb-core",
+    "crates/pcb-coordinator",
+    "crates/pcb-benchmark",
+    "crates/pcb-engine",
+    "crates/pcb-grid-router",
+    "crates/pcb-kicad",
+    "crates/pcb-pipeline",
+    "crates/pcb-placement",
+    "crates/pcb-routing",
+    "crates/pcb-validate",
+    "crates/pcb-viewer",
+]
+resolver = "3"
+
+[dependencies]
+layout-trace-model = { path = "crates/layout-trace-model" }
+pcb-core = { path = "crates/pcb-core" }
+pcb-benchmark = { path = "crates/pcb-benchmark" }
+pcb-coordinator = { path = "crates/pcb-coordinator" }
+pcb-engine = { path = "crates/pcb-engine" }
+pcb-grid-router = { path = "crates/pcb-grid-router" }
+pcb-kicad = { path = "crates/pcb-kicad" }
+pcb-pipeline = { path = "crates/pcb-pipeline" }
+pcb-placement = { path = "crates/pcb-placement" }
+pcb-routing = { path = "crates/pcb-routing" }
+pcb-validate = { path = "crates/pcb-validate" }
+pcb-viewer = { path = "crates/pcb-viewer" }
+serde = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }

@@ -1,0 +1,16 @@
+{
+  "maximum_connections": 1,
+  "insertion": {
+    "local_candidate_cap": 1,
+    "local_native_admission": "exhaustive",
+    "local_routing_portfolio": [
+      {
+        "resolution_mm": 0.05,
+        "max_expansions": 2000000
+      }
+    ],
+    "single_connection_ripup": null,
+    "fallback": "declared_target_control",
+    "via_penalty_mm": 2.0
+  }
+}

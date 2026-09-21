@@ -1,0 +1,11 @@
+[package]
+name = "engine-playback-experiment"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+pcb-core = { path = "../../crates/pcb-core" }
+pcb-engine = { path = "../../crates/pcb-engine" }
+serde_json = "1.0"

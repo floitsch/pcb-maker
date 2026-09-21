@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "board": {
+    "bounds": {
+      "min": {
+        "x": 0,
+        "y": 0
+      },
+      "max": {
+        "x": 20,
+        "y": 14
+      }
+    },
+    "layers": [
+      {
+        "id": "top"
+      }
+    ]
+  },
+  "rules": {
+    "clearance": 0.2
+  },
+  "components": [
+    {
+      "id": "L",
+      "position": {
+        "x": 2,
+        "y": 7
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.4
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R",
+      "position": {
+        "x": 18,
+        "y": 7
+      },
+      "size": {
+        "x": 1,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "fixed",
+        "rotation": "fixed"
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": 0,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.4
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "PART",
+      "position": {
+        "x": 10,
+        "y": 7
+      },
+      "size": {
+        "x": 4,
+        "y": 1
+      },
+      "constraints": {
+        "movement": "free",
+        "rotation": "free",
+        "region": {
+          "min": {
+            "x": 8,
+            "y": 6
+          },
+          "max": {
+            "x": 12,
+            "y": 8
+          }
+        }
+      },
+      "body_is_routing_keepout": false,
+      "pins": [
+        {
+          "id": "1",
+          "offset": {
+            "x": -1.5,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.4
+              }
+            }
+          ]
+        },
+        {
+          "id": "2",
+          "offset": {
+            "x": 1.5,
+            "y": 0
+          },
+          "pads": [
+            {
+              "layer": "top",
+              "shape": {
+                "kind": "circle",
+                "diameter": 0.4
+              }
+            }
+          ]
+        }
+      ],
+      "rotation_degrees": 180
+    }
+  ],
+  "nets": [
+    {
+      "id": "LEFT",
+      "from": {
+        "component": "L",
+        "pin": "1"
+      },
+      "to": {
+        "component": "PART",
+        "pin": "1"
+      },
+      "width": 0.25,
+      "layer": "top"
+    },
+    {
+      "id": "RIGHT",
+      "from": {
+        "component": "PART",
+        "pin": "2"
+      },
+      "to": {
+        "component": "R",
+        "pin": "1"
+      },
+      "width": 0.25,
+      "layer": "top"
+    }
+  ]
+}

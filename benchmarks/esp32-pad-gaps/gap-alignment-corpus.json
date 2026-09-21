@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "esp32-pad-gap-alignment",
+  "cases": [
+    {
+      "id": "gap-blocked",
+      "comparison": "gap-blocked/comparison-gap-aligned.json"
+    },
+    {
+      "id": "gap-open",
+      "comparison": "gap-open/comparison-gap-aligned.json"
+    },
+    {
+      "id": "dual-prefix03-blocked",
+      "comparison": "dual-prefix03-blocked/comparison-gap-aligned.json"
+    },
+    {
+      "id": "dual-prefix03-open",
+      "comparison": "dual-prefix03-open/comparison-gap-aligned.json"
+    }
+  ]
+}

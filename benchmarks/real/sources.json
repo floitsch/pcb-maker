@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "kicad-pic-programmer",
+      "tier": "small_real",
+      "upstream": "https://gitlab.com/kicad/code/kicad",
+      "commit": "0feeca2a807f428ad2b3fa7c1e39625cb769f02c",
+      "license": "GPL-3.0-or-later",
+      "archive_url": "https://gitlab.com/kicad/code/kicad/-/archive/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/kicad-0feeca2a807f428ad2b3fa7c1e39625cb769f02c.tar.gz?path=demos/pic_programmer",
+      "archive_sha256": "ac7e53eea024fea13e7ac4322a9ab87e870d756cc267f83c29037ce99d198ca0",
+      "archive_strip_components": 3,
+      "stem": "pic_programmer",
+      "files": {
+        "pic_programmer.kicad_pcb": "1ca70b620506818eb0227e2863bbd573d1fec1672072dc43d0dbe8475e69c8fb",
+        "pic_programmer.kicad_sch": "cf92bff8aebe19e45444f13b2ccd1c8ad578df6a226acd5381e2eff95e2fc08f",
+        "pic_programmer.kicad_pro": "3b0ac39da5af86d0baa2a64da55a89c39ba00148dc82b54f3062f5c3650a5cc5",
+        "pic_sockets.kicad_sch": "8cbf575b53b205280ca277df8affc6477cf20c5d06c63c267cd6fb19b6d771ae",
+        "pic_programmer.kicad_sym": "311bf43e2f3999072cad00a00b8c894c6adbaec5b97ada2256b0db1d2115039a"
+      }
+    },
+    {
+      "id": "olimex-esp32-c3-rev-c",
+      "tier": "small_real",
+      "upstream": "https://github.com/OLIMEX/ESP32-C3-DevKit-Lipo",
+      "commit": "319b656993e79dc654a945a5f8bca45c580941ad",
+      "license": "CERN-OHL-S-2.0",
+      "archive_url": "https://codeload.github.com/OLIMEX/ESP32-C3-DevKit-Lipo/tar.gz/319b656993e79dc654a945a5f8bca45c580941ad",
+      "archive_sha256": "1646559128f07584cc2970961bb549f38c19e87d5c7d8c179ae2d435e616079e",
+      "archive_strip_components": 3,
+      "archive_subpath": "ESP32-C3-DevKit-Lipo-319b656993e79dc654a945a5f8bca45c580941ad/HARDWARE/ESP32-C3-DevKit-Lipo_Rev_C",
+      "stem": "ESP32-C3-DevKit-Lipo_Rev_C",
+      "files": {
+        "ESP32-C3-DevKit-Lipo_Rev_C.kicad_pcb": "dab2e22be4f508594091f25e4ba1a9b39da5fe8f75f0acf80d0a410ae23da291",
+        "ESP32-C3-DevKit-Lipo_Rev_C.kicad_sch": "7be83cd366e2ab1e6c281262d5977af49d6f2f69c4e822b6c76ffefd38f58739",
+        "ESP32-C3-DevKit-Lipo_Rev_C.kicad_pro": "de1cc71afdc273abb9550ae4f548233d2312f2d4455ad7573b7d66d3c9499f6a"
+      }
+    },
+    {
+      "id": "kicad-ecc83-pp",
+      "tier": "small_real",
+      "upstream": "https://gitlab.com/kicad/code/kicad",
+      "commit": "0feeca2a807f428ad2b3fa7c1e39625cb769f02c",
+      "license": "GPL-3.0-or-later",
+      "archive_url": "https://gitlab.com/kicad/code/kicad/-/archive/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/kicad-0feeca2a807f428ad2b3fa7c1e39625cb769f02c.tar.gz?path=demos/ecc83",
+      "archive_sha256": "9a51c450cc5c5792e809c9fd38d408d7979b6934c965b048b36d734ffd3a15a7",
+      "archive_strip_components": 3,
+      "stem": "ecc83-pp",
+      "files": {
+        "ecc83-pp.kicad_pcb": "0ab45f4f8c90ac877e3313a1888d875107f2be3fc2b2f40cfb7927873b35260c",
+        "ecc83-pp.kicad_sch": "8a2d0359a0f3e647378034d84ab72b09dd7aa42f8b1f5e7fa0ff28ae369beee9",
+        "ecc83-pp.kicad_pro": "8a943fac4b0cc3ed4fa83ccc83a6e15b9326178845ada0aa906df63f0672e975"
+      }
+    },
+    {
+      "id": "kicad-interf-u",
+      "tier": "medium_real",
+      "upstream": "https://gitlab.com/kicad/code/kicad",
+      "commit": "0feeca2a807f428ad2b3fa7c1e39625cb769f02c",
+      "license": "GPL-3.0-or-later",
+      "archive_url": "https://gitlab.com/kicad/code/kicad/-/archive/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/kicad-0feeca2a807f428ad2b3fa7c1e39625cb769f02c.tar.gz?path=demos/interf_u",
+      "archive_sha256": "3ba6558e2c7c791a47d5c00607fe954df69bfbd6b1951962d44d31e455904ebe",
+      "archive_strip_components": 3,
+      "stem": "interf_u",
+      "files": {
+        "interf_u.kicad_pcb": "a740ce7fde77ab6af191e23ece21e57d36bb3c29325879248520dcd9ab47b57e",
+        "interf_u.kicad_sch": "b3b8c3b199382f414e4b4b6661978f9b72e0879a99453cdfbbb6dd366c5a5a13",
+        "interf_u.kicad_pro": "b9908a96e6113e6e51f488482108dc87aa5d9bcd838f9e3345c85e0db09bffa9"
+      }
+    },
+    {
+      "id": "kicad-complex-hierarchy",
+      "tier": "small_real",
+      "upstream": "https://gitlab.com/kicad/code/kicad",
+      "commit": "0feeca2a807f428ad2b3fa7c1e39625cb769f02c",
+      "license": "GPL-3.0-or-later",
+      "archive_url": "https://gitlab.com/kicad/code/kicad/-/archive/0feeca2a807f428ad2b3fa7c1e39625cb769f02c/kicad-0feeca2a807f428ad2b3fa7c1e39625cb769f02c.tar.gz?path=demos/complex_hierarchy",
+      "archive_sha256": "20c808ec54a2e0f997f637bab6bdb10b07967221bb56326d398bb808092dc2fc",
+      "archive_strip_components": 3,
+      "stem": "complex_hierarchy",
+      "files": {
+        "ampli_ht.kicad_sch": "ef6f503f39f79a94ad6550268565d7418dde96b296f5f2971c97383603da18a3",
+        "complex_hierarchy.kicad_pcb": "d5f4162d4c766448832723d139f9e0fcb88a17c82340f10f6f6dc6c2042f0d69",
+        "complex_hierarchy.kicad_pro": "55438416ca7fd46b5bad22da2693e9c43240060977d06daabcba084aa17e2804",
+        "complex_hierarchy.kicad_sch": "4344cf98eac9e48262bc6092add7c0dffe27b560627d0658e5129250e7226e9e",
+        "complex_hierarchy.kicad_sym": "39ae1574cda9ab144ab6e6fc8db48ba518a6d6c2fdc4b8cbdb0d6816aea1c91b",
+        "complex_hierarchy.pretty/Altech_AK300_1x02_P5.00mm_45-Degree.kicad_mod": "ad699abe749c42684e8a45a5c07527b74b3b8dd702940a6f48c43bc25df69d4c",
+        "complex_hierarchy.pretty/CP_Axial_L10.0mm_D4.5mm_P15.00mm_Horizontal.kicad_mod": "85d5482650ecb76f5367bce0e039338ffe8a683f3a6dcfc3af2a22399a3ecc65",
+        "complex_hierarchy.pretty/CP_Axial_L11.0mm_D6.0mm_P18.00mm_Horizontal.kicad_mod": "76a1e1bfd36c1dfbd24db82ae14bc8ac9688918d88be6bd2abf636af134512dd",
+        "complex_hierarchy.pretty/C_Disc_D5.0mm_W2.5mm_P5.00mm.kicad_mod": "8470e1280101425fecbc76612432ed9adfbc570e9c5be48f2b27560952020c62",
+        "complex_hierarchy.pretty/DIP-8_W7.62mm_LongPads.kicad_mod": "db7d323a4d137b17a5b1355b9dcc13fd712caa70bc8ecddc18cab4c9dabd9c6d",
+        "complex_hierarchy.pretty/D_DO-35_SOD27_P7.62mm_Horizontal.kicad_mod": "a36f18c7484177cadff8626f3c19f52c7b81eddc1c2c8db7098d062b281cec26",
+        "complex_hierarchy.pretty/D_DO-41_SOD81_P12.70mm_Horizontal.kicad_mod": "761f1d9976988de6de7da76167d6cc33464fdb1ffbd29aac0dca12c7151bae34",
+        "complex_hierarchy.pretty/Potentiometer_Bourns_3266W_Vertical.kicad_mod": "01e6c2d009a76985b46495aaa7a0746e858f7381d01d1168a87519ff12692990",
+        "complex_hierarchy.pretty/R_Axial_DIN0204_L3.6mm_D1.6mm_P7.62mm_Horizontal.kicad_mod": "280aa291709eecd34106c3a69169331922695374a3186c0949aac2f16b10b806",
+        "complex_hierarchy.pretty/TO-92_HandSolder.kicad_mod": "46bba204fab663ea16febd7686759ff16c38dd1e9bd79a4b28c60d6a020c0915",
+        "fp-lib-table": "033abebfd8e676afd8500b8ab27ead67e6fe599fd14e7898584d7fe43f3fe0fa",
+        "sym-lib-table": "44339f22283830e5511f9586104abeb0bee776be07d5512e485dbc2d96a6eefa"
+      }
+    }
+  ]
+}

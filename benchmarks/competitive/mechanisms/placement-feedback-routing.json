@@ -1,0 +1,20 @@
+{
+  "grid_mm": 0.5,
+  "retry_grid_mm": [],
+  "max_expansions_per_search": 1000000,
+  "maximum_exact_edge_retries": 64,
+  "straight_cost": 1000,
+  "diagonal_cost": 1414,
+  "bend_cost": 100,
+  "via_cost": 8000,
+  "allow_vias": true,
+  "route_order": "width_descending",
+  "priority_branches": [],
+  "raster_safety": "exact_centerline",
+  "multi_terminal_routing": "terminal_mst",
+  "terminal_junction_slack_mm": null,
+  "maximum_terminal_junction_searches": 32,
+  "maximum_tree_attachment_searches": 1,
+  "tree_attachment_minimum_spacing_mm": 0.0,
+  "tree_attachment_portfolio_objective": "retained_length"
+}

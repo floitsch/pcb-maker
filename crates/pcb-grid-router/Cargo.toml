@@ -1,0 +1,8 @@
+[package]
+name = "pcb-grid-router"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Deterministic bounded grid-routing strategy for pcb-maker"
+publish = false
+

@@ -1,0 +1,16 @@
+# Copyright (C) 2026 Toit contributors.
+
+[package]
+name = "layout-trace-routing"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Routing topology, corridor, and route-family kernel ported from layout-trace"
+publish = false
+
+[dependencies]
+layout-trace-model = { path = "../layout-trace-model" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+sha2 = "0.10"
+spade = "2.15.1"

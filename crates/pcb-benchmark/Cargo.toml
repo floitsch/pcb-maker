@@ -1,0 +1,18 @@
+[package]
+name = "pcb-benchmark"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Reproducible competitive benchmark harness for pcb-maker"
+publish = false
+
+[dependencies]
+layout-trace-model = { path = "../layout-trace-model" }
+pcb-coordinator = { path = "../pcb-coordinator" }
+pcb-kicad = { path = "../pcb-kicad" }
+pcb-placement = { path = "../pcb-placement" }
+pcb-routing = { path = "../pcb-routing" }
+pcb-validate = { path = "../pcb-validate" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"

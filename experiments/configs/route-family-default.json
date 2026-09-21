@@ -1,0 +1,16 @@
+{
+  "corridor": {
+    "circle_segments": 16,
+    "placement_revision": 1,
+    "first_corridor_revision": 1,
+    "embedding_mode": "full_width"
+  },
+  "portfolio_id": "pcb-maker-route-families",
+  "geometry_revision": 1,
+  "maximum_assignment_nodes": 100000,
+  "maximum_repair_component_branches": 6,
+  "context_correction_limits": {
+    "max_nodes": 50000,
+    "max_promoted_branches": 3
+  }
+}
