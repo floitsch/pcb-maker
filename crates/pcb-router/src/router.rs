@@ -621,20 +621,63 @@ impl Router {
                     })
                 })
                 .collect();
+            // A pad straddling the board edge (connector shell, card-edge
+            // finger) cannot host copper at its centre: the stub then starts
+            // at the nearest point along the pad's long axis that keeps the
+            // edge clearance.
+            let narrowest = *widths.last().unwrap();
+            let mut starts = vec![terminal.anchor];
+            if !self.stub_keeps_edge(terminal.anchor, terminal.anchor, narrowest) {
+                let shape = &self.board.obstacles[terminal.pad].shape;
+                let mut interior: Vec<crate::geometry::Point> = Vec::new();
+                for step in 1.. {
+                    let d = step as f64 * 0.1;
+                    if d > half_length {
+                        break;
+                    }
+                    for sign in [1.0, -1.0] {
+                        let point = [
+                            terminal.anchor[0] + sign * axis[0] * d,
+                            terminal.anchor[1] + sign * axis[1] * d,
+                        ];
+                        if well_inside(shape, point)
+                            && self.stub_keeps_edge(point, point, narrowest)
+                        {
+                            interior.push(point);
+                        }
+                    }
+                }
+                starts = interior;
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                    eprintln!(
+                        "edge escape for {} at {:?}: {} interior starts",
+                        terminal.label,
+                        terminal.anchor,
+                        starts.len()
+                    );
+                }
+            }
+            let candidate_count = candidates.len();
             for (_, cell) in candidates.into_iter().take(600) {
                 let center = self.grid.center_of(cell);
                 let mut found: Option<(f64, Vec<crate::geometry::Point>)> = None;
                 'widths: for width in widths.iter().copied() {
-                    if self.stub_is_clear(net, layer, terminal.anchor, center, width) {
-                        found = Some((width, vec![terminal.anchor, center]));
-                        break;
+                    for start in &starts {
+                        if self.stub_is_clear(net, layer, *start, center, width)
+                            && self.stub_keeps_edge(*start, center, width)
+                        {
+                            found = Some((width, vec![*start, center]));
+                            break 'widths;
+                        }
                     }
                     for exit in &exits {
                         if crate::geometry::distance(*exit, center) > 1.5 * self.grid.pitch + 0.15 {
                             continue;
                         }
                         if self.stub_is_clear(net, layer, terminal.anchor, *exit, width)
+                            && self.stub_keeps_edge(terminal.anchor, *exit, width)
                             && self.stub_is_clear(net, layer, *exit, center, width)
+                            && self.stub_keeps_edge(*exit, center, width)
                         {
                             found = Some((width, vec![terminal.anchor, *exit, center]));
                             break 'widths;
@@ -669,6 +712,14 @@ impl Router {
                 if accepted == WANTED {
                     break;
                 }
+            }
+            if accepted == 0 && std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                eprintln!(
+                    "no escape for {} at {:?} layer {layer}: {candidate_count} candidates, {} stub starts",
+                    terminal.label,
+                    terminal.anchor,
+                    starts.len()
+                );
             }
         }
     }
@@ -2574,8 +2625,10 @@ impl Router {
                     .iter()
                     .take(8)
                     .map(|(value, layer, tile)| {
-                        let x = (tile % self.tiles_x) as f64 * TILE as f64 * self.grid.pitch + self.grid.origin[0];
-                        let y = (tile / self.tiles_x) as f64 * TILE as f64 * self.grid.pitch + self.grid.origin[1];
+                        let x = (tile % self.tiles_x) as f64 * TILE as f64 * self.grid.pitch
+                            + self.grid.origin[0];
+                        let y = (tile / self.tiles_x) as f64 * TILE as f64 * self.grid.pitch
+                            + self.grid.origin[1];
                         format!("L{layer}({x:.0},{y:.0}):{value:.0}")
                     })
                     .collect();
@@ -2655,7 +2708,9 @@ impl Router {
         for round in 0..self.config.via_reduction_rounds {
             if started.elapsed().as_secs_f64() > budget {
                 if self.config.verbose {
-                    eprintln!("via reduction: budget of {budget:.0}s used, stopping before round {round}");
+                    eprintln!(
+                        "via reduction: budget of {budget:.0}s used, stopping before round {round}"
+                    );
                 }
                 break;
             }
@@ -3395,6 +3450,40 @@ impl Router {
         })
     }
 
+    /// Whether a stub of `width` from `start` to `end` lies inside the board
+    /// and keeps the edge clearance from the outline. Cutouts are obstacles
+    /// and are checked by `stub_is_clear`.
+    fn stub_keeps_edge(
+        &self,
+        start: crate::geometry::Point,
+        end: crate::geometry::Point,
+        width: f64,
+    ) -> bool {
+        let outline = &self.board.outline;
+        if outline.is_empty() {
+            return true;
+        }
+        if !crate::geometry::point_in_polygon(start, outline)
+            || !crate::geometry::point_in_polygon(end, outline)
+        {
+            return false;
+        }
+        let required = width / 2.0 + self.board.edge_clearance + SAFETY;
+        let bounds = crate::geometry::Aabb {
+            minimum: [start[0].min(end[0]), start[1].min(end[1])],
+            maximum: [start[0].max(end[0]), start[1].max(end[1])],
+        }
+        .inflated(required);
+        crate::geometry::polygon_edges(outline).all(|(a, b)| {
+            let edge = crate::geometry::Aabb {
+                minimum: [a[0].min(b[0]), a[1].min(b[1])],
+                maximum: [a[0].max(b[0]), a[1].max(b[1])],
+            };
+            !bounds.intersects(edge)
+                || crate::geometry::segment_segment_distance(start, end, a, b) >= required
+        })
+    }
+
     /// The copper of `net` and the indices of its cosmetic pad-centre stubs.
     fn materialize(&self, net: NetId) -> (NetRoute, Vec<usize>) {
         let description = &self.board.nets[net as usize];
@@ -3438,6 +3527,7 @@ impl Router {
                         center,
                         rules.trace_width,
                     )
+                    && self.stub_keeps_edge(anchor, center, rules.trace_width)
                 {
                     stubs.push(route.segments.len());
                     route.segments.push(Segment {

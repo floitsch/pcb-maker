@@ -274,3 +274,46 @@ fn incremental_update_reroutes_only_what_a_change_touches() {
     assert!(verify(&changed, &second.routes).is_empty());
     assert_eq!(second.routes[1].segments, first.routes[1].segments);
 }
+
+#[test]
+fn a_pad_straddling_the_board_edge_is_reached_from_inside() {
+    // A connector shell pad hangs over the outline (the designer's choice,
+    // KiCad flags the pad itself). The track that reaches it must still keep
+    // the edge clearance: it starts inside the pad, away from the edge.
+    // Only 0.71 mm of the pad is inside the board: no lattice node in it
+    // keeps the 0.5 mm edge clearance with a 0.25 mm track, so the pad is
+    // reached through an escape stub.
+    let mut builder = Builder::new(20.0, 20.0, 2);
+    builder.board.edge_clearance = 0.5;
+    builder.net("lv", &[([10.0, 10.0], 0b11), ([10.0, 12.0], 0b11)]);
+    let net = builder.board.nets.len() as u32 - 1;
+    builder.board.obstacles.push(Obstacle {
+        shape: Shape::Polygon {
+            points: vec![[-1.25, 9.4], [0.71, 9.4], [0.71, 10.6], [-1.25, 10.6]],
+        },
+        layers: 0b11,
+        kind: ObstacleKind::Copper,
+        net: Some(net),
+        clearance: 0.0,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "shell".into(),
+    });
+    builder.board.nets[net as usize].terminals.push(Terminal {
+        anchor: [-0.25, 10.0],
+        layers: 0b11,
+        pad: builder.board.obstacles.len() - 1,
+        label: "shell".into(),
+    });
+    let result = route(&builder.board, &config());
+    assert_eq!(result.status, vec![NetStatus::Routed]);
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    // The stub into the shell pad is real copper of the pad's net.
+    assert!(
+        result.routes[0]
+            .segments
+            .iter()
+            .any(|segment| segment.start[0] < 0.71 || segment.end[0] < 0.71)
+    );
+}
