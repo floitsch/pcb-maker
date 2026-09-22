@@ -48,6 +48,9 @@ pub struct Config {
     /// Plan every connection on a coarse tile graph first and search the
     /// lattice only inside that corridor (widening it on failure).
     pub corridors: bool,
+    /// Cost factor for a trace step on a node covered by another net's
+    /// pour, and for a via through one: cutting a plane is expensive.
+    pub plane_cut_cost: f64,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -71,6 +74,7 @@ impl Default for Config {
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
+            plane_cut_cost: 3.0,
             heuristic_weight: 1.0,
             verbose: false,
         }
@@ -241,6 +245,13 @@ pub struct Router<'a> {
     /// Per layer and node: the pour net (as `owner`) whose pad needs the
     /// surrounding copper for its thermal spokes; other nets pay to pass.
     guard: Vec<Vec<u32>>,
+    /// Per layer and node: the pour (as `owner`) covering the node, if any.
+    covered: Vec<Vec<u32>>,
+    /// Per layer and tile: share of the tile under some pour.
+    tile_covered: Vec<Vec<f32>>,
+    /// Per layer: cost factor for cutting a pour there. Relative to the
+    /// least covered layer, so a board poured on every layer has no penalty.
+    layer_cut: Vec<f32>,
 
     cost: Vec<f32>,
     seen: Vec<u32>,
@@ -383,6 +394,9 @@ impl<'a> Router<'a> {
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
             corridor: None,
             guard: vec![Vec::new(); layers],
+            covered: vec![Vec::new(); layers],
+            tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
+            layer_cut: vec![1.0; layers],
             cost: vec![0.0; states],
             seen: vec![0; states],
             closed: vec![0; states],
@@ -403,6 +417,7 @@ impl<'a> Router<'a> {
             .map(|net| router.prepare_net(net as NetId))
             .collect();
         router.guard = router.thermal_guards();
+        router.mark_covered();
         router
     }
 
@@ -552,6 +567,47 @@ impl<'a> Router<'a> {
                 })
             })
         })
+    }
+
+    /// Marks the nodes and tiles under pours, per layer.
+    fn mark_covered(&mut self) {
+        let tiles = self.tiles_x * self.tiles_y;
+        for plane in &self.board.planes {
+            let layer = plane.layer;
+            if self.covered[layer].is_empty() {
+                self.covered[layer] = vec![0; self.grid.cells()];
+            }
+            let mask = &self.nets[plane.net as usize].plane;
+            if mask.is_empty() || mask[layer].is_empty() {
+                continue;
+            }
+            let mut per_tile = vec![0u32; tiles];
+            for (cell, inside) in mask[layer].iter().enumerate() {
+                if *inside {
+                    self.covered[layer][cell] = crate::grid::owner(plane.net);
+                    per_tile[(cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE] += 1;
+                }
+            }
+            for (tile, count) in per_tile.iter().enumerate() {
+                let share = *count as f32 / (TILE * TILE) as f32;
+                self.tile_covered[layer][tile] = self.tile_covered[layer][tile].max(share.min(1.0));
+            }
+        }
+        let share: Vec<f32> = (0..self.board.layer_count)
+            .map(|layer| {
+                if self.covered[layer].is_empty() {
+                    0.0
+                } else {
+                    self.covered[layer].iter().filter(|owner| **owner != 0).count() as f32
+                        / self.grid.cells() as f32
+                }
+            })
+            .collect();
+        let least = share.iter().copied().fold(1.0f32, f32::min);
+        for layer in 0..self.board.layer_count {
+            let relative = (share[layer] - least).max(0.0) / (1.0 - least).max(1.0e-3);
+            self.layer_cut[layer] = 1.0 + (self.config.plane_cut_cost as f32 - 1.0) * relative;
+        }
     }
 
     /// Nodes around pads that connect to a pour of their net on that layer.
@@ -1290,7 +1346,16 @@ impl<'a> Router<'a> {
             if hard && fill >= 1.0 && !endpoint[tile] {
                 return None;
             }
-            Some((1.0 + 12.0 * fill * fill * fill) * (1.0 + self.tile_history[layer][tile]))
+            let covered = if self.nets[net as usize].plane.is_empty() {
+                self.tile_covered[layer][tile]
+            } else {
+                0.0
+            };
+            Some(
+                (1.0 + 12.0 * fill * fill * fill)
+                    * (1.0 + self.tile_history[layer][tile])
+                    * (1.0 + (self.layer_cut[layer] - 1.0) * covered),
+            )
         };
         let mut reached = None;
         while let Some(Reverse((bits, state))) = heap.pop() {
@@ -1621,6 +1686,12 @@ impl<'a> Router<'a> {
                         step *= 4.0;
                     }
                 }
+                if !self.covered[layer].is_empty() {
+                    let pour = self.covered[layer][target_cell];
+                    if pour != 0 && pour != own {
+                        step *= self.layer_cut[layer];
+                    }
+                }
                 if (arrived as usize) < 8 {
                     let turn = (direction as i32 - arrived as i32).rem_euclid(8);
                     step += bend_cost * turn.min(8 - turn) as f32;
@@ -1647,7 +1718,13 @@ impl<'a> Router<'a> {
                 } else {
                     self.history[layers][cell]
                 };
-                let step = via_cost * (1.0 + history) * (1.0 + present * occupied);
+                let mut cut = 1.0f32;
+                for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
+                    if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
+                        cut *= factor;
+                    }
+                }
+                let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 for target_layer in 0..layers {
                     if target_layer == layer {
                         continue;
@@ -1710,8 +1787,11 @@ impl<'a> Router<'a> {
             let (x0, y0, x1, y1) = router.window(net, 0.0);
             (x1 - x0) + (y1 - y0)
         };
+        // Pour nets first: their connections are local stubs and vias that
+        // must claim the sites next to their pads before signals do.
         order.sort_by_key(|net| {
             (
+                self.nets[*net as usize].plane.is_empty(),
                 self.board.nets[*net as usize].terminals.len() > 8,
                 span(&self, *net),
                 *net,
@@ -1897,28 +1977,59 @@ impl<'a> Router<'a> {
             (net, state.branches.clone(), state.connected.clone(), state.complete)
         };
         let mut saved = vec![save(self, net)];
+        let mut involved: Vec<NetId> = vec![net];
         self.unstamp(net);
         self.route_net(net, 50.0, false, 4.0);
         self.nets[net as usize].blocked = false;
         self.stamp(net);
         let mut ok = self.nets[net as usize].complete;
-        if ok {
-            let victims: Vec<NetId> = order
+        // A small negotiation among the nets this connection displaces: they
+        // may push each other around, but the forced net itself stays put.
+        let mut present = 2.0f32;
+        for _ in 0..16 {
+            if !ok {
+                break;
+            }
+            let conflicted: Vec<NetId> = order
                 .iter()
                 .copied()
                 .filter(|other| *other != net && !self.conflicts(*other).is_empty())
                 .collect();
-            for victim in &victims {
-                saved.push(save(self, *victim));
+            if conflicted.is_empty() {
+                break;
             }
-            for victim in &victims {
+            for victim in &conflicted {
+                if !involved.contains(victim) {
+                    involved.push(*victim);
+                    saved.push(save(self, *victim));
+                }
                 self.rip_up_conflicted(*victim);
-                self.route_net(*victim, 0.0, true, 4.0);
+                self.route_net(*victim, present, false, 4.0);
                 self.stamp(*victim);
-                ok &= self.nets[*victim as usize].complete;
             }
-            ok &= self.conflicts(net).is_empty()
-                && victims.iter().all(|victim| self.conflicts(*victim).is_empty());
+            present = (present * 1.5).min(self.config.present_cap as f32);
+        }
+        if ok {
+            ok = involved.iter().all(|member| {
+                self.nets[*member as usize].complete && self.conflicts(*member).is_empty()
+            }) && self.conflicts(net).is_empty();
+        }
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            let incomplete: Vec<&str> = involved
+                .iter()
+                .filter(|member| !self.nets[**member as usize].complete)
+                .map(|member| self.board.nets[*member as usize].name.as_str())
+                .collect();
+            let conflicted: Vec<&str> = involved
+                .iter()
+                .filter(|member| !self.conflicts(**member).is_empty())
+                .map(|member| self.board.nets[*member as usize].name.as_str())
+                .collect();
+            eprintln!(
+                "force_connect {}: ok {ok}, {} involved, incomplete {incomplete:?}, conflicted {conflicted:?}",
+                self.board.nets[net as usize].name,
+                involved.len()
+            );
         }
         if !ok {
             for (restored, ..) in &saved {
@@ -2022,9 +2133,9 @@ impl<'a> Router<'a> {
         let class_index = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let terminal_count = self.nets[net as usize].terminal_nodes.len();
-        // A labelled node is solid (3x3 free), so a via there touches copper
-        // on that layer; one more ring keeps it off the ragged edge.
-        let via_reach = 2;
+        // A labelled node has pour copper; the via's own clearance against
+        // foreign copper is checked through the via maps, so no extra ring.
+        let via_reach = 0;
         let _ = class;
         let mut stitches = 0;
         let mut rerouted = false;
@@ -2049,6 +2160,26 @@ impl<'a> Router<'a> {
                 stalled = 0;
             }
             previous_islands = islands.len();
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                for terminal in islands.iter().take(6) {
+                    let root = find(&mut parent, terminal_base + terminal);
+                    let branches = (0..self.nets[net as usize].branches.len())
+                        .filter(|index| find(&mut parent, terminal_base + terminal_count + index) == root)
+                        .count();
+                    let pieces: Vec<usize> = (1..=pours.pieces).filter(|piece| find(&mut parent, *piece) == root).collect();
+                    let sizes: Vec<usize> = pieces.iter().take(4).map(|piece| {
+                        pours.label.iter().map(|layer| layer.iter().filter(|l| **l == *piece as u32).count()).sum()
+                    }).collect();
+                    eprintln!(
+                        "  stranded {} at {:?} layers {:#b}: {branches} branches, {} pieces (sizes {sizes:?}), terminal nodes {}",
+                        self.board.nets[net as usize].terminals[*terminal].label,
+                        self.board.nets[net as usize].terminals[*terminal].anchor,
+                        self.board.nets[net as usize].terminals[*terminal].layers,
+                        pieces.len(),
+                        self.nets[net as usize].terminal_nodes[*terminal].len()
+                    );
+                }
+            }
             if self.config.verbose {
                 let attached = islands
                     .iter()
