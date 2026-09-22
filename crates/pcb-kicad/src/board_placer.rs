@@ -16,6 +16,13 @@ pub struct KiCadBoardPlacerConfig {
     /// References that must keep their pose, in addition to locked
     /// footprints, footprints without nets, and footprints on the board edge.
     pub fixed: Vec<String>,
+    /// Glob patterns (`*` and `?`) of references that stay fixed.
+    pub fixed_patterns: Vec<String>,
+    /// Through-hole parts with at least four pins (connectors, headers)
+    /// whose body comes within this distance of the outline stay where the
+    /// designer put them: at the edge, where they are reachable.
+    #[serde(default = "default_edge_keep_mm")]
+    pub edge_keep_mm: f64,
     /// References that may move even though a default rule would fix them.
     pub free: Vec<String>,
     /// Share of the whitespace taken by filler charge: 1 packs the parts as
@@ -44,6 +51,8 @@ impl Default for KiCadBoardPlacerConfig {
             grid_mm: 0.635,
             keep_rotation: false,
             fixed: Vec::new(),
+            fixed_patterns: Vec::new(),
+            edge_keep_mm: default_edge_keep_mm(),
             free: Vec::new(),
             whitespace_fill: 0.6,
             track_pitch_mm: 0.65,
@@ -235,6 +244,31 @@ pub(super) struct LoweredPlacement {
     pub source_at: Vec<[f64; 3]>,
 }
 
+fn default_edge_keep_mm() -> f64 {
+    3.0
+}
+
+/// `*` matches any run of characters, `?` one character.
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let mut table = vec![vec![false; text.len() + 1]; pattern.len() + 1];
+    table[0][0] = true;
+    for p in 1..=pattern.len() {
+        if pattern[p - 1] == '*' {
+            table[p][0] = table[p - 1][0];
+        }
+        for t in 1..=text.len() {
+            table[p][t] = match pattern[p - 1] {
+                '*' => table[p - 1][t] || table[p][t - 1],
+                '?' => table[p - 1][t - 1],
+                c => table[p - 1][t - 1] && c == text[t - 1],
+            };
+        }
+    }
+    table[pattern.len()][text.len()]
+}
+
 pub(super) fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
@@ -246,6 +280,7 @@ pub(super) fn lower_placement(
     let mut references = Vec::new();
     let mut source_at = Vec::new();
     let mut locked = Vec::new();
+    let mut connector = Vec::new();
     for footprint in pcb
         .children()
         .iter()
@@ -288,6 +323,7 @@ pub(super) fn lower_placement(
                 .map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64))
                 .collect()
         };
+        connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
                 || footprint
@@ -319,6 +355,77 @@ pub(super) fn lower_placement(
         });
         references.push(reference);
         source_at.push(at);
+    }
+
+    // Rule areas that forbid footprints are obstacles too, and a part the
+    // designer placed reaching into one (an antenna module at its keepout)
+    // is there on purpose and stays.
+    let footprint_count = components.len();
+    let mut keepouts: Vec<pcb_router::geometry::Aabb> = Vec::new();
+    for item in pcb.children() {
+        if item.head() != Some("zone")
+            || !item.child("keepout").is_some_and(|keepout| {
+                form_atom(keepout, "footprints", 1) == Some("not_allowed")
+            })
+        {
+            continue;
+        }
+        let Some(polygon) = item.child("polygon").and_then(|polygon| polygon.child("pts")) else {
+            continue;
+        };
+        let mut bounds: Option<pcb_router::geometry::Aabb> = None;
+        for point in polygon.children().iter().filter(|child| child.head() == Some("xy")) {
+            let coordinate = |index: usize| -> Result<f64, String> {
+                point
+                    .children()
+                    .get(index)
+                    .and_then(Expr::atom)
+                    .ok_or_else(|| "keepout point without coordinates".to_string())?
+                    .parse::<f64>()
+                    .map_err(|error| format!("invalid keepout coordinate: {error}"))
+            };
+            let xy = [coordinate(1)?, coordinate(2)?];
+            let corner = pcb_router::geometry::Aabb {
+                minimum: xy,
+                maximum: xy,
+            };
+            bounds = Some(bounds.map_or(corner, |bounds| bounds.union(corner)));
+        }
+        let Some(bounds) = bounds else {
+            continue;
+        };
+        let layers: Vec<&str> = item
+            .child("layers")
+            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+            .or_else(|| form_atom(item, "layer", 1).map(|layer| vec![layer]))
+            .unwrap_or_default();
+        let side = match (layers.iter().any(|l| *l == "F.Cu"), layers.iter().any(|l| *l == "B.Cu")) {
+            (true, false) => core::Side::Front,
+            (false, true) => core::Side::Back,
+            _ => core::Side::Both,
+        };
+        keepouts.push(bounds);
+        components.push(core::Component {
+            name: "keepout".into(),
+            body_center: [0.0, 0.0],
+            body_size: [
+                bounds.maximum[0] - bounds.minimum[0],
+                bounds.maximum[1] - bounds.minimum[1],
+            ],
+            round: false,
+            halo: 0.0,
+            pins: Vec::new(),
+            side,
+            fixed: true,
+            angle_options: vec![0.0],
+        });
+        poses.push(core::Pose {
+            position: [
+                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+            ],
+            angle: 0.0,
+        });
     }
 
     // Copper-layer text and graphics are part of the board: parts must not
@@ -391,11 +498,25 @@ pub(super) fn lower_placement(
         grid: config.grid_mm,
         edge_margin: config.edge_margin_mm,
     };
-    for index in 0..problem.components.len() {
+    for index in 0..footprint_count {
         let reference = &references[index];
-        let on_edge = !core::legal::body_inside_outline(&problem, index, problem.poses[index]);
+        let component = &problem.components[index];
+        let pose = problem.poses[index];
+        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+        let reach = config.edge_keep_mm;
+        let in_keepout = keepouts.iter().any(|keepout| {
+            center[0] + half[0] + reach > keepout.minimum[0]
+                && center[0] - half[0] - reach < keepout.maximum[0]
+                && center[1] + half[1] + reach > keepout.minimum[1]
+                && center[1] - half[1] - reach < keepout.maximum[1]
+        });
+        let on_edge = !core::legal::body_inside_outline(&problem, index, problem.poses[index])
+            || in_keepout
+            || (connector[index]
+                && core::legal::body_near_outline(&problem, index, problem.poses[index], config.edge_keep_mm));
         let default_fixed = locked[index] || problem.components[index].pins.is_empty() || on_edge;
         problem.components[index].fixed = config.fixed.contains(reference)
+            || config.fixed_patterns.iter().any(|pattern| glob_matches(pattern, reference))
             || (default_fixed && !config.free.contains(reference));
     }
     Ok(LoweredPlacement {

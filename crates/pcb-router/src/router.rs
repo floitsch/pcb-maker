@@ -2495,6 +2495,26 @@ impl Router {
                 break;
             }
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && iteration % 10 == 9 {
+                // The most contested tiles: where history piled up.
+                let mut tiles: Vec<(f32, usize, usize)> = Vec::new();
+                for (layer, history) in self.tile_history.iter().enumerate() {
+                    for (tile, value) in history.iter().enumerate() {
+                        if *value > 0.0 {
+                            tiles.push((*value, layer, tile));
+                        }
+                    }
+                }
+                tiles.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+                let hot: Vec<String> = tiles
+                    .iter()
+                    .take(8)
+                    .map(|(value, layer, tile)| {
+                        let x = (tile % self.tiles_x) as f64 * TILE as f64 * self.grid.pitch + self.grid.origin[0];
+                        let y = (tile / self.tiles_x) as f64 * TILE as f64 * self.grid.pitch + self.grid.origin[1];
+                        format!("L{layer}({x:.0},{y:.0}):{value:.0}")
+                    })
+                    .collect();
+                eprintln!("  hottest tiles: {}", hot.join(" "));
                 let names: Vec<String> = conflicted
                     .iter()
                     .take(24)
@@ -2559,6 +2579,11 @@ impl Router {
     /// converged state. A round is kept only if nothing opens and the via
     /// count drops.
     fn reduce_vias(&mut self, order: &[NetId]) {
+        // Fewer vias are worth nothing while connections are open, and the
+        // renegotiation would take as long as the one that failed.
+        if self.quality().0 > 0 {
+            return;
+        }
         for round in 0..self.config.via_reduction_rounds {
             let before = self.quality();
             let pending: Vec<NetId> = order
@@ -2757,6 +2782,12 @@ impl Router {
                 .filter(|other| *other != net && !self.conflicts(*other).is_empty())
                 .collect();
             if conflicted.is_empty() {
+                break;
+            }
+            // A forced connection is a local repair; when it cascades
+            // through the board the copper is simply not there.
+            if involved.len() + conflicted.len() > 24 {
+                ok = false;
                 break;
             }
             for victim in &conflicted {

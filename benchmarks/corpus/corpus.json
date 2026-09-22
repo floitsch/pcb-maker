@@ -54,7 +54,9 @@
     {
       "name": "ngdevkit",
       "directory": "/home/flo/programming/ngdevkit-linker/layouts/default",
-      "board_id": "default"
+      "board_id": "default",
+      "layout": {"placer": {"fixed_patterns": ["H*"]}},
+      "note": "the headers are the ribbon interface and stay where the designer put them; the ESP32 module stays at its antenna keepout automatically"
     },
     {
       "name": "sonde-xilinx",

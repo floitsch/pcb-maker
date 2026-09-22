@@ -41,18 +41,17 @@ pub struct Grid {
 
 /// Channels between neighbouring pads that a track of the narrowest class
 /// fits through with less than a pitch of play: (axis the pads are spaced
-/// along, channel centre on that axis, slack each side).
+/// along, channel centre on that axis, slack each side). Only channels next
+/// to a pad fenced in on all four sides count (the inside of a BGA), where
+/// the channel is the only way in; between the pads of a connector row it is
+/// a shortcut that must not move the lattice off the pad centres.
 fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
     let width = board
         .classes
         .iter()
         .map(|class| class.trace_width)
         .fold(f64::INFINITY, f64::min)
-        .min(if board.neck_width > 0.0 {
-            board.neck_width
-        } else {
-            f64::INFINITY
-        });
+        .min(if board.neck_width > 0.0 { board.neck_width } else { f64::INFINITY });
     let clearance = board
         .classes
         .iter()
@@ -67,63 +66,72 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
         .flat_map(|net| net.terminals.iter())
         .map(|terminal| {
             let pad = &board.obstacles[terminal.pad];
-            (
-                terminal.anchor,
-                pad.shape.aabb(),
-                pad.clearance.max(clearance),
-            )
+            (terminal.anchor, pad.shape.aabb(), pad.clearance.max(clearance))
         })
         .collect();
-    // Neighbours within 2 mm through a coarse hash.
+    // Row and column neighbours within 2 mm, through a coarse hash.
     let cell = 2.0;
-    let mut buckets: std::collections::HashMap<(i64, i64), Vec<usize>> =
-        std::collections::HashMap::new();
+    let mut buckets: std::collections::HashMap<(i64, i64), Vec<usize>> = std::collections::HashMap::new();
     for (index, (anchor, _, _)) in pads.iter().enumerate() {
         buckets
-            .entry((
-                (anchor[0] / cell).floor() as i64,
-                (anchor[1] / cell).floor() as i64,
-            ))
+            .entry(((anchor[0] / cell).floor() as i64, (anchor[1] / cell).floor() as i64))
             .or_default()
             .push(index);
     }
-    let mut channels = Vec::new();
-    for (index, (anchor, aabb, pad_clearance)) in pads.iter().enumerate() {
-        let (bx, by) = (
-            (anchor[0] / cell).floor() as i64,
-            (anchor[1] / cell).floor() as i64,
-        );
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let Some(others) = buckets.get(&(bx + dx, by + dy)) else {
-                    continue;
-                };
-                for &other in others {
-                    if other <= index {
+    // (neighbour, axis of separation, sign)
+    let neighbours: Vec<Vec<(usize, usize, bool)>> = (0..pads.len())
+        .map(|index| {
+            let anchor = pads[index].0;
+            let (bx, by) = ((anchor[0] / cell).floor() as i64, (anchor[1] / cell).floor() as i64);
+            let mut found = Vec::new();
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let Some(others) = buckets.get(&(bx + dx, by + dy)) else {
                         continue;
-                    }
-                    let (other_anchor, other_aabb, other_clearance) = &pads[other];
-                    let separation = [other_anchor[0] - anchor[0], other_anchor[1] - anchor[1]];
-                    let axis = if separation[0].abs() >= separation[1].abs() {
-                        0
-                    } else {
-                        1
                     };
-                    if separation[1 - axis].abs() > 0.05 || separation[axis].abs() > cell {
-                        continue;
+                    for &other in others {
+                        if other == index {
+                            continue;
+                        }
+                        let other_anchor = pads[other].0;
+                        let separation = [other_anchor[0] - anchor[0], other_anchor[1] - anchor[1]];
+                        let axis = if separation[0].abs() >= separation[1].abs() { 0 } else { 1 };
+                        if separation[1 - axis].abs() <= 0.05 && separation[axis].abs() <= cell {
+                            found.push((other, axis, separation[axis] > 0.0));
+                        }
                     }
-                    let (near, far) = if separation[axis] > 0.0 {
-                        (aabb.maximum[axis], other_aabb.minimum[axis])
-                    } else {
-                        (other_aabb.maximum[axis], aabb.minimum[axis])
-                    };
-                    let free = far - near - pad_clearance - other_clearance;
-                    if free < width - 1.0e-6 {
-                        continue;
-                    }
-                    channels.push((axis, (near + far) / 2.0, (free - width) / 2.0));
                 }
             }
+            found
+        })
+        .collect();
+    let enclosed: Vec<bool> = neighbours
+        .iter()
+        .map(|found| {
+            let mut sides = [false; 4];
+            for (_, axis, positive) in found {
+                sides[axis * 2 + *positive as usize] = true;
+            }
+            sides.iter().all(|side| *side)
+        })
+        .collect();
+    let mut channels = Vec::new();
+    for (index, (_, aabb, pad_clearance)) in pads.iter().enumerate() {
+        for &(other, axis, positive) in &neighbours[index] {
+            if other <= index || !(enclosed[index] || enclosed[other]) {
+                continue;
+            }
+            let (_, other_aabb, other_clearance) = &pads[other];
+            let (near, far) = if positive {
+                (aabb.maximum[axis], other_aabb.minimum[axis])
+            } else {
+                (other_aabb.maximum[axis], aabb.minimum[axis])
+            };
+            let free = far - near - pad_clearance - other_clearance;
+            if free < width - 1.0e-6 {
+                continue;
+            }
+            channels.push((axis, (near + far) / 2.0, (free - width) / 2.0));
         }
     }
     channels

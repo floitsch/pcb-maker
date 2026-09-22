@@ -152,6 +152,7 @@ def main():
                 "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
                 "pours": result.get("pours", "none"),
                 "routing_seconds": round(result["routing_seconds"], 2),
+                "wall_seconds": round(seconds, 1),
                 "internal_violations": len(result["internal_violations"]),
                 "native": drc_summary(work / "routed", baseline, reference),
             }
@@ -220,8 +221,15 @@ def main():
             else:
                 row["tscircuit"] = {"error": (work / "tscircuit.log").read_text()[-300:], "exit": code}
 
+        # Per-board layout constraints (fixed parts and the like) live in the
+        # corpus: the placement task includes the designer's rough intent.
+        layout_arguments = ["auto"]
+        if board.get("layout"):
+            (work / "layout-config.json").write_text(json.dumps(board["layout"]))
+            layout_arguments.append(work / "layout-config.json")
+
         if not arguments.skip_layout:
-            code, seconds = run(arguments.binary, ["layout-kicad-board", source, board_id, work / "layout", "auto"],
+            code, seconds = run(arguments.binary, ["layout-kicad-board", source, board_id, work / "layout"] + layout_arguments,
                                 work / "layout.log", arguments.timeout)
             report = work / "layout/board-layout.json"
             if report.exists():
@@ -259,7 +267,7 @@ def main():
                     entry["error"] = (shrunk / "shrink.log").read_text()[-300:]
                     row["shrink"].append(entry)
                     break
-                code, seconds = run(arguments.binary, ["layout-kicad-board", shrunk_source, board_id, shrunk / "layout", "auto"],
+                code, seconds = run(arguments.binary, ["layout-kicad-board", shrunk_source, board_id, shrunk / "layout"] + layout_arguments,
                                     shrunk / "layout.log", arguments.timeout)
                 report = shrunk / "layout/board-layout.json"
                 if report.exists():

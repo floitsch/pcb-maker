@@ -92,6 +92,11 @@ pub fn body_inside_outline(problem: &Problem, index: usize, pose: Pose) -> bool 
     inside_outline(problem, bare(problem, index, pose, 0.0))
 }
 
+/// Whether the body grown by `reach` on every side touches the outline.
+pub fn body_near_outline(problem: &Problem, index: usize, pose: Pose, reach: f64) -> bool {
+    !inside_outline(problem, bare(problem, index, pose, reach))
+}
+
 /// Whether component `index` at `pose` is inside the board and clear of all
 /// components in `others` (indices with their poses taken from `poses`).
 pub fn is_legal(

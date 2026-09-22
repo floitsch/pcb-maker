@@ -63,10 +63,22 @@ is complete and clean, ColdFire and video are one and seven nets short.
   net does not fit once the other nets are in; its designer used small +3.3 V
   pour regions, which the router treats as routing. The placer needs side
   assignment for a board this dense.
-- **ngdevkit** (174 x 134 mm, 186 footprints, about 1070 pads): the 207-pad
-  ground pour and the 90-pad 3.3 V pour are cut into 1500 pieces by the signal
-  routing and cannot all be stitched. Pour nets need to be planned first, with
-  pour continuity as a resource in the tile graph.
+- **ngdevkit** (174 x 134 mm, 186 footprints, about 1070 pads, two layers,
+  0.15 mm escape rules): two separate problems. First, its PSRAM is a 48-ball
+  0.75 mm BGA whose inter-ball channels leave a 0.15 mm track 0.01 mm of
+  slack, so the lattice must put a node row exactly mid-channel — a 0.1 mm
+  lattice cannot, which made the inner balls unreachable and every net to
+  them a permanent failure; the lattice choice now scores such tight channels
+  and picks 0.125 mm (see [router.md](router.md)). Second, with the balls
+  reachable, the negotiation still does not converge: 50-90 nets stay in
+  conflict at the present-cost cap, and the congestion history piles up on
+  the front layer at the BGA (x 145-151, y 78-84 mm), where the 16-bit data
+  and 20-bit address buses from the level translators, the expander bus and
+  the BGA escape all meet. The ground pour (224 pads on both layers) is
+  shredded into 1500 pieces on the way; a plane skeleton keeps its pads
+  connected but does not make the signals fit. As placed by its (unfinished)
+  designer the board is most likely not routable on two layers; it is the
+  test case for automatic re-placement, not for the router alone.
 - **ColdFire / video** (4 layers): the remaining opens are ground pads whose
   inner-plane island cannot be stitched back to the main plane; same cause as
   ngdevkit, on inner layers.
@@ -154,6 +166,21 @@ being actively developed.
 With pours kept (pcb-maker's normal route mode, which neither external router
 can run) the same boards route with the same completion, fewer vias on most,
 and 15-30 % less copper.
+
+## Strength: the same design on a smaller board
+
+`run.py --shrink` (default factors 0.9, 0.8, 0.7, 0.6, 0.5) scales a board's
+outline and every position on it towards the centre by a factor, keeps part
+sizes, pushes parts back inside the outline where they would stick out, and
+places and routes the result from scratch (`pcb-maker shrink-kicad-board`
+does the transformation alone). Only the designer's own findings are
+forgiven. The table's "smallest clean board" column is the last factor that
+routed clean, with what stopped the next one: the strength of the
+place-and-route flow in one number per board. The limit is often physical
+before it is algorithmic — dut-c3 at 0.8 puts a 50 mm header on a 52 mm
+board, into the corner mounting holes. Per-board placement constraints
+(`"layout"` in `corpus.json`, e.g. ngdevkit's headers) apply to the shrunk
+boards as well.
 
 ## Growing the corpus
 
