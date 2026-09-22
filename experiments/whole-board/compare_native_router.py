@@ -143,6 +143,9 @@ def compare(args):
         report['edge_translation']=read(root/'edge-translation/report.json')
         shutil.copy2(dsn,root/'input-untranslated.dsn')
         shutil.copy2(root/'edge-translation/translated.dsn',dsn)
+    assert call('class-translation',[sys.executable,helper.parent/'translate_dsn_classes.py',dsn,
+        root/'source-rules.json',root/'class-translation.json']) == 0
+    report['class_translation']=read(root/'class-translation.json')
     assert call('dsn-audit',[sys.executable,helper.parent/'audit_dsn_classes.py',board,dsn,root/'dsn-audit.json']) == 0
     report['dsn_audit'] = read(root/'dsn-audit.json')
     assert call('exchange-geometry',[sys.executable,helper.parent/'inspect_dsn_geometry.py',dsn,

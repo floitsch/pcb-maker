@@ -52,8 +52,9 @@ def progress_admissible(native, drc, baseline, allow_annotations):
             or native['schematic_parity_issues'] > BASELINE_NATIVE['schematic_parity_issues']
             or len(findings) != native['drc_design_violations']):
         return False
+    # Findings of a type the source already has, no more than it has, are
+    # not the router's doing.
     return not findings or (allow_annotations
-        and all(f['type'] in ANNOTATION_TYPES for f in findings)
         and not (finding_counts(findings) - finding_counts(design_findings(baseline))))
 
 

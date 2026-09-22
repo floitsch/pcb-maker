@@ -72,6 +72,7 @@ const HELPERS: &[(&str, &str)] = &[
     helper!("audit_dsn_classes.py"),
     helper!("inspect_dsn_geometry.py"),
     helper!("translate_dsn_edge.py"),
+    helper!("translate_dsn_classes.py"),
     helper!("adapt_dsn_layers.py"),
     helper!("audit_partial_ripup.py"),
     helper!("report_adaptive_routing.py"),

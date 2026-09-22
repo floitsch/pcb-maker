@@ -20,7 +20,8 @@ def tag(name):return '{'+NS+'}'+name
 def render(directory,board_id):
     preview=ET.parse(directory/'preview.svg').getroot()
     x,y,w,h=map(float,preview.attrib['viewBox'].split())
-    labels=json.loads((directory/'preview-labels.json').read_text())['labels']
+    labels_path=directory/'preview-labels.json'
+    labels=json.loads(labels_path.read_text())['labels'] if labels_path.exists() else []
     native_layers={}
     for side,layer in [('front','F.Cu'),('back','B.Cu')]:
         target=directory/f'inspection-{side}.svg'

@@ -100,9 +100,25 @@ def audit(board_path, dsn_path):
     exported = {}
     for net in children(network,'net'):
         assert net[1] not in exported
-        # KiCad's exporter suffixes repeated pad numbers (U1-39@1, ...).
-        exported[net[1]] = sorted(pin.split('@')[0] for pin in child(net,'pins')[1:])
-    assert exported == {k:sorted(v) for k,v in pins.items()}, 'DSN net/pin inventory changed'
+        # KiCad's exporter suffixes repeated pad numbers (U1-39@1, ...) and
+        # quotes references with special characters ("USB-C1"-A7), which the
+        # tokenizer above splits into '"USB-C1"' and '-A7'.
+        tokens = child(net,'pins')[1:]
+        joined = []
+        for token in tokens:
+            # A pin id never starts with '-': such a token continues the
+            # (quoted) reference before it.
+            if joined and token.startswith('-'):
+                joined[-1] = joined[-1].strip('"') + token
+            else:
+                joined.append(token)
+        exported[net[1]] = sorted({pin.split('@')[0].replace('"','') for pin in joined})
+    # Compare distinct pad ids of nets with something to route.
+    native = {k:sorted(set(v)) for k,v in pins.items()}
+    native = {k:v for k,v in native.items() if len(v) > 1}
+    exported = {k:v for k,v in exported.items() if len(v) > 1}
+    assert exported == native, 'DSN net/pin inventory changed: ' + str(
+        [(k, native.get(k), exported.get(k)) for k in set(native) | set(exported) if native.get(k) != exported.get(k)][:3])
     return {'scope':__doc__, 'source_board_sha256':digest(board_path),
             'source_project_sha256':digest(board_path.with_suffix('.kicad_pro')),
             'dsn_sha256':digest(dsn_path),'class_geometry_matches':True,

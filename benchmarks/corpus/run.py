@@ -178,14 +178,15 @@ def main():
             if report.exists():
                 result = json.loads(report.read_text())
                 native = result.get("native") or {}
+                statistics = result.get("statistics") or {}
+                physical = statistics.get("physical_copper") or {}
                 row["freerouting"] = {
                     "status": result.get("status"),
-                    "complete": bool(result.get("routing_complete")) and bool(native.get("complete")),
+                    "complete": bool(result.get("routing_complete")) and native.get("selected_net_unconnected_items") == 0,
                     "unconnected": native.get("selected_net_unconnected_items"),
-                    "vias": result.get("vias"),
-                    "length_mm": round(result["physical_centerline_length_mm"], 1) if result.get("physical_centerline_length_mm") else None,
-                    "router_seconds": round(result["external_router_seconds"], 1) if result.get("external_router_seconds") else None,
-                    "passes": result.get("reported_router_passes"),
+                    "vias": statistics.get("vias"),
+                    "length_mm": round(physical["physical_centerline_length_mm"], 1) if physical.get("physical_centerline_length_mm") else None,
+                    "router_seconds": round(result["router_seconds"], 1) if result.get("router_seconds") else None,
                     "native_findings": drc_summary(work / "freerouting/routing/result", baseline, reference),
                 }
             else:
@@ -252,7 +253,7 @@ def main():
         if findings.get("errors"):
             problems.append(", ".join(f"{k}×{v}" for k, v in findings["errors"].items()))
         verdict = "clean" if entry.get("complete") and not problems else ("; ".join(problems) or entry.get("status", "?"))
-        return f"{entry.get('vias')} vias, {entry.get('length_mm')} mm, {entry.get('router_seconds')} s ({entry.get('passes')} passes) — {verdict}"
+        return f"{entry.get('vias')} vias, {entry.get('length_mm')} mm, {entry.get('router_seconds')} s — {verdict}"
 
     for row in rows:
         reference = row.get("reference", {})
