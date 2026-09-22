@@ -283,11 +283,11 @@ fn routable_net(name: &str) -> bool {
         && !name.starts_with("unconnected-(")
 }
 
-struct Lowered {
-    board: core::Board,
+pub(super) struct Lowered {
+    pub board: core::Board,
 }
 
-fn lower(
+pub(super) fn lower(
     pcb: &Expr,
     config: &KiCadBoardRouterConfig,
     connect_pours: bool,
@@ -792,7 +792,7 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
         / 2.0
 }
 
-struct Pour {
+pub(super) struct Pour {
     net: String,
     layers: core::LayerMask,
     priority: i64,
@@ -802,7 +802,7 @@ struct Pour {
     polygon: Vec<[f64; 2]>,
 }
 
-fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
+pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
     let mut result = Vec::new();
     for zone in pcb
         .children()
@@ -909,23 +909,8 @@ pub fn route_kicad_board(
     Ok(result)
 }
 
-fn route_kicad_board_once(
-    source_directory: &Path,
-    board_id: &str,
-    output_directory: &Path,
-    config: &KiCadBoardRouterConfig,
-    connect_pours: bool,
-) -> Result<KiCadBoardRouterResult, String> {
-    let started = std::time::Instant::now();
-    let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
-    let source = fs::read_to_string(&source_board)
-        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let mut pcb = parse(&source)?;
-    let copper_net_names = unambiguous_pad_net_names(&pcb)?;
-    let Lowered { board } = lower(&pcb, config, connect_pours)?;
-    let layer_names = LayerTable::from_pcb(&pcb)?.names;
-    let lowering_seconds = started.elapsed().as_secs_f64();
-
+/// The core router configuration for a KiCad configuration.
+pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     let mut router_config = core::Config {
         verbose: true,
         ..core::Config::default()
@@ -948,17 +933,21 @@ fn route_kicad_board_once(
     if let Some(cap) = config.present_cap {
         router_config.present_cap = cap;
     }
-    let routing_started = std::time::Instant::now();
-    let result = core::route(&board, &router_config);
-    let routing_seconds = routing_started.elapsed().as_secs_f64();
+    router_config
+}
 
-    let verification_started = std::time::Instant::now();
-    let violations = core::verify(&board, &result.routes);
-    let internal_verification_seconds = verification_started.elapsed().as_secs_f64();
-
-    let Expr::List(items) = &mut pcb else {
+/// Writes a routing result as copper into `pcb` and reports per net.
+pub(super) fn emit_routes(
+    pcb: &mut Expr,
+    board: &core::Board,
+    result: &core::RoutingResult,
+    layer_names: &[String],
+) -> Result<Vec<KiCadBoardRouterNet>, String> {
+    let copper_net_names = unambiguous_pad_net_names(pcb)?;
+    let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
+    items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
@@ -1003,8 +992,26 @@ fn route_kicad_board_once(
                 .sum(),
         });
     }
-    canonicalize_copper_net_names(&mut pcb, &copper_net_names);
+    canonicalize_copper_net_names(pcb, &copper_net_names);
+    Ok(nets)
+}
 
+/// Writes `pcb` (with its copper) as the project in `output_directory`,
+/// verifies it natively unless told not to, and builds the report.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn finish_routed_board(
+    pcb: &Expr,
+    board: &core::Board,
+    result: &core::RoutingResult,
+    nets: Vec<KiCadBoardRouterNet>,
+    layer_names: &[String],
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+    timings: [f64; 2],
+) -> Result<KiCadBoardRouterResult, String> {
+    let violations = core::verify(board, &result.routes);
     if output_directory.exists() {
         return Err(format!(
             "output directory {} already exists",
@@ -1013,9 +1020,8 @@ fn route_kicad_board_once(
     }
     copy_directory_tree(source_directory, output_directory)?;
     let output_board = output_directory.join(format!("{board_id}.kicad_pcb"));
-    fs::write(&output_board, format!("{}\n", encode(&pcb)))
+    fs::write(&output_board, format!("{}\n", encode(pcb)))
         .map_err(|error| format!("failed to write {}: {error}", output_board.display()))?;
-
     let native_started = std::time::Instant::now();
     let native = if config.skip_native_verification {
         None
@@ -1023,7 +1029,6 @@ fn route_kicad_board_once(
         Some(verify_materialized_rung(output_directory, board_id)?)
     };
     let native_verification_seconds = native_started.elapsed().as_secs_f64();
-
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
     let report = KiCadBoardRouterResult {
         board_id: board_id.into(),
@@ -1037,9 +1042,9 @@ fn route_kicad_board_once(
         iterations: result.iterations,
         searches: result.searches,
         expansions: result.expansions,
-        lowering_seconds,
-        routing_seconds,
-        internal_verification_seconds,
+        lowering_seconds: timings[0],
+        routing_seconds: timings[1],
+        internal_verification_seconds: 0.0,
         native_verification_seconds,
         internal_violations: violations
             .iter()
@@ -1065,4 +1070,37 @@ fn route_kicad_board_once(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(report)
+}
+
+fn route_kicad_board_once(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<KiCadBoardRouterResult, String> {
+    let started = std::time::Instant::now();
+    let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let source = fs::read_to_string(&source_board)
+        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    let mut pcb = parse(&source)?;
+    let Lowered { board } = lower(&pcb, config, connect_pours)?;
+    let layer_names = LayerTable::from_pcb(&pcb)?.names;
+    let lowering_seconds = started.elapsed().as_secs_f64();
+    let routing_started = std::time::Instant::now();
+    let result = core::route(&board, &core_config(config));
+    let routing_seconds = routing_started.elapsed().as_secs_f64();
+    let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
+    finish_routed_board(
+        &pcb,
+        &board,
+        &result,
+        nets,
+        &layer_names,
+        source_directory,
+        board_id,
+        output_directory,
+        config,
+        [lowering_seconds, routing_seconds],
+    )
 }

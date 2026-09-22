@@ -2404,28 +2404,30 @@ fn run() -> Result<(), String> {
                 &config,
                 &router,
             )?;
-            for round in &result.rounds {
+            println!(
+                "placed in {:.1}s; first route {:.1}s: {} open, {} vias, {:.0} mm",
+                result.placement_seconds,
+                result.first_route_seconds,
+                result.first_unconnected_terminals,
+                result.first_vias,
+                result.first_length_mm,
+            );
+            for step in &result.moves {
                 println!(
-                    "round {}: wirelength {:.0} mm, routed {} ({} unconnected), {} vias, {:.0} mm, place {:.1}s route {:.1}s, congested {:?}",
-                    round.round,
-                    round.wirelength_mm,
-                    round.routed_connections,
-                    round.unconnected_terminals,
-                    round.vias,
-                    round.length_mm,
-                    round.placement_seconds,
-                    round.routing_seconds,
-                    round
-                        .most_congested
-                        .iter()
-                        .take(3)
-                        .map(|(reference, _)| reference.as_str())
-                        .collect::<Vec<_>>(),
+                    "move {} {:?} -> {:?}: {} nets rerouted in {:.1}s, {} open, {} vias, {:.0} mm{}",
+                    step.reference,
+                    step.from,
+                    step.to,
+                    step.rerouted_nets,
+                    step.seconds,
+                    step.unconnected_terminals,
+                    step.vias,
+                    step.length_mm,
+                    if step.kept { " (kept)" } else { "" },
                 );
             }
             println!(
-                "selected round {}: routed {}/{} connections, {} vias, {:.1} mm, native complete={}",
-                result.selected_round,
+                "final: routed {}/{} connections, {} vias, {:.1} mm, native complete={}",
                 result.routed.routed_connections,
                 result.routed.routable_connections,
                 result.routed.vias,

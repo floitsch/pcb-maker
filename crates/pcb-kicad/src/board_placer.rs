@@ -200,13 +200,42 @@ fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool), String> {
     ))
 }
 
-struct LoweredPlacement {
-    problem: core::Problem,
-    references: Vec<String>,
-    source_at: Vec<[f64; 3]>,
+/// Moves a footprint to `pose`, keeping pad and text angles (which KiCad
+/// stores as absolute values) consistent. Returns the written pose.
+pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Result<[f64; 3], String> {
+    let current = form_at(footprint)?;
+    let at = [
+        (pose.position[0] * 1.0e6).round() / 1.0e6,
+        (pose.position[1] * 1.0e6).round() / 1.0e6,
+        normalize_angle(pose.angle),
+    ];
+    let delta = normalize_angle(at[2] - current[2]);
+    set_form_at(footprint, at)?;
+    if delta != 0.0
+        && let Expr::List(children) = footprint
+    {
+        for child in children.iter_mut() {
+            if matches!(child.head(), Some("pad" | "property" | "fp_text"))
+                && child.child("at").is_some()
+            {
+                let child_at = form_at(child)?;
+                set_form_at(
+                    child,
+                    [child_at[0], child_at[1], normalize_angle(child_at[2] + delta)],
+                )?;
+            }
+        }
+    }
+    Ok(at)
 }
 
-fn lower_placement(
+pub(super) struct LoweredPlacement {
+    pub problem: core::Problem,
+    pub references: Vec<String>,
+    pub source_at: Vec<[f64; 3]>,
+}
+
+pub(super) fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
 ) -> Result<LoweredPlacement, String> {
@@ -409,29 +438,7 @@ pub fn place_kicad_board(
     {
         let pose = placement.poses[index];
         let source_at = lowered.source_at[index];
-        let at = [
-            (pose.position[0] * 1.0e6).round() / 1.0e6,
-            (pose.position[1] * 1.0e6).round() / 1.0e6,
-            normalize_angle(pose.angle),
-        ];
-        let delta = normalize_angle(at[2] - source_at[2]);
-        set_form_at(footprint, at)?;
-        if delta != 0.0
-            && let Expr::List(children) = footprint
-        {
-            // Pad and text angles are stored absolute in board files.
-            for child in children.iter_mut() {
-                if matches!(child.head(), Some("pad" | "property" | "fp_text"))
-                    && child.child("at").is_some()
-                {
-                    let child_at = form_at(child)?;
-                    set_form_at(
-                        child,
-                        [child_at[0], child_at[1], normalize_angle(child_at[2] + delta)],
-                    )?;
-                }
-            }
-        }
+        let at = write_footprint_pose(footprint, pose)?;
         footprints.push(KiCadPlacedFootprint {
             reference: lowered.references[index].clone(),
             fixed: lowered.problem.components[index].fixed,

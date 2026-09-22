@@ -202,3 +202,33 @@ fn pour_connects_pads_with_stub_vias_only() {
     assert!(length < 6.0, "ground stubs are {length} mm long");
 }
 
+
+#[test]
+fn incremental_update_reroutes_only_what_a_change_touches() {
+    let mut builder = Builder::new(40.0, 20.0, 2);
+    builder.net("A", &[([3.0, 5.0], 0b01), ([37.0, 5.0], 0b01)]);
+    builder.net("B", &[([3.0, 15.0], 0b01), ([37.0, 15.0], 0b01)]);
+    let config = config();
+    let mut router = pcb_router::router::Router::new(&builder.board, &config);
+    let first = router.run_in_place();
+    assert_eq!(first.status, vec![NetStatus::Routed, NetStatus::Routed]);
+
+    // A keepout appears across net A's straight path; net B is untouched.
+    let mut changed = builder.board.clone();
+    changed.obstacles.push(Obstacle {
+        shape: Shape::rectangle([20.0, 5.0], [0.5, 3.0], 0.0),
+        layers: 0b11,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "wall".into(),
+    });
+    let rerouted = router.update(&changed).unwrap();
+    assert_eq!(rerouted, 1);
+    let second = router.reroute(true);
+    assert_eq!(second.status, vec![NetStatus::Routed, NetStatus::Routed]);
+    assert!(verify(&changed, &second.routes).is_empty());
+    assert_eq!(second.routes[1].segments, first.routes[1].segments);
+}

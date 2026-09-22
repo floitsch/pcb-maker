@@ -154,6 +154,7 @@ struct NetState {
     plane_target: Vec<Vec<bool>>,
 }
 
+#[derive(Clone)]
 struct Stamps {
     /// Like `trace_to_*`, grown by the error of snapping an off-lattice
     /// stub sample to its nearest node.
@@ -213,9 +214,10 @@ fn disc(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     offsets
 }
 
-pub struct Router<'a> {
-    board: &'a Board,
-    config: &'a Config,
+#[derive(Clone)]
+pub struct Router {
+    board: Board,
+    config: Config,
     grid: Grid,
     statics: Vec<StaticMaps>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
@@ -269,10 +271,11 @@ pub struct Router<'a> {
     searches: u64,
     search_seconds: f64,
     stamp_seconds: f64,
+    iterations: usize,
 }
 
-impl<'a> Router<'a> {
-    pub fn new(board: &'a Board, config: &'a Config) -> Self {
+impl Router {
+    pub fn new(board: &Board, config: &Config) -> Self {
         let grid = Grid::choose(board, &config.pitches);
         let cells = grid.cells();
         let layers = board.layer_count;
@@ -376,8 +379,8 @@ impl<'a> Router<'a> {
             }
         }
         let mut router = Self {
-            board,
-            config,
+            board: board.clone(),
+            config: config.clone(),
             statics,
             occupancy: vec![vec![0; cells]; maps],
             stamp_mark: vec![vec![0; cells]; maps],
@@ -411,6 +414,7 @@ impl<'a> Router<'a> {
             searches: 0,
             search_seconds: 0.0,
             stamp_seconds: 0.0,
+            iterations: 0,
             grid,
         };
         router.nets = (0..board.nets.len())
@@ -1778,8 +1782,140 @@ impl<'a> Router<'a> {
         Some(path)
     }
 
-    pub fn run(mut self) -> RoutingResult {
-        let started = std::time::Instant::now();
+    /// Whether a retained branch is still legal against the fixed copper.
+    fn branch_is_legal(&self, net: NetId, branch: &Branch) -> bool {
+        let class = self.board.nets[net as usize].class;
+        let statics = &self.statics[class];
+        let nx = self.grid.nx as i64;
+        for (index, node) in branch.nodes.iter().enumerate() {
+            if !statics.trace_allowed(node.layer as usize, node.cell as usize, net) {
+                return false;
+            }
+            if index == 0 {
+                continue;
+            }
+            let previous = branch.nodes[index - 1];
+            if previous.cell == node.cell {
+                if statics.via_blocked[node.cell as usize] {
+                    return false;
+                }
+                continue;
+            }
+            let (dx, dy) = (
+                node.cell as i64 % nx - previous.cell as i64 % nx,
+                node.cell as i64 / nx - previous.cell as i64 / nx,
+            );
+            let Some(direction) = DIRECTIONS
+                .iter()
+                .position(|(sx, sy)| *sx as i64 == dx && *sy as i64 == dy)
+            else {
+                return false;
+            };
+            if !statics.edge_allowed(previous.layer as usize, previous.cell as usize, direction, net)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Replaces the board (same nets and rule classes, other fixed copper or
+    /// terminal positions) and reroutes only what the change invalidated:
+    /// nets whose pads moved and nets whose copper now collides with fixed
+    /// objects. Returns the number of nets rerouted. Everything else keeps
+    /// its copper, occupancy, and history.
+    pub fn update(&mut self, board: &Board) -> Result<usize, String> {
+        if board.nets.len() != self.board.nets.len()
+            || board.classes != self.board.classes
+            || board.layer_count != self.board.layer_count
+            || board
+                .nets
+                .iter()
+                .zip(&self.board.nets)
+                .any(|(new, old)| new.name != old.name || new.terminals.len() != old.terminals.len())
+        {
+            return Err("incremental update needs the same nets and rules".into());
+        }
+        let previous: Vec<NetState> = std::mem::take(&mut self.nets);
+        // Occupancy is rebuilt from the retained branches below.
+        for map in &mut self.occupancy {
+            map.fill(0);
+        }
+        for map in &mut self.tile_claimed {
+            map.fill(0);
+        }
+        self.board = board.clone();
+        self.statics = (0..self.board.classes.len())
+            .map(|class| StaticMaps::build(&self.board, &self.grid, class))
+            .collect();
+        let layers = self.board.layer_count;
+        let tiles = self.tiles_x * self.tiles_y;
+        self.tile_routable = vec![vec![0u32; tiles]; self.board.classes.len() * layers];
+        for class in 0..self.board.classes.len() {
+            for layer in 0..layers {
+                for (cell, value) in self.statics[class].trace[layer].iter().enumerate() {
+                    if *value != crate::grid::BLOCKED {
+                        self.tile_routable[class * layers + layer]
+                            [(cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE] += 1;
+                    }
+                }
+            }
+        }
+        self.nets = (0..self.board.nets.len())
+            .map(|net| self.prepare_net(net as NetId))
+            .collect();
+        self.guard = self.thermal_guards();
+        self.covered = vec![Vec::new(); layers];
+        self.tile_covered = vec![vec![0.0; tiles]; layers];
+        self.mark_covered();
+
+        let mut rerouted = 0;
+        for (net, old) in previous.into_iter().enumerate() {
+            let id = net as NetId;
+            let same_terminals = old.terminal_nodes == self.nets[net].terminal_nodes;
+            let legal = same_terminals
+                && old.branches.iter().all(|branch| self.branch_is_legal(id, branch));
+            if legal && !old.branches.is_empty() {
+                let state = &mut self.nets[net];
+                state.branches = old.branches;
+                state.connected = old.connected;
+                state.complete = old.complete;
+                state.reroutes = old.reroutes;
+                self.stamp(id);
+            } else if self.nets[net].routable {
+                rerouted += 1;
+            }
+        }
+        Ok(rerouted)
+    }
+
+    /// Routes whatever is unrouted or in conflict after `update`, then
+    /// finishes as `run` does. Cheap when little changed. Without `polish`
+    /// the per-net cleanup pass is skipped (for trials).
+    pub fn reroute(&mut self, polish: bool) -> RoutingResult {
+        let order = self.routing_order();
+        let pending: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                !state.complete || !self.conflicts(*net).is_empty()
+            })
+            .collect();
+        self.negotiate(&order, pending);
+        let cleanup = self.config.cleanup_passes;
+        if !polish {
+            self.config.cleanup_passes = 0;
+        }
+        let result = self.finish(&order);
+        self.config.cleanup_passes = cleanup;
+        result
+    }
+
+    /// Nets in routing order: pour nets first (their connections are local
+    /// stubs and vias that must claim the sites next to their pads), then
+    /// small nets by span, then the large ones.
+    fn routing_order(&self) -> Vec<NetId> {
         let mut order: Vec<NetId> = (0..self.board.nets.len() as NetId)
             .filter(|net| self.nets[*net as usize].routable)
             .collect();
@@ -1787,24 +1923,38 @@ impl<'a> Router<'a> {
             let (x0, y0, x1, y1) = router.window(net, 0.0);
             (x1 - x0) + (y1 - y0)
         };
-        // Pour nets first: their connections are local stubs and vias that
-        // must claim the sites next to their pads before signals do.
         order.sort_by_key(|net| {
             (
                 self.nets[*net as usize].plane.is_empty(),
                 self.board.nets[*net as usize].terminals.len() > 8,
-                span(&self, *net),
+                span(self, *net),
                 *net,
             )
         });
+        order
+    }
 
+    /// Routes everything from the current state and produces the result.
+    pub fn run(mut self) -> RoutingResult {
+        self.run_in_place()
+    }
+
+    /// Like `run`, keeping the router for later `update` calls.
+    pub fn run_in_place(&mut self) -> RoutingResult {
+        let order = self.routing_order();
+        self.negotiate(&order, order.clone());
+        self.finish(&order)
+    }
+
+    /// Negotiated congestion over `pending` (which grows to whatever those
+    /// nets conflict with) until the board is conflict free or stalls.
+    fn negotiate(&mut self, order: &[NetId], mut pending: Vec<NetId>) {
+        let started = std::time::Instant::now();
         let mut present = self.config.present_factor as f32;
-        let mut pending = order.clone();
-        let mut iterations = 0;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
         for iteration in 0..self.config.max_iterations {
-            iterations = iteration + 1;
+            self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
             for net in &pending {
                 let search_started = std::time::Instant::now();
@@ -1817,7 +1967,7 @@ impl<'a> Router<'a> {
                 self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
             }
             let mut conflicted = Vec::new();
-            for net in &order {
+            for net in order {
                 let conflicts = self.conflicts(*net);
                 if conflicts.is_empty()
                     && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
@@ -1865,17 +2015,21 @@ impl<'a> Router<'a> {
                 break;
             }
         }
+    }
 
-        self.resolve_remaining(&order);
+    /// Resolves what negotiation left, cleans up, stitches pours and
+    /// materializes the copper.
+    fn finish(&mut self, order: &[NetId]) -> RoutingResult {
+        self.resolve_remaining(order);
         let cleanup_started = std::time::Instant::now();
-        let improved = self.clean_up(&order);
+        let improved = self.clean_up(order);
         let plane_nets: Vec<NetId> = order
             .iter()
             .copied()
             .filter(|net| !self.nets[*net as usize].plane.is_empty())
             .collect();
         for net in plane_nets {
-            let stitches = self.stitch_pours(net, &order);
+            let stitches = self.stitch_pours(net, order);
             if self.config.verbose {
                 eprintln!(
                     "pour {}: {stitches} stitching vias, complete {}",
@@ -1919,7 +2073,7 @@ impl<'a> Router<'a> {
         // too close to routed copper of another net.
         loop {
             let mut offending: Vec<(usize, usize)> = Vec::new();
-            for violation in crate::verify::verify(self.board, &routes) {
+            for violation in crate::verify::verify(&self.board, &routes) {
                 let involved = violation
                     .segment
                     .map(|segment| (violation.net as usize, segment))
@@ -1959,10 +2113,10 @@ impl<'a> Router<'a> {
             congestion,
             routes,
             status,
-            iterations,
+            iterations: self.iterations,
             expansions: self.expansions,
             searches: self.searches,
-            grid: self.grid,
+            grid: self.grid.clone(),
         }
     }
 

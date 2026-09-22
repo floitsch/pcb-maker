@@ -156,7 +156,9 @@ def main():
                 result = json.loads(report.read_text())
                 routed = result["routed"]
                 row["layout"] = {
-                    "rounds": len(result["rounds"]), "selected_round": result["selected_round"],
+                    "moves": len(result.get("moves", [])),
+                    "kept_moves": sum(1 for m in result.get("moves", []) if m.get("kept")),
+                    "first_open": result.get("first_unconnected_terminals"),
                     "routed": routed["routed_connections"], "connections": routed["routable_connections"],
                     "unconnected_terminals": routed["unconnected_terminals"],
                     "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),

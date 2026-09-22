@@ -74,7 +74,7 @@ pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunitie
 mod adaptive_routing;
 mod board_layout;
 pub use board_layout::{
-    KiCadBoardLayoutConfig, KiCadBoardLayoutResult, KiCadBoardLayoutRound, layout_kicad_board,
+    KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, layout_kicad_board,
 };
 mod board_placer;
 pub use board_placer::{
