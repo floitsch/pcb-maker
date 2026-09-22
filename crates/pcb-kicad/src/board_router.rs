@@ -61,8 +61,8 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub refine_pitches_mm: Option<Vec<f64>>,
     /// A finer lattice is only tried when the routing time projected from
-    /// the previous attempt stays below this (default 240 s), and no further
-    /// attempt of any kind follows one that took longer than this.
+    /// the previous attempt stays below this (default 240 s); no attempt of
+    /// any kind follows one that took longer than twice this.
     #[serde(default)]
     pub refine_budget_seconds: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
@@ -921,7 +921,11 @@ pub fn route_kicad_board(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let parsed = parse(&source)?;
-    let has_pours = !pours(&parsed, &LayerTable::from_pcb(&parsed)?)?.is_empty();
+    let pour_nets: Vec<String> = pours(&parsed, &LayerTable::from_pcb(&parsed)?)?
+        .into_iter()
+        .map(|pour| pour.net)
+        .collect();
+    let has_pours = !pour_nets.is_empty();
     // Unconnected items as the router and, when asked, KiCad see them. A
     // starved thermal is a pad that KiCad refuses to count as connected.
     let open = |result: &KiCadBoardRouterResult, directory: &Path| {
@@ -977,6 +981,19 @@ pub fn route_kicad_board(
             }
         }
         for (connect, skeleton) in &modes {
+            // The skeleton only helps when the plain pour connection left
+            // pads of a pour net open; elsewhere it just takes room.
+            if *skeleton
+                && !config.plane_skeleton.unwrap_or(false)
+                && best.as_ref().is_some_and(|(_, result)| {
+                    result.pours == "connect"
+                        && !result.nets.iter().any(|net| {
+                            net.unconnected_terminals > 0 && pour_nets.contains(&net.connection)
+                        })
+                })
+            {
+                continue;
+            }
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
             if let Some(pitch) = pitch {
@@ -1029,7 +1046,9 @@ pub fn route_kicad_board(
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
             }
-            if opens == 0 || seconds > budget {
+            // Another way of connecting the pours is worth trying up to
+            // twice the budget; a board that slow gets no more attempts.
+            if opens == 0 || seconds > 2.0 * budget {
                 break 'ladder;
             }
         }

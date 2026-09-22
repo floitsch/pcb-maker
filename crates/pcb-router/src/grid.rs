@@ -128,7 +128,9 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
                 (other_aabb.maximum[axis], aabb.minimum[axis])
             };
             let free = far - near - pad_clearance - other_clearance;
-            if free < width - 1.0e-6 {
+            // A channel with no play at all is not a channel (rounding
+            // decides whether it passes DRC); it must not steer the lattice.
+            if free < width + 0.005 {
                 continue;
             }
             channels.push((axis, (near + far) / 2.0, (free - width) / 2.0));
@@ -210,6 +212,12 @@ impl Grid {
             }
         }
         let channels = tight_channels(board);
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            eprintln!("lattice: {} tight channels, {} pad anchors", channels.len(), anchors.len());
+            for (axis, centre, slack) in channels.iter().take(6) {
+                eprintln!("  channel axis {axis} at {centre:.3} slack {slack:.3}");
+            }
+        }
         let mut best: Option<(f64, f64, [f64; 2])> = None;
         for &pitch in candidates {
             let mut phase = [0.0; 2];
@@ -229,8 +237,9 @@ impl Grid {
                     *merged.entry(residue % wrap).or_default() += count;
                 }
                 // A tight channel needs a node row within its slack of its
-                // centre; missing one walls off a pad, so channels outweigh
-                // pad centres. Candidate phases come from both.
+                // centre; missing one walls off a pad, so all channels
+                // together weigh twice all pad centres. Candidate phases
+                // come from both.
                 let tight: Vec<(f64, f64)> = channels
                     .iter()
                     .filter(|(channel_axis, _, slack)| {
@@ -263,7 +272,7 @@ impl Grid {
                     } else {
                         count
                     };
-                    let value = 10.0 * aligned as f64 / tight.len().max(1) as f64
+                    let value = 2.0 * aligned as f64 / tight.len().max(1) as f64
                         + aligned_anchors as f64 / anchors.len().max(1) as f64;
                     if axis_best.is_none_or(|(best, best_residue)| {
                         value > best + 1e-9 || (value > best - 1e-9 && residue < best_residue)
