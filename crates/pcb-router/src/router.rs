@@ -10,6 +10,8 @@
 //! nets that are still in conflict are ripped up and rerouted, until no
 //! conflicts remain. Pads, keepouts and the outline are never negotiable.
 
+use rayon::prelude::*;
+use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
@@ -56,6 +58,11 @@ pub struct Config {
     /// keeping a round only if nothing opens and vias go down.
     pub via_reduction_rounds: usize,
     pub via_reduction_factor: f64,
+    /// Heuristic weight while reducing vias (searches there are long
+    /// same-layer detours; a little greed keeps them cheap).
+    pub via_reduction_weight: f64,
+    /// Route spatially disjoint nets of one iteration in parallel.
+    pub parallel: bool,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -79,8 +86,10 @@ impl Default for Config {
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
+            parallel: true,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,
+            via_reduction_weight: 1.0,
             plane_cut_cost: 3.0,
             heuristic_weight: 1.0,
             verbose: false,
@@ -221,6 +230,63 @@ fn disc(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     offsets
 }
 
+/// Per-thread search state: A* arrays, generation marks and counters.
+#[derive(Clone, Default)]
+pub struct Scratch {
+    cost: Vec<f32>,
+    seen: Vec<u32>,
+    closed: Vec<u32>,
+    parent: Vec<u8>,
+    target_mark: Vec<u32>,
+    target_terminal: Vec<u16>,
+    tree_mark: Vec<u32>,
+    tree_terminal: Vec<u16>,
+    own_via_near: Vec<u32>,
+    generation: u32,
+    corridor: Option<Vec<bool>>,
+    expansions: u64,
+    searches: u64,
+}
+
+impl Scratch {
+    fn new(states: usize, cells: usize) -> Self {
+        Self {
+            cost: vec![0.0; states],
+            seen: vec![0; states],
+            closed: vec![0; states],
+            parent: vec![0; states],
+            target_mark: vec![0; states],
+            target_terminal: vec![NO_TERMINAL; states],
+            tree_mark: vec![0; states],
+            tree_terminal: vec![NO_TERMINAL; states],
+            own_via_near: vec![0; cells],
+            generation: 0,
+            corridor: None,
+            expansions: 0,
+            searches: 0,
+        }
+    }
+
+    fn fits(&self, states: usize, cells: usize) -> bool {
+        self.cost.len() == states && self.own_via_near.len() == cells
+    }
+}
+
+thread_local! {
+    static THREAD_SCRATCH: RefCell<Option<Scratch>> = const { RefCell::new(None) };
+}
+
+/// Runs `body` with this thread's scratch, allocated once per board size.
+fn with_thread_scratch<T>(states: usize, cells: usize, body: impl FnOnce(&mut Scratch) -> T) -> T {
+    THREAD_SCRATCH.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if !slot.as_ref().is_some_and(|scratch| scratch.fits(states, cells)) {
+            *slot = Some(Scratch::new(states, cells));
+        }
+        body(slot.as_mut().unwrap())
+    })
+}
+
 #[derive(Clone)]
 pub struct Router {
     board: Board,
@@ -249,8 +315,6 @@ pub struct Router {
     /// Per layer (last entry: vias): where conflicts kept happening, so the
     /// corridor planner learns to send some nets another way.
     tile_history: Vec<Vec<f32>>,
-    /// When set, searches only enter these tiles.
-    corridor: Option<Vec<bool>>,
     /// Per layer and node: the pour net (as `owner`) whose pad needs the
     /// surrounding copper for its thermal spokes; other nets pay to pass.
     guard: Vec<Vec<u32>>,
@@ -262,20 +326,7 @@ pub struct Router {
     /// least covered layer, so a board poured on every layer has no penalty.
     layer_cut: Vec<f32>,
 
-    cost: Vec<f32>,
-    seen: Vec<u32>,
-    closed: Vec<u32>,
-    parent: Vec<u8>,
-    target_mark: Vec<u32>,
-    target_terminal: Vec<u16>,
-    tree_mark: Vec<u32>,
-    tree_terminal: Vec<u16>,
-    /// Cells too close to one of the searching net's own vias for another
-    /// via (that cell itself is fine: it is the same hole).
-    own_via_near: Vec<u32>,
-    generation: u32,
-    expansions: u64,
-    searches: u64,
+    scratch: Scratch,
     search_seconds: f64,
     stamp_seconds: f64,
     iterations: usize,
@@ -402,23 +453,11 @@ impl Router {
             tile_claimed: vec![vec![0; tiles_x * tiles_y]; maps],
             tile_routable,
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
-            corridor: None,
             guard: vec![Vec::new(); layers],
             covered: vec![Vec::new(); layers],
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
-            cost: vec![0.0; states],
-            seen: vec![0; states],
-            closed: vec![0; states],
-            parent: vec![0; states],
-            target_mark: vec![0; states],
-            target_terminal: vec![NO_TERMINAL; states],
-            tree_mark: vec![0; states],
-            tree_terminal: vec![NO_TERMINAL; states],
-            own_via_near: vec![0; cells],
-            generation: 0,
-            expansions: 0,
-            searches: 0,
+            scratch: Scratch::new(states, cells),
             search_seconds: 0.0,
             stamp_seconds: 0.0,
             iterations: 0,
@@ -561,9 +600,8 @@ impl Router {
     }
 
     /// Whether the stub behind escape node `node` is free of other nets.
-    fn escape_is_free(&self, net: NetId, node: Node) -> bool {
-        let state = &self.nets[net as usize];
-        let Some((cells, _, _)) = state.escapes.get(&node) else {
+    fn escape_is_free(&self, net_state: &NetState, net: NetId, node: Node) -> bool {
+        let Some((cells, _, _)) = net_state.escapes.get(&node) else {
             return true;
         };
         let map = self.map_index(self.board.nets[net as usize].class, node.layer as usize);
@@ -969,20 +1007,29 @@ impl Router {
     /// Connects all terminals of `net` into one tree, reusing any branches
     /// the net still has. With `hard`, nodes claimed by other nets are
     /// impassable and a partial result may be kept.
-    fn route_net(&mut self, net: NetId, present: f32, hard: bool, window_growth: f64) {
+    #[allow(clippy::too_many_arguments)]
+    fn route_net(
+        &self,
+        scratch: &mut Scratch,
+        net: NetId,
+        net_state: &mut NetState,
+        present: f32,
+        hard: bool,
+        window_growth: f64,
+    ) {
         let terminal_count = self.board.nets[net as usize].terminals.len();
-        let retained = self.nets[net as usize].branches.clone();
+        let retained = net_state.branches.clone();
         let keep = vec![true; retained.len()];
         let hosts = junction_hosts(&retained, &keep);
 
         // Elements are terminals, retained branches, and finally the pours.
-        let has_plane = !self.nets[net as usize].plane.is_empty();
+        let has_plane = !net_state.plane.is_empty();
         let plane_element = terminal_count + retained.len();
         let mut parent: Vec<usize> =
             (0..terminal_count + retained.len() + has_plane as usize).collect();
         if has_plane {
             for terminal in 0..terminal_count {
-                if self.nets[net as usize].on_plane[terminal] {
+                if net_state.on_plane[terminal] {
                     parent[terminal] = plane_element;
                 }
             }
@@ -1009,11 +1056,14 @@ impl Router {
             .map(|element| find(&mut parent, element))
             .collect();
 
-        self.generation += 1;
-        let tree_generation = self.generation;
+        scratch.generation += 1;
+        let tree_generation = scratch.generation;
         let mut tree: Vec<Node> = Vec::new();
         let mut in_tree = vec![false; parent.len()];
-        let absorb = |router: &mut Self,
+        let cells = self.grid.cells();
+        let state_of = |node: Node| node.layer as usize * cells + node.cell as usize;
+        let absorb = |scratch: &mut Scratch,
+                          net_state: &mut NetState,
                           tree: &mut Vec<Node>,
                           in_tree: &mut Vec<bool>,
                           root: usize| {
@@ -1026,19 +1076,19 @@ impl Router {
                     continue;
                 }
                 if element < terminal_count {
-                    for node in router.nets[net as usize].terminal_nodes[element].clone() {
-                        let state = router.state(node);
-                        router.tree_mark[state] = tree_generation;
-                        router.tree_terminal[state] = element as u16;
+                    for node in net_state.terminal_nodes[element].clone() {
+                        let state = state_of(node);
+                        scratch.tree_mark[state] = tree_generation;
+                        scratch.tree_terminal[state] = element as u16;
                         tree.push(node);
                     }
-                    router.nets[net as usize].connected[element] = true;
+                    net_state.connected[element] = true;
                 } else {
                     for node in &retained[element - terminal_count].nodes {
-                        let state = router.state(*node);
-                        if router.tree_mark[state] != tree_generation {
-                            router.tree_mark[state] = tree_generation;
-                            router.tree_terminal[state] = NO_TERMINAL;
+                        let state = state_of(*node);
+                        if scratch.tree_mark[state] != tree_generation {
+                            scratch.tree_mark[state] = tree_generation;
+                            scratch.tree_terminal[state] = NO_TERMINAL;
                             tree.push(*node);
                         }
                     }
@@ -1046,13 +1096,13 @@ impl Router {
             }
         };
         if has_plane {
-            self.connect_to_plane(net, &retained, &component, plane_element, present, hard);
+            self.connect_to_plane(scratch, net, net_state, &retained, &component, plane_element, present, hard);
             return;
         }
         let first_live = (0..terminal_count)
-            .find(|terminal| !self.nets[net as usize].terminal_nodes[*terminal].is_empty())
+            .find(|terminal| !net_state.terminal_nodes[*terminal].is_empty())
             .unwrap_or(0);
-        absorb(self, &mut tree, &mut in_tree, component[first_live]);
+        absorb(scratch, net_state, &mut tree, &mut in_tree, component[first_live]);
 
         let pitch = self.grid.pitch as f32;
         loop {
@@ -1064,7 +1114,7 @@ impl Router {
                     continue;
                 }
                 if element < terminal_count {
-                    for node in &self.nets[net as usize].terminal_nodes[element] {
+                    for node in &net_state.terminal_nodes[element] {
                         targets.push((*node, element as u16));
                     }
                     let anchor = self.board.nets[net as usize].terminals[element].anchor;
@@ -1072,7 +1122,7 @@ impl Router {
                         ((anchor[0] - self.grid.origin[0]) / self.grid.pitch).round() as i32,
                         ((anchor[1] - self.grid.origin[1]) / self.grid.pitch).round() as i32,
                         // Rounding the anchor to a node costs at most one pitch.
-                        self.nets[net as usize].terminal_reach[element] + pitch,
+                        net_state.terminal_reach[element] + pitch,
                     ));
                 } else {
                     exact_points = false;
@@ -1090,17 +1140,19 @@ impl Router {
             // Two-level search: a corridor from the tile graph first, wider
             // on failure, and only then the plain window and the full board.
             let mut planned = None;
-            let reroutes = self.nets[net as usize].reroutes;
+            let reroutes = net_state.reroutes;
             if self.config.corridors && !self.cleanup {
                 let margin = (1 + reroutes / 3).min(10);
                 for margin in [margin, margin + 3] {
-                    let Some(corridor) = self.plan_corridor(net, &tree, &targets, hard, margin)
+                    let Some(corridor) = self.plan_corridor(net, net_state, &tree, &targets, hard, margin)
                     else {
                         break;
                     };
-                    self.corridor = Some(corridor);
+                    scratch.corridor = Some(corridor);
                     planned = self.search(
+                scratch,
                         net,
+                        net_state,
                         &tree,
                         &targets,
                         points.as_deref(),
@@ -1109,21 +1161,23 @@ impl Router {
                         hard,
                         full,
                     );
-                    self.corridor = None;
+                    scratch.corridor = None;
                     if planned.is_some() {
                         break;
                     }
                 }
             }
             let path = planned.or_else(|| {
-                self.search(net, &tree, &targets, points.as_deref(), false, present, hard, windowed)
+                self.search(scratch, net, net_state, &tree, &targets, points.as_deref(), false, present, hard, windowed)
             });
             let path = path
                 .or_else(|| {
                     (windowed != full)
                         .then(|| {
                             self.search(
+                scratch,
                                 net,
+                                net_state,
                                 &tree,
                                 &targets,
                                 points.as_deref(),
@@ -1140,18 +1194,18 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = self.tree_terminal[first];
-            let reached = self.target_terminal[last] as usize;
+            let start_terminal = scratch.tree_terminal[first];
+            let reached = scratch.target_terminal[last] as usize;
             for node in &path[1..] {
                 let state = self.state(*node);
-                if self.tree_mark[state] != tree_generation {
-                    self.tree_mark[state] = tree_generation;
-                    self.tree_terminal[state] = NO_TERMINAL;
+                if scratch.tree_mark[state] != tree_generation {
+                    scratch.tree_mark[state] = tree_generation;
+                    scratch.tree_terminal[state] = NO_TERMINAL;
                     tree.push(*node);
                 }
             }
-            absorb(self, &mut tree, &mut in_tree, component[reached]);
-            self.nets[net as usize].branches.push(Branch {
+            absorb(scratch, net_state, &mut tree, &mut in_tree, component[reached]);
+            net_state.branches.push(Branch {
                 nodes: path,
                 start_terminal,
                 end_terminal: if reached < terminal_count {
@@ -1162,18 +1216,21 @@ impl Router {
             });
         }
         let complete = in_tree.iter().all(|inside| *inside);
-        self.nets[net as usize].complete = complete;
+        net_state.complete = complete;
         if !hard && !complete {
-            self.nets[net as usize].blocked = true;
+            net_state.blocked = true;
         }
     }
 
     /// Routing for a net with copper pours: every group of terminals and
     /// retained branches that does not touch a pour is connected to the
     /// nearest free pour node, or to another group on the way.
+    #[allow(clippy::too_many_arguments)]
     fn connect_to_plane(
-        &mut self,
+        &self,
+        scratch: &mut Scratch,
         net: NetId,
+        net_state: &mut NetState,
         retained: &[Branch],
         component: &[usize],
         plane_element: usize,
@@ -1198,7 +1255,7 @@ impl Router {
                     self.board.nets[net as usize].name,
                     roots.len(),
                     (0..terminal_count)
-                        .filter(|terminal| !self.nets[net as usize].on_plane[*terminal])
+                        .filter(|terminal| !net_state.on_plane[*terminal])
                         .collect::<Vec<_>>()
                 );
             }
@@ -1212,28 +1269,28 @@ impl Router {
             else {
                 break;
             };
-            self.generation += 1;
-            let tree_generation = self.generation;
+            scratch.generation += 1;
+            let tree_generation = scratch.generation;
             let mut sources: Vec<Node> = Vec::new();
             let mut targets: Vec<(Node, u16)> = Vec::new();
             for element in (0..parent.len()).filter(|element| *element != plane_element) {
                 let inside = find(&mut parent, element) == root;
                 let nodes: Vec<Node> = if element < terminal_count {
-                    self.nets[net as usize].terminal_nodes[element].clone()
+                    net_state.terminal_nodes[element].clone()
                 } else if element < plane_element {
                     retained[element - terminal_count].nodes.clone()
                 } else {
                     // Branches added by this call follow the retained ones.
-                    self.nets[net as usize].branches[retained.len() + element - plane_element - 1]
+                    net_state.branches[retained.len() + element - plane_element - 1]
                         .nodes
                         .clone()
                 };
                 for node in nodes {
                     if inside {
                         let state = self.state(node);
-                        if self.tree_mark[state] != tree_generation {
-                            self.tree_mark[state] = tree_generation;
-                            self.tree_terminal[state] = if element < terminal_count {
+                        if scratch.tree_mark[state] != tree_generation {
+                            scratch.tree_mark[state] = tree_generation;
+                            scratch.tree_terminal[state] = if element < terminal_count {
                                 element as u16
                             } else {
                                 NO_TERMINAL
@@ -1245,14 +1302,14 @@ impl Router {
                     }
                 }
             }
-            let Some(path) = self.search(net, &sources, &targets, None, true, present, hard, full)
+            let Some(path) = self.search(scratch, net, net_state, &sources, &targets, None, true, present, hard, full)
             else {
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                    let restricted = !self.nets[net as usize].plane_target.is_empty();
+                    let restricted = !net_state.plane_target.is_empty();
                     let plane_nodes: usize = if restricted {
-                        self.nets[net as usize].plane_target.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
+                        net_state.plane_target.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
                     } else {
-                        self.nets[net as usize].plane.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
+                        net_state.plane.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
                     };
                     eprintln!(
                         "  no path: group root {root}, {} sources, {} group targets, plane nodes {plane_nodes} (restricted {restricted}), hard {hard}",
@@ -1265,9 +1322,9 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = self.tree_terminal[first];
-            let (reached, end_terminal) = if self.target_mark[last] == self.generation {
-                let element = self.target_terminal[last] as usize;
+            let start_terminal = scratch.tree_terminal[first];
+            let (reached, end_terminal) = if scratch.target_mark[last] == scratch.generation {
+                let element = scratch.target_terminal[last] as usize;
                 (
                     element,
                     if element < terminal_count {
@@ -1281,7 +1338,7 @@ impl Router {
             };
             let (a, b) = (find(&mut parent, root), find(&mut parent, reached));
             parent[a] = b;
-            self.nets[net as usize].branches.push(Branch {
+            net_state.branches.push(Branch {
                 nodes: path,
                 start_terminal,
                 end_terminal,
@@ -1301,12 +1358,12 @@ impl Router {
         let mut complete = true;
         for terminal in 0..terminal_count {
             let connected = find(&mut parent, terminal) == main;
-            self.nets[net as usize].connected[terminal] = connected;
+            net_state.connected[terminal] = connected;
             complete &= connected;
         }
-        self.nets[net as usize].complete = complete;
+        net_state.complete = complete;
         if !hard && !complete {
-            self.nets[net as usize].blocked = true;
+            net_state.blocked = true;
         }
     }
 
@@ -1316,6 +1373,7 @@ impl Router {
     fn plan_corridor(
         &self,
         net: NetId,
+        net_state: &NetState,
         sources: &[Node],
         targets: &[(Node, u16)],
         hard: bool,
@@ -1357,7 +1415,7 @@ impl Router {
             if hard && fill >= 1.0 && !endpoint[tile] {
                 return None;
             }
-            let covered = if self.nets[net as usize].plane.is_empty() {
+            let covered = if net_state.plane.is_empty() {
                 self.tile_covered[layer][tile]
             } else {
                 0.0
@@ -1427,8 +1485,10 @@ impl Router {
 
     #[allow(clippy::too_many_arguments)]
     fn search(
-        &mut self,
+        &self,
+        scratch: &mut Scratch,
         net: NetId,
+        net_state: &NetState,
         sources: &[Node],
         targets: &[(Node, u16)],
         points: Option<&[(i32, i32, f32)]>,
@@ -1437,9 +1497,9 @@ impl Router {
         hard: bool,
         window: (usize, usize, usize, usize),
     ) -> Option<Vec<Node>> {
-        self.searches += 1;
-        self.generation += 1;
-        let generation = self.generation;
+        scratch.searches += 1;
+        scratch.generation += 1;
+        let generation = scratch.generation;
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
@@ -1463,8 +1523,8 @@ impl Router {
             let stamps = &self.stamps[class][class];
             let nx = self.grid.nx as i64;
             let ny = self.grid.ny as i64;
-            let mut near = std::mem::take(&mut self.own_via_near);
-            for branch in &self.nets[net as usize].branches {
+            let mut near = std::mem::take(&mut scratch.own_via_near);
+            for branch in &net_state.branches {
                 for pair in branch.nodes.windows(2) {
                     if pair[0].cell != pair[1].cell {
                         continue;
@@ -1481,22 +1541,22 @@ impl Router {
             }
             // A via cell itself stays allowed even inside another own via's
             // ring, so mark exact via cells last.
-            for branch in &self.nets[net as usize].branches {
+            for branch in &net_state.branches {
                 for pair in branch.nodes.windows(2) {
                     if pair[0].cell == pair[1].cell {
                         near[pair[0].cell as usize] = 0;
                     }
                 }
             }
-            self.own_via_near = near;
+            scratch.own_via_near = near;
         }
         for (node, element) in targets {
-            if hard && !self.escape_is_free(net, *node) {
+            if hard && !self.escape_is_free(net_state, net, *node) {
                 continue;
             }
             let state = self.state(*node);
-            self.target_mark[state] = generation;
-            self.target_terminal[state] = *element;
+            scratch.target_mark[state] = generation;
+            scratch.target_terminal[state] = *element;
         }
 
         // Without a short list of target points, guide the search with an
@@ -1594,15 +1654,15 @@ impl Router {
                 && (self.occupancy[self.map_index(class, node.layer as usize)]
                     [node.cell as usize]
                     > 0
-                    || !self.escape_is_free(net, *node))
+                    || !self.escape_is_free(net_state, net, *node))
             {
                 continue;
             }
             let state = self.state(*node);
             let (x, y) = self.grid.xy(node.cell as usize);
-            self.seen[state] = generation;
-            self.cost[state] = 0.0;
-            self.parent[state] = PARENT_SOURCE;
+            scratch.seen[state] = generation;
+            scratch.cost[state] = 0.0;
+            scratch.parent[state] = PARENT_SOURCE;
             heap.push(Reverse((
                 heuristic(node.layer as usize, x as i32, y as i32).to_bits(),
                 state as u32,
@@ -1616,17 +1676,17 @@ impl Router {
         let mut found = None;
         while let Some(Reverse((_, state))) = heap.pop() {
             let state = state as usize;
-            if self.closed[state] == generation {
+            if scratch.closed[state] == generation {
                 continue;
             }
-            self.closed[state] = generation;
-            self.expansions += 1;
-            if self.target_mark[state] == generation {
+            scratch.closed[state] = generation;
+            scratch.expansions += 1;
+            if scratch.target_mark[state] == generation {
                 found = Some(state);
                 break;
             }
             if plane_target {
-                let state_net = &self.nets[net as usize];
+                let state_net = &net_state;
                 let mask = if state_net.plane_target.is_empty() {
                     &state_net.plane[state / cells]
                 } else {
@@ -1645,8 +1705,8 @@ impl Router {
             let cell = state % cells;
             let x = cell % nx;
             let y = cell / nx;
-            let here = self.cost[state];
-            let arrived = self.parent[state];
+            let here = scratch.cost[state];
+            let arrived = scratch.parent[state];
             let blocked_edges = if statics.edge_owner[layer][cell] == own {
                 0
             } else {
@@ -1666,7 +1726,7 @@ impl Router {
                 if blocked_edges & (1 << direction) != 0 {
                     continue;
                 }
-                if let Some(corridor) = &self.corridor
+                if let Some(corridor) = &scratch.corridor
                     && !corridor[(ty as usize / TILE) * self.tiles_x + tx as usize / TILE]
                 {
                     continue;
@@ -1677,7 +1737,7 @@ impl Router {
                     continue;
                 }
                 let target_state = layer * cells + target_cell;
-                if self.closed[target_state] == generation {
+                if scratch.closed[target_state] == generation {
                     continue;
                 }
                 let occupied = self.occupancy[trace_base + layer][target_cell] as f32;
@@ -1708,10 +1768,10 @@ impl Router {
                     step += bend_cost * turn.min(8 - turn) as f32;
                 }
                 let total = here + step;
-                if self.seen[target_state] != generation || total < self.cost[target_state] {
-                    self.seen[target_state] = generation;
-                    self.cost[target_state] = total;
-                    self.parent[target_state] = direction as u8;
+                if scratch.seen[target_state] != generation || total < scratch.cost[target_state] {
+                    scratch.seen[target_state] = generation;
+                    scratch.cost[target_state] = total;
+                    scratch.parent[target_state] = direction as u8;
                     let estimate = total + heuristic(layer, tx as i32, ty as i32);
                     heap.push(Reverse((estimate.to_bits(), target_state as u32)));
                 }
@@ -1721,7 +1781,7 @@ impl Router {
             if layers > 1
                 && !statics.via_blocked[cell]
                 && !(hard && via_occupied > 0.0)
-                && self.own_via_near[cell] != generation
+                && scratch.own_via_near[cell] != generation
             {
                 let occupied = via_occupied;
                 let history = if self.cleanup {
@@ -1748,14 +1808,14 @@ impl Router {
                         continue;
                     }
                     let target_state = target_layer * cells + cell;
-                    if self.closed[target_state] == generation {
+                    if scratch.closed[target_state] == generation {
                         continue;
                     }
                     let total = here + step;
-                    if self.seen[target_state] != generation || total < self.cost[target_state] {
-                        self.seen[target_state] = generation;
-                        self.cost[target_state] = total;
-                        self.parent[target_state] = 8 + layer as u8;
+                    if scratch.seen[target_state] != generation || total < scratch.cost[target_state] {
+                        scratch.seen[target_state] = generation;
+                        scratch.cost[target_state] = total;
+                        scratch.parent[target_state] = 8 + layer as u8;
                         let estimate = total + heuristic(target_layer, x as i32, y as i32);
                         heap.push(Reverse((estimate.to_bits(), target_state as u32)));
                     }
@@ -1772,7 +1832,7 @@ impl Router {
                 layer: layer as u8,
                 cell: cell as u32,
             });
-            let parent = self.parent[state];
+            let parent = scratch.parent[state];
             if parent == PARENT_SOURCE {
                 break;
             }
@@ -1919,6 +1979,55 @@ impl Router {
         result
     }
 
+    /// Routes one net with the router's own scratch (sequential callers).
+    fn route_net_seq(&mut self, net: NetId, present: f32, hard: bool, window_growth: f64) {
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut net_state = std::mem::take(&mut self.nets[net as usize]);
+        self.route_net(&mut scratch, net, &mut net_state, present, hard, window_growth);
+        self.nets[net as usize] = net_state;
+        self.scratch = scratch;
+    }
+
+    /// Groups `pending` into batches of nets whose search windows (with a
+    /// tile of margin) do not overlap, keeping the given order inside each
+    /// batch. Pour nets and nets without a bounded window get a batch each.
+    fn batches(&self, pending: &[NetId], growth: f64) -> Vec<Vec<NetId>> {
+        let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
+        let mut batches: Vec<(Vec<NetId>, Vec<(usize, usize, usize, usize)>)> = Vec::new();
+        for net in pending {
+            let window = self.window(*net, growth);
+            let alone = window == full || !self.nets[*net as usize].plane.is_empty();
+            let margin = TILE * 2;
+            let rect = (
+                window.0.saturating_sub(margin),
+                window.1.saturating_sub(margin),
+                window.2 + margin,
+                window.3 + margin,
+            );
+            let overlaps = |other: &(usize, usize, usize, usize)| {
+                rect.0 <= other.2 && rect.2 >= other.0 && rect.1 <= other.3 && rect.3 >= other.1
+            };
+            let slot = if alone {
+                None
+            } else {
+                batches.iter().position(|(members, rects)| {
+                    members.len() < 64 && !rects.iter().any(overlaps)
+                })
+            };
+            match slot {
+                Some(index) if !alone => {
+                    batches[index].0.push(*net);
+                    batches[index].1.push(rect);
+                }
+                _ => {
+                    let rects = if alone { vec![full] } else { vec![rect] };
+                    batches.push((vec![*net], rects));
+                }
+            }
+        }
+        batches.into_iter().map(|(members, _)| members).collect()
+    }
+
     /// Nets in routing order: pour nets first (their connections are local
     /// stubs and vias that must claim the sites next to their pads), then
     /// small nets by span, then the large ones.
@@ -1963,14 +2072,51 @@ impl Router {
         for iteration in 0..self.config.max_iterations {
             self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
-            for net in &pending {
+            for batch in self.batches(&pending, growth) {
                 let search_started = std::time::Instant::now();
-                self.rip_up_conflicted(*net);
-                self.route_net(*net, present, false, growth);
-                self.nets[*net as usize].reroutes += 1;
+                for net in &batch {
+                    self.rip_up_conflicted(*net);
+                }
+                if batch.len() == 1 || !self.config.parallel {
+                    for net in &batch {
+                        self.route_net_seq(*net, present, false, growth);
+                    }
+                } else {
+                    // The nets of a batch do not overlap: routing them against
+                    // the same occupancy is the same as routing them in turn.
+                    let states = self.grid.cells() * self.board.layer_count;
+                    let cells = self.grid.cells();
+                    let this: &Self = self;
+                    let routed: Vec<(NetId, NetState, u64, u64)> = batch
+                        .par_iter()
+                        .map(|net| {
+                            with_thread_scratch(states, cells, |scratch| {
+                                let (searches, expansions) = (scratch.searches, scratch.expansions);
+                                let mut net_state = this.nets[*net as usize].clone();
+                                this.route_net(scratch, *net, &mut net_state, present, false, growth);
+                                (
+                                    *net,
+                                    net_state,
+                                    scratch.searches - searches,
+                                    scratch.expansions - expansions,
+                                )
+                            })
+                        })
+                        .collect();
+                    for (net, net_state, searches, expansions) in routed {
+                        self.nets[net as usize] = net_state;
+                        self.scratch.searches += searches;
+                        self.scratch.expansions += expansions;
+                    }
+                }
+                for net in &batch {
+                    self.nets[*net as usize].reroutes += 1;
+                }
                 self.search_seconds += search_started.elapsed().as_secs_f64();
                 let stamp_started = std::time::Instant::now();
-                self.stamp(*net);
+                for net in &batch {
+                    self.stamp(*net);
+                }
                 self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
             }
             let mut conflicted = Vec::new();
@@ -2003,8 +2149,8 @@ impl Router {
                     started.elapsed().as_secs_f64(),
                     self.search_seconds,
                     self.stamp_seconds,
-                    self.searches,
-                    self.expansions / 1_000_000
+                    self.scratch.searches,
+                    self.scratch.expansions / 1_000_000
                 );
             }
             if conflicted.is_empty() {
@@ -2076,13 +2222,22 @@ impl Router {
             }
             let snapshot = self.clone();
             let via_cost = self.config.via_cost;
+            let weight = self.config.heuristic_weight;
             self.config.via_cost = via_cost * self.config.via_reduction_factor.powi(round as i32 + 1);
+            self.config.heuristic_weight = weight.max(self.config.via_reduction_weight);
             for net in &pending {
                 self.rip_up(*net);
             }
-            self.negotiate(order, pending);
+            self.negotiate(order, pending.clone());
             self.resolve_remaining(order);
-            self.clean_up(order);
+            self.config.heuristic_weight = weight;
+            // Only the nets this round touched can have got worse.
+            let touched: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|net| self.nets[*net as usize].reroutes > snapshot.nets[*net as usize].reroutes || pending.contains(net))
+                .collect();
+            self.clean_up(&touched);
             self.config.via_cost = via_cost;
             let after = self.quality();
             let keep = after.0 <= before.0 && after.1 < before.1;
@@ -2095,10 +2250,10 @@ impl Router {
                 );
             }
             if !keep {
-                let generation = self.generation.max(snapshot.generation);
+                // Restore, but still try the next (more expensive) round.
+                let scratch = std::mem::take(&mut self.scratch);
                 *self = snapshot;
-                self.generation = generation;
-                break;
+                self.scratch = scratch;
             }
         }
     }
@@ -2199,8 +2354,8 @@ impl Router {
             routes,
             status,
             iterations: self.iterations,
-            expansions: self.expansions,
-            searches: self.searches,
+            expansions: self.scratch.expansions,
+            searches: self.scratch.searches,
             grid: self.grid.clone(),
         }
     }
@@ -2218,7 +2373,7 @@ impl Router {
         let mut saved = vec![save(self, net)];
         let mut involved: Vec<NetId> = vec![net];
         self.unstamp(net);
-        self.route_net(net, 50.0, false, 4.0);
+        self.route_net_seq(net, 50.0, false, 4.0);
         self.nets[net as usize].blocked = false;
         self.stamp(net);
         let mut ok = self.nets[net as usize].complete;
@@ -2243,7 +2398,7 @@ impl Router {
                     saved.push(save(self, *victim));
                 }
                 self.rip_up_conflicted(*victim);
-                self.route_net(*victim, present, false, 4.0);
+                self.route_net_seq(*victim, present, false, 4.0);
                 self.stamp(*victim);
             }
             present = (present * 1.5).min(self.config.present_cap as f32);
@@ -2528,7 +2683,7 @@ impl Router {
             }
             self.nets[net as usize].plane_target = target;
             self.unstamp(net);
-            self.route_net(net, 0.0, true, 1.0);
+            self.route_net_seq(net, 0.0, true, 1.0);
             self.stamp(net);
             let hard_complete = self.nets[net as usize].complete;
             let mut forced = None;
@@ -2593,7 +2748,7 @@ impl Router {
                 let before = self.geometric_cost(*net);
                 let saved = self.nets[*net as usize].branches.clone();
                 self.rip_up(*net);
-                self.route_net(*net, 0.0, true, 1.0);
+                self.route_net_seq(*net, 0.0, true, 1.0);
                 let state = &self.nets[*net as usize];
                 if state.complete && self.geometric_cost(*net) < before - 1.0e-6 {
                     improved = true;
@@ -2640,7 +2795,7 @@ impl Router {
         }
         removed.sort_by_key(|net| order.iter().position(|other| other == net));
         for net in &removed {
-            self.route_net(*net, 0.0, true, 4.0);
+            self.route_net_seq(*net, 0.0, true, 4.0);
             self.stamp(*net);
         }
         for net in removed {

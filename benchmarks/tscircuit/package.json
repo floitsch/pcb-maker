@@ -1,0 +1,15 @@
+{
+  "name": "tscircuit",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "@tscircuit/capacity-autorouter": "^0.0.919",
+    "dsn-converter": "^0.0.92"
+  }
+}

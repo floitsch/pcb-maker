@@ -7,3 +7,4 @@ description = "In-memory whole-board negotiated-congestion router for pcb-maker"
 publish = false
 
 [dependencies]
+rayon = "1"

@@ -67,6 +67,8 @@ def main():
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-layout", action="store_true")
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--tscircuit", action="store_true",
+                        help="also route the cold board with tscircuit's capacity autorouter (needs --freerouting for the DSN)")
     parser.add_argument("--freerouting", type=Path,
                         help="external.json for route-kicad-board-freerouting; adds a matched comparison on the cold board")
     arguments = parser.parse_args()
@@ -192,6 +194,26 @@ def main():
             else:
                 row["freerouting"] = {"error": (work / "freerouting.log").read_text()[-300:], "exit": code}
 
+        if arguments.freerouting and arguments.tscircuit and (work / "freerouting/routing/input.dsn").exists():
+            code, seconds = run(sys.executable, [ROOT / "benchmarks/tscircuit/run_board.py", work / "freerouting", board_id,
+                                                 work / "tscircuit", arguments.timeout],
+                                work / "tscircuit.log", arguments.timeout + 600)
+            report = work / "tscircuit/report.json"
+            if report.exists():
+                result = json.loads(report.read_text())
+                native = result.get("native") or {}
+                row["tscircuit"] = {
+                    "status": result.get("status"),
+                    "complete": result.get("status") == "finished" and native.get("selected_net_unconnected_items") == 0,
+                    "unconnected": native.get("selected_net_unconnected_items"),
+                    "vias": result.get("vias"),
+                    "length_mm": round(result["length_mm"], 1) if result.get("length_mm") else None,
+                    "router_seconds": round(result["seconds"], 1) if result.get("seconds") else None,
+                    "native_findings": drc_summary(work / "tscircuit/result", baseline, reference),
+                }
+            else:
+                row["tscircuit"] = {"error": (work / "tscircuit.log").read_text()[-300:], "exit": code}
+
         if not arguments.skip_layout:
             code, seconds = run(arguments.binary, ["layout-kicad-board", source, board_id, work / "layout", "auto"],
                                 work / "layout.log", arguments.timeout)
@@ -218,8 +240,9 @@ def main():
 
     (arguments.output / "results.json").write_text(json.dumps(rows, indent=1))
     with_external = any("freerouting" in row for row in rows)
-    lines = (["| Board | Reference copper | Route (designer placement) | Place + route (automatic) | pcb-maker, cold board | Freerouting, cold board |",
-              "| --- | --- | --- | --- | --- | --- |"] if with_external else
+    with_tscircuit = any("tscircuit" in row for row in rows)
+    lines = (["| Board | Reference copper | Route (designer placement) | Place + route (automatic) | pcb-maker, cold board | Freerouting, cold board |" + (" tscircuit, cold board |" if with_tscircuit else ""),
+              "| --- | --- | --- | --- | --- | --- |" + (" --- |" if with_tscircuit else "")] if with_external else
              ["| Board | Reference copper | Route (designer placement) | Place + route (automatic) |",
               "| --- | --- | --- | --- |"])
 
@@ -261,6 +284,8 @@ def main():
                 f"{reference.get('zones')} zones | {cell(row.get('route')) if 'error' not in row else row['error'][:80]} | {cell(row.get('layout'))} |")
         if with_external:
             line += f" {cell(row.get('cold_route'))} | {external_cell(row.get('freerouting'))} |"
+            if with_tscircuit:
+                line += f" {external_cell(row.get('tscircuit'))} |"
         lines.append(line)
     (arguments.output / "results.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
