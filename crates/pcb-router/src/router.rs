@@ -68,7 +68,7 @@ pub struct Config {
     /// same-layer detours; a little greed keeps them cheap).
     pub via_reduction_weight: f64,
     /// Via reduction stops once it has used this many times the main
-    /// negotiation's time (at least 20 s).
+    /// negotiation's time (at least 60 s).
     pub via_reduction_budget: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
@@ -2596,7 +2596,7 @@ impl Router {
         if self.quality().0 > 0 {
             return;
         }
-        let budget = (self.config.via_reduction_budget * self.negotiation_seconds).max(20.0);
+        let budget = (self.config.via_reduction_budget * self.negotiation_seconds).max(60.0);
         let started = std::time::Instant::now();
         for round in 0..self.config.via_reduction_rounds {
             if started.elapsed().as_secs_f64() > budget {
