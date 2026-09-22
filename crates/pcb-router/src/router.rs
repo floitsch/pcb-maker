@@ -67,6 +67,12 @@ pub struct Config {
     /// Heuristic weight while reducing vias (searches there are long
     /// same-layer detours; a little greed keeps them cheap).
     pub via_reduction_weight: f64,
+    /// Via reduction stops once it has used this many times the main
+    /// negotiation's time (at least 20 s).
+    pub via_reduction_budget: f64,
+    /// A negotiation that has not converged after this many seconds is
+    /// handed to the resolution step as it is.
+    pub negotiation_seconds: f64,
     /// Route spatially disjoint nets of one iteration in parallel.
     pub parallel: bool,
     /// Batch size when overlap is ignored (0 keeps batches disjoint). Nets in
@@ -101,6 +107,8 @@ impl Default for Config {
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,
             via_reduction_weight: 1.0,
+            via_reduction_budget: 2.0,
+            negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
             skeleton_bias: 6.0,
@@ -375,6 +383,8 @@ pub struct Router {
 
     scratch: Scratch,
     search_seconds: f64,
+    /// Wall time of the last full negotiation.
+    negotiation_seconds: f64,
     stamp_seconds: f64,
     iterations: usize,
 }
@@ -513,6 +523,7 @@ impl Router {
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
             search_seconds: 0.0,
+            negotiation_seconds: 0.0,
             stamp_seconds: 0.0,
             iterations: 0,
             grid,
@@ -2538,10 +2549,11 @@ impl Router {
             pending = conflicted;
             present =
                 (present * self.config.present_growth as f32).min(self.config.present_cap as f32);
-            if stalled > 25 {
+            if stalled > 25 || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
                 break;
             }
         }
+        self.negotiation_seconds = started.elapsed().as_secs_f64();
     }
 
     /// Resolves what negotiation left, cleans up, stitches pours and
@@ -2584,7 +2596,15 @@ impl Router {
         if self.quality().0 > 0 {
             return;
         }
+        let budget = (self.config.via_reduction_budget * self.negotiation_seconds).max(20.0);
+        let started = std::time::Instant::now();
         for round in 0..self.config.via_reduction_rounds {
+            if started.elapsed().as_secs_f64() > budget {
+                if self.config.verbose {
+                    eprintln!("via reduction: budget of {budget:.0}s used, stopping before round {round}");
+                }
+                break;
+            }
             let before = self.quality();
             let pending: Vec<NetId> = order
                 .iter()

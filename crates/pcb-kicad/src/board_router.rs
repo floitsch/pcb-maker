@@ -921,7 +921,8 @@ pub fn route_kicad_board(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let parsed = parse(&source)?;
-    let pour_nets: Vec<String> = pours(&parsed, &LayerTable::from_pcb(&parsed)?)?
+    let layer_table = LayerTable::from_pcb(&parsed)?;
+    let pour_nets: Vec<String> = pours(&parsed, &layer_table)?
         .into_iter()
         .map(|pour| pour.net)
         .collect();
@@ -941,12 +942,17 @@ pub fn route_kicad_board(
     // skeleton, then pour nets as tracks; each first on the regular lattice
     // and then on finer ones. It stops at the first clean board and
     // otherwise keeps the one with the fewest opens.
+    // A skeleton helps a two-layer board whose pours get shredded by the
+    // signals; with inner planes the pours stay whole and the fixed tree
+    // only blocks vias.
     let skeleton = config.plane_skeleton.unwrap_or(false);
+    let two_layers = layer_table.names.len() == 2;
     let modes: Vec<(bool, bool)> = match (has_pours, config.pours) {
         (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false)],
         (true, KiCadPourMode::Connect) => vec![(true, skeleton)],
         (true, KiCadPourMode::Auto) if skeleton => vec![(true, true), (false, false)],
-        (true, KiCadPourMode::Auto) => vec![(true, false), (true, true), (false, false)],
+        (true, KiCadPourMode::Auto) if two_layers => vec![(true, false), (true, true), (false, false)],
+        (true, KiCadPourMode::Auto) => vec![(true, false), (false, false)],
     };
     let refine = config
         .refine_pitches_mm
