@@ -20,48 +20,53 @@ cargo build --release
 python3 benchmarks/corpus/run.py build/corpus   # add --only NAME... or --skip-layout
 ```
 
-## Results (2026-09-21, one thread)
+## Results (2026-09-22, one thread)
 
-Route times are routing only; place + route times are the whole coupled loop
-including several routing probes and the final native check.
+Tracks and vias are stripped; copper pours stay (where copper is poured is a
+design decision like the placement). `pours connect` means pads reached their
+pour through stubs, vias and stitching; `pours tracks` means the pour nets were
+routed as tracks because connecting through the pour left something open (the
+router tries both and keeps the better board). Route times are routing only;
+place + route times are the whole coupled loop including its routing probes
+and the final native check.
 
 | Board | Reference copper | Route (designer placement) | Place + route (automatic) |
 | --- | --- | --- | --- |
-| ecc83 | 59 tracks, 0 vias, 1 zones | 9/9, 0 vias, 249 mm, 0.09 s — clean | 9/9, 0 vias, 230 mm, 6.5 s — clean |
-| hierarchy | 364 tracks, 0 vias, 166 zones | 50/50, 0 vias, 1330 mm, 1.22 s — clean | 50/50, 0 vias, 1409 mm, 12.2 s — clean |
-| pic | 370 tracks, 6 vias, 1 zones | 34/34, 1 vias, 1907 mm, 2.84 s — clean | 34/34, 1 vias, 1763 mm, 18.6 s — clean |
-| interf-u | 731 tracks, 84 vias, 1 zones | 110/110, 58 vias, 4788 mm, 21.47 s — clean | 110/110, 51 vias, 4797 mm, 115.3 s — clean |
-| olimex-c3 | 768 tracks, 88 vias, 160 zones | 34/34, 49 vias, 926 mm, 1.84 s — clean | 34/34, 58 vias, 918 mm, 19.2 s — clean |
-| dut-c3 | 321 tracks, 57 vias, 2 zones | 42/42, 24 vias, 1391 mm, 3.15 s — clean | 42/42, 27 vias, 1231 mm, 22.4 s — clean |
-| dut-c6 | 359 tracks, 68 vias, 2 zones | 42/42, 29 vias, 1310 mm, 3.61 s — clean | 42/42, 25 vias, 1281 mm, 15.0 s — clean |
-| dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 42 vias, 1473 mm, 4.15 s — clean | 46/46, 45 vias, 1612 mm, 24.5 s — clean |
-| dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 42 vias, 1384 mm, 4.35 s — clean | 46/46, 37 vias, 1377 mm, 21.3 s — clean |
-| dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 38 vias, 1368 mm, 4.02 s — clean | 46/46, 32 vias, 1373 mm, 23.4 s — clean |
-| sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 2 vias, 688 mm, 0.68 s — clean | 26/26, 2 vias, 688 mm, 9.2 s — clean |
-| multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 24 vias, 2502 mm, 17.46 s — clean | 79/79, 33 vias, 2002 mm, 33.9 s — clean |
-| stickhub | 1113 tracks, 87 vias, 5 zones | 42/45, 49 vias, 800 mm, 4.5 s — **4 unconnected** | **placement not legal** (dense two-sided board) |
-| ngdevkit | 115 tracks, 29 vias, 2 zones (unfinished by its designer) | **timeout at 1800 s**, 38 of 175 nets still in conflict | not run |
+| ecc83 | 59 tracks, 0 vias, 1 zones | 9/9, 0 vias, 160 mm, 0.09 s, pours connect — clean | 9/9, 0 vias, 140 mm, 6.4 s, pours connect — clean |
+| hierarchy | 364 tracks, 0 vias, 166 zones | 50/50, 0 vias, 986 mm, 0.65 s, pours connect — clean | 50/50, 0 vias, 1119 mm, 11.0 s, pours connect — clean |
+| pic | 370 tracks, 6 vias, 1 zones | 34/34, 0 vias, 1944 mm, 3.11 s, pours tracks — clean | 34/34, 6 vias, 2100 mm, 24.0 s, pours connect — clean |
+| interf-u | 731 tracks, 84 vias, 1 zones | 110/110, 52 vias, 4610 mm, 11.16 s, pours tracks — clean | 110/110, 63 vias, 4674 mm, 386.7 s, pours tracks — clean |
+| olimex-c3 | 768 tracks, 88 vias, 160 zones | 34/34, 50 vias, 904 mm, 1.53 s, pours tracks — clean | 34/34, 61 vias, 912 mm, 31.0 s, pours tracks — clean |
+| dut-c3 | 321 tracks, 57 vias, 2 zones | 42/42, 29 vias, 1055 mm, 2.29 s, pours connect — clean | 42/42, 23 vias, 956 mm, 18.2 s, pours connect — clean |
+| dut-c6 | 359 tracks, 68 vias, 2 zones | 42/42, 34 vias, 1031 mm, 3.42 s, pours connect — clean | 42/42, 24 vias, 1020 mm, 15.7 s, pours connect — clean |
+| dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 45 vias, 1211 mm, 3.88 s, pours connect — clean | 46/46, 51 vias, 1356 mm, 25.9 s, pours connect — clean |
+| dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 44 vias, 1129 mm, 3.38 s, pours connect — clean | 46/46, 42 vias, 1144 mm, 18.9 s, pours connect — clean |
+| dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 41 vias, 1138 mm, 3.67 s, pours connect — clean | 46/46, 43 vias, 1446 mm, 32.8 s, pours tracks — clean |
+| sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 1 vias, 515 mm, 0.46 s, pours connect — clean | 26/26, 1 vias, 789 mm, 16.3 s, pours tracks — clean |
+| multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 25 vias, 2056 mm, 5.8 s, pours connect — clean | 79/79, 39 vias, 2077 mm, 56.4 s, pours tracks — starved_thermal×1 |
+| stickhub | 1113 tracks, 87 vias, 5 zones | 43/45, 43 vias, 782 mm, 3.0 s, pours tracks — **9 unconnected** (17-pin +3.3 V) | **placement not legal** |
+| ngdevkit | 115 tracks, 29 vias, 2 zones (designer never finished it) | 161/180, 1108 vias, 19 035 mm, 804 s, pours connect — **181 unconnected**, mostly the 207-pad ground and 90-pad 3.3 V pours | not run |
 
-Twelve of fourteen boards complete and are clean in both modes. The DUT boards
-are the project's target workload (an agent or human names the parts and rough
-constraints; the rest is automatic).
+Twelve of fourteen boards are complete and clean in both modes. Compared with
+the first run a day earlier, the router is 2x faster on the large boards
+(two-level search: a coarse tile graph plans each connection and the lattice
+search stays inside that corridor), fine-pitch pads that cannot hold a lattice
+node get exact escape stubs, copper-layer text and graphics are obstacles, and
+pour nets connect through their pours.
 
 ## What the failures say
 
-- **StickHub** (16 x 40 mm, two-sided SMD, 0.15 mm rules) relies on five copper
-  pours. Stripping them forces ground onto tracks, which takes the room the USB
-  pairs need. Pours must be supported: keep the zones, route the other nets,
-  let KiCad refill, and stitch what is still disconnected. The placer also
-  fails here: it never changes a part's side and treats halos too generously
-  for a board this dense.
-- **ngdevkit** (174 x 134 mm, 186 footprints, four rule classes, about 1070
-  pads; its designer never finished it) runs into the time limit: 31 iterations
-  at about 56 s, with roughly 730,000 expansions per search. Once the
-  present-congestion factor reaches its cap, contested nodes are walls while
-  the search heuristic still assumes free-board cost, so searches flood. Next:
-  cap the present factor and rely on history, bound the effort per search,
-  route independent nets in parallel, and tighten the memory layout of the
-  search.
+- **StickHub** (16 x 40 mm, two-sided SMD, 0.15 mm rules): the 17-pin +3.3 V
+  net does not fit once the other nets are in; its designer used a +3.3 V pour
+  region plus a ground pour, which the router only handles for the largest
+  pours. Smaller pours and better use of both sides are the next step; the
+  placer also needs side assignment for a board this dense.
+- **ngdevkit** (174 x 134 mm, 186 footprints, about 1070 pads; its designer
+  never finished it): finishes in 13 minutes instead of hitting the 30-minute
+  wall, with 161 of 180 nets. The 207-pad ground pour and the 90-pad 3.3 V pour
+  are cut into 1500 pieces by the signal routing, and stitching cannot rejoin
+  them all. Pour nets need to be planned first (keep pour continuity as a
+  resource in the tile graph), not repaired afterwards.
 
 ## Growing the corpus
 

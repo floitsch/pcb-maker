@@ -64,6 +64,28 @@ Interf-U were re-run during the audit.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
+## Two-level search
+
+Every connection is first planned on a coarse graph of 16 x 16-node tiles
+(per layer, with via edges between layers). A tile costs more the fuller it
+is, with the fill maintained incrementally from the occupancy maps, and more
+again where conflicts keep happening. The lattice A* then runs only inside the
+planned corridor (one tile of margin); nets that keep losing negotiations get
+wider corridors, and a failed corridor falls back to the plain window and the
+whole board. This is the "graph layer tells the geometric layer where to go"
+idea; it halved the time on the large boards and reduced vias and copper.
+
+## Copper pours
+
+Zones covering at least a tenth of the board are pours. Pads inside a pour
+are connected; other pads get a short stub and a via to the nearest free pour
+node. After routing, the pour's solid pieces are labelled on the lattice;
+islands holding pads are stitched to the main piece with vias, and pads that
+cannot be stitched are routed to it. Around pads that connect to a pour, other
+nets pay extra so the thermal spokes survive. If the router or KiCad still
+sees open items, the pour nets are routed as tracks instead and the better
+board is kept.
+
 ## Known limits / next steps
 
 - Two copper layers, through vias only (the core is N-layer; the adapter is

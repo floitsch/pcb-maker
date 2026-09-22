@@ -1916,7 +1916,9 @@ impl<'a> Router<'a> {
         let _ = class;
         let mut stitches = 0;
         let mut rerouted = false;
-        for _ in 0..400 {
+        let mut previous_islands = usize::MAX;
+        let mut stalled = 0;
+        for _ in 0..1500 {
             let (pours, mut parent, main) = self.analyze_pours(net);
             let terminal_base = pours.pieces + 1;
             let islands: Vec<usize> = (0..terminal_count)
@@ -1925,6 +1927,16 @@ impl<'a> Router<'a> {
             if islands.is_empty() {
                 break;
             }
+            // Vias that do not reduce the stranded count are not progress.
+            if islands.len() >= previous_islands {
+                stalled += 1;
+                if stalled > 3 && rerouted {
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+            previous_islands = islands.len();
             if self.config.verbose {
                 let attached = islands
                     .iter()
@@ -1970,13 +1982,20 @@ impl<'a> Router<'a> {
                         for other in (0..layers).filter(|other| *other != layer) {
                             let target = pours.label[other].get(cell).copied().unwrap_or(0);
                             if target == 0
-                                || find(&mut parent, target as usize) != main
+                                || find(&mut parent, target as usize) == island
                                 || !pours.solid_around(&self.grid, other, cell, via_reach)
                             {
                                 continue;
                             }
-                            let distance =
-                                crate::geometry::distance(anchor, self.grid.center_of(cell));
+                            // Any other piece helps (islands merge step by
+                            // step); the main piece is worth a detour.
+                            let bonus = if find(&mut parent, target as usize) == main {
+                                0.0
+                            } else {
+                                5.0
+                            };
+                            let distance = bonus
+                                + crate::geometry::distance(anchor, self.grid.center_of(cell));
                             if best.is_none_or(|(best, ..)| distance < best) {
                                 best = Some((distance, layer, other, cell));
                             }
@@ -2012,6 +2031,7 @@ impl<'a> Router<'a> {
             }
             // No via fits: route the stranded terminals to the main piece.
             rerouted = true;
+            stalled = 0;
             let mut target: Vec<Vec<bool>> = Vec::new();
             for layer in 0..layers {
                 target.push(
@@ -2177,16 +2197,11 @@ impl<'a> Router<'a> {
                         self.board.hole_clearance.max(obstacle.clearance)
                     }
                 };
-            let bounds = obstacle.shape.aabb().inflated(required);
-            let reaches = |point: crate::geometry::Point| {
-                point[0] >= bounds.minimum[0]
-                    && point[0] <= bounds.maximum[0]
-                    && point[1] >= bounds.minimum[1]
-                    && point[1] <= bounds.maximum[1]
+            let stub = crate::geometry::Aabb {
+                minimum: [start[0].min(end[0]), start[1].min(end[1])],
+                maximum: [start[0].max(end[0]), start[1].max(end[1])],
             };
-            // Stubs are shorter than a pad, so an end-point test is a
-            // sufficient broad phase.
-            (!reaches(start) && !reaches(end))
+            !stub.intersects(obstacle.shape.aabb().inflated(required))
                 || obstacle.shape.distance_to_segment(start, end) >= required
         })
     }
