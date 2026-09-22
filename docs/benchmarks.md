@@ -46,7 +46,7 @@ DRC error beyond what the stripped source or the designer's own board has.
 | dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 44 vias, 1252 mm, 38 s (ladder 86 s), pours connect+skeleton — clean | 46/46, 51 vias, 1356 mm, 24.3 s, pours connect — clean |
 | dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 38 vias, 1147 mm, 39 s (ladder 45 s), pours connect — clean | 46/46, 42 vias, 1144 mm, 17.7 s, pours connect — clean |
 | dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 41 vias, 1173 mm, 30 s (ladder 36 s), pours connect — clean | 46/46, 43 vias, 1446 mm, 29.7 s, pours tracks — clean |
-| ngdevkit (designer never finished it) | 115 tracks, 29 vias, 2 zones | 163/180, 1079 vias, 18 669 mm, 824 s — **190 unconnected** (the 207-pad and 90-pad pours) | timed out |
+| ngdevkit (designer never finished it; headers fixed by `corpus.json`) | 115 tracks, 29 vias, 2 zones | 159/180, 1191 vias, 20 156 mm, 1105 s (ladder 1105 s, negotiation capped at 900 s), pours connect — **151 unconnected** | 173/180, 765 vias, 18 474 mm, 2604 s, pours tracks — **74 unconnected**, 29 edge-clearance and 4 clearance findings |
 | sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 2 vias, 575 mm, 3.42 s (ladder 18 s), pours connect+skeleton — clean | 26/26, 1 vias, 789 mm, 15.3 s, pours tracks — clean |
 | multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 18 vias, 2090 mm, 40 s (ladder 47 s), pours connect — clean | 79/79, 39 vias, 2077 mm, 52.5 s, pours tracks — starved_thermal×1 |
 | stickhub | 1113 tracks, 87 vias, 5 zones | 44/45, 56 vias, 572 mm, 25 s (ladder 198 s), pours connect — **1 unconnected**; solder_mask_bridge×8 | **placement not legal** |
@@ -86,7 +86,11 @@ tiny_tapeout's source fails KiCad's own checks.
   shredded into 1500 pieces on the way; a plane skeleton keeps its pads
   connected but does not make the signals fit. As placed by its (unfinished)
   designer the board is most likely not routable on two layers; it is the
-  test case for automatic re-placement, not for the router alone.
+  test case for automatic re-placement, not for the router alone. With the
+  53 headers and the ESP32 module held (the headers are the ribbon
+  interface; the module sits at its antenna keepout) and everything else
+  re-placed, the coupled loop gets to 173/180 in 43 minutes — better than
+  the designer's placement, still not a board.
 - **ColdFire / video** (4 layers): the remaining opens are ground pads whose
   inner-plane island cannot be stitched back to the main plane; same cause as
   ngdevkit, on inner layers.
