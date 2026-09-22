@@ -391,6 +391,10 @@ impl StaticMaps {
             }
         }
 
+        // A pad may straddle the outline (card-edge fingers, connector
+        // shells) but a track centreline on it still keeps the edge
+        // clearance: pad cells inside the edge zone stay blocked.
+        let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED).collect();
         let mut trace = vec![base_trace; board.layer_count];
         let mut edge_block = vec![vec![0u8; cells]; board.layer_count];
         let mut edge_owner = vec![vec![FREE; cells]; board.layer_count];
@@ -443,7 +447,9 @@ impl StaticMaps {
                         let center = grid.center(x, y);
                         let distance = obstacle.shape.distance_to_point(center);
                         if distance < trace_reach {
-                            claim(&mut trace[layer][index], obstacle.net);
+                            if !edge_zone[index] {
+                                claim(&mut trace[layer][index], obstacle.net);
+                            }
                         } else if distance < trace_reach + margin {
                             mark_tight_edges(
                                 grid,
