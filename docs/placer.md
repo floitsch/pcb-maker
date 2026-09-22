@@ -86,8 +86,8 @@ angles as absolute values).
   of a footprint is never changed.
 - No constraint language yet (regions, groups, alignment, decoupling
   proximity, keep-near-edge); fixed/free lists are the only user control.
-- The coupling uses per-footprint halos only; congestion does not yet move
-  individual parts or feed a density term directly.
+- Congestion drives nudges of individual parts, but does not yet feed the
+  global placer's density term (coupling step 3).
 - Silkscreen labels are not placed; the separate repair tool handles most.
 - No pin or gate swapping.
 - The spectral solve is a direct O(n^3) cosine transform (64 bins); an FFT or
