@@ -30,6 +30,11 @@ pub struct KiCadBoardRouterConfig {
     pub against_direction_cost: Option<f64>,
     #[serde(default)]
     pub maximum_iterations: Option<usize>,
+    /// Directory receiving the routing after every negotiation iteration
+    /// as `attempt-NN/frame-NNNN.kicad_pcb` (one attempt per ladder rung),
+    /// for animations and diagnostics.
+    #[serde(default)]
+    pub frame_directory: Option<PathBuf>,
     #[serde(default)]
     pub grid_pitches_mm: Option<Vec<f64>>,
     /// Above 1, negotiation searches trade optimality for speed; the
@@ -1275,6 +1280,19 @@ fn starved_thermals(directory: &Path) -> usize {
     })
 }
 
+/// A fresh numbered subdirectory of `root` for one routing attempt's frames.
+fn attempt_frame_directory(root: &Path) -> Result<PathBuf, String> {
+    fs::create_dir_all(root)
+        .map_err(|error| format!("failed to create {}: {error}", root.display()))?;
+    let attempts = fs::read_dir(root)
+        .map_err(|error| format!("failed to read {}: {error}", root.display()))?
+        .count();
+    let directory = root.join(format!("attempt-{attempts:02}"));
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
+    Ok(directory)
+}
+
 fn route_kicad_board_once(
     source_directory: &Path,
     board_id: &str,
@@ -1291,7 +1309,30 @@ fn route_kicad_board_once(
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
-    let result = core::route(&board, &core_config(config));
+    let result = match &config.frame_directory {
+        None => core::route(&board, &core_config(config)),
+        Some(root) => {
+            let directory = attempt_frame_directory(root)?;
+            let mut router = core::router::Router::new(&board, &core_config(config));
+            let frame_pcb = pcb.clone();
+            let frame_board = board.clone();
+            let frame_layers = layer_names.clone();
+            router.set_frame_hook(std::sync::Arc::new(move |iteration, snapshot| {
+                let mut frame = frame_pcb.clone();
+                let written = emit_routes(&mut frame, &frame_board, snapshot, &frame_layers)
+                    .and_then(|_| {
+                        let path = directory.join(format!("frame-{iteration:04}.kicad_pcb"));
+                        fs::write(&path, format!("{}\n", encode(&frame))).map_err(|error| {
+                            format!("failed to write {}: {error}", path.display())
+                        })
+                    });
+                if let Err(error) = written {
+                    eprintln!("frame {iteration}: {error}");
+                }
+            }));
+            router.run()
+        }
+    };
     let routing_seconds = routing_started.elapsed().as_secs_f64();
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     finish_routed_board(

@@ -14,6 +14,13 @@ the result with an exact internal verifier, writes the project once, and runs
 native KiCad verification once as the final gate. It exits non-zero when the
 internal verifier or KiCad finds anything.
 
+A config file that only tunes the router (no `connection_rules`) still takes
+its rules from the project. `{"frame_directory": "<dir>"}` additionally
+writes the board after every negotiation iteration as
+`<dir>/attempt-NN/frame-NNNN.kicad_pcb`; `docs/images/animate.py routing`
+turns those frames into a GIF (the README's routing animation is
+Interf-U, cold, 81 iterations).
+
 ## Results (2026-09-21, one thread, cold boards, zero initial copper)
 
 | Board | Nets | `pcb-router` | Old internal router | Freerouting 2.2.4 |

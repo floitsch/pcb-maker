@@ -14,6 +14,7 @@ use rayon::prelude::*;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::board::{Board, NetId, NetRoute, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
@@ -387,6 +388,9 @@ pub struct Router {
     negotiation_seconds: f64,
     stamp_seconds: f64,
     iterations: usize,
+    /// Called after every negotiation iteration with the routing as it
+    /// stands (animations, diagnostics).
+    frame_hook: Option<Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>>,
 }
 
 impl Router {
@@ -522,6 +526,7 @@ impl Router {
             layer_cut: vec![1.0; layers],
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
+            frame_hook: None,
             search_seconds: 0.0,
             negotiation_seconds: 0.0,
             stamp_seconds: 0.0,
@@ -2320,6 +2325,52 @@ impl Router {
         self.finish(&order)
     }
 
+    /// Registers a hook called after every negotiation iteration with the
+    /// iteration count and the routing as it stands (see `snapshot`).
+    pub fn set_frame_hook(&mut self, hook: Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>) {
+        self.frame_hook = Some(hook);
+    }
+
+    /// The routing as it stands: every net materialized as it is, conflicts
+    /// and all, without cleanup, stub checks or congestion.
+    pub fn snapshot(&self) -> RoutingResult {
+        let routes = (0..self.board.nets.len() as NetId)
+            .map(|net| self.materialize(net).0)
+            .collect();
+        RoutingResult {
+            grid: self.grid.clone(),
+            congestion: Vec::new(),
+            routes,
+            status: self.statuses(),
+            iterations: self.iterations,
+            expansions: self.scratch.expansions,
+            searches: self.scratch.searches,
+        }
+    }
+
+    fn statuses(&self) -> Vec<NetStatus> {
+        (0..self.board.nets.len())
+            .map(|net| {
+                let state = &self.nets[net];
+                if self.board.nets[net].terminals.len() < 2 && state.plane.is_empty() {
+                    NetStatus::Trivial
+                } else if !state.routable {
+                    NetStatus::Unreachable
+                } else if state.complete {
+                    NetStatus::Routed
+                } else {
+                    NetStatus::Partial {
+                        unconnected_terminals: state
+                            .connected
+                            .iter()
+                            .filter(|connected| !**connected)
+                            .count(),
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Routes every pour net that has no copper yet as a plain tree, biased
     /// onto the layer its pours cover most, against all copper already on
     /// the board. The tree stays fixed for the rest of the run.
@@ -2486,6 +2537,9 @@ impl Router {
                     self.tile_history[layer][tile] += self.config.history_increment as f32;
                 }
                 conflicted.push(*net);
+            }
+            if let Some(hook) = self.frame_hook.clone() {
+                hook(self.iterations, &self.snapshot());
             }
             if self.config.verbose {
                 eprintln!(
@@ -2692,26 +2746,7 @@ impl Router {
             );
         }
 
-        let status = (0..self.board.nets.len())
-            .map(|net| {
-                let state = &self.nets[net];
-                if self.board.nets[net].terminals.len() < 2 && state.plane.is_empty() {
-                    NetStatus::Trivial
-                } else if !state.routable {
-                    NetStatus::Unreachable
-                } else if state.complete {
-                    NetStatus::Routed
-                } else {
-                    NetStatus::Partial {
-                        unconnected_terminals: state
-                            .connected
-                            .iter()
-                            .filter(|connected| !**connected)
-                            .count(),
-                    }
-                }
-            })
-            .collect();
+        let status = self.statuses();
         let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) = (0..self.board.nets.len()
             as NetId)
             .map(|net| self.materialize(net))

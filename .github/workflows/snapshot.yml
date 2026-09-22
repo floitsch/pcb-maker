@@ -1,0 +1,95 @@
+name: snapshot
+
+# Every push to main rebuilds the `snapshot` pre-release: one archive per
+# platform, always the latest commit. The tag moves with it.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked --bin pcb-maker --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          set -eu
+          stage="pcb-maker-${{ matrix.name }}"
+          mkdir -p "dist/$stage"
+          cp "target/${{ matrix.target }}/release/pcb-maker" "dist/$stage/"
+          cp README.md LICENSE "dist/$stage/"
+          cp -r docs "dist/$stage/docs"
+          (cd dist && tar czf "$stage.tar.gz" "$stage")
+          rm -r "dist/$stage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcb-maker-${{ matrix.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: update snapshot release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Move the snapshot tag to this commit
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f snapshot "$GITHUB_SHA"
+          git push -f origin snapshot
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          short="${GITHUB_SHA::7}"
+          title="Snapshot $short"
+          notes="Automatic build of \`$GITHUB_SHA\` ($(date -u +%Y-%m-%d)).
+
+          Archives contain the \`pcb-maker\` binary, the README and the docs. KiCad (\`kicad-cli\`, version 9 or newer) must be installed for the native verification gate.
+
+          This is a moving pre-release: every push to \`main\` replaces it."
+          if gh release view snapshot >/dev/null 2>&1; then
+            gh release edit snapshot --prerelease --title "$title" --notes "$notes" --target "$GITHUB_SHA"
+          else
+            gh release create snapshot --prerelease --title "$title" --notes "$notes" --target "$GITHUB_SHA"
+          fi
+          gh release upload snapshot dist/*.tar.gz --clobber
