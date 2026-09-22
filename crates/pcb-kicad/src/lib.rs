@@ -82,6 +82,8 @@ pub use board_placer::{
 };
 mod board_router;
 mod outline;
+mod shrink;
+pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
 pub use project_rules::resolve_project_rules;
 pub use board_router::{

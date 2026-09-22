@@ -39,6 +39,96 @@ pub struct Grid {
     pub ny: usize,
 }
 
+/// Channels between neighbouring pads that a track of the narrowest class
+/// fits through with less than a pitch of play: (axis the pads are spaced
+/// along, channel centre on that axis, slack each side).
+fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
+    let width = board
+        .classes
+        .iter()
+        .map(|class| class.trace_width)
+        .fold(f64::INFINITY, f64::min)
+        .min(if board.neck_width > 0.0 {
+            board.neck_width
+        } else {
+            f64::INFINITY
+        });
+    let clearance = board
+        .classes
+        .iter()
+        .map(|class| class.clearance)
+        .fold(f64::INFINITY, f64::min);
+    if !width.is_finite() || !clearance.is_finite() {
+        return Vec::new();
+    }
+    let pads: Vec<(Point, Aabb, f64)> = board
+        .nets
+        .iter()
+        .flat_map(|net| net.terminals.iter())
+        .map(|terminal| {
+            let pad = &board.obstacles[terminal.pad];
+            (
+                terminal.anchor,
+                pad.shape.aabb(),
+                pad.clearance.max(clearance),
+            )
+        })
+        .collect();
+    // Neighbours within 2 mm through a coarse hash.
+    let cell = 2.0;
+    let mut buckets: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (index, (anchor, _, _)) in pads.iter().enumerate() {
+        buckets
+            .entry((
+                (anchor[0] / cell).floor() as i64,
+                (anchor[1] / cell).floor() as i64,
+            ))
+            .or_default()
+            .push(index);
+    }
+    let mut channels = Vec::new();
+    for (index, (anchor, aabb, pad_clearance)) in pads.iter().enumerate() {
+        let (bx, by) = (
+            (anchor[0] / cell).floor() as i64,
+            (anchor[1] / cell).floor() as i64,
+        );
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let Some(others) = buckets.get(&(bx + dx, by + dy)) else {
+                    continue;
+                };
+                for &other in others {
+                    if other <= index {
+                        continue;
+                    }
+                    let (other_anchor, other_aabb, other_clearance) = &pads[other];
+                    let separation = [other_anchor[0] - anchor[0], other_anchor[1] - anchor[1]];
+                    let axis = if separation[0].abs() >= separation[1].abs() {
+                        0
+                    } else {
+                        1
+                    };
+                    if separation[1 - axis].abs() > 0.05 || separation[axis].abs() > cell {
+                        continue;
+                    }
+                    let (near, far) = if separation[axis] > 0.0 {
+                        (aabb.maximum[axis], other_aabb.minimum[axis])
+                    } else {
+                        (other_aabb.maximum[axis], aabb.minimum[axis])
+                    };
+                    let free = far - near - pad_clearance - other_clearance;
+                    if free < width - 1.0e-6 {
+                        continue;
+                    }
+                    channels.push((axis, (near + far) / 2.0, (free - width) / 2.0));
+                }
+            }
+        }
+    }
+    channels
+}
+
 impl Grid {
     pub fn cells(&self) -> usize {
         self.nx * self.ny
@@ -111,6 +201,7 @@ impl Grid {
                 bounds.maximum[axis] = bounds.maximum[axis].max(point[axis]);
             }
         }
+        let channels = tight_channels(board);
         let mut best: Option<(f64, f64, [f64; 2])> = None;
         for &pitch in candidates {
             let mut phase = [0.0; 2];
@@ -119,7 +210,9 @@ impl Grid {
                 let mut histogram = std::collections::BTreeMap::<i64, usize>::new();
                 for anchor in &anchors {
                     let residue = anchor[axis].rem_euclid(pitch);
-                    *histogram.entry((residue * 1.0e4).round() as i64).or_default() += 1;
+                    *histogram
+                        .entry((residue * 1.0e4).round() as i64)
+                        .or_default() += 1;
                 }
                 // Residues wrap around: 0 and `pitch` are the same phase.
                 let wrap = (pitch * 1.0e4).round() as i64;
@@ -127,12 +220,52 @@ impl Grid {
                 for (residue, count) in histogram {
                     *merged.entry(residue % wrap).or_default() += count;
                 }
-                let (residue, count) = merged
-                    .into_iter()
-                    .max_by_key(|(residue, count)| (*count, -*residue))
-                    .unwrap_or((0, 0));
+                // A tight channel needs a node row within its slack of its
+                // centre; missing one walls off a pad, so channels outweigh
+                // pad centres. Candidate phases come from both.
+                let tight: Vec<(f64, f64)> = channels
+                    .iter()
+                    .filter(|(channel_axis, _, slack)| {
+                        *channel_axis == axis && *slack < pitch / 2.0
+                    })
+                    .map(|(_, centre, slack)| (centre.rem_euclid(pitch), *slack))
+                    .collect();
+                let mut phases: Vec<(i64, usize)> = merged.into_iter().collect();
+                for (centre, _) in &tight {
+                    phases.push(((centre * 1.0e4).round() as i64 % wrap, 0));
+                }
+                let mut axis_best: Option<(f64, i64)> = None;
+                for (residue, count) in phases {
+                    let phase = residue as f64 / 1.0e4;
+                    let aligned = tight
+                        .iter()
+                        .filter(|(centre, slack)| {
+                            let offset = (centre - phase).rem_euclid(pitch);
+                            offset.min(pitch - offset) <= *slack + 1.0e-6
+                        })
+                        .count();
+                    let aligned_anchors = if count == 0 {
+                        anchors
+                            .iter()
+                            .filter(|anchor| {
+                                let offset = (anchor[axis] - phase).rem_euclid(pitch);
+                                offset.min(pitch - offset) <= 1.0e-4
+                            })
+                            .count()
+                    } else {
+                        count
+                    };
+                    let value = 10.0 * aligned as f64 / tight.len().max(1) as f64
+                        + aligned_anchors as f64 / anchors.len().max(1) as f64;
+                    if axis_best.is_none_or(|(best, best_residue)| {
+                        value > best + 1e-9 || (value > best - 1e-9 && residue < best_residue)
+                    }) {
+                        axis_best = Some((value, residue));
+                    }
+                }
+                let (value, residue) = axis_best.unwrap_or((0.0, 0));
                 phase[axis] = residue as f64 / 1.0e4;
-                score += count as f64 / anchors.len().max(1) as f64;
+                score += value;
             }
             if best.is_none_or(|(best_score, _, _)| score > best_score + 1e-9) {
                 best = Some((score, pitch, phase));
@@ -229,8 +362,7 @@ impl StaticMaps {
             };
             for y in y0..=y1 {
                 for x in x0..=x1 {
-                    let distance =
-                        crate::geometry::point_segment_distance(grid.center(x, y), a, b);
+                    let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
                     let index = grid.index(x, y);
                     if distance < trace_edge + edge_margin {
                         base_trace[index] = BLOCKED;

@@ -2258,6 +2258,31 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "shrink-kicad-board" => {
+            let usage = "usage: pcb-maker shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let factor: f64 = arguments
+                .next()
+                .ok_or_else(|| usage.to_string())?
+                .parse()
+                .map_err(|error| format!("invalid factor: {error}"))?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let report = pcb_kicad::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
+            println!(
+                "wrote {output}: {:.1} x {:.1} mm -> {:.1} x {:.1} mm, {} footprints, {} pushed back inside: {}",
+                report.size_before_mm[0],
+                report.size_before_mm[1],
+                report.size_after_mm[0],
+                report.size_after_mm[1],
+                report.footprints,
+                report.edge_bound.len(),
+                report.edge_bound.join(" ")
+            );
+            Ok(())
+        }
         "strip-kicad-tracks" => {
             let usage = "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

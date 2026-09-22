@@ -51,6 +51,20 @@ pub struct KiCadBoardRouterConfig {
     pub via_reduction_rounds: Option<usize>,
     #[serde(default)]
     pub jacobi_batch: Option<usize>,
+    /// Route pour nets first as a fixed tree on their plane layer.
+    #[serde(default)]
+    pub plane_skeleton: Option<bool>,
+    #[serde(default)]
+    pub skeleton_bias: Option<f64>,
+    /// Finer lattice pitches tried, in order, when the routing with the
+    /// regular pitch leaves connections open. `None` means 0.075 then 0.05.
+    #[serde(default)]
+    pub refine_pitches_mm: Option<Vec<f64>>,
+    /// A finer lattice is only tried when the routing time projected from
+    /// the previous attempt stays below this (default 240 s), and no further
+    /// attempt of any kind follows one that took longer than this.
+    #[serde(default)]
+    pub refine_budget_seconds: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -92,14 +106,17 @@ impl KiCadBoardRouterConfig {
                 number("via_size_mm"),
                 number("via_drill_mm"),
             ) {
-                (Some(trace_width_mm), Some(clearance_mm), Some(via_size_mm), Some(via_drill_mm)) => {
-                    Some(KiCadConnectionRoutingRules {
-                        trace_width_mm,
-                        clearance_mm,
-                        via_size_mm,
-                        via_drill_mm,
-                    })
-                }
+                (
+                    Some(trace_width_mm),
+                    Some(clearance_mm),
+                    Some(via_size_mm),
+                    Some(via_drill_mm),
+                ) => Some(KiCadConnectionRoutingRules {
+                    trace_width_mm,
+                    clearance_mm,
+                    via_size_mm,
+                    via_drill_mm,
+                }),
                 _ => None,
             };
             return Ok(Self {
@@ -118,7 +135,8 @@ impl KiCadBoardRouterConfig {
                 ..Self::default()
             });
         }
-        serde_json::from_value(value).map_err(|error| format!("invalid board-router config: {error}"))
+        serde_json::from_value(value)
+            .map_err(|error| format!("invalid board-router config: {error}"))
     }
 }
 
@@ -252,7 +270,10 @@ impl LayerTable {
 
     /// Mask for a KiCad layer list such as `("F.Cu" "In1.Cu")`, `*.Cu`
     /// (all copper) or `F&B.Cu` (both outer layers).
-    pub fn mask_of<'a>(&self, names: impl Iterator<Item = &'a str>) -> Result<core::LayerMask, String> {
+    pub fn mask_of<'a>(
+        &self,
+        names: impl Iterator<Item = &'a str>,
+    ) -> Result<core::LayerMask, String> {
         let mut mask = 0;
         for name in names {
             match name {
@@ -375,16 +396,27 @@ pub(super) fn lower(
                             let (sin, cos) = (-form_at(pad)?[2]).to_radians().sin_cos();
                             let shape = match values.get(1) {
                                 Some(&height) if (height - diameter).abs() > 1.0e-9 => {
-                                    let (long, short) = (diameter.max(height), diameter.min(height));
-                                    let axis = if diameter >= height { [1.0, 0.0] } else { [0.0, 1.0] };
+                                    let (long, short) =
+                                        (diameter.max(height), diameter.min(height));
+                                    let axis = if diameter >= height {
+                                        [1.0, 0.0]
+                                    } else {
+                                        [0.0, 1.0]
+                                    };
                                     let half = (long - short) / 2.0;
                                     let offset = [
                                         half * (axis[0] * cos - axis[1] * sin),
                                         half * (axis[0] * sin + axis[1] * cos),
                                     ];
                                     core::Shape::Capsule {
-                                        start: [lowered.center[0] - offset[0], lowered.center[1] - offset[1]],
-                                        end: [lowered.center[0] + offset[0], lowered.center[1] + offset[1]],
+                                        start: [
+                                            lowered.center[0] - offset[0],
+                                            lowered.center[1] - offset[1],
+                                        ],
+                                        end: [
+                                            lowered.center[0] + offset[0],
+                                            lowered.center[1] + offset[1],
+                                        ],
                                         radius: short / 2.0,
                                     }
                                 }
@@ -509,7 +541,9 @@ pub(super) fn lower(
                 return Err("the board router does not yet lower existing arc tracks".into());
             }
             Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
-                if form_atom(item, "layer", 1).and_then(|name| layers.index(name)).is_some() =>
+                if form_atom(item, "layer", 1)
+                    .and_then(|name| layers.index(name))
+                    .is_some() =>
             {
                 let layer = form_atom(item, "layer", 1)
                     .and_then(|name| layers.index(name))
@@ -666,7 +700,8 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
     });
     for zone in items.iter_mut().filter(|item| item.head() == Some("zone")) {
         if let Expr::List(children) = zone {
-            children.retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
+            children
+                .retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
         }
     }
     if let Some(parent) = destination.parent() {
@@ -727,7 +762,9 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         Some("gr_text") => {
             let at = form_at(item)?;
             let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
-            let font = item.child("effects").and_then(|effects| effects.child("font"));
+            let font = item
+                .child("effects")
+                .and_then(|effects| effects.child("font"));
             let size = font
                 .and_then(|font| form_xy(font, "size").ok())
                 .unwrap_or([1.0, 1.0]);
@@ -747,7 +784,14 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             let justify: Vec<&str> = item
                 .child("effects")
                 .and_then(|effects| effects.child("justify"))
-                .map(|justify| justify.children().iter().skip(1).filter_map(Expr::atom).collect())
+                .map(|justify| {
+                    justify
+                        .children()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .collect()
+                })
                 .unwrap_or_default();
             let shift = if justify.contains(&"left") {
                 half[0]
@@ -756,7 +800,11 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             } else {
                 0.0
             };
-            let shift = if justify.contains(&"mirror") { -shift } else { shift };
+            let shift = if justify.contains(&"mirror") {
+                -shift
+            } else {
+                shift
+            };
             let offset = rotate_vector([shift, 0.0], -at[2]);
             vec![core::Shape::rectangle(
                 [at[0] + offset[0], at[1] + offset[1]],
@@ -874,42 +922,119 @@ pub fn route_kicad_board(
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let parsed = parse(&source)?;
     let has_pours = !pours(&parsed, &LayerTable::from_pcb(&parsed)?)?.is_empty();
-    let connect = has_pours && config.pours != KiCadPourMode::Tracks;
-    let mut result =
-        route_kicad_board_once(source_directory, board_id, output_directory, config, connect)?;
-    result.pours = if !has_pours {
-        "none"
-    } else if connect {
-        "connect"
-    } else {
-        "tracks"
-    }
-    .into();
-    // Unconnected items as the router and, when asked, KiCad see them.
-    let open = |result: &KiCadBoardRouterResult| {
+    // Unconnected items as the router and, when asked, KiCad see them. A
+    // starved thermal is a pad that KiCad refuses to count as connected.
+    let open = |result: &KiCadBoardRouterResult, directory: &Path| {
         result.unconnected_terminals
             + result.internal_violations.len()
             + result
                 .native
                 .as_ref()
                 .map_or(0, |native| native.selected_net_unconnected_items)
+            + starved_thermals(directory)
     };
-    if connect && config.pours == KiCadPourMode::Auto && open(&result) > 0 {
-        let fallback_directory = output_directory.with_extension("tracks");
-        if fallback_directory.exists() {
-            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
-        }
-        let mut fallback =
-            route_kicad_board_once(source_directory, board_id, &fallback_directory, config, false)?;
-        fallback.pours = "tracks".into();
-        if open(&fallback) < open(&result) {
-            fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
-            fs::rename(&fallback_directory, output_directory).map_err(|error| error.to_string())?;
-            result = fallback;
-        } else {
-            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+    // The attempt ladder: pours connected, then connected with a fixed plane
+    // skeleton, then pour nets as tracks; each first on the regular lattice
+    // and then on finer ones. It stops at the first clean board and
+    // otherwise keeps the one with the fewest opens.
+    let skeleton = config.plane_skeleton.unwrap_or(false);
+    let modes: Vec<(bool, bool)> = match (has_pours, config.pours) {
+        (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false)],
+        (true, KiCadPourMode::Connect) => vec![(true, skeleton)],
+        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true), (false, false)],
+        (true, KiCadPourMode::Auto) => vec![(true, false), (true, true), (false, false)],
+    };
+    let refine = config
+        .refine_pitches_mm
+        .clone()
+        .unwrap_or_else(|| vec![0.075, 0.05]);
+    let mut pitches: Vec<Option<Vec<f64>>> = vec![None];
+    let coarsest = core_config(config)
+        .pitches
+        .iter()
+        .copied()
+        .fold(0.0, f64::max);
+    for pitch in refine {
+        if pitch < coarsest {
+            pitches.push(Some(vec![pitch]));
         }
     }
+    let budget = config.refine_budget_seconds.unwrap_or(240.0);
+    let scratch = output_directory.with_extension("attempt");
+    let mut best: Option<(usize, KiCadBoardRouterResult)> = None;
+    // Routing seconds and pitch of the slowest attempt so far, to project
+    // the cost of a finer lattice.
+    let mut slowest: Option<(f64, f64)> = None;
+    'ladder: for pitch in &pitches {
+        if let (Some(pitch), Some((seconds, previous))) = (pitch, slowest) {
+            let projected = seconds * (previous / pitch[0]).powi(2);
+            if projected > budget {
+                eprintln!(
+                    "skipping pitch {:?}: projected {projected:.0} s exceeds the {budget:.0} s refinement budget",
+                    pitch
+                );
+                break;
+            }
+        }
+        for (connect, skeleton) in &modes {
+            let mut attempt = config.clone();
+            attempt.plane_skeleton = Some(*skeleton);
+            if let Some(pitch) = pitch {
+                attempt.grid_pitches_mm = Some(pitch.clone());
+            }
+            let directory = if best.is_none() {
+                output_directory.to_path_buf()
+            } else {
+                scratch.clone()
+            };
+            if directory.exists() {
+                fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+            }
+            let mut result =
+                route_kicad_board_once(source_directory, board_id, &directory, &attempt, *connect)?;
+            result.pours = if !has_pours {
+                "none"
+            } else if *connect && *skeleton {
+                "connect+skeleton"
+            } else if *connect {
+                "connect"
+            } else {
+                "tracks"
+            }
+            .into();
+            let opens = open(&result, &directory);
+            eprintln!(
+                "attempt pours={} pitch={}: {opens} open, {} vias, {:.1} s",
+                result.pours,
+                pitch
+                    .as_ref()
+                    .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
+                result.vias,
+                result.routing_seconds
+            );
+            let seconds = result.routing_seconds;
+            let used = (result.routing_seconds, result.grid_pitch_mm);
+            if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
+                slowest = Some(used);
+            }
+            let better = best
+                .as_ref()
+                .is_none_or(|(best_opens, _)| opens < *best_opens);
+            if better {
+                if directory != output_directory {
+                    fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+                    fs::rename(&directory, output_directory).map_err(|error| error.to_string())?;
+                }
+                best = Some((opens, result));
+            } else if directory.exists() {
+                fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+            }
+            if opens == 0 || seconds > budget {
+                break 'ladder;
+            }
+        }
+    }
+    let result = best.expect("at least one routing attempt").1;
     let report_path = output_directory.join("board-router.json");
     fs::write(
         &report_path,
@@ -957,6 +1082,12 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(batch) = config.jacobi_batch {
         router_config.jacobi_batch = batch;
+    }
+    if let Some(skeleton) = config.plane_skeleton {
+        router_config.plane_skeleton = skeleton;
+    }
+    if let Some(bias) = config.skeleton_bias {
+        router_config.skeleton_bias = bias;
     }
     router_config
 }
@@ -1095,6 +1226,22 @@ pub(super) fn finish_routed_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(report)
+}
+
+/// Number of `starved_thermal` findings in the directory's native DRC report.
+fn starved_thermals(directory: &Path) -> usize {
+    let Ok(text) = fs::read_to_string(directory.join("drc.json")) else {
+        return 0;
+    };
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return 0;
+    };
+    report["violations"].as_array().map_or(0, |violations| {
+        violations
+            .iter()
+            .filter(|violation| violation["type"].as_str() == Some("starved_thermal"))
+            .count()
+    })
 }
 
 fn route_kicad_board_once(

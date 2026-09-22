@@ -37,9 +37,13 @@ Interf-U were re-run during the audit.
    turns pads, holes, rule areas, existing copper, the outline and the resolved
    per-net rules into a format-independent `pcb_router::Board`.
 2. **Lattice.** A pitch and phase are chosen so that as many pad centres as
-   possible fall on nodes (through-hole boards live on an imperial lattice and
-   a one-track channel between two pads is only usable with a node row in its
-   centre).
+   possible fall on nodes (through-hole boards live on an imperial lattice).
+   Tight channels count ten times more than pad centres: a channel between two
+   neighbouring pads that the narrowest track fits through with less than
+   half a pitch to spare needs a node row within that slack of its centre, or
+   the pad row is a wall. (ngdevkit's 0.75 mm BGA with 0.28 mm balls and
+   0.15 mm rules leaves 0.01 mm of slack; 0.125 or 0.075 mm lattices reach
+   its inner balls, 0.1 mm cannot.)
 3. **Static maps (once per rule class).** Per layer and node: free, blocked, or
    owned by one net (its own pads). Nodes within one chord sagitta of an
    obstacle get exact per-edge checks, so there is no blanket safety margin
@@ -86,6 +90,31 @@ nets pay extra so the thermal spokes survive. If the router or KiCad still
 sees open items, the pour nets are routed as tracks instead and the better
 board is kept.
 
+### Plane skeleton (fallback)
+
+When a pour ends up shredded by the signal routing, stitching after the fact
+cannot repair it (ngdevkit's ground pour: 1536 pieces, 171 stranded pads,
+274 stitching vias for six of them). The skeleton secures the pour's
+continuity first: the pour net is routed as a plain tree, biased six-fold
+onto the layer its pours cover most, against the still empty board, and
+that tree is *fixed* for the rest of the run (never ripped up, never the
+pour net's conflict). After routing, every part of it that lies in solid
+pour copper is trimmed away again, so only the hops the pour cannot provide
+remain, and the usual stitching adds what the trimmed pieces still need.
+Where the pour alone would have done, the skeleton costs signals room on the
+plane layer (dut-c3: 7 more vias, 8 % more copper), so it is the second rung
+of the attempt ladder, not the default.
+
+## The attempt ladder
+
+`route-kicad-board ... auto` runs attempts until one is clean (no open
+items, no internal violation, no starved thermal in KiCad's DRC) and keeps
+the best otherwise: pours connected; pours connected with the plane
+skeleton; pour nets as tracks; then the same on finer lattices (0.075 and
+0.05 mm) as long as the time projected from the previous attempt stays under
+`refine_budget_seconds` (240 s). StickHub is the board that needs the finer
+rung: 8 open on the regular lattice, clean at 0.075 mm.
+
 ## Via reduction
 
 Once the board is complete, the nets that have vias are renegotiated from the
@@ -105,5 +134,10 @@ all other copper is boxed in, while renegotiation lets the neighbours move.
 - 45° lattice output, no any-angle/arc post-processing yet.
 - Rules come from the `.kicad_pro` (net classes, patterns, minimums); custom
   DRC rules and per-layer rules are not read.
-- Single threaded. Independent nets can be routed in parallel.
+- Nets with disjoint search windows are routed in parallel; on large boards
+  with long nets almost nothing is disjoint and the router is effectively
+  single threaded. Jacobi-style parallel routing of overlapping nets (each
+  against the current copper, then all re-stamped) was tried and converges
+  far worse (Interf-U: 448 s and 44 vias against 81 s and 28 vias); the
+  option `jacobi_batch` is kept off.
 - No pin/gate swapping, no differential pairs, no length tuning.

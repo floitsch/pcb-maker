@@ -71,7 +71,13 @@ def main():
                         help="also route the cold board with tscircuit's capacity autorouter (needs --freerouting for the DSN)")
     parser.add_argument("--freerouting", type=Path,
                         help="external.json for route-kicad-board-freerouting; adds a matched comparison on the cold board")
+    parser.add_argument("--shrink", type=float, nargs="*",
+                        help="strength: also place and route the board shrunk to these factors of its size "
+                             "(default 0.9 0.8 0.7 0.6 0.5 when given without values), stopping at the first "
+                             "factor that is not clean")
     arguments = parser.parse_args()
+    if arguments.shrink is not None and not arguments.shrink:
+        arguments.shrink = [0.9, 0.8, 0.7, 0.6, 0.5]
     arguments.output.mkdir(parents=True, exist_ok=True)
     rows = []
     for board in json.loads(arguments.corpus.read_text())["boards"]:
@@ -235,6 +241,48 @@ def main():
                 }
             else:
                 row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code}
+
+        if arguments.shrink:
+            # Strength: the same design on a smaller board, placed and routed
+            # from scratch. Only the designer's own findings are forgiven;
+            # the stripped source's placement no longer exists.
+            row["shrink"] = []
+            for factor in arguments.shrink:
+                shrunk = work / f"shrink-{factor}"
+                shrunk_source = shrunk / "source"
+                shutil.copytree(source, shrunk_source)
+                code, _ = run(arguments.binary, ["shrink-kicad-board", source / f"{board_id}.kicad_pcb",
+                                                 shrunk_source / f"{board_id}.kicad_pcb", str(factor)],
+                              shrunk / "shrink.log", 300)
+                entry = {"factor": factor}
+                if code != 0:
+                    entry["error"] = (shrunk / "shrink.log").read_text()[-300:]
+                    row["shrink"].append(entry)
+                    break
+                code, seconds = run(arguments.binary, ["layout-kicad-board", shrunk_source, board_id, shrunk / "layout", "auto"],
+                                    shrunk / "layout.log", arguments.timeout)
+                report = shrunk / "layout/board-layout.json"
+                if report.exists():
+                    result = json.loads(report.read_text())
+                    routed = result["routed"]
+                    entry.update({
+                        "routed": routed["routed_connections"], "connections": routed["routable_connections"],
+                        "unconnected_terminals": routed["unconnected_terminals"],
+                        "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
+                        "seconds": round(seconds, 1),
+                        "internal_violations": len(routed["internal_violations"]),
+                        "native": drc_summary(shrunk / "layout/result", frozenset(), reference),
+                    })
+                else:
+                    entry.update({"error": (shrunk / "layout.log").read_text()[-400:], "exit": code})
+                row["shrink"].append(entry)
+                print(json.dumps({"name": board["name"], "shrink": entry}), flush=True)
+                native = entry.get("native") or {}
+                clean = ("error" not in entry and entry["routed"] == entry["connections"]
+                         and not entry["internal_violations"] and native
+                         and not native.get("unconnected") and not native.get("errors"))
+                if not clean:
+                    break
         rows.append(row)
         print(json.dumps(row), flush=True)
 
@@ -278,6 +326,20 @@ def main():
         verdict = "clean" if entry.get("complete") and not problems else ("; ".join(problems) or entry.get("status", "?"))
         return f"{entry.get('vias')} vias, {entry.get('length_mm')} mm, {entry.get('router_seconds')} s — {verdict}"
 
+    with_shrink = any("shrink" in row for row in rows)
+    if with_shrink:
+        lines[0] += " Smallest clean board |"
+        lines[1] += " --- |"
+
+    def shrink_cell(entries):
+        if not entries:
+            return "—"
+        clean = [e for e in entries if e.get("routed") == e.get("connections") and not e.get("internal_violations")
+                 and e.get("native") and not e["native"].get("unconnected") and not e["native"].get("errors")]
+        last = entries[-1]
+        failed = "" if last in clean else f"; {last['factor']}: {cell(last).split(' — ')[-1][:60]}"
+        return (f"{clean[-1]['factor']} ({clean[-1]['vias']} vias, {clean[-1]['seconds']} s)" if clean else "not even 1.0 shrunk") + failed
+
     for row in rows:
         reference = row.get("reference", {})
         line = (f"| {row['name']} | {reference.get('segments')} tracks, {reference.get('vias')} vias, "
@@ -286,6 +348,8 @@ def main():
             line += f" {cell(row.get('cold_route'))} | {external_cell(row.get('freerouting'))} |"
             if with_tscircuit:
                 line += f" {external_cell(row.get('tscircuit'))} |"
+        if with_shrink:
+            line += f" {shrink_cell(row.get('shrink'))} |"
         lines.append(line)
     (arguments.output / "results.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))

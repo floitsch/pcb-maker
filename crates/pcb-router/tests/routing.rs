@@ -3,9 +3,8 @@
 // found in the LICENSE file.
 
 use pcb_router::{
-    Plane,
-    Board, Config, Net, NetStatus, Obstacle, ObstacleKind, RuleClass, Shape, Terminal, route,
-    verify,
+    Board, Config, Net, NetStatus, Obstacle, ObstacleKind, Plane, RuleClass, Shape, Terminal,
+    route, verify,
 };
 
 fn class() -> RuleClass {
@@ -88,7 +87,11 @@ fn crossing_nets_on_one_layer_need_two_layers() {
     assert!(verify(&builder.board, &result.routes).is_empty());
     // Through-hole pads change layers for free, so no via is needed.
     assert_eq!(
-        result.routes.iter().map(|route| route.vias.len()).sum::<usize>(),
+        result
+            .routes
+            .iter()
+            .map(|route| route.vias.len())
+            .sum::<usize>(),
         0
     );
     let layers: Vec<_> = result
@@ -129,10 +132,7 @@ fn negotiation_shares_a_narrow_channel_fairly() {
         });
     }
     for (index, y) in [6.0, 10.0, 14.0].iter().enumerate() {
-        builder.net(
-            &format!("N{index}"),
-            &[([3.0, *y], 0b1), ([27.0, *y], 0b1)],
-        );
+        builder.net(&format!("N{index}"), &[([3.0, *y], 0b1), ([27.0, *y], 0b1)]);
     }
     let result = route(&builder.board, &config());
     let routed = result
@@ -202,6 +202,48 @@ fn pour_connects_pads_with_stub_vias_only() {
     assert!(length < 6.0, "ground stubs are {length} mm long");
 }
 
+#[test]
+fn plane_skeleton_is_trimmed_back_to_what_the_pour_cannot_provide() {
+    // Same board, routed with the skeleton: the fixed ground tree is routed
+    // first, but every part of it that lies in solid pour is trimmed again,
+    // so the result is the same two stub vias.
+    let mut builder = Builder::new(30.0, 20.0, 2);
+    builder.net(
+        "GND",
+        &[
+            ([3.0, 3.0], 0b11),
+            ([27.0, 17.0], 0b11),
+            ([10.0, 10.0], 0b01),
+            ([20.0, 10.0], 0b01),
+        ],
+    );
+    builder.net("SIG", &[([3.0, 10.0], 0b01), ([27.0, 10.0], 0b01)]);
+    builder.board.planes.push(Plane {
+        net: 0,
+        class: 0,
+        layer: 1,
+        polygon: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        excluded: Vec::new(),
+        connect: true,
+        thermal_reach: 0.0,
+    });
+    let config = Config {
+        plane_skeleton: true,
+        ..config()
+    };
+    let result = route(&builder.board, &config);
+    assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    let ground = &result.routes[0];
+    assert_eq!(ground.vias.len(), 2);
+    let length: f64 = ground
+        .segments
+        .iter()
+        .map(|s| ((s.start[0] - s.end[0]).powi(2) + (s.start[1] - s.end[1]).powi(2)).sqrt())
+        .sum();
+    assert!(length < 6.0, "ground stubs are {length} mm long");
+}
 
 #[test]
 fn incremental_update_reroutes_only_what_a_change_touches() {
