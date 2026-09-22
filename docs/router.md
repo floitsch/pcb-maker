@@ -6,7 +6,7 @@ file-to-file sequential router described in the
 
 ```sh
 cargo run --release -- route-kicad-board \
-  <source-directory> <board-id> <output-directory> <config.json>
+  <source-directory> <board-id> <output-directory> [config.json|auto]
 ```
 
 The command parses the board once, routes every connection in memory, checks
@@ -91,9 +91,10 @@ board is kept.
 - Two copper layers, through vias only (the core is N-layer; the adapter is
   not yet).
 - Existing tracks are obstacles; they are not yet adopted as tree components.
-- Copper zones are ignored; arcs in existing copper are refused.
+- Only pours covering at least 10 % of the board are connected through;
+  smaller zones are treated as routing. Arcs in existing copper are refused.
 - 45° lattice output, no any-angle/arc post-processing yet.
-- Rules come from the resolved `connection_rules` JSON produced by the
-  existing Python helper; they should be read from the KiCad project directly.
+- Rules come from the `.kicad_pro` (net classes, patterns, minimums); custom
+  DRC rules and per-layer rules are not read.
 - Single threaded. Independent nets can be routed in parallel.
 - No pin/gate swapping, no differential pairs, no length tuning.
