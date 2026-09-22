@@ -596,6 +596,8 @@ pub(super) fn lower(
         }
     }
     for cutout in &loops.cutouts {
+        // A cutout is board edge to KiCad: the edge clearance applies, not
+        // the hole clearance.
         obstacles.push(core::Obstacle {
             shape: core::Shape::Polygon {
                 points: cutout.clone(),
@@ -603,7 +605,7 @@ pub(super) fn lower(
             layers: layers.all(),
             kind: core::ObstacleKind::Hole,
             net: None,
-            clearance: 0.0,
+            clearance: config.edge_clearance_mm,
             blocks_tracks: true,
             blocks_vias: true,
             label: "board cutout".into(),
