@@ -13,7 +13,8 @@ both systems return evidence to a coordinator instead of hiding failed work.
 placer in `crates/pcb-placer` ([docs/placer.md](docs/placer.md)) and the router
 below.
 
-Results on the 14-board corpus are in [docs/benchmarks.md](docs/benchmarks.md).
+Results on the 18-board corpus, including a head-to-head with Freerouting, are
+in [docs/benchmarks.md](docs/benchmarks.md).
 
 **Routing a complete KiCad board** now goes through the in-memory
 negotiated-congestion router in `crates/pcb-router`

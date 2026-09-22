@@ -98,6 +98,38 @@ All clean in native KiCad (multichannel keeps one starved thermal spoke in
 both). Fewer vias or less copper on nine of twelve boards; the price is time on
 boards where many nudges are tried.
 
+## Head-to-head with Freerouting (2026-09-22)
+
+`run.py --freerouting benchmarks/corpus/freerouting.json` routes every
+two-layer board with both routers on the same *cold* board (tracks, vias and
+pours stripped, since the Specctra exchange carries no pours), with the same
+KiCad rules, one thread each, and judges both with the same native KiCad DRC
+minus what the source already had. Freerouting 2.2.4 runs through the
+project's existing adapter (`route-kicad-board-freerouting`), which translates
+the board minimum into the DSN class rules and the edge clearance.
+
+| Board | pcb-maker | Freerouting 2.2.4 |
+| --- | --- | --- |
+| ecc83 | 9/9, 0 vias, 249 mm, 0.1 s — clean | complete, 0 vias, 253 mm, 1.0 s — clean |
+| hierarchy | 50/50, 0 vias, 1330 mm, 1.0 s — clean | 0 vias, 1377 mm, 5.2 s — **1 unconnected** |
+| pic | 34/34, 1 via, 1911 mm, 2.5 s — clean | 0 vias, 2101 mm, 5.1 s — **1 unconnected** |
+| interf-u | 110/110, 57 vias, 4550 mm, 10.8 s — clean | complete, 44 vias, 5051 mm, 34.3 s — clean |
+| olimex-c3 | 34/34, 50 vias, 907 mm, 1.6 s — clean | 18.8 s — **16 new hole-clearance errors** (the DSN exchange drops the mounting holes' 1.85 mm local clearance) |
+| dut-c3 | 42/42, 27 vias, 1295 mm, 3.7 s — clean | 23 vias, 1322 mm, 11.9 s — **2 unconnected** |
+| dut-c6 | 42/42, 32 vias, 1252 mm, 3.4 s — clean | complete, 29 vias, 1355 mm, 11.4 s — clean |
+| dut-s2 | 46/46, 51 vias, 1408 mm, 4.0 s — clean | complete, 36 vias, 1582 mm, 10.3 s — clean |
+| dut-s3 | 46/46, 44 vias, 1323 mm, 4.2 s — clean | complete, 31 vias, 1472 mm, 10.6 s — clean |
+| dut-esp32 | 46/46, 39 vias, 1392 mm, 3.5 s — clean | complete, 35 vias, 1449 mm, 14.0 s — clean |
+| sonde-xilinx | 26/26, 2 vias, 700 mm, 0.8 s — clean | complete, 0 vias, 757 mm, 2.9 s — clean |
+| multichannel | 79/79, 26 vias, 2494 mm, 14.9 s — clean | **180 unconnected** after 16.9 s (its via class is below the board's minimum via size; Freerouting stops) |
+| stickhub | 43/45, 53 vias, 752 mm, 7.3 s — **4 unconnected** | 44 vias, 851 mm, 63.4 s — **2 unconnected** |
+
+Completion: pcb-maker finishes 12 of 13, Freerouting 8 of 13. Time: pcb-maker
+is 3-10x faster on every board. Vias: Freerouting uses fewer on the boards both
+complete (Interf-U 44 vs 57, DUT boards 23-36 vs 27-51); pcb-maker uses less
+copper on all of them. StickHub is the one board where Freerouting gets further
+(2 open vs 4). Fewer vias is the clearest remaining gap on the routing side.
+
 ## Growing the corpus
 
 The KiCad demo repository also has two very large boards (jetson-agx-thor, vme-wren: 1100-1500
