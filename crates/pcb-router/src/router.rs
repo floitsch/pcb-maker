@@ -63,6 +63,10 @@ pub struct Config {
     pub via_reduction_weight: f64,
     /// Route spatially disjoint nets of one iteration in parallel.
     pub parallel: bool,
+    /// Batch size when overlap is ignored (0 keeps batches disjoint). Nets in
+    /// a batch then route against the same occupancy and settle their
+    /// conflicts in later iterations.
+    pub jacobi_batch: usize,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -87,6 +91,7 @@ impl Default for Config {
             plane_via_cost: 2.0,
             corridors: true,
             parallel: true,
+            jacobi_batch: 0,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,
             via_reduction_weight: 1.0,
@@ -1992,6 +1997,12 @@ impl Router {
     /// tile of margin) do not overlap, keeping the given order inside each
     /// batch. Pour nets and nets without a bounded window get a batch each.
     fn batches(&self, pending: &[NetId], growth: f64) -> Vec<Vec<NetId>> {
+        if self.config.jacobi_batch > 0 {
+            return pending
+                .chunks(self.config.jacobi_batch)
+                .map(<[NetId]>::to_vec)
+                .collect();
+        }
         let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
         let mut batches: Vec<(Vec<NetId>, Vec<(usize, usize, usize, usize)>)> = Vec::new();
         for net in pending {
@@ -2072,7 +2083,12 @@ impl Router {
         for iteration in 0..self.config.max_iterations {
             self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
-            for batch in self.batches(&pending, growth) {
+            let batches = self.batches(&pending, growth);
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                let sizes: Vec<usize> = batches.iter().map(Vec::len).collect();
+                eprintln!("  {} nets in {} batches: {:?}", pending.len(), batches.len(), sizes);
+            }
+            for batch in batches {
                 let search_started = std::time::Instant::now();
                 for net in &batch {
                     self.rip_up_conflicted(*net);
