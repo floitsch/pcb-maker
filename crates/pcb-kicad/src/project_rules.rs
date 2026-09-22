@@ -172,7 +172,12 @@ pub fn resolve_project_rules(
         .map(|class| class.trace_width_mm)
         .fold(f64::INFINITY, f64::min);
     Ok(KiCadBoardRouterConfig {
-        neck_width_mm: Some(narrowest.max(minimum("min_track_width")).max(0.1)),
+        // Designers neck down to the board minimum where a pad demands it.
+        neck_width_mm: Some(if minimum("min_track_width") > 0.0 {
+            minimum("min_track_width").max(0.1)
+        } else {
+            narrowest.max(0.1)
+        }),
         connection_rules,
         default_rules: Some(classes["Default"].clone()),
         // KiCad's built-in board setup applies when the project is silent.

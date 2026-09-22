@@ -64,24 +64,45 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
-    for item in pcb.children() {
+    // Footprints may carry part of the outline (card-edge notches); their
+    // graphics are in the footprint frame.
+    let identity = [0.0, 0.0, 0.0];
+    let items: Vec<(&Expr, [f64; 3])> = pcb
+        .children()
+        .iter()
+        .flat_map(|item| -> Vec<(&Expr, [f64; 3])> {
+            if item.head() == Some("footprint") {
+                let at = form_at(item).unwrap_or(identity);
+                item.children().iter().map(|child| (child, at)).collect()
+            } else {
+                vec![(item, identity)]
+            }
+        })
+        .collect();
+    for (item, frame) in items {
         if form_atom(item, "layer", 1) != Some("Edge.Cuts") {
             continue;
         }
+        let place = |local: [f64; 2]| -> [f64; 2] {
+            let offset = rotate_vector(local, -frame[2]);
+            [frame[0] + offset[0], frame[1] + offset[1]]
+        };
+        let xy = |head: &str| -> Result<[f64; 2], String> { Ok(place(form_xy(item, head)?)) };
         match item.head() {
-            Some("gr_line") => open.push(vec![form_xy(item, "start")?, form_xy(item, "end")?]),
-            Some("gr_arc") => open.push(arc_points(
-                form_xy(item, "start")?,
-                form_xy(item, "mid")?,
-                form_xy(item, "end")?,
-            )),
-            Some("gr_rect") => {
+            Some("gr_line" | "fp_line") => open.push(vec![xy("start")?, xy("end")?]),
+            Some("gr_arc" | "fp_arc") => open.push(arc_points(xy("start")?, xy("mid")?, xy("end")?)),
+            Some("gr_rect" | "fp_rect") => {
                 let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
-                loops.push(vec![a, [b[0], a[1]], b, [a[0], b[1]]]);
+                loops.push(
+                    [a, [b[0], a[1]], b, [a[0], b[1]]]
+                        .iter()
+                        .map(|corner| place(*corner))
+                        .collect(),
+                );
             }
-            Some("gr_circle") => {
-                let center = form_xy(item, "center")?;
-                let end = form_xy(item, "end")?;
+            Some("gr_circle" | "fp_circle") => {
+                let center = xy("center")?;
+                let end = xy("end")?;
                 let opposite = [2.0 * center[0] - end[0], 2.0 * center[1] - end[1]];
                 let quarter = [
                     center[0] - (end[1] - center[1]),
@@ -94,7 +115,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 points.pop();
                 loops.push(points);
             }
-            Some("gr_poly") => {
+            Some("gr_poly" | "fp_poly") => {
                 let mut points = Vec::new();
                 for point in item
                     .child("pts")
@@ -103,16 +124,16 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                     .iter()
                     .filter(|point| point.head() == Some("xy"))
                 {
-                    points.push([
+                    points.push(place([
                         expression_coordinate(point, 1, "outline x")?,
                         expression_coordinate(point, 2, "outline y")?,
-                    ]);
+                    ]));
                 }
                 if points.len() >= 3 {
                     loops.push(points);
                 }
             }
-            Some("gr_curve") => {
+            Some("gr_curve" | "fp_curve") => {
                 return Err("Edge.Cuts bezier curves are not supported yet".into());
             }
             _ => {}
@@ -144,7 +165,23 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                     && (key(open[*index][0]) == tail || key(*open[*index].last().unwrap()) == tail)
             });
             let Some(next) = next else {
-                return Err("Edge.Cuts graphics do not form closed loops".into());
+                // Stuck at this end: grow from the other end instead.
+                let head = key(chain[0]);
+                let continues = (0..open.len()).any(|index| {
+                    !used[index]
+                        && (key(open[index][0]) == head || key(*open[index].last().unwrap()) == head)
+                });
+                if continues {
+                    chain.reverse();
+                    continue;
+                }
+                // A drawing with one gap (a missing edge) is closed with a
+                // straight line, as KiCad's own outline tolerance would.
+                let others_open = (0..open.len()).any(|index| !used[index]);
+                if others_open {
+                    return Err("Edge.Cuts graphics do not form closed loops".into());
+                }
+                break;
             };
             used[next] = true;
             let mut piece = open[next].clone();

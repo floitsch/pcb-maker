@@ -140,7 +140,7 @@ struct NetState {
     on_plane: Vec<bool>,
     /// Terminal nodes outside their (too narrow) pad, with the lattice
     /// nodes sampled along the straight stub from the pad centre.
-    escapes: HashMap<Node, (Vec<u32>, f64)>,
+    escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)>,
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
@@ -426,7 +426,7 @@ impl<'a> Router<'a> {
         net: NetId,
         terminal: &crate::board::Terminal,
         nodes: &mut Vec<Node>,
-        escapes: &mut HashMap<Node, (Vec<u32>, f64)>,
+        escapes: &mut HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)>,
     ) {
         const REACH: f64 = 2.0;
         const WANTED: usize = 12;
@@ -461,36 +461,73 @@ impl<'a> Router<'a> {
                 }
             }
             candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            let mut found = 0;
-            for (distance, cell) in candidates.into_iter().take(600) {
+            let mut accepted = 0;
+            // Exit points along the pad's long axis, for bent stubs.
+            let pad = self.board.obstacles[terminal.pad].shape.aabb();
+            let extent = [
+                pad.maximum[0] - pad.minimum[0],
+                pad.maximum[1] - pad.minimum[1],
+            ];
+            let axis = if extent[0] >= extent[1] { [1.0, 0.0] } else { [0.0, 1.0] };
+            let half_length = extent[0].max(extent[1]) / 2.0;
+            let exits: Vec<crate::geometry::Point> = [1.0, -1.0]
+                .iter()
+                .flat_map(|sign| {
+                    (0..8).map(move |step| {
+                        let d = half_length + 0.05 + step as f64 * 0.1;
+                        [
+                            terminal.anchor[0] + sign * axis[0] * d,
+                            terminal.anchor[1] + sign * axis[1] * d,
+                        ]
+                    })
+                })
+                .collect();
+            for (_, cell) in candidates.into_iter().take(600) {
                 let center = self.grid.center_of(cell);
-                let Some(width) = widths
-                    .iter()
-                    .copied()
-                    .find(|width| self.stub_is_clear(net, layer, terminal.anchor, center, *width))
-                else {
+                let mut found: Option<(f64, Vec<crate::geometry::Point>)> = None;
+                'widths: for width in widths.iter().copied() {
+                    if self.stub_is_clear(net, layer, terminal.anchor, center, width) {
+                        found = Some((width, vec![terminal.anchor, center]));
+                        break;
+                    }
+                    for exit in &exits {
+                        if crate::geometry::distance(*exit, center) > 1.5 * self.grid.pitch + 0.15 {
+                            continue;
+                        }
+                        if self.stub_is_clear(net, layer, terminal.anchor, *exit, width)
+                            && self.stub_is_clear(net, layer, *exit, center, width)
+                        {
+                            found = Some((width, vec![terminal.anchor, *exit, center]));
+                            break 'widths;
+                        }
+                    }
+                }
+                let Some((width, polyline)) = found else {
                     continue;
                 };
-                let samples = (distance / (self.grid.pitch / 2.0)).ceil().max(1.0) as usize;
-                let mut cells: Vec<u32> = (0..=samples)
-                    .filter_map(|index| {
+                let mut cells: Vec<u32> = Vec::new();
+                for pair in polyline.windows(2) {
+                    let length = crate::geometry::distance(pair[0], pair[1]);
+                    let samples = (length / (self.grid.pitch / 2.0)).ceil().max(1.0) as usize;
+                    for index in 0..=samples {
                         let t = index as f64 / samples as f64;
-                        self.grid.nearest_node([
-                            terminal.anchor[0] + t * (center[0] - terminal.anchor[0]),
-                            terminal.anchor[1] + t * (center[1] - terminal.anchor[1]),
-                        ])
-                    })
-                    .map(|cell| cell as u32)
-                    .collect();
+                        if let Some(cell) = self.grid.nearest_node([
+                            pair[0][0] + t * (pair[1][0] - pair[0][0]),
+                            pair[0][1] + t * (pair[1][1] - pair[0][1]),
+                        ]) {
+                            cells.push(cell as u32);
+                        }
+                    }
+                }
                 cells.dedup();
                 let node = Node {
                     layer: layer as u8,
                     cell: cell as u32,
                 };
-                escapes.insert(node, (cells, width));
+                escapes.insert(node, (cells, width, polyline));
                 nodes.push(node);
-                found += 1;
-                if found == WANTED {
+                accepted += 1;
+                if accepted == WANTED {
                     break;
                 }
             }
@@ -500,7 +537,7 @@ impl<'a> Router<'a> {
     /// Whether the stub behind escape node `node` is free of other nets.
     fn escape_is_free(&self, net: NetId, node: Node) -> bool {
         let state = &self.nets[net as usize];
-        let Some((cells, _)) = state.escapes.get(&node) else {
+        let Some((cells, _, _)) = state.escapes.get(&node) else {
             return true;
         };
         let map = self.map_index(self.board.nets[net as usize].class, node.layer as usize);
@@ -557,7 +594,7 @@ impl<'a> Router<'a> {
         let statics = &self.statics[description.class];
         let mut terminal_nodes = Vec::new();
         let mut terminal_reach = Vec::new();
-        let mut escapes: HashMap<Node, (Vec<u32>, f64)> = HashMap::new();
+        let mut escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)> = HashMap::new();
         for terminal in &description.terminals {
             let pad = &self.board.obstacles[terminal.pad];
             let mut nodes = Vec::new();
@@ -784,7 +821,7 @@ impl<'a> Router<'a> {
             let base = querying * (layers + 1);
             for branch in &branches {
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                    if let Some((cells, _)) = escapes.get(&end) {
+                    if let Some((cells, _, _)) = escapes.get(&end) {
                         for cell in cells {
                             apply(base + end.layer as usize, *cell, &stamps.stub_to_trace);
                             apply(base + layers, *cell, &stamps.stub_to_via);
@@ -819,7 +856,7 @@ impl<'a> Router<'a> {
         let mut result = Vec::new();
         for branch in &self.nets[net as usize].branches {
             for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                if let Some((cells, _)) = self.nets[net as usize].escapes.get(&end) {
+                if let Some((cells, _, _)) = self.nets[net as usize].escapes.get(&end) {
                     let map = self.map_index(class, end.layer as usize);
                     for cell in cells {
                         if self.occupancy[map][*cell as usize] > 1 {
@@ -2308,21 +2345,24 @@ impl<'a> Router<'a> {
                 }
                 let anchor = description.terminals[terminal as usize].anchor;
                 let center = self.grid.center_of(node.cell as usize);
-                let width = state
-                    .escapes
-                    .get(&node)
-                    .map_or(rules.trace_width, |(_, width)| *width);
-                if crate::geometry::distance(anchor, center) > 1.0e-7
-                    && self.stub_is_clear(net, node.layer as usize, anchor, center, width)
-                {
-                    if !state.escapes.contains_key(&node) {
-                        stubs.push(route.segments.len());
+                if let Some((_, width, polyline)) = state.escapes.get(&node) {
+                    for pair in polyline.windows(2) {
+                        route.segments.push(Segment {
+                            layer: node.layer as usize,
+                            start: pair[0],
+                            end: pair[1],
+                            width: *width,
+                        });
                     }
+                } else if crate::geometry::distance(anchor, center) > 1.0e-7
+                    && self.stub_is_clear(net, node.layer as usize, anchor, center, rules.trace_width)
+                {
+                    stubs.push(route.segments.len());
                     route.segments.push(Segment {
                         layer: node.layer as usize,
                         start: anchor,
                         end: center,
-                        width,
+                        width: rules.trace_width,
                     });
                 }
             };

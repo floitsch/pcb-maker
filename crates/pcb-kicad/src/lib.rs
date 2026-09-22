@@ -12010,34 +12010,128 @@ fn custom_pad_geometry(
         .child("primitives")
         .ok_or_else(|| "custom pad has no primitives form".to_string())?;
     for primitive in primitives.children().iter().skip(1) {
-        if primitive.head() != Some("gr_poly")
-            || form_atom(primitive, "fill", 1) != Some("yes")
-            || form_atom(primitive, "width", 1) != Some("0")
-        {
-            return Err(format!(
-                "KiCad grid adapter does not yet lower custom-pad primitive {} unless it is a zero-width filled polygon",
-                primitive.head().unwrap_or("unknown")
-            ));
-        }
-        let points_form = primitive
-            .child("pts")
-            .ok_or_else(|| "custom-pad polygon has no pts form".to_string())?;
-        let mut points = Vec::new();
-        for point in points_form.children().iter().skip(1) {
-            if point.head() != Some("xy") {
-                return Err("custom-pad polygon contains a non-xy point".into());
-            }
+        let width = primitive
+            .child("stroke")
+            .and_then(|stroke| form_f64(stroke, "width", 1).ok())
+            .or_else(|| form_f64(primitive, "width", 1).ok())
+            .unwrap_or(0.0)
+            .max(0.0);
+        let filled = !matches!(form_atom(primitive, "fill", 1), None | Some("no" | "none"));
+        let local_point = |point: &Expr, label: &str| -> Result<[f64; 2], String> {
             let local = [
-                expression_coordinate(point, 1, "custom-pad x")?,
-                expression_coordinate(point, 2, "custom-pad y")?,
+                expression_coordinate(point, 1, label)?,
+                expression_coordinate(point, 2, label)?,
             ];
             let offset = rotate_vector(local, -pad_angle_degrees);
-            points.push([center[0] + offset[0], center[1] + offset[1]]);
+            Ok([center[0] + offset[0], center[1] + offset[1]])
+        };
+        let xy = |head: &str| -> Result<[f64; 2], String> {
+            let form = primitive
+                .child(head)
+                .ok_or_else(|| format!("custom-pad primitive has no {head}"))?;
+            local_point(form, head)
+        };
+        match primitive.head() {
+            Some("gr_poly") => {
+                let points_form = primitive
+                    .child("pts")
+                    .ok_or_else(|| "custom-pad polygon has no pts form".to_string())?;
+                let mut points = Vec::new();
+                for point in points_form.children().iter().skip(1) {
+                    if point.head() != Some("xy") {
+                        return Err("custom-pad polygon contains a non-xy point".into());
+                    }
+                    points.push(local_point(point, "custom-pad point")?);
+                }
+                if points.len() < 3 {
+                    return Err("custom-pad polygon has fewer than three points".into());
+                }
+                if filled {
+                    parts.push(ObstacleGeometry::Polygon {
+                        points: points.clone(),
+                    });
+                }
+                // A stroked outline is copper too: one capsule per edge.
+                if width > 0.0 {
+                    for index in 0..points.len() {
+                        parts.push(ObstacleGeometry::Segment {
+                            start: points[index],
+                            end: points[(index + 1) % points.len()],
+                            radius: width / 2.0,
+                        });
+                    }
+                }
+            }
+            Some("gr_line") => parts.push(ObstacleGeometry::Segment {
+                start: xy("start")?,
+                end: xy("end")?,
+                radius: width.max(0.01) / 2.0,
+            }),
+            Some("gr_rect") => {
+                let (a, b) = (xy("start")?, xy("end")?);
+                // Rotated pads make the rectangle a general quadrilateral.
+                let local_a = [
+                    expression_coordinate(primitive.child("start").unwrap(), 1, "x")?,
+                    expression_coordinate(primitive.child("start").unwrap(), 2, "y")?,
+                ];
+                let local_b = [
+                    expression_coordinate(primitive.child("end").unwrap(), 1, "x")?,
+                    expression_coordinate(primitive.child("end").unwrap(), 2, "y")?,
+                ];
+                let corners: Vec<[f64; 2]> = [
+                    local_a,
+                    [local_b[0], local_a[1]],
+                    local_b,
+                    [local_a[0], local_b[1]],
+                ]
+                .iter()
+                .map(|corner| {
+                    let offset = rotate_vector(*corner, -pad_angle_degrees);
+                    [center[0] + offset[0], center[1] + offset[1]]
+                })
+                .collect();
+                let _ = (a, b);
+                if filled {
+                    parts.push(ObstacleGeometry::Polygon {
+                        points: corners.clone(),
+                    });
+                }
+                if width > 0.0 {
+                    for index in 0..4 {
+                        parts.push(ObstacleGeometry::Segment {
+                            start: corners[index],
+                            end: corners[(index + 1) % 4],
+                            radius: width / 2.0,
+                        });
+                    }
+                }
+            }
+            Some("gr_circle") => {
+                let circle_center = xy("center")?;
+                let end = xy("end")?;
+                let radius = distance_squared(circle_center, end).sqrt();
+                parts.push(ObstacleGeometry::Circle {
+                    center: circle_center,
+                    radius: radius + width / 2.0,
+                });
+            }
+            Some("gr_arc") => {
+                let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
+                for pair in outline::arc_points(start, mid, end).windows(2) {
+                    parts.push(ObstacleGeometry::Segment {
+                        start: pair[0],
+                        end: pair[1],
+                        radius: width.max(0.01) / 2.0,
+                    });
+                }
+            }
+            other => {
+                return Err(format!(
+                    "KiCad grid adapter does not yet lower custom-pad primitive {}",
+                    other.unwrap_or("unknown")
+                ));
+            }
         }
-        if points.len() < 3 {
-            return Err("custom-pad polygon has fewer than three points".into());
-        }
-        parts.push(ObstacleGeometry::Polygon { points });
     }
     if parts.len() == 1 {
         return Err("custom pad has no supported copper primitives".into());

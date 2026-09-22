@@ -348,6 +348,53 @@ fn lower(
                     let label = format!("{reference}.{}", pad_name.trim_matches('"'));
                     let lowered = lower_pad(pad, footprint_at)?;
                     let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
+                    // Plated holes of pads without a net are just holes to
+                    // everyone; the board's hole clearance applies.
+                    if pad_type == "thru_hole"
+                        && !node_net(pad).map(normalize_net).is_some_and(routable_net)
+                        && let Some(drill) = pad.child("drill")
+                    {
+                        let values: Vec<f64> = drill
+                            .children()
+                            .iter()
+                            .skip(1)
+                            .filter_map(Expr::atom)
+                            .filter_map(|value| value.parse::<f64>().ok())
+                            .collect();
+                        if let Some(&diameter) = values.first() {
+                            let (sin, cos) = (-form_at(pad)?[2]).to_radians().sin_cos();
+                            let shape = match values.get(1) {
+                                Some(&height) if (height - diameter).abs() > 1.0e-9 => {
+                                    let (long, short) = (diameter.max(height), diameter.min(height));
+                                    let axis = if diameter >= height { [1.0, 0.0] } else { [0.0, 1.0] };
+                                    let half = (long - short) / 2.0;
+                                    let offset = [
+                                        half * (axis[0] * cos - axis[1] * sin),
+                                        half * (axis[0] * sin + axis[1] * cos),
+                                    ];
+                                    core::Shape::Capsule {
+                                        start: [lowered.center[0] - offset[0], lowered.center[1] - offset[1]],
+                                        end: [lowered.center[0] + offset[0], lowered.center[1] + offset[1]],
+                                        radius: short / 2.0,
+                                    }
+                                }
+                                _ => core::Shape::Circle {
+                                    center: lowered.center,
+                                    radius: diameter / 2.0,
+                                },
+                            };
+                            obstacles.push(core::Obstacle {
+                                shape,
+                                layers: layers.all(),
+                                kind: core::ObstacleKind::Hole,
+                                net: None,
+                                clearance: local_clearance::pad_clearance(pad, item)?,
+                                blocks_tracks: true,
+                                blocks_vias: true,
+                                label: format!("{label} plated hole"),
+                            });
+                        }
+                    }
                     if pad_type == "np_thru_hole"
                         && let Some(drill) = pad.child("drill")
                     {
