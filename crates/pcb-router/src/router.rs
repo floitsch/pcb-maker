@@ -51,6 +51,11 @@ pub struct Config {
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
     pub plane_cut_cost: f64,
+    /// After the board is complete, renegotiate the nets that have vias with
+    /// the via cost multiplied by `via_reduction_factor`, this many times,
+    /// keeping a round only if nothing opens and vias go down.
+    pub via_reduction_rounds: usize,
+    pub via_reduction_factor: f64,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
@@ -74,6 +79,8 @@ impl Default for Config {
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
+            via_reduction_rounds: 3,
+            via_reduction_factor: 2.0,
             plane_cut_cost: 3.0,
             heuristic_weight: 1.0,
             verbose: false,
@@ -2019,10 +2026,88 @@ impl Router {
 
     /// Resolves what negotiation left, cleans up, stitches pours and
     /// materializes the copper.
+    /// (open terminals, vias, lattice length) of the current state.
+    fn quality(&self) -> (usize, usize, f64) {
+        let mut open = 0;
+        let mut vias = 0;
+        let mut length = 0.0;
+        for (net, state) in self.nets.iter().enumerate() {
+            if !state.routable {
+                continue;
+            }
+            open += state.connected.iter().filter(|c| !**c).count();
+            if !self.conflicts(net as NetId).is_empty() {
+                open += 1;
+            }
+            let nx = self.grid.nx as i64;
+            for branch in &state.branches {
+                for pair in branch.nodes.windows(2) {
+                    if pair[0].cell == pair[1].cell {
+                        vias += 1;
+                    } else {
+                        let dx = (pair[0].cell as i64 % nx - pair[1].cell as i64 % nx).abs();
+                        let dy = (pair[0].cell as i64 / nx - pair[1].cell as i64 / nx).abs();
+                        length += self.grid.pitch * ((dx * dx + dy * dy) as f64).sqrt();
+                    }
+                }
+            }
+        }
+        (open, vias, length)
+    }
+
+    /// Renegotiates the nets that have vias with a higher via cost, from the
+    /// converged state. A round is kept only if nothing opens and the via
+    /// count drops.
+    fn reduce_vias(&mut self, order: &[NetId]) {
+        for round in 0..self.config.via_reduction_rounds {
+            let before = self.quality();
+            let pending: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|net| {
+                    self.nets[*net as usize]
+                        .branches
+                        .iter()
+                        .any(|branch| branch.nodes.windows(2).any(|pair| pair[0].cell == pair[1].cell))
+                })
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+            let snapshot = self.clone();
+            let via_cost = self.config.via_cost;
+            self.config.via_cost = via_cost * self.config.via_reduction_factor.powi(round as i32 + 1);
+            for net in &pending {
+                self.rip_up(*net);
+            }
+            self.negotiate(order, pending);
+            self.resolve_remaining(order);
+            self.clean_up(order);
+            self.config.via_cost = via_cost;
+            let after = self.quality();
+            let keep = after.0 <= before.0 && after.1 < before.1;
+            if self.config.verbose {
+                eprintln!(
+                    "via reduction round {round}: {:?} -> {:?}, {}",
+                    before,
+                    after,
+                    if keep { "kept" } else { "reverted" }
+                );
+            }
+            if !keep {
+                let generation = self.generation.max(snapshot.generation);
+                *self = snapshot;
+                self.generation = generation;
+                break;
+            }
+        }
+    }
+
     fn finish(&mut self, order: &[NetId]) -> RoutingResult {
         self.resolve_remaining(order);
         let cleanup_started = std::time::Instant::now();
         let improved = self.clean_up(order);
+        self.reduce_vias(order);
         let plane_nets: Vec<NetId> = order
             .iter()
             .copied()

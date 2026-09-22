@@ -41,6 +41,14 @@ pub struct KiCadBoardRouterConfig {
     /// Narrowest track the board allows (neck-downs out of small pads).
     #[serde(default)]
     pub neck_width_mm: Option<f64>,
+    #[serde(default)]
+    pub cleanup_via_cost_mm: Option<f64>,
+    #[serde(default)]
+    pub cleanup_passes: Option<usize>,
+    #[serde(default)]
+    pub bend_cost_mm: Option<f64>,
+    #[serde(default)]
+    pub via_reduction_rounds: Option<usize>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -932,6 +940,18 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(cap) = config.present_cap {
         router_config.present_cap = cap;
+    }
+    if let Some(cost) = config.cleanup_via_cost_mm {
+        router_config.cleanup_via_cost = cost;
+    }
+    if let Some(passes) = config.cleanup_passes {
+        router_config.cleanup_passes = passes;
+    }
+    if let Some(cost) = config.bend_cost_mm {
+        router_config.bend_cost = cost;
+    }
+    if let Some(rounds) = config.via_reduction_rounds {
+        router_config.via_reduction_rounds = rounds;
     }
     router_config
 }
