@@ -1,12 +1,18 @@
 # Coupling placement and routing
 
-Status: design, 2026-09-22. What exists today is the loop in
-`crates/pcb-kicad/src/board_layout.rs`: place, route, read the router's
-congestion history, grow the halos of the footprints in congested regions,
-place again from scratch, keep the best round. It works (see
-[benchmarks](benchmarks.md)), but it is a loose coupling: every placement
-change restarts routing from nothing, and the placer learns about routing only
-through per-footprint halos.
+Status: steps 1 and 2 below are implemented (2026-09-22); 3 and 4 are open.
+
+`layout-kicad-board` places the board, routes it once, and then lets the
+router and the placer take turns on one in-memory state
+(`crates/pcb-kicad/src/board_layout.rs`): the router's congestion history
+names the footprints sitting where nets fought for room, the placer proposes
+small legal moves for them (axis steps of 0.5-4 mm, quarter turns), ranked by
+the congestion they would land in, the router reroutes only the nets the move
+invalidated (`Router::update` and `Router::reroute` in `pcb-router`), and the
+move is kept when the board improves (open connections first, then vias and
+copper). On Interf-U two nudges take the first placement from 9 open
+connections to 110/110; on the DUT boards a handful of resistor nudges remove
+10-25 % of the vias. Per-board results are in [benchmarks.md](benchmarks.md).
 
 ## The idea
 
@@ -30,18 +36,15 @@ placer and router:
 
 ## Steps
 
-1. **Incremental router state.** `pcb_router::Router` becomes long-lived:
-   `update(board_delta)` rebuilds the static maps only in the tiles whose
-   fixed copper changed, recomputes terminal nodes and escapes for the moved
-   footprints, rips up the nets that touch changed tiles, and reruns
-   negotiation for the pending set. Everything else (occupancy, tile fill,
-   history) is kept.
-2. **Router-driven moves.** After a round, the router names the tiles where
-   negotiation could not converge and the footprints whose pins sit in them.
-   The placer proposes small legal moves for those footprints (its refinement
-   step already does legal moves and swaps), the router reroutes incrementally,
-   and the move is kept if fewer nets remain in conflict. This replaces the
-   halo-growth-and-restart loop.
+1. **Incremental router state** (done). `pcb_router::Router` is long-lived:
+   `update(board)` rebuilds the static maps, keeps every net whose pads did
+   not move and whose copper is still legal, and rips up the rest;
+   `reroute()` negotiates only the pending set. Occupancy, tile fill and
+   history are kept. (The static maps are still rebuilt in full; rebuilding
+   only the changed tiles is a later optimization.)
+2. **Router-driven moves** (done). See above. Each trial costs one
+   incremental reroute plus the polish pass, 1 s on a small board and about
+   20 s on Interf-U.
 3. **Capacity-aware placement.** The placer's density term takes the tile
    graph's routing demand into account: a tile that must carry many corridors
    needs whitespace, not only body room. Corridor demand is estimated from the

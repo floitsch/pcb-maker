@@ -61,11 +61,10 @@ less copper); on PIC and the hierarchy board the automatic one is.
    (smaller halos, then no spacing) for crowded boards.
 5. **Refinement.** Greedy legal moves, rotations and swaps that strictly
    reduce wirelength.
-6. **Coupling.** `layout-kicad-board` routes each placement with `pcb-router`.
-   The router's congestion history says where it was starved of room; the
-   footprints there get larger halos and the board is placed again. The best
-   round (completion first, then vias and length) is routed to the end and
-   verified natively.
+6. **Coupling.** `layout-kicad-board` routes the placement once, then the
+   router and placer take turns on one in-memory state: congested footprints
+   are nudged, the router reroutes only what the nudge touched, and moves are
+   kept when the board improves. See [coupling.md](coupling.md).
 
 The written board is checked: every pad must land exactly where the placer's
 model said it would, including rotated footprints (KiCad stores pad and text

@@ -70,10 +70,33 @@ is complete and clean, ColdFire and video are one and seven nets short.
 - **ColdFire / video** (4 layers): the remaining opens are ground pads whose
   inner-plane island cannot be stitched back to the main plane; same cause as
   ngdevkit, on inner layers.
-- **Automatic placement on the large boards** runs out of its 25-minute
-  budget (several routing probes per round) or cannot legalize dense
-  two-sided boards. Incremental routing ([coupling.md](coupling.md)) is the
-  planned fix for the budget; side assignment for the legality.
+- **Automatic placement on dense two-sided boards** (StickHub, openair,
+  tiny_tapeout) cannot be legalized without side assignment.
+
+## Coupled loop (2026-09-22, later the same day)
+
+`layout-kicad-board` now nudges congested footprints and reroutes
+incrementally instead of re-placing from scratch
+([coupling.md](coupling.md)). Place + route results, same boards:
+
+| Board | Halo rounds (old) | Incremental moves (new) |
+| --- | --- | --- |
+| ecc83 | 9/9, 0 vias, 140 mm, 6 s | 9/9, 0 vias, 140 mm, 6 s |
+| hierarchy | 50/50, 0 vias, 1119 mm, 10 s | 50/50, 0 vias, 1194 mm, 29 s |
+| pic | 34/34, 6 vias, 2100 mm, 23 s | 34/34, 4 vias, 1920 mm, 480 s |
+| interf-u | 110/110, 63 vias, 4674 mm, 362 s | 110/110, 56 vias, 4399 mm, 235 s |
+| olimex-c3 | 34/34, 61 vias, 912 mm, 29 s | 34/34, 65 vias, 960 mm, 19 s |
+| dut-c3 | 42/42, 23 vias, 956 mm, 17 s | 42/42, 22 vias, 991 mm, 67 s |
+| dut-c6 | 42/42, 24 vias, 1020 mm, 14 s | 42/42, 24 vias, 985 mm, 35 s |
+| dut-s2 | 46/46, 51 vias, 1356 mm, 24 s | 46/46, 44 vias, 1317 mm, 205 s |
+| dut-s3 | 46/46, 42 vias, 1144 mm, 18 s | 46/46, 31 vias, 1130 mm, 64 s |
+| dut-esp32 | 46/46, 43 vias, 1446 mm, 30 s | 46/46, 42 vias, 1217 mm, 22 s |
+| sonde-xilinx | 26/26, 1 via, 789 mm, 15 s | 26/26, 1 via, 789 mm, 13 s |
+| multichannel | 79/79, 39 vias, 2077 mm, 52 s | 79/79, 42 vias, 1664 mm, 14 s |
+
+All clean in native KiCad (multichannel keeps one starved thermal spoke in
+both). Fewer vias or less copper on nine of twelve boards; the price is time on
+boards where many nudges are tried.
 
 ## Growing the corpus
 

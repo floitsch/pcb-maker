@@ -348,6 +348,40 @@ pub fn layout_kicad_board(
         "tracks"
     }
     .into();
+    // As in route mode: if connecting through the pours left something open
+    // in KiCad's eyes, route the pour nets as tracks on the same placement
+    // and keep the better board.
+    let open = |result: &KiCadBoardRouterResult| {
+        result.unconnected_terminals
+            + result.internal_violations.len()
+            + result
+                .native
+                .as_ref()
+                .map_or(0, |native| native.selected_net_unconnected_items)
+    };
+    if connect && router_config.pours == KiCadPourMode::Auto && open(&routed) > 0 {
+        let mut tracks_config = router_config.clone();
+        tracks_config.pours = KiCadPourMode::Tracks;
+        let fallback_directory = output_directory.join("result-tracks");
+        // The placement file already carries the final poses.
+        let placed_pcb = {
+            let mut copy = pcb.clone();
+            if let Expr::List(items) = &mut copy {
+                items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+            }
+            copy
+        };
+        fs::write(&placed_board, format!("{}\n", encode(&placed_pcb)))
+            .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
+        let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &tracks_config)?;
+        if open(&fallback) < open(&routed) {
+            fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
+            fs::rename(&fallback_directory, &result_directory).map_err(|error| error.to_string())?;
+            routed = fallback;
+        } else {
+            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+        }
+    }
     // The placement file should show the final poses too.
     {
         let mut placed_pcb = pcb.clone();
