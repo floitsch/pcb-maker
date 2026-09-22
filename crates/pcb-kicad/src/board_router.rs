@@ -472,17 +472,29 @@ pub(super) fn lower(
                     if pad_layers == 0 {
                         continue;
                     }
-                    let net = node_net(pad)
-                        .map(normalize_net)
+                    let net_name = node_net(pad).map(normalize_net);
+                    let net = net_name
                         .filter(|name| routable_net(name))
                         .map(|name| net_id(name, &mut nets, &mut classes))
                         .transpose()?;
+                    let mut clearance = local_clearance::pad_clearance(pad, item)?;
+                    if net.is_none() {
+                        // A pad the router never connects (single-pin net,
+                        // unconnected pin, no net) still keeps its net
+                        // class's clearance in KiCad's DRC.
+                        let rules = net_name
+                            .and_then(|name| config.connection_rules.get(name))
+                            .or(config.default_rules.as_ref());
+                        if let Some(rules) = rules {
+                            clearance = clearance.max(rules.clearance_mm);
+                        }
+                    }
                     obstacles.push(core::Obstacle {
                         shape: shape(&lowered.geometry),
                         layers: pad_layers,
                         kind: core::ObstacleKind::Copper,
                         net,
-                        clearance: local_clearance::pad_clearance(pad, item)?,
+                        clearance,
                         blocks_tracks: true,
                         blocks_vias: true,
                         label: label.clone(),

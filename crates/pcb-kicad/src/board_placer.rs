@@ -478,6 +478,45 @@ pub(super) fn lower_placement(
         locked.push(true);
     }
 
+    // Cutouts are board edge too: parts keep the edge margin from them.
+    for cutout in &loops.cutouts {
+        let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for point in cutout {
+            for axis in 0..2 {
+                minimum[axis] = minimum[axis].min(point[axis]);
+                maximum[axis] = maximum[axis].max(point[axis]);
+            }
+        }
+        if minimum[0] > maximum[0] {
+            continue;
+        }
+        let margin = config.edge_margin_mm;
+        components.push(core::Component {
+            name: "cutout".into(),
+            body_center: [0.0, 0.0],
+            body_size: [
+                maximum[0] - minimum[0] + 2.0 * margin,
+                maximum[1] - minimum[1] + 2.0 * margin,
+            ],
+            round: false,
+            halo: 0.0,
+            pins: Vec::new(),
+            side: core::Side::Both,
+            fixed: true,
+            angle_options: vec![0.0],
+        });
+        poses.push(core::Pose {
+            position: [
+                (minimum[0] + maximum[0]) / 2.0,
+                (minimum[1] + maximum[1]) / 2.0,
+            ],
+            angle: 0.0,
+        });
+        references.push("cutout".into());
+        source_at.push([0.0; 3]);
+        locked.push(true);
+    }
+
     let mut pin_counts = vec![0usize; net_ids.len()];
     for component in &components {
         for pin in &component.pins {
