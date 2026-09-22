@@ -107,7 +107,7 @@ impl Default for Config {
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,
             via_reduction_weight: 1.0,
-            via_reduction_budget: 2.0,
+            via_reduction_budget: 3.0,
             negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
