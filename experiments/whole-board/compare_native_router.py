@@ -115,6 +115,10 @@ def compare(args):
     baseline_drc = read(source/'drc.json')
     if sequence:
         assert baseline['selected_net_unconnected_items'] == sequence['expected_source_unconnected_items']
+    import report_adaptive_routing
+    report_adaptive_routing.BASELINE_NATIVE = {
+        'erc_violations': baseline['erc_violations'],
+        'schematic_parity_issues': baseline['schematic_parity_issues']}
     assert progress_admissible(baseline,baseline_drc,baseline_drc,True)
     assert call('source-stats',[executable,'inspect-kicad-board',board]) == 0
     stats = read(root/'source-stats.log')

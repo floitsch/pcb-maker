@@ -5,3 +5,4 @@
 !/run/.gitkeep
 /benchmarks/real/external/
 /target-exp/
+/benchmarks/corpus/freerouting-2.2.4.jar

@@ -50,7 +50,7 @@ def inspect(dsn, native_directory, board_id, output, jar, java_bin, outside_outl
     project = native_directory/(board_id+'.kicad_pro')
     board = native_directory/(board_id+'.kicad_pcb')
     board_hash = digest(board)
-    native_edge = read(project)['board']['design_settings']['rules']['min_copper_edge_clearance']
+    native_edge = (read(project).get('board',{}).get('design_settings',{}).get('rules',{}).get('min_copper_edge_clearance',0.5))
     render(native_directory,board_id)
     svg = ET.parse(native_directory/'inspection-combined.svg').getroot()
     bx,by,bw,bh = map(float,svg.attrib['viewBox'].split())

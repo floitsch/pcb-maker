@@ -67,6 +67,8 @@ def main():
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--skip-layout", action="store_true")
     parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--freerouting", type=Path,
+                        help="external.json for route-kicad-board-freerouting; adds a matched comparison on the cold board")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -148,6 +150,47 @@ def main():
         else:
             row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code}
 
+        if arguments.freerouting:
+            # Matched comparison: both routers on the cold board (no pours),
+            # which is the only input the external adapter accepts.
+            cold = work / "cold-source"
+            shutil.copytree(source, cold)
+            shutil.copy(work / "cold.kicad_pcb", cold / f"{board_id}.kicad_pcb")
+            code, seconds = run(arguments.binary, ["route-kicad-board", cold, board_id, work / "cold-routed", "auto"],
+                                work / "cold-route.log", arguments.timeout)
+            report = work / "cold-routed/board-router.json"
+            if report.exists():
+                result = json.loads(report.read_text())
+                row["cold_route"] = {
+                    "routed": result["routed_connections"], "connections": result["routable_connections"],
+                    "unconnected_terminals": result["unconnected_terminals"],
+                    "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
+                    "routing_seconds": round(result["routing_seconds"], 2),
+                    "internal_violations": len(result["internal_violations"]),
+                    "native": drc_summary(work / "cold-routed", baseline, reference),
+                }
+            else:
+                row["cold_route"] = {"error": (work / "cold-route.log").read_text()[-300:], "exit": code}
+            code, seconds = run(arguments.binary, ["route-kicad-board-freerouting", cold, board_id,
+                                                   work / "freerouting", arguments.freerouting.resolve()],
+                                work / "freerouting.log", arguments.timeout + 300)
+            report = work / "freerouting/routing/report.json"
+            if report.exists():
+                result = json.loads(report.read_text())
+                native = result.get("native") or {}
+                row["freerouting"] = {
+                    "status": result.get("status"),
+                    "complete": bool(result.get("routing_complete")) and bool(native.get("complete")),
+                    "unconnected": native.get("selected_net_unconnected_items"),
+                    "vias": result.get("vias"),
+                    "length_mm": round(result["physical_centerline_length_mm"], 1) if result.get("physical_centerline_length_mm") else None,
+                    "router_seconds": round(result["external_router_seconds"], 1) if result.get("external_router_seconds") else None,
+                    "passes": result.get("reported_router_passes"),
+                    "native_findings": drc_summary(work / "freerouting/routing/result", baseline, reference),
+                }
+            else:
+                row["freerouting"] = {"error": (work / "freerouting.log").read_text()[-300:], "exit": code}
+
         if not arguments.skip_layout:
             code, seconds = run(arguments.binary, ["layout-kicad-board", source, board_id, work / "layout", "auto"],
                                 work / "layout.log", arguments.timeout)
@@ -173,8 +216,11 @@ def main():
         print(json.dumps(row), flush=True)
 
     (arguments.output / "results.json").write_text(json.dumps(rows, indent=1))
-    lines = ["| Board | Reference copper | Route (designer placement) | Place + route (automatic) |",
-             "| --- | --- | --- | --- |"]
+    with_external = any("freerouting" in row for row in rows)
+    lines = (["| Board | Reference copper | Route (designer placement) | Place + route (automatic) | pcb-maker, cold board | Freerouting, cold board |",
+              "| --- | --- | --- | --- | --- | --- |"] if with_external else
+             ["| Board | Reference copper | Route (designer placement) | Place + route (automatic) |",
+              "| --- | --- | --- | --- |"])
 
     def cell(entry):
         if entry is None:
@@ -194,10 +240,27 @@ def main():
         return (f"{entry['routed']}/{entry['connections']}, {entry['vias']} vias, "
                 f"{entry['length_mm']:.0f} mm, {seconds} s, pours {entry.get('pours', 'none')} — {verdict}")
 
+    def external_cell(entry):
+        if entry is None:
+            return "—"
+        if "error" in entry:
+            return "**failed**: " + entry["error"].strip().splitlines()[-1][:80]
+        findings = entry.get("native_findings") or {}
+        problems = []
+        if entry.get("unconnected"):
+            problems.append(f"{entry['unconnected']} unconnected")
+        if findings.get("errors"):
+            problems.append(", ".join(f"{k}×{v}" for k, v in findings["errors"].items()))
+        verdict = "clean" if entry.get("complete") and not problems else ("; ".join(problems) or entry.get("status", "?"))
+        return f"{entry.get('vias')} vias, {entry.get('length_mm')} mm, {entry.get('router_seconds')} s ({entry.get('passes')} passes) — {verdict}"
+
     for row in rows:
         reference = row.get("reference", {})
-        lines.append(f"| {row['name']} | {reference.get('segments')} tracks, {reference.get('vias')} vias, "
-                     f"{reference.get('zones')} zones | {cell(row.get('route')) if 'error' not in row else row['error'][:80]} | {cell(row.get('layout'))} |")
+        line = (f"| {row['name']} | {reference.get('segments')} tracks, {reference.get('vias')} vias, "
+                f"{reference.get('zones')} zones | {cell(row.get('route')) if 'error' not in row else row['error'][:80]} | {cell(row.get('layout'))} |")
+        if with_external:
+            line += f" {cell(row.get('cold_route'))} | {external_cell(row.get('freerouting'))} |"
+        lines.append(line)
     (arguments.output / "results.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 

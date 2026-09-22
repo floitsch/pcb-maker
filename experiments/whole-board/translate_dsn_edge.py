@@ -43,7 +43,7 @@ def translate(dsn, project, raw, output):
     assert not output.exists()
     custom=project.with_suffix('.kicad_dru')
     assert not custom.exists() or not custom.read_text().strip(), 'Custom edge rules require separate lowering'
-    native=Decimal(str(read(project)['board']['design_settings']['rules']['min_copper_edge_clearance']))
+    native=Decimal(str((read(project).get('board',{}).get('design_settings',{}).get('rules',{}).get('min_copper_edge_clearance',0.5))))
     assert native.is_finite() and native>=0
     assert digest(dsn)==raw['dsn_sha256'], 'Stale external inspection'
     assert digest(project)==raw['source_project_sha256'], 'Stale native project inspection'

@@ -41,9 +41,15 @@ def finding_counts(findings):
     return Counter(map(fingerprint, findings))
 
 
+# ERC and schematic-parity findings that the source itself has are not the
+# router's doing; a benchmark harness sets this from the source verification.
+BASELINE_NATIVE = {'erc_violations': 0, 'schematic_parity_issues': 0}
+
+
 def progress_admissible(native, drc, baseline, allow_annotations):
     findings = design_findings(drc)
-    if (native['erc_violations'] or native['schematic_parity_issues']
+    if (native['erc_violations'] > BASELINE_NATIVE['erc_violations']
+            or native['schematic_parity_issues'] > BASELINE_NATIVE['schematic_parity_issues']
             or len(findings) != native['drc_design_violations']):
         return False
     return not findings or (allow_annotations

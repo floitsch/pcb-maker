@@ -100,7 +100,8 @@ def audit(board_path, dsn_path):
     exported = {}
     for net in children(network,'net'):
         assert net[1] not in exported
-        exported[net[1]] = sorted(child(net,'pins')[1:])
+        # KiCad's exporter suffixes repeated pad numbers (U1-39@1, ...).
+        exported[net[1]] = sorted(pin.split('@')[0] for pin in child(net,'pins')[1:])
     assert exported == {k:sorted(v) for k,v in pins.items()}, 'DSN net/pin inventory changed'
     return {'scope':__doc__, 'source_board_sha256':digest(board_path),
             'source_project_sha256':digest(board_path.with_suffix('.kicad_pro')),

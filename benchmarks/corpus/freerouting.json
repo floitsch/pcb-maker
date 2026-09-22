@@ -1,0 +1,8 @@
+{
+  "jar": "freerouting-2.2.4.jar",
+  "java": "/usr/lib/jvm/java-26-openjdk/bin/java",
+  "python": "/usr/bin/python3",
+  "maximum_seconds": 1500,
+  "maximum_passes": 100,
+  "pipeline_maximum_seconds": 1800
+}
