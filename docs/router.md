@@ -86,6 +86,15 @@ nets pay extra so the thermal spokes survive. If the router or KiCad still
 sees open items, the pour nets are routed as tracks instead and the better
 board is kept.
 
+## Via reduction
+
+Once the board is complete, the nets that have vias are renegotiated from the
+converged state with the via cost doubled per round, up to three rounds. A
+round is kept only if nothing opens and the via count drops; otherwise the
+state is restored. This is where most of the via savings come from: the
+cleanup pass alone cannot remove a via, because a single net rerouted against
+all other copper is boxed in, while renegotiation lets the neighbours move.
+
 ## Known limits / next steps
 
 - Two copper layers, through vias only (the core is N-layer; the adapter is
