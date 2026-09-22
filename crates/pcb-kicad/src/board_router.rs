@@ -927,16 +927,20 @@ pub fn route_kicad_board(
         .map(|pour| pour.net)
         .collect();
     let has_pours = !pour_nets.is_empty();
-    // Unconnected items as the router and, when asked, KiCad see them. A
-    // starved thermal is a pad that KiCad refuses to count as connected.
+    // Unconnected items as the router and, when asked, KiCad see them,
+    // and separately the starved thermals (pads KiCad does not count as
+    // connected to their pour): those rank attempts but, being a matter of
+    // zone settings as often as of routing, do not call for further rungs.
     let open = |result: &KiCadBoardRouterResult, directory: &Path| {
-        result.unconnected_terminals
-            + result.internal_violations.len()
-            + result
-                .native
-                .as_ref()
-                .map_or(0, |native| native.selected_net_unconnected_items)
-            + starved_thermals(directory)
+        (
+            result.unconnected_terminals
+                + result.internal_violations.len()
+                + result
+                    .native
+                    .as_ref()
+                    .map_or(0, |native| native.selected_net_unconnected_items),
+            starved_thermals(directory),
+        )
     };
     // The attempt ladder: pours connected, then connected with a fixed plane
     // skeleton, then pour nets as tracks; each first on the regular lattice
@@ -971,7 +975,7 @@ pub fn route_kicad_board(
     }
     let budget = config.refine_budget_seconds.unwrap_or(240.0);
     let scratch = output_directory.with_extension("attempt");
-    let mut best: Option<(usize, KiCadBoardRouterResult)> = None;
+    let mut best: Option<((usize, usize), KiCadBoardRouterResult)> = None;
     // Routing seconds and pitch of the slowest attempt so far, to project
     // the cost of a finer lattice.
     let mut slowest: Option<(f64, f64)> = None;
@@ -1027,11 +1031,13 @@ pub fn route_kicad_board(
             .into();
             let opens = open(&result, &directory);
             eprintln!(
-                "attempt pours={} pitch={}: {opens} open, {} vias, {:.1} s",
+                "attempt pours={} pitch={}: {} open, {} starved, {} vias, {:.1} s",
                 result.pours,
                 pitch
                     .as_ref()
                     .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
+                opens.0,
+                opens.1,
                 result.vias,
                 result.routing_seconds
             );
@@ -1054,7 +1060,7 @@ pub fn route_kicad_board(
             }
             // Another way of connecting the pours is worth trying up to
             // twice the budget; a board that slow gets no more attempts.
-            if opens == 0 || seconds > 2.0 * budget {
+            if opens.0 == 0 || seconds > 2.0 * budget {
                 break 'ladder;
             }
         }
