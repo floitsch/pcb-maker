@@ -20,49 +20,57 @@ cargo build --release
 python3 benchmarks/corpus/run.py build/corpus   # add --only NAME... or --skip-layout
 ```
 
-## Results (2026-09-22, one thread)
+## Results (route column 2026-09-22 evening, layout column earlier that day; one thread)
 
 Tracks and vias are stripped; copper pours stay (where copper is poured is a
 design decision like the placement). `pours connect` means pads reached their
-pour through stubs, vias and stitching; `pours tracks` means the pour nets were
-routed as tracks because connecting through the pour left something open (the
-router tries both and keeps the better board). Route times are routing only;
-place + route times are the whole coupled loop including its routing probes
-and the final native check. "Clean" means no unconnected items and no copper
+pour through stubs, vias and stitching; `pours connect+skeleton` adds the
+fixed plane skeleton; `pours tracks` means the pour nets were routed as
+tracks because connecting through the pour left something open (the
+[attempt ladder](router.md#the-attempt-ladder) tries these in turn and keeps
+the best board). Route times are the winning attempt's routing, with the
+whole ladder's wall time including native checks in parentheses; place +
+route times are the whole coupled loop including its routing probes and the
+final native check. "Clean" means no unconnected items and no copper
 DRC error beyond what the stripped source or the designer's own board has.
 
 | Board | Reference copper | Route (designer placement) | Place + route (automatic) |
 | --- | --- | --- | --- |
-| ecc83 | 59 tracks, 0 vias, 1 zones | 9/9, 0 vias, 160 mm, 0.08 s, pours connect — clean | 9/9, 0 vias, 140 mm, 5.8 s, pours connect — clean |
-| hierarchy | 364 tracks, 0 vias, 166 zones | 50/50, 0 vias, 986 mm, 0.62 s, pours connect — clean | 50/50, 0 vias, 1119 mm, 10.0 s, pours connect — clean |
-| pic | 370 tracks, 6 vias, 1 zones | 34/34, 0 vias, 1944 mm, 2.96 s, pours tracks — clean | 34/34, 6 vias, 2100 mm, 23.0 s, pours connect — clean |
-| interf-u | 731 tracks, 84 vias, 1 zones | 110/110, 52 vias, 4610 mm, 10.53 s, pours tracks — clean | 110/110, 63 vias, 4674 mm, 361.8 s, pours tracks — clean |
-| olimex-c3 | 768 tracks, 88 vias, 160 zones | 34/34, 50 vias, 904 mm, 1.43 s, pours tracks — clean | 34/34, 61 vias, 912 mm, 28.8 s, pours tracks — clean |
-| dut-c3 | 321 tracks, 57 vias, 2 zones | 42/42, 29 vias, 1055 mm, 2.16 s, pours connect — clean | 42/42, 23 vias, 956 mm, 17.3 s, pours connect — clean |
-| dut-c6 | 359 tracks, 68 vias, 2 zones | 42/42, 34 vias, 1031 mm, 3.25 s, pours connect — clean | 42/42, 24 vias, 1020 mm, 14.4 s, pours connect — clean |
-| dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 45 vias, 1211 mm, 3.72 s, pours connect — clean | 46/46, 51 vias, 1356 mm, 24.3 s, pours connect — clean |
-| dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 44 vias, 1129 mm, 3.19 s, pours connect — clean | 46/46, 42 vias, 1144 mm, 17.7 s, pours connect — clean |
-| dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 41 vias, 1138 mm, 3.5 s, pours connect — clean | 46/46, 43 vias, 1446 mm, 29.7 s, pours tracks — clean |
+| ecc83 | 59 tracks, 0 vias, 1 zones | 9/9, 0 vias, 160 mm, 0.19 s (ladder 6 s), pours connect — clean | 9/9, 0 vias, 140 mm, 5.8 s, pours connect — clean |
+| hierarchy | 364 tracks, 0 vias, 166 zones | 50/50, 0 vias, 1003 mm, 1.65 s (ladder 9 s), pours connect — clean | 50/50, 0 vias, 1119 mm, 10.0 s, pours connect — clean |
+| pic | 370 tracks, 6 vias, 1 zones | 34/34, 2 vias, 1520 mm, 8.18 s (ladder 15 s), pours connect — clean | 34/34, 6 vias, 2100 mm, 23.0 s, pours connect — clean |
+| interf-u | 731 tracks, 84 vias, 1 zones | 110/110, 28 vias, 4735 mm, 75 s (ladder 233 s), pours tracks — clean | 110/110, 63 vias, 4674 mm, 361.8 s, pours tracks — clean |
+| olimex-c3 | 768 tracks, 88 vias, 160 zones | 34/34, 49 vias, 965 mm, 19 s (ladder 67 s), pours tracks — clean | 34/34, 61 vias, 912 mm, 28.8 s, pours tracks — clean |
+| dut-c3 | 321 tracks, 57 vias, 2 zones | 42/42, 25 vias, 1102 mm, 23 s (ladder 30 s), pours connect — clean | 42/42, 23 vias, 956 mm, 17.3 s, pours connect — clean |
+| dut-c6 | 359 tracks, 68 vias, 2 zones | 42/42, 32 vias, 1034 mm, 26 s (ladder 32 s), pours connect — clean | 42/42, 24 vias, 1020 mm, 14.4 s, pours connect — clean |
+| dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 44 vias, 1252 mm, 38 s (ladder 86 s), pours connect+skeleton — clean | 46/46, 51 vias, 1356 mm, 24.3 s, pours connect — clean |
+| dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 38 vias, 1147 mm, 39 s (ladder 45 s), pours connect — clean | 46/46, 42 vias, 1144 mm, 17.7 s, pours connect — clean |
+| dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 41 vias, 1173 mm, 30 s (ladder 36 s), pours connect — clean | 46/46, 43 vias, 1446 mm, 29.7 s, pours tracks — clean |
 | ngdevkit (designer never finished it) | 115 tracks, 29 vias, 2 zones | 163/180, 1079 vias, 18 669 mm, 824 s — **190 unconnected** (the 207-pad and 90-pad pours) | timed out |
-| sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 1 vias, 515 mm, 0.43 s, pours connect — clean | 26/26, 1 vias, 789 mm, 15.3 s, pours tracks — clean |
-| multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 25 vias, 2056 mm, 5.52 s, pours connect — clean | 79/79, 39 vias, 2077 mm, 52.5 s, pours tracks — starved_thermal×1 |
-| stickhub | 1113 tracks, 87 vias, 5 zones | 43/45, 43 vias, 782 mm, 2.9 s — **9 unconnected** (17-pin +3.3 V) | **placement not legal** |
-| coldfire (4 layers, 209 nets) | 2935 tracks, 253 vias, 3 zones | 208/209, 177 vias, 9111 mm, 204 s — **12 unconnected** (GND, inner plane islands) | 208/209, 207 vias, 8890 mm, 1189 s — 12 unconnected |
-| video (4 layers, 371 nets, 189 footprints) | 7932 tracks, 808 vias, 2 zones | 364/371, 542 vias, 34 746 mm, 406 s — **8 unconnected** | timed out |
-| openair-max (4 layers, 120 nets, 210 footprints) | 1638 tracks, 410 vias, 34 zones | 120/120, 124 vias, 4315 mm, 58 s — clean | **placement not legal** |
-| tiny_tapeout (4 layers; its source fails KiCad DRC: 8 clearance errors, 3 shorts) | 2143 tracks, 405 vias, 2 zones | 81/108, 141 vias, 7029 mm, 143 s — 40 unconnected | **placement not legal** |
+| sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 2 vias, 575 mm, 3.42 s (ladder 18 s), pours connect+skeleton — clean | 26/26, 1 vias, 789 mm, 15.3 s, pours tracks — clean |
+| multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 18 vias, 2090 mm, 40 s (ladder 47 s), pours connect — clean | 79/79, 39 vias, 2077 mm, 52.5 s, pours tracks — starved_thermal×1 |
+| stickhub | 1113 tracks, 87 vias, 5 zones | 44/45, 56 vias, 572 mm, 25 s (ladder 198 s), pours connect — **1 unconnected**; solder_mask_bridge×8 | **placement not legal** |
+| coldfire (4 layers, 209 nets) | 2935 tracks, 253 vias, 3 zones | 208/209, 198 vias, 9155 mm, 308 s (ladder 621 s), pours tracks — **11 unconnected** | 208/209, 207 vias, 8890 mm, 1189 s — 12 unconnected |
+| video (4 layers, 371 nets, 189 footprints) | 7932 tracks, 808 vias, 2 zones | 362/371, 669 vias, 34180 mm, 936 s (ladder 950 s), pours connect — **45 unconnected**; starved_thermal×8 | timed out |
+| openair-max (4 layers, 120 nets, 210 footprints) | 1638 tracks, 410 vias, 34 zones | 120/120, 114 vias, 4365 mm, 180 s (ladder 467 s), pours tracks — solder_mask_bridge×2 | **placement not legal** |
+| tiny_tapeout (4 layers; its source fails KiCad DRC: 8 clearance errors, 3 shorts) | 2143 tracks, 405 vias, 2 zones | 78/108, 139 vias, 7053 mm, 189 s (ladder 583 s), pours tracks — **42 unconnected** | **placement not legal** |
 
-Thirteen boards are complete and clean in route mode, twelve in both modes.
-The four-layer boards are new: the adapter now reads the copper stack from the
-board and routes with through vias on all layers; openair-max (210 footprints)
-is complete and clean, ColdFire and video are one and seven nets short.
+Twelve of the thirteen two-layer boards are complete and clean in route
+mode (StickHub is one pad short with its pours kept; on the cold board it
+completes on the 0.075 mm rung), twelve in both modes. Of the four-layer
+boards, openair-max (210 footprints) is complete, ColdFire is one net short,
+video nine: video's single pour-connect attempt runs into the 900 s
+negotiation cap and the ladder does not try the pour-as-tracks rung after an
+attempt that slow (an earlier build reached 364/371 that way), and
+tiny_tapeout's source fails KiCad's own checks.
 
 ## What the failures say
 
-- **StickHub** (16 x 40 mm, two-sided SMD, 0.15 mm rules): the 17-pin +3.3 V
-  net does not fit once the other nets are in; its designer used small +3.3 V
-  pour regions, which the router treats as routing. The placer needs side
-  assignment for a board this dense.
+- **StickHub** (16 x 40 mm, two-sided SMD, 0.15 mm rules): on the regular
+  0.1 mm lattice the 17-pin +3.3 V net does not fit once the other nets are
+  in; the 0.075 mm rung completes the cold board (45/45, 47 vias, 41 s) and
+  with the small +3.3 V pour regions kept the 0.05 mm rung gets to one open
+  pad. The placer needs side assignment for a board this dense.
 - **ngdevkit** (174 x 134 mm, 186 footprints, about 1070 pads, two layers,
   0.15 mm escape rules): two separate problems. First, its PSRAM is a 48-ball
   0.75 mm BGA whose inter-ball channels leave a 0.15 mm track 0.01 mm of
