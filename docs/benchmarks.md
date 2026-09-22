@@ -98,44 +98,62 @@ All clean in native KiCad (multichannel keeps one starved thermal spoke in
 both). Fewer vias or less copper on nine of twelve boards; the price is time on
 boards where many nudges are tried.
 
-## Head-to-head with Freerouting (2026-09-22, after via reduction)
+## Head-to-head with Freerouting and tscircuit (2026-09-22)
 
-`run.py --freerouting benchmarks/corpus/freerouting.json` routes every
-two-layer board with both routers on the same *cold* board (tracks, vias and
-pours stripped, since the Specctra exchange carries no pours), with the same
-KiCad rules, one thread each, and judges both with the same native KiCad DRC
-minus what the source already had. Freerouting 2.2.4 runs through the
-project's existing adapter (`route-kicad-board-freerouting`), which translates
-the board minimum into the DSN class rules and the edge clearance.
+`run.py --freerouting benchmarks/corpus/freerouting.json --tscircuit` routes
+every two-layer board with three routers on the same *cold* board (tracks,
+vias and pours stripped, since the Specctra exchange carries no pours), with
+the same KiCad rules, and judges all three with the same native KiCad DRC
+minus what the source already had:
 
-| Board | pcb-maker | Freerouting 2.2.4 |
-| --- | --- | --- |
-| ecc83 | 9/9, 0 vias, 249 mm, 0.1 s — clean | complete, 0 vias, 253 mm, 1.3 s — clean |
-| hierarchy | 50/50, 0 vias, 1330 mm, 1.0 s — clean | 0 vias, 1377 mm, 6.8 s — **1 unconnected** |
-| pic | 34/34, 1 via, 1911 mm, 3.6 s — clean | 0 vias, 2101 mm, 5.3 s — **1 unconnected** |
-| interf-u | 110/110, **30 vias**, 4654 mm, 66 s — clean | complete, 44 vias, 5051 mm, 32 s — clean |
-| olimex-c3 | 34/34, 44 vias, 936 mm, 7.5 s — clean | 23 s — **16 new hole-clearance errors** (the DSN exchange drops the mounting holes' 1.85 mm local clearance) |
-| dut-c3 | 42/42, 27 vias, 1295 mm, 6.7 s — clean | 23 vias, 1322 mm, 14 s — **2 unconnected** |
-| dut-c6 | 42/42, **26 vias**, 1274 mm, 21 s — clean | complete, 29 vias, 1355 mm, 14 s — clean |
-| dut-s2 | 46/46, **34 vias**, 1492 mm, 16 s — clean | complete, 36 vias, 1582 mm, 13 s — clean |
-| dut-s3 | 46/46, 33 vias, 1409 mm, 26 s — clean | complete, **31 vias**, 1472 mm, 12 s — clean |
-| dut-esp32 | 46/46, **30 vias**, 1401 mm, 23 s — clean | complete, 35 vias, 1449 mm, 13 s — clean |
-| sonde-xilinx | 26/26, 2 vias, 700 mm, 1.4 s — clean | complete, **0 vias**, 757 mm, 3.0 s — clean |
-| multichannel | 79/79, 20 vias, 2578 mm, 70 s — clean | **180 unconnected** after 15 s (its via class is below the board's minimum via size; Freerouting stops) |
-| stickhub | 43/45, 53 vias, 752 mm, 12 s — **4 unconnected** | 44 vias, 851 mm, 55 s — **2 unconnected** |
+- **pcb-maker**, one thread (plus parallel batches where nets are disjoint).
+- **Freerouting 2.2.4** through the project's adapter
+  (`route-kicad-board-freerouting`), which translates the board minimum into
+  the DSN class rules and the edge clearance; one thread, optimizer off.
+- **tscircuit capacity-autorouter 0.0.919** (the other actively developed
+  open-source PCB autorouter) through `benchmarks/tscircuit/route_dsn.mjs`,
+  which turns the same DSN into its SimpleRouteJson (pads as rectangles, nets
+  as pad centres, the board's width, clearance and via rules through the
+  solver's fields) and writes a Specctra session for the same import.
 
-Completion: pcb-maker finishes 12 of 13, Freerouting 8 of 13. Copper:
-pcb-maker uses less on every board. Vias, on the seven boards both complete:
-pcb-maker fewer on four (Interf-U 30 vs 44), Freerouting fewer on two
-(dut-s3 33 vs 31, sonde 2 vs 0), equal on one. Time: with the via-reduction
-phase pcb-maker is now slower than Freerouting on the mid-size boards
-(16-70 s vs 12-32 s) and faster on the small ones; the phase can be switched
-off (`via_reduction_rounds: 0`) for the previous 3-10x speed advantage at
-20-40 % more vias. StickHub is the one board where Freerouting gets further.
+"Bad" counts KiCad DRC errors plus unconnected items.
 
-With pours kept (pcb-maker's normal route mode, which Freerouting cannot run)
-the same boards route with the same completion, fewer vias on most, and
-15-30 % less copper.
+| Board | pcb-maker | Freerouting | tscircuit |
+| --- | --- | --- | --- |
+| ecc83 | 9/9, 0 vias, 249 mm, 0.1 s, clean | complete, 0 vias, 253 mm, 1.5 s, clean | complete, 0 vias, 273 mm, 3.4 s, **7 bad** |
+| hierarchy | 50/50, 0 vias, 1330 mm, 1 s, clean | **1 open**, 0 vias, 1377 mm, 7.8 s | complete, 18 vias, 1434 mm, 12 s, **10 bad** |
+| pic | 34/34, 1 via, 1911 mm, 4 s, clean | **1 open**, 0 vias, 2101 mm, 7.2 s | complete, 16 vias, 2005 mm, 30 s, **180 bad** |
+| interf-u | 110/110, **30 vias**, 4654 mm, 109 s, clean | complete, 44 vias, 5051 mm, 44 s, clean | **timed out** (25 min) |
+| olimex-c3 | 34/34, 44 vias, 936 mm, 8 s, clean | **16 new hole-clearance errors** (DSN drops local clearances), 24 s | **61 open**, 101 vias, 84 s, 407 bad |
+| dut-c3 | 42/42, 27 vias, 1295 mm, 7 s, clean | **2 open**, 23 vias, 1322 mm, 14 s | complete, 77 vias, 1377 mm, 27 s, **12 bad** |
+| dut-c6 | 42/42, **26 vias**, 1274 mm, 22 s, clean | complete, 29 vias, 1355 mm, 14 s, clean | complete, 71 vias, 1301 mm, 10 s, clean |
+| dut-s2 | 46/46, **34 vias**, 1492 mm, 17 s, clean | complete, 36 vias, 1582 mm, 13 s, clean | complete, 109 vias, 1548 mm, 20 s, clean |
+| dut-s3 | 46/46, 33 vias, 1409 mm, 27 s, clean | complete, **31 vias**, 1472 mm, 11 s, clean | **1 open**, 108 vias, 1463 mm, 96 s, 8 bad |
+| dut-esp32 | 46/46, **30 vias**, 1401 mm, 24 s, clean | complete, 35 vias, 1449 mm, 14 s, clean | complete, 90 vias, 1408 mm, 15 s, **1 bad** |
+| sonde-xilinx | 26/26, 2 vias, 700 mm, 1 s, clean | complete, **0 vias**, 757 mm, 3.1 s, clean | **4 open**, 25 vias, 883 mm, 16 s, 52 bad |
+| multichannel | 79/79, 20 vias, 2578 mm, 75 s, clean | **180 open** (via class below board minimum), 16 s | **81 open**, 130 vias, 20 s, 1194 bad |
+| stickhub | 43/45, 53 vias, 752 mm, 13 s, **4 open** | **2 open**, 44 vias, 851 mm, 66 s | **226 open** (routing failed), 20 s |
+
+Clean completions: pcb-maker 12 of 13, Freerouting 8 of 13, tscircuit 3 of 13
+(dut-c6, dut-s2 and ecc83 apart from its 7 findings). Copper: pcb-maker
+least on every board. Vias among the boards pcb-maker and Freerouting both
+complete: pcb-maker fewer on four, Freerouting on two, equal on one; tscircuit
+uses two to four times as many. Time: Freerouting is the fastest on the
+mid-size boards; pcb-maker's via-reduction phase (three renegotiation rounds)
+is what it spends its extra time on and can be switched off
+(`via_reduction_rounds: 0`), which makes it 3-10x faster than either at
+20-40 % more vias. StickHub remains the one board where Freerouting gets
+further than pcb-maker.
+
+tscircuit's numbers should be read with care: the bridge is new, the solver
+has no trace-to-trace clearance field (spacing is encoded as width plus
+clearance), and its own benchmarks are tscircuit-native boards rather than
+KiCad projects. It is included because it is the other open-source router
+being actively developed.
+
+With pours kept (pcb-maker's normal route mode, which neither external router
+can run) the same boards route with the same completion, fewer vias on most,
+and 15-30 % less copper.
 
 ## Growing the corpus
 
