@@ -70,6 +70,26 @@
       "name": "stickhub",
       "directory": "benchmarks/real/external/_downloads/kicad-src/demos/stickhub",
       "board_id": "StickHub"
+    },
+    {
+      "name": "coldfire-4l",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/kit-dev-coldfire-xilinx_5213",
+      "board_id": "kit-dev-coldfire-xilinx_5213"
+    },
+    {
+      "name": "video-4l",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/video",
+      "board_id": "video"
+    },
+    {
+      "name": "openair-4l",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/openair-max",
+      "board_id": "One-Air-Max"
+    },
+    {
+      "name": "tinytapeout-4l",
+      "directory": "benchmarks/real/external/_downloads/kicad-src/demos/tiny_tapeout",
+      "board_id": "tinytapeout-demo"
     }
   ]
 }

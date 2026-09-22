@@ -167,7 +167,12 @@ pub fn resolve_project_rules(
             .unwrap_or_else(|| "Default".into());
         connection_rules.insert(normalize_net(&raw).to_string(), classes[&class].clone());
     }
+    let narrowest = classes
+        .values()
+        .map(|class| class.trace_width_mm)
+        .fold(f64::INFINITY, f64::min);
     Ok(KiCadBoardRouterConfig {
+        neck_width_mm: Some(narrowest.max(minimum("min_track_width")).max(0.1)),
         connection_rules,
         default_rules: Some(classes["Default"].clone()),
         // KiCad's built-in board setup applies when the project is silent.

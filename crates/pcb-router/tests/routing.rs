@@ -31,6 +31,7 @@ impl Builder {
                 hole_clearance: 0.25,
                 hole_to_hole: 0.25,
                 classes: vec![class()],
+                neck_width: 0.25,
                 obstacles: Vec::new(),
                 nets: Vec::new(),
                 planes: Vec::new(),

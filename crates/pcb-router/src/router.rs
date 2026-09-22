@@ -140,7 +140,7 @@ struct NetState {
     on_plane: Vec<bool>,
     /// Terminal nodes outside their (too narrow) pad, with the lattice
     /// nodes sampled along the straight stub from the pad centre.
-    escapes: HashMap<Node, Vec<u32>>,
+    escapes: HashMap<Node, (Vec<u32>, f64)>,
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
@@ -250,6 +250,9 @@ pub struct Router<'a> {
     target_terminal: Vec<u16>,
     tree_mark: Vec<u32>,
     tree_terminal: Vec<u16>,
+    /// Cells too close to one of the searching net's own vias for another
+    /// via (that cell itself is fine: it is the same hole).
+    own_via_near: Vec<u32>,
     generation: u32,
     expansions: u64,
     searches: u64,
@@ -388,6 +391,7 @@ impl<'a> Router<'a> {
             target_terminal: vec![NO_TERMINAL; states],
             tree_mark: vec![0; states],
             tree_terminal: vec![NO_TERMINAL; states],
+            own_via_near: vec![0; cells],
             generation: 0,
             expansions: 0,
             searches: 0,
@@ -422,11 +426,17 @@ impl<'a> Router<'a> {
         net: NetId,
         terminal: &crate::board::Terminal,
         nodes: &mut Vec<Node>,
-        escapes: &mut HashMap<Node, Vec<u32>>,
+        escapes: &mut HashMap<Node, (Vec<u32>, f64)>,
     ) {
-        const REACH: f64 = 1.2;
+        const REACH: f64 = 2.0;
         const WANTED: usize = 12;
+        let class = self.board.classes[self.board.nets[net as usize].class];
         let statics = &self.statics[self.board.nets[net as usize].class];
+        let widths = if self.board.neck_width < class.trace_width {
+            vec![class.trace_width, self.board.neck_width]
+        } else {
+            vec![class.trace_width]
+        };
         let bounds = crate::geometry::Aabb {
             minimum: terminal.anchor,
             maximum: terminal.anchor,
@@ -452,11 +462,15 @@ impl<'a> Router<'a> {
             }
             candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             let mut found = 0;
-            for (distance, cell) in candidates.into_iter().take(400) {
+            for (distance, cell) in candidates.into_iter().take(600) {
                 let center = self.grid.center_of(cell);
-                if !self.stub_is_clear(net, layer, terminal.anchor, center) {
+                let Some(width) = widths
+                    .iter()
+                    .copied()
+                    .find(|width| self.stub_is_clear(net, layer, terminal.anchor, center, *width))
+                else {
                     continue;
-                }
+                };
                 let samples = (distance / (self.grid.pitch / 2.0)).ceil().max(1.0) as usize;
                 let mut cells: Vec<u32> = (0..=samples)
                     .filter_map(|index| {
@@ -473,7 +487,7 @@ impl<'a> Router<'a> {
                     layer: layer as u8,
                     cell: cell as u32,
                 };
-                escapes.insert(node, cells);
+                escapes.insert(node, (cells, width));
                 nodes.push(node);
                 found += 1;
                 if found == WANTED {
@@ -486,7 +500,7 @@ impl<'a> Router<'a> {
     /// Whether the stub behind escape node `node` is free of other nets.
     fn escape_is_free(&self, net: NetId, node: Node) -> bool {
         let state = &self.nets[net as usize];
-        let Some(cells) = state.escapes.get(&node) else {
+        let Some((cells, _)) = state.escapes.get(&node) else {
             return true;
         };
         let map = self.map_index(self.board.nets[net as usize].class, node.layer as usize);
@@ -543,7 +557,7 @@ impl<'a> Router<'a> {
         let statics = &self.statics[description.class];
         let mut terminal_nodes = Vec::new();
         let mut terminal_reach = Vec::new();
-        let mut escapes: HashMap<Node, Vec<u32>> = HashMap::new();
+        let mut escapes: HashMap<Node, (Vec<u32>, f64)> = HashMap::new();
         for terminal in &description.terminals {
             let pad = &self.board.obstacles[terminal.pad];
             let mut nodes = Vec::new();
@@ -628,6 +642,19 @@ impl<'a> Router<'a> {
             })
             .collect();
         let has_plane = !plane.is_empty();
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            for (index, nodes) in terminal_nodes.iter().enumerate() {
+                if nodes.is_empty() && !on_plane[index] {
+                    eprintln!(
+                        "dead pad {} of {} at {:?} layers {:#b}",
+                        description.terminals[index].label,
+                        description.name,
+                        description.terminals[index].anchor,
+                        description.terminals[index].layers
+                    );
+                }
+            }
+        }
         // Pads without any access are reported; the rest is still routed.
         let live = terminal_nodes
             .iter()
@@ -757,7 +784,7 @@ impl<'a> Router<'a> {
             let base = querying * (layers + 1);
             for branch in &branches {
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                    if let Some(cells) = escapes.get(&end) {
+                    if let Some((cells, _)) = escapes.get(&end) {
                         for cell in cells {
                             apply(base + end.layer as usize, *cell, &stamps.stub_to_trace);
                             apply(base + layers, *cell, &stamps.stub_to_via);
@@ -792,7 +819,7 @@ impl<'a> Router<'a> {
         let mut result = Vec::new();
         for branch in &self.nets[net as usize].branches {
             for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                if let Some(cells) = self.nets[net as usize].escapes.get(&end) {
+                if let Some((cells, _)) = self.nets[net as usize].escapes.get(&end) {
                     let map = self.map_index(class, end.layer as usize);
                     for cell in cells {
                         if self.occupancy[map][*cell as usize] > 1 {
@@ -1116,6 +1143,19 @@ impl<'a> Router<'a> {
             }
             let Some(path) = self.search(net, &sources, &targets, None, true, present, hard, full)
             else {
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                    let restricted = !self.nets[net as usize].plane_target.is_empty();
+                    let plane_nodes: usize = if restricted {
+                        self.nets[net as usize].plane_target.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
+                    } else {
+                        self.nets[net as usize].plane.iter().map(|m| m.iter().filter(|b| **b).count()).sum()
+                    };
+                    eprintln!(
+                        "  no path: group root {root}, {} sources, {} group targets, plane nodes {plane_nodes} (restricted {restricted}), hard {hard}",
+                        sources.len(),
+                        targets.len()
+                    );
+                }
                 failed[root] = true;
                 continue;
             };
@@ -1306,6 +1346,37 @@ impl<'a> Router<'a> {
             self.config.heuristic_weight as f32 * 0.999
         };
 
+        {
+            let stamps = &self.stamps[class][class];
+            let nx = self.grid.nx as i64;
+            let ny = self.grid.ny as i64;
+            let mut near = std::mem::take(&mut self.own_via_near);
+            for branch in &self.nets[net as usize].branches {
+                for pair in branch.nodes.windows(2) {
+                    if pair[0].cell != pair[1].cell {
+                        continue;
+                    }
+                    let (x, y) = (pair[0].cell as i64 % nx, pair[0].cell as i64 / nx);
+                    for (dx, dy) in &stamps.via_to_via {
+                        let (tx, ty) = (x + *dx as i64, y + *dy as i64);
+                        if tx >= 0 && ty >= 0 && tx < nx && ty < ny && (*dx != 0 || *dy != 0) {
+                            near[(ty * nx + tx) as usize] = generation;
+                        }
+                    }
+                    near[pair[0].cell as usize] = 0;
+                }
+            }
+            // A via cell itself stays allowed even inside another own via's
+            // ring, so mark exact via cells last.
+            for branch in &self.nets[net as usize].branches {
+                for pair in branch.nodes.windows(2) {
+                    if pair[0].cell == pair[1].cell {
+                        near[pair[0].cell as usize] = 0;
+                    }
+                }
+            }
+            self.own_via_near = near;
+        }
         for (node, element) in targets {
             if hard && !self.escape_is_free(net, *node) {
                 continue;
@@ -1528,7 +1599,11 @@ impl<'a> Router<'a> {
             }
 
             let via_occupied = self.occupancy[via_map][cell] as f32;
-            if layers > 1 && !statics.via_blocked[cell] && !(hard && via_occupied > 0.0) {
+            if layers > 1
+                && !statics.via_blocked[cell]
+                && !(hard && via_occupied > 0.0)
+                && self.own_via_near[cell] != generation
+            {
                 let occupied = via_occupied;
                 let history = if self.cleanup {
                     0.0
@@ -2176,9 +2251,10 @@ impl<'a> Router<'a> {
         layer: usize,
         start: crate::geometry::Point,
         end: crate::geometry::Point,
+        width: f64,
     ) -> bool {
         let class = self.board.classes[self.board.nets[net as usize].class];
-        let half_width = class.trace_width / 2.0;
+        let half_width = width / 2.0;
         self.board.obstacles.iter().all(|obstacle| {
             if obstacle.net == Some(net)
                 || obstacle.layers & (1 << layer) == 0
@@ -2232,8 +2308,12 @@ impl<'a> Router<'a> {
                 }
                 let anchor = description.terminals[terminal as usize].anchor;
                 let center = self.grid.center_of(node.cell as usize);
+                let width = state
+                    .escapes
+                    .get(&node)
+                    .map_or(rules.trace_width, |(_, width)| *width);
                 if crate::geometry::distance(anchor, center) > 1.0e-7
-                    && self.stub_is_clear(net, node.layer as usize, anchor, center)
+                    && self.stub_is_clear(net, node.layer as usize, anchor, center, width)
                 {
                     if !state.escapes.contains_key(&node) {
                         stubs.push(route.segments.len());
@@ -2242,7 +2322,7 @@ impl<'a> Router<'a> {
                         layer: node.layer as usize,
                         start: anchor,
                         end: center,
-                        width: rules.trace_width,
+                        width,
                     });
                 }
             };
@@ -2258,11 +2338,15 @@ impl<'a> Router<'a> {
                 }
                 self.emit_run(&branch.nodes[run_start..index], &junctions, &rules, &mut route);
                 if layer_change {
-                    route.vias.push(Via {
-                        at: self.grid.center_of(branch.nodes[index].cell as usize),
-                        diameter: rules.via_diameter,
-                        drill: rules.via_drill,
-                    });
+                    // Through vias at one spot are one hole.
+                    let at = self.grid.center_of(branch.nodes[index].cell as usize);
+                    if !route.vias.iter().any(|via| via.at == at) {
+                        route.vias.push(Via {
+                            at,
+                            diameter: rules.via_diameter,
+                            drill: rules.via_drill,
+                        });
+                    }
                 }
                 run_start = index;
             }

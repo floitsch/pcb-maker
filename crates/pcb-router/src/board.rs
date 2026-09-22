@@ -92,6 +92,9 @@ pub struct Board {
     pub hole_clearance: f64,
     pub hole_to_hole: f64,
     pub classes: Vec<RuleClass>,
+    /// Narrowest track allowed on the board. A pad too narrow for its own
+    /// class's track is left with a stub of this width (a neck-down).
+    pub neck_width: f64,
     pub obstacles: Vec<Obstacle>,
     /// Indexed by `NetId`.
     pub nets: Vec<Net>,

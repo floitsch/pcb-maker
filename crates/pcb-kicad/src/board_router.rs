@@ -38,6 +38,9 @@ pub struct KiCadBoardRouterConfig {
     pub heuristic_weight: Option<f64>,
     #[serde(default)]
     pub present_cap: Option<f64>,
+    /// Narrowest track the board allows (neck-downs out of small pads).
+    #[serde(default)]
+    pub neck_width_mm: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -184,8 +187,94 @@ fn shape(geometry: &ObstacleGeometry) -> core::Shape {
     }
 }
 
-fn mask(layers: [bool; 2]) -> core::LayerMask {
-    layers[0] as u32 | (layers[1] as u32) << 1
+/// The board's copper layers in stack order: front, inner 1..n, back.
+pub(super) struct LayerTable {
+    pub names: Vec<String>,
+}
+
+impl LayerTable {
+    pub fn from_pcb(pcb: &Expr) -> Result<Self, String> {
+        let mut names: Vec<String> = pcb
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| entry.children().get(1).and_then(Expr::atom))
+            .filter(|name| name.ends_with(".Cu"))
+            .map(str::to_owned)
+            .collect();
+        let rank = |name: &str| -> (u8, u32) {
+            match name {
+                "F.Cu" => (0, 0),
+                "B.Cu" => (2, 0),
+                _ => (
+                    1,
+                    name.trim_start_matches("In")
+                        .trim_end_matches(".Cu")
+                        .parse()
+                        .unwrap_or(u32::MAX),
+                ),
+            }
+        };
+        names.sort_by_key(|name| rank(name));
+        if names.first().map(String::as_str) != Some("F.Cu")
+            || names.last().map(String::as_str) != Some("B.Cu")
+            || names.len() > 32
+        {
+            return Err(format!(
+                "unsupported copper layer stack {names:?}: expected F.Cu, inner layers, B.Cu"
+            ));
+        }
+        Ok(Self { names })
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|layer| layer == name)
+    }
+
+    pub fn all(&self) -> core::LayerMask {
+        (1u32 << self.len()) - 1
+    }
+
+    /// Mask for a KiCad layer list such as `("F.Cu" "In1.Cu")`, `*.Cu`
+    /// (all copper) or `F&B.Cu` (both outer layers).
+    pub fn mask_of<'a>(&self, names: impl Iterator<Item = &'a str>) -> Result<core::LayerMask, String> {
+        let mut mask = 0;
+        for name in names {
+            match name {
+                "*.Cu" => mask |= self.all(),
+                "F&B.Cu" => mask |= 1 | 1 << (self.len() - 1),
+                name if name.ends_with(".Cu") => {
+                    mask |= 1
+                        << self
+                            .index(name)
+                            .ok_or_else(|| format!("unknown copper layer {name:?}"))?;
+                }
+                _ => {}
+            }
+        }
+        Ok(mask)
+    }
+
+    /// Mask of an item with either a `layer` or a `layers` form.
+    pub fn mask_of_item(&self, item: &Expr) -> Result<core::LayerMask, String> {
+        if let Some(layer) = form_atom(item, "layer", 1) {
+            return self.mask_of(std::iter::once(layer));
+        }
+        let names: Vec<&str> = item
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .collect();
+        self.mask_of(names.into_iter())
+    }
 }
 
 fn routable_net(name: &str) -> bool {
@@ -204,6 +293,7 @@ fn lower(
     connect_pours: bool,
 ) -> Result<Lowered, String> {
     let loops = outline::board_loops(pcb)?;
+    let layers = LayerTable::from_pcb(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
     let mut nets: Vec<core::Net> = Vec::new();
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
@@ -274,7 +364,7 @@ fn lower(
                                     center: lowered.center,
                                     radius: diameter / 2.0,
                                 },
-                                layers: 0b11,
+                                layers: layers.all(),
                                 kind: core::ObstacleKind::Hole,
                                 net: None,
                                 clearance: local_clearance::pad_clearance(pad, item)?,
@@ -284,7 +374,8 @@ fn lower(
                             });
                         }
                     }
-                    if !lowered.layers[0] && !lowered.layers[1] {
+                    let pad_layers = layers.mask_of_item(pad)?;
+                    if pad_layers == 0 {
                         continue;
                     }
                     let net = node_net(pad)
@@ -294,7 +385,7 @@ fn lower(
                         .transpose()?;
                     obstacles.push(core::Obstacle {
                         shape: shape(&lowered.geometry),
-                        layers: mask(lowered.layers),
+                        layers: pad_layers,
                         kind: core::ObstacleKind::Copper,
                         net,
                         clearance: local_clearance::pad_clearance(pad, item)?,
@@ -305,7 +396,7 @@ fn lower(
                     if let Some(net) = net {
                         nets[net as usize].terminals.push(core::Terminal {
                             anchor: lowered.center,
-                            layers: mask(lowered.layers),
+                            layers: pad_layers,
                             pad: obstacles.len() - 1,
                             label,
                         });
@@ -313,7 +404,8 @@ fn lower(
                 }
             }
             Some("segment") => {
-                let Some(layer) = form_atom(item, "layer", 1).and_then(copper_layer_index) else {
+                let Some(layer) = form_atom(item, "layer", 1).and_then(|name| layers.index(name))
+                else {
                     continue;
                 };
                 let net = node_net(item)
@@ -347,7 +439,7 @@ fn lower(
                         center: form_xy(item, "at")?,
                         radius: form_f64(item, "size", 1)? / 2.0,
                     },
-                    layers: 0b11,
+                    layers: layers.all(),
                     kind: core::ObstacleKind::Copper,
                     net,
                     clearance: 0.0,
@@ -360,9 +452,11 @@ fn lower(
                 return Err("the board router does not yet lower existing arc tracks".into());
             }
             Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
-                if form_atom(item, "layer", 1).and_then(copper_layer_index).is_some() =>
+                if form_atom(item, "layer", 1).and_then(|name| layers.index(name)).is_some() =>
             {
-                let layer = form_atom(item, "layer", 1).and_then(copper_layer_index).unwrap();
+                let layer = form_atom(item, "layer", 1)
+                    .and_then(|name| layers.index(name))
+                    .unwrap();
                 for shape in copper_graphic_shapes(item)? {
                     obstacles.push(core::Obstacle {
                         shape,
@@ -390,7 +484,7 @@ fn lower(
                         shape: core::Shape::Polygon {
                             points: rule_area_polygon_points(item)?,
                         },
-                        layers: mask(rule_area_layer_mask(item)?),
+                        layers: layers.mask_of_item(item)?,
                         kind: core::ObstacleKind::Keepout,
                         net: None,
                         clearance: 0.0,
@@ -410,7 +504,7 @@ fn lower(
             shape: core::Shape::Polygon {
                 points: cutout.clone(),
             },
-            layers: 0b11,
+            layers: layers.all(),
             kind: core::ObstacleKind::Hole,
             net: None,
             clearance: 0.0,
@@ -419,7 +513,7 @@ fn lower(
             label: "board cutout".into(),
         });
     }
-    let pours = pours(pcb)?;
+    let pours = pours(pcb, &layers)?;
     let mut planes = Vec::new();
     for pour in &pours {
         // A pour without pads has nothing to connect.
@@ -439,8 +533,8 @@ fn lower(
                 classes.push(brush);
                 classes.len() - 1
             });
-        for layer in 0..2 {
-            if !pour.layers[layer] {
+        for layer in 0..layers.len() {
+            if pour.layers & (1 << layer) == 0 {
                 continue;
             }
             planes.push(core::Plane {
@@ -451,7 +545,9 @@ fn lower(
                 excluded: pours
                     .iter()
                     .filter(|other| {
-                        other.net != pour.net && other.layers[layer] && other.priority > pour.priority
+                        other.net != pour.net
+                            && other.layers & (1 << layer) != 0
+                            && other.priority > pour.priority
                     })
                     .map(|other| other.polygon.clone())
                     .collect(),
@@ -465,7 +561,13 @@ fn lower(
     }
     Ok(Lowered {
         board: core::Board {
-            layer_count: 2,
+            layer_count: layers.len(),
+            neck_width: config.neck_width_mm.unwrap_or_else(|| {
+                classes
+                    .iter()
+                    .map(|class| class.trace_width)
+                    .fold(f64::INFINITY, f64::min)
+            }),
             outline: loops.outline.clone(),
             edge_clearance: config.edge_clearance_mm,
             hole_clearance: config.hole_clearance_mm,
@@ -645,7 +747,7 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 
 struct Pour {
     net: String,
-    layers: [bool; 2],
+    layers: core::LayerMask,
     priority: i64,
     clearance: f64,
     min_thickness: f64,
@@ -653,7 +755,7 @@ struct Pour {
     polygon: Vec<[f64; 2]>,
 }
 
-fn pours(pcb: &Expr) -> Result<Vec<Pour>, String> {
+fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
     let mut result = Vec::new();
     for zone in pcb
         .children()
@@ -670,13 +772,13 @@ fn pours(pcb: &Expr) -> Result<Vec<Pour>, String> {
         if form_atom(zone, "fill", 1) == Some("no") {
             continue;
         }
-        let Ok(layers) = rule_area_layer_mask(zone) else {
-            // Pours on inner layers are outside the two-layer adapter.
+        let mask = layers.mask_of_item(zone)?;
+        if mask == 0 {
             continue;
-        };
+        }
         result.push(Pour {
             net: net.to_string(),
-            layers,
+            layers: mask,
             priority: form_atom(zone, "priority", 1)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
@@ -713,7 +815,8 @@ pub fn route_kicad_board(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let has_pours = !pours(&parse(&source)?)?.is_empty();
+    let parsed = parse(&source)?;
+    let has_pours = !pours(&parsed, &LayerTable::from_pcb(&parsed)?)?.is_empty();
     let connect = has_pours && config.pours != KiCadPourMode::Tracks;
     let mut result =
         route_kicad_board_once(source_directory, board_id, output_directory, config, connect)?;
@@ -773,6 +876,7 @@ fn route_kicad_board_once(
     let mut pcb = parse(&source)?;
     let copper_net_names = unambiguous_pad_net_names(&pcb)?;
     let Lowered { board } = lower(&pcb, config, connect_pours)?;
+    let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
 
     let mut router_config = core::Config {
@@ -817,7 +921,7 @@ fn route_kicad_board_once(
                 start: nanometres(segment.start),
                 end: nanometres(segment.end),
                 width: segment.width,
-                layer: copper_layer_name(segment.layer).into(),
+                layer: layer_names[segment.layer].clone(),
             }));
         }
         for via in &route.vias {
@@ -895,7 +999,7 @@ fn route_kicad_board_once(
             .map(|violation| KiCadBoardRouterViolation {
                 connection: board.nets[violation.net as usize].name.clone(),
                 other: violation.other.clone(),
-                layer: copper_layer_name(violation.layer).into(),
+                layer: layer_names[violation.layer].clone(),
                 at: violation.at,
                 required_mm: violation.required,
                 actual_mm: violation.actual,
