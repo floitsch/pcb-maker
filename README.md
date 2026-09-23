@@ -133,7 +133,7 @@ every router (full table and method in [docs/benchmarks.md](docs/benchmarks.md))
 | PIC programmer (34) | complete, 1 via, 1911 mm, 4 s | 1 open, 0 vias, 2101 mm, 7 s |
 | Complex hierarchy (50) | complete, 0 vias, 1330 mm, 1 s | 1 open, 0 vias, 1377 mm, 8 s |
 | ESP32-C6 DUT (42) | complete, 26 vias, 1274 mm, 22 s | complete, 29 vias, 1355 mm, 14 s |
-| Multichannel (79) | complete, 20 vias, 2578 mm, 75 s | 180 open (via class below minimum), 16 s |
+| Multichannel (79) | complete, 20 vias, 2578 mm, 75 s | 180 open, 16 s (likely an adapter setup problem, [being checked](docs/todo.md)) |
 | StickHub (45) | 4 open, 53 vias, 13 s | 2 open, 44 vias, 66 s |
 
 ```sh
