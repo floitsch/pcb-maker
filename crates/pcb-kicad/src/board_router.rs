@@ -617,7 +617,7 @@ pub(super) fn lower(
             layers: layers.all(),
             kind: core::ObstacleKind::Hole,
             net: None,
-            clearance: config.edge_clearance_mm,
+            clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
             blocks_tracks: true,
             blocks_vias: true,
             label: "board cutout".into(),
@@ -679,7 +679,9 @@ pub(super) fn lower(
                     .fold(f64::INFINITY, f64::min)
             }),
             outline: loops.outline.clone(),
-            edge_clearance: config.edge_clearance_mm,
+            // Arcs are flattened to chords inside the true curve; the
+            // chord error is added so copper stays clear of the real edge.
+            edge_clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
             hole_clearance: config.hole_clearance_mm,
             hole_to_hole: config.hole_to_hole_clearance_mm,
             classes,
