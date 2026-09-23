@@ -32,7 +32,11 @@ built from the KiCad demos, Olimex and generated ESP32 boards:
 - **Not there yet:** dense two-sided boards can leave the placer without a
   legal solution, large four-layer boards take 10–20 minutes, big copper
   pours on both layers of a two-layer board are still the weak spot, and
-  there is no differential-pair, length-matching or pin-swap support.
+  there is no differential-pair, length-matching or pin-swap support. The
+  hardest board in the corpus, a 186-footprint two-layer design with a
+  0.75 mm BGA and a 3.3 V pour on both layers, is DRC-clean but stops at
+  153 of 180 nets with the designer's placement and 161 with automatic
+  placement.
 
 Take a look at the [benchmarks](docs/benchmarks.md) before trusting any
 number here; they are re-run and rewritten as the code changes.
