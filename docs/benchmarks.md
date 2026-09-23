@@ -46,7 +46,7 @@ DRC error beyond what the stripped source or the designer's own board has.
 | dut-s2 | 432 tracks, 83 vias, 2 zones | 46/46, 44 vias, 1252 mm, 38 s (ladder 86 s), pours connect+skeleton — clean | 46/46, 51 vias, 1356 mm, 24.3 s, pours connect — clean |
 | dut-s3 | 392 tracks, 64 vias, 2 zones | 46/46, 38 vias, 1147 mm, 39 s (ladder 45 s), pours connect — clean | 46/46, 42 vias, 1144 mm, 17.7 s, pours connect — clean |
 | dut-esp32 | 345 tracks, 64 vias, 2 zones | 46/46, 41 vias, 1173 mm, 30 s (ladder 36 s), pours connect — clean | 46/46, 43 vias, 1446 mm, 29.7 s, pours tracks — clean |
-| ngdevkit (designer never finished it; headers fixed by `corpus.json`) | 115 tracks, 29 vias, 2 zones | 159/180, 1191 vias, 20 156 mm, 1105 s (ladder 1105 s, negotiation capped at 900 s), pours connect — **151 unconnected** | 173/180, 765 vias, 18 474 mm, 2604 s, pours tracks — **74 unconnected**, 29 edge-clearance and 4 clearance findings |
+| ngdevkit (designer never finished it; headers fixed by `corpus.json`) | 115 tracks, 29 vias, 2 zones | 153/180, 1060 vias, 18 730 mm, 1098 s (negotiation capped at 900 s), pours connect — **151 unconnected**; starved_thermal×41 | 161/180, 741 vias, 18 567 mm, 2566 s, pours tracks — **90 unconnected**; starved_thermal×8 |
 | sonde-xilinx | 208 tracks, 3 vias, 1 zones | 26/26, 2 vias, 575 mm, 3.42 s (ladder 18 s), pours connect+skeleton — clean | 26/26, 1 vias, 789 mm, 15.3 s, pours tracks — clean |
 | multichannel | 576 tracks, 29 vias, 2 zones | 79/79, 18 vias, 2090 mm, 40 s (ladder 47 s), pours connect — clean | 79/79, 39 vias, 2077 mm, 52.5 s, pours tracks — starved_thermal×1 |
 | stickhub | 1113 tracks, 87 vias, 5 zones | 44/45, 56 vias, 572 mm, 25 s (ladder 198 s), pours connect — **1 unconnected**; solder_mask_bridge×8 | **placement not legal** |
@@ -54,6 +54,12 @@ DRC error beyond what the stripped source or the designer's own board has.
 | video (4 layers, 371 nets, 189 footprints) | 7932 tracks, 808 vias, 2 zones | 362/371, 669 vias, 34180 mm, 936 s (ladder 950 s), pours connect — **45 unconnected**; starved_thermal×8 | timed out |
 | openair-max (4 layers, 120 nets, 210 footprints) | 1638 tracks, 410 vias, 34 zones | 120/120, 114 vias, 4365 mm, 180 s (ladder 467 s), pours tracks — solder_mask_bridge×2 | **placement not legal** |
 | tiny_tapeout (4 layers; its source fails KiCad DRC: 8 clearance errors, 3 shorts) | 2143 tracks, 405 vias, 2 zones | 78/108, 139 vias, 7053 mm, 189 s (ladder 583 s), pours tracks — **42 unconnected** | **placement not legal** |
+
+The ngdevkit row is from 2026-09-23 (after the cutout, edge-stub and
+unrouted-pad clearance fixes): no clearance or internal findings remain, only
+the designer's own USB-C shell pads on the edge; completion varies between
+runs (153–160 route, 161–173 layout) because the ladder's budgets are
+wall-clock based.
 
 Twelve of the thirteen two-layer boards are complete and clean in route
 mode (StickHub is one pad short with its pours kept; on the cold board it
