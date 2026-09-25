@@ -147,4 +147,5 @@ all other copper is boxed in, while renegotiation lets the neighbours move.
   against the current copper, then all re-stamped) was tried and converges
   far worse (Interf-U: 448 s and 44 vias against 81 s and 28 vias); the
   option `jacobi_batch` is kept off.
-- No pin/gate swapping, no differential pairs, no length tuning.
+- No gate swapping, no differential pairs, no length tuning. Pin swapping
+  is a separate step before routing ([pin-swap.md](pin-swap.md)).

@@ -89,6 +89,8 @@ angles as absolute values).
 - Congestion drives nudges of individual parts, but does not yet feed the
   global placer's density term (coupling step 3).
 - Silkscreen labels are not placed; the separate repair tool handles most.
-- No pin or gate swapping.
+- Pin swapping runs once after placement when the layout config names a
+  `pin_swaps` file ([pin-swap.md](pin-swap.md)); it is not yet part of the
+  move loop. No gate swapping.
 - The spectral solve is a direct O(n^3) cosine transform (64 bins); an FFT or
   a GPU kernel becomes relevant for boards with thousands of parts.

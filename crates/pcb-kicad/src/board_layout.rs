@@ -28,6 +28,10 @@ pub struct KiCadBoardLayoutConfig {
     /// Wall-clock budget for the move phase, in seconds.
     pub move_seconds: f64,
     pub placer: KiCadBoardPlacerConfig,
+    /// Interchangeable pins (`pin-swaps.json`; relative to the source
+    /// directory). The nets on them are permuted after placement.
+    pub pin_swaps: Option<PathBuf>,
+    pub pin_swap: KiCadPinSwapConfig,
 }
 
 impl Default for KiCadBoardLayoutConfig {
@@ -38,6 +42,8 @@ impl Default for KiCadBoardLayoutConfig {
             steps_mm: vec![0.5, 1.0, 2.0, 4.0],
             move_seconds: 600.0,
             placer: KiCadBoardPlacerConfig::default(),
+            pin_swaps: None,
+            pin_swap: KiCadPinSwapConfig::default(),
         }
     }
 }
@@ -64,6 +70,7 @@ pub struct KiCadBoardLayoutResult {
     pub first_vias: usize,
     pub first_length_mm: f64,
     pub moves: Vec<KiCadBoardLayoutMove>,
+    pub pin_swaps: Option<KiCadPinSwapResult>,
     pub routed: KiCadBoardRouterResult,
 }
 
@@ -152,6 +159,16 @@ pub fn layout_kicad_board(
             placement.unplaced, placement.illegal
         ));
     }
+
+    // Pins are assigned for the placement; the placed project (board and
+    // schematic) is what the result is built from.
+    let pin_swaps = match &config.pin_swaps {
+        Some(path) => {
+            let spec = read_pin_swap_spec(&source_directory.join(path))?;
+            Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
+        }
+        None => None,
+    };
 
     let placed_board = placed_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&placed_board)
@@ -399,6 +416,7 @@ pub fn layout_kicad_board(
         first_vias: first.1,
         first_length_mm: first.2,
         moves,
+        pin_swaps,
         routed,
     };
     let report_path = output_directory.join("board-layout.json");

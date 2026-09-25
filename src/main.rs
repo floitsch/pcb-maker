@@ -2464,6 +2464,43 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "swap-kicad-pins" => {
+            let usage = "usage: pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-swaps.json> [config.json]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let spec = pcb_kicad::read_pin_swap_spec(Path::new(
+                &arguments.next().ok_or_else(|| usage.to_string())?,
+            ))?;
+            let config: pcb_kicad::KiCadPinSwapConfig = match arguments.next() {
+                Some(path) => serde_json::from_str(
+                    &std::fs::read_to_string(&path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {path}: {error}"))?,
+                None => Default::default(),
+            };
+            let result = pcb_kicad::swap_kicad_pins(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &spec,
+                &config,
+            )?;
+            println!(
+                "{} groups, {} units: ratsnest {:.0} mm with {} crossings -> {:.0} mm with {} crossings; {} pins changed, {} schematic pins relabelled; {:.2}s",
+                result.groups,
+                result.units,
+                result.before.length_mm,
+                result.before.crossings,
+                result.after.length_mm,
+                result.after.crossings,
+                result.changes.len(),
+                result.schematic_labels_changed,
+                result.seconds,
+            );
+            Ok(())
+        }
         "place-kicad-board" => {
             let usage = "usage: pcb-maker place-kicad-board <source-directory> <board-id> <output-directory> [config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

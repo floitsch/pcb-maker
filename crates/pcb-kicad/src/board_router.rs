@@ -76,6 +76,13 @@ pub struct KiCadBoardRouterConfig {
     /// How nets with copper pours are connected.
     #[serde(default)]
     pub pours: KiCadPourMode,
+    /// Interchangeable pins (`pin-swaps.json`; relative to the source
+    /// directory). The nets on them are permuted before routing, in the
+    /// board and the schematic.
+    #[serde(default)]
+    pub pin_swaps: Option<PathBuf>,
+    #[serde(default)]
+    pub pin_swap: KiCadPinSwapConfig,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
@@ -193,6 +200,9 @@ pub struct KiCadBoardRouterResult {
     pub congestion: Vec<f32>,
     #[serde(skip)]
     pub grid_origin: [f64; 2],
+    /// The pin assignment chosen before routing, if pins were swappable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin_swaps: Option<KiCadPinSwapResult>,
 }
 
 fn shape(geometry: &ObstacleGeometry) -> core::Shape {
@@ -938,6 +948,26 @@ pub fn route_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardRouterResult, String> {
+    // With interchangeable pins, the ladder routes a copy with the pins
+    // assigned; every attempt copies its project from there.
+    let swapped_directory = output_directory.with_extension("swapped");
+    let (source_directory, pin_swaps) = match &config.pin_swaps {
+        Some(path) => {
+            let spec = read_pin_swap_spec(&source_directory.join(path))?;
+            let result =
+                swap_kicad_pins(source_directory, board_id, &swapped_directory, &spec, &config.pin_swap)?;
+            eprintln!(
+                "pin swaps: ratsnest {:.0} mm with {} crossings -> {:.0} mm with {} crossings, {} pins changed",
+                result.before.length_mm,
+                result.before.crossings,
+                result.after.length_mm,
+                result.after.crossings,
+                result.changes.len()
+            );
+            (swapped_directory.as_path(), Some(result))
+        }
+        None => (source_directory, None),
+    };
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
@@ -1086,7 +1116,11 @@ pub fn route_kicad_board(
             }
         }
     }
-    let result = best.expect("at least one routing attempt").1;
+    let mut result = best.expect("at least one routing attempt").1;
+    result.pin_swaps = pin_swaps;
+    if config.pin_swaps.is_some() {
+        fs::remove_dir_all(&swapped_directory).map_err(|error| error.to_string())?;
+    }
     let report_path = output_directory.join("board-router.json");
     fs::write(
         &report_path,
@@ -1270,6 +1304,7 @@ pub(super) fn finish_routed_board(
         nets,
         congestion: result.congestion.clone(),
         grid_origin: result.grid.origin,
+        pin_swaps: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

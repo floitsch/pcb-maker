@@ -82,6 +82,11 @@ pub use board_placer::{
 };
 mod board_router;
 mod outline;
+mod pin_swap;
+pub use pin_swap::{
+    KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,
+    read_pin_swap_spec, swap_kicad_pins, swap_kicad_pins_in_place,
+};
 mod shrink;
 pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
