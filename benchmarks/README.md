@@ -3,6 +3,10 @@
 Cross-tool cold-input manifests and their execution contract are documented in
 [`competitive/README.md`](competitive/README.md).
 
+Boards from the breadboard fence project (a dense mixed board, 2 and 4
+layers, with an issue log and feature targets such as pin swapping and
+placement constraints) are in [`fence/README.md`](fence/README.md).
+
 ## Active declaration-to-KiCad ladder
 
 `esp32-c3-ladder/declaration.json` is the system pipeline ladder. Rung 0 keeps

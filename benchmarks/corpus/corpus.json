@@ -92,6 +92,41 @@
       "name": "tinytapeout-4l",
       "directory": "benchmarks/real/external/_downloads/kicad-src/demos/tiny_tapeout",
       "board_id": "tinytapeout-demo"
+    },
+    {
+      "name": "fence-v4-4l",
+      "directory": "benchmarks/fence/v4-4layer/fence",
+      "board_id": "fence",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "J4", "U2", "C3", "C4", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"]}},
+      "note": "breadboard fence v4, 4 layers (benchmarks/fence/README.md): rows cross between resistor networks and two LQFP-44 switches; In1.Cu keeps its no-tracks rule area (issue 9)"
+    },
+    {
+      "name": "fence-esp32-v4-4l",
+      "directory": "benchmarks/fence/v4-4layer/fence-esp32",
+      "board_id": "fence-esp32",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "J4", "RN9", "U2", "C3", "C4", "TP1", "TP2", "TP3", "TP4", "U3", "C5", "C6", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"]}},
+      "note": "as fence-v4-4l plus an ESP32-C3 module whose antenna overhangs the outline"
+    },
+    {
+      "name": "fence-v4-2l",
+      "directory": "benchmarks/fence/v4-2layer/fence",
+      "board_id": "fence",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "J4", "U2", "C3", "C4", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"]}},
+      "note": "the v4 fence on 2 layers with the 4-layer placement; not routable so far (benchmarks/fence/README.md)"
+    },
+    {
+      "name": "fence-esp32-v4-2l",
+      "directory": "benchmarks/fence/v4-2layer/fence-esp32",
+      "board_id": "fence-esp32",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "J4", "RN9", "U2", "C3", "C4", "TP1", "TP2", "TP3", "TP4", "U3", "C5", "C6", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"]}},
+      "note": "as fence-v4-2l, ESP32 variant"
+    },
+    {
+      "name": "fence-keepout",
+      "directory": "benchmarks/fence/keepout-in-footprint",
+      "board_id": "fence-esp32",
+      "layout": {"placer": {"fixed_patterns": ["J*", "RN*"], "fixed": ["U1", "C1", "C2", "J4", "U2", "C3", "C4", "U3", "C5", "C6", "U4", "C8", "C9", "U5", "C10", "C11"]}},
+      "note": "v1 fence, ESP32 variant, 2 layers, without the board-level copy of the antenna keepout: pass means no copper in the footprint keepout (issue 1 in benchmarks/fence/README.md)"
     }
   ]
 }

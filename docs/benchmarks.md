@@ -206,3 +206,16 @@ The KiCad demo repository also has two very large boards (jetson-agx-thor, vme-w
 footprints, 10-12 layers) as long-term targets. More open boards (Olimex and
 others) can be added to `corpus.json`; boards whose source fails KiCad's checks
 for other reasons than the baseline subtraction covers should be skipped.
+
+## Breadboard fence boards (added 2026-09-25)
+
+[`benchmarks/fence/`](../benchmarks/fence/README.md) holds the boards of a
+separate hardware project that uses pcb-maker as its placer and router: a
+dense 76 × 31 mm board where 30 row nets each cross between a resistor
+network and one of two LQFP-44 crosspoint switches. Five of them are
+`corpus.json` entries (`fence-*`): the current 4-layer boards (complete so
+far), the same boards on 2 layers (not routable so far) and a footprint
+keepout test. Its README also carries an issue log of what pcb-maker got
+wrong on these boards (footprint keepouts ignored, signals on a plane layer,
+no placement constraints, no pin swapping) with a benchmark and a pass
+criterion for each.

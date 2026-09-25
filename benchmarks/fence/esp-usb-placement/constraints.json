@@ -1,0 +1,59 @@
+{
+ "version": 1,
+ "edge": [
+  {
+   "part": "U3",
+   "edge": "left",
+   "flush": true,
+   "overhang": {
+    "edge": "top",
+    "feature": "antenna keepout",
+    "beyond_outline": true
+   }
+  },
+  {
+   "part": "J4",
+   "edge": "left",
+   "opening_outwards": true
+  }
+ ],
+ "relative": [
+  {
+   "part": "J4",
+   "below": "U3",
+   "max_gap_mm": 3
+  }
+ ],
+ "near": [
+  {
+   "part": "U2",
+   "part_of": "J4",
+   "max_mm": 10
+  },
+  {
+   "part": "U2",
+   "part_of": "U3",
+   "max_mm": 12
+  },
+  {
+   "part": "C5",
+   "pin_of": "U3:3",
+   "max_mm": 6
+  },
+  {
+   "part": "C6",
+   "pin_of": "U3:3",
+   "max_mm": 6
+  },
+  {
+   "part": "C3",
+   "pin_of": "U2:3",
+   "max_mm": 4
+  },
+  {
+   "part": "C4",
+   "pin_of": "U2:2",
+   "max_mm": 4
+  }
+ ]
+}
