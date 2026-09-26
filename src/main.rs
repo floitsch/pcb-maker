@@ -6218,10 +6218,20 @@ fn board_router_config(
     board_id: &str,
 ) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
     match path {
-        None | Some("auto") => pcb_kicad::resolve_project_rules(
-            &Path::new(source).join(format!("{board_id}.kicad_pro")),
-            &Path::new(source).join(format!("{board_id}.kicad_pcb")),
-        ),
+        None | Some("auto") => {
+            let mut config = pcb_kicad::resolve_project_rules(
+                &Path::new(source).join(format!("{board_id}.kicad_pro")),
+                &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+            )?;
+            // Experiment hook for machines without kicad-cli.
+            if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
+                config.skip_native_verification = true;
+            }
+            if let Some(batch) = std::env::var("PCB_JACOBI_BATCH").ok().and_then(|v| v.parse().ok()) {
+                config.jacobi_batch = Some(batch);
+            }
+            Ok(config)
+        }
         Some(path) => {
             let mut config = pcb_kicad::KiCadBoardRouterConfig::from_json(
                 serde_json::from_str(
