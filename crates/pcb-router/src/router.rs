@@ -235,6 +235,21 @@ fn junction_hosts(branches: &[Branch], keep: &[bool]) -> HashMap<Node, usize> {
     hosts
 }
 
+/// Experiment hook: `PCB_ROUTER_SEED` perturbs the net order and seeds the
+/// history with noise, so the same board can be routed many different ways.
+fn experiment_seed() -> Option<u64> {
+    std::env::var("PCB_ROUTER_SEED").ok()?.parse().ok()
+}
+
+/// splitmix64 mapped to [0, 1).
+fn unit_noise(state: &mut u64) -> f64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+}
+
 fn find(parent: &mut [usize], mut element: usize) -> usize {
     while parent[element] != element {
         parent[element] = parent[parent[element]];
@@ -533,6 +548,15 @@ impl Router {
             iterations: 0,
             grid,
         };
+        if let Some(seed) = experiment_seed() {
+            let mut state = seed;
+            let amplitude = config.history_increment as f32;
+            for layer in router.history.iter_mut().chain(router.tile_history.iter_mut()) {
+                for value in layer.iter_mut() {
+                    *value = amplitude * unit_noise(&mut state) as f32;
+                }
+            }
+        }
         router.nets = (0..board.nets.len())
             .map(|net| router.prepare_net(net as NetId))
             .collect();
@@ -2352,11 +2376,18 @@ impl Router {
             let (x0, y0, x1, y1) = router.window(net, 0.0);
             (x1 - x0) + (y1 - y0)
         };
+        let mut state = experiment_seed().unwrap_or(0) ^ 0x5DEE_CE66;
+        let jitter: Vec<f64> = (0..self.board.nets.len())
+            .map(|_| match experiment_seed() {
+                Some(_) => 0.6 + 0.8 * unit_noise(&mut state),
+                None => 1.0,
+            })
+            .collect();
         order.sort_by_key(|net| {
             (
                 self.nets[*net as usize].plane.is_empty(),
                 self.board.nets[*net as usize].terminals.len() > 8,
-                span(self, *net),
+                (span(self, *net) as f64 * jitter[*net as usize]) as u64,
                 *net,
             )
         });
@@ -2652,6 +2683,22 @@ impl Router {
                 stalled = 0;
             } else {
                 stalled += 1;
+            }
+            // Experiment hook: reroute only a random fraction of the
+            // conflicted nets per iteration (damped Jacobi).
+            if let Some(fraction) = std::env::var("PCB_ROUTER_REROUTE_FRACTION")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+            {
+                let mut state = experiment_seed().unwrap_or(0) ^ (iteration as u64).wrapping_mul(0x2545_F491);
+                let kept: Vec<NetId> = conflicted
+                    .iter()
+                    .copied()
+                    .filter(|_| unit_noise(&mut state) < fraction)
+                    .collect();
+                if !kept.is_empty() {
+                    conflicted = kept;
+                }
             }
             pending = conflicted;
             present =
