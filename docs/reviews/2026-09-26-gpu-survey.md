@@ -45,7 +45,9 @@ on the same skeleton, which keeps what makes the current router good
    price noise; or keep Gauss–Seidel semantics with small batches of nets
    whose *corridors* (not bounding boxes) are disjoint, committing winners by
    priority (deterministic reservations). Which one is needed is an empirical
-   question; the batch-size measurement below is the first data point.
+   question. Measured here (below): on the densest two-layer board every
+   snapshot variant, even pairs of nets, leaves 14–27 connections open where
+   the serial router completes, so dense boards need the Gauss–Seidel form.
 3. **Clearance as fields.** Either per-class occupancy convolved with a disc
    of radius w_a/2 + clr + w_b/2 (linear, so K² convolutions per iteration for
    the whole board, own contribution subtracted), or a top-2-owner distance
@@ -222,9 +224,9 @@ f16 or u16 fields, corridors instead of bounding boxes (report 6 estimates a
 - **Jacobi or Gauss–Seidel.** Reports 1, 3, 5 and 6 expect damped Jacobi
   (random subsets, stickiness) to converge within 1.5–2× of serial
   iterations. Report 2 doubts it for the endgame and prefers small
-  Gauss–Seidel batches with ordered commits plus many replicas. Our own
-  Jacobi run supports the caution; the batch-size measurement below is the
-  first curve.
+  Gauss–Seidel batches with ordered commits plus many replicas. The
+  measurement below sides with report 2 for dense boards (untested: the
+  proximal term).
 - **Resolution.** Report 5 argues for 0.1–0.125 mm plus continuous
   legalization; report 3 says the h/√2 rasterization margin eats too much of
   a 0.2 mm clearance at 0.125 mm and wants ≤ 0.07 mm near dense pins.
@@ -244,13 +246,109 @@ f16 or u16 fields, corridors instead of bounding boxes (report 6 estimates a
 All CPU, on this container (4 cores), boards from the corpus without native
 KiCad (`skip_native_verification`), one Rayon thread per run.
 
-EXPERIMENTS_PLACEHOLDER
+Boards are the corpus copies stripped of tracks and vias (pours kept) and
+routed with the project rules (`auto`), exactly as `benchmarks/corpus/run.py`
+does, but without the final native KiCad gate (`PCB_SKIP_NATIVE`, no
+kicad-cli in this container); one Rayon thread per run, four runs at a time
+on four cores. The unseeded runs reproduce the published benchmark rows (PIC:
+34/34, 2 vias, 1520 mm). Hooks used, all opt-in and inert by default:
+`PCB_ROUTER_SEED` (jitters the net order and seeds the history with noise of
+one history increment), `PCB_ROUTER_REROUTE_FRACTION` (reroute only that
+random fraction of the conflicted nets per iteration), `PCB_JACOBI_BATCH`.
+A first attempt that routed the unstripped demo boards (old tracks as
+obstacles) was discarded.
+
+### 1. Seed spread of the existing router
+
+| Board | Unseeded | Seeds | Complete | Vias (min / median / max) | Copper mm (min / median) | Negotiation iterations |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| PIC | 2 vias, 1520 mm | 15 | 15 | 0 / 1 / 5 | 1491 / 1525 | 9–23 |
+| ESP32-C3 DUT | 25 vias, 1102 mm | 15 | 15 | 24 / 27 / 33 | 1043 / 1078 | 13–79 |
+| Multichannel | 18 vias, 2090 mm | 11 | 11 | 14 / 17 / 23 | 2069 / 2101 | 10–50 |
+| Interf-U | 28 vias, 4735 mm | 7 | 6 | 24 / 68 / 82 | 4454 / 4660 | 21–108 |
+
+- The router is far from deterministic in outcome once the order and the
+  initial prices move a little: via counts spread by ±20–40 %, iteration
+  counts by 3–8×. The median seed is about as good as the unseeded run.
+- Best of 7–15 seeds saves vias on every board: PIC 2 → 0, DUT 25 → 24,
+  Multichannel 18 → 14, Interf-U 28 → 24. That is the "cheap runs, keep the
+  best" effect, available today on idle CPU cores without any GPU.
+- No correlated failure on these boards: all complete. The boards where it
+  would matter (ngdevkit, the four-layer ones) were not in this run
+  (ngdevkit's source is not in the container; the four-layer boards take
+  10–20 minutes per run).
+- **A side finding worth a TODO.** Interf-U's via counts are bimodal
+  (24–31 or 68–82) because of the attempt ladder, not the search: the ladder
+  keeps the first clean attempt. The first rung (pours connected) leaves
+  4–21 connections open depending on the seed; the second (plane skeleton)
+  is clean for 3 of 7 seeds with 68–82 vias and stops there, while the third
+  (pour nets as tracks) produces 24–31 vias whenever it is reached. Running
+  the remaining rungs when a clean result is expensive, or comparing rungs by
+  vias once clean, would help today.
+
+### 2. Parallel nets against one snapshot (the question behind every GPU router)
+
+`jacobi_batch` groups the nets whose windows overlap everything (the long
+ones; nets in disjoint windows keep their disjoint batches) into groups of B
+that route against the same snapshot. "30 %" and "15 %" additionally reroute
+only that fraction of the conflicted nets per iteration (damped Jacobi, no
+stickiness term).
+
+| Board | Serial | B = 2 | B = 8 | B = 32 | all | all, 30 % | all, 15 % |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PIC | 0 open, 2 vias | 0, 1 | 0, 0 | 0, 2 | 0, 2 | 0, 0 | 0, 0 |
+| ESP32-C3 DUT | 0 open, 25 vias | 0, 29 | 0, 38 | 0, 32 | 0, 34 | 0, 38 | 0, 39 |
+| Multichannel | 0 open, 18 vias | 0, 21 | 0, 25 | 0, 18 | 0, 24 | 0, 20 | 0, 16 |
+| Interf-U | 0 open, 28 vias | **27 open**, 57 | **26**, 61 | **25**, 33 | **21**, 46 | **14**, 71 | **25**, 74 |
+
+(cells: open connections, vias)
+
+- On the three easier boards every variant completes, at a cost of up to
+  +56 % vias (DUT); the damped variants need up to 3.6× the iterations
+  (Multichannel 134 against 37).
+- On Interf-U, the densest two-layer board, *every* snapshot variant fails,
+  even pairs: 14–27 connections stay open where the serial router completes.
+  The negotiation oscillates, stops improving and is cut off by the stall
+  rule after 27–35 iterations (serial: 70). Rerouting a random 30 % halves
+  the damage but does not remove it.
+- This decides the main disagreement between the reports in favour of
+  report 2: a GPU router for dense boards has to keep Gauss–Seidel semantics
+  where nets overlap (small batches of nets with disjoint *corridors*,
+  deterministic reservations with ordered commits, windowed endgames) and
+  take its parallelism from replicas, disjoint windows and the search kernel
+  itself. Damped Jacobi is fine for the coarse level and easy boards.
+  The proximal "stay on your old path" term was not tested and is the next
+  thing to try before ruling damped Jacobi out.
+
+### 3. The screened field (the fluid idea's diffusion part)
+
+`experiments/field-routing/screened_and_sweeps.py`, exact sparse solves on
+the 2026-09-07 wall fixture: plain Laplace descent 42 cells (4-neighbour);
+screened, descending −log u: 28 at leak 0.1 and 0.01 (the shortest), 34 at
+0.001. With 8 neighbours the greedy descent gets 21.8 against the optimal
+20.97 for both. The detour of the earlier experiment was the L² energy, not
+fields as such.
+
+### 4. Prefix-min sweeps against Dijkstra
+
+Same script. The field computed only by directional prefix-min scans
+(`d ← S + cummin(d − S)` along rows, columns, diagonals, both directions)
+equals Dijkstra on the wall fixture and on PCB-like grids (pad rows, walls
+with openings) up to 512×512. Rounds to convergence: 2–8 with 4 neighbours,
+9–24 with 8 (octile ties make zig-zag paths with many "bends"). Each round is
+8 line passes over the window, so a 256×256 window costs about 200 passes
+where Dijkstra pops 65 k nodes: more total work, all of it parallel. The
+prefix-sum form with a large finite obstacle cost loses precision on big
+grids (max error 6·10⁻⁴ on distances of ~1000 at 512×512); the tropical-map
+scan, which never subtracts, is the one to implement in WGSL.
 
 ## Suggested order
 
-1. Finish the two CPU measurements that decide the architecture (above):
-   how much seeds spread and where the failures sit; how quality falls with
-   batch size, with and without damping.
+1. Cheap wins the measurements exposed, no GPU needed: a seeded portfolio
+   on idle cores (best of N saved 4–100 % of vias), and a ladder that does
+   not stop at an expensive clean rung. Then repeat the seed run on
+   ngdevkit and the four-layer boards to see whether failures are
+   correlated, and test damped Jacobi with the proximal term.
 2. Validate the primitive on the GPU: a wgpu sweep kernel (tile-local scans,
    packed u32 atomicMin) for single nets, then 128 concurrent windows, against
    the CPU A\* on windows cut from real boards. Go/no-go: at least 20× one
