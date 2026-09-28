@@ -94,13 +94,17 @@ impl State<'_> {
             }
             let other_component = &self.problem.components[other];
             if side.collides(other_component.side) {
-                if component.hollow.is_empty() && other_component.hollow.is_empty() {
+                if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
                     total += area((rect.center, rect.half), (body.center, body.half));
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
                     // spacing, as the rectangles are) only.
-                    let blocking = |part: &crate::problem::Component, pose: Pose, whole: &Rect| -> Vec<(Point, Point)> {
-                        if part.hollow.is_empty() {
+                    let blocking = |part: &crate::problem::Component,
+                                    against: &crate::problem::Component,
+                                    pose: Pose,
+                                    whole: &Rect|
+                     -> Vec<(Point, Point)> {
+                        if !part.hollow_for(against) {
                             return vec![(whole.center, whole.half)];
                         }
                         let margin = self.problem.spacing / 2.0;
@@ -109,8 +113,8 @@ impl State<'_> {
                             .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
                             .collect()
                     };
-                    let theirs = blocking(other_component, self.poses[other], body);
-                    for mine in blocking(component, pose, &rect) {
+                    let theirs = blocking(other_component, component, self.poses[other], body);
+                    for mine in blocking(component, other_component, pose, &rect) {
                         for other in &theirs {
                             total += area(mine, *other);
                         }

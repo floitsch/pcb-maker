@@ -220,6 +220,10 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
     // Inside the outline is fine; on the pad is not.
     assert!(legal(&problem, 25.0));
     assert!(!legal(&problem, 17.0));
+    // A part with holes may not sit inside it (KiCad's pth_inside_courtyard).
+    problem.components[1].far_side = vec![[-0.5, -0.5, 0.5, 0.5]];
+    assert!(!legal(&problem, 25.0));
+    problem.components[1].far_side.clear();
     // Without the hollow boxes the body blocks.
     problem.components[0].hollow.clear();
     assert!(!legal(&problem, 25.0));

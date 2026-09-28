@@ -149,6 +149,19 @@ impl Component {
         self.boxes(&self.hollow, pose)
     }
 
+    /// Whether the part has holes (a through-hole part, a mounting hole).
+    /// Holes may not lie inside another part's courtyard, even a hollow
+    /// one's (KiCad's `pth_inside_courtyard`).
+    pub fn has_holes(&self) -> bool {
+        !self.far_side.is_empty()
+    }
+
+    /// Whether the part blocks `other` with its blocking boxes only, not
+    /// its whole body.
+    pub fn hollow_for(&self, other: &Component) -> bool {
+        !self.hollow.is_empty() && !other.has_holes()
+    }
+
     /// The area the part takes on its own side.
     pub fn blocking_area(&self) -> f64 {
         if self.hollow.is_empty() {

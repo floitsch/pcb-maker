@@ -11,7 +11,7 @@ const DEFAULT_TRACK: f64 = 0.2;
 const DEFAULT_VIA: f64 = 0.6;
 const DEFAULT_DRILL: f64 = 0.3;
 
-fn wildcard_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
     let (mut p, mut t) = (0, 0);

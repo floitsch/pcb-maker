@@ -152,6 +152,16 @@ pub fn layout_kicad_board(
     }
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
+    // Requested net classes set their nets' rules (and the spacing).
+    let with_classes;
+    let router_config = if router_config.net_classes.is_empty() {
+        router_config
+    } else {
+        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)?;
+        &with_classes
+    };
     let mut placer_config = resolve_constraints(&config.placer, source_directory)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
@@ -188,6 +198,9 @@ pub fn layout_kicad_board(
         add_pour_zones(&mut pcb, &router_config.add_pours)?;
         fs::write(&placed_board, format!("{}\n", encode(&pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
+    }
+    if !router_config.net_classes.is_empty() {
+        crate::net_classes::write_net_classes(&placed_directory, board_id, &pcb, &router_config.net_classes)?;
     }
     let layers = LayerTable::from_pcb(&pcb)?;
     let has_pours = !pours(&pcb, &layers)?.is_empty();

@@ -36,7 +36,8 @@ Full reference: [constraints.md](constraints.md).
 - **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be;
   **`back`/`front`** on which side.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
-  module above parts): only its pads block.
+  module above parts): only its pads block. Parts with holes still stay
+  out, as KiCad forbids holes inside a courtyard.
 - **`near`, `group` and `relative`** keep parts together.
 - **`overhang`** lets a module's antenna reach beyond an edge.
 
@@ -63,6 +64,14 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `[{"net": "GND", "layers": ["B.Cu"]}]`. Each covers the board outline;
     pads connect to it, and islands are stitched with vias. A layer where
     that net already has a zone is skipped.
+  - `net_classes`: track widths and clearances for named nets, such as
+    `[{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.6,
+    "clearance_mm": 0.3}]`. The fields are `via_diameter_mm` and
+    `via_drill_mm` besides those two. Nets take KiCad wildcards (`*`, `?`)
+    and may leave out the sheet path's leading `/`. The first class naming
+    a net wins. The classes go into the result's `.kicad_pro` ahead of the
+    project's own, so KiCad and its DRC use the same rules. Without them,
+    net classes come from the project.
 - **Router options in layout mode.** The same file goes in the router
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.

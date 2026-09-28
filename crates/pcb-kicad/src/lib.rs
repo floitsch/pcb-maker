@@ -83,6 +83,8 @@ pub use board_placer::{
 mod board_router;
 mod describe;
 mod flip;
+mod net_classes;
+pub use net_classes::KiCadNetClassRequest;
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{

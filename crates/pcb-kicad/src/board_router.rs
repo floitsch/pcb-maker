@@ -94,6 +94,11 @@ pub struct KiCadBoardRouterConfig {
     /// bottom: each covers the board outline on its layers.
     #[serde(default)]
     pub add_pours: Vec<KiCadPourRequest>,
+    /// Net classes to add: track width, clearance and vias for named nets,
+    /// ahead of the project's own classes and written into its
+    /// `.kicad_pro`.
+    #[serde(default)]
+    pub net_classes: Vec<crate::net_classes::KiCadNetClassRequest>,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted before routing, in the
     /// board and the schematic.
@@ -1117,11 +1122,23 @@ pub fn route_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardRouterResult, String> {
+    // Requested net classes set their nets' rules.
+    let with_classes;
+    let config = if config.net_classes.is_empty() {
+        config
+    } else {
+        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        with_classes = crate::net_classes::with_net_classes(config, &parse(&text)?)?;
+        &with_classes
+    };
     // With interchangeable pins, the ladder routes a copy with the pins
     // assigned; every attempt copies its project from there.
-    // Requested pours go into a copy of the project that the attempts use.
+    // Requested pours and net classes go into a copy of the project that the
+    // attempts use.
     let poured_directory = output_directory.with_extension("poured");
-    let source_directory = if config.add_pours.is_empty() {
+    let prepared = !config.add_pours.is_empty() || !config.net_classes.is_empty();
+    let source_directory = if !prepared {
         source_directory
     } else {
         if poured_directory.exists() {
@@ -1133,6 +1150,9 @@ pub fn route_kicad_board(
         let mut pcb = parse(&text)?;
         add_pour_zones(&mut pcb, &config.add_pours)?;
         fs::write(&board, format!("{}\n", encode(&pcb))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
+        if !config.net_classes.is_empty() {
+            crate::net_classes::write_net_classes(&poured_directory, board_id, &pcb, &config.net_classes)?;
+        }
         poured_directory.as_path()
     };
     let swapped_directory = output_directory.with_extension("swapped");
@@ -1355,7 +1375,7 @@ pub fn route_kicad_board(
     }
     let mut result = best.expect("at least one routing attempt").1;
     result.pin_swaps = pin_swaps;
-    if !config.add_pours.is_empty() {
+    if prepared {
         fs::remove_dir_all(&poured_directory).map_err(|error| error.to_string())?;
     }
     if config.pin_swaps.is_some() {

@@ -162,7 +162,8 @@ pub fn is_legal(
         }
         let other_side = problem.components[other].side;
         if side.collides(other_side) {
-            let hollow = !problem.components[index].hollow.is_empty() || !problem.components[other].hollow.is_empty();
+            let (mine, theirs) = (&problem.components[index], &problem.components[other]);
+            let hollow = mine.hollow_for(theirs) || theirs.hollow_for(mine);
             if if hollow {
                 hollow_overlap(problem, index, pose, other, poses[other])
             } else {
@@ -180,9 +181,9 @@ pub fn is_legal(
 /// Whether two parts on the same side meet where one of them is hollow:
 /// only its blocking boxes count.
 fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
-    let blocking = |index: usize, pose: Pose| -> Vec<Rect> {
+    let blocking = |index: usize, pose: Pose, other: usize| -> Vec<Rect> {
         let component = &problem.components[index];
-        if component.hollow.is_empty() {
+        if !component.hollow_for(&problem.components[other]) {
             return vec![rect(problem, index, pose)];
         }
         component
@@ -195,8 +196,8 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
             })
             .collect()
     };
-    let theirs = blocking(b, pose_b);
-    blocking(a, pose_a)
+    let theirs = blocking(b, pose_b, a);
+    blocking(a, pose_a, b)
         .into_iter()
         .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, problem.spacing)))
 }
