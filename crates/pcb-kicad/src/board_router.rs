@@ -61,6 +61,15 @@ pub struct KiCadBoardRouterConfig {
     /// connections, then vias, then copper. `None`/1: one way.
     #[serde(default)]
     pub seeds: Option<usize>,
+    /// The first of the `seeds` (0: the deterministic order).
+    #[serde(default)]
+    pub first_seed: Option<u64>,
+    /// An attempt that leaves connections open is routed again this many
+    /// perturbed ways at once (default 4; 0: never). Many failures depend
+    /// on the order: Starling fails unseeded and completes for 5 of 8
+    /// seeds.
+    #[serde(default)]
+    pub retry_seeds: Option<usize>,
     /// Route pour nets first as a fixed tree on their plane layer.
     #[serde(default)]
     pub plane_skeleton: Option<bool>,
@@ -1096,7 +1105,44 @@ pub fn route_kicad_board(
                 "tracks"
             }
             .into();
-            let opens = open(&result, &directory);
+            let mut opens = open(&result, &directory);
+            // Open connections often depend on the order: route the same
+            // attempt a few perturbed ways and keep the better board.
+            let retry = config.retry_seeds.unwrap_or(4);
+            if opens.0 > 0
+                && retry > 0
+                && attempt.seeds.unwrap_or(1) <= 1
+                && attempt.first_seed.unwrap_or(0) == 0
+                && result.routing_seconds <= budget
+            {
+                let mut seeded = attempt.clone();
+                seeded.seeds = Some(retry);
+                seeded.first_seed = Some(1);
+                let retry_directory = output_directory.with_extension("seeds");
+                if retry_directory.exists() {
+                    fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
+                }
+                let mut other =
+                    route_kicad_board_once(source_directory, board_id, &retry_directory, &seeded, *connect)?;
+                other.pours = result.pours.clone();
+                let other_opens = open(&other, &retry_directory);
+                eprintln!(
+                    "attempt again with {retry} seeds: {} open, {} vias, {:.1} s",
+                    other_opens.0, other.vias, other.routing_seconds
+                );
+                if (other_opens, other.vias, other.length_mm)
+                    .partial_cmp(&(opens, result.vias, result.length_mm))
+                    .is_some_and(|order| order.is_lt())
+                {
+                    fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+                    fs::rename(&retry_directory, &directory).map_err(|error| error.to_string())?;
+                    other.routing_seconds += result.routing_seconds;
+                    result = other;
+                    opens = other_opens;
+                } else {
+                    fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
+                }
+            }
             eprintln!(
                 "attempt pours={} pitch={}: {} open, {} starved, {} vias, {:.1} s",
                 result.pours,
@@ -1157,15 +1203,15 @@ pub fn route_kicad_board(
     Ok(result)
 }
 
-/// Routes `board` with the deterministic order and `count - 1` perturbed
-/// ones in parallel, and returns the best result.
-fn route_seeds(board: &core::Board, config: &core::Config, count: usize) -> core::RoutingResult {
+/// Routes `board` with seeds `first..first + count` in parallel (seed 0 is
+/// the deterministic order) and returns the best result.
+fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: usize) -> core::RoutingResult {
     let results: Vec<(Option<u64>, core::RoutingResult)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..count as u64)
+        let handles: Vec<_> = (first..first + count.max(1) as u64)
             .map(|index| {
                 let mut seeded = config.clone();
                 seeded.seed = (index > 0).then_some(index);
-                seeded.verbose = config.verbose && index == 0;
+                seeded.verbose = config.verbose && index == first;
                 scope.spawn(move || (seeded.seed, core::route(board, &seeded)))
             })
             .collect();
@@ -1433,7 +1479,12 @@ fn route_kicad_board_once(
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
     let result = match &config.frame_directory {
-        None if config.seeds.unwrap_or(1) > 1 => route_seeds(&board, &core_config(config), config.seeds.unwrap_or(1)),
+        None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => route_seeds(
+            &board,
+            &core_config(config),
+            config.first_seed.unwrap_or(0),
+            config.seeds.unwrap_or(1),
+        ),
         None => core::route(&board, &core_config(config)),
         Some(root) => {
             let directory = attempt_frame_directory(root)?;
