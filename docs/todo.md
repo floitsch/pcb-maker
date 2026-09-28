@@ -40,3 +40,19 @@ router and placer items.
   every board tried (PIC 2 → 0, Multichannel 18 → 14, Interf-U 28 → 24).
   Idle cores could run seeds in parallel and keep the best board.
 
+## Placer
+
+- **Legalization loses 30-90 % of the global placement's wirelength.**
+  Examples: PIC 678 → 1306 mm, hierarchy 493 → 907-1169 mm, Interf-U
+  3206 → 4077 mm; measured 2026-09-26/28, graph-first experiment on branch
+  `experiment/graph-first-placement`.
+  - **Not the anneal's random walk alone.** A minimum-displacement overlap
+    relaxation in its place (tried 2026-09-28, reverted) ends no better
+    (hierarchy 974, Interf-U 5301).
+  - **The global placement's wirelength is partly fictitious.** At the 4 %
+    bin-overflow stop, parts still overlap physically: 64 bins smear small
+    parts over about 1.5 mm.
+  - **Candidates.** An exact pairwise overlap term (with halos) for the last
+    global iterations; bins sized from the median part; or the survey's
+    CP-SAT NoOverlap2D / sparrow legalizer
+    ([algorithm survey](reviews/2026-09-26-algorithm-survey.md), section 5).
