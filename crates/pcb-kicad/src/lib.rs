@@ -12198,7 +12198,8 @@ fn custom_pad_geometry(
         }
     }
     if parts.len() == 1 {
-        return Err("custom pad has no supported copper primitives".into());
+        // No primitives: KiCad draws just the anchor shape.
+        return Ok(parts.pop().expect("the anchor"));
     }
     Ok(ObstacleGeometry::Union { parts })
 }

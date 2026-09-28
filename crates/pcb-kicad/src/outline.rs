@@ -90,7 +90,26 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         let xy = |head: &str| -> Result<[f64; 2], String> { Ok(place(form_xy(item, head)?)) };
         match item.head() {
             Some("gr_line" | "fp_line") => open.push(vec![xy("start")?, xy("end")?]),
-            Some("gr_arc" | "fp_arc") => open.push(arc_points(xy("start")?, xy("mid")?, xy("end")?)),
+            Some("gr_arc" | "fp_arc") => {
+                let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
+                if distance_squared(start, end).sqrt() < 1.0e-6 && distance_squared(start, mid).sqrt() > 1.0e-6 {
+                    // An arc that ends where it starts is a full circle
+                    // (start and mid are opposite).
+                    let center = [(start[0] + mid[0]) / 2.0, (start[1] + mid[1]) / 2.0];
+                    let quarter = [
+                        center[0] - (start[1] - center[1]),
+                        center[1] + (start[0] - center[0]),
+                    ];
+                    let back = [2.0 * center[0] - quarter[0], 2.0 * center[1] - quarter[1]];
+                    let mut points = arc_points(start, quarter, mid);
+                    points.pop();
+                    points.extend(arc_points(mid, back, start));
+                    points.pop();
+                    loops.push(points);
+                } else {
+                    open.push(arc_points(start, mid, end));
+                }
+            }
             Some("gr_rect" | "fp_rect") => {
                 let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
                 loops.push(
@@ -142,16 +161,26 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 
     // End points closer than this belong together: drawings exported by
     // other tools miss by a few micrometres, and KiCad chains them.
-    const CHAIN_TOLERANCE: f64 = 0.01;
+    // Outlines drawn from tiny segments (0.01 mm) must not collapse, so the
+    // tolerance stays below that, and a piece's two ends are never merged.
+    const CHAIN_TOLERANCE: f64 = 0.005;
     let mut anchors: Vec<[f64; 2]> = Vec::new();
     for piece in &mut open {
+        let mut own: Option<usize> = None;
         for end in [0, piece.len() - 1] {
             let point = piece[end];
-            match anchors.iter().find(|anchor| {
+            match anchors.iter().position(|anchor| {
                 (anchor[0] - point[0]).abs() <= CHAIN_TOLERANCE && (anchor[1] - point[1]).abs() <= CHAIN_TOLERANCE
             }) {
-                Some(anchor) => piece[end] = *anchor,
-                None => anchors.push(point),
+                Some(index) if Some(index) != own || piece.len() > 2 && end == 0 => {
+                    piece[end] = anchors[index];
+                    own.get_or_insert(index);
+                }
+                Some(_) => {}
+                None => {
+                    anchors.push(point);
+                    own.get_or_insert(anchors.len() - 1);
+                }
             }
         }
     }

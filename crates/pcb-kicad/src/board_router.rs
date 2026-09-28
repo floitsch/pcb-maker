@@ -1199,6 +1199,9 @@ pub fn route_kicad_board(
             }
             .into();
             let mut opens = open(&result, &directory);
+            // What one attempt at this pitch costs, for projecting finer
+            // pitches; a seed retry does not change it.
+            let attempt_seconds = result.routing_seconds;
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
@@ -1247,8 +1250,8 @@ pub fn route_kicad_board(
                 result.vias,
                 result.routing_seconds
             );
-            let seconds = result.routing_seconds;
-            let used = (result.routing_seconds, result.grid_pitch_mm);
+            let seconds = attempt_seconds;
+            let used = (attempt_seconds, result.grid_pitch_mm);
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
                 slowest = Some(used);
             }
