@@ -162,8 +162,10 @@ pub fn layout_kicad_board(
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
         return Err(format!(
-            "placement is not legal (unplaced {:?}, illegal {:?})",
-            placement.unplaced, placement.illegal
+            "placement is not legal (unplaced {:?}, illegal {:?}); {}",
+            placement.unplaced,
+            placement.illegal,
+            placement.hints.join("; ")
         ));
     }
 

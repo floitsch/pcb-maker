@@ -120,6 +120,12 @@ pub struct KiCadBoardPlacerResult {
     /// The board size a constraints outline set (automatic or given).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_mm: Option<[f64; 2]>,
+    /// Share of the board the parts' bodies (with spacing) take, front and
+    /// back.
+    pub utilization: [f64; 2],
+    /// What to change when parts found no legal place.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<String>,
     pub seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
@@ -963,7 +969,70 @@ pub fn place_kicad_board(
             .map(|index| lowered.references[*index].clone())
             .collect()
     };
+    // How full each side is, and what to change when parts did not fit.
+    let problem = &lowered.problem;
+    let outline_area = {
+        let outline = &problem.outline;
+        (0..outline.len())
+            .map(|index| {
+                let (a, b) = (outline[index], outline[(index + 1) % outline.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let mut used = [0.0f64; 2];
+    for (index, component) in problem.components.iter().enumerate() {
+        let half = component.half_extent(placement.poses[index].angle);
+        let area = (2.0 * half[0] + problem.spacing) * (2.0 * half[1] + problem.spacing);
+        match component.side {
+            core::Side::Front => used[0] += area,
+            core::Side::Back => used[1] += area,
+            core::Side::Both => {
+                used[0] += area;
+                used[1] += area;
+            }
+            core::Side::Neither => {}
+        }
+    }
+    let utilization = used.map(|used| (used / outline_area.max(1.0e-9) * 1000.0).round() / 1000.0);
+    let mut hints = Vec::new();
+    if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
+        for (side, share) in ["front", "back"].iter().zip(utilization) {
+            if share > 0.7 {
+                hints.push(format!(
+                    "the {side} side is {:.0} % full: enlarge the outline, move parts to the other side, or fix fewer parts",
+                    share * 100.0
+                ));
+            }
+        }
+        let constraints = &problem.constraints;
+        for index in placement.unplaced.iter().chain(&placement.illegal) {
+            let name = &lowered.references[*index];
+            if constraints.edges.iter().any(|(part, _, _)| part == index)
+                || constraints.regions.iter().any(|(part, _)| part == index)
+                || constraints.overhangs.iter().any(|(part, _, _)| part == index)
+            {
+                hints.push(format!(
+                    "{name} is held by an edge, region or overhang constraint: loosen it (a larger max_mm or region)"
+                ));
+            } else if problem.components[*index].fixed {
+                hints.push(format!("{name} is fixed where it overlaps another part: move it or unfix it"));
+            }
+        }
+        if hints.is_empty() {
+            hints.push(
+                "no free spot fits the part's courtyard with the copper clearance around it: give the board more room"
+                    .into(),
+            );
+        }
+        hints.sort();
+        hints.dedup();
+    }
     let result = KiCadBoardPlacerResult {
+        utilization,
+        hints,
         board_id: board_id.into(),
         components: lowered.problem.components.len(),
         movable: lowered
