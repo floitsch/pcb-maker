@@ -34,7 +34,7 @@ downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |
 | --- | --- | --- |
-| `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. | board |
+| `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. Leave out `width` and `height` and the board is sized from its parts: `area_factor` (default 3) times their total body area, at `aspect` width/height (default 1.5). The size used is reported as `outline_mm`. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box. On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |

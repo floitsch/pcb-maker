@@ -136,10 +136,12 @@ impl Field {
             let last = ((high[axis] - self.origin[axis]) / self.bin[axis])
                 .floor()
                 .min(self.bins as f64 - 1.0);
-            (first as usize, last.max(first) as usize)
+            // A body entirely off the field touches no bin.
+            (first <= last).then_some((first as usize, last as usize))
         };
-        let (x0, x1) = range(0);
-        let (y0, y1) = range(1);
+        let (Some((x0, x1)), Some((y0, y1))) = (range(0), range(1)) else {
+            return;
+        };
         for y in y0..=y1 {
             let bottom = self.origin[1] + y as f64 * self.bin[1];
             let height = (high[1].min(bottom + self.bin[1]) - low[1].max(bottom)).max(0.0);

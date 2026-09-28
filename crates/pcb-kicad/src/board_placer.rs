@@ -108,6 +108,9 @@ pub struct KiCadBoardPlacerResult {
     /// Every placement constraint with whether the placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub constraint_warnings: Vec<String>,
+    /// The board size a constraints outline set (automatic or given).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline_mm: Option<[f64; 2]>,
     pub seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
@@ -753,10 +756,16 @@ pub fn place_kicad_board(
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
     let config = &resolve_constraints(config, source_directory)?;
+    let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
         && let Some(outline) = &constraints.outline
     {
-        apply_outline(&mut pcb, outline)?;
+        let mut part_area = 0.0;
+        for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+            let (_, size, _) = local_body(footprint)?;
+            part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
+        }
+        outline_size = Some(apply_outline(&mut pcb, outline, part_area)?);
     }
     let lowered = lower_placement(&pcb, config)?;
     for warning in &lowered.constraint_warnings {
@@ -869,6 +878,7 @@ pub fn place_kicad_board(
         illegal: names(&placement.illegal),
         constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references),
         constraint_warnings: lowered.constraint_warnings.clone(),
+        outline_mm: outline_size,
         seconds: started.elapsed().as_secs_f64(),
         footprints,
     };

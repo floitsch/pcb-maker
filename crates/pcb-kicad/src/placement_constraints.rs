@@ -49,8 +49,19 @@ pub struct KiCadPlacementConstraints {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadOutlineConstraint {
-    pub width: f64,
-    pub height: f64,
+    /// Size in millimetres. Leave both out and the board is sized from its
+    /// parts: `area_factor` times their total body area, at `aspect`.
+    #[serde(default)]
+    pub width: Option<f64>,
+    #[serde(default)]
+    pub height: Option<f64>,
+    /// Board area per unit of part area when sizing automatically
+    /// (default 3: room for routing on two layers).
+    #[serde(default)]
+    pub area_factor: Option<f64>,
+    /// Width over height when sizing automatically (default 1.5).
+    #[serde(default)]
+    pub aspect: Option<f64>,
     /// Top-left corner in board coordinates. Default: the old outline's
     /// top-left corner, or, without one, centred on the footprints.
     #[serde(default)]
@@ -179,8 +190,25 @@ pub(super) fn resolve_constraints(
 }
 
 /// Replaces the board's Edge.Cuts graphics by the constraint's rectangle.
-pub(super) fn apply_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint) -> Result<(), String> {
-    if !(outline.width > 0.0 && outline.height > 0.0) {
+/// `part_area` is the parts' total body area, for automatic sizing.
+/// Returns the size used.
+pub(super) fn apply_outline(
+    pcb: &mut Expr,
+    outline: &KiCadOutlineConstraint,
+    part_area: f64,
+) -> Result<[f64; 2], String> {
+    let (width, height) = match (outline.width, outline.height) {
+        (Some(width), Some(height)) => (width, height),
+        (None, None) => {
+            let area = part_area * outline.area_factor.unwrap_or(3.0);
+            let aspect = outline.aspect.unwrap_or(1.5).max(0.1);
+            let width = (area * aspect).sqrt();
+            // Whole half millimetres, rounded up.
+            ((width * 2.0).ceil() / 2.0, (area / width * 2.0).ceil() / 2.0)
+        }
+        _ => return Err("outline needs both width and height, or neither (automatic size)".into()),
+    };
+    if !(width > 0.0 && height > 0.0) {
         return Err("outline width and height must be positive".into());
     }
     let old = outline::board_loops(pcb).ok().map(|loops| {
@@ -204,8 +232,8 @@ pub(super) fn apply_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint) ->
                 .iter()
                 .fold([0.0, 0.0], |sum, at| [sum[0] + at[0] / count, sum[1] + at[1] / count]);
             [
-                x.unwrap_or(center[0] - outline.width / 2.0),
-                y.unwrap_or(center[1] - outline.height / 2.0),
+                x.unwrap_or(center[0] - width / 2.0),
+                y.unwrap_or(center[1] - height / 2.0),
             ]
         }
     };
@@ -222,11 +250,11 @@ pub(super) fn apply_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint) ->
         "(gr_rect (start {} {}) (end {} {}) (stroke (width 0.05) (type solid)) (fill no) (layer \"Edge.Cuts\"))",
         corner[0],
         corner[1],
-        corner[0] + outline.width,
-        corner[1] + outline.height
+        corner[0] + width,
+        corner[1] + height
     ))?;
     items.push(rectangle);
-    Ok(())
+    Ok([width, height])
 }
 
 fn edge(name: &str) -> Result<Edge, String> {
