@@ -72,10 +72,10 @@ Commit f07b3fa: **97/114 pass (85 %)**.
   - three placement seeds, keeping the best.
 - **Progress.** 71/114 in the first run; no board has a copper error now.
 - **What is left:**
-  - **15 boards cannot be placed legally.** Some designs overlap courtyards
+  - **14 boards cannot be placed legally.** Some designs overlap courtyards
     on purpose (a breakout whose carrier footprint covers the whole board,
     two modules sharing space across the sides); D3's rules switch that
     check off, and pcb-maker keeps bodies apart. Others are shields with
     mechanically fixed headers, or boards with cutouts where a connector
     sits.
-  - **2 leave a connection open.**
+  - **3 leave connections open.**
