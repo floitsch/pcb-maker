@@ -75,7 +75,7 @@ fn fit_halos(problem: &Problem, limit: f64) -> Problem {
         problem
             .components
             .iter()
-            .filter(|component| component.fixed == fixed)
+            .filter(|component| component.fixed == fixed && component.side != Side::Neither)
             .map(|component| {
                 let margin = if fixed {
                     0.0

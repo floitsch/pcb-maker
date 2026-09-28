@@ -153,18 +153,47 @@ pub fn is_legal(
     }
     let side = problem.components[index].side;
     for other in others {
-        if other == index || !side.collides(problem.components[other].side) {
+        if other == index {
             continue;
         }
         // Two fixed parts are the designer's responsibility.
         if problem.components[index].fixed && problem.components[other].fixed {
             continue;
         }
-        if overlaps(body, rect(problem, other, poses[other]), problem.spacing) {
+        let other_side = problem.components[other].side;
+        if side.collides(other_side) {
+            if overlaps(body, rect(problem, other, poses[other]), problem.spacing) {
+                return false;
+            }
+        } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other]) {
             return false;
         }
     }
     true
+}
+
+/// Whether a part's holes and pads on the far side meet the other part's
+/// body there (either way round), for parts on opposite sides.
+fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
+    let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose| {
+        let component = &problem.components[holes];
+        if component.far_side.is_empty() {
+            return false;
+        }
+        let target = rect(problem, body, pose_body);
+        component.far_boxes(pose_holes).into_iter().any(|(center, half)| {
+            overlaps(
+                Rect {
+                    center,
+                    half,
+                    round: false,
+                },
+                target,
+                problem.spacing,
+            )
+        })
+    };
+    meets(a, pose_a, b, pose_b) || meets(b, pose_b, a, pose_a)
 }
 
 pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {

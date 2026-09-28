@@ -13,10 +13,20 @@ pub enum Side {
     Back,
     /// Through-hole parts and mechanical features block both sides.
     Both,
+    /// Artwork without pads or courtyard (a logo): it occupies nothing.
+    Neither,
 }
 
 impl Side {
+    /// Front against back: only far-side boxes can meet.
+    pub fn opposite(self, other: Side) -> bool {
+        matches!((self, other), (Side::Front, Side::Back) | (Side::Back, Side::Front))
+    }
+
     pub fn collides(self, other: Side) -> bool {
+        if self == Side::Neither || other == Side::Neither {
+            return false;
+        }
         self == Side::Both || other == Side::Both || self == other
     }
 }
@@ -44,6 +54,10 @@ pub struct Component {
     pub fixed: bool,
     /// Angles the placer may choose from, in degrees.
     pub angle_options: Vec<f64>,
+    /// Boxes ([min x, min y, max x, max y], own frame) a through-hole part
+    /// occupies on the other side of the board: its holes and plated pads.
+    /// The rest of its body leaves that side free.
+    pub far_side: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -115,6 +129,25 @@ impl Component {
     pub fn position_for_center(&self, center: Point, angle: f64) -> Point {
         let offset = self.offset(self.body_center, angle);
         [center[0] - offset[0], center[1] - offset[1]]
+    }
+
+    /// Board-space boxes (centre, half extent) of `far_side` at a pose.
+    pub fn far_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
+        self.far_side
+            .iter()
+            .map(|local| {
+                let center = self.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], pose.angle);
+                let half = [(local[2] - local[0]) / 2.0, (local[3] - local[1]) / 2.0];
+                let (sin, cos) = (-pose.angle).to_radians().sin_cos();
+                (
+                    [pose.position[0] + center[0], pose.position[1] + center[1]],
+                    [
+                        cos.abs() * half[0] + sin.abs() * half[1],
+                        sin.abs() * half[0] + cos.abs() * half[1],
+                    ],
+                )
+            })
+            .collect()
     }
 
     pub fn pin_position(&self, pin: &Pin, pose: Pose) -> Point {

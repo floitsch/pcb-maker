@@ -406,6 +406,7 @@ pub(super) fn lower_placement(
         let (body_center, body_size, round) = local_body(footprint)?;
         let mut pins = Vec::new();
         let mut through = false;
+        let mut far_side = Vec::new();
         let mut named = BTreeMap::new();
         for pad in footprint
             .children()
@@ -416,7 +417,24 @@ pub(super) fn lower_placement(
                 named.entry(name.to_string()).or_insert([at[0], at[1]]);
             }
             let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
-            through |= matches!(pad_type, "thru_hole" | "np_thru_hole");
+            if matches!(pad_type, "thru_hole" | "np_thru_hole") {
+                through = true;
+                // What the part occupies on the other side: this pad (or
+                // hole) and the clearance a hole keeps.
+                let pad_at = form_at(pad)?;
+                let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
+                let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
+                let keep_away = if pad_type == "np_thru_hole" {
+                    local_clearance::pad_clearance(pad, footprint)?
+                } else {
+                    0.0
+                };
+                let half = [
+                    (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
+                    (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
+                ];
+                far_side.push([pad_at[0] - half[0], pad_at[1] - half[1], pad_at[0] + half[0], pad_at[1] + half[1]]);
+            }
             let Some(net) = node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net) else {
                 continue;
             };
@@ -428,8 +446,17 @@ pub(super) fn lower_placement(
                 net,
             });
         }
-        let side = if through {
-            core::Side::Both
+        // Artwork (a logo) has neither pads nor a courtyard: it occupies
+        // nothing, rather than being a 1 mm wall at its origin.
+        let artwork = !footprint.children().iter().any(|child| {
+            child.head() == Some("pad")
+                || (matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
+                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")))
+        });
+        // A through-hole part sits on its footprint's side; on the other
+        // side only its holes and pads (`far_side`) are in the way.
+        let side = if artwork {
+            core::Side::Neither
         } else if form_atom(footprint, "layer", 1) == Some("B.Cu") {
             core::Side::Back
         } else {
@@ -467,6 +494,7 @@ pub(super) fn lower_placement(
             side,
             fixed: false,
             angle_options,
+            far_side: if through { far_side } else { Vec::new() },
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -540,6 +568,7 @@ pub(super) fn lower_placement(
             side,
             fixed: true,
             angle_options: vec![0.0],
+            far_side: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -590,6 +619,7 @@ pub(super) fn lower_placement(
             },
             fixed: true,
             angle_options: vec![0.0],
+            far_side: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -629,6 +659,7 @@ pub(super) fn lower_placement(
             side: core::Side::Both,
             fixed: true,
             angle_options: vec![0.0],
+            far_side: Vec::new(),
         });
         poses.push(core::Pose {
             position: [

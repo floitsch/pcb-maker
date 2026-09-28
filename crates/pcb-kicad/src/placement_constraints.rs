@@ -507,6 +507,7 @@ mod tests {
             side: core::Side::Front,
             fixed,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
+            far_side: Vec::new(),
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],

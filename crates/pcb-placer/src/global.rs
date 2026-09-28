@@ -264,7 +264,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let mut poses = problem.poses.clone();
     let mut fixed = field.fixed.clone();
     for (index, component) in problem.components.iter().enumerate() {
-        if component.fixed {
+        if component.fixed && component.side != crate::problem::Side::Neither {
             let pose = poses[index];
             let half = component.half_extent(pose.angle);
             field.overlap(

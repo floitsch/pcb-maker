@@ -21,6 +21,7 @@ fn chain(parts: usize) -> Problem {
         side: Side::Both,
         fixed: true,
         angle_options: vec![0.0],
+        far_side: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -52,6 +53,7 @@ fn chain(parts: usize) -> Problem {
             side: Side::Front,
             fixed: false,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
+            far_side: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {

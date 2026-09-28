@@ -80,14 +80,31 @@ impl State<'_> {
     fn overlap(&self, index: usize, rect: Rect) -> f64 {
         let side = self.problem.components[index].side;
         let mut total = 0.0;
+        let area = |a: (Point, Point), b: (Point, Point)| {
+            let width = a.1[0] + b.1[0] - (a.0[0] - b.0[0]).abs();
+            let height = a.1[1] + b.1[1] - (a.0[1] - b.0[1]).abs();
+            if width > 0.0 && height > 0.0 { width * height } else { 0.0 }
+        };
+        let component = &self.problem.components[index];
+        let pose = self.poses[index];
+        let own_far = if component.far_side.is_empty() { Vec::new() } else { component.far_boxes(pose) };
         for (other, body) in self.rects.iter().enumerate() {
-            if other == index || !side.collides(self.problem.components[other].side) {
+            if other == index {
                 continue;
             }
-            let width = rect.half[0] + body.half[0] - (rect.center[0] - body.center[0]).abs();
-            let height = rect.half[1] + body.half[1] - (rect.center[1] - body.center[1]).abs();
-            if width > 0.0 && height > 0.0 {
-                total += width * height;
+            let other_component = &self.problem.components[other];
+            if side.collides(other_component.side) {
+                total += area((rect.center, rect.half), (body.center, body.half));
+            } else if side.opposite(other_component.side) {
+                // Across the board only holes and pads meet bodies.
+                for far in &own_far {
+                    total += area(*far, (body.center, body.half));
+                }
+                if !other_component.far_side.is_empty() {
+                    for far in other_component.far_boxes(self.poses[other]) {
+                        total += area(far, (rect.center, rect.half));
+                    }
+                }
             }
         }
         // Leaving the board is as bad as overlapping something (for an

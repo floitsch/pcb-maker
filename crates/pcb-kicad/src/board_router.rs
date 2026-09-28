@@ -504,6 +504,17 @@ pub(super) fn lower(
             Some("footprint") => {
                 let footprint_at = form_at(item)?;
                 let reference = footprint_reference(item).unwrap_or_default();
+                // Rule areas inside the footprint (an antenna keepout) keep
+                // tracks and vias out like board-level ones.
+                for zone in item
+                    .children()
+                    .iter()
+                    .filter(|child| child.head() == Some("zone") && is_rule_area(child))
+                {
+                    if let Some(obstacle) = rule_area_obstacle(zone, &layers, &format!("{reference} keepout"))? {
+                        obstacles.push(obstacle);
+                    }
+                }
                 for pad in item
                     .children()
                     .iter()
@@ -667,30 +678,8 @@ pub(super) fn lower(
                 }
             }
             Some("zone") if is_rule_area(item) => {
-                let allowed = |kind: &str| {
-                    item.child("keepout")
-                        .and_then(|keepout| keepout.child(kind))
-                        .and_then(|form| form.children().get(1))
-                        .and_then(Expr::atom)
-                        != Some("not_allowed")
-                };
-                let (blocks_tracks, blocks_vias) = (!allowed("tracks"), !allowed("vias"));
-                if blocks_tracks || blocks_vias {
-                    obstacles.push(core::Obstacle {
-                        shape: core::Shape::Polygon {
-                            points: rule_area_polygon_points(item)?,
-                        },
-                        layers: layers.mask_of_item(item)?,
-                        kind: core::ObstacleKind::Keepout,
-                        net: None,
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks,
-                        blocks_vias,
-                        label: form_atom(item, "name", 1)
-                            .unwrap_or("unnamed rule area")
-                            .to_string(),
-                    });
+                if let Some(obstacle) = rule_area_obstacle(item, &layers, "unnamed rule area")? {
+                    obstacles.push(obstacle);
                 }
             }
             _ => {}
@@ -944,6 +933,35 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         }
         _ => Vec::new(),
     })
+}
+
+/// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
+/// footprints are stored in board coordinates too.
+fn rule_area_obstacle(zone: &Expr, layers: &LayerTable, fallback_label: &str) -> Result<Option<core::Obstacle>, String> {
+    let allowed = |kind: &str| {
+        zone.child("keepout")
+            .and_then(|keepout| keepout.child(kind))
+            .and_then(|form| form.children().get(1))
+            .and_then(Expr::atom)
+            != Some("not_allowed")
+    };
+    let (blocks_tracks, blocks_vias) = (!allowed("tracks"), !allowed("vias"));
+    if !(blocks_tracks || blocks_vias) {
+        return Ok(None);
+    }
+    Ok(Some(core::Obstacle {
+        shape: core::Shape::Polygon {
+            points: rule_area_polygon_points(zone)?,
+        },
+        layers: layers.mask_of_item(zone)?,
+        kind: core::ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks,
+        blocks_vias,
+        label: form_atom(zone, "name", 1).unwrap_or(fallback_label).to_string(),
+    }))
 }
 
 fn rule_area_like_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {

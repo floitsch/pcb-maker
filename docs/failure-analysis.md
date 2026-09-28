@@ -360,6 +360,34 @@ Side issues:
   constraint language (issues 2 and 11) are still open and unchanged. They
   are not failures of the kind analysed here.
 
+## Status 2026-09-28
+
+- **F2, done.** `Board::copper_clearance` resolves overrides like KiCad
+  (checked with kicad-cli): tinytapeout's dead pads went from 22 to 9. The
+  rest are power pins that no track of their class reaches at 0.4 mm
+  pitch.
+- **F3, router side done.** Keepout zones inside footprints become keepout
+  obstacles.
+  - For placement, a module's courtyard usually covers its antenna.
+  - An `overhang` constraint puts the keepout outside the board
+    ([constraints.md](constraints.md)).
+- **Failure report, done.** `board-router.json` carries `diagnostics`: dead
+  pads with what is near them, the last conflicted nets, the ten hottest
+  tiles ([agents.md](agents.md)).
+- **F6, partly.** The ladder no longer stops at an expensive clean rung,
+  and retries open attempts with 4 seeds. Its budgets are still
+  wall-clock based.
+- **Also fixed from the PCBench boards** ([../benchmarks/pcbench/README.md](../benchmarks/pcbench/README.md)):
+  - numeric net labels;
+  - copper text boxes;
+  - trapezoidal pads;
+  - slotted holes;
+  - hole-less multi-layer pads;
+  - negative clearances;
+  - outline gaps.
+- **Open:** F1 (plane layers), F4 (negotiation stalls), F5, F7 (placer body
+  model).
+
 ## Work list
 
 Ordered by expected gain per effort. Each item names its pass criterion.
