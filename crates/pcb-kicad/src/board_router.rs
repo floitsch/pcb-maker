@@ -515,6 +515,28 @@ pub(super) fn lower(
                         obstacles.push(obstacle);
                     }
                 }
+                // Copper drawn inside the footprint (a logo, a net tie's
+                // bridge) belongs to no net.
+                for graphic in item.children().iter().filter(|child| {
+                    matches!(child.head(), Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly"))
+                }) {
+                    let Some(layer) = form_atom(graphic, "layer", 1).and_then(|name| layers.index(name)) else {
+                        continue;
+                    };
+                    for shape in copper_graphic_shapes(graphic)? {
+                        obstacles.push(core::Obstacle {
+                            shape: place_shape(shape, footprint_at),
+                            layers: 1 << layer,
+                            kind: core::ObstacleKind::Copper,
+                            net: None,
+                            clearance: 0.0,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!("{reference} copper {}", graphic.head().unwrap_or("graphic")),
+                        });
+                    }
+                }
                 for pad in item
                     .children()
                     .iter()
@@ -812,8 +834,34 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
         .map_err(|error| format!("failed to write {}: {error}", destination.display()))
 }
 
+/// A shape in a footprint's frame, placed on the board.
+fn place_shape(shape: core::Shape, at: [f64; 3]) -> core::Shape {
+    let place = |point: [f64; 2]| {
+        let offset = rotate_vector(point, -at[2]);
+        [at[0] + offset[0], at[1] + offset[1]]
+    };
+    match shape {
+        core::Shape::Circle { center, radius } => core::Shape::Circle {
+            center: place(center),
+            radius,
+        },
+        core::Shape::Capsule { start, end, radius } => core::Shape::Capsule {
+            start: place(start),
+            end: place(end),
+            radius,
+        },
+        core::Shape::Polygon { points } => core::Shape::Polygon {
+            points: points.into_iter().map(place).collect(),
+        },
+        core::Shape::Union { parts } => core::Shape::Union {
+            parts: parts.into_iter().map(|part| place_shape(part, at)).collect(),
+        },
+    }
+}
+
 /// Copper-layer graphics as obstacle shapes. Text becomes its (generous)
-/// bounding box.
+/// bounding box. Footprint graphics (`fp_*`) come out in the footprint's
+/// frame; `place_shape` puts them on the board.
 pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
     let width = item
         .child("stroke")
@@ -826,8 +874,8 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         radius: width / 2.0,
     };
     Ok(match item.head() {
-        Some("gr_line") => vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)],
-        Some("gr_arc") => outline::arc_points(
+        Some("gr_line" | "fp_line") => vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)],
+        Some("gr_arc" | "fp_arc") => outline::arc_points(
             form_xy(item, "start")?,
             form_xy(item, "mid")?,
             form_xy(item, "end")?,
@@ -835,7 +883,7 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         .windows(2)
         .map(|pair| capsule(pair[0], pair[1]))
         .collect(),
-        Some("gr_rect") => {
+        Some("gr_rect" | "fp_rect") => {
             let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
             let corners = [a, [b[0], a[1]], b, [a[0], b[1]]];
             let mut shapes: Vec<_> = (0..4)
@@ -848,7 +896,7 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             }
             shapes
         }
-        Some("gr_circle") => {
+        Some("gr_circle" | "fp_circle") => {
             let center = form_xy(item, "center")?;
             let radius = distance_squared(center, form_xy(item, "end")?).sqrt();
             vec![core::Shape::Circle {
@@ -856,7 +904,7 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 radius: radius + width / 2.0,
             }]
         }
-        Some("gr_poly") => vec![core::Shape::Polygon {
+        Some("gr_poly" | "fp_poly") => vec![core::Shape::Polygon {
             points: rule_area_like_points(item)?,
         }],
         Some("gr_text") => {
