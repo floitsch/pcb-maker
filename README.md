@@ -41,10 +41,15 @@ Olimex and generated ESP32 boards:
   11 of the 13 two-layer boards clean, one more with a single thermal-relief
   finding; the automatically placed Interf-U routes with fewer vias than the
   human layout.
-- **Not there yet:** dense two-sided boards can leave the placer without a
-  legal solution, large four-layer boards take 10–20 minutes, big copper
-  pours on both layers of a two-layer board are still the weak spot, and
-  there is no differential-pair, length-matching or pin-swap support. The
+- **Not there yet.**
+  - Placement: very dense two-sided boards with rotated parts can leave the
+    placer without a legal solution.
+  - Speed: large four-layer boards take 10–20 minutes.
+  - Pours: big copper pours on both layers of a two-layer board are still
+    the weak spot.
+  - Features: no differential pairs or length matching, and no side
+    assignment (moving parts to the other side). Pin swapping exists but
+    is opt-in. The
   hardest board in the corpus, a 186-footprint two-layer design with a
   0.75 mm BGA and a 3.3 V pour on both layers, is DRC-clean but stops at
   153 of 180 nets with the designer's placement and 161 with automatic
