@@ -110,8 +110,22 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // Crowded boards cannot afford the full comfort margins: give up halos,
     // then the spacing, before giving up on a part.
     let mut best: Option<(Vec<usize>, Vec<Pose>, Problem)> = None;
-    for (halo_scale, spacing_scale) in [(1.0, 1.0), (0.5, 1.0), (0.0, 1.0), (0.0, 0.0)] {
+    // The last level also snaps to a finer grid: on small, crowded boards
+    // the regular grid leaves no legal spot where a finer one does.
+    let fine = problem.grid.min(0.1);
+    for (halo_scale, spacing_scale, grid) in [
+        (1.0, 1.0, problem.grid),
+        (0.5, 1.0, problem.grid),
+        (0.0, 1.0, problem.grid),
+        (0.0, 0.0, problem.grid),
+        (0.0, 0.0, fine),
+    ] {
+        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && best.is_some() {
+            // Same as the previous level.
+            continue;
+        }
         let mut relaxed = problem.clone();
+        relaxed.grid = grid;
         relaxed.spacing *= spacing_scale;
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
