@@ -38,6 +38,7 @@ downwards, so `top` is the smaller y.
 | `fixed` | These parts keep the pose they have in the board file. | hard |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box. On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
+| `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
 | `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. | hard |
 | `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. | soft |
@@ -52,7 +53,7 @@ global placement, annealing, legalization, refinement and the router-driven
 nudges. A board where no legal position exists reports the part as `unplaced`.
 
 **Soft** constraints are a penalty: one millimetre of violation costs as
-much as `constraint_weight` (default 10) millimetres of wire. They act as a
+much as `constraint_weight` (default 50) millimetres of wire. They act as a
 force in global placement. A repair pass then searches around every violated
 relation, and router nudges may not make a violated one worse. When the
 geometry makes a soft constraint impossible, the placement comes as close as
@@ -76,8 +77,6 @@ or pad is an error, never ignored.
 
 ## Not supported yet
 
-- `opening_outwards` for connectors: accepted with a warning; give a
-  `rotation` instead.
 - Putting a part on the other side of the board (side assignment).
 - Keepout regions for placement other than the board's own rule areas.
 - Groups ("keep these together") other than pairwise `near`.

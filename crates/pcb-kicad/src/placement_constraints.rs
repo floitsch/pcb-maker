@@ -247,6 +247,7 @@ pub(super) fn apply_constraints(
     references: &[String],
     pads: &[BTreeMap<String, [f64; 2]>],
     keepouts: &[Option<[f64; 4]>],
+    mouths: &[Option<[f64; 2]>],
     constraints: &KiCadPlacementConstraints,
     weight: f64,
 ) -> Result<Vec<String>, String> {
@@ -332,11 +333,40 @@ pub(super) fn apply_constraints(
             problem.components[index].angle_options = angles;
             problem.constraints.overhangs.push((index, side, local));
         }
-        if entry.opening_outwards.is_some() {
-            warnings.push(format!(
-                "edge constraint for {}: opening_outwards is not supported yet; give a rotation instead",
-                entry.part
-            ));
+        if entry.opening_outwards == Some(true) {
+            let side = edge(&entry.edge)?;
+            let mouth = mouths[index].ok_or_else(|| {
+                format!(
+                    "edge constraint for {}: cannot tell which way it opens (no side of its courtyard reaches clearly beyond its pads); give a rotation instead",
+                    entry.part
+                )
+            })?;
+            let component = &problem.components[index];
+            let facing = |angle: f64| {
+                let direction = component.offset(mouth, angle);
+                match side {
+                    Edge::Left => direction[0] < -0.5,
+                    Edge::Right => direction[0] > 0.5,
+                    Edge::Top => direction[1] < -0.5,
+                    Edge::Bottom => direction[1] > 0.5,
+                }
+            };
+            let angles: Vec<f64> = component.angle_options.iter().copied().filter(|angle| facing(*angle)).collect();
+            if angles.is_empty() {
+                return Err(format!(
+                    "edge constraint for {}: no allowed rotation opens it towards the {} edge",
+                    entry.part,
+                    side.name()
+                ));
+            }
+            if !angles.iter().any(|angle| (angle - problem.poses[index].angle).abs() < 1.0e-6) {
+                let center = component.center(problem.poses[index]);
+                problem.poses[index] = core::Pose {
+                    position: component.position_for_center(center, angles[0]),
+                    angle: angles[0],
+                };
+            }
+            problem.components[index].angle_options = angles;
         }
         constrained.insert(index);
     }
@@ -500,7 +530,8 @@ mod tests {
     fn apply(json: &str) -> Result<(core::Problem, Vec<String>), String> {
         let (mut problem, references, pads) = problem();
         let constraints: KiCadPlacementConstraints = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        let warnings = apply_constraints(&mut problem, &references, &pads, &[None, None, None], &constraints, 10.0)?;
+        let warnings =
+            apply_constraints(&mut problem, &references, &pads, &[None, None, None], &[None, None, None], &constraints, 10.0)?;
         Ok((problem, warnings))
     }
 

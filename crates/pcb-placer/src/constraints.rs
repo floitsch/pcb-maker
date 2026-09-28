@@ -360,8 +360,16 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
     }
 }
 
+/// Relations missed by less than this (grid snapping) count as kept.
+pub const RELATION_TOLERANCE: f64 = 0.05;
+
 /// How far (mm) a relation is missed.
 pub fn relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
+    let violation = raw_relation_violation(problem, poses, relation);
+    if violation <= RELATION_TOLERANCE { 0.0 } else { violation }
+}
+
+fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
     match relation {
         Relation::Near { part, anchor, max } => {
             let gap = box_gap(

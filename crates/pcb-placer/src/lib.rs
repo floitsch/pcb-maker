@@ -140,7 +140,12 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let problem = &relaxed;
     legal::refine(problem, &mut poses, config.refine_passes);
-    if legal::repair_relations(problem, &mut poses) > 0 {
+    // Moving one part can break a relation repaired before; repeat while
+    // it helps.
+    for _ in 0..5 {
+        if legal::repair_relations(problem, &mut poses) == 0 {
+            break;
+        }
         legal::refine(problem, &mut poses, config.refine_passes);
     }
     let wirelength_final = problem.wirelength(&poses);

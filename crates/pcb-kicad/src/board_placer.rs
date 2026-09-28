@@ -73,7 +73,7 @@ impl Default for KiCadBoardPlacerConfig {
             edge_margin_mm: 0.5,
             seed: 1,
             constraints: None,
-            constraint_weight: 10.0,
+            constraint_weight: 50.0,
         }
     }
 }
@@ -252,6 +252,73 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     Ok(at)
 }
 
+/// Which way a connector opens, in its own frame: the side where the
+/// courtyard reaches farthest beyond the pads (a USB receptacle's shell, a
+/// barrel jack's body), if one side clearly does.
+fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, String> {
+    let footprint_angle = form_at(footprint)?[2];
+    let mut courtyard = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut pads = courtyard;
+    let grow = |bounds: &mut [f64; 4], point: [f64; 2], half: [f64; 2]| {
+        bounds[0] = bounds[0].min(point[0] - half[0]);
+        bounds[1] = bounds[1].min(point[1] - half[1]);
+        bounds[2] = bounds[2].max(point[0] + half[0]);
+        bounds[3] = bounds[3].max(point[1] + half[1]);
+    };
+    for child in footprint.children() {
+        let on_courtyard = form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd"));
+        match child.head() {
+            Some("fp_line" | "fp_rect" | "fp_arc") if on_courtyard => {
+                for head in ["start", "mid", "end"] {
+                    if child.child(head).is_some() {
+                        grow(&mut courtyard, form_xy(child, head)?, [0.0, 0.0]);
+                    }
+                }
+            }
+            Some("fp_poly") if on_courtyard => {
+                for point in child
+                    .child("pts")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                {
+                    grow(
+                        &mut courtyard,
+                        [expression_coordinate(point, 1, "courtyard x")?, expression_coordinate(point, 2, "courtyard y")?],
+                        [0.0, 0.0],
+                    );
+                }
+            }
+            Some("pad") => {
+                let at = form_at(child)?;
+                let size = form_xy(child, "size").unwrap_or([0.0, 0.0]);
+                let (sin, cos) = (-(at[2] - footprint_angle)).to_radians().sin_cos();
+                grow(
+                    &mut pads,
+                    [at[0], at[1]],
+                    [
+                        (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
+                        (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0,
+                    ],
+                );
+            }
+            _ => {}
+        }
+    }
+    if !courtyard[0].is_finite() || !pads[0].is_finite() {
+        return Ok(None);
+    }
+    let mut sides = [
+        (pads[0] - courtyard[0], [-1.0, 0.0]),
+        (pads[1] - courtyard[1], [0.0, -1.0]),
+        (courtyard[2] - pads[2], [1.0, 0.0]),
+        (courtyard[3] - pads[3], [0.0, 1.0]),
+    ];
+    sides.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok((sides[0].0 >= 1.0 && sides[0].0 >= 1.5 * sides[1].0.max(0.0)).then_some(sides[0].1))
+}
+
 /// Bounding box, in the footprint's own frame, of its keepout zones.
 fn footprint_keepout_box(footprint: &Expr, at: [f64; 3]) -> Result<Option<[f64; 4]>, String> {
     let mut bounds: Option<[f64; 4]> = None;
@@ -328,6 +395,7 @@ pub(super) fn lower_placement(
     // footprint's own keepout zones (an antenna), for overhang constraints.
     let mut pad_offsets: Vec<BTreeMap<String, [f64; 2]>> = Vec::new();
     let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
+    let mut mouths: Vec<Option<[f64; 2]>> = Vec::new();
     for footprint in pcb
         .children()
         .iter()
@@ -408,6 +476,7 @@ pub(super) fn lower_placement(
         source_at.push(at);
         pad_offsets.push(named);
         keepout_boxes.push(footprint_keepout_box(footprint, at)?);
+        mouths.push(connector_mouth(footprint)?);
     }
 
     // Rule areas that forbid footprints are obstacles too, and a part the
@@ -622,6 +691,7 @@ pub(super) fn lower_placement(
             &references,
             &pad_offsets,
             &keepout_boxes,
+            &mouths,
             constraints,
             config.constraint_weight,
         )?,
