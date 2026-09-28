@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+# Copyright (C) 2026 Toit contributors.
+"""Generates agent layout tasks from PCBench boards.
+
+    benchmarks/agent-tasks/from_pcbench.py <output-dir> [--subset d3-test] [--limit N]
+
+For each board the task is: keep the outline, put every connector the
+designer placed at an edge on that edge (in the designer's orientation),
+keep parts that hang over the outline where they are, and place everything
+else from a single stack. The output directory receives tasks.json and one
+constraints file per board; run them with
+`benchmarks/agent-tasks/run.py <out> --tasks <output-dir>/tasks.json`."""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+sys.path.insert(0, str(ROOT / "benchmarks/pcbench"))
+import run as pcbench  # noqa: E402
+
+WORK = ROOT / "benchmarks/real/external/pcbench-work/newdrc"
+STEM = "processed_v9_guide_v3"
+CONNECTOR_PREFIXES = ("J", "P", "CN", "CON", "USB", "X")
+
+
+def is_connector(footprint):
+    reference = footprint["reference"]
+    prefix = reference.rstrip("0123456789")
+    return prefix in CONNECTOR_PREFIXES and sum(1 for _, net in footprint["pads"] if net) >= 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--subset", default="d3-test")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--binary", type=Path, default=ROOT / "target/release/pcb-maker")
+    parser.add_argument("--reach", type=float, default=2.0, help="distance to an edge that counts as at the edge")
+    arguments = parser.parse_args()
+    arguments.output.mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((ROOT / "benchmarks/pcbench/manifest.json").read_text())
+    boards = pcbench.subset(manifest, arguments.subset)
+    if arguments.limit:
+        boards = boards[:arguments.limit]
+    tasks = []
+    for board in boards:
+        name = board["name"]
+        described = subprocess.run([str(arguments.binary), "describe-kicad-board", str(WORK / name), STEM],
+                                   capture_output=True, text=True)
+        if described.returncode != 0:
+            print(f"skipping {name}: {described.stderr.strip()[-200:]}", file=sys.stderr)
+            continue
+        description = json.loads(described.stdout)
+        outline = description["outline"]
+        if outline is None:
+            continue
+        low, high = outline["minimum"], outline["maximum"]
+        edges, rotations, fixed = [], [], []
+        for footprint in description["footprints"]:
+            if not footprint["reference"] or not any(net for _, net in footprint["pads"]):
+                continue
+            body = footprint["body"]
+            distances = {"left": body[0] - low[0], "top": body[1] - low[1],
+                         "right": high[0] - body[2], "bottom": high[1] - body[3]}
+            if min(distances.values()) < -0.01:
+                # The designer lets it hang over the outline: it stays.
+                fixed.append(footprint["reference"])
+                continue
+            if not is_connector(footprint):
+                continue
+            side, distance = min(distances.items(), key=lambda item: item[1])
+            if distance <= arguments.reach:
+                edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2)})
+                rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360})
+        constraints = {"version": 1, "fixed": fixed, "edge": edges, "rotation": rotations}
+        (arguments.output / f"{name}.json").write_text(json.dumps(constraints, indent=1))
+        tasks.append({"name": name, "directory": str(WORK / name), "board_id": STEM,
+                      "unplace": True, "remove_outline": False,
+                      "stack_at": [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2],
+                      "constraints": f"{name}.json", "router": {}})
+    (arguments.output / "tasks.json").write_text(json.dumps({"comment": __doc__.splitlines()[0], "tasks": tasks}, indent=1))
+    print(f"{len(tasks)} tasks", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

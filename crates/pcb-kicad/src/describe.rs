@@ -35,6 +35,8 @@ pub struct KiCadDescribedFootprint {
     pub side: String,
     /// Courtyard (or pad) box in the footprint's own frame, before rotation.
     pub size_mm: [f64; 2],
+    /// The body's box on the board: [min x, min y, max x, max y].
+    pub body: [f64; 4],
     pub through_hole: bool,
     pub locked: bool,
     /// Pad name and net (`None` for an unconnected pad).
@@ -89,7 +91,22 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
     let mut nets: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
         let reference = footprint_reference(footprint).unwrap_or_default();
-        let (_, size, _) = local_body(footprint)?;
+        let (center, size, _) = local_body(footprint)?;
+        let at = form_at(footprint)?;
+        let (sin, cos) = (-at[2]).to_radians().sin_cos();
+        let offset = [center[0] * cos - center[1] * sin, center[0] * sin + center[1] * cos];
+        let middle = [at[0] + offset[0], at[1] + offset[1]];
+        let half = [
+            (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
+            (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0,
+        ];
+        let round = |value: f64| (value * 1000.0).round() / 1000.0;
+        let body = [
+            round(middle[0] - half[0]),
+            round(middle[1] - half[1]),
+            round(middle[0] + half[0]),
+            round(middle[1] + half[1]),
+        ];
         let mut pads = Vec::new();
         let mut through_hole = false;
         for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
@@ -106,9 +123,10 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
         footprints.push(KiCadDescribedFootprint {
             value: property(footprint, "Value"),
             footprint: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
-            at: form_at(footprint)?,
+            at,
             side: if form_atom(footprint, "layer", 1) == Some("B.Cu") { "back" } else { "front" }.into(),
-            size_mm: [(size[0] * 1000.0).round() / 1000.0, (size[1] * 1000.0).round() / 1000.0],
+            size_mm: [round(size[0]), round(size[1])],
+            body,
             through_hole,
             locked: footprint.child("locked").is_some()
                 || footprint.children().iter().any(|child| child.atom() == Some("locked")),
