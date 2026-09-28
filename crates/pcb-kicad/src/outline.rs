@@ -269,6 +269,19 @@ mod tests {
     }
 
     #[test]
+    fn an_arc_that_ends_where_it_starts_is_a_circle() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
+          (gr_arc (start 5 10) (mid 15 10) (end 5 10) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        assert_eq!(loops.cutouts.len(), 1);
+        assert!((polygon_area(&loops.cutouts[0]) - std::f64::consts::PI * 25.0).abs() < 0.5);
+    }
+
+    #[test]
     fn rounded_rectangle_with_a_cutout() {
         let pcb = parse(
             r#"(kicad_pcb

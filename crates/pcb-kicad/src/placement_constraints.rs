@@ -593,6 +593,24 @@ mod tests {
     }
 
     #[test]
+    fn an_outline_without_size_is_sized_from_the_parts() {
+        let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)) (gr_line (start 0 0) (end 1 0) (layer \"Edge.Cuts\")))").unwrap();
+        let outline: KiCadOutlineConstraint = serde_json::from_str(r#"{"aspect": 2.0}"#).unwrap();
+        // 150 mm2 of parts at the default factor 3: 450 mm2, 30 x 15.
+        let size = apply_outline(&mut pcb, &outline, 150.0).unwrap();
+        assert_eq!(size, [30.0, 15.0]);
+        let edges: Vec<_> = pcb
+            .children()
+            .iter()
+            .filter(|item| form_atom(item, "layer", 1) == Some("Edge.Cuts"))
+            .collect();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].head(), Some("gr_rect"));
+        let only_width: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 10}"#).unwrap();
+        assert!(apply_outline(&mut pcb, &only_width, 1.0).is_err());
+    }
+
+    #[test]
     fn fixed_wins_over_a_constraint_and_mistakes_are_errors() {
         let (problem, _) = apply(r#"{"version": 1, "fixed": ["C1"], "near": [{"part": "C1", "part_of": "C2", "max_mm": 1}]}"#).unwrap();
         assert!(problem.components[1].fixed);

@@ -150,3 +150,37 @@ fn relations_pull_parts_together_against_the_netlist() {
         assert!(status.satisfied, "{status:?}");
     }
 }
+
+#[test]
+fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
+    use pcb_placer::legal::is_legal;
+    let part = |side: Side, far_side: Vec<[f64; 4]>| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [10.0, 10.0],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side,
+    };
+    let mut problem = chain(1);
+    problem.components = vec![
+        // A through-hole part on the front with one 2 mm hole at its centre.
+        part(Side::Front, vec![[-1.0, -1.0, 1.0, 1.0]]),
+        // An SMD part on the back.
+        Component { body_size: [3.0, 3.0], ..part(Side::Back, Vec::new()) },
+        // Artwork: occupies nothing.
+        Component { body_size: [20.0, 20.0], ..part(Side::Neither, Vec::new()) },
+    ];
+    problem.poses = vec![Pose { position: [40.0, 25.0], angle: 0.0 }; 3];
+    problem.spacing = 0.2;
+    // Under the body but away from the hole: legal.
+    let beside = Pose { position: [44.0, 25.0], angle: 0.0 };
+    assert!(is_legal(&problem, &problem.poses, 1, beside, 0..3));
+    // On the hole: not legal.
+    let on_hole = Pose { position: [40.5, 25.0], angle: 0.0 };
+    assert!(!is_legal(&problem, &problem.poses, 1, on_hole, 0..3));
+}
