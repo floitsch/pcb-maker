@@ -52,10 +52,20 @@ router and placer items.
   - **The global placement's wirelength is partly fictitious.** At the 4 %
     bin-overflow stop, parts still overlap physically: 64 bins smear small
     parts over about 1.5 mm.
-  - **Candidates.** An exact pairwise overlap term (with halos) for the last
-    global iterations; bins sized from the median part; or the survey's
+  - **Exact pairwise overlap force: tried 2026-09-29, reverted.** This was
+    the exact overlap of body pairs as an extra force in the late global
+    iterations, which keep going until the pairs are nearly apart. Final
+    wirelength did not improve consistently:
+    - improved: hierarchy −11 % (weight 10), PIC −18 % (10), Interf-U
+      −11 % (0.1);
+    - worse: multichannel +14 % and sonde +18 % (10);
+    - no weight is best on every board, and the changes are within the
+      seed spread.
+  - **Open candidates.** Bins sized from the median part; the survey's
     CP-SAT NoOverlap2D / sparrow legalizer
     ([algorithm survey](reviews/2026-09-26-algorithm-survey.md), section 5).
+    Meanwhile three placement seeds (the best one kept) absorb part of the
+    spread.
 - **LNS endgame: tried, no gain (2026-09-28).** This was the survey's
   large-neighbourhood search: rip up an open net with every net in its
   window, reinsert with the open net first in a shuffled order, and keep
