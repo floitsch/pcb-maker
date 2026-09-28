@@ -18,10 +18,12 @@ pub(super) fn pad_clearance(pad: &Expr, footprint: &Expr) -> Result<f64, String>
         return Ok(0.0);
     };
     let clearance = form_f64(owner, "clearance", 1)?;
-    if !clearance.is_finite() || clearance < 0.0 {
-        return Err("unsupported negative or non-finite pad/footprint clearance".into());
+    if !clearance.is_finite() {
+        return Err("unsupported non-finite pad/footprint clearance".into());
     }
-    Ok(clearance)
+    // Old (KiCad 4) boards carry negative overrides; they never lower the
+    // clearance here, the class clearance applies.
+    Ok(clearance.max(0.0))
 }
 
 impl CopperObstacle {

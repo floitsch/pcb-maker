@@ -56,6 +56,11 @@ pub struct KiCadBoardRouterConfig {
     pub via_reduction_rounds: Option<usize>,
     #[serde(default)]
     pub jacobi_batch: Option<usize>,
+    /// Route every attempt this many ways at once (the deterministic order
+    /// plus perturbed orders, in parallel) and keep the best: fewest open
+    /// connections, then vias, then copper. `None`/1: one way.
+    #[serde(default)]
+    pub seeds: Option<usize>,
     /// Route pour nets first as a fixed tree on their plane layer.
     #[serde(default)]
     pub plane_skeleton: Option<bool>,
@@ -323,10 +328,12 @@ impl LayerTable {
     }
 }
 
-fn routable_net(name: &str) -> bool {
-    !name.is_empty()
-        && !name.bytes().all(|byte| byte.is_ascii_digit())
-        && !name.starts_with("unconnected-(")
+/// Whether a net (by its raw name, sheet path included) is routed. Bare
+/// numbers are placeholders for single pins; `/1` is a labelled net.
+pub(super) fn routable_net(raw: &str) -> bool {
+    !raw.is_empty()
+        && !raw.bytes().all(|byte| byte.is_ascii_digit())
+        && !raw.rsplit('/').next().unwrap_or(raw).starts_with("unconnected-(")
 }
 
 pub(super) struct Lowered {
@@ -397,7 +404,7 @@ pub(super) fn lower(
                     // Plated holes of pads without a net are just holes to
                     // everyone; the board's hole clearance applies.
                     if pad_type == "thru_hole"
-                        && !node_net(pad).map(normalize_net).is_some_and(routable_net)
+                        && !node_net(pad).is_some_and(routable_net)
                         && let Some(drill) = pad.child("drill")
                     {
                         let values: Vec<f64> = drill
@@ -483,8 +490,9 @@ pub(super) fn lower(
                         continue;
                     }
                     let net_name = node_net(pad).map(normalize_net);
-                    let net = net_name
-                        .filter(|name| routable_net(name))
+                    let net = node_net(pad)
+                        .filter(|raw| routable_net(raw))
+                        .map(normalize_net)
                         .map(|name| net_id(name, &mut nets, &mut classes))
                         .transpose()?;
                     let mut clearance = local_clearance::pad_clearance(pad, item)?;
@@ -525,8 +533,8 @@ pub(super) fn lower(
                     continue;
                 };
                 let net = node_net(item)
+                    .filter(|raw| routable_net(raw))
                     .map(normalize_net)
-                    .filter(|name| routable_net(name))
                     .map(|name| net_id(name, &mut nets, &mut classes))
                     .transpose()?;
                 obstacles.push(core::Obstacle {
@@ -546,8 +554,8 @@ pub(super) fn lower(
             }
             Some("via") => {
                 let net = node_net(item)
+                    .filter(|raw| routable_net(raw))
                     .map(normalize_net)
-                    .filter(|name| routable_net(name))
                     .map(|name| net_id(name, &mut nets, &mut classes))
                     .transpose()?;
                 obstacles.push(core::Obstacle {
@@ -802,15 +810,34 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             let thickness = font
                 .and_then(|font| form_f64(font, "thickness", 1).ok())
                 .unwrap_or(0.15);
+            // KiCad's stroke font, measured on its own plots: glyph
+            // advances in units of the font width (`i` 0.48 ... `m` 1.33);
+            // glyphs ascend 0.65 and descend up to 0.89 font heights, and
+            // lines are 1.6 heights apart. The sum gets 8 % on top so the
+            // box stays outside every measured text.
+            let advance = |character: char| match character {
+                'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
+                'l' => 0.52,
+                't' | 'f' => 0.57,
+                'r' => 0.62,
+                '(' | ')' | '[' | ']' | '{' | '}' => 0.67,
+                'J' | '_' | ' ' | '"' => 0.76,
+                'A' => 0.86,
+                'N' | 'w' => 1.05,
+                'M' | 'W' | '%' => 1.14,
+                '-' => 1.24,
+                '@' => 1.29,
+                'm' => 1.33,
+                _ => 1.0,
+            };
             let lines = text.split("\\n").count().max(1) as f64;
-            let longest = text
+            let widest = text
                 .split("\\n")
-                .map(|line| line.chars().count())
-                .max()
-                .unwrap_or(0) as f64;
+                .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
+                .fold(0.0, f64::max);
             let half = [
-                longest * size[1] * 0.55 + thickness,
-                lines * size[0] * 0.85 + thickness,
+                (widest * size[1] + thickness) / 2.0,
+                (lines - 1.0) * 1.62 * size[0] / 2.0 + 0.9 * size[0] + thickness / 2.0,
             ];
             let justify: Vec<&str> = item
                 .child("effects")
@@ -900,8 +927,8 @@ pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
     {
         let Some(net) = form_atom(zone, "net_name", 1)
             .or_else(|| node_net(zone))
+            .filter(|raw| routable_net(raw))
             .map(normalize_net)
-            .filter(|net| routable_net(net))
         else {
             continue;
         };
@@ -1030,6 +1057,7 @@ pub fn route_kicad_board(
     // Routing seconds and pitch of the slowest attempt so far, to project
     // the cost of a finer lattice.
     let mut slowest: Option<(f64, f64)> = None;
+    let mut extra_rung_tried = false;
     'ladder: for pitch in &pitches {
         if let (Some(pitch), Some((seconds, previous))) = (pitch, slowest) {
             let projected = seconds * (previous / pitch[0]).powi(2);
@@ -1041,7 +1069,7 @@ pub fn route_kicad_board(
                 break;
             }
         }
-        for (connect, skeleton) in &modes {
+        for (mode, (connect, skeleton)) in modes.iter().enumerate() {
             // The skeleton only helps when the plain pour connection left
             // pads of a pour net open; elsewhere it just takes room.
             if *skeleton
@@ -1097,9 +1125,12 @@ pub fn route_kicad_board(
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
                 slowest = Some(used);
             }
-            let better = best
-                .as_ref()
-                .is_none_or(|(best_opens, _)| opens < *best_opens);
+            // Equally open boards: fewer vias, then less copper.
+            let better = best.as_ref().is_none_or(|(best_opens, best_result)| {
+                (opens, result.vias, result.length_mm)
+                    .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                    .is_some_and(|order| order.is_lt())
+            });
             if better {
                 if directory != output_directory {
                     fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
@@ -1111,7 +1142,15 @@ pub fn route_kicad_board(
             }
             // Another way of connecting the pours is worth trying up to
             // twice the budget; a board that slow gets no more attempts.
-            if opens.0 == 0 || seconds > 2.0 * budget {
+            // A clean board from the plane skeleton still gets the next
+            // rung when time allows: the fixed tree often costs many vias
+            // that routing the pour nets as tracks does not.
+            let skeleton_clean = opens.0 == 0 && *connect && *skeleton && !extra_rung_tried;
+            if skeleton_clean && mode + 1 < modes.len() && seconds <= budget / 2.0 {
+                extra_rung_tried = true;
+                continue;
+            }
+            if opens.0 == 0 || extra_rung_tried || seconds > 2.0 * budget {
                 break 'ladder;
             }
         }
@@ -1128,6 +1167,51 @@ pub fn route_kicad_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(result)
+}
+
+/// Routes `board` with the deterministic order and `count - 1` perturbed
+/// ones in parallel, and returns the best result.
+fn route_seeds(board: &core::Board, config: &core::Config, count: usize) -> core::RoutingResult {
+    let results: Vec<(Option<u64>, core::RoutingResult)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..count as u64)
+            .map(|index| {
+                let mut seeded = config.clone();
+                seeded.seed = (index > 0).then_some(index);
+                seeded.verbose = config.verbose && index == 0;
+                scope.spawn(move || (seeded.seed, core::route(board, &seeded)))
+            })
+            .collect();
+        handles.into_iter().map(|handle| handle.join().expect("routing thread")).collect()
+    });
+    let key = |result: &core::RoutingResult| {
+        let open: usize = result
+            .status
+            .iter()
+            .map(|status| match status {
+                core::NetStatus::Partial { unconnected_terminals } => *unconnected_terminals,
+                core::NetStatus::Unreachable => 1,
+                _ => 0,
+            })
+            .sum::<usize>()
+            + core::verify(board, &result.routes).len();
+        let vias: usize = result.routes.iter().map(|route| route.vias.len()).sum();
+        let length: f64 = result
+            .routes
+            .iter()
+            .flat_map(|route| route.segments.iter())
+            .map(|segment| distance_squared(segment.start, segment.end).sqrt())
+            .sum();
+        (open, vias, length)
+    };
+    let scored: Vec<_> = results.into_iter().map(|(seed, result)| (key(&result), seed, result)).collect();
+    for (score, seed, _) in &scored {
+        eprintln!("seed {seed:?}: {} open, {} vias, {:.0} mm", score.0, score.1, score.2);
+    }
+    scored
+        .into_iter()
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .expect("at least one seed")
+        .2
 }
 
 /// The core router configuration for a KiCad configuration.
@@ -1361,6 +1445,7 @@ fn route_kicad_board_once(
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
     let result = match &config.frame_directory {
+        None if config.seeds.unwrap_or(1) > 1 => route_seeds(&board, &core_config(config), config.seeds.unwrap_or(1)),
         None => core::route(&board, &core_config(config)),
         Some(root) => {
             let directory = attempt_frame_directory(root)?;

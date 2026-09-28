@@ -140,6 +140,21 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         }
     }
 
+    // End points closer than this belong together: drawings exported by
+    // other tools miss by a few micrometres, and KiCad chains them.
+    const CHAIN_TOLERANCE: f64 = 0.01;
+    let mut anchors: Vec<[f64; 2]> = Vec::new();
+    for piece in &mut open {
+        for end in [0, piece.len() - 1] {
+            let point = piece[end];
+            match anchors.iter().find(|anchor| {
+                (anchor[0] - point[0]).abs() <= CHAIN_TOLERANCE && (anchor[1] - point[1]).abs() <= CHAIN_TOLERANCE
+            }) {
+                Some(anchor) => piece[end] = *anchor,
+                None => anchors.push(point),
+            }
+        }
+    }
     // Chain open pieces by their end points (matched to a micrometre).
     let key = |point: [f64; 2]| {
         (
@@ -208,6 +223,21 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn end_points_a_few_micrometres_apart_are_chained() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_line (start 0 0) (end 10 0) (layer "Edge.Cuts"))
+          (gr_line (start 10.004 0) (end 10.004 5) (layer "Edge.Cuts"))
+          (gr_line (start 10 5) (end 0 5) (layer "Edge.Cuts"))
+          (gr_line (start 0 5) (end 0 0) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        assert!((polygon_area(&loops.outline) - 50.0).abs() < 0.05);
+        assert!(loops.cutouts.is_empty());
+    }
 
     #[test]
     fn rounded_rectangle_with_a_cutout() {

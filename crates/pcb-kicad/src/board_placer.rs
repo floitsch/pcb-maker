@@ -112,10 +112,9 @@ pub struct KiCadBoardPlacerResult {
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
 
-fn placer_net(name: &str) -> bool {
-    !name.is_empty()
-        && !name.bytes().all(|byte| byte.is_ascii_digit())
-        && !name.starts_with("unconnected-(")
+/// Whether a net (by its raw name) connects parts; see `routable_net`.
+fn placer_net(raw: &str) -> bool {
+    board_router::routable_net(raw)
 }
 
 fn normalize_angle(angle: f64) -> f64 {
@@ -350,7 +349,7 @@ pub(super) fn lower_placement(
             }
             let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
             through |= matches!(pad_type, "thru_hole" | "np_thru_hole");
-            let Some(net) = node_net(pad).map(normalize_net).filter(|net| placer_net(net)) else {
+            let Some(net) = node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net) else {
                 continue;
             };
             let next = net_ids.len();
@@ -708,7 +707,7 @@ pub fn place_kicad_board(
             .iter()
             .filter(|child| child.head() == Some("pad"))
         {
-            if !node_net(pad).map(normalize_net).is_some_and(placer_net) {
+            if !node_net(pad).is_some_and(placer_net) {
                 continue;
             }
             let written = lower_pad(pad, footprint_at)?.center;

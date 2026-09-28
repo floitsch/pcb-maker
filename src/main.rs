@@ -2578,7 +2578,18 @@ fn run() -> Result<(), String> {
                 ));
             }
             if result.native.as_ref().is_some_and(|native| !native.complete) {
-                return Err("native KiCad verification is not complete".into());
+                // Warnings (silkscreen, text size, missing libraries) do
+                // not make a board incomplete; errors, unconnected items and
+                // schematic mismatches do.
+                let (errors, warnings) = native_findings(&Path::new(&output).join("drc.json"))?;
+                let native = result.native.as_ref().expect("checked above");
+                if errors > 0 || native.selected_net_unconnected_items > 0 || native.schematic_parity_issues > 0 {
+                    return Err(format!(
+                        "native KiCad verification is not complete: {errors} error(s), {} unconnected item(s), {} schematic mismatch(es); see drc.json",
+                        native.selected_net_unconnected_items, native.schematic_parity_issues
+                    ));
+                }
+                eprintln!("native KiCad verification: complete, with {warnings} warning(s); see drc.json");
             }
             Ok(())
         }
@@ -6267,6 +6278,9 @@ fn board_router_config(
             if let Some(batch) = std::env::var("PCB_JACOBI_BATCH").ok().and_then(|v| v.parse().ok()) {
                 config.jacobi_batch = Some(batch);
             }
+            if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS").ok().and_then(|v| v.parse().ok()) {
+                config.seeds = Some(seeds);
+            }
             Ok(config)
         }
         Some(path) => {
@@ -6289,4 +6303,23 @@ fn board_router_config(
             Ok(config)
         }
     }
+}
+
+/// Error- and warning-severity findings in a KiCad DRC report, library
+/// metadata warnings left out.
+fn native_findings(report: &Path) -> Result<(usize, usize), String> {
+    let text = std::fs::read_to_string(report).map_err(|error| format!("failed to read {}: {error}", report.display()))?;
+    let report: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let mut errors = 0;
+    let mut warnings = 0;
+    for finding in report["violations"].as_array().into_iter().flatten() {
+        if pcb_kicad::is_library_metadata_warning(finding) {
+            continue;
+        }
+        match finding["severity"].as_str() {
+            Some("error") => errors += 1,
+            _ => warnings += 1,
+        }
+    }
+    Ok((errors, warnings))
 }

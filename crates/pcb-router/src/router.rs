@@ -83,6 +83,10 @@ pub struct Config {
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
     /// Print one progress line per iteration to stderr.
+    /// Perturbs the net order and seeds the history with noise of one
+    /// history increment, so the same board can be routed several ways
+    /// (`None`: the deterministic order).
+    pub seed: Option<u64>,
     pub verbose: bool,
 }
 
@@ -114,6 +118,7 @@ impl Default for Config {
             plane_skeleton: false,
             skeleton_bias: 6.0,
             heuristic_weight: 1.0,
+            seed: None,
             verbose: false,
         }
     }
@@ -548,7 +553,7 @@ impl Router {
             iterations: 0,
             grid,
         };
-        if let Some(seed) = experiment_seed() {
+        if let Some(seed) = config.seed.or_else(experiment_seed) {
             let mut state = seed;
             let amplitude = config.history_increment as f32;
             for layer in router.history.iter_mut().chain(router.tile_history.iter_mut()) {
@@ -948,12 +953,36 @@ impl Router {
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
             for (index, nodes) in terminal_nodes.iter().enumerate() {
                 if nodes.is_empty() && !on_plane[index] {
+                    let terminal = &description.terminals[index];
+                    let pad = &self.board.obstacles[terminal.pad];
+                    let (mut inside, mut allowed) = (0, 0);
+                    if let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb()) {
+                        for layer in 0..self.board.layer_count {
+                            if terminal.layers & (1 << layer) == 0 {
+                                continue;
+                            }
+                            for y in y0..=y1 {
+                                for x in x0..=x1 {
+                                    let cell = self.grid.index(x, y);
+                                    inside += well_inside(&pad.shape, self.grid.center(x, y)) as usize;
+                                    allowed += statics.trace_allowed(layer, cell, net) as usize;
+                                }
+                            }
+                        }
+                    }
+                    let near = pad.shape.aabb().inflated(1.0);
+                    for other in &self.board.obstacles {
+                        if other.net != Some(net) && other.layers & terminal.layers != 0 && other.shape.aabb().intersects(near) {
+                            eprintln!("  blocked by {:?} net {:?} {:?}", other.kind, other.net, other.shape.aabb());
+                        }
+                    }
                     eprintln!(
-                        "dead pad {} of {} at {:?} layers {:#b}",
-                        description.terminals[index].label,
+                        "dead pad {} of {} at {:?} layers {:#b}: shape {:?}, {inside} nodes well inside, {allowed} allowed",
+                        terminal.label,
                         description.name,
-                        description.terminals[index].anchor,
-                        description.terminals[index].layers
+                        terminal.anchor,
+                        terminal.layers,
+                        pad.shape.aabb(),
                     );
                 }
             }
@@ -2376,9 +2405,10 @@ impl Router {
             let (x0, y0, x1, y1) = router.window(net, 0.0);
             (x1 - x0) + (y1 - y0)
         };
-        let mut state = experiment_seed().unwrap_or(0) ^ 0x5DEE_CE66;
+        let seed = self.config.seed.or_else(experiment_seed);
+        let mut state = seed.unwrap_or(0) ^ 0x5DEE_CE66;
         let jitter: Vec<f64> = (0..self.board.nets.len())
-            .map(|_| match experiment_seed() {
+            .map(|_| match seed {
                 Some(_) => 0.6 + 0.8 * unit_noise(&mut state),
                 None => 1.0,
             })
@@ -2690,7 +2720,8 @@ impl Router {
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
             {
-                let mut state = experiment_seed().unwrap_or(0) ^ (iteration as u64).wrapping_mul(0x2545_F491);
+                let mut state = self.config.seed.or_else(experiment_seed).unwrap_or(0)
+                    ^ (iteration as u64).wrapping_mul(0x2545_F491);
                 let kept: Vec<NetId> = conflicted
                     .iter()
                     .copied()

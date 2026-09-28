@@ -1785,16 +1785,21 @@ fn physical_copper_statistics(
         let start = form_xy(item, "start")?;
         let end = form_xy(item, "end")?;
         let width = form_f64(item, "width", 1)?;
-        if !width.is_finite() || width <= 0.0 || start == end {
+        if !width.is_finite() || width <= 0.0 {
             return Err(format!("segment {ordinal} has invalid geometry"));
+        }
+        // Real boards carry zero-length segments; they add no copper.
+        if start == end {
+            continue;
         }
         let layer = form_atom(item, "layer", 1)
             .ok_or_else(|| format!("segment {ordinal} has no layer"))?
             .to_string();
+        // Copper on no net (stray or decorative tracks) still counts.
         let net = node_net(item)
             .map(normalize_net)
             .filter(|net| !net.is_empty())
-            .ok_or_else(|| format!("segment {ordinal} has no named net"))?
+            .unwrap_or("(no net)")
             .to_string();
         let length = distance_squared(start, end).sqrt();
         layers
@@ -1892,16 +1897,13 @@ fn physical_copper_statistics(
     {
         let diameter = form_f64(item, "size", 1)?;
         let drill = form_f64(item, "drill", 1)?;
-        if !diameter.is_finite()
-            || !drill.is_finite()
-            || diameter <= 0.0
-            || drill <= 0.0
-            || drill >= diameter
-        {
+        if !diameter.is_finite() || !drill.is_finite() || diameter <= 0.0 || drill <= 0.0 {
             return Err(format!("via {ordinal} has invalid diameter/drill"));
         }
+        // Real boards have vias drilled as wide as their pad (KiCad accepts
+        // them when the annular-width check is off): no annulus.
         let outer_area = std::f64::consts::PI * (diameter / 2.0).powi(2);
-        let drill_area = std::f64::consts::PI * (drill / 2.0).powi(2);
+        let drill_area = std::f64::consts::PI * (drill.min(diameter) / 2.0).powi(2);
         let annulus_area = outer_area - drill_area;
         via_projected_outer_area_mm2 += outer_area;
         via_drill_area_mm2 += drill_area;
