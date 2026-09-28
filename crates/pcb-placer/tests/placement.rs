@@ -69,6 +69,7 @@ fn chain(parts: usize) -> Problem {
         spacing: 0.5,
         grid: 0.5,
         edge_margin: 0.0,
+        min_spacing: 0.0,
         constraints: Default::default(),
     }
 }

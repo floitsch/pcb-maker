@@ -82,6 +82,9 @@ pub struct Problem {
     pub grid: f64,
     /// Movable bodies keep this distance from the board edge.
     pub edge_margin: f64,
+    /// Spacing never relaxed below this: pads may sit on a body's edge, so
+    /// bodies closer than the copper clearance put pads too close.
+    pub min_spacing: f64,
     pub constraints: crate::constraints::Constraints,
 }
 

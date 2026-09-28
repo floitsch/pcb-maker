@@ -558,6 +558,7 @@ mod tests {
             spacing: 0.2,
             grid: 0.1,
             edge_margin: 0.5,
+            min_spacing: 0.0,
             constraints: Default::default(),
         };
         let references = vec!["J1".to_string(), "C1".to_string(), "C2".to_string()];

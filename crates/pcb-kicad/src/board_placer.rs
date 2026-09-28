@@ -52,6 +52,10 @@ pub struct KiCadBoardPlacerConfig {
     /// Millimetres of wirelength one millimetre of a missed near or
     /// relative constraint costs.
     pub constraint_weight: f64,
+    /// The largest copper clearance of the board's rules: bodies are never
+    /// placed closer than this (pads may sit on a body's edge). Read from
+    /// the project when not given.
+    pub copper_clearance_mm: Option<f64>,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -74,6 +78,7 @@ impl Default for KiCadBoardPlacerConfig {
             seed: 1,
             constraints: None,
             constraint_weight: 50.0,
+            copper_clearance_mm: None,
         }
     }
 }
@@ -127,6 +132,16 @@ fn normalize_angle(angle: f64) -> f64 {
     } else {
         wrapped
     }
+}
+
+/// The largest copper clearance of a router configuration's rules.
+pub(super) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
+    config
+        .connection_rules
+        .values()
+        .chain(config.default_rules.iter())
+        .map(|rules| rules.clearance_mm)
+        .fold(0.0, f64::max)
 }
 
 /// Bounding box, in the footprint's own frame, of its courtyard and pads.
@@ -200,14 +215,62 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
                     (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
                     (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
                 ];
+                // A drill offset moves the copper away from the anchor, also
+                // on SMD pads.
+                let offset = child
+                    .child("drill")
+                    .and_then(|drill| drill.child("offset"))
+                    .and_then(|offset| {
+                        Some([
+                            expression_coordinate(offset, 1, "pad offset x").ok()?,
+                            expression_coordinate(offset, 2, "pad offset y").ok()?,
+                        ])
+                    })
+                    .unwrap_or([0.0, 0.0]);
+                let center = [
+                    at[0] + cos * offset[0] - sin * offset[1],
+                    at[1] + sin * offset[0] + cos * offset[1],
+                ];
                 for corner in [[-1.0, -1.0], [1.0, 1.0]] {
                     include(
-                        [at[0] + corner[0] * half[0], at[1] + corner[1] * half[1]],
+                        [center[0] + corner[0] * half[0], center[1] + corner[1] * half[1]],
                         0.0,
                     );
                 }
             }
             _ => {}
+        }
+    }
+    if !minimum[0].is_finite() {
+        // Neither courtyard nor pads: copper artwork (a logo on copper)
+        // still takes its room.
+        for child in footprint.children() {
+            if !(matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
+                && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
+            {
+                continue;
+            }
+            let mut points = Vec::new();
+            for head in ["start", "mid", "end", "center"] {
+                if child.child(head).is_some() {
+                    points.push(form_xy(child, head)?);
+                }
+            }
+            for point in child
+                .child("pts")
+                .map(Expr::children)
+                .unwrap_or_default()
+                .iter()
+                .filter(|point| point.head() == Some("xy"))
+            {
+                points.push([expression_coordinate(point, 1, "copper x")?, expression_coordinate(point, 2, "copper y")?]);
+            }
+            for point in points {
+                for axis in 0..2 {
+                    minimum[axis] = minimum[axis].min(point[axis]);
+                    maximum[axis] = maximum[axis].max(point[axis]);
+                }
+            }
         }
     }
     if !minimum[0].is_finite() {
@@ -454,7 +517,8 @@ pub(super) fn lower_placement(
         let artwork = !footprint.children().iter().any(|child| {
             child.head() == Some("pad")
                 || (matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")))
+                    && form_atom(child, "layer", 1)
+                        .is_some_and(|layer| layer.ends_with(".CrtYd") || layer.ends_with(".Cu")))
         });
         // A through-hole part sits on its footprint's side; on the other
         // side only its holes and pads (`far_side`) are in the way.
@@ -695,6 +759,7 @@ pub(super) fn lower_placement(
         spacing: config.spacing_mm,
         grid: config.grid_mm,
         edge_margin: config.edge_margin_mm,
+        min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
         constraints: Default::default(),
     };
     for index in 0..footprint_count {
@@ -756,7 +821,16 @@ pub fn place_kicad_board(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
-    let config = &resolve_constraints(config, source_directory)?;
+    let mut config = resolve_constraints(config, source_directory)?;
+    if config.copper_clearance_mm.is_none() {
+        config.copper_clearance_mm = project_rules::resolve_project_rules(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+            &source_board,
+        )
+        .ok()
+        .map(|rules| largest_clearance(&rules));
+    }
+    let config = &config;
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
         && let Some(outline) = &constraints.outline

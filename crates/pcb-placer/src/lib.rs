@@ -126,7 +126,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         let mut relaxed = problem.clone();
         relaxed.grid = grid;
-        relaxed.spacing *= spacing_scale;
+        relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
         }
