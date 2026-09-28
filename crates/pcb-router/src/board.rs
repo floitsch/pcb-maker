@@ -38,8 +38,12 @@ pub struct Obstacle {
     pub kind: ObstacleKind,
     /// Copper of this net may touch the obstacle (its own pads).
     pub net: Option<NetId>,
-    /// A clearance floor local to this object (pad or footprint override).
+    /// A clearance floor local to this object.
     pub clearance: f64,
+    /// A pad or footprint clearance override: it replaces the clearance of
+    /// the object's net class (KiCad: a positive override wins, also when
+    /// it is smaller).
+    pub clearance_override: Option<f64>,
     pub blocks_tracks: bool,
     pub blocks_vias: bool,
     /// Human-readable owner, for reports only.
@@ -106,13 +110,18 @@ impl Board {
         (1u32 << self.layer_count) - 1
     }
 
-    /// Clearance between copper of `class` and `obstacle`: the largest of
-    /// both nets' class clearances and the obstacle's local floor.
+    /// Clearance between copper of `class` and `obstacle`, as KiCad resolves
+    /// it: the larger of the two objects' clearances, where the obstacle's is
+    /// its override if it has one, else its net class's (and its local
+    /// floor).
     pub fn copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
-        let obstacle_class = obstacle
-            .net
-            .map_or(0.0, |net| self.classes[self.nets[net as usize].class].clearance);
-        class.clearance.max(obstacle.clearance).max(obstacle_class)
+        let obstacle_side = obstacle.clearance_override.unwrap_or_else(|| {
+            let obstacle_class = obstacle
+                .net
+                .map_or(0.0, |net| self.classes[self.nets[net as usize].class].clearance);
+            obstacle.clearance.max(obstacle_class)
+        });
+        class.clearance.max(obstacle_side)
     }
 }
 

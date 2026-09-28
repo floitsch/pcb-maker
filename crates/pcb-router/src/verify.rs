@@ -51,7 +51,9 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
         .classes
         .iter()
         .map(|class| class.clearance)
-        .chain(board.obstacles.iter().map(|obstacle| obstacle.clearance))
+        .chain(board.obstacles.iter().map(|obstacle| {
+            obstacle.clearance.max(obstacle.clearance_override.unwrap_or(0.0))
+        }))
         .fold(board.hole_clearance, f64::max);
 
     let mut index: HashMap<(i64, i64), Vec<Item>> = HashMap::new();

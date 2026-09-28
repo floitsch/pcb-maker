@@ -461,6 +461,7 @@ pub(super) fn lower(
                             kind: core::ObstacleKind::Hole,
                             net: None,
                             clearance: local_clearance::pad_clearance(pad, item)?,
+                            clearance_override: None,
                             blocks_tracks: true,
                             blocks_vias: true,
                             label: if pad_type == "np_thru_hole" {
@@ -480,7 +481,11 @@ pub(super) fn lower(
                         .map(normalize_net)
                         .map(|name| net_id(name, &mut nets, &mut classes))
                         .transpose()?;
-                    let mut clearance = local_clearance::pad_clearance(pad, item)?;
+                    // A positive pad or footprint override replaces the
+                    // net class's clearance in KiCad, also when smaller.
+                    let clearance_override =
+                        Some(local_clearance::pad_clearance(pad, item)?).filter(|value| *value > 0.0);
+                    let mut clearance = 0.0;
                     if net.is_none() {
                         // A pad the router never connects (single-pin net,
                         // unconnected pin, no net) still keeps its net
@@ -489,7 +494,7 @@ pub(super) fn lower(
                             .and_then(|name| config.connection_rules.get(name))
                             .or(config.default_rules.as_ref());
                         if let Some(rules) = rules {
-                            clearance = clearance.max(rules.clearance_mm);
+                            clearance = rules.clearance_mm;
                         }
                     }
                     obstacles.push(core::Obstacle {
@@ -498,6 +503,7 @@ pub(super) fn lower(
                         kind: core::ObstacleKind::Copper,
                         net,
                         clearance,
+                        clearance_override,
                         blocks_tracks: true,
                         blocks_vias: true,
                         label: label.clone(),
@@ -544,6 +550,7 @@ pub(super) fn lower(
                     kind: core::ObstacleKind::Copper,
                     net,
                     clearance: 0.0,
+                    clearance_override: None,
                     blocks_tracks: true,
                     blocks_vias: true,
                     label: "existing track".into(),
@@ -564,6 +571,7 @@ pub(super) fn lower(
                     kind: core::ObstacleKind::Copper,
                     net,
                     clearance: 0.0,
+                    clearance_override: None,
                     blocks_tracks: true,
                     blocks_vias: true,
                     label: "existing via".into(),
@@ -587,6 +595,7 @@ pub(super) fn lower(
                         kind: core::ObstacleKind::Copper,
                         net: None,
                         clearance: 0.0,
+                        clearance_override: None,
                         blocks_tracks: true,
                         blocks_vias: true,
                         label: format!("copper {}", item.head().unwrap_or("graphic")),
@@ -611,6 +620,7 @@ pub(super) fn lower(
                         kind: core::ObstacleKind::Keepout,
                         net: None,
                         clearance: 0.0,
+                        clearance_override: None,
                         blocks_tracks,
                         blocks_vias,
                         label: form_atom(item, "name", 1)
@@ -633,6 +643,7 @@ pub(super) fn lower(
             kind: core::ObstacleKind::Hole,
             net: None,
             clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
+            clearance_override: None,
             blocks_tracks: true,
             blocks_vias: true,
             label: "board cutout".into(),
