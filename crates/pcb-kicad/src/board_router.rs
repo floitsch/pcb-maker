@@ -217,6 +217,70 @@ pub struct KiCadBoardRouterResult {
     /// The pin assignment chosen before routing, if pins were swappable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_swaps: Option<KiCadPinSwapResult>,
+    /// What stood in the way, when something did.
+    pub diagnostics: KiCadRoutingDiagnostics,
+}
+
+/// Why a routing is not complete, for whoever has to fix the board.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct KiCadRoutingDiagnostics {
+    /// Pads no track of their net's class can enter: too narrow a gap to
+    /// their neighbours for the class's width and clearance, or covered by
+    /// another object. `near` lists the objects around the pad.
+    pub dead_pads: Vec<KiCadDeadPad>,
+    /// Nets still competing for room when negotiation stopped.
+    pub conflicted_nets: Vec<String>,
+    /// Where nets fought longest (16 x 16-node tiles), most contested
+    /// first: the places to give more room.
+    pub hot_spots: Vec<KiCadHotSpot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadDeadPad {
+    pub pad: String,
+    pub net: String,
+    pub at: [f64; 2],
+    pub near: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadHotSpot {
+    pub layer: String,
+    pub at: [f64; 2],
+    pub history: f32,
+}
+
+fn diagnostics(board: &core::Board, result: &core::RoutingResult, layer_names: &[String]) -> KiCadRoutingDiagnostics {
+    let round = |point: [f64; 2]| [(point[0] * 1000.0).round() / 1000.0, (point[1] * 1000.0).round() / 1000.0];
+    KiCadRoutingDiagnostics {
+        dead_pads: result
+            .diagnostics
+            .dead_pads
+            .iter()
+            .map(|dead| KiCadDeadPad {
+                pad: dead.label.clone(),
+                net: board.nets[dead.net as usize].name.clone(),
+                at: round(dead.anchor),
+                near: dead.near.clone(),
+            })
+            .collect(),
+        conflicted_nets: result
+            .diagnostics
+            .conflicted
+            .iter()
+            .map(|net| board.nets[*net as usize].name.clone())
+            .collect(),
+        hot_spots: result
+            .diagnostics
+            .hot_spots
+            .iter()
+            .map(|spot| KiCadHotSpot {
+                layer: layer_names.get(spot.layer).cloned().unwrap_or_default(),
+                at: round(spot.center),
+                history: spot.history,
+            })
+            .collect(),
+    }
 }
 
 fn shape(geometry: &ObstacleGeometry) -> core::Shape {
@@ -1434,6 +1498,7 @@ pub(super) fn finish_routed_board(
         congestion: result.congestion.clone(),
         grid_origin: result.grid.origin,
         pin_swaps: None,
+        diagnostics: diagnostics(board, result, layer_names),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

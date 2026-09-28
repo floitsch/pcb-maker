@@ -148,6 +148,35 @@ pub struct RoutingResult {
     pub iterations: usize,
     pub expansions: u64,
     pub searches: u64,
+    /// Why the routing is not complete, when it is not.
+    pub diagnostics: Diagnostics,
+}
+
+/// A machine-readable account of what stood in the way.
+#[derive(Clone, Debug, Default)]
+pub struct Diagnostics {
+    /// Pads that no track of their net's class can enter, with the objects
+    /// around them (candidates for what blocks them).
+    pub dead_pads: Vec<DeadPad>,
+    /// Nets still in conflict when negotiation stopped.
+    pub conflicted: Vec<NetId>,
+    /// The tiles where nets fought longest, most contested first.
+    pub hot_spots: Vec<HotSpot>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DeadPad {
+    pub net: NetId,
+    pub label: String,
+    pub anchor: crate::geometry::Point,
+    pub near: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HotSpot {
+    pub layer: usize,
+    pub center: crate::geometry::Point,
+    pub history: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -408,6 +437,8 @@ pub struct Router {
     negotiation_seconds: f64,
     stamp_seconds: f64,
     iterations: usize,
+    /// Nets in conflict after the last negotiation iteration.
+    last_conflicted: Vec<NetId>,
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
     frame_hook: Option<Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>>,
@@ -551,6 +582,7 @@ impl Router {
             negotiation_seconds: 0.0,
             stamp_seconds: 0.0,
             iterations: 0,
+            last_conflicted: Vec::new(),
             grid,
         };
         if let Some(seed) = config.seed.or_else(experiment_seed) {
@@ -2457,6 +2489,71 @@ impl Router {
             iterations: self.iterations,
             expansions: self.scratch.expansions,
             searches: self.scratch.searches,
+            diagnostics: Diagnostics::default(),
+        }
+    }
+
+    /// Dead pads, the last conflicted nets and the hottest tiles.
+    fn diagnostics(&self) -> Diagnostics {
+        let mut dead_pads = Vec::new();
+        for (net, state) in self.nets.iter().enumerate() {
+            let description = &self.board.nets[net];
+            let class = self.board.classes[description.class];
+            for (index, nodes) in state.terminal_nodes.iter().enumerate() {
+                if !nodes.is_empty() || state.on_plane.get(index).copied().unwrap_or(false) {
+                    continue;
+                }
+                let terminal = &description.terminals[index];
+                let pad = &self.board.obstacles[terminal.pad];
+                let reach = pad
+                    .shape
+                    .aabb()
+                    .inflated(class.trace_width / 2.0 + class.clearance + self.grid.pitch);
+                let mut near: Vec<String> = self
+                    .board
+                    .obstacles
+                    .iter()
+                    .filter(|other| {
+                        other.net != Some(net as NetId)
+                            && other.layers & terminal.layers != 0
+                            && other.shape.aabb().intersects(reach)
+                    })
+                    .map(|other| other.label.clone())
+                    .collect();
+                near.sort();
+                near.dedup();
+                near.truncate(8);
+                dead_pads.push(DeadPad {
+                    net: net as NetId,
+                    label: terminal.label.clone(),
+                    anchor: terminal.anchor,
+                    near,
+                });
+            }
+        }
+        let mut hot_spots: Vec<HotSpot> = Vec::new();
+        for (layer, history) in self.tile_history.iter().enumerate() {
+            for (tile, value) in history.iter().enumerate() {
+                if *value > 0.0 {
+                    let x = (tile % self.tiles_x) as f64 * TILE as f64 + TILE as f64 / 2.0;
+                    let y = (tile / self.tiles_x) as f64 * TILE as f64 + TILE as f64 / 2.0;
+                    hot_spots.push(HotSpot {
+                        layer,
+                        center: [
+                            self.grid.origin[0] + x * self.grid.pitch,
+                            self.grid.origin[1] + y * self.grid.pitch,
+                        ],
+                        history: *value,
+                    });
+                }
+            }
+        }
+        hot_spots.sort_by(|a, b| b.history.total_cmp(&a.history));
+        hot_spots.truncate(10);
+        Diagnostics {
+            dead_pads,
+            conflicted: self.last_conflicted.clone(),
+            hot_spots,
         }
     }
 
@@ -2668,6 +2765,7 @@ impl Router {
                     self.scratch.failed_searches
                 );
             }
+            self.last_conflicted = conflicted.clone();
             if conflicted.is_empty() {
                 break;
             }
@@ -2924,7 +3022,9 @@ impl Router {
                 *total += value;
             }
         }
+        let diagnostics = self.diagnostics();
         RoutingResult {
+            diagnostics,
             congestion,
             routes,
             status,

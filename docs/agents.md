@@ -56,6 +56,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 | `routed.native` | KiCad's own verdict: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. Silkscreen findings show up here too; `repair-kicad-silkscreen` fixes most of them. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
 | `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. |
+| `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
+| `routed.diagnostics.conflicted_nets` | Nets still fighting for room when the router gave up. |
+| `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`), worst first: give these areas more room. |
 | `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on. |
 
 ## When it does not work out
@@ -67,8 +70,10 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 - **A `near` or `relative` constraint is not `satisfied`.** Geometry forbids
   it, or it conflicts with another constraint; `violation_mm` says by how
   much. Relax the distance, or fix the part yourself.
-- **Connections stay open.** The board is too dense for its layer count or
-  size. Enlarge the outline or add layers. `benchmarks/corpus/run.py
+- **Connections stay open.** Read `routed.diagnostics`. `hot_spots` say
+  where to make room (move parts apart, enlarge the outline, add layers);
+  `dead_pads` name pads whose class is too wide for them. Otherwise the
+  board is too dense for its layer count or size. Enlarge the outline or add layers. `benchmarks/corpus/run.py
   --shrink` shows how much a design can shrink.
 - **Pads or copper too close to the edge.** A `flush` part's courtyard
   touches the edge; its pads still need the board's copper-to-edge

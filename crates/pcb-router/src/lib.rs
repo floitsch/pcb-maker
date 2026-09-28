@@ -22,5 +22,5 @@ pub use board::{
     Terminal, Via,
 };
 pub use geometry::{Point, Shape};
-pub use router::{Config, NetStatus, RoutingResult, route};
+pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};
 pub use verify::{Violation, verify};
