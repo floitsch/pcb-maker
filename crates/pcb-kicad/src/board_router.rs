@@ -336,6 +336,45 @@ pub(super) fn routable_net(raw: &str) -> bool {
         && !raw.rsplit('/').next().unwrap_or(raw).starts_with("unconnected-(")
 }
 
+/// The drilled hole of a pad: a circle, or a capsule for a slot
+/// (`(drill oval 1 7)`), centred on the pad.
+fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
+    let Some(drill) = pad.child("drill") else {
+        return Ok(None);
+    };
+    let values: Vec<f64> = drill
+        .children()
+        .iter()
+        .skip(1)
+        .filter_map(Expr::atom)
+        .filter_map(|value| value.parse::<f64>().ok())
+        .collect();
+    let Some(&diameter) = values.first().filter(|diameter| **diameter > 0.0) else {
+        return Ok(None);
+    };
+    let (sin, cos) = (-form_at(pad)?[2]).to_radians().sin_cos();
+    Ok(Some(match values.get(1) {
+        Some(&height) if (height - diameter).abs() > 1.0e-9 => {
+            let (long, short) = (diameter.max(height), diameter.min(height));
+            let axis = if diameter >= height { [1.0, 0.0] } else { [0.0, 1.0] };
+            let half = (long - short) / 2.0;
+            let offset = [
+                half * (axis[0] * cos - axis[1] * sin),
+                half * (axis[0] * sin + axis[1] * cos),
+            ];
+            core::Shape::Capsule {
+                start: [center[0] - offset[0], center[1] - offset[1]],
+                end: [center[0] + offset[0], center[1] + offset[1]],
+                radius: short / 2.0,
+            }
+        }
+        _ => core::Shape::Circle {
+            center,
+            radius: diameter / 2.0,
+        },
+    }))
+}
+
 pub(super) struct Lowered {
     pub board: core::Board,
 }
@@ -402,88 +441,25 @@ pub(super) fn lower(
                     let lowered = lower_pad(pad, footprint_at)?;
                     let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
                     // Plated holes of pads without a net are just holes to
-                    // everyone; the board's hole clearance applies.
-                    if pad_type == "thru_hole"
-                        && !node_net(pad).is_some_and(routable_net)
-                        && let Some(drill) = pad.child("drill")
-                    {
-                        let values: Vec<f64> = drill
-                            .children()
-                            .iter()
-                            .skip(1)
-                            .filter_map(Expr::atom)
-                            .filter_map(|value| value.parse::<f64>().ok())
-                            .collect();
-                        if let Some(&diameter) = values.first() {
-                            let (sin, cos) = (-form_at(pad)?[2]).to_radians().sin_cos();
-                            let shape = match values.get(1) {
-                                Some(&height) if (height - diameter).abs() > 1.0e-9 => {
-                                    let (long, short) =
-                                        (diameter.max(height), diameter.min(height));
-                                    let axis = if diameter >= height {
-                                        [1.0, 0.0]
-                                    } else {
-                                        [0.0, 1.0]
-                                    };
-                                    let half = (long - short) / 2.0;
-                                    let offset = [
-                                        half * (axis[0] * cos - axis[1] * sin),
-                                        half * (axis[0] * sin + axis[1] * cos),
-                                    ];
-                                    core::Shape::Capsule {
-                                        start: [
-                                            lowered.center[0] - offset[0],
-                                            lowered.center[1] - offset[1],
-                                        ],
-                                        end: [
-                                            lowered.center[0] + offset[0],
-                                            lowered.center[1] + offset[1],
-                                        ],
-                                        radius: short / 2.0,
-                                    }
-                                }
-                                _ => core::Shape::Circle {
-                                    center: lowered.center,
-                                    radius: diameter / 2.0,
-                                },
-                            };
-                            obstacles.push(core::Obstacle {
-                                shape,
-                                layers: layers.all(),
-                                kind: core::ObstacleKind::Hole,
-                                net: None,
-                                clearance: local_clearance::pad_clearance(pad, item)?,
-                                blocks_tracks: true,
-                                blocks_vias: true,
-                                label: format!("{label} plated hole"),
-                            });
-                        }
-                    }
-                    if pad_type == "np_thru_hole"
-                        && let Some(drill) = pad.child("drill")
-                    {
-                        let diameter = drill
-                            .children()
-                            .iter()
-                            .skip(1)
-                            .filter_map(Expr::atom)
-                            .filter_map(|value| value.parse::<f64>().ok())
-                            .fold(0.0_f64, f64::max);
-                        if diameter > 0.0 {
-                            obstacles.push(core::Obstacle {
-                                shape: core::Shape::Circle {
-                                    center: lowered.center,
-                                    radius: diameter / 2.0,
-                                },
-                                layers: layers.all(),
-                                kind: core::ObstacleKind::Hole,
-                                net: None,
-                                clearance: local_clearance::pad_clearance(pad, item)?,
-                                blocks_tracks: true,
-                                blocks_vias: true,
-                                label: format!("{label} hole"),
-                            });
-                        }
+                    // everyone; the board's hole clearance applies. Holes of
+                    // mechanical (unplated) pads always are.
+                    let hole = (pad_type == "thru_hole" && !node_net(pad).is_some_and(routable_net))
+                        || pad_type == "np_thru_hole";
+                    if hole && let Some(shape) = drill_shape(pad, lowered.center)? {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: layers.all(),
+                            kind: core::ObstacleKind::Hole,
+                            net: None,
+                            clearance: local_clearance::pad_clearance(pad, item)?,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: if pad_type == "np_thru_hole" {
+                                format!("{label} hole")
+                            } else {
+                                format!("{label} plated hole")
+                            },
+                        });
                     }
                     let pad_layers = layers.mask_of_item(pad)?;
                     if pad_layers == 0 {
@@ -518,9 +494,21 @@ pub(super) fn lower(
                         label: label.clone(),
                     });
                     if let Some(net) = net {
+                        // Without a hole, a pad on several layers (an
+                        // edge-mount connector's top and bottom pads) does
+                        // not join them: it is reached on its footprint's
+                        // side, and layer changes need a via.
+                        let mut terminal_layers = pad_layers;
+                        if pad.child("drill").is_none() && pad_layers.count_ones() > 1 {
+                            let side = form_atom(item, "layer", 1)
+                                .and_then(|name| layers.index(name))
+                                .map(|layer| 1 << layer)
+                                .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
+                            terminal_layers = side.unwrap_or(pad_layers & pad_layers.wrapping_neg());
+                        }
                         nets[net as usize].terminals.push(core::Terminal {
                             anchor: lowered.center,
-                            layers: pad_layers,
+                            layers: terminal_layers,
                             pad: obstacles.len() - 1,
                             label,
                         });
