@@ -161,22 +161,29 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 
     // End points closer than this belong together: drawings exported by
     // other tools miss by a few micrometres, and KiCad chains them.
-    // Outlines drawn from tiny segments (0.01 mm) must not collapse, so the
-    // tolerance stays below that, and a piece's two ends are never merged.
-    const CHAIN_TOLERANCE: f64 = 0.005;
+    // End points closer than this belong together: arcs converted from
+    // older KiCad files miss their neighbours by up to 10 um, and KiCad
+    // chains them. Each end joins the nearest point already seen, never
+    // the other end of its own piece, so outlines drawn from 0.01 mm
+    // segments keep their shape.
+    const CHAIN_TOLERANCE: f64 = 0.02;
     let mut anchors: Vec<[f64; 2]> = Vec::new();
     for piece in &mut open {
         let mut own: Option<usize> = None;
         for end in [0, piece.len() - 1] {
             let point = piece[end];
-            match anchors.iter().position(|anchor| {
-                (anchor[0] - point[0]).abs() <= CHAIN_TOLERANCE && (anchor[1] - point[1]).abs() <= CHAIN_TOLERANCE
-            }) {
-                Some(index) if Some(index) != own || piece.len() > 2 && end == 0 => {
+            let nearest = anchors
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| Some(*index) != own)
+                .map(|(index, anchor)| (distance_squared(*anchor, point).sqrt(), index))
+                .filter(|(distance, _)| *distance <= CHAIN_TOLERANCE)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            match nearest {
+                Some((_, index)) => {
                     piece[end] = anchors[index];
                     own.get_or_insert(index);
                 }
-                Some(_) => {}
                 None => {
                     anchors.push(point);
                     own.get_or_insert(anchors.len() - 1);
