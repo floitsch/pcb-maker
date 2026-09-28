@@ -94,7 +94,7 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   satisfies the hard constraints for these parts. The hints after the
   semicolon say why: a side that is more than 70 % full (parts' bodies
   with spacing against the board area), or parts held by an `edge`,
-  `region` or overhang constraint, or fixed parts that overlap. Give them
+  `region` or overhang constraint. Give them
   more room: a larger `outline`, a wider `region`, a looser `edge`
   `max_mm`, parts on the other side, or unfix a neighbour.
   `placed/board-placer.json` has the same `hints` and the `utilization`

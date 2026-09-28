@@ -1030,7 +1030,14 @@ pub fn place_kicad_board(
             }
         }
         let constraints = &problem.constraints;
-        for index in placement.unplaced.iter().chain(&placement.illegal) {
+        // Fixed parts are only illegal where a part that found no place
+        // lies on them; the moving parts are the ones to talk about.
+        for index in placement
+            .unplaced
+            .iter()
+            .chain(&placement.illegal)
+            .filter(|index| !problem.components[**index].fixed)
+        {
             let name = &lowered.references[*index];
             if constraints.edges.iter().any(|(part, _, _)| part == index)
                 || constraints.regions.iter().any(|(part, _)| part == index)
@@ -1039,8 +1046,6 @@ pub fn place_kicad_board(
                 hints.push(format!(
                     "{name} is held by an edge, region or overhang constraint: loosen it (a larger max_mm or region)"
                 ));
-            } else if problem.components[*index].fixed {
-                hints.push(format!("{name} is fixed where it overlaps another part: move it or unfix it"));
             }
         }
         if hints.is_empty() {
