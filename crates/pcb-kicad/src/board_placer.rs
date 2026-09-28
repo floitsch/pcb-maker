@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_outline, constraint_report,
-    resolve_constraints,
+    KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_keepouts, apply_outline,
+    constraint_report, resolve_constraints,
 };
 use pcb_placer as core;
 
@@ -631,7 +631,10 @@ pub(super) fn lower_placement(
             (false, true) => core::Side::Back,
             _ => core::Side::Both,
         };
-        keepouts.push(bounds);
+        // A part inside a constraint keepout is not there on purpose.
+        if !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)) {
+            keepouts.push(bounds);
+        }
         components.push(core::Component {
             name: "keepout".into(),
             body_center: [0.0, 0.0],
@@ -851,6 +854,9 @@ pub fn place_kicad_board(
             part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
         }
         outline_size = Some(apply_outline(&mut pcb, outline, part_area)?);
+    }
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
+        apply_keepouts(&mut pcb, &constraints.keepout)?;
     }
     let lowered = lower_placement(&pcb, config)?;
     for warning in &lowered.constraint_warnings {

@@ -24,6 +24,7 @@ takes the constraints inline.
  "edge":     [{"part": "J4", "edge": "left", "flush": true},
               {"part": "U3", "edge": "left", "flush": true, "overhang": {"edge": "top"}}],
  "region":   [{"parts": ["U5", "C1?"], "x": [0, 20], "y": [0, 15]}],
+ "keepout":  [{"x": [30, 40], "y": [0, 10], "side": "front", "copper": true}],
  "near":     [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
               {"part": "U2", "part_of": "J4", "max_mm": 10}],
  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}]}
@@ -43,6 +44,7 @@ downwards, so `top` is the smaller y.
 | `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
 | `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. | hard |
+| `keepout` | No part's body enters the box (`x`, `y` and `origin` as for `region`) on `side` `front`, `back` or `both` (default). With `"copper": true` no track, via or pour enters it either (under an antenna, for a label or a mechanical part). The box is written to the board as a KiCad rule area named `constraint keepout N`, so KiCad's DRC checks it too; placing again with the same constraints replaces it. | hard |
 | `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. | soft |
 | `relative` | The part lies `below`/`above`/`left_of`/`right_of` another part: it does not overlap it along that axis, its centre lies within the other part's extent across it, and the gap is at most `max_gap_mm` (default 5). | soft |
 
@@ -80,7 +82,6 @@ or pad is an error, never ignored.
 ## Not supported yet
 
 - Putting a part on the other side of the board (side assignment).
-- Keepout regions for placement other than the board's own rule areas.
 - Groups ("keep these together") other than pairwise `near`.
 
 ## From a netlist to a board

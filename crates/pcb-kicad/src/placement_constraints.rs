@@ -8,6 +8,7 @@
 //!  "rotation": [{"part": "U1", "angle": 90}],
 //!  "edge": [{"part": "J4", "edge": "left", "flush": true}],
 //!  "region": [{"parts": ["U5", "C1?"], "x": [0, 20], "y": [0, 15], "origin": "board"}],
+//!  "keepout": [{"x": [30, 40], "y": [0, 10], "side": "front", "copper": true}],
 //!  "near": [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
 //!           {"part": "U2", "part_of": "J4", "max_mm": 10}],
 //!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}]}
@@ -45,6 +46,8 @@ pub struct KiCadPlacementConstraints {
     pub edge: Vec<KiCadEdgeConstraint>,
     #[serde(default)]
     pub region: Vec<KiCadRegionConstraint>,
+    #[serde(default)]
+    pub keepout: Vec<KiCadKeepoutConstraint>,
     #[serde(default)]
     pub near: Vec<KiCadNearConstraint>,
     #[serde(default)]
@@ -119,6 +122,25 @@ pub struct KiCadRegionConstraint {
     /// bounding box; `absolute`: KiCad board coordinates.
     #[serde(default)]
     pub origin: Option<String>,
+}
+
+/// A box no part may enter; written to the board as a KiCad rule area, so
+/// the router and KiCad's DRC keep it too.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadKeepoutConstraint {
+    pub x: [f64; 2],
+    pub y: [f64; 2],
+    /// As for regions: `board` (default) or `absolute`.
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// `front`, `back` or `both` (default).
+    #[serde(default)]
+    pub side: Option<String>,
+    /// No tracks, vias or pours either: bare board (under an antenna, for
+    /// a label or a mechanical part).
+    #[serde(default)]
+    pub copper: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -260,6 +282,72 @@ pub(super) fn apply_outline(
     ))?;
     items.push(rectangle);
     Ok([width, height])
+}
+
+/// Names of the rule areas `apply_keepouts` writes. Parts inside one are
+/// not there on purpose (unlike parts inside a designer's rule area).
+pub(super) const KEEPOUT_NAME: &str = "constraint keepout";
+
+/// Replaces the board's constraint keepouts by the given ones.
+pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]) -> Result<(), String> {
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    items.retain(|item| {
+        !(item.head() == Some("zone") && form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)))
+    });
+    if keepouts.is_empty() {
+        return Ok(());
+    }
+    let corner = outline::board_loops(pcb)?
+        .outline
+        .iter()
+        .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+            [corner[0].min(point[0]), corner[1].min(point[1])]
+        });
+    let mut zones = Vec::new();
+    for (number, keepout) in keepouts.iter().enumerate() {
+        let offset = match keepout.origin.as_deref() {
+            None | Some("board") => corner,
+            Some("absolute") => [0.0, 0.0],
+            Some(other) => return Err(format!("unknown keepout origin {other:?} (board or absolute)")),
+        };
+        let (x0, x1) = (offset[0] + keepout.x[0].min(keepout.x[1]), offset[0] + keepout.x[0].max(keepout.x[1]));
+        let (y0, y1) = (offset[1] + keepout.y[0].min(keepout.y[1]), offset[1] + keepout.y[0].max(keepout.y[1]));
+        if !(x1 > x0 && y1 > y0) {
+            return Err(format!("keepout {} is empty", number + 1));
+        }
+        let layers = match (keepout.side.as_deref(), keepout.copper) {
+            (Some("front"), _) => "\"F.Cu\"",
+            (Some("back"), _) => "\"B.Cu\"",
+            (None | Some("both"), false) => "\"F.Cu\" \"B.Cu\"",
+            (None | Some("both"), true) => "\"*.Cu\"",
+            (Some(other), _) => return Err(format!("unknown keepout side {other:?} (front, back or both)")),
+        };
+        let copper = if keepout.copper { "not_allowed" } else { "allowed" };
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for byte in format!("{KEEPOUT_NAME} {number} {x0} {y0} {x1} {y1}").bytes() {
+            hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        zones.push(parse(&format!(
+            "(zone (layers {layers}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (name \"{KEEPOUT_NAME} {}\") \
+             (hatch edge 0.5) (connect_pads (clearance 0)) (min_thickness 0.25) \
+             (keepout (tracks {copper}) (vias {copper}) (pads allowed) (copperpour {copper}) (footprints not_allowed)) \
+             (fill (thermal_gap 0.5) (thermal_bridge_width 0.5)) \
+             (polygon (pts (xy {x0} {y0}) (xy {x1} {y0}) (xy {x1} {y1}) (xy {x0} {y1}))))",
+            hash >> 32,
+            (hash >> 16) & 0xffff,
+            hash & 0xfff,
+            (hash >> 12) & 0xfff,
+            hash & 0xffff_ffff_ffff,
+            number + 1,
+        ))?);
+    }
+    let Expr::List(items) = pcb else {
+        unreachable!();
+    };
+    items.extend(zones);
+    Ok(())
 }
 
 fn edge(name: &str) -> Result<Edge, String> {
@@ -648,6 +736,45 @@ mod tests {
             r#"{"version": 1, "colour": "green"}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn keepouts_become_rule_areas_and_replace_earlier_ones() {
+        let mut pcb = parse(
+            "(kicad_pcb (gr_rect (start 10 20) (end 60 60) (stroke (width 0.05) (type solid)) (fill no) (layer \"Edge.Cuts\")))",
+        )
+        .unwrap();
+        let keepouts = |json: &str| -> Vec<KiCadKeepoutConstraint> {
+            serde_json::from_str::<KiCadPlacementConstraints>(json).unwrap().keepout
+        };
+        let zones = |pcb: &Expr| -> Vec<Expr> {
+            pcb.children().iter().filter(|item| item.head() == Some("zone")).cloned().collect()
+        };
+        apply_keepouts(
+            &mut pcb,
+            &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [2, 4], "copper": true}, {"x": [1, 2], "y": [1, 2], "side": "back"}]}"#),
+        )
+        .unwrap();
+        let written = zones(&pcb);
+        assert_eq!(written.len(), 2);
+        // Relative to the outline's corner; copper keepouts block tracks on every layer.
+        let text = format!("{}", encode(&written[0]));
+        assert!(text.contains("(xy 10 22)") && text.contains("(xy 15 24)"), "{text}");
+        assert!(text.contains("\"*.Cu\"") && text.contains("(tracks not_allowed)"), "{text}");
+        let text = format!("{}", encode(&written[1]));
+        assert!(text.contains("\"B.Cu\"") && text.contains("(tracks allowed)") && text.contains("(footprints not_allowed)"));
+        // Applying again replaces them; nothing removes them all.
+        apply_keepouts(&mut pcb, &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [0, 5]}]}"#)).unwrap();
+        assert_eq!(zones(&pcb).len(), 1);
+        apply_keepouts(&mut pcb, &[]).unwrap();
+        assert!(zones(&pcb).is_empty());
+        for bad in [
+            r#"{"version": 1, "keepout": [{"x": [0, 0], "y": [0, 5]}]}"#,
+            r#"{"version": 1, "keepout": [{"x": [0, 1], "y": [0, 5], "side": "top"}]}"#,
+            r#"{"version": 1, "keepout": [{"x": [0, 1], "y": [0, 5], "origin": "center"}]}"#,
+        ] {
+            assert!(apply_keepouts(&mut pcb, &keepouts(bad)).is_err(), "{bad} was accepted");
         }
     }
 }
