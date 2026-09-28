@@ -185,8 +185,33 @@ pub fn layout_kicad_board(
 
     let first_started = std::time::Instant::now();
     let mut board = lower(&pcb, router_config, connect)?.board;
-    let mut router = core::router::Router::new(&board, &core_config);
-    let mut result = router.run_in_place();
+    // With seeds, the first route is done several ways at once; the best
+    // router state carries the move phase.
+    let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
+    let (mut router, mut result) = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..seeds)
+            .map(|index| {
+                let mut seeded = core_config.clone();
+                seeded.seed = (index > 0).then_some(index);
+                seeded.verbose = core_config.verbose && index == 0;
+                let board = &board;
+                scope.spawn(move || {
+                    let mut router = core::router::Router::new(board, &seeded);
+                    let result = router.run_in_place();
+                    (router, result)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("routing thread"))
+            .min_by(|a, b| {
+                score(&a.1, &board)
+                    .partial_cmp(&score(&b.1, &board))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .expect("at least one seed")
+    });
     let first_route_seconds = first_started.elapsed().as_secs_f64();
     let mut best = score(&result, &board);
     let first = (
