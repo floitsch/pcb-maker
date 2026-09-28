@@ -88,6 +88,34 @@ small JSON keeps parts where the designer put them:
   <sub>Placement of the same board: parts start on top of each other and spread out under net attraction and density repulsion, then are snapped to a legal, routable layout.</sub>
 </p>
 
+### Say where things go
+
+For agents and people alike, `constraints.json` states placement intent:
+
+- **Board shape.** The board size, or leave it out and it is estimated
+  from the parts.
+- **Edges.** Parts on an edge: flush, with a connector opening outwards, or
+  an antenna reaching beyond it.
+- **Placement.** Regions, rotations and fixed parts.
+- **Proximity.** Parts near other parts or near a given pad.
+
+```json
+{"version": 1,
+ "outline": {"width": 60, "height": 40},
+ "edge": [{"part": "J1", "edge": "left", "flush": true, "opening_outwards": true}],
+ "near": [{"part": "C1", "pin_of": "U1:3", "max_mm": 2}]}
+```
+
+```sh
+echo '{"placer": {"constraints": "constraints.json"}}' > layout.json
+pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
+```
+
+The result reports every constraint as kept or missed, by how much. When
+connections stay open, `board-router.json` says which pads are unreachable
+and where nets fought for room. See [docs/agents.md](docs/agents.md) and
+[docs/constraints.md](docs/constraints.md).
+
 ### Placement only
 
 ```sh
