@@ -11951,6 +11951,26 @@ fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad, String> {
                 radius,
             }
         }
+        "trapezoid" => {
+            // KiCad's corners (PAD::BuildPadPolygon), with half the delta.
+            let delta = form_xy(pad, "rect_delta").unwrap_or([0.0, 0.0]);
+            let (half, d) = ([size[0] / 2.0, size[1] / 2.0], [delta[0] / 2.0, delta[1] / 2.0]);
+            let corners = [
+                [-half[0] - d[1], half[1] + d[0]],
+                [-half[0] + d[1], -half[1] - d[0]],
+                [half[0] - d[1], -half[1] + d[0]],
+                [half[0] + d[1], half[1] - d[0]],
+            ];
+            ObstacleGeometry::Polygon {
+                points: corners
+                    .iter()
+                    .map(|corner| {
+                        let offset = rotate_vector(*corner, -pad_at[2]);
+                        [copper_center[0] + offset[0], copper_center[1] + offset[1]]
+                    })
+                    .collect(),
+            }
+        }
         _ => ObstacleGeometry::Rectangle {
             center: copper_center,
             half_size: [size[0] / 2.0, size[1] / 2.0],
