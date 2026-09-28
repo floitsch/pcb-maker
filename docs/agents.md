@@ -5,6 +5,20 @@ You have a KiCad project: a `.kicad_pcb` with footprints and nets, from
 optional. pcb-maker places the parts, routes the board, and tells you
 precisely what it achieved.
 
+## 0. Look at the board
+
+```sh
+pcb-maker describe-kicad-board <project-dir> <board-id> > board.json
+```
+
+The file lists what constraints refer to:
+- the outline's box and the copper layers;
+- every footprint with reference, value, library name, position, side,
+  size, whether it is through-hole or locked, and its pads with their
+  nets;
+- every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
+  width and clearance.
+
 ## 1. Say what you want: `constraints.json`
 
 ```json

@@ -130,7 +130,7 @@ fn normalize_angle(angle: f64) -> f64 {
 }
 
 /// Bounding box, in the footprint's own frame, of its courtyard and pads.
-fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool), String> {
+pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool), String> {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     let mut include = |point: [f64; 2], radius: f64| {

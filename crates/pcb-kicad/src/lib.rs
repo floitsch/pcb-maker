@@ -81,6 +81,8 @@ pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadPlacedFootprint, place_kicad_board,
 };
 mod board_router;
+mod describe;
+pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, read_placement_constraints,
