@@ -56,6 +56,9 @@ pub struct KiCadBoardPlacerConfig {
     /// placed closer than this (pads may sit on a body's edge). Read from
     /// the project when not given.
     pub copper_clearance_mm: Option<f64>,
+    /// Placements tried with different seeds (in parallel); the best is
+    /// kept: fewest illegal parts, least missed constraints, least wire.
+    pub placement_seeds: usize,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -79,6 +82,7 @@ impl Default for KiCadBoardPlacerConfig {
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
+            placement_seeds: 3,
         }
     }
 }
@@ -850,7 +854,33 @@ pub fn place_kicad_board(
     placer_config.global.whitespace_fill = config.whitespace_fill;
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
-    let placement = core::place(&lowered.problem, &placer_config);
+    // Several seeds, in parallel; the placement with the fewest illegal
+    // parts, then the least missed constraints, then the least wirelength
+    // wins. Placement takes seconds; the constraints are what the user asked
+    // for.
+    let seeds = config.placement_seeds.max(1) as u64;
+    let placement = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..seeds)
+            .map(|offset| {
+                let mut seeded = placer_config.clone();
+                seeded.global.seed = config.seed + offset;
+                seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+                let problem = &lowered.problem;
+                scope.spawn(move || core::place(problem, &seeded))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("placement thread"))
+            .min_by(|a, b| {
+                let key = |placement: &core::Placement| {
+                    let missed: f64 = placement.constraints.iter().map(|status| status.violation).sum();
+                    (placement.unplaced.len() + placement.illegal.len(), missed, placement.wirelength_final)
+                };
+                key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .expect("at least one seed")
+    });
 
     let Expr::List(items) = &mut pcb else {
         return Err("PCB root is not a list".into());
