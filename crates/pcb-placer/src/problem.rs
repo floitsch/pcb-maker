@@ -58,6 +58,11 @@ pub struct Component {
     /// occupies on the other side of the board: its holes and plated pads.
     /// The rest of its body leaves that side free.
     pub far_side: Vec<[f64; 4]>,
+    /// Boxes ([min x, min y, max x, max y], own frame) that block the
+    /// part's own side in place of its body: a hollow part (a shield's
+    /// outline around its header pads) lets other parts sit inside it.
+    /// Empty: the whole body blocks.
+    pub hollow: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -136,7 +141,25 @@ impl Component {
 
     /// Board-space boxes (centre, half extent) of `far_side` at a pose.
     pub fn far_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
-        self.far_side
+        self.boxes(&self.far_side, pose)
+    }
+
+    /// Board-space boxes (centre, half extent) of `hollow` at a pose.
+    pub fn hollow_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
+        self.boxes(&self.hollow, pose)
+    }
+
+    /// The area the part takes on its own side.
+    pub fn blocking_area(&self) -> f64 {
+        if self.hollow.is_empty() {
+            self.body_size[0] * self.body_size[1]
+        } else {
+            self.hollow.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum()
+        }
+    }
+
+    fn boxes(&self, boxes: &[[f64; 4]], pose: Pose) -> Vec<(Point, Point)> {
+        boxes
             .iter()
             .map(|local| {
                 let center = self.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], pose.angle);

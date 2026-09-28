@@ -5,7 +5,7 @@
 use super::*;
 use crate::placement_constraints::{
     KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_keepouts, apply_outline,
-    constraint_report, resolve_constraints,
+    apply_sides, constraint_report, resolve_constraints,
 };
 use pcb_placer as core;
 
@@ -470,6 +470,7 @@ pub(super) fn lower_placement(
     // Every pad by name, for constraints that point at a pin, and the
     // footprint's own keepout zones (an antenna), for overhang constraints.
     let mut pad_offsets: Vec<BTreeMap<String, [f64; 2]>> = Vec::new();
+    let mut pad_boxes: Vec<Vec<[f64; 4]>> = Vec::new();
     let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
     let mut mouths: Vec<Option<[f64; 2]>> = Vec::new();
     for footprint in pcb
@@ -483,6 +484,7 @@ pub(super) fn lower_placement(
         let mut pins = Vec::new();
         let mut through = false;
         let mut far_side = Vec::new();
+        let mut own_pads = Vec::new();
         let mut named = BTreeMap::new();
         for pad in footprint
             .children()
@@ -493,23 +495,26 @@ pub(super) fn lower_placement(
                 named.entry(name.to_string()).or_insert([at[0], at[1]]);
             }
             let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
+            // The pad (or hole) with the clearance a hole keeps, in the
+            // footprint's frame.
+            let pad_at = form_at(pad)?;
+            let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
+            let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
+            let keep_away = if pad_type == "np_thru_hole" {
+                local_clearance::pad_clearance(pad, footprint)?
+            } else {
+                0.0
+            };
+            let half = [
+                (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
+                (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
+            ];
+            let pad_box = [pad_at[0] - half[0], pad_at[1] - half[1], pad_at[0] + half[0], pad_at[1] + half[1]];
+            own_pads.push(pad_box);
             if matches!(pad_type, "thru_hole" | "np_thru_hole") {
                 through = true;
-                // What the part occupies on the other side: this pad (or
-                // hole) and the clearance a hole keeps.
-                let pad_at = form_at(pad)?;
-                let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
-                let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
-                let keep_away = if pad_type == "np_thru_hole" {
-                    local_clearance::pad_clearance(pad, footprint)?
-                } else {
-                    0.0
-                };
-                let half = [
-                    (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
-                    (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
-                ];
-                far_side.push([pad_at[0] - half[0], pad_at[1] - half[1], pad_at[0] + half[0], pad_at[1] + half[1]]);
+                // What the part occupies on the other side.
+                far_side.push(pad_box);
             }
             let Some(net) = node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net) else {
                 continue;
@@ -572,6 +577,7 @@ pub(super) fn lower_placement(
             fixed: false,
             angle_options,
             far_side: if through { far_side } else { Vec::new() },
+            hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -580,6 +586,7 @@ pub(super) fn lower_placement(
         references.push(reference);
         source_at.push(at);
         pad_offsets.push(named);
+        pad_boxes.push(own_pads);
         keepout_boxes.push(footprint_keepout_box(footprint, at)?);
         mouths.push(connector_mouth(footprint)?);
     }
@@ -649,6 +656,7 @@ pub(super) fn lower_placement(
             fixed: true,
             angle_options: vec![0.0],
             far_side: Vec::new(),
+            hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -700,6 +708,7 @@ pub(super) fn lower_placement(
             fixed: true,
             angle_options: vec![0.0],
             far_side: Vec::new(),
+            hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -740,6 +749,7 @@ pub(super) fn lower_placement(
             fixed: true,
             angle_options: vec![0.0],
             far_side: Vec::new(),
+            hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -802,6 +812,7 @@ pub(super) fn lower_placement(
             &mut problem,
             &references,
             &pad_offsets,
+            &pad_boxes,
             &keepout_boxes,
             &mouths,
             &locked,
@@ -857,6 +868,7 @@ pub fn place_kicad_board(
     }
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
         apply_keepouts(&mut pcb, &constraints.keepout)?;
+        apply_sides(&mut pcb, constraints)?;
     }
     let lowered = lower_placement(&pcb, config)?;
     for warning in &lowered.constraint_warnings {
@@ -991,7 +1003,11 @@ pub fn place_kicad_board(
     let mut used = [0.0f64; 2];
     for (index, component) in problem.components.iter().enumerate() {
         let half = component.half_extent(placement.poses[index].angle);
-        let area = (2.0 * half[0] + problem.spacing) * (2.0 * half[1] + problem.spacing);
+        let area = if component.hollow.is_empty() {
+            (2.0 * half[0] + problem.spacing) * (2.0 * half[1] + problem.spacing)
+        } else {
+            component.blocking_area()
+        };
         match component.side {
             core::Side::Front => used[0] += area,
             core::Side::Back => used[1] += area,

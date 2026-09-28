@@ -82,7 +82,11 @@ fn fit_halos(problem: &Problem, limit: f64) -> Problem {
                 } else {
                     2.0 * scale * component.halo + problem.spacing
                 };
-                (component.body_size[0] + margin) * (component.body_size[1] + margin)
+                if component.hollow.is_empty() {
+                    (component.body_size[0] + margin) * (component.body_size[1] + margin)
+                } else {
+                    component.blocking_area()
+                }
             })
             .sum()
     };

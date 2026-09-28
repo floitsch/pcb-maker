@@ -162,7 +162,12 @@ pub fn is_legal(
         }
         let other_side = problem.components[other].side;
         if side.collides(other_side) {
-            if overlaps(body, rect(problem, other, poses[other]), problem.spacing) {
+            let hollow = !problem.components[index].hollow.is_empty() || !problem.components[other].hollow.is_empty();
+            if if hollow {
+                hollow_overlap(problem, index, pose, other, poses[other])
+            } else {
+                overlaps(body, rect(problem, other, poses[other]), problem.spacing)
+            } {
                 return false;
             }
         } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other]) {
@@ -170,6 +175,30 @@ pub fn is_legal(
         }
     }
     true
+}
+
+/// Whether two parts on the same side meet where one of them is hollow:
+/// only its blocking boxes count.
+fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
+    let blocking = |index: usize, pose: Pose| -> Vec<Rect> {
+        let component = &problem.components[index];
+        if component.hollow.is_empty() {
+            return vec![rect(problem, index, pose)];
+        }
+        component
+            .hollow_boxes(pose)
+            .into_iter()
+            .map(|(center, half)| Rect {
+                center,
+                half,
+                round: false,
+            })
+            .collect()
+    };
+    let theirs = blocking(b, pose_b);
+    blocking(a, pose_a)
+        .into_iter()
+        .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, problem.spacing)))
 }
 
 /// Whether a part's holes and pads on the far side meet the other part's

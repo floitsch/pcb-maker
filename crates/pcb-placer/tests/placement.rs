@@ -22,6 +22,7 @@ fn chain(parts: usize) -> Problem {
         fixed: true,
         angle_options: vec![0.0],
         far_side: Vec::new(),
+        hollow: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -54,6 +55,7 @@ fn chain(parts: usize) -> Problem {
             fixed: false,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
+            hollow: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -166,6 +168,7 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         fixed: false,
         angle_options: vec![0.0],
         far_side,
+        hollow: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -184,4 +187,40 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
     // On the hole: not legal.
     let on_hole = Pose { position: [40.5, 25.0], angle: 0.0 };
     assert!(!is_legal(&problem, &problem.poses, 1, on_hole, 0..3));
+}
+
+#[test]
+fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
+    use pcb_placer::legal::is_legal;
+    let mut problem = chain(1);
+    let part = |size: f64, fixed: bool| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [size, size],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side: Side::Front,
+        fixed,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+    };
+    // A shield outline over the whole board with one header pad at its
+    // left end.
+    let shield = Component { hollow: vec![[-9.0, -1.0, -7.0, 1.0]], ..part(20.0, true) };
+    problem.components = vec![shield, part(2.0, false)];
+    problem.poses = vec![
+        Pose { position: [25.0, 25.0], angle: 0.0 },
+        Pose { position: [25.0, 25.0], angle: 0.0 },
+    ];
+    let legal = |problem: &Problem, x: f64| {
+        is_legal(problem, &problem.poses, 1, Pose { position: [x, 25.0], angle: 0.0 }, 0..2)
+    };
+    // Inside the outline is fine; on the pad is not.
+    assert!(legal(&problem, 25.0));
+    assert!(!legal(&problem, 17.0));
+    // Without the hollow boxes the body blocks.
+    problem.components[0].hollow.clear();
+    assert!(!legal(&problem, 25.0));
 }

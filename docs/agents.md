@@ -33,7 +33,10 @@ Full reference: [constraints.md](constraints.md).
 - **`move_all`** places every part, except locked ones and those named in
   `fixed`. Use it for a board straight from a netlist.
 - **`outline`** sets the board size.
-- **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be.
+- **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be;
+  **`back`/`front`** on which side.
+- **`hollow`** lets parts sit inside a big part's outline (a shield, a
+  module above parts): only its pads block.
 - **`near` and `relative`** keep parts together.
 - **`overhang`** lets a module's antenna reach beyond an edge.
 

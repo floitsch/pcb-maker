@@ -6,8 +6,10 @@
 
 For each board the task is: keep the outline, put every connector the
 designer placed at an edge on that edge (in the designer's orientation),
-keep parts that hang over the outline where they are, and place everything
-else from a single stack. The output directory receives tasks.json and one
+keep parts that hang over the outline where they are, keep parts whose
+courtyard holds other parts (a shield's outline) where they are and let
+parts sit inside them (`hollow`), and place everything else from a single
+stack. The output directory receives tasks.json and one
 constraints file per board; run them with
 `benchmarks/agent-tasks/run.py <out> --tasks <output-dir>/tasks.json`."""
 
@@ -59,9 +61,23 @@ def main():
         if outline is None:
             continue
         low, high = outline["minimum"], outline["maximum"]
-        edges, rotations, fixed = [], [], []
+        edges, rotations, fixed, hollow = [], [], [], []
+        footprints = [f for f in description["footprints"] if f["reference"]]
+        for footprint in footprints:
+            body = footprint["body"]
+            inside = [other for other in footprints if other is not footprint
+                      and (other["side"] == footprint["side"] or footprint["through_hole"] or other["through_hole"])
+                      and body[0] <= other["body"][0] and body[1] <= other["body"][1]
+                      and other["body"][2] <= body[2] and other["body"][3] <= body[3]]
+            if inside and any(net for _, net in footprint["pads"]):
+                # It holds other parts: a shield's outline, a module over
+                # parts. It stays, and parts may sit inside it.
+                hollow.append(footprint["reference"])
         for footprint in description["footprints"]:
             if not footprint["reference"] or not any(net for _, net in footprint["pads"]):
+                continue
+            if footprint["reference"] in hollow:
+                fixed.append(footprint["reference"])
                 continue
             body = footprint["body"]
             distances = {"left": body[0] - low[0], "top": body[1] - low[1],
@@ -77,6 +93,8 @@ def main():
                 edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2)})
                 rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360})
         constraints = {"version": 1, "move_all": True, "fixed": fixed, "edge": edges, "rotation": rotations}
+        if hollow:
+            constraints["hollow"] = hollow
         (arguments.output / f"{name}.json").write_text(json.dumps(constraints, indent=1))
         tasks.append({"name": name, "directory": str(WORK / name), "board_id": STEM,
                       "unplace": True, "remove_outline": False,

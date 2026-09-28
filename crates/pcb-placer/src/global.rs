@@ -85,6 +85,15 @@ struct Body {
     /// Which side's density field the body charges (0: front, 1: back on
     /// a two-sided board).
     field: usize,
+    /// Scales the half extent for density: a hollow part charges only the
+    /// area its blocking boxes take.
+    density: f64,
+}
+
+impl Body {
+    fn charge_half(&self) -> Point {
+        [self.half[0] * self.density, self.half[1] * self.density]
+    }
 }
 
 struct Field {
@@ -287,11 +296,17 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             let pose = poses[index];
             let half = component.half_extent(pose.angle);
             for side in fields_of(component.side) {
-                field.overlap(
-                    component.center(pose),
-                    [half[0] + component.halo, half[1] + component.halo],
-                    |bin, area| side_fixed[side][bin] += area,
-                );
+                if component.hollow.is_empty() {
+                    field.overlap(
+                        component.center(pose),
+                        [half[0] + component.halo, half[1] + component.halo],
+                        |bin, area| side_fixed[side][bin] += area,
+                    );
+                } else {
+                    for (center, half) in component.hollow_boxes(pose) {
+                        field.overlap(center, half, |bin, area| side_fixed[side][bin] += area);
+                    }
+                }
             }
             // A through-hole part's holes are in the way on the other side.
             if two_sided && component.side != Side::Both {
@@ -335,11 +350,17 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 angle: poses[*index].angle,
                 pins: component.pins.len() as f64,
                 field: fields_of(component.side).first().copied().unwrap_or(0),
+                density: if component.hollow.is_empty() {
+                    1.0
+                } else {
+                    let whole = 4.0 * (half[0] + component.halo) * (half[1] + component.halo);
+                    (component.blocking_area() / whole.max(1.0e-9)).sqrt().min(1.0)
+                },
             }
         })
         .collect();
-    let movable_area: f64 = bodies.iter().map(|body| 4.0 * body.half[0] * body.half[1]).sum();
-    let mut areas: Vec<f64> = bodies.iter().map(|body| 4.0 * body.half[0] * body.half[1]).collect();
+    let movable_area: f64 = bodies.iter().map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1]).sum();
+    let mut areas: Vec<f64> = bodies.iter().map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1]).collect();
     areas.sort_by(f64::total_cmp);
     let trimmed = &areas[areas.len() / 10..(areas.len() * 9).div_ceil(10).max(areas.len() / 10 + 1)];
     let filler_side = (trimmed.iter().sum::<f64>() / trimmed.len() as f64)
@@ -350,7 +371,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         let side_movable: f64 = bodies
             .iter()
             .filter(|body| body.field == side)
-            .map(|body| 4.0 * body.half[0] * body.half[1])
+            .map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1])
             .sum();
         let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (side_free[side] - side_movable).max(0.0);
         let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
@@ -362,6 +383,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 angle: 0.0,
                 pins: 0.0,
                 field: side,
+                density: 1.0,
             });
         }
     }
@@ -479,7 +501,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             density.copy_from_slice(fixed);
             let mut real = vec![0.0; n * n];
             for (body, center) in bodies.iter().zip(&reference).filter(|(body, _)| body.field == side) {
-                let (half, scale) = field.smoothed(body.half);
+                let (half, scale) = field.smoothed(body.charge_half());
                 field.overlap(*center, half, |bin, area| {
                     density[bin] += area * scale;
                     if body.component.is_some() {
@@ -497,7 +519,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 if body.field != side {
                     continue;
                 }
-                let (half, scale) = field.smoothed(body.half);
+                let (half, scale) = field.smoothed(body.charge_half());
                 let mut force = [0.0; 2];
                 field.overlap(*center, half, |bin, area| {
                     force[0] += area * scale * field.field_x[bin];
@@ -591,7 +613,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             .iter()
             .enumerate()
             .map(|(index, body)| {
-                let charge = 4.0 * body.half[0] * body.half[1];
+                let charge = 4.0 * body.charge_half()[0] * body.charge_half()[1];
                 let precondition = (body.pins + lambda * charge).max(1.0);
                 [
                     (wire_gradient[index][0] + lambda * density_gradient[index][0]) / precondition,

@@ -82,6 +82,7 @@ pub use board_placer::{
 };
 mod board_router;
 mod describe;
+mod flip;
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{

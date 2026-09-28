@@ -9,6 +9,8 @@
 //!  "edge": [{"part": "J4", "edge": "left", "flush": true}],
 //!  "region": [{"parts": ["U5", "C1?"], "x": [0, 20], "y": [0, 15], "origin": "board"}],
 //!  "keepout": [{"x": [30, 40], "y": [0, 10], "side": "front", "copper": true}],
+//!  "back": ["BT1", "C2?"],
+//!  "hollow": ["SHIELD1"],
 //!  "near": [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
 //!           {"part": "U2", "part_of": "J4", "max_mm": 10}],
 //!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}]}
@@ -48,6 +50,17 @@ pub struct KiCadPlacementConstraints {
     pub region: Vec<KiCadRegionConstraint>,
     #[serde(default)]
     pub keepout: Vec<KiCadKeepoutConstraint>,
+    /// References or glob patterns of parts that go on the bottom side
+    /// (flipped as KiCad flips them), and of parts that go on the top.
+    #[serde(default)]
+    pub back: Vec<String>,
+    #[serde(default)]
+    pub front: Vec<String>,
+    /// References or glob patterns of parts whose pads alone block other
+    /// parts: other parts may sit inside their courtyard (a shield's
+    /// outline around its headers, a module mounted above parts).
+    #[serde(default)]
+    pub hollow: Vec<String>,
     #[serde(default)]
     pub near: Vec<KiCadNearConstraint>,
     #[serde(default)]
@@ -350,6 +363,43 @@ pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]
     Ok(())
 }
 
+/// Flips the footprints `back` and `front` name onto that side.
+pub(super) fn apply_sides(pcb: &mut Expr, constraints: &KiCadPlacementConstraints) -> Result<(), String> {
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    let mut used = vec![false; constraints.back.len() + constraints.front.len()];
+    for item in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+        let reference = footprint_reference(item).unwrap_or_default();
+        let mut side = None;
+        for (index, (pattern, wanted)) in constraints
+            .back
+            .iter()
+            .map(|pattern| (pattern, "B.Cu"))
+            .chain(constraints.front.iter().map(|pattern| (pattern, "F.Cu")))
+            .enumerate()
+        {
+            if glob_matches(pattern, &reference) {
+                used[index] = true;
+                if side.is_some_and(|side| side != wanted) {
+                    return Err(format!("{reference} is named for both the front and the back"));
+                }
+                side = Some(wanted);
+            }
+        }
+        if let Some(side) = side
+            && form_atom(item, "layer", 1) != Some(side)
+        {
+            flip::flip_footprint(item)?;
+        }
+    }
+    if let Some(index) = used.iter().position(|used| !used) {
+        let pattern = constraints.back.iter().chain(&constraints.front).nth(index).unwrap();
+        return Err(format!("side constraint {pattern:?} matches no part"));
+    }
+    Ok(())
+}
+
 fn edge(name: &str) -> Result<Edge, String> {
     match name {
         "left" => Ok(Edge::Left),
@@ -367,6 +417,7 @@ pub(super) fn apply_constraints(
     problem: &mut core::Problem,
     references: &[String],
     pads: &[BTreeMap<String, [f64; 2]>],
+    pad_boxes: &[Vec<[f64; 4]>],
     keepouts: &[Option<[f64; 4]>],
     mouths: &[Option<[f64; 2]>],
     locked: &[bool],
@@ -573,6 +624,22 @@ pub(super) fn apply_constraints(
             }
         }
     }
+    for pattern in &constraints.hollow {
+        let parts = matching(pattern);
+        if parts.is_empty() {
+            return Err(format!("hollow constraint {pattern:?} matches no part"));
+        }
+        for index in parts {
+            if pad_boxes[index].is_empty() {
+                return Err(format!("hollow part {} has no pads", references[index]));
+            }
+            problem.components[index].hollow = pad_boxes[index].clone();
+        }
+    }
+    // A part sent to a side is placed there.
+    for pattern in constraints.back.iter().chain(&constraints.front) {
+        constrained.extend(matching(pattern));
+    }
     for index in constrained {
         problem.components[index].fixed = false;
     }
@@ -637,6 +704,7 @@ mod tests {
             fixed,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
+            hollow: Vec::new(),
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
@@ -666,6 +734,7 @@ mod tests {
                 &mut problem,
                 &references,
                 &pads,
+                &[vec![[0.0, -0.5, 1.0, 0.5]], Vec::new(), Vec::new()],
                 &[None, None, None],
                 &[None, None, None],
                 &[false, false, false],
@@ -725,6 +794,8 @@ mod tests {
     fn fixed_wins_over_a_constraint_and_mistakes_are_errors() {
         let (problem, _) = apply(r#"{"version": 1, "fixed": ["C1"], "near": [{"part": "C1", "part_of": "C2", "max_mm": 1}]}"#).unwrap();
         assert!(problem.components[1].fixed);
+        let (problem, _) = apply(r#"{"version": 1, "hollow": ["J1"]}"#).unwrap();
+        assert_eq!(problem.components[0].hollow, vec![[0.0, -0.5, 1.0, 0.5]]);
         for bad in [
             r#"{"version": 1, "near": [{"part": "R9", "part_of": "C2", "max_mm": 1}]}"#,
             r#"{"version": 1, "near": [{"part": "C1", "pin_of": "J1:7", "max_mm": 1}]}"#,
@@ -734,9 +805,37 @@ mod tests {
             r#"{"version": 1, "fixed": ["Q*"]}"#,
             r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "overhang": {"edge": "top"}}]}"#,
             r#"{"version": 1, "colour": "green"}"#,
+            r#"{"version": 1, "hollow": ["U*"]}"#,
+            r#"{"version": 1, "hollow": ["C1"]}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }
+    }
+
+    #[test]
+    fn side_constraints_flip_parts_onto_their_side() {
+        let footprint = |reference: &str, layer: &str| {
+            format!(
+                "(footprint \"R\" (layer \"{layer}\") (at 5 5) (property \"Reference\" \"{reference}\" (at 0 -1 0) (layer \"F.SilkS\")) \
+                 (pad \"1\" smd rect (at 1 1) (size 1 1) (layers \"{layer}\")))"
+            )
+        };
+        let board = format!("(kicad_pcb {} {} {})", footprint("R1", "F.Cu"), footprint("R2", "F.Cu"), footprint("C1", "B.Cu"));
+        let sides = |json: &str| -> Result<Vec<String>, String> {
+            let mut pcb = parse(&board).unwrap();
+            apply_sides(&mut pcb, &serde_json::from_str(json).unwrap())?;
+            Ok(pcb
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("footprint"))
+                .map(|item| form_atom(item, "layer", 1).unwrap().to_string())
+                .collect())
+        };
+        assert_eq!(sides(r#"{"version": 1, "back": ["R*"], "front": ["C1"]}"#).unwrap(), ["B.Cu", "B.Cu", "F.Cu"]);
+        // A part already on its side stays as it is.
+        assert_eq!(sides(r#"{"version": 1, "back": ["C1", "R2"]}"#).unwrap(), ["F.Cu", "B.Cu", "B.Cu"]);
+        assert!(sides(r#"{"version": 1, "back": ["R*"], "front": ["R1"]}"#).is_err());
+        assert!(sides(r#"{"version": 1, "back": ["U1"]}"#).is_err());
     }
 
     #[test]
