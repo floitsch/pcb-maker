@@ -726,6 +726,7 @@ pub(super) fn lower_placement(
             &pad_offsets,
             &keepout_boxes,
             &mouths,
+            &locked,
             constraints,
             config.constraint_weight,
         )?,

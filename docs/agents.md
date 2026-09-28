@@ -23,12 +23,15 @@ The file lists what constraints refer to:
 
 ```json
 {"version": 1,
+ "move_all": true,
  "outline": {"width": 60, "height": 40},
  "edge": [{"part": "J1", "edge": "left", "flush": true}],
  "near": [{"part": "C1", "pin_of": "U1:3", "max_mm": 2}]}
 ```
 
 Full reference: [constraints.md](constraints.md).
+- **`move_all`** places every part, except locked ones and those named in
+  `fixed`. Use it for a board straight from a netlist.
 - **`outline`** sets the board size.
 - **`edge`, `region`, `rotation` and `fixed`** decide where parts may be.
 - **`near` and `relative`** keep parts together.

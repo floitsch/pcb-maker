@@ -76,7 +76,7 @@ def main():
             if distance <= arguments.reach:
                 edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2)})
                 rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360})
-        constraints = {"version": 1, "fixed": fixed, "edge": edges, "rotation": rotations}
+        constraints = {"version": 1, "move_all": True, "fixed": fixed, "edge": edges, "rotation": rotations}
         (arguments.output / f"{name}.json").write_text(json.dumps(constraints, indent=1))
         tasks.append({"name": name, "directory": str(WORK / name), "board_id": STEM,
                       "unplace": True, "remove_outline": False,

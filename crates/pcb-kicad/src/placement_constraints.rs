@@ -34,6 +34,11 @@ pub struct KiCadPlacementConstraints {
     /// References or glob patterns (`*`, `?`) that keep their pose.
     #[serde(default)]
     pub fixed: Vec<String>,
+    /// Every footprint with nets moves unless `fixed` names it or it is
+    /// locked: for boards fresh from a netlist, where the default rules
+    /// (parts on the edge stay) would read intent into a stack of parts.
+    #[serde(default)]
+    pub move_all: bool,
     #[serde(default)]
     pub rotation: Vec<KiCadRotationConstraint>,
     #[serde(default)]
@@ -276,6 +281,7 @@ pub(super) fn apply_constraints(
     pads: &[BTreeMap<String, [f64; 2]>],
     keepouts: &[Option<[f64; 4]>],
     mouths: &[Option<[f64; 2]>],
+    locked: &[bool],
     constraints: &KiCadPlacementConstraints,
     weight: f64,
 ) -> Result<Vec<String>, String> {
@@ -472,6 +478,13 @@ pub(super) fn apply_constraints(
     problem.constraints.relation_weight = weight;
 
     // Constrained parts move (the user said where they go), fixed ones stay.
+    if constraints.move_all {
+        for index in 0..footprints {
+            if !problem.components[index].pins.is_empty() && !locked[index] {
+                problem.components[index].fixed = false;
+            }
+        }
+    }
     for index in constrained {
         problem.components[index].fixed = false;
     }
@@ -560,7 +573,16 @@ mod tests {
         let (mut problem, references, pads) = problem();
         let constraints: KiCadPlacementConstraints = serde_json::from_str(json).map_err(|e| e.to_string())?;
         let warnings =
-            apply_constraints(&mut problem, &references, &pads, &[None, None, None], &[None, None, None], &constraints, 10.0)?;
+            apply_constraints(
+                &mut problem,
+                &references,
+                &pads,
+                &[None, None, None],
+                &[None, None, None],
+                &[false, false, false],
+                &constraints,
+                10.0,
+            )?;
         Ok((problem, warnings))
     }
 

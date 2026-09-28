@@ -1,6 +1,43 @@
-{"version": 1,
- "outline": {"width": 100, "height": 80, "x": 0, "y": 0},
- "edge": [{"part": "P101", "edge": "left"}, {"part": "P102", "edge": "left"},
-          {"part": "P201", "edge": "right"}, {"part": "P202", "edge": "right"},
-          {"part": "P301", "edge": "right"}, {"part": "P302", "edge": "right"}],
- "near": [{"part": "C101", "part_of": "U101", "max_mm": 3}]}
+{
+ "version": 1,
+ "move_all": true,
+ "outline": {
+  "width": 100,
+  "height": 80,
+  "x": 0,
+  "y": 0
+ },
+ "edge": [
+  {
+   "part": "P101",
+   "edge": "left"
+  },
+  {
+   "part": "P102",
+   "edge": "left"
+  },
+  {
+   "part": "P201",
+   "edge": "right"
+  },
+  {
+   "part": "P202",
+   "edge": "right"
+  },
+  {
+   "part": "P301",
+   "edge": "right"
+  },
+  {
+   "part": "P302",
+   "edge": "right"
+  }
+ ],
+ "near": [
+  {
+   "part": "C101",
+   "part_of": "U101",
+   "max_mm": 3
+  }
+ ]
+}

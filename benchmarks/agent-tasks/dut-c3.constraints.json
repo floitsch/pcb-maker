@@ -1,8 +1,59 @@
-{"version": 1,
- "outline": {"width": 65, "height": 56, "x": 20, "y": 20},
- "edge": [{"part": "J1", "edge": "bottom", "flush": true},
-          {"part": "J3", "edge": "top"}, {"part": "J4", "edge": "top"},
-          {"part": "J2", "edge": "left"},
-          {"part": "U1", "edge": "left"}, {"part": "U2", "edge": "right"}],
- "near": [{"part": "C2", "part_of": "U1", "max_mm": 4}, {"part": "C3", "part_of": "U1", "max_mm": 4},
-          {"part": "C5", "part_of": "U2", "max_mm": 4}, {"part": "C6", "part_of": "U2", "max_mm": 4}]}
+{
+ "version": 1,
+ "move_all": true,
+ "outline": {
+  "width": 65,
+  "height": 56,
+  "x": 20,
+  "y": 20
+ },
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "bottom",
+   "flush": true
+  },
+  {
+   "part": "J3",
+   "edge": "top"
+  },
+  {
+   "part": "J4",
+   "edge": "top"
+  },
+  {
+   "part": "J2",
+   "edge": "left"
+  },
+  {
+   "part": "U1",
+   "edge": "left"
+  },
+  {
+   "part": "U2",
+   "edge": "right"
+  }
+ ],
+ "near": [
+  {
+   "part": "C2",
+   "part_of": "U1",
+   "max_mm": 4
+  },
+  {
+   "part": "C3",
+   "part_of": "U1",
+   "max_mm": 4
+  },
+  {
+   "part": "C5",
+   "part_of": "U2",
+   "max_mm": 4
+  },
+  {
+   "part": "C6",
+   "part_of": "U2",
+   "max_mm": 4
+  }
+ ]
+}
