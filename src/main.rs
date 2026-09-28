@@ -6299,6 +6299,9 @@ fn board_router_config(
                 config.edge_clearance_mm = project.edge_clearance_mm;
                 config.hole_clearance_mm = project.hole_clearance_mm;
                 config.hole_to_hole_clearance_mm = project.hole_to_hole_clearance_mm;
+                if config.neck_width_mm.is_none() {
+                    config.neck_width_mm = project.neck_width_mm;
+                }
             }
             Ok(config)
         }

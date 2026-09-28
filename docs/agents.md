@@ -33,6 +33,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   vias) from the project's `.kicad_pro`.
 - **Only routing?** When the placement is already final, use
   `pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto`.
+- **Router options.** Pass a JSON file instead of `auto`, for example
+  `{"seeds": 4}`. The rules still come from the project.
+  - `seeds`: route that many ways in parallel and keep the best: fewest
+    opens, then vias, then copper. Worth it on idle cores; best of 4 took
+    PIC from 2 vias to 0.
+  - `pours`: `auto`, `connect` or `tracks`.
+  - `pin_swaps`: see below.
 - **Pin swapping.** `"pin_swaps": "pin-swaps.json"` lets pcb-maker reassign
   interchangeable pins (GPIOs, resistor-network elements). The schematic is
   rewritten to match ([pin-swap.md](pin-swap.md)).
