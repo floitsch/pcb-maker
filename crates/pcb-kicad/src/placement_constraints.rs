@@ -27,6 +27,10 @@ use pcb_placer::constraints::{Anchor, Edge, Relation};
 #[serde(deny_unknown_fields)]
 pub struct KiCadPlacementConstraints {
     pub version: u32,
+    /// A rectangular board outline replacing the board's own (or giving a
+    /// board without one its shape).
+    #[serde(default)]
+    pub outline: Option<KiCadOutlineConstraint>,
     /// References or glob patterns (`*`, `?`) that keep their pose.
     #[serde(default)]
     pub fixed: Vec<String>,
@@ -40,6 +44,19 @@ pub struct KiCadPlacementConstraints {
     pub near: Vec<KiCadNearConstraint>,
     #[serde(default)]
     pub relative: Vec<KiCadRelativeConstraint>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadOutlineConstraint {
+    pub width: f64,
+    pub height: f64,
+    /// Top-left corner in board coordinates. Default: the old outline's
+    /// top-left corner, or, without one, centred on the footprints.
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -159,6 +176,57 @@ pub(super) fn resolve_constraints(
         )?));
     }
     Ok(resolved)
+}
+
+/// Replaces the board's Edge.Cuts graphics by the constraint's rectangle.
+pub(super) fn apply_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint) -> Result<(), String> {
+    if !(outline.width > 0.0 && outline.height > 0.0) {
+        return Err("outline width and height must be positive".into());
+    }
+    let old = outline::board_loops(pcb).ok().map(|loops| {
+        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+            [corner[0].min(point[0]), corner[1].min(point[1])]
+        })
+    });
+    let corner = match (outline.x, outline.y, old) {
+        (Some(x), Some(y), _) => [x, y],
+        (x, y, Some(old)) if old[0].is_finite() => [x.unwrap_or(old[0]), y.unwrap_or(old[1])],
+        (x, y, _) => {
+            // Centred on the footprints.
+            let origins: Vec<[f64; 3]> = pcb
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("footprint"))
+                .map(form_at)
+                .collect::<Result<_, _>>()?;
+            let count = origins.len().max(1) as f64;
+            let center = origins
+                .iter()
+                .fold([0.0, 0.0], |sum, at| [sum[0] + at[0] / count, sum[1] + at[1] / count]);
+            [
+                x.unwrap_or(center[0] - outline.width / 2.0),
+                y.unwrap_or(center[1] - outline.height / 2.0),
+            ]
+        }
+    };
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    items.retain(|item| {
+        !(matches!(
+            item.head(),
+            Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly" | "gr_curve")
+        ) && form_atom(item, "layer", 1) == Some("Edge.Cuts"))
+    });
+    let rectangle = parse(&format!(
+        "(gr_rect (start {} {}) (end {} {}) (stroke (width 0.05) (type solid)) (fill no) (layer \"Edge.Cuts\"))",
+        corner[0],
+        corner[1],
+        corner[0] + outline.width,
+        corner[1] + outline.height
+    ))?;
+    items.push(rectangle);
+    Ok(())
 }
 
 fn edge(name: &str) -> Result<Edge, String> {
@@ -348,6 +416,22 @@ pub(super) fn apply_constraints(
     // Constrained parts move (the user said where they go), fixed ones stay.
     for index in constrained {
         problem.components[index].fixed = false;
+    }
+    // With an outline from the constraints, parts entirely off the board
+    // are unplaced, not deliberately hanging over the edge.
+    if constraints.outline.is_some() {
+        for index in 0..footprints {
+            let component = &problem.components[index];
+            let pose = problem.poses[index];
+            let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+            let off = center[0] + half[0] <= bounds[0]
+                || center[0] - half[0] >= bounds[2]
+                || center[1] + half[1] <= bounds[1]
+                || center[1] - half[1] >= bounds[3];
+            if off && !component.pins.is_empty() {
+                problem.components[index].fixed = false;
+            }
+        }
     }
     for pattern in &constraints.fixed {
         let matched = matching(pattern);

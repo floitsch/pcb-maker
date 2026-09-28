@@ -17,6 +17,7 @@ takes the constraints inline.
 
 ```json
 {"version": 1,
+ "outline":  {"width": 100, "height": 80, "x": 0, "y": 0},
  "fixed":    ["J1", "H*"],
  "rotation": [{"part": "U1", "angle": 90}, {"part": "D1", "angles": [0, 180]}],
  "edge":     [{"part": "J4", "edge": "left", "flush": true},
@@ -33,6 +34,7 @@ downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |
 | --- | --- | --- |
+| `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box. On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
@@ -79,6 +81,27 @@ or pad is an error, never ignored.
 - Putting a part on the other side of the board (side assignment).
 - Keepout regions for placement other than the board's own rule areas.
 - Groups ("keep these together") other than pairwise `near`.
+
+## From a netlist to a board
+
+A board fresh from a netlist import (every footprint at one point, no
+outline; KiCad's "Update PCB from schematic", kinet2pcb, SKiDL) can be
+laid out from the constraints alone.
+
+For example, KiCad's complex-hierarchy demo, stacked and without its outline,
+with these constraints:
+
+```json
+{"version": 1,
+ "outline": {"width": 100, "height": 80, "x": 0, "y": 0},
+ "edge": [{"part": "P101", "edge": "left"}, {"part": "P102", "edge": "left"},
+          {"part": "P201", "edge": "right"}, {"part": "P202", "edge": "right"},
+          {"part": "P301", "edge": "right"}, {"part": "P302", "edge": "right"}],
+ "near": [{"part": "C101", "part_of": "U101", "max_mm": 3}]}
+```
+
+The result: every constraint holds, all 50 connections are routed with
+2 vias, and KiCad finds no copper error (5 minutes).
 
 ## Example
 

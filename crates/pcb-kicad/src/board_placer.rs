@@ -4,7 +4,8 @@
 
 use super::*;
 use crate::placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, constraint_report, resolve_constraints,
+    KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_outline, constraint_report,
+    resolve_constraints,
 };
 use pcb_placer as core;
 
@@ -652,6 +653,11 @@ pub fn place_kicad_board(
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
     let config = &resolve_constraints(config, source_directory)?;
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
+        && let Some(outline) = &constraints.outline
+    {
+        apply_outline(&mut pcb, outline)?;
+    }
     let lowered = lower_placement(&pcb, config)?;
     for warning in &lowered.constraint_warnings {
         eprintln!("warning: {warning}");
