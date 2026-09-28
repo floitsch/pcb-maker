@@ -113,8 +113,12 @@ For agents and people alike, `constraints.json` states placement intent:
   from the parts.
 - **Edges.** Parts on an edge: flush, with a connector opening outwards, or
   an antenna reaching beyond it.
-- **Placement.** Regions, rotations and fixed parts.
-- **Proximity.** Parts near other parts or near a given pad.
+- **Placement.** Regions, keepouts, rotations, fixed parts, and the side
+  a part goes on.
+- **Proximity.** Parts near other parts or near a given pad, and groups
+  kept together.
+- **Shields and modules.** Parts inside a hollow part's outline, where
+  only its pads block.
 
 ```json
 {"version": 1,
@@ -132,7 +136,8 @@ A ground plane is one line of router config, used in place of `auto`:
 `{"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]}`.
 
 The result reports every constraint as kept or missed, by how much. When
-connections stay open, `board-router.json` says which pads are unreachable
+parts find no place, the error says why: how full each side is, or which
+constraint holds the part. When connections stay open, `board-router.json` says which pads are unreachable
 and where nets fought for room. See [docs/agents.md](docs/agents.md) and
 [docs/constraints.md](docs/constraints.md).
 
