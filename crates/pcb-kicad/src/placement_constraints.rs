@@ -13,7 +13,8 @@
 //!  "hollow": ["SHIELD1"],
 //!  "near": [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
 //!           {"part": "U2", "part_of": "J4", "max_mm": 10}],
-//!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}]}
+//!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
+//!  "group": [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}]}
 //! ```
 //!
 //! Parts named by a constraint may move even where a default rule would
@@ -65,6 +66,21 @@ pub struct KiCadPlacementConstraints {
     pub near: Vec<KiCadNearConstraint>,
     #[serde(default)]
     pub relative: Vec<KiCadRelativeConstraint>,
+    #[serde(default)]
+    pub group: Vec<KiCadGroupConstraint>,
+}
+
+/// Parts kept together: each one's body within `max_mm` of the central
+/// part's body (a regulator with its inductor and capacitors).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadGroupConstraint {
+    /// References or glob patterns.
+    pub parts: Vec<String>,
+    /// The part the others gather around (default: the largest).
+    #[serde(default)]
+    pub around: Option<String>,
+    pub max_mm: f64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -590,6 +606,39 @@ pub(super) fn apply_constraints(
         });
         constrained.insert(part);
     }
+    for entry in &constraints.group {
+        let mut members = Vec::new();
+        for pattern in &entry.parts {
+            let parts = matching(pattern);
+            if parts.is_empty() {
+                return Err(format!("group constraint {pattern:?} matches no part"));
+            }
+            for part in parts {
+                if !members.contains(&part) {
+                    members.push(part);
+                }
+            }
+        }
+        let center = match &entry.around {
+            Some(reference) => find(reference)?,
+            None => *members
+                .iter()
+                .max_by(|a, b| {
+                    let area = |index: usize| problem.components[index].body_size[0] * problem.components[index].body_size[1];
+                    area(**a).total_cmp(&area(**b))
+                })
+                .expect("a group has members"),
+        };
+        for part in members.into_iter().filter(|part| *part != center) {
+            problem.constraints.relations.push(Relation::Near {
+                part,
+                anchor: Anchor::Body(center),
+                max: entry.max_mm.max(0.0),
+            });
+            constrained.insert(part);
+        }
+        constrained.insert(center);
+    }
     for entry in &constraints.relative {
         let part = find(&entry.part)?;
         let sides = [
@@ -794,6 +843,12 @@ mod tests {
     fn fixed_wins_over_a_constraint_and_mistakes_are_errors() {
         let (problem, _) = apply(r#"{"version": 1, "fixed": ["C1"], "near": [{"part": "C1", "part_of": "C2", "max_mm": 1}]}"#).unwrap();
         assert!(problem.components[1].fixed);
+        let (problem, _) = apply(r#"{"version": 1, "group": [{"parts": ["C*", "J1"], "around": "J1", "max_mm": 2}]}"#).unwrap();
+        assert_eq!(problem.constraints.relations.len(), 2);
+        assert!(problem.constraints.relations.iter().all(|relation| matches!(
+            relation,
+            Relation::Near { anchor: Anchor::Body(0), max, .. } if *max == 2.0
+        )));
         let (problem, _) = apply(r#"{"version": 1, "hollow": ["J1"]}"#).unwrap();
         assert_eq!(problem.components[0].hollow, vec![[0.0, -0.5, 1.0, 0.5]]);
         for bad in [
@@ -806,6 +861,7 @@ mod tests {
             r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "overhang": {"edge": "top"}}]}"#,
             r#"{"version": 1, "colour": "green"}"#,
             r#"{"version": 1, "hollow": ["U*"]}"#,
+            r#"{"version": 1, "group": [{"parts": ["C1", "U9"], "max_mm": 2}]}"#,
             r#"{"version": 1, "hollow": ["C1"]}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");

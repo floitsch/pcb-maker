@@ -47,9 +47,9 @@ Olimex and generated ESP32 boards:
   - Speed: large four-layer boards take 10–20 minutes.
   - Pours: big copper pours on both layers of a two-layer board are still
     the weak spot.
-  - Features: no differential pairs or length matching, and no side
-    assignment (moving parts to the other side). Pin swapping exists but
-    is opt-in. The
+  - Features: no differential pairs or length matching; the placer does
+    not choose sides by itself (constraints put parts on the back). Pin
+    swapping exists but is opt-in. The
   hardest board in the corpus, a 186-footprint two-layer design with a
   0.75 mm BGA and a 3.3 V pour on both layers, is DRC-clean but stops at
   153 of 180 nets with the designer's placement and 161 with automatic

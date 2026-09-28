@@ -29,7 +29,8 @@ takes the constraints inline.
  "hollow":   ["SHIELD1"],
  "near":     [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
               {"part": "U2", "part_of": "J4", "max_mm": 10}],
- "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}]}
+ "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
+ "group":    [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}]}
 ```
 
 Parts are named by reference. `fixed` and `region.parts` also take glob patterns
@@ -50,6 +51,7 @@ downwards, so `top` is the smaller y.
 | `back`, `front` | These parts go on the bottom (top) side. A part on the other side is flipped as KiCad flips it (mirrored, layers swapped) before placement; it is then placed like any other. A part named in both is an error. | hard |
 | `hollow` | Only these parts' pads (and holes) block other parts; the rest of their courtyard may hold parts: a shield's outline around its headers, a module mounted above parts. KiCad's DRC will report the courtyard overlap it allows. Usually fixed as well. | hard |
 | `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. | soft |
+| `group` | The parts (references or globs) stay together: each body within `max_mm` of the central part's body, `around` (default: the largest member). Reported as one `near` per member. | soft |
 | `relative` | The part lies `below`/`above`/`left_of`/`right_of` another part: it does not overlap it along that axis, its centre lies within the other part's extent across it, and the gap is at most `max_gap_mm` (default 5). | soft |
 
 A part named by any constraint may move even where a default rule would fix
@@ -85,7 +87,12 @@ or pad is an error, never ignored.
 
 ## Not supported yet
 
-- Groups ("keep these together") other than pairwise `near`.
+- A non-rectangular `outline` (draw it in KiCad instead: the placer
+  follows any outline the board has).
+- Choosing sides automatically: parts stay on their side unless `back` or
+  `front` names them.
+- Routing intent: differential pairs, length matching. Track widths and
+  clearances come from the project's KiCad net classes.
 
 ## From a netlist to a board
 

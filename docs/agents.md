@@ -37,7 +37,7 @@ Full reference: [constraints.md](constraints.md).
   **`back`/`front`** on which side.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
   module above parts): only its pads block.
-- **`near` and `relative`** keep parts together.
+- **`near`, `group` and `relative`** keep parts together.
 - **`overhang`** lets a module's antenna reach beyond an edge.
 
 Unknown keys, parts or pads are errors, not silently ignored.
