@@ -13,7 +13,7 @@
 use super::*;
 use crate::board_placer::{lower_placement, write_footprint_pose};
 use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, resolve_constraints};
-use crate::board_router::{LayerTable, core_config, emit_routes, finish_routed_board, lower, pours};
+use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, pours};
 use pcb_placer as placer;
 use pcb_router as core;
 
@@ -177,6 +177,12 @@ pub fn layout_kicad_board(
     let source = fs::read_to_string(&placed_board)
         .map_err(|error| format!("failed to read {}: {error}", placed_board.display()))?;
     let mut pcb = parse(&source)?;
+    // Requested pours (a ground plane) join the placed board.
+    if !router_config.add_pours.is_empty() {
+        add_pour_zones(&mut pcb, &router_config.add_pours)?;
+        fs::write(&placed_board, format!("{}\n", encode(&pcb)))
+            .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
+    }
     let layers = LayerTable::from_pcb(&pcb)?;
     let has_pours = !pours(&pcb, &layers)?.is_empty();
     let connect = has_pours && router_config.pours != KiCadPourMode::Tracks;

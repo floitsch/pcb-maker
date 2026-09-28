@@ -111,6 +111,9 @@ echo '{"placer": {"constraints": "constraints.json"}}' > layout.json
 pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 ```
 
+A ground plane is one line of router config, used in place of `auto`:
+`{"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]}`.
+
 The result reports every constraint as kept or missed, by how much. When
 connections stay open, `board-router.json` says which pads are unreachable
 and where nets fought for room. See [docs/agents.md](docs/agents.md) and

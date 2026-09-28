@@ -39,6 +39,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     opens, then vias, then copper. Worth it on idle cores; best of 4 took
     PIC from 2 vias to 0.
   - `pours`: `auto`, `connect` or `tracks`.
+  - `add_pours`: planes to add before routing, such as
+    `[{"net": "GND", "layers": ["B.Cu"]}]`. Each covers the board outline;
+    pads connect to it, and islands are stitched with vias. A layer where
+    that net already has a zone is skipped.
+- **Router options in layout mode.** The same file goes in the router
+  config position:
+  `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
   - `pin_swaps`: see below.
 - **Pin swapping.** `"pin_swaps": "pin-swaps.json"` lets pcb-maker reassign
   interchangeable pins (GPIOs, resistor-network elements). The schematic is
