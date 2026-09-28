@@ -73,6 +73,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 - **Output.** `<out-dir>/result/` holds the finished project, copied, with
   the placement and the copper. `<out-dir>/placed/placement.html` animates
   the placement.
+- **Iterate quickly.** Work in three steps:
+  1. Check the constraints alone, which takes seconds:
+     `pcb-maker place-kicad-board <dir> <id> <out> placer.json`, where
+     `placer.json` is the `placer` object of `layout.json`.
+     `<out>/board-placer.json` reports every constraint, `unplaced`,
+     `hints` and `utilization`.
+  2. Make a draft: `{"moves": 0, "placer": {...}}` in `layout.json` places
+     and routes once, skipping the router-driven part moves. Those moves
+     take most of a layout's time.
+  3. Make the final run with the defaults (40 moves, at most 600 s of
+     them).
 
 ## 3. Read the verdict: `<out-dir>/board-layout.json`
 
