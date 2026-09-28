@@ -68,6 +68,7 @@ pub struct Problem {
     pub grid: f64,
     /// Movable bodies keep this distance from the board edge.
     pub edge_margin: f64,
+    pub constraints: crate::constraints::Constraints,
 }
 
 pub fn rotate(local: Point, angle_degrees: f64) -> Point {

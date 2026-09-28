@@ -12,6 +12,7 @@
 
 use super::*;
 use crate::board_placer::{lower_placement, write_footprint_pose};
+use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, resolve_constraints};
 use crate::board_router::{LayerTable, core_config, emit_routes, finish_routed_board, lower, pours};
 use pcb_placer as placer;
 use pcb_router as core;
@@ -71,6 +72,8 @@ pub struct KiCadBoardLayoutResult {
     pub first_length_mm: f64,
     pub moves: Vec<KiCadBoardLayoutMove>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
+    /// Every placement constraint with whether the final placement keeps it.
+    pub constraints: Vec<KiCadConstraintStatus>,
     pub routed: KiCadBoardRouterResult,
 }
 
@@ -149,7 +152,7 @@ pub fn layout_kicad_board(
     }
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
-    let mut placer_config = config.placer.clone();
+    let mut placer_config = resolve_constraints(&config.placer, source_directory)?;
     placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
     let placed_directory = output_directory.join("placed");
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
@@ -239,8 +242,6 @@ pub fn layout_kicad_board(
         }
         let component = &problem.problem.components[index];
         let current = problem.problem.poses[index];
-        let grid = problem.problem.grid.max(0.05);
-        let snap = |value: f64| (value / grid).round() * grid;
 
         // Candidate poses: steps along the axes and quarter turns, legal
         // against the placement, ranked by the congestion they land in.
@@ -252,7 +253,7 @@ pub fn layout_kicad_board(
                     let wanted = [center[0] + dx, center[1] + dy];
                     let position = component.position_for_center(wanted, angle);
                     let pose = placer::Pose {
-                        position: [snap(position[0]), snap(position[1])],
+                        position: placer::constraints::snap_position(&problem.problem, index, position, angle),
                         angle,
                     };
                     if pose == current {
@@ -266,6 +267,22 @@ pub fn layout_kicad_board(
                         0..problem.problem.components.len(),
                     ) {
                         continue;
+                    }
+                    // A nudge must not break a near or relative constraint
+                    // further.
+                    if !problem.problem.constraints.relations.is_empty() {
+                        let before = placer::constraints::relation_penalty(
+                            &problem.problem,
+                            &problem.problem.poses,
+                            Some(index),
+                        );
+                        let mut trial = problem.problem.poses.clone();
+                        trial[index] = pose;
+                        if placer::constraints::relation_penalty(&problem.problem, &trial, Some(index))
+                            > before + 1.0e-9
+                        {
+                            continue;
+                        }
                     }
                     let landing = body_congestion(
                         &result,
@@ -417,6 +434,7 @@ pub fn layout_kicad_board(
         first_length_mm: first.2,
         moves,
         pin_swaps,
+        constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
         routed,
     };
     let report_path = output_directory.join("board-layout.json");

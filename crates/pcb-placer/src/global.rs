@@ -15,6 +15,7 @@
 //! density 1; routing room comes from per-part halos, and filler charges
 //! decide how much of the remaining whitespace stays between the parts.
 
+use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 
 #[derive(Clone, Debug)]
@@ -76,6 +77,10 @@ struct Body {
     /// Index into the problem's components; `None` for fillers.
     component: Option<usize>,
     half: Point,
+    /// Half extent of the body alone (without halo), and its angle, for
+    /// constraints.
+    bare: Point,
+    angle: f64,
     pins: f64,
 }
 
@@ -294,6 +299,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             Body {
                 component: Some(*index),
                 half: [half[0] + component.halo, half[1] + component.halo],
+                bare: half,
+                angle: poses[*index].angle,
                 pins: component.pins.len() as f64,
             }
         })
@@ -311,6 +318,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         bodies.push(Body {
             component: None,
             half: [filler_side / 2.0; 2],
+            bare: [filler_side / 2.0; 2],
+            angle: 0.0,
             pins: 0.0,
         });
     }
@@ -366,6 +375,9 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 } else {
                     (bounds[axis] + bounds[axis + 2]) / 2.0
                 };
+            }
+            if let Some(index) = body.component {
+                constraints::clamp_center(problem, index, center, body.bare, body.angle);
             }
         }
     };
@@ -500,6 +512,25 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             }
         }
 
+        if !problem.constraints.relations.is_empty() {
+            let mut at = poses.clone();
+            for (body, index) in movable.iter().enumerate() {
+                at[*index].position =
+                    problem.components[*index].position_for_center(reference[body], at[*index].angle);
+            }
+            let mut body_of = vec![usize::MAX; problem.components.len()];
+            for (body, index) in movable.iter().enumerate() {
+                body_of[*index] = body;
+            }
+            constraints::add_relation_gradient(
+                problem,
+                &at,
+                &body_of,
+                &mut wire_gradient,
+                problem.constraints.relation_weight,
+            );
+        }
+
         if iteration == 0 {
             let wire: f64 = wire_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
             let charge: f64 = density_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
@@ -589,6 +620,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 let component = &problem.components[*index];
                 let half = component.half_extent(poses[*index].angle);
                 bodies[body].half = [half[0] + component.halo, half[1] + component.halo];
+                bodies[body].bare = half;
+                bodies[body].angle = poses[*index].angle;
                 poses[*index].position = problem.components[*index]
                     .position_for_center(major[body], poses[*index].angle);
             }

@@ -81,6 +81,10 @@ pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadPlacedFootprint, place_kicad_board,
 };
 mod board_router;
+mod placement_constraints;
+pub use placement_constraints::{
+    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, read_placement_constraints,
+};
 mod outline;
 mod pin_swap;
 pub use pin_swap::{
@@ -3962,6 +3966,9 @@ fn verify_materialized_rung_with_options(
     board_id: &str,
     refill_zones: bool,
 ) -> Result<VerificationReport, String> {
+    if !directory.join(format!("{board_id}.kicad_sch")).exists() {
+        return verify_board_only(directory, board_id, refill_zones);
+    }
     if let Some(cache_root) = env::var_os(KICAD_VERIFICATION_CACHE_ENV) {
         verify_materialized_rung_cached(directory, board_id, refill_zones, Path::new(&cache_root))
     } else {
@@ -4007,6 +4014,34 @@ fn verify_materialized_rung_uncached(
 
     let erc: serde_json::Value = read_json(&erc_path)?;
     let drc: serde_json::Value = read_json(&drc_path)?;
+    write_verification_report(directory, board_id, &erc, &drc)
+}
+
+/// A project without a schematic (a bare board, as in board-only benchmark
+/// sets): DRC without schematic parity, and an empty ERC report in its place.
+fn verify_board_only(
+    directory: &Path,
+    board_id: &str,
+    refill_zones: bool,
+) -> Result<VerificationReport, String> {
+    remove_if_present(&directory.join("verification.json"))?;
+    let pcb = directory.join(format!("{board_id}.kicad_pcb"));
+    let drc_path = directory.join("drc.json");
+    let mut drc_arguments = vec!["pcb", "drc", "--format", "json", "--severity-all"];
+    if refill_zones {
+        drc_arguments.push("--refill-zones");
+    }
+    drc_arguments.push("--output");
+    run_kicad_report(&drc_arguments, &drc_path, &pcb)?;
+    let drc: serde_json::Value = read_json(&drc_path)?;
+    let erc = serde_json::json!({
+        "source": format!("{board_id}.kicad_sch"),
+        "date": drc["date"].as_str().unwrap_or("unknown"),
+        "kicad_version": "none: board-only project, no schematic",
+        "coordinate_units": "mm",
+        "sheets": [],
+    });
+    write_typed_json(&directory.join("erc.json"), &erc)?;
     write_verification_report(directory, board_id, &erc, &drc)
 }
 

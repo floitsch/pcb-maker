@@ -10,6 +10,7 @@
 //! that grows until no overlap is worth keeping. It starts cold, because the
 //! global placement is already good and must not be scrambled.
 
+use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon};
 
 #[derive(Clone, Debug)]
@@ -89,10 +90,33 @@ impl State<'_> {
                 total += width * height;
             }
         }
-        // Leaving the board is as bad as overlapping something.
+        // Leaving the board is as bad as overlapping something (for an
+        // overhanging part, only with what belongs on the board).
         let component = &self.problem.components[index];
         let margin = component.halo + self.problem.spacing / 2.0 - self.problem.edge_margin;
-        let bare = [rect.half[0] - margin, rect.half[1] - margin];
+        let mut bare = [rect.half[0] - margin, rect.half[1] - margin];
+        let mut rect = rect;
+        if !self.problem.constraints.is_empty() {
+            // Constrained sides may touch the edge; an overhanging part
+            // counts only its share on the board.
+            let pose = self.poses[index];
+            let inner = constraints::inner_box(self.problem, index, pose).unwrap_or_else(|| {
+                let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+                [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+            });
+            let margins = constraints::side_margins(self.problem, index);
+            let grown = [
+                inner[0] - margins[0],
+                inner[1] - margins[1],
+                inner[2] + margins[2],
+                inner[3] + margins[3],
+            ];
+            rect.center = [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0];
+            bare = [
+                ((grown[2] - grown[0]) / 2.0 - 1.0e-6).max(0.0),
+                ((grown[3] - grown[1]) / 2.0 - 1.0e-6).max(0.0),
+            ];
+        }
         let outside_x = (self.bounds[0] - (rect.center[0] - bare[0])).max(0.0)
             + ((rect.center[0] + bare[0]) - self.bounds[2]).max(0.0);
         let outside_y = (self.bounds[1] - (rect.center[1] - bare[1])).max(0.0)
@@ -110,6 +134,16 @@ impl State<'_> {
             }
         }
         total
+    }
+
+    /// Relations involving `index`, plus its hard constraints priced so
+    /// steeply that no wirelength gain pays for missing them.
+    fn constraint_cost(&self, index: usize) -> f64 {
+        if self.problem.constraints.is_empty() {
+            return 0.0;
+        }
+        constraints::relation_penalty(self.problem, &self.poses, Some(index))
+            + 1000.0 * constraints::hard_violation(self.problem, index, self.poses[index])
     }
 
     fn wirelength(&self, nets: &[usize]) -> f64 {
@@ -139,13 +173,6 @@ impl State<'_> {
     }
 }
 
-fn snap(value: f64, grid: f64) -> f64 {
-    if grid > 0.0 {
-        (value / grid).round() * grid
-    } else {
-        value
-    }
-}
 
 /// Improves `poses` in place and returns the remaining overlap area.
 pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -> f64 {
@@ -186,10 +213,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     let rectangular =
         (area - (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])).abs() < 1.0e-6 * area.max(1.0);
     for index in &movable {
-        poses[*index].position = [
-            snap(poses[*index].position[0], problem.grid),
-            snap(poses[*index].position[1], problem.grid),
-        ];
+        poses[*index].position =
+            constraints::snap_position(problem, *index, poses[*index].position, poses[*index].angle);
     }
     let mut state = State {
         problem,
@@ -237,16 +262,18 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                         .position_for_center(component.center(first_pose), second_pose.angle),
                     angle: second_pose.angle,
                 };
-                let snapped = |pose: Pose| Pose {
-                    position: [snap(pose.position[0], problem.grid), snap(pose.position[1], problem.grid)],
+                let snapped = |part: usize, pose: Pose| Pose {
+                    position: constraints::snap_position(problem, part, pose.position, pose.angle),
                     angle: pose.angle,
                 };
-                let (first_new, second_new) = (snapped(first_new), snapped(second_new));
+                let (first_new, second_new) = (snapped(index, first_new), snapped(other, second_new));
                 let mut nets = state.incident[index].clone();
                 nets.extend(&state.incident[other]);
                 nets.sort_unstable();
                 nets.dedup();
                 let before = state.wirelength(&nets)
+                    + state.constraint_cost(index)
+                    + state.constraint_cost(other)
                     + penalty
                         * (state.overlap(index, state.rects[index])
                             + state.overlap(other, state.rects[other]));
@@ -256,6 +283,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 state.rects[index] = state.rect(index, first_new);
                 state.rects[other] = state.rect(other, second_new);
                 let after = state.wirelength(&nets)
+                    + state.constraint_cost(index)
+                    + state.constraint_cost(other)
                     + penalty
                         * (state.overlap(index, state.rects[index])
                             + state.overlap(other, state.rects[other]));
@@ -276,7 +305,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 }
                 let position = component.position_for_center(component.center(old), angle);
                 Pose {
-                    position: [snap(position[0], problem.grid), snap(position[1], problem.grid)],
+                    position: constraints::snap_position(problem, index, position, angle),
                     angle,
                 }
             } else {
@@ -297,11 +326,13 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 }
             };
             let before = state.wirelength(&state.incident[index])
+                + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let saved = state.rects[index];
             state.poses[index] = new;
             state.rects[index] = state.rect(index, new);
             let after = state.wirelength(&state.incident[index])
+                + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let delta = after - before;
             if delta > 0.0 && random.next() >= (-delta / temperature).exp() {

@@ -5,6 +5,7 @@
 //! Exact legality, legalization of a global placement, and
 //! wirelength-driven detailed placement.
 
+use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon};
 
 #[derive(Clone, Copy, Debug)]
@@ -87,6 +88,44 @@ fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
     }
 }
 
+/// Whether the part keeps the edge margin inside the outline; an
+/// overhanging part only with the share of its body that belongs on the
+/// board.
+fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
+    if problem.constraints.is_empty() {
+        return inside_outline(problem, bare(problem, index, pose, problem.edge_margin));
+    }
+    let inner = constraints::inner_box(problem, index, pose).unwrap_or_else(|| {
+        let (center, half) = (
+            problem.components[index].center(pose),
+            problem.components[index].half_extent(pose.angle),
+        );
+        [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+    });
+    // A side against a constrained edge may touch it: shrink by a hair so
+    // the outline test does not sit on the boundary.
+    let margins = constraints::side_margins(problem, index).map(|margin| {
+        if margin > 0.0 { margin } else { -1.0e-6 }
+    });
+    let grown = [
+        inner[0] - margins[0],
+        inner[1] - margins[1],
+        inner[2] + margins[2],
+        inner[3] + margins[3],
+    ];
+    if grown[0] > grown[2] || grown[1] > grown[3] {
+        return false;
+    }
+    inside_outline(
+        problem,
+        Rect {
+            center: [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0],
+            half: [(grown[2] - grown[0]) / 2.0, (grown[3] - grown[1]) / 2.0],
+            round: false,
+        },
+    )
+}
+
 /// Whether the body itself (without any margin) lies inside the outline.
 pub fn body_inside_outline(problem: &Problem, index: usize, pose: Pose) -> bool {
     inside_outline(problem, bare(problem, index, pose, 0.0))
@@ -107,7 +146,9 @@ pub fn is_legal(
     others: impl Iterator<Item = usize>,
 ) -> bool {
     let body = rect(problem, index, pose);
-    if !problem.components[index].fixed && !inside_outline(problem, bare(problem, index, pose, problem.edge_margin)) {
+    if !problem.components[index].fixed
+        && (!on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose))
+    {
         return false;
     }
     let side = problem.components[index].side;
@@ -134,13 +175,6 @@ pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {
         .collect()
 }
 
-fn snap(value: f64, grid: f64) -> f64 {
-    if grid > 0.0 {
-        (value / grid).round() * grid
-    } else {
-        value
-    }
-}
 
 /// Moves every movable component to the nearest legal, grid-snapped position,
 /// largest bodies first. Returns the components that found no position.
@@ -177,7 +211,7 @@ pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
                 step * step
             };
             let ideal = component.position_for_center(wanted_center, *angle);
-            let origin = [snap(ideal[0], problem.grid), snap(ideal[1], problem.grid)];
+            let origin = constraints::snap_position(problem, index, ideal, *angle);
             'search: for ring in 0..=rings {
                 // Once a legal spot exists, only slightly farther rings can
                 // still hold a closer Euclidean match.
@@ -215,6 +249,70 @@ pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
         placed.push(index);
     }
     failed
+}
+
+/// For every part that misses a near or relative constraint, searches legal
+/// positions around what the relation wants and takes the one with the
+/// least relation penalty plus wirelength, if that beats where it is.
+/// Returns the number of parts moved.
+pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
+    let constraints = &problem.constraints;
+    if constraints.relations.is_empty() {
+        return 0;
+    }
+    let count = problem.components.len();
+    let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
+    let mut moved = 0;
+    for relation in &constraints.relations {
+        let Some(index) = relation.parts()[0] else {
+            continue;
+        };
+        if problem.components[index].fixed
+            || constraints::relation_violation(problem, poses, relation) <= 0.0
+        {
+            continue;
+        }
+        let component = &problem.components[index];
+        let score = |poses: &[Pose]| {
+            constraints::relation_penalty(problem, poses, Some(index)) + problem.wirelength(poses)
+        };
+        let original = poses[index];
+        let mut best = (score(poses), original);
+        let target = constraints::relation_target(problem, poses, relation);
+        let reach = component.body_size[0].max(component.body_size[1]) + 6.0;
+        let rings = (reach / step).ceil() as i64;
+        for angle in &component.angle_options {
+            let ideal = component.position_for_center(target, *angle);
+            let origin = constraints::snap_position(problem, index, ideal, *angle);
+            for ring in 0..=rings {
+                for dy in -ring..=ring {
+                    for dx in -ring..=ring {
+                        if dx.abs().max(dy.abs()) != ring {
+                            continue;
+                        }
+                        let pose = Pose {
+                            position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                            angle: *angle,
+                        };
+                        if !is_legal(problem, poses, index, pose, 0..count) {
+                            continue;
+                        }
+                        poses[index] = pose;
+                        let candidate = score(poses);
+                        poses[index] = original;
+                        if candidate < best.0 - 1.0e-9 {
+                            best = (candidate, pose);
+                        }
+                    }
+                }
+            }
+        }
+        if best.1 != original {
+            poses[index] = best.1;
+            moved += 1;
+        }
+    }
+    moved
 }
 
 /// Local search on a legal placement: every move keeps it legal and strictly
@@ -293,9 +391,27 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
             }
             target = [target[0] / weight, target[1] / weight];
             let original = poses[index];
-            let mut best = (cost(poses, &incident[index]), original);
+            let score = |poses: &[Pose]| {
+                cost(poses, &incident[index]) + constraints::relation_penalty(problem, poses, Some(index))
+            };
+            let mut best = (score(poses), original);
             let center = component.center(original);
-            for angle in &component.angle_options {
+            // Besides the pull of its nets, a part that misses a relation
+            // is drawn towards what it relates to.
+            let mut targets = vec![target];
+            for relation in &problem.constraints.relations {
+                if relation.parts()[0] != Some(index)
+                    || constraints::relation_violation(problem, poses, relation) <= 0.0
+                {
+                    continue;
+                }
+                targets.push(constraints::relation_target(problem, poses, relation));
+            }
+            for (angle, target) in component
+                .angle_options
+                .iter()
+                .flat_map(|angle| targets.iter().map(move |target| (angle, *target)))
+            {
                 for fraction in [1.0, 0.75, 0.5, 0.25, 0.125, 0.0] {
                     let wanted = [
                         center[0] + fraction * (target[0] - center[0]),
@@ -303,14 +419,14 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                     ];
                     let position = component.position_for_center(wanted, *angle);
                     let pose = Pose {
-                        position: [snap(position[0], problem.grid), snap(position[1], problem.grid)],
+                        position: constraints::snap_position(problem, index, position, *angle),
                         angle: *angle,
                     };
                     if pose == original {
                         continue;
                     }
                     poses[index] = pose;
-                    let candidate = cost(poses, &incident[index]);
+                    let candidate = score(poses);
                     if candidate < best.0 - 1.0e-9 && is_legal(problem, poses, index, pose, 0..count)
                     {
                         best = (candidate, pose);
@@ -345,9 +461,14 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                 nets.extend(&incident[b]);
                 nets.sort_unstable();
                 nets.dedup();
-                let before = cost(poses, &nets);
+                let pair = |poses: &[Pose]| {
+                    cost(poses, &nets)
+                        + constraints::relation_penalty(problem, poses, Some(a))
+                        + constraints::relation_penalty(problem, poses, Some(b))
+                };
+                let before = pair(poses);
                 poses.swap(a, b);
-                if cost(poses, &nets) < before - 1.0e-9
+                if pair(poses) < before - 1.0e-9
                     && is_legal(problem, poses, a, poses[a], 0..count)
                     && is_legal(problem, poses, b, poses[b], 0..count)
                 {

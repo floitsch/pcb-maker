@@ -67,6 +67,7 @@ fn chain(parts: usize) -> Problem {
         spacing: 0.5,
         grid: 0.5,
         edge_margin: 0.0,
+        constraints: Default::default(),
     }
 }
 
@@ -101,4 +102,49 @@ fn dense_board_still_becomes_legal() {
     let placement = place(&problem, &Config::new());
     assert!(placement.unplaced.is_empty(), "{:?}", placement.unplaced);
     assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
+}
+
+#[test]
+fn edge_and_region_constraints_are_kept() {
+    use pcb_placer::constraints::Edge;
+    let mut problem = chain(12);
+    // R5 (index 7) must touch the top edge, R8 (index 10) stay in the
+    // bottom-right corner box.
+    problem.constraints.edges.push((7, Edge::Top, 0.5));
+    problem.constraints.regions.push((10, [60.0, 35.0, 80.0, 50.0]));
+    problem.constraints.relation_weight = 4.0;
+    let placement = place(&problem, &Config::new());
+    assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
+    assert_eq!(placement.constraints.len(), 2);
+    for status in &placement.constraints {
+        assert!(status.satisfied, "{status:?}");
+    }
+    let top = problem.components[7].center(placement.poses[7])[1]
+        - problem.components[7].half_extent(placement.poses[7].angle)[1];
+    assert!(top <= 0.5 + 1.0e-6, "top {top}");
+}
+
+#[test]
+fn relations_pull_parts_together_against_the_netlist() {
+    use pcb_placer::constraints::{Anchor, Edge, Relation};
+    let mut problem = chain(12);
+    // R0 and R11 sit at opposite ends of the chain; ask for R11 right next
+    // to R0's second pin, and R6 directly below R1.
+    problem.constraints.relations.push(Relation::Near {
+        part: 13,
+        anchor: Anchor::Point(2, [2.0, 0.0]),
+        max: 2.0,
+    });
+    problem.constraints.relations.push(Relation::Beside {
+        part: 8,
+        anchor: 3,
+        side: Edge::Bottom,
+        max_gap: 3.0,
+    });
+    problem.constraints.relation_weight = 4.0;
+    let placement = place(&problem, &Config::new());
+    assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
+    for status in &placement.constraints {
+        assert!(status.satisfied, "{status:?}");
+    }
 }

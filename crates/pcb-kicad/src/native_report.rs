@@ -19,7 +19,12 @@ use std::{
 /// a board design violation. Keep this policy shared by absolute verification
 /// and source/result admission; other warnings and mismatch errors still count.
 pub fn is_library_metadata_warning(finding: &Value) -> bool {
-    finding["type"] == "lib_footprint_mismatch" && finding["severity"] == "warning"
+    // `lib_footprint_issues`: the footprint's library is not installed, as
+    // for boards shared without their libraries.
+    matches!(
+        finding["type"].as_str(),
+        Some("lib_footprint_mismatch" | "lib_footprint_issues")
+    ) && finding["severity"] == "warning"
 }
 
 /// Design findings from an already validated native DRC report. Metadata

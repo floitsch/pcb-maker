@@ -6,6 +6,7 @@
 //! and wirelength-driven detailed placement.
 
 pub mod anneal;
+pub mod constraints;
 pub mod global;
 pub mod legal;
 pub mod problem;
@@ -49,6 +50,8 @@ pub struct Placement {
     pub unplaced: Vec<usize>,
     /// Components violating spacing or the outline in the final result.
     pub illegal: Vec<usize>,
+    /// Every placement constraint with whether the result keeps it.
+    pub constraints: Vec<constraints::Status>,
 }
 
 /// Area of the outline polygon.
@@ -137,6 +140,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let problem = &relaxed;
     legal::refine(problem, &mut poses, config.refine_passes);
+    if legal::repair_relations(problem, &mut poses) > 0 {
+        legal::refine(problem, &mut poses, config.refine_passes);
+    }
     let wirelength_final = problem.wirelength(&poses);
     frames.push(Frame {
         iteration: global.iterations + 2,
@@ -145,6 +151,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         poses: poses.clone(),
     });
     let illegal = legal::illegal_components(problem, &poses);
+    let constraints = constraints::report(problem, &poses);
     Placement {
         poses,
         frames,
@@ -156,5 +163,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         wirelength_final,
         unplaced,
         illegal,
+        constraints,
     }
 }

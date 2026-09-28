@@ -3,6 +3,9 @@
 //! Whole-board component placement through the `pcb-placer` core.
 
 use super::*;
+use crate::placement_constraints::{
+    KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, constraint_report, resolve_constraints,
+};
 use pcb_placer as core;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,6 +45,12 @@ pub struct KiCadBoardPlacerConfig {
     /// copper-to-edge clearance, since pads may reach the courtyard).
     pub edge_margin_mm: f64,
     pub seed: u64,
+    /// Placement constraints: a `constraints.json` path (relative to the
+    /// source directory) or the constraints inline.
+    pub constraints: Option<KiCadConstraintsSource>,
+    /// Millimetres of wirelength one millimetre of a missed near or
+    /// relative constraint costs.
+    pub constraint_weight: f64,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -62,6 +71,8 @@ impl Default for KiCadBoardPlacerConfig {
             maximum_utilization: 0.6,
             edge_margin_mm: 0.5,
             seed: 1,
+            constraints: None,
+            constraint_weight: 10.0,
         }
     }
 }
@@ -93,6 +104,9 @@ pub struct KiCadBoardPlacerResult {
     pub wirelength_final_mm: f64,
     pub unplaced: Vec<String>,
     pub illegal: Vec<String>,
+    /// Every placement constraint with whether the placement keeps it.
+    pub constraints: Vec<KiCadConstraintStatus>,
+    pub constraint_warnings: Vec<String>,
     pub seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
@@ -238,10 +252,39 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     Ok(at)
 }
 
+/// Bounding box, in the footprint's own frame, of its keepout zones.
+fn footprint_keepout_box(footprint: &Expr, at: [f64; 3]) -> Result<Option<[f64; 4]>, String> {
+    let mut bounds: Option<[f64; 4]> = None;
+    for zone in footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("zone") && child.child("keepout").is_some())
+    {
+        let Some(points) = zone.child("polygon").and_then(|polygon| polygon.child("pts")) else {
+            continue;
+        };
+        for point in points.children().iter().filter(|child| child.head() == Some("xy")) {
+            let board = [
+                expression_coordinate(point, 1, "keepout x")?,
+                expression_coordinate(point, 2, "keepout y")?,
+            ];
+            // Zones inside footprints are stored in board coordinates.
+            let local = core::problem::rotate([board[0] - at[0], board[1] - at[1]], at[2]);
+            let entry = bounds.get_or_insert([local[0], local[1], local[0], local[1]]);
+            entry[0] = entry[0].min(local[0]);
+            entry[1] = entry[1].min(local[1]);
+            entry[2] = entry[2].max(local[0]);
+            entry[3] = entry[3].max(local[1]);
+        }
+    }
+    Ok(bounds)
+}
+
 pub(super) struct LoweredPlacement {
     pub problem: core::Problem,
     pub references: Vec<String>,
     pub source_at: Vec<[f64; 3]>,
+    pub constraint_warnings: Vec<String>,
 }
 
 fn default_edge_keep_mm() -> f64 {
@@ -249,7 +292,7 @@ fn default_edge_keep_mm() -> f64 {
 }
 
 /// `*` matches any run of characters, `?` one character.
-fn glob_matches(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
     let mut table = vec![vec![false; text.len() + 1]; pattern.len() + 1];
@@ -281,6 +324,10 @@ pub(super) fn lower_placement(
     let mut source_at = Vec::new();
     let mut locked = Vec::new();
     let mut connector = Vec::new();
+    // Every pad by name, for constraints that point at a pin, and the
+    // footprint's own keepout zones (an antenna), for overhang constraints.
+    let mut pad_offsets: Vec<BTreeMap<String, [f64; 2]>> = Vec::new();
+    let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
     for footprint in pcb
         .children()
         .iter()
@@ -291,11 +338,15 @@ pub(super) fn lower_placement(
         let (body_center, body_size, round) = local_body(footprint)?;
         let mut pins = Vec::new();
         let mut through = false;
+        let mut named = BTreeMap::new();
         for pad in footprint
             .children()
             .iter()
             .filter(|child| child.head() == Some("pad"))
         {
+            if let (Some(name), Ok(at)) = (pad.children().get(1).and_then(Expr::atom), form_at(pad)) {
+                named.entry(name.to_string()).or_insert([at[0], at[1]]);
+            }
             let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
             through |= matches!(pad_type, "thru_hole" | "np_thru_hole");
             let Some(net) = node_net(pad).map(normalize_net).filter(|net| placer_net(net)) else {
@@ -355,6 +406,8 @@ pub(super) fn lower_placement(
         });
         references.push(reference);
         source_at.push(at);
+        pad_offsets.push(named);
+        keepout_boxes.push(footprint_keepout_box(footprint, at)?);
     }
 
     // Rule areas that forbid footprints are obstacles too, and a part the
@@ -426,6 +479,9 @@ pub(super) fn lower_placement(
             ],
             angle: 0.0,
         });
+        references.push("keepout".into());
+        source_at.push([0.0; 3]);
+        locked.push(true);
     }
 
     // Copper-layer text and graphics are part of the board: parts must not
@@ -536,6 +592,7 @@ pub(super) fn lower_placement(
         spacing: config.spacing_mm,
         grid: config.grid_mm,
         edge_margin: config.edge_margin_mm,
+        constraints: Default::default(),
     };
     for index in 0..footprint_count {
         let reference = &references[index];
@@ -558,10 +615,25 @@ pub(super) fn lower_placement(
             || config.fixed_patterns.iter().any(|pattern| glob_matches(pattern, reference))
             || (default_fixed && !config.free.contains(reference));
     }
+    let constraint_warnings = match &config.constraints {
+        None => Vec::new(),
+        Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
+            &mut problem,
+            &references,
+            &pad_offsets,
+            &keepout_boxes,
+            constraints,
+            config.constraint_weight,
+        )?,
+        Some(KiCadConstraintsSource::File(path)) => {
+            return Err(format!("constraints file {} was not resolved", path.display()));
+        }
+    };
     Ok(LoweredPlacement {
         problem,
         references,
         source_at,
+        constraint_warnings,
     })
 }
 
@@ -579,7 +651,11 @@ pub fn place_kicad_board(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
+    let config = &resolve_constraints(config, source_directory)?;
     let lowered = lower_placement(&pcb, config)?;
+    for warning in &lowered.constraint_warnings {
+        eprintln!("warning: {warning}");
+    }
     let mut placer_config = core::Config::new();
     placer_config.global.whitespace_fill = config.whitespace_fill;
     placer_config.maximum_utilization = config.maximum_utilization;
@@ -685,6 +761,8 @@ pub fn place_kicad_board(
         wirelength_final_mm: placement.wirelength_final,
         unplaced: names(&placement.unplaced),
         illegal: names(&placement.illegal),
+        constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references),
+        constraint_warnings: lowered.constraint_warnings.clone(),
         seconds: started.elapsed().as_secs_f64(),
         footprints,
     };
