@@ -86,27 +86,31 @@ no unconnected item.
 
 ### 2026-09-28, route mode, all 617 boards
 
-Commit 30df46e, 4 boards at a time with 2 threads each, 900 s per board
-(`build/pcbench-all-v7`).
+Commit 7b8fc4d, 4 boards at a time with 2 threads each, 900 s per board
+(`build/pcbench-all-v9`; two outline boards re-run after the last fix).
 
 | Tier | Boards | pcb-maker clean | PCBench Freerouting success | pcb-maker vias / designer | copper / designer | median s |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| D3-A | 97 | 97 (100 %) | 93 (96 %) | 0.49 | 0.89 | 6.0 |
-| D3-B | 267 | 257 (96 %) | 242 (91 %) | 0.42 | 0.92 | 8.3 |
-| D3-C | 248 | 227 (92 %) | 187 (75 %) | 0.58 | 0.93 | 36.6 |
+| D3-A | 97 | 97 (100 %) | 93 (96 %) | 0.49 | 0.89 | 6.4 |
+| D3-B | 267 | 263 (99 %) | 242 (91 %) | 0.43 | 0.92 | 9.1 |
+| D3-C | 248 | 236 (95 %) | 187 (75 %) | 0.59 | 0.94 | 37.3 |
 | not in D3 | 5 | 5 | 4 | | | |
-| all | 617 | **586 (95 %)** | 526 (85 %) | 0.56 | 0.93 | 12.5 |
+| all | 617 | **601 (97 %)** | 526 (85 %) | 0.56 | 0.93 | 12.3 |
 
-- **PCBWorld's test splits** (99 + 10 + 10 boards; 94 + 9 + 9 reproduced
-  here): 109/114 clean in the first run, all 114 after the fixes below.
+- **PCBWorld's test splits** (94 + 9 + 9 boards reproduced here): all
+  clean.
 - **Published Clean Pass on the same splits:**
-  - D3-A: Freerouting 0.80, best RL 0.94.
+  - D3-A: Freerouting 0.80, KiCadRoutingTools 0.74, best RL 0.94, best
+    LLM 0.65.
   - D3-B: Freerouting 0.78, best RL 0.45.
-- **Where the 31 failures came from** (`triage.py`):
-  - 4 adapter errors;
-  - 3 model mismatches;
-  - 7 DRC findings;
-  - 17 with connections left open.
+- **The 16 boards that are not clean** (`triage.py`):
+  - 14 leave connections open.
+  - glasgow reaches the 900 s limit.
+  - navelino-leaf's outline has junctions.
+  - No board has a model mismatch or a copper DRC error.
+- **Progress over the day.** The first full run (commit 30df46e) had
+  586/617 clean, with 31 failures: 4 errors, 3 model mismatches, 7 DRC
+  errors and 17 open.
 
 ### Bugs these boards exposed (all fixed)
 

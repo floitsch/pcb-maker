@@ -15,8 +15,20 @@ one goal: the best open-source PCB placer and router.
 
 ## Status
 
-Not finished, but already useful. On the [18-board corpus](docs/benchmarks.md)
-built from the KiCad demos, Olimex and generated ESP32 boards:
+Not finished, but already useful.
+
+- **Open-source boards.** On the 617 open-source boards of
+  [PCBench / PCBWorld D3](benchmarks/pcbench/README.md), prepared the way
+  PCBWorld prepares them, pcb-maker routes 601 (97 %) clean. PCBench's
+  Freerouting run succeeded on 526 (85 %).
+  - On the hardest tier (D3-C, 248 boards): 95 % against 75 %.
+  - Vias are about half and copper 93 % of the designers' boards.
+- **Agent tasks.** Boards reduced to what an agent starts from (parts
+  stacked, no outline) are laid out from a `constraints.json`
+  ([agent tasks](benchmarks/agent-tasks/README.md)).
+
+On the [18-board corpus](docs/benchmarks.md) built from the KiCad demos,
+Olimex and generated ESP32 boards:
 
 - **Routing** (designer's placement kept, tracks and vias stripped): 12 of
   the 13 two-layer boards complete and DRC-clean. Of the four-layer boards,
@@ -181,6 +193,8 @@ python3 benchmarks/corpus/run.py build/corpus   # route and layout for every boa
 | `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
 | `src/main.rs` | the `pcb-maker` command line |
 | `benchmarks/corpus` | the board corpus runner and the Freerouting / tscircuit comparisons |
+| `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
+| `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
 | `docs/` | design notes, results and the trust audit that reset the project |
 
 The other crates (`pcb-engine`, `pcb-grid-router`, `layout-trace-*`, …) are
