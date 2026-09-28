@@ -56,3 +56,15 @@ router and placer items.
     global iterations; bins sized from the median part; or the survey's
     CP-SAT NoOverlap2D / sparrow legalizer
     ([algorithm survey](reviews/2026-09-26-algorithm-survey.md), section 5).
+- **LNS endgame: tried, no gain (2026-09-28).** This was the survey's
+  large-neighbourhood search: rip up an open net with every net in its
+  window, reinsert with the open net first in a shuffled order, and keep
+  the round if fewer terminals stay open.
+  - Result on four PCBench "open" boards: rounds were kept, but no board
+    got closer to complete.
+  - Why: each ends with two or three nets that compete for the same gap,
+    and only one fits on the lattice, whatever the order.
+  - The designer fitted both, so the limit is geometric (lattice
+    resolution or topology), not negotiation.
+  - Reverted; the survey's exact window solving or a finer local lattice
+    would be the next step for these.
