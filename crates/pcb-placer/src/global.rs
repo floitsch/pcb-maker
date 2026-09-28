@@ -82,6 +82,9 @@ struct Body {
     bare: Point,
     angle: f64,
     pins: f64,
+    /// Which side's density field the body charges (0: front, 1: back on
+    /// a two-sided board).
+    field: usize,
 }
 
 struct Field {
@@ -264,23 +267,50 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         }
     }
     let mut poses = problem.poses.clone();
-    let mut fixed = field.fixed.clone();
+    // A board with parts on both sides gets one density field per side:
+    // a front part and a back part may share the same spot.
+    use crate::problem::Side;
+    let two_sided = problem.components.iter().any(|component| component.side == Side::Front)
+        && problem.components.iter().any(|component| component.side == Side::Back);
+    let side_count = if two_sided { 2 } else { 1 };
+    let fields_of = |side: Side| -> Vec<usize> {
+        match side {
+            Side::Front => vec![0],
+            Side::Back => vec![side_count - 1],
+            Side::Both => (0..side_count).collect(),
+            Side::Neither => Vec::new(),
+        }
+    };
+    let mut side_fixed = vec![field.fixed.clone(); side_count];
     for (index, component) in problem.components.iter().enumerate() {
-        if component.fixed && component.side != crate::problem::Side::Neither {
+        if component.fixed {
             let pose = poses[index];
             let half = component.half_extent(pose.angle);
-            field.overlap(
-                component.center(pose),
-                [half[0] + component.halo, half[1] + component.halo],
-                |bin, area| fixed[bin] += area,
-            );
+            for side in fields_of(component.side) {
+                field.overlap(
+                    component.center(pose),
+                    [half[0] + component.halo, half[1] + component.halo],
+                    |bin, area| side_fixed[side][bin] += area,
+                );
+            }
+            // A through-hole part's holes are in the way on the other side.
+            if two_sided && component.side != Side::Both {
+                let other = 1 - fields_of(component.side).first().copied().unwrap_or(0);
+                for (center, half) in component.far_boxes(pose) {
+                    field.overlap(center, half, |bin, area| side_fixed[other][bin] += area);
+                }
+            }
         }
     }
-    for value in &mut fixed {
-        *value = value.min(bin_area);
+    for fixed in &mut side_fixed {
+        for value in fixed.iter_mut() {
+            *value = value.min(bin_area);
+        }
     }
-    field.fixed = fixed;
-    let free_area: f64 = field.fixed.iter().map(|fixed| bin_area - fixed).sum();
+    let side_free: Vec<f64> = side_fixed
+        .iter()
+        .map(|fixed| fixed.iter().map(|fixed| bin_area - fixed).sum())
+        .collect();
 
     let movable: Vec<usize> = (0..problem.components.len())
         .filter(|index| !problem.components[*index].fixed)
@@ -304,6 +334,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 bare: half,
                 angle: poses[*index].angle,
                 pins: component.pins.len() as f64,
+                field: fields_of(component.side).first().copied().unwrap_or(0),
             }
         })
         .collect();
@@ -314,16 +345,25 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let filler_side = (trimmed.iter().sum::<f64>() / trimmed.len() as f64)
         .sqrt()
         .max(field.bin[0].min(field.bin[1]));
-    let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (free_area - movable_area).max(0.0);
-    let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
-    for _ in 0..filler_count {
-        bodies.push(Body {
-            component: None,
-            half: [filler_side / 2.0; 2],
-            bare: [filler_side / 2.0; 2],
-            angle: 0.0,
-            pins: 0.0,
-        });
+    // Fillers take a share of each side's whitespace.
+    for side in 0..side_count {
+        let side_movable: f64 = bodies
+            .iter()
+            .filter(|body| body.field == side)
+            .map(|body| 4.0 * body.half[0] * body.half[1])
+            .sum();
+        let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (side_free[side] - side_movable).max(0.0);
+        let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
+        for _ in 0..filler_count {
+            bodies.push(Body {
+                component: None,
+                half: [filler_side / 2.0; 2],
+                bare: [filler_side / 2.0; 2],
+                angle: 0.0,
+                pins: 0.0,
+                field: side,
+            });
+        }
     }
 
     // Start from the pin centroid of fixed parts (or the board centre) with
@@ -432,36 +472,41 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
 
     for iteration in 0..config.max_iterations {
         iterations = iteration + 1;
-        // Density of all charges at the reference solution.
-        density.copy_from_slice(&field.fixed);
-        let mut real = vec![0.0; n * n];
-        for (body, center) in bodies.iter().zip(&reference) {
-            let (half, scale) = field.smoothed(body.half);
-            field.overlap(*center, half, |bin, area| {
-                density[bin] += area * scale;
-                if body.component.is_some() {
-                    real[bin] += area * scale;
-                }
-            });
-        }
-        overflow = real
-            .iter()
-            .zip(&field.fixed)
-            .map(|(real, fixed)| (real - (bin_area - fixed)).max(0.0))
-            .sum::<f64>()
-            / movable_area;
-        field.solve(&density);
-
+        // Density of all charges at the reference solution, side by side.
         let mut density_gradient = vec![[0.0; 2]; bodies.len()];
-        for (index, (body, center)) in bodies.iter().zip(&reference).enumerate() {
-            let (half, scale) = field.smoothed(body.half);
-            let mut force = [0.0; 2];
-            field.overlap(*center, half, |bin, area| {
-                force[0] += area * scale * field.field_x[bin];
-                force[1] += area * scale * field.field_y[bin];
-            });
-            density_gradient[index] = [-force[0], -force[1]];
+        let mut overflow_area = 0.0;
+        for (side, fixed) in side_fixed.iter().enumerate() {
+            density.copy_from_slice(fixed);
+            let mut real = vec![0.0; n * n];
+            for (body, center) in bodies.iter().zip(&reference).filter(|(body, _)| body.field == side) {
+                let (half, scale) = field.smoothed(body.half);
+                field.overlap(*center, half, |bin, area| {
+                    density[bin] += area * scale;
+                    if body.component.is_some() {
+                        real[bin] += area * scale;
+                    }
+                });
+            }
+            overflow_area += real
+                .iter()
+                .zip(fixed)
+                .map(|(real, fixed)| (real - (bin_area - fixed)).max(0.0))
+                .sum::<f64>();
+            field.solve(&density);
+            for (index, (body, center)) in bodies.iter().zip(&reference).enumerate() {
+                if body.field != side {
+                    continue;
+                }
+                let (half, scale) = field.smoothed(body.half);
+                let mut force = [0.0; 2];
+                field.overlap(*center, half, |bin, area| {
+                    force[0] += area * scale * field.field_x[bin];
+                    force[1] += area * scale * field.field_y[bin];
+                });
+                density_gradient[index] = [-force[0], -force[1]];
+            }
         }
+        overflow = overflow_area / movable_area;
 
         // Weighted-average wirelength gradient.
         let gamma = 8.0
