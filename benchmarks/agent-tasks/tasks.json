@@ -1,0 +1,23 @@
+{"comment": "Agent-style layout tasks: a real board is stripped to what an agent starts from (tracks removed, movable footprints stacked at one point, optionally no outline), then laid out from constraints. expected_misses lists constraints that are geometrically impossible (documented in the task's notes); a task passes when every other constraint holds, every connection is routed and KiCad reports no copper error.",
+ "tasks": [
+  {"name": "hierarchy-from-netlist",
+   "directory": "benchmarks/real/external/kicad-complex-hierarchy", "board_id": "complex_hierarchy",
+   "unplace": true, "remove_outline": true,
+   "constraints": "hierarchy.constraints.json",
+   "router": {"add_pours": [{"net": "GND", "layers": ["F.Cu"]}]},
+   "notes": "KiCad's complex-hierarchy demo from a netlist: board size, connectors on the left and right edges, a decoupling capacitor at its amplifier, a ground plane on the top (the bottom has one)."},
+  {"name": "esp32-dut-from-netlist",
+   "directory": "/home/flo/work/testing-esp32-duts/generated/esp32-c3", "board_id": "esp32-c3",
+   "unplace": true, "remove_outline": true,
+   "constraints": "dut-c3.constraints.json",
+   "router": {},
+   "notes": "The ESP32-C3 test board: the controller module on the left edge, the device under test on the right, service headers on top, the system header along the bottom, decoupling next to each module."},
+  {"name": "esp-usb-corner",
+   "directory": "benchmarks/fence/esp-usb-placement", "board_id": "fence-esp32",
+   "unplace": false, "remove_outline": false,
+   "constraints": "../fence/esp-usb-placement/constraints.json",
+   "placer": {"fixed": ["U1", "C1", "C2", "U4", "C8", "C9", "U5", "C10", "C11", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8", "J1", "J2", "J3", "J5", "J6", "JP1"]},
+   "router": {},
+   "expected_misses": [["near", "C5", "U3"], ["near", "C6", "U3"], ["relative", "J4", "U3"]],
+   "notes": "The breadboard fence's USB/ESP corner (benchmarks/fence/esp-usb-placement): module flush in the corner with its antenna beyond the top edge, USB-C below it opening outwards. C5/C6 cannot come within 6 mm of the module's pin 3 (the pad sits 8.4 mm inside its courtyard), and J4 cannot sit within 3 mm below the module with C5/C6 in between."}
+ ]}
