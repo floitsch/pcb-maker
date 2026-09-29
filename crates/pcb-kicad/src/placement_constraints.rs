@@ -16,6 +16,7 @@
 //!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
 //!  "group": [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
 //!  "row": [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}],
+//!  "apart": [{"parts": ["U5"], "from": ["U1", "Q*"], "min_mm": 10}],
 //!  "device_front": "left",
 //!  "place": [{"part": "SW1", "at": "front"}, {"part": "J1", "x": 10, "y": 5, "angle": 90}]}
 //! ```
@@ -73,12 +74,26 @@ pub struct KiCadPlacementConstraints {
     pub group: Vec<KiCadGroupConstraint>,
     #[serde(default)]
     pub row: Vec<KiCadRowConstraint>,
+    #[serde(default)]
+    pub apart: Vec<KiCadApartConstraint>,
     /// The board edge the device's front is at (`left`, `right`, `top`,
     /// `bottom`): `place` then understands `front` and `rear`.
     #[serde(default)]
     pub device_front: Option<String>,
     #[serde(default)]
     pub place: Vec<KiCadPlaceConstraint>,
+}
+
+/// Parts kept away from others: every body of `parts` at least `min_mm`
+/// from every body of `from` (a temperature sensor away from the regulator,
+/// an audio input away from the switcher).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadApartConstraint {
+    /// References or glob patterns.
+    pub parts: Vec<String>,
+    pub from: Vec<String>,
+    pub min_mm: f64,
 }
 
 /// Where one part goes, in words (`at`) or exactly (`x`, `y`, `angle`).
@@ -927,6 +942,37 @@ pub(super) fn apply_constraints(
         }
         constrained.insert(center);
     }
+    for entry in &constraints.apart {
+        let expand = |patterns: &[String]| -> Result<Vec<usize>, String> {
+            let mut parts = Vec::new();
+            for pattern in patterns {
+                let matched = matching(pattern);
+                if matched.is_empty() {
+                    return Err(format!("apart constraint {pattern:?} matches no part"));
+                }
+                for part in matched {
+                    if !parts.contains(&part) {
+                        parts.push(part);
+                    }
+                }
+            }
+            Ok(parts)
+        };
+        let (parts, others) = (expand(&entry.parts)?, expand(&entry.from)?);
+        if !(entry.min_mm > 0.0) {
+            return Err(format!("apart constraint {:?}: min_mm must be positive", entry.parts));
+        }
+        for part in &parts {
+            for other in others.iter().filter(|other| *other != part) {
+                problem.constraints.relations.push(Relation::Apart {
+                    part: *part,
+                    anchor: *other,
+                    min: entry.min_mm,
+                });
+            }
+            constrained.insert(*part);
+        }
+    }
     for entry in &constraints.relative {
         let part = find(&entry.part)?;
         let sides = [
@@ -1160,6 +1206,21 @@ mod tests {
             r#"{"version": 1, "hollow": ["U*"]}"#,
             r#"{"version": 1, "group": [{"parts": ["C1", "U9"], "max_mm": 2}]}"#,
             r#"{"version": 1, "hollow": ["C1"]}"#,
+        ] {
+            assert!(apply(bad).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn apart_keeps_every_named_part_from_every_other() {
+        let (problem, _) = apply(r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["C*", "J1"], "min_mm": 5}]}"#).unwrap();
+        assert_eq!(
+            problem.constraints.relations,
+            vec![Relation::Apart { part: 1, anchor: 2, min: 5.0 }, Relation::Apart { part: 1, anchor: 0, min: 5.0 }]
+        );
+        for bad in [
+            r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["U*"], "min_mm": 5}]}"#,
+            r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["C2"], "min_mm": 0}]}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }

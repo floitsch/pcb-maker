@@ -342,3 +342,46 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
     problem.components[0].copper_only = false;
     assert!(!legal(&problem, 23.0));
 }
+
+#[test]
+fn apart_keeps_connected_parts_away_from_each_other() {
+    use pcb_placer::constraints::Relation;
+    let part = || Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [4.0, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+    };
+    let mut problem = Problem {
+        outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+        components: vec![part(), part()],
+        net_weights: vec![1.0],
+        poses: vec![Pose { position: [30.0, 20.0], angle: 0.0 }; 2],
+        spacing: 0.5,
+        grid: 0.5,
+        edge_margin: 0.5,
+        min_spacing: 0.2,
+        constraints: Default::default(),
+    };
+    problem.constraints.relations.push(Relation::Apart { part: 0, anchor: 1, min: 15.0 });
+    problem.constraints.relation_weight = 50.0;
+    let placement = place(&problem, &Config::new());
+    assert!(placement.unplaced.is_empty());
+    let [a, b] = [placement.poses[0].position, placement.poses[1].position];
+    let gap = ((a[0] - b[0]).abs() - 4.0).max(0.0).hypot(((a[1] - b[1]).abs() - 4.0).max(0.0));
+    assert!(gap >= 15.0 - 0.1, "gap {gap}");
+    assert!(placement.constraints.iter().all(|status| status.satisfied));
+}

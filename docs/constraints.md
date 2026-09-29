@@ -32,6 +32,7 @@ takes the constraints inline.
  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
  "group":    [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
  "row":      [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}],
+ "apart":    [{"parts": ["U5"], "from": ["U1", "Q*"], "min_mm": 10}],
  "device_front": "left",
  "place":    [{"part": "SW1", "at": "front"}, {"part": "D1", "at": "top-right"},
               {"part": "J1", "x": 10, "y": 5, "angle": 90}]}
@@ -59,6 +60,7 @@ downwards, so `top` is the smaller y.
 | `near` | The gap between the part's body and another part's body (`part_of`) or a pad (`pin_of`, `REF:PAD`) is at most `max_mm`. | soft |
 | `group` | The parts (references or globs) stay together: each body within `max_mm` of the central part's body, `around` (default: the largest member). Reported as one `near` per member. | soft |
 | `row` | The parts (in the order given; a glob's parts in natural order, D2 before D10) lie in a line along the board's `axis` (`x`, default, or `y`), `pitch_mm` apart, turned alike. With `columns`, the parts fill a grid line by line (a keyboard's switches), the lines `row_pitch_mm` apart (default `pitch_mm`). The row is placed as one part: it moves and turns (by half turns) as a whole. Other constraints name its first part only; naming another part of a row is an error. | hard |
+| `apart` | Every body of `parts` stays at least `min_mm` from every body of `from` (references or globs): a temperature sensor away from the regulator, an audio input away from the switcher. Reported per pair. | soft |
 | `relative` | The part lies `below`/`above`/`left_of`/`right_of` another part: it does not overlap it along that axis, its centre lies within the other part's extent across it, and the gap is at most `max_gap_mm` (default 5). | soft |
 
 A part named by any constraint may move even where a default rule would fix

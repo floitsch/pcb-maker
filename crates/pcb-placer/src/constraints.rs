@@ -59,6 +59,9 @@ pub enum Relation {
         side: Edge,
         max_gap: f64,
     },
+    /// The gap between `part`'s body and `anchor`'s body is at least `min`
+    /// (a temperature sensor away from a regulator).
+    Apart { part: usize, anchor: usize, min: f64 },
 }
 
 impl Relation {
@@ -70,7 +73,9 @@ impl Relation {
                     Anchor::Body(index) | Anchor::Point(index, _) => *index,
                 }),
             ],
-            Relation::Beside { part, anchor, .. } => [Some(*part), Some(*anchor)],
+            Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
+                [Some(*part), Some(*anchor)]
+            }
         }
     }
 }
@@ -384,6 +389,10 @@ pub fn relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
 
 fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
     match relation {
+        Relation::Apart { part, anchor, min } => {
+            let gap = box_gap(body(problem, *part, poses[*part]), body(problem, *anchor, poses[*anchor]));
+            (min - gap).max(0.0)
+        }
         Relation::Near { part, anchor, max } => {
             let gap = box_gap(
                 body(problem, *part, poses[*part]),
@@ -451,6 +460,16 @@ pub fn add_relation_gradient(
             continue;
         }
         match relation {
+            Relation::Apart { part, anchor, .. } => {
+                // Apart: the two push each other away.
+                let (a, _) = body(problem, *part, poses[*part]);
+                let (b, _) = body(problem, *anchor, poses[*anchor]);
+                let delta = [a[0] - b[0], a[1] - b[1]];
+                let length = delta[0].hypot(delta[1]);
+                let unit = if length > 1.0e-9 { [delta[0] / length, delta[1] / length] } else { [1.0, 0.0] };
+                push(*part, [-unit[0], -unit[1]]);
+                push(*anchor, unit);
+            }
             Relation::Near { part, anchor, .. } => {
                 let (a, _) = body(problem, *part, poses[*part]);
                 let (b, _) = anchor_point(problem, poses, *anchor);
@@ -549,6 +568,7 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             kind: match relation {
                 Relation::Near { .. } => "near",
                 Relation::Beside { .. } => "relative",
+                Relation::Apart { .. } => "apart",
             },
             part: part.unwrap_or(0),
             other,
@@ -610,9 +630,19 @@ fn grid_phase(problem: &Problem, index: usize, angle: f64) -> Point {
 }
 
 /// Where a relation wants its part's body centre: the anchor point (near),
-/// or just off the anchor's body on the relation's side (relative).
+/// just off the anchor's body on the relation's side (relative), or far
+/// enough from the anchor the way the part lies already (apart).
 pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -> Point {
     match relation {
+        Relation::Apart { part, anchor, min } => {
+            let (a, ah) = body(problem, *part, poses[*part]);
+            let (b, bh) = body(problem, *anchor, poses[*anchor]);
+            let delta = [a[0] - b[0], a[1] - b[1]];
+            let length = delta[0].hypot(delta[1]);
+            let unit = if length > 1.0e-9 { [delta[0] / length, delta[1] / length] } else { [1.0, 0.0] };
+            let distance = ah[0].hypot(ah[1]) + bh[0].hypot(bh[1]) + min;
+            [b[0] + unit[0] * distance, b[1] + unit[1] * distance]
+        }
         Relation::Near { anchor, .. } => anchor_point(problem, poses, *anchor).0,
         Relation::Beside {
             part,
