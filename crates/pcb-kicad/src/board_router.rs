@@ -95,6 +95,9 @@ pub struct KiCadBoardRouterConfig {
     /// Rip-up rounds of the topological engine (default 30).
     #[serde(default)]
     pub topological_rounds: Option<usize>,
+    /// Weights of the topological engine (defaults in `pcb_topo::Config`).
+    #[serde(default)]
+    pub topological: KiCadTopologicalConfig,
     /// Pull the lattice router's tracks tight afterwards (any-angle tracks
     /// with arcs, as the topological engine draws them), wherever the
     /// result stays legal.
@@ -132,6 +135,58 @@ pub enum KiCadPourMode {
     Connect,
     /// Pour nets are routed like any other net; the pour merely fills.
     Tracks,
+}
+
+/// Tuning of the topological engine; every field defaults to
+/// `pcb_topo::Config`'s.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct KiCadTopologicalConfig {
+    /// Millimetres one crossing costs while routing.
+    #[serde(default)]
+    pub crossing: Option<f64>,
+    /// Millimetres a via costs while routing and assigning layers.
+    #[serde(default)]
+    pub via: Option<f64>,
+    /// Millimetres a via costs while improving a legal board.
+    #[serde(default)]
+    pub improve_via: Option<f64>,
+    #[serde(default)]
+    pub improve_passes: Option<usize>,
+    /// Spacing of via sites in open areas.
+    #[serde(default)]
+    pub spacing: Option<f64>,
+    #[serde(default)]
+    pub seconds: Option<f64>,
+    /// Route the first time layer by layer rather than TopoR's way.
+    #[serde(default)]
+    pub layered_start: Option<bool>,
+}
+
+impl KiCadTopologicalConfig {
+    pub fn apply(&self, config: &mut pcb_topo::Config) {
+        if let Some(layered) = self.layered_start {
+            config.layered_start = layered;
+        }
+        if let Some(crossing) = self.crossing {
+            config.weights.crossing = crossing;
+        }
+        if let Some(via) = self.via {
+            config.weights.via = via;
+            config.costs.via = via;
+        }
+        if let Some(via) = self.improve_via {
+            config.improve_via = via;
+        }
+        if let Some(passes) = self.improve_passes {
+            config.improve_passes = passes;
+        }
+        if let Some(spacing) = self.spacing {
+            config.spacing = spacing;
+        }
+        if let Some(seconds) = self.seconds {
+            config.seconds = seconds;
+        }
+    }
 }
 
 fn default_hole_clearance() -> f64 {
@@ -1772,15 +1827,16 @@ fn route_kicad_board_once(
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
     let result = match &config.frame_directory {
-        _ if config.engine.as_deref() == Some("topological") => pcb_topo::route(
-            &board,
-            &pcb_topo::Config {
+        _ if config.engine.as_deref() == Some("topological") => {
+            let mut topological = pcb_topo::Config {
                 iterations: config.topological_rounds.unwrap_or(30),
                 seed: config.first_seed.unwrap_or(1).max(1),
                 verbose: true,
                 ..pcb_topo::Config::default()
-            },
-        ),
+            };
+            config.topological.apply(&mut topological);
+            pcb_topo::route(&board, &topological)
+        }
         None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => route_seeds(
             &board,
             &core_config(config),

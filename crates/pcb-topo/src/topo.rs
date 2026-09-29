@@ -95,6 +95,9 @@ pub struct Topology {
     /// Per edge and per vertex: congestion history.
     pub history: Vec<f64>,
     pub vertex_history: Vec<f64>,
+    /// Room taken off an edge on a layer because the geometry found less
+    /// than the model had (learned from realization).
+    pub penalty: HashMap<(usize, usize), f64>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -119,6 +122,10 @@ impl PartialOrd for Queued {
 
 fn distance(a: Point, b: Point) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
+}
+
+fn point_segment_distance(point: Point, a: Point, b: Point) -> f64 {
+    pcb_router::geometry::point_segment_distance(point, a, b)
 }
 
 /// A search node: a portal (and gap, for an edge), on a layer, entering
@@ -161,6 +168,7 @@ impl Topology {
             face_wires: vec![Vec::new(); mesh.faces.len()],
             history: vec![0.0; mesh.edges.len()],
             vertex_history: vec![0.0; mesh.points.len()],
+            penalty: HashMap::new(),
         }
     }
 
@@ -275,7 +283,7 @@ impl Topology {
         };
         let mut total = 0.0;
         for layer in layers {
-            let mut room = Self::fixed_capacity(board, mesh, edge, layer, net, class);
+            let mut room = Self::fixed_capacity(board, mesh, edge, layer, net, class) - self.penalty.get(&(edge, layer)).copied().unwrap_or(0.0);
             for &vertex in &mesh.edges[edge] {
                 room -= self.occupant_keep_off(board, vertex, layer, net, class);
             }
@@ -285,8 +293,9 @@ impl Topology {
     }
 
     /// Whether a via of `net`/`class` at `vertex` leaves every wire of
-    /// another net crossing an edge around it its room.
-    pub fn via_fits(&self, board: &Board, mesh: &Mesh, vertex: usize, net: NetId, class: ClassId) -> bool {
+    /// another net crossing an edge around it its room; `ours` are sites the
+    /// same wire already passes (taken as vias too).
+    pub fn via_fits(&self, board: &Board, mesh: &Mesh, vertex: usize, net: NetId, class: ClassId, ours: &[usize]) -> bool {
         let rule = &board.classes[class];
         for &face in &mesh.vertex_faces[vertex] {
             for &edge in &mesh.face_edges[face] {
@@ -314,7 +323,7 @@ impl Topology {
                     let other = mesh.edges[edge][0] + mesh.edges[edge][1] - vertex;
                     let fixed = mesh.cut[edge][layer] - Self::fixed_keep_off(board, mesh, other, layer, net, class) + widest_gap;
                     let via = rule.via_diameter / 2.0 + rule.clearance.max(widest_gap);
-                    let occupied = self.occupant_keep_off(board, other, layer, u32::MAX, class);
+                    let occupied = if ours.contains(&other) { via } else { self.occupant_keep_off(board, other, layer, u32::MAX, class) };
                     if crossing > fixed - via - occupied + 1.0e-9 {
                         return false;
                     }
@@ -489,7 +498,12 @@ impl Topology {
             }
             // Wires through the ends (vias above all) may leave no room.
             let capacity = self.capacity(board, mesh, edge, on, request.net, request.class);
-            if layered && capacity + 1.0e-9 < request.room {
+            let fits = if layered {
+                capacity + 1.0e-9 >= request.room
+            } else {
+                (0..board.layer_count).any(|layer| self.capacity(board, mesh, edge, Some(layer), request.net, request.class) + 1.0e-9 >= request.room)
+            };
+            if !fits {
                 continue;
             }
             let over = (self.used(board, edge, on, request.net) + request.room - capacity).clamp(0.0, request.room);
@@ -514,8 +528,18 @@ impl Topology {
                 continue;
             }
             // A via here must leave room for the wires already passing it.
-            if layered && !self.via_fits(board, mesh, vertex, request.net, request.class) {
-                continue;
+            if layered {
+                let mut ours = Vec::new();
+                let mut node = parent;
+                while node != NONE {
+                    if let Some(Portal::Vertex(site)) = search.nodes[node].portal {
+                        ours.push(site);
+                    }
+                    node = search.nodes[node].parent;
+                }
+                if !self.via_fits(board, mesh, vertex, request.net, request.class, &ours) {
+                    continue;
+                }
             }
             if Self::is_ancestor(search, parent, Portal::Vertex(vertex)) {
                 continue;
@@ -692,6 +716,51 @@ impl Topology {
             }
         }
         total + distance(previous, path.to)
+    }
+
+    /// The geometry of `wire` on `layer` missed `deficit` millimetres at
+    /// `at`: the edges it crosses there (on that layer) lose that much room.
+    pub fn learn(&mut self, mesh: &Mesh, wire: usize, layer: usize, at: Point, deficit: f64) {
+        let path = &self.wires[wire];
+        for (step, &portal) in path.portals.iter().enumerate() {
+            let Portal::Edge(edge) = portal else { continue };
+            if !path.layers.is_empty() && path.layers[step] != layer {
+                continue;
+            }
+            let [a, b] = mesh.edges[edge].map(|vertex| mesh.points[vertex]);
+            if point_segment_distance(at, a, b) < 1.0 {
+                let entry = self.penalty.entry((edge, layer)).or_default();
+                *entry = (*entry + deficit.max(0.0) + 0.02).min(mesh.edge_length(edge));
+            }
+        }
+    }
+
+    /// Wires that need more room on some edge (on their layer) than the
+    /// edge has left for them, and the edges.
+    pub fn overflowing(&self, board: &Board, mesh: &Mesh) -> (Vec<usize>, Vec<usize>) {
+        let mut wires = Vec::new();
+        let mut edges = Vec::new();
+        for edge in 0..self.order.len() {
+            let mut over = false;
+            for &wire in &self.order[edge] {
+                let path = &self.wires[wire];
+                if path.layers.is_empty() {
+                    continue;
+                }
+                let layer = path.layers[self.step_of(wire, edge).expect("wire on edge")];
+                let used = self.used(board, edge, Some(layer), path.net) + Self::track_room(board, path.class);
+                if used > self.capacity(board, mesh, edge, Some(layer), path.net, path.class) + 1.0e-6 {
+                    wires.push(wire);
+                    over = true;
+                }
+            }
+            if over {
+                edges.push(edge);
+            }
+        }
+        wires.sort_unstable();
+        wires.dedup();
+        (wires, edges)
     }
 
     /// Takes a wire out of the topology.

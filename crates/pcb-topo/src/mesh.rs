@@ -58,6 +58,9 @@ fn distance(a: Point, b: Point) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
 
+/// The longest side of an obstacle or the outline in the triangulation.
+const SIDE: f64 = 0.8;
+
 fn key(point: Point) -> (i64, i64) {
     ((point[0] * 1.0e6).round() as i64, (point[1] * 1.0e6).round() as i64)
 }
@@ -246,7 +249,18 @@ impl Mesh {
             rings.extend(polygons_of(&obstacle.shape));
         }
         for ring in &rings {
-            let handles: Vec<_> = ring
+            // Long sides get vertices along them, so that a narrow gap
+            // between a side and a corner facing it is a (short) edge.
+            let mut points = Vec::new();
+            for index in 0..ring.len() {
+                let (a, b) = (ring[index], ring[(index + 1) % ring.len()]);
+                let pieces = (distance(a, b) / SIDE).ceil().max(1.0) as usize;
+                for piece in 0..pieces {
+                    let t = piece as f64 / pieces as f64;
+                    points.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+                }
+            }
+            let handles: Vec<_> = points
                 .iter()
                 .filter_map(|point| cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok())
                 .collect();

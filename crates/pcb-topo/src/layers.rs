@@ -249,6 +249,30 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             break;
         }
     }
+    // On two layers, whole webs of crossing stretches flip together: the
+    // moves one wire at a time cannot make.
+    if board.layer_count == 2 {
+        for _ in 0..4 {
+            if !flip_clusters(topology, &partners, &allowed, costs, &mut random) {
+                break;
+            }
+            let mut improved = false;
+            for &wire in &order {
+                usage.remove(board, topology, wire);
+                let context = Context { board, mesh, topology, usage: &usage, costs };
+                let current = context.current(wire, &partners[wire], &allowed[wire]);
+                let (layers, cost) = context.best(wire, &partners[wire], &allowed[wire]);
+                if cost + 1.0e-9 < current {
+                    topology.wires[wire].layers = layers;
+                    improved = true;
+                }
+                usage.add(board, topology, wire);
+            }
+            if !improved {
+                break;
+            }
+        }
+    }
     let context = Context { board, mesh, topology, usage: &usage, costs };
     let mut stats = Stats::default();
     for &wire in &routed {
@@ -272,6 +296,156 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
         }
     }
     stats
+}
+
+/// Two-layer moves on whole clusters. A wire's stretch between via sites
+/// (or its ends) has a single layer, and stretches that cross must differ,
+/// so the stretches linked by crossings flip together, keeping every
+/// crossing apart. Simulated annealing over the clusters minimizes vias and
+/// layers not allowed. Returns whether the layers changed (for the better).
+fn flip_clusters(topology: &mut Topology, partners: &[Vec<Vec<(usize, usize)>>], allowed: &[Vec<u32>], costs: Costs, random: &mut u64) -> bool {
+    let mut next = || {
+        *random ^= *random << 13;
+        *random ^= *random >> 7;
+        *random ^= *random << 17;
+        (*random >> 11) as f64 / (1u64 << 53) as f64
+    };
+    // Stretches: (wire, first step, last step), and which one each step is in.
+    let mut stretches: Vec<(usize, usize, usize)> = Vec::new();
+    let mut stretch_of: Vec<Vec<usize>> = vec![Vec::new(); topology.wires.len()];
+    for (wire, path) in topology.wires.iter().enumerate() {
+        if !path.routed || path.layers.len() != path.faces.len() {
+            continue;
+        }
+        stretch_of[wire] = vec![0; path.faces.len()];
+        let mut first = 0;
+        for step in 0..path.faces.len() {
+            stretch_of[wire][step] = stretches.len();
+            if step + 1 == path.faces.len() || matches!(path.portals[step], Portal::Vertex(_)) {
+                stretches.push((wire, first, step));
+                first = step + 1;
+            }
+        }
+    }
+    let count = stretches.len();
+    if count == 0 {
+        return false;
+    }
+    // Clusters: stretches joined by crossings.
+    let mut parent: Vec<usize> = (0..count).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    for (wire, list) in partners.iter().enumerate() {
+        if stretch_of[wire].is_empty() {
+            continue;
+        }
+        for (step, pairs) in list.iter().enumerate() {
+            for &(other, other_step) in pairs {
+                if stretch_of[other].is_empty() {
+                    continue;
+                }
+                let (a, b) = (find(&mut parent, stretch_of[wire][step]), find(&mut parent, stretch_of[other][other_step]));
+                parent[a] = b;
+            }
+        }
+    }
+    let mut cluster_of = vec![0; count];
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+    let mut index: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for stretch in 0..count {
+        let root = find(&mut parent, stretch);
+        let cluster = *index.entry(root).or_insert_with(|| {
+            clusters.push(Vec::new());
+            clusters.len() - 1
+        });
+        cluster_of[stretch] = cluster;
+        clusters[cluster].push(stretch);
+    }
+    // Per stretch: its layer, the cost of each layer, and its neighbours
+    // along its wire (a via if their layers differ).
+    let mut layer: Vec<usize> = stretches.iter().map(|&(wire, first, _)| topology.wires[wire].layers[first].min(1)).collect();
+    let own_cost: Vec<[f64; 2]> = stretches
+        .iter()
+        .map(|&(wire, first, last)| {
+            let mut cost = [0.0; 2];
+            for step in first..=last {
+                for (side, entry) in cost.iter_mut().enumerate() {
+                    if allowed[wire][step] & (1 << side) == 0 {
+                        *entry += INFEASIBLE;
+                    }
+                }
+            }
+            cost
+        })
+        .collect();
+    let mut neighbours: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (stretch, &(wire, _, last)) in stretches.iter().enumerate() {
+        if last + 1 < topology.wires[wire].faces.len() {
+            let following = stretch_of[wire][last + 1];
+            neighbours[stretch].push(following);
+            neighbours[following].push(stretch);
+        }
+    }
+    let energy = |layer: &[usize]| -> f64 {
+        let mut total = 0.0;
+        for stretch in 0..count {
+            total += own_cost[stretch][layer[stretch]];
+            for &other in &neighbours[stretch] {
+                if other > stretch && layer[other] != layer[stretch] {
+                    total += costs.via;
+                }
+            }
+        }
+        total
+    };
+    let delta = |layer: &[usize], cluster: usize| -> f64 {
+        let mut change = 0.0;
+        for &stretch in &clusters[cluster] {
+            change += own_cost[stretch][1 - layer[stretch]] - own_cost[stretch][layer[stretch]];
+            for &other in &neighbours[stretch] {
+                if cluster_of[other] == cluster {
+                    continue;
+                }
+                let before = (layer[other] != layer[stretch]) as usize as f64;
+                let after = (layer[other] != 1 - layer[stretch]) as usize as f64;
+                change += costs.via * (after - before);
+            }
+        }
+        change
+    };
+    let start = energy(&layer);
+    let mut current = start;
+    let (mut best, mut best_layer) = (start, layer.clone());
+    let moves = 60 * clusters.len();
+    for step in 0..moves {
+        let temperature = costs.via * (1.0 - step as f64 / moves as f64).powi(2) + 1.0e-6;
+        let cluster = ((next() * clusters.len() as f64) as usize).min(clusters.len() - 1);
+        let change = delta(&layer, cluster);
+        if change < 0.0 || next() < (-change / temperature).exp() {
+            for &stretch in &clusters[cluster] {
+                layer[stretch] = 1 - layer[stretch];
+            }
+            current += change;
+            if current < best - 1.0e-9 {
+                best = current;
+                best_layer.clone_from(&layer);
+            }
+        }
+    }
+    if best + 1.0e-9 >= start {
+        return false;
+    }
+    for (stretch, &(wire, first, last)) in stretches.iter().enumerate() {
+        for step in first..=last {
+            topology.wires[wire].layers[step] = best_layer[stretch];
+        }
+    }
+    true
 }
 
 /// Wires in trouble after assignment: same-layer crossings, layers or vias

@@ -154,12 +154,28 @@ pub enum Where {
     Arc(usize),
 }
 
-pub fn closest(path: &Path, point: Point) -> (f64, Where) {
-    let mut best = (f64::INFINITY, Where::Tangent(0));
+/// The path's pieces in order: the arc of each inner disc with a radius,
+/// the tangent after each disc.
+fn elements(path: &Path) -> Vec<Where> {
     let count = path.discs.len();
+    let mut list = Vec::with_capacity(2 * count);
     for index in 0..count {
-        let disc = &path.discs[index];
-        if index > 0 && index + 1 < count && disc.radius > 0.0 {
+        if index > 0 && index + 1 < count && path.discs[index].radius > 0.0 {
+            list.push(Where::Arc(index));
+        }
+        if index + 1 < count {
+            list.push(Where::Tangent(index));
+        }
+    }
+    list
+}
+
+/// Distance from `point` to one piece of the path.
+fn element_distance(path: &Path, element: Where, point: Point) -> f64 {
+    match element {
+        Where::Tangent(index) => point_segment_distance(point, path.touch[index].1, path.touch[index + 1].0),
+        Where::Arc(index) => {
+            let disc = &path.discs[index];
             let (from, to) = path.touch[index];
             let arc = sweep(disc, from, to);
             let angle = (point[1] - disc.center[1]).atan2(point[0] - disc.center[0]);
@@ -170,23 +186,84 @@ pub fn closest(path: &Path, point: Point) -> (f64, Where) {
                 -(a0 - angle).rem_euclid(std::f64::consts::TAU)
             };
             let within = if arc >= 0.0 { offset <= arc } else { offset >= arc };
-            let d = if within {
+            if within {
                 (distance(point, disc.center) - disc.radius).abs()
             } else {
                 distance(point, from).min(distance(point, to))
-            };
-            if d < best.0 {
-                best = (d, Where::Arc(index));
-            }
-        }
-        if index + 1 < count {
-            let d = point_segment_distance(point, path.touch[index].1, path.touch[index + 1].0);
-            if d < best.0 {
-                best = (d, Where::Tangent(index));
             }
         }
     }
+}
+
+/// The direction of the path at the element `element` (at the point of it
+/// nearest to `near`), and the discs that element belongs to (without the
+/// end points).
+pub fn element(path: &Path, element: Where, near: Point) -> (Point, Vec<Disc>) {
+    let inner = |index: usize| path.discs.get(index).copied().filter(|disc| disc.vertex != usize::MAX && disc.radius > 0.0);
+    match element {
+        Where::Tangent(index) => {
+            let direction = sub(path.touch[index + 1].0, path.touch[index].1);
+            (direction, [inner(index), inner(index + 1)].into_iter().flatten().collect())
+        }
+        Where::Arc(index) => {
+            let disc = path.discs[index];
+            let radial = sub(near, disc.center);
+            // Left discs are passed counter-clockwise.
+            let direction = if disc.side > 0.0 { [-radial[1], radial[0]] } else { [radial[1], -radial[0]] };
+            (direction, inner(index).into_iter().collect())
+        }
+    }
+}
+
+pub fn closest(path: &Path, point: Point) -> (f64, Where) {
+    let mut best = (f64::INFINITY, Where::Tangent(0));
+    for element in elements(path) {
+        let d = element_distance(path, element, point);
+        if d < best.0 {
+            best = (d, element);
+        }
+    }
     best
+}
+
+fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
+    let (d1, d2) = (cross(sub(b, a), sub(c, a)), cross(sub(b, a), sub(d, a)));
+    let (d3, d4) = (cross(sub(d, c), sub(a, c)), cross(sub(d, c), sub(b, c)));
+    d1 * d2 <= 0.0 && d3 * d4 <= 0.0
+}
+
+/// The closest approach of `path` to `point` where the path crosses the
+/// segment `a`–`b` (the pieces crossing it and their neighbours), or of
+/// the whole path if it does not cross it.
+pub fn closest_near(path: &Path, point: Point, a: Point, b: Point) -> f64 {
+    let list = elements(path);
+    let crosses = |element: Where| match element {
+        Where::Tangent(index) => segments_cross(path.touch[index].1, path.touch[index + 1].0, a, b),
+        Where::Arc(index) => {
+            let disc = &path.discs[index];
+            let (from, to) = path.touch[index];
+            let arc = sweep(disc, from, to);
+            let a0 = (from[1] - disc.center[1]).atan2(from[0] - disc.center[0]);
+            let mut previous = from;
+            (1..=8).any(|step| {
+                let angle = a0 + arc * step as f64 / 8.0;
+                let next = [disc.center[0] + disc.radius * angle.cos(), disc.center[1] + disc.radius * angle.sin()];
+                let hit = segments_cross(previous, next, a, b);
+                previous = next;
+                hit
+            })
+        }
+    };
+    let mut best = f64::INFINITY;
+    for (position, &element) in list.iter().enumerate() {
+        if !crosses(element) {
+            continue;
+        }
+        for near in list.iter().take((position + 3).min(list.len())).skip(position.saturating_sub(2)) {
+            best = best.min(element_distance(path, *near, point));
+        }
+    }
+    if best.is_finite() { best } else { closest(path, point).0 }
 }
 
 /// Total length of the path.
