@@ -20,6 +20,8 @@ grid, halos, edge margin and bodies): checked against the full spacing, no
 move on a crowded board would ever be legal. If connections are still open
 at the end, route mode's whole ladder (pours as tracks, finer pitches,
 seeds) routes the final placement once more, and the better board is kept.
+If only thermals are starved (pads KiCad does not count as joined to their
+pour), the pour nets are routed as tracks instead.
 On Interf-U two nudges take the first placement from 9 open
 connections to 110/110; on the DUT boards a handful of resistor nudges remove
 10-25 % of the vias. Per-board results are in [benchmarks.md](benchmarks.md).

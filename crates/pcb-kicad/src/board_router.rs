@@ -1707,7 +1707,7 @@ pub(super) fn finish_routed_board(
 }
 
 /// Number of `starved_thermal` findings in the directory's native DRC report.
-fn starved_thermals(directory: &Path) -> usize {
+pub(super) fn starved_thermals(directory: &Path) -> usize {
     let Ok(text) = fs::read_to_string(directory.join("drc.json")) else {
         return 0;
     };

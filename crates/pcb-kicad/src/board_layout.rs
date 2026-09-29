@@ -502,7 +502,9 @@ pub fn layout_kicad_board(
     .into();
     // If something is still open (in KiCad's eyes too), route the final
     // placement with route mode's whole ladder (pours as tracks, finer
-    // pitches, more seeds) and keep the better board.
+    // pitches, more seeds) and keep the better board. If only thermals are
+    // starved (pads KiCad does not count as joined to their pour), route
+    // the pour nets as tracks.
     let open = |result: &KiCadBoardRouterResult| {
         result.unconnected_terminals
             + result.internal_violations.len()
@@ -511,7 +513,20 @@ pub fn layout_kicad_board(
                 .as_ref()
                 .map_or(0, |native| native.selected_net_unconnected_items)
     };
-    if open(&routed) > 0 {
+    let quality = |result: &KiCadBoardRouterResult, directory: &Path| {
+        (open(result), crate::board_router::starved_thermals(directory))
+    };
+    let current = quality(&routed, &result_directory);
+    let fallback_config = if current.0 > 0 {
+        Some(router_config.clone())
+    } else if current.1 > 0 && connect && router_config.pours == KiCadPourMode::Auto {
+        let mut tracks = router_config.clone();
+        tracks.pours = KiCadPourMode::Tracks;
+        Some(tracks)
+    } else {
+        None
+    };
+    if let Some(fallback_config) = fallback_config {
         let fallback_directory = output_directory.join("result-ladder");
         // The placement file already carries the final poses.
         let placed_pcb = {
@@ -523,8 +538,8 @@ pub fn layout_kicad_board(
         };
         fs::write(&placed_board, format!("{}\n", encode(&placed_pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
-        let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, router_config)?;
-        if open(&fallback) < open(&routed) {
+        let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
+        if quality(&fallback, &fallback_directory) < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
             fs::rename(&fallback_directory, &result_directory).map_err(|error| error.to_string())?;
             routed = fallback;
