@@ -285,6 +285,24 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Gives every UUID inside a footprint instance its own value (library
+/// files carry one set for all instances; KiCad makes new ones when it
+/// adds a footprint).
+fn renew_uuids(item: &mut Expr, owner: &str) {
+    let Expr::List(items) = item else {
+        return;
+    };
+    if items.first().and_then(Expr::atom) == Some("uuid")
+        && let Some(old) = items.get(1).and_then(Expr::atom).map(str::to_owned)
+    {
+        items[1] = Expr::Atom(format!("\"{}\"", uuid_of(&format!("{owner} {old}"))));
+        return;
+    }
+    for child in items.iter_mut() {
+        renew_uuids(child, owner);
+    }
+}
+
 /// A string from the netlist, still escaped as KiCad writes strings.
 fn text_of(node: &Expr, head: &str) -> Option<String> {
     form_atom(node, head, 1).map(str::to_owned)
@@ -443,6 +461,9 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             continue;
         };
         items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version")));
+        for item in items.iter_mut() {
+            renew_uuids(item, &reference);
+        }
         items[1] = Expr::Atom(requote(&found));
         // Placement fields after the layer.
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
@@ -506,14 +527,20 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         if items[attr].children().len() == 1 {
             items.remove(attr);
         }
+        // Pads sharing a number share the pin's net, except a pin nothing
+        // connects: KiCad gives each such pad its own net (`_1`, `_2`).
+        let mut repeats: BTreeMap<String, usize> = BTreeMap::new();
         for item in items.iter_mut() {
             match item.head() {
                 Some("pad") => {
                     let number = item.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
-                    if let Some((net, function, kind)) = pins.get(&(reference.clone(), number))
+                    if let Some((net, function, kind)) = pins.get(&(reference.clone(), number.clone()))
                         && let Expr::List(parts) = item
                     {
-                        parts.push(parse(&format!("(net {})", requote(net)))?);
+                        let seen = repeats.entry(number).or_insert(0);
+                        let net = if *seen > 0 && net.starts_with("unconnected-") { format!("{net}_{seen}") } else { net.clone() };
+                        *seen += 1;
+                        parts.push(parse(&format!("(net {})", requote(&net)))?);
                         if let Some(function) = function {
                             parts.push(parse(&format!("(pinfunction {})", requote(function)))?);
                         }
