@@ -60,6 +60,21 @@ router and placer items.
 
 ## Placer
 
+- **Placement for bus-heavy through-hole boards.** Interf-U from its
+  schematic (2026-09-29): a quick route leaves 89 connections open at the
+  designer's area, and only 3.9 times the parts' area (191 x 128 mm against
+  the designer's 116 x 108) routes. Our router completes the designer's
+  placement in 75 s, so the placement is what loses: aligned rows of chips
+  with the bus running straight between them are not something the
+  wirelength objective finds.
+- **Packing along an edge.** FRM16 (a 137 x 15 mm strip, five 12 mm
+  connectors on the top edge and an 18 x 12 mm relay) and similar boards
+  leave connectors unplaced although the designer's placement exists: the
+  legalizer places greedily and does not pack a crowded edge.
+- **Card edges.** Parts held at an edge may now be placed by their copper
+  (a PCIe tab with its key notch), centred in the tab. MAVRIC's outermost
+  finger stays unreachable on the back layer although the designer runs a
+  0.4 mm track there; not understood yet.
 - **Alignment beyond rows.** `row` places parts in a line at a pitch as
   one macro body, or a grid with `columns`. Alignment without a fixed
   pitch, rows of parts turned differently and nested groups (a switch with
