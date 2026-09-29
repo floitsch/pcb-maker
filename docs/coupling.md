@@ -17,7 +17,10 @@ connections open, the other seeds' legal placements are routed once too
 leaves the fewest open carries on (`placement_race` in
 `board-layout.json`): the placement kept for the least wire is not always
 the one that routes. Moves stop early when six trials in a row close no
-open connection; the final ladder is the better use of that time. Moves keep to the relaxation the placement needed (its spacing,
+open connection; the final ladder is the better use of that time. While
+connections are open, trials skip the polish (an exact cleanup of every
+net, up to 110 s per trial on Interf-U) and the kept board is polished
+once at the end. Moves keep to the relaxation the placement needed (its spacing,
 grid, halos, edge margin and bodies): checked against the full spacing, no
 move on a crowded board would ever be legal. If connections are still open
 at the end, route mode's whole ladder (pours as tracks, finer pitches,

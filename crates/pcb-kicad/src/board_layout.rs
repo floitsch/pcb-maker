@@ -316,6 +316,10 @@ pub fn layout_kicad_board(
     let move_started = std::time::Instant::now();
     let mut moves = Vec::new();
     let mut since_improvement = 0;
+    // While connections are open, trials are judged on the open ones, which
+    // the polish (an exact cleanup of every net, up to minutes on a big
+    // board) does not change: it waits until the end.
+    let mut polished = true;
     // Trials since a move last closed an open connection: when moves stop
     // closing them, the final ladder is the better use of the time.
     let mut since_fewer_open = 0;
@@ -453,7 +457,8 @@ pub fn layout_kicad_board(
                     return Err(error);
                 }
             };
-            let trial = router.reroute(true);
+            let polish = best.0 == 0;
+            let trial = router.reroute(polish);
             let trial_score = score(&trial, &trial_board);
             let kept = trial_score < best;
             if kept && trial_score.0 < best.0 {
@@ -481,6 +486,7 @@ pub fn layout_kicad_board(
                 best = trial_score;
                 result = trial;
                 board = trial_board;
+                polished = polish;
                 improved = true;
                 break;
             }
@@ -495,6 +501,9 @@ pub fn layout_kicad_board(
         }
     }
 
+    if !polished {
+        result = router.reroute(true);
+    }
     let layer_names = layers.names.clone();
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     let result_directory = output_directory.join("result");
