@@ -323,6 +323,10 @@ struct Run<'a> {
     started: Instant,
     random: Random,
     rounds: usize,
+    /// Seconds spent searching, assigning layers and realizing.
+    timing: [f64; 3],
+    /// Searches, and those that failed layered.
+    searches: [usize; 2],
 }
 
 impl Run<'_> {
@@ -363,7 +367,9 @@ impl Run<'_> {
         for round in 0..=rounds {
             // The model first: no overflow, no same-layer crossing.
             let left = self.negotiate(topology, 12);
+            let realizing = Instant::now();
             let attempt = realize_all(board, mesh, topology, Some(&format!("{label}{:02}", round + 1)));
+            self.timing[2] += realizing.elapsed().as_secs_f64();
             self.report(&format!("{label}round {round} (model: {left} wires left in overflow or conflict)"), &attempt);
             self.rounds += 1;
             let better = best.as_ref().is_none_or(|(known, _)| {
@@ -409,16 +415,22 @@ impl Run<'_> {
             let other = (self.random.next() % (index as u64 + 1)) as usize;
             again.swap(index, other);
         }
+        let searching = Instant::now();
         for wire in again {
             let (start, end) = self.terminal_layers(topology, wire);
             let (from, to) = self.ends[wire];
+            self.searches[0] += 1;
             if !topology.route(board, mesh, wire, from, to, weights, Mode::Layered, start, end) {
                 // No legal way on the layers as they are: route across and
                 // let the layer assignment part the crossings.
+                self.searches[1] += 1;
                 topology.route(board, mesh, wire, from, to, weights, Mode::Planar, start, end);
             }
         }
+        self.timing[0] += searching.elapsed().as_secs_f64();
+        let assigning = Instant::now();
         layers::assign(board, mesh, topology, config.costs, config.seed.wrapping_add(self.rounds as u64));
+        self.timing[1] += assigning.elapsed().as_secs_f64();
         self.rounds += 1;
     }
 
@@ -488,7 +500,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     let mut topology = Topology::new(&mesh);
     let (wires, ends) = connections(board, &mesh);
     topology.wires = wires;
-    let mut run = Run { board, mesh: &mesh, config, ends, started, random: Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1), rounds: 0 };
+    let mut run = Run { board, mesh: &mesh, config, ends, started, random: Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1), rounds: 0, timing: [0.0; 3], searches: [0; 2] };
     // TopoR's order: the widest nets first, then the shortest connections.
     let mut order: Vec<usize> = (0..topology.wires.len()).collect();
     order.sort_by(|&a, &b| {
@@ -603,10 +615,16 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     }
     if config.verbose {
         eprintln!(
-            "topological: {} of {} wires kept, {:.2}s",
+            "topological: {} of {} wires kept, {:.2}s (search {:.1}s for {} searches, {} expansions, {} failing layered; layers {:.1}s; geometry {:.1}s)",
             topology.wires.len() - dropped.len(),
             topology.wires.len(),
-            started.elapsed().as_secs_f64()
+            started.elapsed().as_secs_f64(),
+            run.timing[0],
+            run.searches[0],
+            topo::EXPANSIONS.load(std::sync::atomic::Ordering::Relaxed),
+            run.searches[1],
+            run.timing[1],
+            run.timing[2]
         );
     }
     RoutingResult {

@@ -131,6 +131,21 @@ impl PartialOrd for Queued {
     }
 }
 
+/// Weight on the distance to go: above 1 the search looks at fewer nodes
+/// and finds slightly longer paths.
+const HEURISTIC: f64 = 1.0;
+
+/// Expansions over all searches, for profiling.
+pub static EXPANSIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct ExpansionCount;
+
+impl ExpansionCount {
+    fn add(&self, count: usize) {
+        EXPANSIONS.fetch_add(count, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 fn distance(a: Point, b: Point) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
@@ -158,6 +173,23 @@ struct Search {
     nodes: Vec<Node>,
     best: HashMap<Key, f64>,
     queue: BinaryHeap<Queued>,
+    /// What does not change during one search, computed once.
+    cache: Cache,
+}
+
+#[derive(Default)]
+struct Cache {
+    /// Per edge: sums of the rooms of the wires on it, before each.
+    rooms: HashMap<usize, Vec<f64>>,
+    /// Per face: other nets' chords (low, high) and their layer there.
+    chords: HashMap<usize, Vec<(f64, f64, Option<usize>)>>,
+    /// Per edge and layer (`usize::MAX`: all): whether a track fits at all,
+    /// the room left by the wires at its ends, and the room others use.
+    edges: HashMap<(usize, usize), (bool, f64, f64)>,
+    /// Per face: the layers the net may use.
+    faces: HashMap<usize, u32>,
+    /// Per site: whether a via fits there (with no sites of our own).
+    sites: HashMap<usize, bool>,
 }
 
 /// What the search needs to know about the wire being routed.
@@ -424,40 +456,6 @@ impl Topology {
         ))
     }
 
-    /// Wires of other nets whose chord through `face` separates the two
-    /// coordinates (a chord between them would cross those wires).
-    fn separating(&self, mesh: &Mesh, face: usize, net: NetId, a: f64, b: f64) -> Vec<usize> {
-        let (low, high) = if a < b { (a, b) } else { (b, a) };
-        let mut found = Vec::new();
-        for &wire in &self.face_wires[face] {
-            if self.wires[wire].net == net {
-                continue;
-            }
-            let Some((c, d)) = self.chord(mesh, face, wire) else {
-                continue;
-            };
-            let inside = |x: f64| x > low && x < high;
-            if inside(c) != inside(d) {
-                found.push(wire);
-            }
-        }
-        found
-    }
-
-    /// Crossing cost of a chord in `face` between two coordinates, or
-    /// `None` if it would cross a wire on the same layer.
-    fn crossing_cost(&self, mesh: &Mesh, request: &Request, face: usize, layer: usize, a: Option<f64>, b: f64) -> Option<f64> {
-        let Some(a) = a else { return Some(0.0) };
-        let mut cost = 0.0;
-        for other in self.separating(mesh, face, request.net, a, b) {
-            if request.mode != Mode::Planar && self.layer_in(other, face) == Some(layer) {
-                return None;
-            }
-            cost += request.weights.crossing;
-        }
-        Some(cost)
-    }
-
     /// Cost of moving from `from` to `to` on `layer`.
     fn step(&self, request: &Request, from: Point, to: Point, layer: usize) -> f64 {
         if request.mode == Mode::Planar || request.weights.against <= 1.0 {
@@ -484,7 +482,66 @@ impl Topology {
         }
         search.best.insert(key, node.cost);
         search.nodes.push(node);
-        search.queue.push(Queued { cost: node.cost + distance(node.point, request.target), node: search.nodes.len() - 1 });
+        search.queue.push(Queued { cost: node.cost + HEURISTIC * distance(node.point, request.target), node: search.nodes.len() - 1 });
+    }
+
+    /// `edge`'s state on `layer` (`None`: all layers) for this search.
+    fn edge_state(&self, board: &Board, mesh: &Mesh, cache: &mut Cache, request: &Request, edge: usize, layer: Option<usize>) -> (bool, f64, f64) {
+        *cache.edges.entry((edge, layer.unwrap_or(usize::MAX))).or_insert_with(|| {
+            (
+                Self::passable(board, mesh, edge, layer, request.net, request.class),
+                self.capacity(board, mesh, edge, layer, request.net, request.class),
+                self.used(board, edge, layer, request.net),
+            )
+        })
+    }
+
+    fn face_mask(board: &Board, mesh: &Mesh, cache: &mut Cache, face: usize, net: NetId) -> u32 {
+        *cache.faces.entry(face).or_insert_with(|| mesh.face_layers(board, face, net))
+    }
+
+    /// `portal` with the rooms summed once per edge.
+    fn cached_portal(&self, board: &Board, mesh: &Mesh, cache: &mut Cache, edge: usize, position: usize, extra: f64) -> Point {
+        let sums = cache.rooms.entry(edge).or_insert_with(|| {
+            let mut sums = vec![0.0];
+            for &wire in &self.order[edge] {
+                let last = *sums.last().expect("sum");
+                sums.push(last + Self::track_room(board, self.wires[wire].class));
+            }
+            sums
+        });
+        let [a, b] = mesh.edges[edge].map(|vertex| mesh.points[vertex]);
+        let length = mesh.edge_length(edge);
+        let total = sums[sums.len() - 1] + extra;
+        let before = sums[position / 2] + if position % 2 == 1 { (sums[position / 2 + 1] - sums[position / 2]) / 2.0 } else { extra / 2.0 };
+        let t = if total <= length { (length - total) / 2.0 + before } else { before * length / total };
+        let t = (t / length.max(1.0e-12)).clamp(0.0, 1.0);
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+    }
+
+    /// Crossing cost of a chord in `face` between two coordinates, or
+    /// `None` if it would cross a wire on the same layer (chords cached).
+    fn cached_crossing_cost(&self, mesh: &Mesh, cache: &mut Cache, request: &Request, face: usize, layer: usize, a: Option<f64>, b: f64) -> Option<f64> {
+        let Some(a) = a else { return Some(0.0) };
+        let chords = cache.chords.entry(face).or_insert_with(|| {
+            self.face_wires[face]
+                .iter()
+                .filter(|&&wire| self.wires[wire].net != request.net)
+                .filter_map(|&wire| self.chord(mesh, face, wire).map(|(c, d)| (c.min(d), c.max(d), self.layer_in(wire, face))))
+                .collect()
+        });
+        let (low, high) = if a < b { (a, b) } else { (b, a) };
+        let mut cost = 0.0;
+        for &(c, d, other_layer) in chords.iter() {
+            let inside = |x: f64| x > low && x < high;
+            if inside(c) != inside(d) {
+                if request.mode != Mode::Planar && other_layer == Some(layer) {
+                    return None;
+                }
+                cost += request.weights.crossing;
+            }
+        }
+        Some(cost)
     }
 
     /// Queues the successors of `parent`, which entered `face` on `layer`.
@@ -506,37 +563,37 @@ impl Topology {
             }
             let next = mesh.across(edge, face);
             let wanted: u32 = if layered { 1 << layer } else { u32::MAX };
-            if next == NONE || mesh.face_layers(board, next, request.net) & wanted == 0 {
+            if next == NONE || Self::face_mask(board, mesh, &mut search.cache, next, request.net) & wanted == 0 {
                 continue;
             }
             if Self::is_ancestor(search, parent, Portal::Edge(edge)) {
                 continue;
             }
             let on = if layered { Some(layer) } else { None };
-            if !Self::passable(board, mesh, edge, on, request.net, request.class) {
+            let (passable, capacity, used) = self.edge_state(board, mesh, &mut search.cache, request, edge, on);
+            if !passable {
                 continue;
             }
             // Wires through the ends (vias above all) may leave no room.
-            let capacity = self.capacity(board, mesh, edge, on, request.net, request.class);
             let fits = if layered {
                 capacity + 1.0e-9 >= request.room
             } else {
-                (0..board.layer_count).any(|layer| self.capacity(board, mesh, edge, Some(layer), request.net, request.class) + 1.0e-9 >= request.room)
+                (0..board.layer_count).any(|layer| self.edge_state(board, mesh, &mut search.cache, request, edge, Some(layer)).1 + 1.0e-9 >= request.room)
             };
             if !fits {
                 continue;
             }
-            let over = (self.used(board, edge, on, request.net) + request.room - capacity).clamp(0.0, request.room);
+            let over = (used + request.room - capacity).clamp(0.0, request.room);
             if request.mode == Mode::Strict && over > 1.0e-9 {
                 continue;
             }
             let fixed = request.weights.overflow * over + request.weights.history * self.history[edge];
             for gap in 0..=self.order[edge].len() {
                 let target = self.coordinate(mesh, face, edge, 2 * gap);
-                let Some(crossings) = self.crossing_cost(mesh, request, face, layer, entry_coordinate, target) else {
+                let Some(crossings) = self.cached_crossing_cost(mesh, &mut search.cache, request, face, layer, entry_coordinate, target) else {
                     continue;
                 };
-                let point = self.portal(board, mesh, edge, 2 * gap, request.room);
+                let point = self.cached_portal(board, mesh, &mut search.cache, edge, 2 * gap, request.room);
                 let total = cost + self.step(request, from_point, point, layer) + crossings + fixed;
                 Self::push(search, request, Node { portal: Some(Portal::Edge(edge)), gap, layer, face: next, point, cost: total, parent });
             }
@@ -547,7 +604,11 @@ impl Topology {
             if !mesh.via_site[vertex] || self.occupant[vertex].is_some() || entry_vertex == Some(vertex) {
                 continue;
             }
-            // A via here must leave room for the wires already passing it.
+            if Self::is_ancestor(search, parent, Portal::Vertex(vertex)) {
+                continue;
+            }
+            // A via here must leave room for the wires already passing it
+            // (and between it and the sites this path already uses).
             if layered {
                 let mut ours = Vec::new();
                 let mut node = parent;
@@ -557,14 +618,16 @@ impl Topology {
                     }
                     node = search.nodes[node].parent;
                 }
-                if !self.via_fits(board, mesh, vertex, request.net, request.class, &ours) {
+                let fits = if ours.is_empty() {
+                    *search.cache.sites.entry(vertex).or_insert_with(|| self.via_fits(board, mesh, vertex, request.net, request.class, &[]))
+                } else {
+                    self.via_fits(board, mesh, vertex, request.net, request.class, &ours)
+                };
+                if !fits {
                     continue;
                 }
             }
-            if Self::is_ancestor(search, parent, Portal::Vertex(vertex)) {
-                continue;
-            }
-            let Some(crossings) = self.crossing_cost(mesh, request, face, layer, entry_coordinate, Self::corner(mesh, face, vertex)) else {
+            let Some(crossings) = self.cached_crossing_cost(mesh, &mut search.cache, request, face, layer, entry_coordinate, Self::corner(mesh, face, vertex)) else {
                 continue;
             };
             let point = mesh.points[vertex];
@@ -573,9 +636,11 @@ impl Topology {
                 if next == face {
                     continue;
                 }
-                let mask = mesh.face_layers(board, next, request.net);
-                let layers: Vec<usize> = if layered { (0..board.layer_count).filter(|&l| mask & (1 << l) != 0).collect() } else if mask != 0 { vec![0] } else { Vec::new() };
-                for next_layer in layers {
+                let mask = Self::face_mask(board, mesh, &mut search.cache, next, request.net);
+                for next_layer in 0..if layered { board.layer_count } else { 1 } {
+                    if mask & if layered { 1 << next_layer } else { u32::MAX } == 0 {
+                        continue;
+                    }
                     let total = if next_layer == layer { base } else { base + request.weights.via };
                     Self::push(search, request, Node { portal: Some(Portal::Vertex(vertex)), gap: 0, layer: next_layer, face: next, point, cost: total, parent });
                 }
@@ -625,13 +690,14 @@ impl Topology {
             self.face_wires[from_face].push(wire);
             return true;
         }
-        let mut search = Search { nodes: Vec::new(), best: HashMap::new(), queue: BinaryHeap::new() };
+        let mut search = Search { nodes: Vec::new(), best: HashMap::new(), queue: BinaryHeap::new(), cache: Cache::default() };
         for &layer in &starts {
             search.nodes.push(Node { portal: None, gap: 0, layer, face: from_face, point: start, cost: 0.0, parent: NONE });
             search.queue.push(Queued { cost: distance(start, request.target), node: search.nodes.len() - 1 });
         }
         let mut found = None;
         let mut expansions = 0usize;
+        let counted = ExpansionCount;
         while let Some(Queued { node, .. }) = search.queue.pop() {
             let current = search.nodes[node];
             if current.portal.is_some() && search.best.get(&(current.portal, current.gap, current.layer, current.face)).is_some_and(|&known| known < current.cost) {
@@ -647,6 +713,7 @@ impl Topology {
             }
             self.expand(board, mesh, &mut search, &request, node);
         }
+        counted.add(expansions);
         let Some(mut node) = found else {
             return false;
         };
