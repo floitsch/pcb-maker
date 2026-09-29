@@ -21,6 +21,9 @@ pub struct KiCadQualityReport {
     pub manufacturing: KiCadManufacturing,
     /// Ground pours and how much other copper cuts them (return paths).
     pub planes: Vec<KiCadPlane>,
+    /// ESD protectors and their distance to the nearest connector pin they
+    /// guard (pad centre to pad centre).
+    pub esd: Vec<(String, Option<f64>)>,
     /// Estimated price of 10 boards at common fabs (docs/cost.md).
     pub cost: crate::cost::KiCadCost,
 }
@@ -151,6 +154,16 @@ impl Part {
     fn prefix(&self) -> &str {
         self.reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_')
     }
+}
+
+/// Whether a part's value names an ESD or surge protector (TVS diodes,
+/// USBLC6, TPD4E001, ...): a word of the value starts with a known name.
+pub(crate) fn esd_protector(value: &str) -> bool {
+    const NAMES: [&str; 12] = ["TVS", "ESD", "USBLC", "PESD", "SMAJ", "SMBJ", "PRTR", "TPD", "SP05", "IP4", "RCLAMP", "SRV05"];
+    value
+        .to_ascii_uppercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| NAMES.iter().any(|name| word.starts_with(name)))
 }
 
 pub(crate) fn ground(net: &str) -> bool {
@@ -585,6 +598,19 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let manufacturing = KiCadManufacturing { vias_in_pads, tombstone_risk, drc };
+    let mut esd = Vec::new();
+    for part in parts.iter().filter(|part| esd_protector(&part.value)) {
+        let mut nearest: Option<f64> = None;
+        for pad in part.pads.iter().filter(|pad| pad.net.as_ref().is_some_and(|net| !ground(net))) {
+            for other in parts.iter().filter(|other| connector(other) && other.reference != part.reference) {
+                for target in other.pads.iter().filter(|target| target.net == pad.net) {
+                    let d = distance(pad.center, target.center);
+                    nearest = Some(nearest.map_or(d, |n| n.min(d)));
+                }
+            }
+        }
+        esd.push((part.reference.clone(), nearest.map(round)));
+    }
     // Ground pours by layer, and the other nets' tracks on those layers.
     let mut planes = Vec::new();
     let mut seen = BTreeSet::new();
@@ -653,6 +679,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         connectors,
         manufacturing,
         planes,
+        esd,
         cost,
     })
 }
@@ -668,6 +695,12 @@ mod tests {
             assert!((got - farads).abs() < farads * 1e-9, "{value}: {got}");
         }
         assert!(capacitance("DNP").is_none());
+        for value in ["ESDA6V1BC6", "USBLC6-2SC6", "TVS", "SMAJ7.0A", "TPD4E001", "IP4220CZ6"] {
+            assert!(esd_protector(value), "{value}");
+        }
+        for value in ["CONN_02X20_DIP40", "100n", "ATmega328P"] {
+            assert!(!esd_protector(value), "{value}");
+        }
         for net in ["GND", "/AGND", "GNDA", "VSS"] {
             assert!(ground(net), "{net}");
         }

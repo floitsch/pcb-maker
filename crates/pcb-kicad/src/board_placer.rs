@@ -439,6 +439,9 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
     // Crystals and the nets on their signal pins; IC pads by net.
     let mut crystals: Vec<(usize, Vec<String>)> = Vec::new();
     let mut ic_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
+    // ESD protection and the nets it guards; connector pads by net.
+    let mut protectors: Vec<(usize, Vec<String>)> = Vec::new();
+    let mut connector_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
     for (index, footprint) in footprints.iter().enumerate() {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let pads: Vec<(Option<String>, [f64; 2], bool)> = footprint
@@ -454,6 +457,28 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
                 )
             })
             .collect();
+        let value = footprint
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Value"))
+            .and_then(|item| item.children().get(2).and_then(Expr::atom))
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        let protector = crate::quality::esd_protector(&value)
+            && !problem.components[index].fixed
+            && !named.contains(&index);
+        if matches!(prefix(&reference).as_str(), "J" | "P" | "CN" | "CON" | "USB") {
+            for (net, offset, _) in &pads {
+                if let Some(net) = net.as_ref().filter(|net| !ground(net)) {
+                    connector_pads.entry(net.clone()).or_default().push((index, *offset));
+                }
+            }
+        }
+        if protector {
+            let nets: Vec<String> = pads.iter().filter_map(|(net, _, _)| net.clone()).filter(|net| !ground(net)).collect();
+            protectors.push((index, nets));
+            continue;
+        }
         match prefix(&reference).as_str() {
             "U" | "IC" if pads.len() >= 3 => {
                 let mut seen = BTreeSet::new();
@@ -520,6 +545,18 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
             continue;
         }
         relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { 2.5 } });
+    }
+    // ESD protection at the connector pins it guards: a surge should meet
+    // it before anything else.
+    for (index, nets) in protectors {
+        let anchors: Vec<Anchor> = nets
+            .iter()
+            .flat_map(|net| connector_pads.get(net).into_iter().flatten())
+            .map(|(connector, offset)| Anchor::Point(*connector, *offset))
+            .collect();
+        if !anchors.is_empty() {
+            relations.push(Relation::NearAny { part: index, anchors, max: 3.0 });
+        }
     }
     // A crystal close to the IC pins it drives (short, quiet oscillator
     // traces).

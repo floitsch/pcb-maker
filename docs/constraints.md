@@ -101,7 +101,9 @@ the placer also pulls:
 - every capacitor between a supply rail and ground to within 2.5 mm of a
   supply pin of an IC on that rail (5 mm for 4.7 µF and more), whichever
   pin suits;
-- every crystal to within 3 mm of the IC pins it drives.
+- every crystal to within 3 mm of the IC pins it drives;
+- every ESD or surge protector (TVS, USBLC6, TPD4E001, ... by value) to
+  within 3 mm of a connector pin it guards.
 
 These are soft, like `near`, and are not reported among the constraints.
 Parts a constraint already places keep to it; a `near` to a part's body
