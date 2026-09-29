@@ -327,8 +327,9 @@ fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
 /// Why no taut path was found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Failure {
-    /// Two discs on opposite sides overlap: the channel is too narrow.
-    Squeezed { vertices: (usize, usize) },
+    /// Two discs on opposite sides overlap (or an end lies in a disc): the
+    /// channel is too narrow there, `need` against `have` millimetres.
+    Squeezed { vertices: (usize, usize), at: Point, need: f64, have: f64 },
     /// The refinement did not settle.
     Unsettled,
 }
@@ -386,7 +387,12 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
                     inner.remove(drop - 1);
                     continue;
                 }
-                return Err(Failure::Squeezed { vertices: (a.vertex, b.vertex) });
+                return Err(Failure::Squeezed {
+                    vertices: (a.vertex, b.vertex),
+                    at: lerp(a.center, b.center, 0.5),
+                    need: (b.side * b.radius - a.side * a.radius).abs(),
+                    have: distance(a.center, b.center),
+                });
             }
         };
         // The vertex the path comes closest to, relative to its radius.

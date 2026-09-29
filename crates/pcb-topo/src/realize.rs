@@ -54,6 +54,9 @@ pub struct Piece {
     pub width: f64,
     /// A polyline in the piece's homotopy class, from its start to its end.
     pub points: Vec<Point>,
+    /// The pad (obstacle) each end connects to, if it is a terminal: the
+    /// end may then move inside the pad to where it is legal.
+    pub pads: [Option<usize>; 2],
 }
 
 #[derive(Clone, Debug)]
@@ -381,6 +384,8 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
         routes[via.net as usize].vias.push(Via { at: via.at, diameter: class.via_diameter, drill: class.via_drill });
         via_wire[via.net as usize].push(via.wire);
     }
+    let pieces: Vec<Piece> = pieces.iter().map(|piece| settle_ends(board, vias, piece)).collect();
+    let pieces = pieces.as_slice();
     for layer in 0..board.layer_count {
         let on_layer: Vec<usize> = (0..pieces.len()).filter(|&index| pieces[index].layer == layer).collect();
         if on_layer.is_empty() {
@@ -406,6 +411,73 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
         }
     }
     Realized { routes, segment_wire, via_wire, failed, paths }
+}
+
+/// Whether a track end of `piece` at `point` keeps its clearances.
+fn legal_end(board: &Board, vias: &[PlacedVia], piece: &Piece, point: Point) -> bool {
+    let rule = &board.classes[piece.class];
+    let half = piece.width / 2.0 + MARGIN;
+    let outline = pcb_router::geometry::polygon_edges(&board.outline)
+        .map(|(a, b)| pcb_router::geometry::point_segment_distance(point, a, b))
+        .fold(f64::INFINITY, f64::min);
+    if outline < board.edge_clearance + half {
+        return false;
+    }
+    for obstacle in &board.obstacles {
+        if obstacle.layers & (1 << piece.layer) == 0 || !obstacle.blocks_tracks {
+            continue;
+        }
+        if obstacle.kind == ObstacleKind::Copper && obstacle.net == Some(piece.net) {
+            continue;
+        }
+        let gap = match obstacle.kind {
+            ObstacleKind::Copper => board.copper_clearance(rule, obstacle),
+            ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+            ObstacleKind::Keepout => 0.0,
+        };
+        let bounds = obstacle.shape.aabb().inflated(gap + half);
+        if point[0] < bounds.minimum[0] || point[0] > bounds.maximum[0] || point[1] < bounds.minimum[1] || point[1] > bounds.maximum[1] {
+            continue;
+        }
+        if obstacle.shape.distance_to_point(point) < gap + half {
+            return false;
+        }
+    }
+    vias.iter().all(|via| {
+        let other = &board.classes[via.class];
+        via.net == piece.net || distance(via.at, point) >= other.via_diameter / 2.0 + rule.clearance.max(other.clearance) + half
+    })
+}
+
+/// The piece with each terminal end moved, if its pad's anchor is too close
+/// to something else, to the first legal point inside the pad on the way
+/// to the next point of its embedding.
+fn settle_ends(board: &Board, vias: &[PlacedVia], piece: &Piece) -> Piece {
+    let mut settled = piece.clone();
+    let count = piece.points.len();
+    if count < 2 {
+        return settled;
+    }
+    for (end, pad) in piece.pads.iter().enumerate() {
+        let Some(pad) = *pad else { continue };
+        let (at, toward) = if end == 0 { (0, 1) } else { (count - 1, count - 2) };
+        let (anchor, next) = (piece.points[at], piece.points[toward]);
+        if legal_end(board, vias, piece, anchor) {
+            continue;
+        }
+        let shape = &board.obstacles[pad].shape;
+        for step in 1..=40 {
+            let candidate = taut::lerp(anchor, next, step as f64 / 40.0);
+            if !shape.contains(candidate) {
+                break;
+            }
+            if legal_end(board, vias, piece, candidate) {
+                settled.points[at] = candidate;
+                break;
+            }
+        }
+    }
+    settled
 }
 
 fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[PlacedVia], layer: usize) -> Vec<Result<Vec<Point>, String>> {
@@ -465,6 +537,8 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                 for vertex in [crossing.left, crossing.right] {
                     let lower = vertex == crossing.left.min(crossing.right);
                     let inside: &[(f64, usize)] = if lower { &list[..mine] } else { &list[mine + 1..] };
+                    // Pieces of other nets wrapped around the vertex inside
+                    // this one: it goes around them.
                     let mut need = radii[local][&vertex];
                     for &(_, other) in inside {
                         let other_piece = piece(other);
@@ -472,9 +546,9 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                             continue;
                         }
                         let Ok(path) = &results[other] else { continue };
+                        let Some(disc) = path.discs.iter().find(|disc| disc.vertex == vertex) else { continue };
                         let other_class = &board.classes[other_piece.class];
-                        let (gap, _) = taut::closest(path, mesh.positions[vertex]);
-                        let wanted = gap + other_piece.width / 2.0 + own_class.clearance.max(other_class.clearance) + own.width / 2.0 + MARGIN;
+                        let wanted = disc.radius + other_piece.width / 2.0 + own_class.clearance.max(other_class.clearance) + own.width / 2.0 + MARGIN;
                         need = need.max(wanted);
                     }
                     if need > radii[local][&vertex] + 1.0e-6 {

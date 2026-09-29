@@ -93,18 +93,20 @@ fn layout(board: &Board, mesh: &mesh::Mesh, topology: &Topology) -> (Vec<Piece>,
             continue;
         }
         let width = board.classes[path.class].trace_width;
-        let piece = |layer: usize, at: Point| Piece { wire, net: path.net, class: path.class, layer, width, points: vec![at] };
-        let mut current = piece(path.layers[0], path.from);
-        for (step, &edge) in path.edges.iter().enumerate() {
-            let point = topology.place(board, mesh, wire, edge);
+        let terminals = &board.nets[path.net as usize].terminals;
+        let piece = |layer: usize, at: Point, pad: Option<usize>| Piece { wire, net: path.net, class: path.class, layer, width, points: vec![at], pads: [pad, None] };
+        let mut current = piece(path.layers[0], path.from, Some(terminals[path.terminals[0]].pad));
+        for (step, &portal) in path.portals.iter().enumerate() {
+            let point = topology.place(board, mesh, wire, portal);
             current.points.push(point);
             if path.via_at(step) {
                 pieces.push(current);
                 vias.push(PlacedVia { wire, net: path.net, class: path.class, at: point });
-                current = piece(path.layers[step + 1], point);
+                current = piece(path.layers[step + 1], point, None);
             }
         }
         current.points.push(path.to);
+        current.pads[1] = Some(terminals[path.terminals[1]].pad);
         pieces.push(current);
     }
     (pieces, vias)
@@ -120,6 +122,9 @@ struct Attempt {
     bad: Vec<usize>,
     vias: usize,
     length: f64,
+    /// What the trouble was: unrouted, layer conflicts, pieces without
+    /// geometry, violations.
+    trouble: [usize; 4],
 }
 
 fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: Option<&str>) -> Attempt {
@@ -127,7 +132,10 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
     let realized = realize::realize(board, &pieces, &vias);
     let violations = verify(board, &realized.routes);
     let mut bad: Vec<usize> = realized.failed.iter().map(|(piece, _)| pieces[*piece].wire).collect();
-    bad.extend(layers::troubled(board, mesh, topology));
+    let troubled = layers::troubled(board, mesh, topology);
+    let unrouted = topology.wires.iter().filter(|wire| !wire.routed).count();
+    let trouble = [unrouted, troubled.len(), realized.failed.len(), violations.len()];
+    bad.extend(troubled);
     if std::env::var_os("PCB_TOPO_DEBUG").is_some() {
         for (piece, reason) in realized.failed.iter().take(10) {
             let piece = &pieces[*piece];
@@ -179,7 +187,7 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
     bad.sort_unstable();
     bad.dedup();
     let length = realized.routes.iter().flat_map(|route| &route.segments).map(|segment| distance(segment.start, segment.end)).sum();
-    Attempt { vias: vias.len(), routes: realized.routes, segment_wire: realized.segment_wire, via_wire: realized.via_wire, bad, length }
+    Attempt { vias: vias.len(), routes: realized.routes, segment_wire: realized.segment_wire, via_wire: realized.via_wire, bad, length, trouble }
 }
 
 fn nearest_via(route: &NetRoute, owners: &[usize], at: Point) -> Option<usize> {
@@ -236,7 +244,7 @@ fn connections(board: &Board, mesh: &mesh::Mesh) -> (Vec<Wire>, Vec<(usize, usiz
                 to: terminals[b].anchor,
                 terminals: [a, b],
                 faces: Vec::new(),
-                edges: Vec::new(),
+                portals: Vec::new(),
                 layers: Vec::new(),
                 routed: false,
             });
@@ -269,6 +277,14 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     for &wire in &order {
         let (start, end) = terminal_layers(&topology, wire);
         topology.route(board, &mesh, wire, ends[wire].0, ends[wire].1, config.weights, Mode::Planar, start, end);
+    }
+    if std::env::var_os("PCB_TOPO_DEBUG").is_some() {
+        for (wire, path) in topology.wires.iter().enumerate() {
+            if !path.routed {
+                let terminals = &board.nets[path.net as usize].terminals;
+                eprintln!("  unrouted wire {wire} ({}): {} to {}", board.nets[path.net as usize].name, terminals[path.terminals[0]].label, terminals[path.terminals[1]].label);
+            }
+        }
     }
     let crossings = topology.crossing_pairs(&mesh).len();
     if picture::directory().is_some() {
@@ -304,8 +320,12 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         let attempt = realize_all(board, &mesh, &topology, Some(&format!("{:02}", round + 1)));
         if config.verbose {
             eprintln!(
-                "round {round}: {} wires in trouble, {} vias, {:.1} mm, {:.2}s",
+                "round {round}: {} wires in trouble ({} unrouted, {} in layer conflict, {} pieces without geometry, {} violations), {} vias, {:.1} mm, {:.2}s",
                 attempt.bad.len(),
+                attempt.trouble[0],
+                attempt.trouble[1],
+                attempt.trouble[2],
+                attempt.trouble[3],
                 attempt.vias,
                 attempt.length,
                 started.elapsed().as_secs_f64()
@@ -325,8 +345,11 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         // reroute them layer by layer with weights oscillated around the
         // configured ones.
         for &wire in &bad {
-            for &edge in &topology.wires[wire].edges {
-                topology.history[edge] += 1.0;
+            for &portal in &topology.wires[wire].portals {
+                match portal {
+                    topo::Portal::Edge(edge) => topology.history[edge] += 1.0,
+                    topo::Portal::Vertex(vertex) => topology.vertex_history[vertex] += 1.0,
+                }
             }
             topology.rip_up(wire);
         }

@@ -45,12 +45,89 @@ pub struct Mesh {
     pub vertex_obstacles: Vec<Vec<usize>>,
     /// Whether the vertex lies on the board outline.
     pub vertex_on_outline: Vec<bool>,
+    /// Whether a via may stand on the vertex (a free point with room).
+    pub via_site: Vec<bool>,
+    /// Faces around each vertex.
+    pub vertex_faces: Vec<Vec<usize>>,
+    /// Per edge and layer: the length of the cut between the edge's ends
+    /// (measured to the true shape of round obstacles).
+    pub cut: Vec<Vec<f64>>,
+}
+
+fn distance(a: Point, b: Point) -> f64 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
+}
+
+fn key(point: Point) -> (i64, i64) {
+    ((point[0] * 1.0e6).round() as i64, (point[1] * 1.0e6).round() as i64)
+}
+
+/// Points where a via of every class keeps its clearances, on a triangular
+/// lattice of the via pitch; where the board is open (more than `spacing`
+/// of room), only every few lattice points.
+fn via_sites(board: &Board, index: &Index, spacing: f64) -> Vec<Point> {
+    let radius = board.classes.iter().map(|class| class.via_diameter / 2.0).fold(0.0, f64::max);
+    let drill = board.classes.iter().map(|class| class.via_drill).fold(0.0, f64::max);
+    let clearance = board.classes.iter().map(|class| class.clearance).fold(0.0, f64::max);
+    if radius <= 0.0 {
+        return Vec::new();
+    }
+    let pitch = (2.0 * radius + clearance).max(drill + board.hole_to_hole) + 0.02;
+    let thin = ((spacing / pitch).round() as usize).max(1);
+    let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for point in &board.outline {
+        for axis in 0..2 {
+            minimum[axis] = minimum[axis].min(point[axis]);
+            maximum[axis] = maximum[axis].max(point[axis]);
+        }
+    }
+    // Room around a point: how much further than needed the nearest
+    // obstacle or the edge is (negative: a via does not fit).
+    let room = |point: Point| -> f64 {
+        if !point_in_polygon(point, &board.outline) {
+            return -1.0;
+        }
+        let mut room = ring_distance(point, &board.outline) - radius - board.edge_clearance;
+        for obstacle in index.near(point, radius + clearance + spacing) {
+            let obstacle = &board.obstacles[obstacle];
+            if !obstacle.blocks_vias {
+                continue;
+            }
+            let gap = match obstacle.kind {
+                ObstacleKind::Copper => clearance.max(obstacle.clearance).max(obstacle.clearance_override.unwrap_or(0.0)),
+                ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance).max(board.hole_to_hole + drill / 2.0 - radius),
+                ObstacleKind::Keepout => 0.0,
+            };
+            room = room.min(obstacle.shape.distance_to_point(point) - radius - gap);
+        }
+        room
+    };
+    let mut sites = Vec::new();
+    let step_y = pitch * 0.866;
+    let rows = ((maximum[1] - minimum[1]) / step_y).ceil() as usize;
+    let columns = ((maximum[0] - minimum[0]) / pitch).ceil() as usize;
+    for row in 0..=rows {
+        for column in 0..=columns {
+            let x = minimum[0] + pitch * (column as f64 + if row % 2 == 0 { 0.0 } else { 0.5 });
+            let y = minimum[1] + step_y * row as f64;
+            let point = [x, y];
+            let free = room(point);
+            if free < 0.01 {
+                continue;
+            }
+            if free > spacing && (row % thin != 0 || column % thin != 0) {
+                continue;
+            }
+            sites.push(point);
+        }
+    }
+    sites
 }
 
 /// The outline of a shape as polygons that contain it (circles and round
 /// ends are circumscribed, so the polygon never cuts into the shape).
 pub fn polygons_of(shape: &Shape) -> Vec<Vec<Point>> {
-    const SIDES: usize = 8;
+    const SIDES: usize = 16;
     let circumscribed = |radius: f64| radius / (std::f64::consts::PI / SIDES as f64).cos();
     match shape {
         Shape::Circle { center, radius } => {
@@ -180,34 +257,15 @@ impl Mesh {
                 }
             }
         }
+        // Via sites: free points where a via of any class fits, on a
+        // lattice of the via pitch near obstacles and sparser in the open.
+        let mut site_positions = Vec::new();
         if spacing > 0.0 && board.outline.len() >= 3 {
-            let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-            for point in &board.outline {
-                for axis in 0..2 {
-                    minimum[axis] = minimum[axis].min(point[axis]);
-                    maximum[axis] = maximum[axis].max(point[axis]);
-                }
-            }
-            let mut y = minimum[1] + spacing / 2.0;
-            let mut row = 0;
-            while y < maximum[1] {
-                // Rows offset by half a step: a triangular lattice.
-                let mut x = minimum[0] + spacing * if row % 2 == 0 { 0.5 } else { 1.0 };
-                while x < maximum[0] {
-                    let point = [x, y];
-                    let open = point_in_polygon(point, &board.outline)
-                        && ring_distance(point, &board.outline) >= spacing / 2.0
-                        && index.near(point, spacing / 2.0).into_iter().all(|obstacle| board.obstacles[obstacle].shape.distance_to_point(point) >= spacing / 2.0);
-                    if open {
-                        let _ = cdt.insert(Vertex { position: Point2::new(x, y) });
-                    }
-                    x += spacing;
-                }
-                y += spacing * 0.866;
-                row += 1;
+            site_positions = via_sites(board, index, spacing);
+            for &point in &site_positions {
+                let _ = cdt.insert(Vertex { position: Point2::new(point[0], point[1]) });
             }
         }
-
         let points: Vec<Point> = cdt
             .vertices()
             .map(|vertex| {
@@ -256,6 +314,14 @@ impl Mesh {
                     .collect(),
             );
         }
+        let sites: std::collections::HashSet<(i64, i64)> = site_positions.iter().map(|&point| key(point)).collect();
+        let via_site: Vec<bool> = points.iter().map(|&point| sites.contains(&key(point))).collect();
+        let mut vertex_faces = vec![Vec::new(); points.len()];
+        for (face, vertices) in faces.iter().enumerate() {
+            for &vertex in vertices {
+                vertex_faces[vertex].push(face);
+            }
+        }
         let mut vertex_obstacles = Vec::with_capacity(points.len());
         let mut vertex_on_outline = Vec::with_capacity(points.len());
         for point in &points {
@@ -272,6 +338,28 @@ impl Mesh {
             );
             vertex_on_outline.push(ring_distance(*point, &board.outline) < 1.0e-6);
         }
+        // The cut each edge stands for, per layer: its length, or less where
+        // an end lies on a round obstacle (whose polygon is circumscribed)
+        // and the obstacle's true shape is closer to the other end.
+        let cut = edges
+            .iter()
+            .map(|&[a, b]: &[usize; 2]| {
+                (0..board.layer_count)
+                    .map(|layer| {
+                        let mut length = distance(points[a], points[b]);
+                        for (end, other) in [(a, b), (b, a)] {
+                            for &obstacle in &vertex_obstacles[end] {
+                                let obstacle: &pcb_router::Obstacle = &board.obstacles[obstacle];
+                                if obstacle.layers & (1 << layer) != 0 && obstacle.blocks_tracks {
+                                    length = length.min(obstacle.shape.distance_to_point(points[other]));
+                                }
+                            }
+                        }
+                        length
+                    })
+                    .collect()
+            })
+            .collect();
         Self {
             points,
             edges,
@@ -283,6 +371,9 @@ impl Mesh {
             inside,
             vertex_obstacles,
             vertex_on_outline,
+            via_site,
+            vertex_faces,
+            cut,
         }
     }
 
@@ -347,13 +438,6 @@ impl Mesh {
         found
     }
 
-    /// Whether a via may stand on `edge`: both faces inside the board and
-    /// free of anything that blocks vias.
-    pub fn via_allowed(&self, board: &Board, edge: usize) -> bool {
-        self.edge_faces[edge].iter().all(|&face| {
-            face != NONE && self.inside[face] && self.face_blockers[face].iter().all(|&blocker| !board.obstacles[blocker].blocks_vias)
-        })
-    }
 }
 
 fn ring_distance(point: Point, ring: &[Point]) -> f64 {

@@ -114,11 +114,16 @@ impl Picture {
         }
     }
 
-    /// The shared triangulation: constraint edges darker.
+    /// The shared triangulation: constraint edges darker, via sites dotted.
     pub fn mesh(&mut self, mesh: &Mesh) {
         for (edge, [a, b]) in mesh.edges.iter().enumerate() {
             let (colour, width) = if mesh.constraint[edge] { ("#999", 0.03) } else { ("#ddd", 0.02) };
             self.polyline(&[mesh.points[*a], mesh.points[*b]], colour, width, 1.0);
+        }
+        for (vertex, &point) in mesh.points.iter().enumerate() {
+            if mesh.via_site[vertex] {
+                self.circle(point, 0.06, "#bbb", "none", 0.0);
+            }
         }
     }
 
@@ -131,10 +136,8 @@ impl Picture {
                 continue;
             }
             let mut points = vec![path.from];
-            for (step, &edge) in path.edges.iter().enumerate() {
-                let index = topology.order[edge].iter().position(|&w| w == wire).expect("wire on edge");
-                points.push(topology.portal(board, mesh, edge, 2 * index + 1, 0.0));
-                let _ = step;
+            for &portal in &path.portals {
+                points.push(topology.place(board, mesh, wire, portal));
             }
             points.push(path.to);
             for (step, pair) in points.windows(2).enumerate() {

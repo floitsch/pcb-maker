@@ -4,10 +4,10 @@
 
 //! Layer assignment after topological routing (TopoR's "расслоение"). Every
 //! routed wire gets a layer in each face it passes. Wires of different nets
-//! that cross in a face must be on different layers there; a change of
-//! layer between two faces is a via on the edge between them, allowed only
-//! where a via may stand; a terminal's face takes a layer of its pad; and
-//! each layer's room on each edge is shared by the wires on it.
+//! that cross in a face must be on different layers there; a wire changes
+//! layer only where it passes a via site (that is a via); a terminal's face
+//! takes a layer of its pad; and each layer's room on each edge is shared
+//! by the wires on it.
 //!
 //! Each wire's best layers, given everyone else's, are found exactly by
 //! dynamic programming over its faces (a Viterbi pass); passes over all
@@ -15,14 +15,14 @@
 //! and a wire only moves if the total cost drops.
 
 use crate::mesh::Mesh;
-use crate::topo::Topology;
+use crate::topo::{Portal, Topology};
 use pcb_router::Board;
 use std::collections::HashMap;
 
 /// Cost of a crossing of two wires on the same layer (illegal).
 const CONFLICT: f64 = 1000.0;
-/// Cost of a layer a face or pad does not allow, or a via where none may
-/// stand.
+/// Cost of a layer a face or pad does not allow, or a change of layer
+/// across an edge.
 const INFEASIBLE: f64 = 1.0e6;
 
 #[derive(Clone, Copy, Debug)]
@@ -84,14 +84,9 @@ struct Usage {
 impl Usage {
     fn add(&mut self, board: &Board, topology: &Topology, wire: usize) {
         let path = &topology.wires[wire];
-        for (step, &edge) in path.edges.iter().enumerate() {
-            if path.via_at(step) {
-                let room = Topology::via_room(board, path.class);
-                for layer in 0..board.layer_count {
-                    self.rooms.entry((edge, layer)).or_default().push((path.net, wire, room));
-                }
-            } else {
-                let room = Topology::track_room(board, path.class);
+        let room = Topology::track_room(board, path.class);
+        for (step, &portal) in path.portals.iter().enumerate() {
+            if let Portal::Edge(edge) = portal {
                 self.rooms.entry((edge, path.layers[step])).or_default().push((path.net, wire, room));
             }
         }
@@ -99,10 +94,12 @@ impl Usage {
 
     fn remove(&mut self, board: &Board, topology: &Topology, wire: usize) {
         let path = &topology.wires[wire];
-        for &edge in &path.edges {
-            for layer in 0..board.layer_count {
-                if let Some(list) = self.rooms.get_mut(&(edge, layer)) {
-                    list.retain(|&(_, owner, _)| owner != wire);
+        for &portal in &path.portals {
+            if let Portal::Edge(edge) = portal {
+                for layer in 0..board.layer_count {
+                    if let Some(list) = self.rooms.get_mut(&(edge, layer)) {
+                        list.retain(|&(_, owner, _)| owner != wire);
+                    }
                 }
             }
         }
@@ -125,7 +122,7 @@ struct Context<'a> {
 impl Context<'_> {
     fn overflow(&self, wire: usize, edge: usize, layer: usize, room: f64) -> f64 {
         let path = &self.topology.wires[wire];
-        let capacity = Topology::capacity(self.board, self.mesh, edge, Some(layer), path.net, path.class);
+        let capacity = self.topology.capacity(self.board, self.mesh, edge, Some(layer), path.net, path.class);
         (self.usage.used(edge, layer, path.net) + room - capacity).clamp(0.0, room)
     }
 
@@ -139,17 +136,16 @@ impl Context<'_> {
         cost
     }
 
-    /// Cost of staying on `layer` across `edge`, or of a via there.
-    fn transition(&self, wire: usize, edge: usize, from: usize, to: usize) -> f64 {
+    /// Cost of passing `portal` from layer `from` to layer `to`: the
+    /// layer's room across an edge, a via at a via site.
+    fn transition(&self, wire: usize, portal: Portal, from: usize, to: usize) -> f64 {
         let path = &self.topology.wires[wire];
-        if from == to {
-            return self.costs.overflow * self.overflow(wire, edge, to, Topology::track_room(self.board, path.class));
+        match portal {
+            Portal::Edge(edge) if from == to => self.costs.overflow * self.overflow(wire, edge, to, Topology::track_room(self.board, path.class)),
+            Portal::Edge(_) => INFEASIBLE,
+            Portal::Vertex(_) if from == to => 0.0,
+            Portal::Vertex(_) => self.costs.via,
         }
-        if !self.mesh.via_allowed(self.board, edge) {
-            return INFEASIBLE;
-        }
-        let room = Topology::via_room(self.board, path.class);
-        self.costs.via + self.costs.overflow * (0..self.board.layer_count).map(|layer| self.overflow(wire, edge, layer, room)).fold(0.0, f64::max)
     }
 
     /// The cheapest layers for `wire` given everyone else's, and their cost.
@@ -163,12 +159,12 @@ impl Context<'_> {
             cost[0][layer] = self.state(wire, 0, layer, partners, allowed);
         }
         for step in 1..steps {
-            let edge = path.edges[step - 1];
+            let portal = path.portals[step - 1];
             for layer in 0..layers {
                 let here = self.state(wire, step, layer, partners, allowed);
                 let mut best = (f64::INFINITY, 0);
                 for previous in 0..layers {
-                    let total = cost[step - 1][previous] + self.transition(wire, edge, previous, layer);
+                    let total = cost[step - 1][previous] + self.transition(wire, portal, previous, layer);
                     if total < best.0 {
                         best = (total, previous);
                     }
@@ -194,7 +190,7 @@ impl Context<'_> {
         for step in 0..path.faces.len() {
             total += self.state(wire, step, path.layers[step], partners, allowed);
             if step > 0 {
-                total += self.transition(wire, path.edges[step - 1], path.layers[step - 1], path.layers[step]);
+                total += self.transition(wire, path.portals[step - 1], path.layers[step - 1], path.layers[step]);
             }
         }
         total
@@ -269,7 +265,7 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             }
             if step + 1 < path.faces.len() && path.via_at(step) {
                 stats.vias += 1;
-                if !mesh.via_allowed(board, path.edges[step]) {
+                if matches!(path.portals[step], Portal::Edge(_)) {
                     stats.infeasible += 1;
                 }
             }
@@ -291,7 +287,7 @@ pub fn troubled(board: &Board, mesh: &Mesh, topology: &Topology) -> Vec<usize> {
         let bad = (0..path.faces.len()).any(|step| {
             allowed[step] & (1 << path.layers[step]) == 0
                 || partners[wire][step].iter().any(|&(other, other_step)| topology.wires[other].layers.get(other_step) == Some(&path.layers[step]))
-                || (step + 1 < path.faces.len() && path.via_at(step) && !mesh.via_allowed(board, path.edges[step]))
+                || (step + 1 < path.faces.len() && path.via_at(step) && matches!(path.portals[step], Portal::Edge(_)))
         });
         if bad {
             found.push(wire);

@@ -125,6 +125,7 @@ pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenRep
             layer: chain.layer,
             width: chain.width,
             points: chain.points.clone(),
+            pads: [None, None],
         })
         .collect();
     let vias: Vec<PlacedVia> = routes
