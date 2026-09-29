@@ -260,7 +260,7 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
             }
             Some("pad") => {
                 let at = form_at(child)?;
-                let size = form_xy(child, "size").unwrap_or([0.0, 0.0]);
+                let size = pad_extent(child);
                 // Pad angles are absolute; bring the pad box into the local frame.
                 let (sin, cos) = (-(at[2] - footprint_angle)).to_radians().sin_cos();
                 // Copper must keep a hole's local clearance, so no other
@@ -380,10 +380,30 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     Ok(at)
 }
 
+/// A pad's size in its own frame, at least its drill (a hole may be
+/// drawn with a token pad).
+fn pad_extent(pad: &Expr) -> [f64; 2] {
+    let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
+    let drill: Vec<f64> = pad
+        .child("drill")
+        .map(|drill| drill.children().iter().skip(1).filter_map(Expr::atom).filter_map(|atom| atom.parse().ok()).collect())
+        .unwrap_or_default();
+    let drill = match drill.as_slice() {
+        [diameter] => [*diameter, *diameter],
+        [width, height, ..] => [*width, *height],
+        [] => [0.0, 0.0],
+    };
+    [size[0].max(drill[0]), size[1].max(drill[1])]
+}
+
 /// Boxes ([min x, min y, max x, max y], own frame) of the separate shapes
-/// a footprint's courtyard is drawn as; empty when it is one shape (or
-/// none). Lines and arcs that share end points form one shape.
-fn courtyard_shapes(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
+/// a footprint's courtyard is drawn as (empty when it is one shape, or
+/// none), and whether the courtyard is malformed: lines and arcs whose end
+/// points do not each join exactly two of them (a zero-length line does
+/// not), which KiCad cannot build and does not check. Lines and arcs that
+/// share end points form one shape.
+fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
+    let mut degrees: Vec<([f64; 2], usize)> = Vec::new();
     let mut shapes: Vec<(Vec<[f64; 2]>, [f64; 4])> = Vec::new();
     let grow = |bounds: &mut [f64; 4], point: [f64; 2], radius: f64| {
         bounds[0] = bounds[0].min(point[0] - radius);
@@ -406,6 +426,12 @@ fn courtyard_shapes(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
                     }
                 }
                 ends = vec![form_xy(child, "start")?, form_xy(child, "end")?];
+                for end in &ends {
+                    match degrees.iter_mut().find(|(point, _)| distance_squared(*point, *end) < 1.0e-6) {
+                        Some((_, degree)) => *degree += 1,
+                        None => degrees.push((*end, 1)),
+                    }
+                }
             }
             Some("fp_rect") => {
                 grow(&mut bounds, form_xy(child, "start")?, 0.0);
@@ -446,10 +472,11 @@ fn courtyard_shapes(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
         }
         shapes.push((points, bounds));
     }
+    let malformed = degrees.iter().any(|(_, degree)| *degree != 2);
     if shapes.len() < 2 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), malformed));
     }
-    Ok(shapes.into_iter().map(|(_, bounds)| bounds).collect())
+    Ok((shapes.into_iter().map(|(_, bounds)| bounds).collect(), malformed))
 }
 
 /// Which way a connector opens, in its own frame: the side where the
@@ -622,7 +649,7 @@ pub(super) fn lower_placement(
             // The pad (or hole) with the clearance a hole keeps, in the
             // footprint's frame.
             let pad_at = form_at(pad)?;
-            let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
+            let size = pad_extent(pad);
             let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
             let keep_away = if pad_type == "np_thru_hole" {
                 local_clearance::pad_clearance(pad, footprint)?
@@ -736,6 +763,7 @@ pub(super) fn lower_placement(
                 .fold(f64::INFINITY, f64::min)
                 .max(0.0)
         };
+        let courtyard = courtyard_shapes(footprint)?;
         connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
@@ -765,7 +793,8 @@ pub(super) fn lower_placement(
             hollow: Vec::new(),
             tight: if config.tight_bodies == Some(true) { tight_body(footprint)? } else { None },
             edge_inset,
-            courtyards: courtyard_shapes(footprint)?,
+            courtyards: courtyard.0,
+            holes_inside: courtyard.1,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -848,6 +877,7 @@ pub(super) fn lower_placement(
             tight: None,
             edge_inset: 0.0,
             courtyards: Vec::new(),
+            holes_inside: false,
         });
         poses.push(core::Pose {
             position: [
@@ -903,6 +933,7 @@ pub(super) fn lower_placement(
             tight: None,
             edge_inset: 0.0,
             courtyards: Vec::new(),
+            holes_inside: false,
         });
         poses.push(core::Pose {
             position: [
@@ -947,6 +978,7 @@ pub(super) fn lower_placement(
             tight: None,
             edge_inset: 0.0,
             courtyards: Vec::new(),
+            holes_inside: false,
         });
         poses.push(core::Pose {
             position: [
@@ -1313,12 +1345,20 @@ mod tests {
         let mut lines = rectangle(0.0, 0.0, 10.0, 5.0);
         lines.insert_str(0, &rectangle(40.0, 30.0, 50.0, 40.0));
         let footprint = parse(&format!("(footprint \"Board\" (layer \"F.Cu\") (at 0 0) {lines})")).unwrap();
-        let mut shapes = courtyard_shapes(&footprint).unwrap();
+        let (mut shapes, malformed) = courtyard_shapes(&footprint).unwrap();
+        assert!(!malformed);
         shapes.sort_by(|a, b| a[0].total_cmp(&b[0]));
         assert_eq!(shapes, vec![[0.0, 0.0, 10.0, 5.0], [40.0, 30.0, 50.0, 40.0]]);
         // One rectangle is one shape: the body covers it.
         let footprint =
             parse(&format!("(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {})", rectangle(0.0, 0.0, 2.0, 1.0))).unwrap();
-        assert!(courtyard_shapes(&footprint).unwrap().is_empty());
+        assert_eq!(courtyard_shapes(&footprint).unwrap(), (Vec::new(), false));
+        // A zero-length line at a corner: KiCad cannot build it.
+        let footprint = parse(&format!(
+            "(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {} (fp_line (start 2 1) (end 2 1) (layer \"F.CrtYd\")))",
+            rectangle(0.0, 0.0, 2.0, 1.0)
+        ))
+        .unwrap();
+        assert!(courtyard_shapes(&footprint).unwrap().1);
     }
 }

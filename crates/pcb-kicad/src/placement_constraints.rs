@@ -757,6 +757,7 @@ mod tests {
             tight: None,
             edge_inset: 0.0,
             courtyards: Vec::new(),
+            holes_inside: false,
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],

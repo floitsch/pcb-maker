@@ -74,6 +74,9 @@ pub struct Component {
     /// shapes of a courtyard drawn as several (a board outline footprint
     /// marking only its connectors); empty when it is one shape.
     pub courtyards: Vec<[f64; 4]>,
+    /// Other parts' holes may lie inside the courtyard: KiCad cannot build
+    /// it (a malformed outline) and does not check it.
+    pub holes_inside: bool,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -189,14 +192,14 @@ impl Component {
     /// pads and its courtyard's separate shapes (holes may not lie inside a
     /// courtyard).
     pub fn hollow_for(&self, other: &Component) -> bool {
-        !self.hollow.is_empty() && (!other.has_holes() || self.courtyards.len() > 1)
+        !self.hollow.is_empty() && (!other.has_holes() || self.holes_inside || self.courtyards.len() > 1)
     }
 
     /// Board-space boxes (centre, half extent) the part blocks `other`
     /// with; see `hollow_for`.
     pub fn blocking_boxes(&self, other: &Component, pose: Pose) -> Vec<(Point, Point)> {
         let mut boxes = self.boxes(&self.hollow, pose);
-        if other.has_holes() {
+        if other.has_holes() && !self.holes_inside {
             boxes.extend(self.boxes(&self.courtyards, pose));
         }
         boxes
