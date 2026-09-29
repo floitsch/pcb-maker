@@ -1190,7 +1190,15 @@ pub fn place_kicad_board(
                 continue;
             }
             let written = lower_pad(pad, footprint_at)?.center;
-            let expected = component.pin_position(&component.pins[pin], placement.poses[index]);
+            // A part a row carries has no pins of its own: its pads follow
+            // its own pose.
+            let expected = match component.pins.get(pin) {
+                Some(own) => component.pin_position(own, placement.poses[index]),
+                None => {
+                    let local = form_at(pad)?;
+                    component.pin_position(&core::Pin { offset: [local[0], local[1]], net: 0 }, placement.poses[index])
+                }
+            };
             if distance_squared(written, expected).sqrt() > 1.0e-5 {
                 return Err(format!(
                     "internal error: pad of {} written at {written:?}, expected {expected:?}",

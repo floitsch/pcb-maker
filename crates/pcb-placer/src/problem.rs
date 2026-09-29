@@ -114,6 +114,20 @@ pub struct Problem {
     pub constraints: crate::constraints::Constraints,
 }
 
+impl Problem {
+    /// Moves every follower (a row's parts) to where its leader carries it.
+    pub fn sync_followers(&self, poses: &mut [Pose]) {
+        for follower in &self.constraints.followers {
+            let leader = poses[follower.leader];
+            let offset = rotate(follower.offset, -leader.angle);
+            poses[follower.part] = Pose {
+                position: [leader.position[0] + offset[0], leader.position[1] + offset[1]],
+                angle: (leader.angle + follower.angle).rem_euclid(360.0),
+            };
+        }
+    }
+}
+
 pub fn rotate(local: Point, angle_degrees: f64) -> Point {
     // Exact for the common quarter turns.
     let quarter = (angle_degrees / 90.0).round();

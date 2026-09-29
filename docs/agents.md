@@ -39,7 +39,8 @@ Full reference: [constraints.md](constraints.md).
   module above parts): only its pads block. Parts with holes still stay
   out of its courtyard's shapes, as KiCad forbids holes inside a
   courtyard.
-- **`near`, `group` and `relative`** keep parts together.
+- **`near`, `group` and `relative`** keep parts together; **`row`** puts
+  parts in a line at a pitch (LED bars, key rows).
 - **`overhang`** lets a module's antenna reach beyond an edge.
 
 Unknown keys, parts or pads are errors, not silently ignored.

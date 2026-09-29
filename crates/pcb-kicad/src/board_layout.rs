@@ -376,18 +376,27 @@ pub fn layout_kicad_board(
             let saved_router = router.clone();
             let saved_pcb = pcb.clone();
             let saved_pose = problem.problem.poses[index];
+            let saved_poses = problem.problem.poses.clone();
+            // The part moves, and the parts its row carries with it.
+            let mut poses = saved_poses.clone();
+            poses[index] = pose;
+            problem.problem.sync_followers(&mut poses);
             {
                 let mut footprints = footprint_items(&mut pcb)?;
-                write_footprint_pose(footprints[index], pose)?;
+                for (part, (old, new)) in saved_poses.iter().zip(&poses).enumerate() {
+                    if part == index || old != new {
+                        write_footprint_pose(footprints[part], *new)?;
+                    }
+                }
             }
-            problem.problem.poses[index] = pose;
+            problem.problem.poses = poses;
             let trial_board = lower(&pcb, router_config, connect)?.board;
             let rerouted = match router.update(&trial_board) {
                 Ok(count) => count,
                 Err(error) => {
                     router = saved_router;
                     pcb = saved_pcb;
-                    problem.problem.poses[index] = saved_pose;
+                    problem.problem.poses = saved_poses.clone();
                     return Err(error);
                 }
             };
@@ -419,7 +428,7 @@ pub fn layout_kicad_board(
             }
             router = saved_router;
             pcb = saved_pcb;
-            problem.problem.poses[index] = saved_pose;
+            problem.problem.poses = saved_poses.clone();
         }
         if improved {
             since_improvement = 0;

@@ -14,7 +14,8 @@
 //!  "near": [{"part": "C1", "pin_of": "U1:48", "max_mm": 3},
 //!           {"part": "U2", "part_of": "J4", "max_mm": 10}],
 //!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
-//!  "group": [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}]}
+//!  "group": [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
+//!  "row": [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}]}
 //! ```
 //!
 //! Parts named by a constraint may move even where a default rule would
@@ -68,6 +69,26 @@ pub struct KiCadPlacementConstraints {
     pub relative: Vec<KiCadRelativeConstraint>,
     #[serde(default)]
     pub group: Vec<KiCadGroupConstraint>,
+    #[serde(default)]
+    pub row: Vec<KiCadRowConstraint>,
+}
+
+/// Parts in a line at a fixed pitch, turned alike (LED bars, key rows, test
+/// points). The row is placed as one part, led by its first part: other
+/// constraints name the first part only.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadRowConstraint {
+    /// References or glob patterns, in row order (a glob's parts in natural
+    /// order: D2 before D10).
+    pub parts: Vec<String>,
+    /// Distance between neighbouring parts' origins.
+    pub pitch_mm: f64,
+    /// `x` (default): along the board's x axis; `y`: along its y axis. The
+    /// row may run either way; a rotation constraint on its first part
+    /// fixes that.
+    #[serde(default)]
+    pub axis: Option<String>,
 }
 
 /// Parts kept together: each one's body within `max_mm` of the central
@@ -426,6 +447,137 @@ fn edge(name: &str) -> Result<Edge, String> {
     }
 }
 
+/// Natural order of references: D2 before D10.
+fn natural(reference: &str) -> (String, u64, String) {
+    let digits = reference.find(|c: char| c.is_ascii_digit()).unwrap_or(reference.len());
+    let end = reference[digits..]
+        .find(|c: char| !c.is_ascii_digit())
+        .map_or(reference.len(), |end| digits + end);
+    (
+        reference[..digits].to_string(),
+        reference[digits..end].parse().unwrap_or(0),
+        reference[end..].to_string(),
+    )
+}
+
+/// Turns every row into one part: the first part carries the others' bodies,
+/// pins and pads at their places in the row; the others become followers
+/// that occupy nothing themselves. Returns each follower's leader.
+fn apply_rows(
+    problem: &mut core::Problem,
+    references: &[String],
+    footprints: usize,
+    pad_boxes: &[Vec<[f64; 4]>],
+    rows: &[KiCadRowConstraint],
+) -> Result<BTreeMap<usize, usize>, String> {
+    let mut leaders = BTreeMap::new();
+    for row in rows {
+        let mut members: Vec<usize> = Vec::new();
+        for pattern in &row.parts {
+            let mut parts: Vec<usize> = (0..footprints).filter(|index| glob_matches(pattern, &references[*index])).collect();
+            if parts.is_empty() {
+                return Err(format!("row part {pattern:?} matches no part"));
+            }
+            parts.sort_by_key(|index| natural(&references[*index]));
+            for part in parts {
+                if !members.contains(&part) {
+                    members.push(part);
+                }
+            }
+        }
+        if members.len() < 2 {
+            return Err(format!("row {:?} has fewer than two parts", row.parts));
+        }
+        if !(row.pitch_mm > 0.0) {
+            return Err(format!("row {:?}: pitch_mm must be positive", row.parts));
+        }
+        let axis = match row.axis.as_deref() {
+            None | Some("x") => [1.0, 0.0],
+            Some("y") => [0.0, 1.0],
+            Some(other) => return Err(format!("unknown row axis {other:?} (x or y)")),
+        };
+        let leader = members[0];
+        let side = problem.components[leader].side;
+        let angle = problem.poses[leader].angle;
+        let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut carried = problem.components[leader].clone();
+        carried.pins.clear();
+        carried.far_side.clear();
+        carried.pads.clear();
+        for (place, member) in members.iter().enumerate() {
+            if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
+                return Err(format!("{} is in two rows", references[*member]));
+            }
+            let component = &problem.components[*member];
+            if component.side != side {
+                return Err(format!("row {:?}: all parts must be on one side", row.parts));
+            }
+            // The member's place in the leader's own frame.
+            let along = place as f64 * row.pitch_mm;
+            let offset = core::problem::rotate([axis[0] * along, axis[1] * along], angle);
+            let shift = |boxes: &[[f64; 4]]| -> Vec<[f64; 4]> {
+                boxes
+                    .iter()
+                    .map(|b| [b[0] + offset[0], b[1] + offset[1], b[2] + offset[0], b[3] + offset[1]])
+                    .collect()
+            };
+            let center = [component.body_center[0] + offset[0], component.body_center[1] + offset[1]];
+            body = [
+                body[0].min(center[0] - component.body_size[0] / 2.0),
+                body[1].min(center[1] - component.body_size[1] / 2.0),
+                body[2].max(center[0] + component.body_size[0] / 2.0),
+                body[3].max(center[1] + component.body_size[1] / 2.0),
+            ];
+            carried.pins.extend(component.pins.iter().map(|pin| core::Pin {
+                offset: [pin.offset[0] + offset[0], pin.offset[1] + offset[1]],
+                net: pin.net,
+            }));
+            carried.far_side.extend(shift(&component.far_side));
+            carried.pads.extend(shift(&pad_boxes[*member]));
+            carried.halo = carried.halo.max(component.halo);
+            carried.edge_inset = carried.edge_inset.min(component.edge_inset);
+            if *member != leader {
+                leaders.insert(*member, leader);
+                problem.constraints.followers.push(core::constraints::Follower {
+                    part: *member,
+                    leader,
+                    offset,
+                    angle: 0.0,
+                });
+            }
+        }
+        carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
+        carried.body_size = [body[2] - body[0], body[3] - body[1]];
+        carried.round = false;
+        carried.tight = None;
+        carried.courtyards.clear();
+        carried.holes_inside = false;
+        // Turning the row by a half turn keeps it along its axis.
+        carried.angle_options.retain(|option| {
+            let turn = (option - angle).rem_euclid(360.0);
+            turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
+        });
+        if carried.angle_options.is_empty() {
+            carried.angle_options = vec![angle];
+        }
+        problem.components[leader] = carried;
+        for member in &members[1..] {
+            let component = &mut problem.components[*member];
+            component.side = core::Side::Neither;
+            component.fixed = true;
+            component.pins.clear();
+            component.far_side.clear();
+            component.pads.clear();
+            component.halo = 0.0;
+            component.body_size = [0.01, 0.01];
+        }
+    }
+    let mut poses = problem.poses.clone();
+    problem.sync_followers(&mut poses);
+    problem.poses = poses;
+    Ok(leaders)
+}
+
 /// Applies `constraints` to a lowered problem. `pads[i]` maps pad names of
 /// footprint `i` to their local offsets. Returns warnings for parts of the
 /// constraints that are accepted but not acted on.
@@ -441,15 +593,24 @@ pub(super) fn apply_constraints(
     weight: f64,
 ) -> Result<Vec<String>, String> {
     let footprints = pads.len();
+    let leaders = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
     let find = |reference: &str| -> Result<usize, String> {
-        references[..footprints]
+        let index = references[..footprints]
             .iter()
             .position(|candidate| candidate == reference)
-            .ok_or_else(|| format!("constraint names unknown part {reference:?}"))
+            .ok_or_else(|| format!("constraint names unknown part {reference:?}"))?;
+        match leaders.get(&index) {
+            Some(leader) => Err(format!(
+                "{reference} is carried by its row: constrain the row's first part, {}",
+                references[*leader]
+            )),
+            None => Ok(index),
+        }
     };
+    // Globs skip the parts rows carry (their first part stands for them).
     let matching = |pattern: &str| -> Vec<usize> {
         (0..footprints)
-            .filter(|index| glob_matches(pattern, &references[*index]))
+            .filter(|index| !leaders.contains_key(index) && glob_matches(pattern, &references[*index]))
             .collect()
     };
     let mut warnings = Vec::new();
@@ -869,6 +1030,31 @@ mod tests {
             r#"{"version": 1, "hollow": ["U*"]}"#,
             r#"{"version": 1, "group": [{"parts": ["C1", "U9"], "max_mm": 2}]}"#,
             r#"{"version": 1, "hollow": ["C1"]}"#,
+        ] {
+            assert!(apply(bad).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_row_is_placed_as_its_first_part() {
+        let (problem, _) = apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
+        // C1 carries C2 three millimetres to its right: one 5 x 1 mm body.
+        assert_eq!(problem.components[1].body_size, [5.0, 1.0]);
+        assert_eq!(problem.components[1].body_center, [1.5, 0.0]);
+        assert!(problem.components[2].fixed && problem.components[2].side == core::Side::Neither);
+        assert_eq!(
+            problem.constraints.followers,
+            vec![core::constraints::Follower { part: 2, leader: 1, offset: [3.0, 0.0], angle: 0.0 }]
+        );
+        assert_eq!(problem.poses[2].position, [13.0, 10.0]);
+        // Only half turns keep the row along its axis.
+        assert_eq!(problem.components[1].angle_options, vec![0.0, 180.0]);
+        for bad in [
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "near": [{"part": "C2", "part_of": "J1", "max_mm": 1}]}"#,
+            r#"{"version": 1, "row": [{"parts": ["C1"], "pitch_mm": 3}]}"#,
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 0}]}"#,
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3, "axis": "z"}]}"#,
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}, {"parts": ["C2", "J1"], "pitch_mm": 3}]}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }

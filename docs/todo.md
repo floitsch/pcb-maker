@@ -42,10 +42,9 @@ router and placer items.
 
 ## Placer
 
-- **Alignment constraints.** A row of parts at a pitch (LED bars, key rows,
-  test points) cannot be said yet. Best built as a macro body in the
-  lowering: the row moves and turns as one part and is expanded back to
-  its footprints after placement.
+- **Alignment beyond rows.** `row` places parts in a line at a pitch as
+  one macro body. Grids (a keyboard matrix), alignment without a fixed
+  pitch, and rows of parts turned differently are not there yet.
 - **Parts as wide as the board.** On raspberry_pi_pullup (a 4.8 mm wide
   board) the parts' copper reaches both edges; the placer's grid cannot
   hit the 0.002 mm of room. Snapping to both edges at once would.

@@ -243,6 +243,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         wirelength: wirelength_final,
         poses: poses.clone(),
     });
+    problem.sync_followers(&mut poses);
     let illegal = legal::illegal_components(problem, &poses);
     let constraints = constraints::report(problem, &poses);
     Placement {

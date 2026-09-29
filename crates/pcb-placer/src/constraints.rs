@@ -92,6 +92,19 @@ pub struct Constraints {
     pub relations: Vec<Relation>,
     /// Millimetres of wirelength one millimetre of relation violation costs.
     pub relation_weight: f64,
+    /// Parts carried by others (a row): placed as part of their leader's
+    /// body, their poses follow the leader's.
+    pub followers: Vec<Follower>,
+}
+
+/// A part whose pose is its leader's pose composed with `offset` (in the
+/// leader's own frame) and `angle` (added to the leader's).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Follower {
+    pub part: usize,
+    pub leader: usize,
+    pub offset: Point,
+    pub angle: f64,
 }
 
 impl Constraints {
