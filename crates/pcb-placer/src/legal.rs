@@ -425,6 +425,65 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
     moved
 }
 
+/// Turns parts of the same kind (same body and pin count, same side) to
+/// their kind's most common angle where that stays legal, costs at most
+/// `tolerance` mm of wire per part and misses no soft constraint more:
+/// consistent orientation eases assembly and inspection. Returns the number
+/// of parts turned.
+pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64) -> usize {
+    let count = problem.components.len();
+    let key = |index: usize| {
+        let component = &problem.components[index];
+        (
+            (component.body_size[0] * 100.0).round() as i64,
+            (component.body_size[1] * 100.0).round() as i64,
+            component.pins.len(),
+            component.side as u8,
+        )
+    };
+    let mut kinds: std::collections::BTreeMap<(i64, i64, usize, u8), Vec<usize>> = Default::default();
+    for index in 0..count {
+        let component = &problem.components[index];
+        if !component.fixed && component.pins.len() >= 2 && component.angle_options.len() > 1 {
+            kinds.entry(key(index)).or_default().push(index);
+        }
+    }
+    let angle_key = |angle: f64| (angle.rem_euclid(360.0).round() as i64) % 360;
+    let mut turned = 0;
+    for members in kinds.values().filter(|members| members.len() >= 2) {
+        let mut counts: std::collections::BTreeMap<i64, usize> = Default::default();
+        for index in members {
+            *counts.entry(angle_key(poses[*index].angle)).or_default() += 1;
+        }
+        let (&modal, _) = counts.iter().max_by_key(|(angle, count)| (**count, -**angle)).unwrap();
+        for &index in members {
+            if angle_key(poses[index].angle) == modal {
+                continue;
+            }
+            let component = &problem.components[index];
+            let Some(&angle) = component.angle_options.iter().find(|option| angle_key(**option) == modal) else {
+                continue;
+            };
+            let center = component.center(poses[index]);
+            let position = constraints::snap_position(problem, index, component.position_for_center(center, angle), angle);
+            let pose = Pose { position, angle };
+            if !is_legal(problem, poses, index, pose, 0..count) {
+                continue;
+            }
+            let before = (problem.wirelength(poses), constraints::relation_penalty(problem, poses, Some(index)));
+            let original = poses[index];
+            poses[index] = pose;
+            let after = (problem.wirelength(poses), constraints::relation_penalty(problem, poses, Some(index)));
+            if after.0 <= before.0 + tolerance && after.1 <= before.1 + 1.0e-9 {
+                turned += 1;
+            } else {
+                poses[index] = original;
+            }
+        }
+    }
+    turned
+}
+
 /// Local search on a legal placement: every move keeps it legal and strictly
 /// reduces the weighted half-perimeter wirelength.
 pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {

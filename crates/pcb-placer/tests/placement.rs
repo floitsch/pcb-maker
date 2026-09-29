@@ -385,3 +385,45 @@ fn apart_keeps_connected_parts_away_from_each_other() {
     assert!(gap >= 15.0 - 0.1, "gap {gap}");
     assert!(placement.constraints.iter().all(|status| status.satisfied));
 }
+
+#[test]
+fn parts_of_a_kind_are_turned_alike() {
+    use pcb_placer::legal::align_orientations;
+    let part = |net: usize| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [3.0, 1.5],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin { offset: [-1.0, 0.0], net }, Pin { offset: [1.0, 0.0], net: net + 1 }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0, 90.0, 180.0, 270.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+    };
+    let problem = Problem {
+        outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
+        components: vec![part(0), part(2), part(4)],
+        net_weights: vec![1.0; 6],
+        poses: vec![
+            Pose { position: [10.0, 10.0], angle: 0.0 },
+            Pose { position: [20.0, 10.0], angle: 0.0 },
+            Pose { position: [30.0, 10.0], angle: 90.0 },
+        ],
+        spacing: 0.5,
+        grid: 0.5,
+        edge_margin: 0.5,
+        min_spacing: 0.2,
+        constraints: Default::default(),
+    };
+    let mut poses = problem.poses.clone();
+    assert_eq!(align_orientations(&problem, &mut poses, 0.5), 1);
+    assert!(poses.iter().all(|pose| pose.angle == 0.0));
+}

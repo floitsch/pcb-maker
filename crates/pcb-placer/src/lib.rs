@@ -237,6 +237,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         legal::refine(problem, &mut poses, config.refine_passes);
     }
+    // Parts of a kind turned alike where it costs next to nothing.
+    legal::align_orientations(problem, &mut poses, 0.5);
     let wirelength_final = problem.wirelength(&poses);
     frames.push(Frame {
         iteration: global.iterations + 2,
