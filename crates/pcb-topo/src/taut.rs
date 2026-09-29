@@ -490,19 +490,27 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
         let at = match place {
             Where::Tangent(index) => index,
             Where::Arc(index) => {
-                // Before or after the disc, by where around it the vertex
-                // lies relative to the arc's middle.
-                let disc = &path.discs[index];
-                let (from, to) = path.touch[index];
-                let arc = sweep(disc, from, to);
-                let middle = sweep(disc, from, vertex.center);
-                let within = if arc >= 0.0 { middle <= arc / 2.0 } else { middle >= arc / 2.0 };
-                if within { index - 1 } else { index }
+                // Before or after the disc, by where the vertex lies along
+                // the path's direction there.
+                let incoming = sub(path.touch[index].0, path.touch[index - 1].1);
+                let outgoing = sub(path.touch[index + 1].0, path.touch[index].1);
+                let unit = |v: Point| scale(v, 1.0 / length(v).max(1.0e-12));
+                let direction = add(unit(incoming), unit(outgoing));
+                if dot(sub(vertex.center, path.discs[index].center), direction) < 0.0 { index - 1 } else { index }
             }
         };
         inner.insert(at.min(inner.len()), vertex);
         let signature: Vec<usize> = inner.iter().map(|disc| disc.vertex).collect();
         if seen.contains(&signature) {
+            if std::env::var_os("PCB_TOPO_TAUT").is_some() {
+                eprintln!("    taut unsettled from {start:?} to {end:?}; inserted {} ({:?} r {:.3} side {}) at {at}", vertex.vertex, vertex.center, vertex.radius, vertex.side);
+                for (index, known) in seen.iter().enumerate().rev().take(6) {
+                    eprintln!("      {index}: {known:?}");
+                }
+                for disc in &vertices {
+                    eprintln!("      vertex {} at {:?} r {:.3} side {}", disc.vertex, disc.center, disc.radius, disc.side);
+                }
+            }
             return Err(Failure::Unsettled);
         }
         seen.push(signature);
