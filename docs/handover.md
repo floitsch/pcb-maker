@@ -17,8 +17,12 @@ work is committed locally on `main`; **nothing is pushed.**
    - lower cost for hackers (fab prices).
 
    Later addition: make more use of pin swapping (nice to have).
-3. **Current goal: "implement the TopoR algorithm (at least as an
-   option)."** It is in progress: see [The topological engine](#the-topological-engine-in-progress).
+3. "Implement the TopoR algorithm (at least as an option)." Done and
+   parked: see [The topological engine](#the-topological-engine-done-parked).
+4. **Current goal (2026-09-30):** "an amazing open-source tool to create
+   PCBs". It must be fast (faster than any open-source tool, ideally as
+   fast as commercial ones), it must scale beyond toy examples, and it must
+   automate everything agents (the primary users) should not have to do.
    The research behind it is in
    [reviews/2026-09-29-topor.md](reviews/2026-09-29-topor.md).
 
@@ -142,108 +146,26 @@ inside the project into itself.
   of 30 s, so it was abandoned.
 - `experiment/graph-first-placement`: older, no gain.
 
-## The topological engine (in progress)
+## The topological engine (done, parked)
 
-**Crate `crates/pcb-topo`, about 2000 lines, uncommitted until this
-hand-over's commit.** Select it with `{"engine": "topological"}` in the
-router config:
+TopoR's algorithm is implemented in `crates/pcb-topo` as an opt-in engine
+(`{"engine": "topological"}`). Design, results and verdict are in
+[topological.md](topological.md).
+- It completes the simple two-layer boards, and they are KiCad clean.
+- It is far behind the lattice router on dense and four-layer boards.
+- It is not developed further.
 
-```sh
-echo '{"engine": "topological"}' > topo.json
-pcb-maker route-kicad-board benchmarks/real/external/kicad-ecc83-pp ecc83-pp out topo.json
-PCB_TOPO_DEBUG=1 ...   # per-piece realization failures and the first violations
-```
+What stays useful from it is **`{"tighten": true}`**. The lattice router's
+copper is pulled tight into any-angle tracks with arcs, wherever the
+result stays legal. PIC: 372 of 374 pieces tightened, 1911 mm to 1841 mm,
+KiCad clean.
 
-The optional `topological_rounds` sets the rip-up rounds (default 30).
-`route_kicad_board` makes a single attempt with pour nets as tracks
-(`board_router.rs`: the early branch plus `route_kicad_board_once`).
-
-### Modules
-
-- **`mesh.rs`.** One constrained Delaunay triangulation (`spade`) of every
-  obstacle, shared by all layers:
-  - circles and round ends become circumscribed octagons;
-  - each face records the obstacles covering it and whether it is inside
-    the outline;
-  - `face_layers(face, net)` gives the layers a net may use there. Inside
-    its own pad a net may go anywhere, the drill included.
-- **`topo.rs`.** Wires are sequences of crossed edges, with an order per
-  edge.
-  - A* runs over the gaps between existing crossings. Its cost is length
-    (through gap "portal" points) plus crossings × weight plus capacity
-    overflow plus history.
-  - Crossings are counted exactly, by chords interleaving around a
-    triangle.
-  - `crossing_pairs`, `overflowing` and `rip_up` are there.
-  - Capacity merges all layers (edge length minus end clearances, times
-    the number of free layers).
-- **`layers.rs`.** Layer assignment on token chains:
-  - tokens are terminals, faces and crossings; crossing partners must
-    differ;
-  - a layer change is a via, which is not allowed in a pad;
-  - a local search moves runs of tokens between layers.
-  - It is a heuristic, not TopoR's exact 2-layer max-cut.
-- **`realize.rs`.** Geometry per layer:
-  - a per-layer triangulation of that layer's obstacles and the vias,
-    where circles and round ends are single points with a radius;
-  - each piece's polyline is traced through it (`LineIntersectionIterator`)
-    to get its channel, with back-and-forth crossings cancelled;
-  - the funnel runs over portals shrunk by each vertex's radius: the
-    obstacle's clearance plus half the width, plus the room of the other
-    nets' pieces crossing closer to that vertex;
-  - the result is exact tangents between discs and arcs, emitted as
-    circumscribing polylines;
-  - which wire owns each segment and via is recorded.
-- **`lib.rs`.** The driver:
-  - each net is a minimum spanning tree of pad-to-pad wires, routed widest
-    first, then shortest;
-  - each round assigns layers, realizes and runs `pcb_router::verify`, then
-    rips up the offending wires (with history and oscillated weights);
-  - the best round is kept, and violating wires are dropped until the
-    verifier is satisfied. **So what it emits is always legal, possibly
-    with opens.**
-
-### Where it stands
-
-On ECC83 (9 nets, 20 wires) the whole pipeline runs in 0.3 s. The copper
-is legal: no internal violation and no KiCad error. **But only 9 of 20
-wires survive.**
-- **5 wires never routed.** A THT pad's centre lies inside its drill hole,
-  which blocked the pad's own net. `face_layers` has just been fixed to
-  allow it; this is untested.
-- **Most realizations fail with "no tangent".** Consecutive discs of the
-  funnel output have the same centre: an apex at the piece's own start or
-  end vertex (the pad centre is a per-layer vertex), or the same vertex
-  twice in a row. This is the **next fix**:
-  1. drop apexes that coincide with the start or end point;
-  2. merge consecutive apexes on the same vertex and side, keeping the
-     largest radius;
-  3. then look again at the "actual -0.8" overlaps (a wire through a pad),
-     which may be a side error in the funnel.
-
-  Unit tests for `tangent`, `arc` and `tighten` on hand-made channels
-  would pay for themselves.
-
-### Still missing for a faithful, useful TopoR
-
-In rough order:
-1. Correct realization (above), then measure it on the corpus against the
-   lattice engine.
-2. **Steiner/T-junctions.** Wires may attach to their net's existing wires,
-   not only pad to pad. Today power nets make long spanning trees.
-3. **Via placement.** Choose a spot in the face with room, check it
-   against obstacles and other vias, and move vias (TopoR's "nudging").
-4. **Per-layer capacity** during routing, instead of all layers merged.
-5. **Exact 2-layer layer assignment** by planar max-cut (Chen, Kajitani &
-   Chan 1983; Barahona 1988), as TopoR claims to do.
-6. **Variant archive** on the (length, vias) convex hull; randomized
-   restarts from archived variants.
-7. **Native KiCad arcs**, which need `Segment` or `NetRoute` to carry arcs
-   and `verify` to handle them. Today they are polylines.
-8. **Pours** (connect to planes), and the engine in `layout-kicad-board`
-   (moves that keep topology: the big speed-up).
-9. Performance: `Mesh::locate` is a linear scan, and path search copies
-   are small but unprofiled.
+Two debugging lessons came out of this work:
+- An earlier session debugged the engine on an *unstripped* ECC83. The
+  designer's tracks were net-less obstacles, and they caused its "unroutable
+  wires". Always strip first: `strip-kicad-copper`.
+- `PCB_TOPO_SVG=<dir>` pictures made the realization bugs obvious. Build
+  pictures early.
 
 ## Where things are
 

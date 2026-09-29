@@ -161,6 +161,33 @@ stop at pad edges.
 | PIC programmer (34) | 34/34, 1 via, 1911 mm | 34/34, 1 via, 1841 mm | 34/34, 1 via, 1682 mm, 1.1 s |
 | Interf-U (110) | 110/110, 24 vias, 4637 mm | 110/110, 24 vias, 4478 mm | 110/110, 57 vias, 4398 mm, 73 s |
 
+On the wider corpus (same stripping, 300 s budget), the topological
+engine falls well behind the lattice router:
+
+| board | lattice | topological |
+| --- | --- | --- |
+| Olimex ESP32-C3 (2 layers) | 34/34, 44 vias | 34/34, 71 vias, 244 s |
+| DUT C3 (2 layers, pours) | 42/42, 22 vias | 41/42, 36 vias |
+| multichannel (2 layers) | 79/79, 20 vias | 78/79, 55 vias |
+| StickHub (2 layers, dense) | 45/45, 45 vias | 17/45 |
+| ColdFire (4 layers) | 207/209 | 116/209 |
+| video (4 layers) | 362/371 | 145/371 |
+| fence (2 layers) | — | 2/101 |
+
+The errors KiCad reports on Olimex (fiducials too close to mounting holes)
+are the design's own.
+
+**Verdict (2026-09-30).** The engine is TopoR's algorithm, and it works:
+- on simple two-layer boards, it matches the lattice router on completion
+  and beats it on length;
+- on dense and four-layer boards, it does not come close;
+- it has more vias everywhere, and on large boards its search is slow.
+
+TopoR's own advantage lies in its geometry, and `tighten` gives us that
+on top of the lattice router's completion. The engine stays as an opt-in
+option and is not developed further. The lattice router is the main
+engine.
+
 ## Differences from TopoR, and what is missing
 
 - **Vias.** TopoR places them "somewhere on the stretch between two
