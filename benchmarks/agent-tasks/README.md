@@ -45,37 +45,51 @@ benchmarks/agent-tasks/run.py build/agent-tasks
 
 - **Kept from the design:** the outline, and every connector the designer
   placed within 2 mm of an edge, on that edge and in its orientation.
-- **Kept where they are:** parts hanging over the outline.
+- **Kept where they are:** parts hanging over the outline, and parts whose
+  courtyard holds other parts (a shield's outline, a module above parts),
+  which become `hollow`: other parts may sit inside them.
 - **Placed from scratch** (`move_all`): everything else, starting from one
   stack.
 
 ```sh
 benchmarks/agent-tasks/from_pcbench.py build/agent-pcbench --subset d3-test
-benchmarks/agent-tasks/run.py build/agent-pcbench-run --tasks build/agent-pcbench/tasks.json --jobs 4
+benchmarks/agent-tasks/run.py build/agent-pcbench-run --tasks build/agent-pcbench/tasks.json --jobs 3
 ```
 
 ### 2026-09-29, the 114 D3 test boards
 
-Commit f07b3fa: **97/114 pass (85 %)**.
+Commit 6529af9, one binary for all tasks: **109/114 pass (96 %)**.
+
+| | This run |
+| --- | --- |
+| Time per task | median 12 s, mean 27 s, longest 243 s (3 in parallel) |
+| Copper (109 passing boards) | 0.80 × the designer's; route mode on the designer's placement: 0.96 × |
+| Vias | 0.53 × the designer's (302 against 567) |
+
 - **Other methods.** For comparison, route mode on the designer's placement
   (the same boards) is 112/112 clean, and PCBWorld's Freerouting Clean Pass
   on D3-A is 0.80. There is no published layout-mode number to compare
   with.
-- **The first run found three placer bugs,** which KiCad reported as shorts
-  and clearance errors:
+- **Bugs and gaps these tasks found**, all fixed:
   - relaxed spacing let pads come closer than the copper clearance;
   - copper artwork occupied nothing;
-  - SMD pads with a drill offset had the wrong box.
-
-  Two more changes helped:
-  - a last legalization level on a 0.1 mm grid, for small crowded boards;
-  - three placement seeds, keeping the best.
-- **Progress.** 71/114 in the first run; no board has a copper error now.
+  - SMD pads with a drill offset had the wrong box; a hole drawn with a
+    token 0.001 mm pad was nearly invisible;
+  - router-driven moves were never legal on a crowded board: they were
+    checked against the full spacing the placement had given up;
+  - layout mode never tried route mode's finer pitches when connections
+    stayed open;
+  - legalization gave up on parts a big part had left no room for (it
+    now retries with them first);
+  - parts inside a shield's outline, parts with holes inside a courtyard
+    (KiCad forbids it, unless the courtyard is malformed and KiCad skips
+    it), connector bodies over the board's peg holes.
+- **Progress.** 71/114 in the first run, 97 (with mixed binaries) and now
+  109; no board has a copper error.
 - **What is left:**
-  - **14 boards cannot be placed legally.** Some designs overlap courtyards
-    on purpose (a breakout whose carrier footprint covers the whole board,
-    two modules sharing space across the sides); D3's rules switch that
-    check off, and pcb-maker keeps bodies apart. Others are shields with
-    mechanically fixed headers, or boards with cutouts where a connector
-    sits.
-  - **3 leave connections open.**
+  - **4 boards cannot be placed legally.** FogDrive and HaveSome fill a side
+    to 82-93 %, the hint says to move parts to the other side. A 4.8 mm
+    wide board whose parts are as wide as the board. An 18.6 mm capacitor
+    between mounting holes and copper text on a 22 mm board.
+  - **1 leaves a connection open.** ESP8266-WS2811 carries 0.9 mm tracks
+    with 0.4 mm clearance on a small board.
