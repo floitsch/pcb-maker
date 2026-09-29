@@ -19,6 +19,8 @@ pub struct KiCadQualityReport {
     pub assembly: KiCadAssembly,
     pub connectors: KiCadConnectors,
     pub manufacturing: KiCadManufacturing,
+    /// Ground pours and how much other copper cuts them (return paths).
+    pub planes: Vec<KiCadPlane>,
     /// Estimated price of 10 boards at common fabs (docs/cost.md).
     pub cost: crate::cost::KiCadCost,
 }
@@ -99,6 +101,18 @@ pub struct KiCadConnectors {
     /// Of those, the ones at an edge (body within 2 mm) facing out.
     pub facing_out: usize,
     pub not_facing_out: Vec<String>,
+}
+
+/// A ground pour on one layer: signal tracks on that layer cut it, and
+/// return currents detour around the cuts.
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadPlane {
+    pub layer: String,
+    pub net: String,
+    /// Length of other nets' tracks on the layer.
+    pub cut_by_mm: f64,
+    /// The longest straight cut: the slot a return current must go around.
+    pub longest_cut_mm: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -261,6 +275,8 @@ struct Track {
     start: [f64; 2],
     end: [f64; 2],
     width: f64,
+    layer: String,
+    net: Option<String>,
 }
 
 pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualityReport, String> {
@@ -284,6 +300,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                     start: form_xy(item, "start")?,
                     end: form_xy(item, "end")?,
                     width: form_f64(item, "width", 1).unwrap_or(0.0),
+                    layer: form_atom(item, "layer", 1).unwrap_or("").to_string(),
+                    net: node_net(item).map(|raw| normalize_net(raw).to_string()),
                 });
             }
             Some("via") => {
@@ -567,6 +585,41 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let manufacturing = KiCadManufacturing { vias_in_pads, tombstone_risk, drc };
+    // Ground pours by layer, and the other nets' tracks on those layers.
+    let mut planes = Vec::new();
+    let mut seen = BTreeSet::new();
+    for zone in pcb.children().iter().filter(|item| item.head() == Some("zone")) {
+        if zone.child("keepout").is_some() {
+            continue;
+        }
+        let Some(net) = form_atom(zone, "net_name", 1).or_else(|| node_net(zone)).map(|raw| normalize_net(raw).to_string()) else {
+            continue;
+        };
+        if !ground(&net) {
+            continue;
+        }
+        let zone_layers: Vec<String> = zone
+            .child("layers")
+            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).map(str::to_owned).collect())
+            .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
+            .unwrap_or_default();
+        for layer in zone_layers {
+            if !seen.insert((layer.clone(), net.clone())) {
+                continue;
+            }
+            let cuts: Vec<f64> = tracks
+                .iter()
+                .filter(|track| track.layer == layer && track.net.as_ref().is_some_and(|other| *other != net))
+                .map(|track| distance(track.start, track.end))
+                .collect();
+            planes.push(KiCadPlane {
+                layer,
+                net: net.clone(),
+                cut_by_mm: round(cuts.iter().sum()),
+                longest_cut_mm: round(cuts.iter().copied().fold(0.0, f64::max)),
+            });
+        }
+    }
     let joints = |through: bool| {
         parts
             .iter()
@@ -599,6 +652,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         assembly,
         connectors,
         manufacturing,
+        planes,
         cost,
     })
 }

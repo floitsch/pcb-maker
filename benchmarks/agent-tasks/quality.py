@@ -76,6 +76,8 @@ def main():
         ("connectors not facing out", ("connectors", "not_facing_out"), lambda r, p: len(get(r, p)), "lower"),
         ("vias in pads", ("manufacturing", "vias_in_pads"), get, "lower"),
         ("tombstone-risk parts", ("manufacturing", "tombstone_risk"), lambda r, p: len(get(r, p)), "lower"),
+        ("ground pour cut by other tracks (mm)", ("planes",),
+         lambda r, p: sum(plane["cut_by_mm"] for plane in r["planes"]) if r["planes"] else None, "lower"),
         ("vias", ("economy", "vias"), get, "lower"),
         ("track length (mm)", ("economy", "track_length_mm"), get, "lower"),
         ("smallest via drill (mm)", ("economy", "smallest_via_drill_mm"), get, "higher"),
