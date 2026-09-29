@@ -42,9 +42,10 @@ pub struct KiCadPlacementConstraints {
     /// References or glob patterns (`*`, `?`) that keep their pose.
     #[serde(default)]
     pub fixed: Vec<String>,
-    /// Every footprint with nets moves unless `fixed` names it or it is
-    /// locked: for boards fresh from a netlist, where the default rules
-    /// (parts on the edge stay) would read intent into a stack of parts.
+    /// Every footprint moves unless `fixed` names it or it is locked: for
+    /// boards fresh from a netlist, where the default rules (parts on the
+    /// edge stay) would read intent into a stack of parts. Mounting holes
+    /// no constraint names go to the corners.
     #[serde(default)]
     pub move_all: bool,
     #[serde(default)]
@@ -1006,10 +1007,34 @@ pub(super) fn apply_constraints(
 
     // Constrained parts move (the user said where they go), fixed ones stay.
     if constraints.move_all {
+        // Parts without nets move too: from a netlist they sit in the stack
+        // with the rest. Mounting holes nobody placed go to the corners, as
+        // designers put them, then to the middle of the edges.
+        let named: BTreeSet<usize> = constraints.fixed.iter().flat_map(|pattern| matching(pattern)).collect();
+        let mut spots = [
+            vec![Edge::Top, Edge::Left],
+            vec![Edge::Top, Edge::Right],
+            vec![Edge::Bottom, Edge::Left],
+            vec![Edge::Bottom, Edge::Right],
+            vec![Edge::Top],
+            vec![Edge::Bottom],
+            vec![Edge::Left],
+            vec![Edge::Right],
+        ]
+        .into_iter();
         for index in 0..footprints {
-            if !problem.components[index].pins.is_empty() && !locked[index] {
-                problem.components[index].fixed = false;
+            // Artwork (a logo) occupies nothing and stays.
+            let component = &problem.components[index];
+            if locked[index] || leaders.contains_key(&index) || component.side == core::Side::Neither {
+                continue;
             }
+            let mounting_hole = component.pins.is_empty() && component.has_holes();
+            if mounting_hole && !constrained.contains(&index) && !named.contains(&index) && !pinned.contains(&index) {
+                for side in spots.next().unwrap_or_default() {
+                    problem.constraints.edges.push((index, side, 1.0 + 1.0e-3));
+                }
+            }
+            problem.components[index].fixed = false;
         }
     }
     for pattern in &constraints.hollow {
@@ -1139,6 +1164,37 @@ mod tests {
                 10.0,
             )?;
         Ok((problem, warnings))
+    }
+
+    #[test]
+    fn move_all_sends_mounting_holes_nobody_placed_to_the_corners() {
+        let run = |json: &str| {
+            let (mut problem, references, pads) = problem();
+            // J1 is a mounting hole: a hole, no nets.
+            problem.components[0].far_side = vec![[-1.0, -1.0, 1.0, 1.0]];
+            let constraints: KiCadPlacementConstraints = serde_json::from_str(json).unwrap();
+            apply_constraints(
+                &mut problem,
+                &references,
+                &pads,
+                &[Vec::new(), Vec::new(), Vec::new()],
+                &[None, None, None],
+                &[None, None, None],
+                &[false, false, false],
+                &constraints,
+                10.0,
+            )
+            .unwrap();
+            problem
+        };
+        let problem = run(r#"{"version": 1, "move_all": true}"#);
+        assert!(problem.components.iter().all(|component| !component.fixed));
+        assert_eq!(problem.constraints.edges, vec![(0, Edge::Top, 1.0 + 1.0e-3), (0, Edge::Left, 1.0 + 1.0e-3)]);
+        // Named anywhere, it goes where it is told.
+        let problem = run(r#"{"version": 1, "move_all": true, "fixed": ["J1"]}"#);
+        assert!(problem.components[0].fixed && problem.constraints.edges.is_empty());
+        let problem = run(r#"{"version": 1, "move_all": true, "place": [{"part": "J1", "at": "bottom"}]}"#);
+        assert_eq!(problem.constraints.edges, vec![(0, Edge::Bottom, 1.0 + 1.0e-3)]);
     }
 
     #[test]

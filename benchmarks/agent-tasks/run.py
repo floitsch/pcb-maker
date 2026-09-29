@@ -42,9 +42,11 @@ def block_end(text, start):
 
 def unplace(board, point, remove_outline, keep=()):
     """Stacks every footprint with a net that is not locked (or in `keep`) at
-    `point`; drops the Edge.Cuts graphics if asked."""
+    `point`; drops the Edge.Cuts graphics if asked. Returns the references
+    of the footprints without nets, which stay where the designer put
+    them."""
     text = board.read_text()
-    pieces, last = [], 0
+    pieces, last, netless = [], 0, []
     pattern = re.compile(r"\((footprint|gr_line|gr_rect|gr_arc|gr_circle|gr_poly)[\s\"]")
     for match in pattern.finditer(text):
         start = match.start()
@@ -58,6 +60,9 @@ def unplace(board, point, remove_outline, keep=()):
             movable = re.search(r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block) and not re.search(
                 r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
                 reference and reference.group(1) in keep)
+            if reference and reference.group(1) and not re.search(r"[*?\[]", reference.group(1)) and not re.search(
+                    r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block):
+                netless.append(reference.group(1))
             if movable:
                 # The footprint's own (at ...) is its first direct child.
                 depth = 0
@@ -80,6 +85,7 @@ def unplace(board, point, remove_outline, keep=()):
         last = end
     pieces.append(text[last:])
     board.write_text("".join(pieces))
+    return netless
 
 
 def native(result_directory):
@@ -113,7 +119,9 @@ def run_task(task, arguments):
         outline = constraints.get("outline", {})
         point = task.get("stack_at") or [outline.get("x", 0) + outline.get("width", 40) / 2,
                                           outline.get("y", 0) + outline.get("height", 40) / 2]
-        unplace(board, point, task.get("remove_outline", False), set(constraints.get("fixed", [])))
+        netless = unplace(board, point, task.get("remove_outline", False), set(constraints.get("fixed", [])))
+        # move_all would move them too.
+        constraints["fixed"] = constraints.get("fixed", []) + [r for r in netless if r not in constraints.get("fixed", [])]
     (source / "constraints.json").write_text(json.dumps(constraints))
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {})}, **task.get("layout", {})}
     (work / "layout.json").write_text(json.dumps(layout))

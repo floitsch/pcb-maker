@@ -1,11 +1,33 @@
 # pcb-maker for agents
 
-You have a KiCad project: a `.kicad_pcb` with footprints and nets, from
-"Update PCB from Schematic", kinet2pcb, SKiDL or a generator; a schematic is
-optional. pcb-maker places the parts, routes the board, and tells you
-precisely what it achieved.
+You have a KiCad schematic, or a board with footprints and nets from
+"Update PCB from Schematic", SKiDL or a generator. pcb-maker places the
+parts, routes the board, tells you precisely what it achieved, and writes
+what a fab needs to make and assemble it.
 
-## 0. Look at the board
+## 0. From a schematic
+
+```sh
+pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-id> [--layers 4]
+```
+
+does what KiCad's "Update PCB from Schematic" does for a new board:
+- every symbol's footprint from the project's and the user's
+  `fp-lib-table` (KiCad's own libraries without one), with its fields (an
+  `LCSC` field ends up in the BOM) and its DNP and BOM flags;
+- pads on their nets, footprints linked to their symbols, so KiCad's
+  schematic parity check passes;
+- the schematic, project file and the project's own libraries copied
+  next to the board.
+
+A KiCad netlist (`.net`, from `kicad-cli sch export netlist`) works in
+place of the schematic. All footprints sit at one point and there is no
+outline: lay the board out with `"move_all": true` and `"outline": {}`
+(or a size). The report lists footprints it could not find (`missing`) and
+those it found in another library or under KiCad 9's name (`substituted`,
+such as `DSUB-25_Female` now `DSUB-25_Socket`).
+
+## 1. Look at the board
 
 ```sh
 pcb-maker describe-kicad-board <project-dir> <board-id> > board.json
@@ -19,7 +41,7 @@ The file lists what constraints refer to:
 - every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
   width and clearance.
 
-## 1. Say what you want: `constraints.json`
+## 2. Say what you want: `constraints.json`
 
 ```json
 {"version": 1,
@@ -31,7 +53,8 @@ The file lists what constraints refer to:
 
 Full reference: [constraints.md](constraints.md).
 - **`move_all`** places every part, except locked ones and those named in
-  `fixed`. Use it for a board straight from a netlist.
+  `fixed`. Use it for a board straight from a netlist. Mounting holes no
+  constraint names go to the corners.
 - **`place`** says where a part goes in words (`"at": "top-left"`,
   `"center"`, `"front"` with `device_front`) or exactly (`x`, `y`,
   `angle`, for a part that must match an enclosure).
@@ -78,7 +101,7 @@ Router side (the file passed in place of `auto`):
 | "Ground plane on the bottom" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]` |
 | "Power traces 0.8 mm wide" | `"net_classes": [{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.8}]` |
 
-## 2. Run
+## 3. Run
 
 ```sh
 echo '{"placer": {"constraints": "constraints.json"}}' > layout.json
@@ -133,7 +156,7 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      at most 600 s while connections are open and 60 s
      (`polish_seconds`) once everything is routed.
 
-## 3. Read the verdict: `<out-dir>/board-layout.json`
+## 4. Read the verdict: `<out-dir>/board-layout.json`
 
 | Field | Meaning |
 | --- | --- |
@@ -177,7 +200,7 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   touches the edge; its pads still need the board's copper-to-edge
   clearance, which DRC reports.
 
-## 4. Order it
+## 5. Order it
 
 ```sh
 pcb-maker export-kicad-fab <out-dir>/result <board-id> <fab-dir>

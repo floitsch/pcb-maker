@@ -93,6 +93,8 @@ mod labels;
 pub use labels::KiCadLabelReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
+mod netlist_import;
+pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist};
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{
