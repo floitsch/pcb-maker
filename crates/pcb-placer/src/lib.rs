@@ -119,22 +119,28 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The last level also snaps to a finer grid: on small, crowded boards
     // the regular grid leaves no legal spot where a finer one does.
     let fine = problem.grid.min(0.1);
-    // Last, where the board's rules let courtyards overlap: bodies without
-    // the courtyard's margin.
+    // Then bodies may come closer to the edge, as far as their copper
+    // allows (the full margin is room for routing too). Last, where the
+    // board's rules let courtyards overlap: bodies without the courtyard's
+    // margin.
+    let inset = problem.components.iter().any(|component| component.edge_inset > 0.0);
     let tight = problem.components.iter().any(|component| component.tight.is_some());
     let mut levels = vec![
-        (1.0, 1.0, problem.grid, false),
-        (0.5, 1.0, problem.grid, false),
-        (0.0, 1.0, problem.grid, false),
-        (0.0, 0.0, problem.grid, false),
-        (0.0, 0.0, fine, false),
+        (1.0, 1.0, problem.grid, false, false),
+        (0.5, 1.0, problem.grid, false, false),
+        (0.0, 1.0, problem.grid, false, false),
+        (0.0, 0.0, problem.grid, false, false),
+        (0.0, 0.0, fine, false, false),
     ];
+    if inset {
+        levels.push((0.0, 0.0, fine, true, false));
+    }
     if tight {
-        levels.push((0.0, 0.0, fine, true));
+        levels.push((0.0, 0.0, fine, true, true));
     }
     let mut used_tight = false;
-    for (halo_scale, spacing_scale, grid, tight) in levels {
-        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !tight && best.is_some() {
+    for (halo_scale, spacing_scale, grid, inset, tight) in levels {
+        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
             // Same as the previous level.
             continue;
         }
@@ -143,6 +149,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
+            if !inset {
+                component.edge_inset = 0.0;
+            }
             if tight {
                 component.use_tight_body();
             }
