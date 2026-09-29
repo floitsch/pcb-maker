@@ -61,6 +61,28 @@ struct Label {
     body: Box2,
 }
 
+/// Moves every coordinate form of a board graphic by `shift`.
+fn translate(item: &mut Expr, shift: [f64; 2]) {
+    let Expr::List(children) = item else {
+        return;
+    };
+    for child in children.iter_mut() {
+        match child.head() {
+            Some("start" | "mid" | "end" | "center" | "xy") => {
+                if let Expr::List(values) = child {
+                    for (index, delta) in [(1, shift[0]), (2, shift[1])] {
+                        if let Some(number) = values.get(index).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()) {
+                            values[index] = Expr::Atom((((number + delta) * 1e6).round() / 1e6).to_string());
+                        }
+                    }
+                }
+            }
+            Some("pts") => translate(child, shift),
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct KiCadLabelReport {
     pub labels: usize,
@@ -206,6 +228,102 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         })
     };
 
+    // Board silkscreen artwork (a logo drawn as polygons and lines) moves as
+    // one piece: shapes within 0.5 mm of each other form a cluster.
+    let mut graphics: Vec<(usize, bool, Box2)> = Vec::new();
+    for (item_index, item) in pcb.children().iter().enumerate() {
+        let Some(back) = form_atom(item, "layer", 1).and_then(silk_side) else {
+            continue;
+        };
+        if !matches!(item.head(), Some("gr_poly" | "gr_line" | "gr_rect" | "gr_circle" | "gr_arc" | "gr_curve")) {
+            continue;
+        }
+        let mut points = Vec::new();
+        for head in ["start", "mid", "end", "center"] {
+            if item.child(head).is_some() {
+                points.push(form_xy(item, head)?);
+            }
+        }
+        for point in item.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|p| p.head() == Some("xy")) {
+            points.push([expression_coordinate(point, 1, "silk x")?, expression_coordinate(point, 2, "silk y")?]);
+        }
+        if item.head() == Some("gr_circle") && points.len() == 2 {
+            let radius = distance_squared(points[0], points[1]).sqrt();
+            points.push([points[0][0] - radius, points[0][1] - radius]);
+            points.push([points[0][0] + radius, points[0][1] + radius]);
+        }
+        if points.is_empty() {
+            continue;
+        }
+        let bounds = points.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
+            [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+        });
+        graphics.push((item_index, back, bounds));
+    }
+    let mut clusters: Vec<(Vec<usize>, bool, Box2)> = Vec::new();
+    for (item_index, back, bounds) in graphics {
+        let mut members = vec![item_index];
+        let mut total = bounds;
+        // Absorb every cluster this shape touches.
+        let mut index = 0;
+        while index < clusters.len() {
+            if clusters[index].1 == back && overlaps(clusters[index].2, total, 0.5) {
+                let (other, _, other_bounds) = clusters.remove(index);
+                members.extend(other);
+                total = [
+                    total[0].min(other_bounds[0]),
+                    total[1].min(other_bounds[1]),
+                    total[2].max(other_bounds[2]),
+                    total[3].max(other_bounds[3]),
+                ];
+                index = 0;
+            } else {
+                index += 1;
+            }
+        }
+        clusters.push((members, back, total));
+    }
+    let mut artwork_moves: Vec<(Vec<usize>, [f64; 2])> = Vec::new();
+    for (members, back, bounds) in clusters {
+        let side = back as usize;
+        // A frame around the whole board is decoration of the board, not a
+        // piece to move.
+        if outline.is_some_and(|board| (bounds[2] - bounds[0]) > 0.8 * (board[2] - board[0])) {
+            continue;
+        }
+        let free = |bounds: Box2, taken: &[Box2]| {
+            !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1)) && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
+        };
+        if free(bounds, &taken[side]) {
+            taken[side].push(bounds);
+            continue;
+        }
+        let mut found = None;
+        'rings: for ring in 1..=60 {
+            let radius = ring as f64 * 0.5;
+            let directions = 8 * ring.min(4);
+            for step in 0..directions {
+                let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
+                let shift = [radius * angle.cos(), radius * angle.sin()];
+                let moved = [bounds[0] + shift[0], bounds[1] + shift[1], bounds[2] + shift[0], bounds[3] + shift[1]];
+                if inside(moved) && free(moved, &taken[side]) {
+                    found = Some((shift, moved));
+                    break 'rings;
+                }
+            }
+        }
+        match found {
+            Some((shift, moved)) => {
+                taken[side].push(moved);
+                artwork_moves.push((members, shift));
+            }
+            None => {
+                taken[side].push(bounds);
+                report.stuck.push("silkscreen artwork".into());
+            }
+        }
+    }
+
     // Board silkscreen texts (a board's name, a note) first: where they are
     // if that is free, else the nearest free spot around it.
     let mut text_moves: Vec<(usize, [f64; 2])> = Vec::new();
@@ -346,6 +464,12 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
+    for (members, shift) in artwork_moves {
+        for item_index in members {
+            translate(&mut items[item_index], shift);
+        }
+        report.moved += 1;
+    }
     for (item_index, shift) in text_moves {
         let at = form_at(&items[item_index])?;
         set_form_at(&mut items[item_index], [at[0] + shift[0], at[1] + shift[1], at[2]])?;
