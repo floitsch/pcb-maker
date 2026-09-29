@@ -10,7 +10,12 @@ small legal moves for them (axis steps of 0.5-4 mm, quarter turns), ranked by
 the congestion they would land in, the router reroutes only the nets the move
 invalidated (`Router::update` and `Router::reroute` in `pcb-router`), and the
 move is kept when the board improves (open connections first, then vias and
-copper). On Interf-U two nudges take the first placement from 9 open
+copper). Moves keep to the relaxation the placement needed (its spacing,
+grid, halos, edge margin and bodies): checked against the full spacing, no
+move on a crowded board would ever be legal. If connections are still open
+at the end, route mode's whole ladder (pours as tracks, finer pitches,
+seeds) routes the final placement once more, and the better board is kept.
+On Interf-U two nudges take the first placement from 9 open
 connections to 110/110; on the DUT boards a handful of resistor nudges remove
 10-25 % of the vias. Per-board results are in [benchmarks.md](benchmarks.md).
 
