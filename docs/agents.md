@@ -37,7 +37,8 @@ Full reference: [constraints.md](constraints.md).
   **`back`/`front`** on which side.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
   module above parts): only its pads block. Parts with holes still stay
-  out, as KiCad forbids holes inside a courtyard.
+  out of its courtyard's shapes, as KiCad forbids holes inside a
+  courtyard.
 - **`near`, `group` and `relative`** keep parts together.
 - **`overhang`** lets a module's antenna reach beyond an edge.
 

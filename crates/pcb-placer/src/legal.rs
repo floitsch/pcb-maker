@@ -188,7 +188,7 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
             return vec![rect(problem, index, pose)];
         }
         component
-            .hollow_boxes(pose)
+            .blocking_boxes(&problem.components[other], pose)
             .into_iter()
             .map(|(center, half)| Rect {
                 center,

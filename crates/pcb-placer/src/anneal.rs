@@ -108,7 +108,7 @@ impl State<'_> {
                             return vec![(whole.center, whole.half)];
                         }
                         let margin = self.problem.spacing / 2.0;
-                        part.hollow_boxes(pose)
+                        part.blocking_boxes(against, pose)
                             .into_iter()
                             .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
                             .collect()

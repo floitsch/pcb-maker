@@ -70,6 +70,10 @@ pub struct Component {
     /// How far the part's copper stays inside its body on every side: the
     /// body may come that much closer to the board edge than the copper.
     pub edge_inset: f64,
+    /// Boxes ([min x, min y, max x, max y], own frame) of the separate
+    /// shapes of a courtyard drawn as several (a board outline footprint
+    /// marking only its connectors); empty when it is one shape.
+    pub courtyards: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -180,10 +184,22 @@ impl Component {
         !self.far_side.is_empty()
     }
 
-    /// Whether the part blocks `other` with its blocking boxes only, not
-    /// its whole body.
+    /// Whether the part blocks `other` with boxes rather than its whole
+    /// body: a hollow part with its pads, or, against a part with holes, its
+    /// pads and its courtyard's separate shapes (holes may not lie inside a
+    /// courtyard).
     pub fn hollow_for(&self, other: &Component) -> bool {
-        !self.hollow.is_empty() && !other.has_holes()
+        !self.hollow.is_empty() && (!other.has_holes() || self.courtyards.len() > 1)
+    }
+
+    /// Board-space boxes (centre, half extent) the part blocks `other`
+    /// with; see `hollow_for`.
+    pub fn blocking_boxes(&self, other: &Component, pose: Pose) -> Vec<(Point, Point)> {
+        let mut boxes = self.boxes(&self.hollow, pose);
+        if other.has_holes() {
+            boxes.extend(self.boxes(&self.courtyards, pose));
+        }
+        boxes
     }
 
     /// The area the part takes on its own side.

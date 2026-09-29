@@ -380,6 +380,78 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     Ok(at)
 }
 
+/// Boxes ([min x, min y, max x, max y], own frame) of the separate shapes
+/// a footprint's courtyard is drawn as; empty when it is one shape (or
+/// none). Lines and arcs that share end points form one shape.
+fn courtyard_shapes(footprint: &Expr) -> Result<Vec<[f64; 4]>, String> {
+    let mut shapes: Vec<(Vec<[f64; 2]>, [f64; 4])> = Vec::new();
+    let grow = |bounds: &mut [f64; 4], point: [f64; 2], radius: f64| {
+        bounds[0] = bounds[0].min(point[0] - radius);
+        bounds[1] = bounds[1].min(point[1] - radius);
+        bounds[2] = bounds[2].max(point[0] + radius);
+        bounds[3] = bounds[3].max(point[1] + radius);
+    };
+    let empty = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for child in footprint.children() {
+        if !form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")) {
+            continue;
+        }
+        let mut bounds = empty;
+        let mut ends = Vec::new();
+        match child.head() {
+            Some("fp_line" | "fp_arc") => {
+                for head in ["start", "mid", "end"] {
+                    if child.child(head).is_some() {
+                        grow(&mut bounds, form_xy(child, head)?, 0.0);
+                    }
+                }
+                ends = vec![form_xy(child, "start")?, form_xy(child, "end")?];
+            }
+            Some("fp_rect") => {
+                grow(&mut bounds, form_xy(child, "start")?, 0.0);
+                grow(&mut bounds, form_xy(child, "end")?, 0.0);
+            }
+            Some("fp_circle") => {
+                let center = form_xy(child, "center")?;
+                grow(&mut bounds, center, distance_squared(center, form_xy(child, "end")?).sqrt());
+            }
+            Some("fp_poly") => {
+                for point in child
+                    .child("pts")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                {
+                    grow(
+                        &mut bounds,
+                        [expression_coordinate(point, 1, "courtyard x")?, expression_coordinate(point, 2, "courtyard y")?],
+                        0.0,
+                    );
+                }
+            }
+            _ => continue,
+        }
+        // Merge with every shape sharing an end point.
+        let touches = |points: &[[f64; 2]]| {
+            ends.iter().any(|end| points.iter().any(|point| distance_squared(*end, *point) < 1.0e-6))
+        };
+        let (mut merged, rest): (Vec<_>, Vec<_>) = shapes.drain(..).partition(|(points, _)| touches(points));
+        shapes = rest;
+        let mut points = ends.clone();
+        for (other_points, other_bounds) in merged.drain(..) {
+            points.extend(other_points);
+            grow(&mut bounds, [other_bounds[0], other_bounds[1]], 0.0);
+            grow(&mut bounds, [other_bounds[2], other_bounds[3]], 0.0);
+        }
+        shapes.push((points, bounds));
+    }
+    if shapes.len() < 2 {
+        return Ok(Vec::new());
+    }
+    Ok(shapes.into_iter().map(|(_, bounds)| bounds).collect())
+}
+
 /// Which way a connector opens, in its own frame: the side where the
 /// courtyard reaches farthest beyond the pads (a USB receptacle's shell, a
 /// barrel jack's body), if one side clearly does.
@@ -693,6 +765,7 @@ pub(super) fn lower_placement(
             hollow: Vec::new(),
             tight: if config.tight_bodies == Some(true) { tight_body(footprint)? } else { None },
             edge_inset,
+            courtyards: courtyard_shapes(footprint)?,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -774,6 +847,7 @@ pub(super) fn lower_placement(
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
+            courtyards: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -828,6 +902,7 @@ pub(super) fn lower_placement(
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
+            courtyards: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -871,6 +946,7 @@ pub(super) fn lower_placement(
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
+            courtyards: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1219,4 +1295,30 @@ pub fn place_kicad_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_courtyard_drawn_as_several_shapes_keeps_them_apart() {
+        let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
+            [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
+                .iter()
+                .map(|[a, b, c, d]| format!("(fp_line (start {a} {b}) (end {c} {d}) (layer \"F.CrtYd\"))"))
+                .collect::<String>()
+        };
+        // An outline marking two connectors: two rectangles, lines in any order.
+        let mut lines = rectangle(0.0, 0.0, 10.0, 5.0);
+        lines.insert_str(0, &rectangle(40.0, 30.0, 50.0, 40.0));
+        let footprint = parse(&format!("(footprint \"Board\" (layer \"F.Cu\") (at 0 0) {lines})")).unwrap();
+        let mut shapes = courtyard_shapes(&footprint).unwrap();
+        shapes.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        assert_eq!(shapes, vec![[0.0, 0.0, 10.0, 5.0], [40.0, 30.0, 50.0, 40.0]]);
+        // One rectangle is one shape: the body covers it.
+        let footprint =
+            parse(&format!("(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {})", rectangle(0.0, 0.0, 2.0, 1.0))).unwrap();
+        assert!(courtyard_shapes(&footprint).unwrap().is_empty());
+    }
 }

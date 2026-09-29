@@ -25,6 +25,7 @@ fn chain(parts: usize) -> Problem {
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
+        courtyards: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -60,6 +61,7 @@ fn chain(parts: usize) -> Problem {
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
+            courtyards: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -175,6 +177,7 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
+        courtyards: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -213,6 +216,7 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
+        courtyards: Vec::new(),
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -255,6 +259,7 @@ fn tight_bodies_are_the_last_resort() {
         hollow: Vec::new(),
         tight: Some([-1.0, -1.0, 1.0, 1.0]),
         edge_inset: 0.0,
+        courtyards: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
