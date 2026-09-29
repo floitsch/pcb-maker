@@ -2496,6 +2496,55 @@ fn run() -> Result<(), String> {
                 result.routed.length_mm,
                 result.routed.native.as_ref().map(|native| native.complete).unwrap_or(false),
             );
+            let missed: Vec<String> = result
+                .constraints
+                .iter()
+                .filter(|status| !status.satisfied)
+                .map(|status| format!("{} {} ({:.1} mm)", status.kind, status.part, status.violation_mm))
+                .collect();
+            println!(
+                "constraints: {} of {} kept{}",
+                result.constraints.len() - missed.len(),
+                result.constraints.len(),
+                if missed.is_empty() { String::new() } else { format!("; missed: {}", missed.join(", ")) }
+            );
+            println!(
+                "silkscreen: {} labels moved{}",
+                result.labels.moved,
+                if result.labels.stuck.is_empty() { String::new() } else { format!(", no room for {:?}", result.labels.stuck) }
+            );
+            if let Some(quality) = &result.quality {
+                let serde_json::Value::Object(report) = serde_json::to_value(quality).map_err(|error| error.to_string())? else {
+                    unreachable!();
+                };
+                let decoupling = &report["decoupling"];
+                if decoupling["capacitors"].as_u64().unwrap_or(0) > 0 {
+                    println!(
+                        "decoupling: capacitors a median {} mm from a supply pin, {} within 3 mm",
+                        decoupling["capacitor_median_mm"], decoupling["capacitors_within_3mm"]
+                    );
+                }
+                for (key, label) in [("crystals", "crystal"), ("switch_inductors", "switch inductor"), ("esd", "ESD protector")] {
+                    for entry in report[key].as_array().into_iter().flatten() {
+                        let (name, distance) = match entry {
+                            serde_json::Value::Array(pair) => (pair[0].clone(), pair[1].clone()),
+                            other => (other["reference"].clone(), other["longest_mm"].clone()),
+                        };
+                        println!("{label} {}: {} mm from its pins", name.as_str().unwrap_or("?"), distance);
+                    }
+                }
+                let cost = &report["cost"];
+                let totals: Vec<String> = cost["fabs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|fab| format!("{} {} {}", fab["fab"].as_str().unwrap_or(""), fab["total"], fab["currency"].as_str().unwrap_or("")))
+                    .collect();
+                println!("cost of {} boards (estimate, parts excluded): {}", cost["quantity"], totals.join(", "));
+                for hint in cost["hints"].as_array().into_iter().flatten() {
+                    println!("cost hint: {}", hint.as_str().unwrap_or(""));
+                }
+            }
             if result.routed.unconnected_terminals > 0 || !result.routed.internal_violations.is_empty() {
                 return Err("layout is not electrically complete".into());
             }
