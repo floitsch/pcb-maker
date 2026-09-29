@@ -49,6 +49,35 @@ Full reference: [constraints.md](constraints.md).
 
 Unknown keys, parts or pads are errors, not silently ignored.
 
+### Cookbook: from what people say to constraints
+
+| They say | Write |
+| --- | --- |
+| "The buttons are at the front, the front is the left side" | `"device_front": "left"`, `"place": [{"part": "SW1", "at": "front"}]` |
+| "Power jack at the back" | `"place": [{"part": "J2", "at": "rear"}]` (with `device_front`) |
+| "USB-C on the bottom edge, plug from outside" | `"edge": [{"part": "J1", "edge": "bottom", "flush": true, "opening_outwards": true}]` |
+| "Mounting holes 3.5 mm in from each corner" | `"place": [{"part": "H1", "x": 3.5, "y": 3.5}, ...]` |
+| "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
+| "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
+| "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |
+| "A 4 x 4 key matrix, 19.05 mm pitch" | `"row": [{"parts": ["SW*"], "pitch_mm": 19.05, "columns": 4}]` |
+| "WiFi antenna over the board edge" | `"edge": [{"part": "U1", "edge": "top", "flush": true, "overhang": {"edge": "top"}}]` |
+| "Decoupling caps at their IC pins" | `"near": [{"part": "C1", "pin_of": "U1:VDD-pad", "max_mm": 2}]` |
+| "Keep the temperature sensor away from the regulator" | `"apart": [{"parts": ["U4"], "from": ["U2"], "min_mm": 10}]` |
+| "Keep the power supply together, bottom right" | `"group": [{"parts": ["U2", "L1", "C1?"], "max_mm": 4}]`, `"place": [{"part": "U2", "at": "bottom-right"}]` |
+| "Nothing under the display window" | `"keepout": [{"x": [10, 40], "y": [5, 25]}]` |
+| "No copper under the antenna" | `"keepout": [{"x": [...], "y": [...], "copper": true}]` |
+| "Battery holder on the back" | `"back": ["BT1"]` |
+| "A HAT: the Pi's outline is fixed, parts go inside it" | `"fixed": ["J5"]`, `"hollow": ["J5"]` |
+| "As small as possible" | `"outline": {}` (sized from the parts), then lower `area_factor` until it no longer fits |
+
+Router side (the file passed in place of `auto`):
+
+| They say | Write |
+| --- | --- |
+| "Ground plane on the bottom" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]` |
+| "Power traces 0.8 mm wide" | `"net_classes": [{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.8}]` |
+
 ## 2. Run
 
 ```sh
