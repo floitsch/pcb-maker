@@ -89,6 +89,13 @@ pub struct KiCadRowConstraint {
     /// fixes that.
     #[serde(default)]
     pub axis: Option<String>,
+    /// Parts per line: with it, the parts fill a grid line by line (a
+    /// keyboard's switches), the lines `row_pitch_mm` apart (default
+    /// `pitch_mm`) across the axis.
+    #[serde(default)]
+    pub columns: Option<usize>,
+    #[serde(default)]
+    pub row_pitch_mm: Option<f64>,
 }
 
 /// Parts kept together: each one's body within `max_mm` of the central
@@ -496,6 +503,13 @@ fn apply_rows(
             Some("y") => [0.0, 1.0],
             Some(other) => return Err(format!("unknown row axis {other:?} (x or y)")),
         };
+        // Lines of a grid follow each other across the axis.
+        let across = [axis[1], axis[0]];
+        let columns = row.columns.unwrap_or(members.len());
+        let line_pitch = row.row_pitch_mm.unwrap_or(row.pitch_mm);
+        if columns == 0 || !(line_pitch > 0.0) {
+            return Err(format!("row {:?}: columns and row_pitch_mm must be positive", row.parts));
+        }
         let leader = members[0];
         let side = problem.components[leader].side;
         let angle = problem.poses[leader].angle;
@@ -513,8 +527,12 @@ fn apply_rows(
                 return Err(format!("row {:?}: all parts must be on one side", row.parts));
             }
             // The member's place in the leader's own frame.
-            let along = place as f64 * row.pitch_mm;
-            let offset = core::problem::rotate([axis[0] * along, axis[1] * along], angle);
+            let along = (place % columns) as f64 * row.pitch_mm;
+            let line = (place / columns) as f64 * line_pitch;
+            let offset = core::problem::rotate(
+                [axis[0] * along + across[0] * line, axis[1] * along + across[1] * line],
+                angle,
+            );
             let shift = |boxes: &[[f64; 4]]| -> Vec<[f64; 4]> {
                 boxes
                     .iter()
@@ -1049,6 +1067,11 @@ mod tests {
         assert_eq!(problem.poses[2].position, [13.0, 10.0]);
         // Only half turns keep the row along its axis.
         assert_eq!(problem.components[1].angle_options, vec![0.0, 180.0]);
+        // Two lines of one: C2 below C1.
+        let (problem, _) =
+            apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 4}]}"#).unwrap();
+        assert_eq!(problem.constraints.followers[0].offset, [0.0, 4.0]);
+        assert_eq!(problem.components[1].body_size, [2.0, 5.0]);
         for bad in [
             r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "near": [{"part": "C2", "part_of": "J1", "max_mm": 1}]}"#,
             r#"{"version": 1, "row": [{"parts": ["C1"], "pitch_mm": 3}]}"#,
