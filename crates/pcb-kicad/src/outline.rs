@@ -14,6 +14,21 @@ pub(super) struct BoardLoops {
 /// Longest chord error accepted when flattening arcs.
 pub(super) const ARC_TOLERANCE: f64 = 0.005;
 
+/// The points a line, rectangle or arc passes through, an arc flattened
+/// (its start, middle and end alone miss its bulge): for extents.
+pub(super) fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
+    if item.child("start").is_some() && item.child("mid").is_some() && item.child("end").is_some() {
+        return Ok(arc_points(form_xy(item, "start")?, form_xy(item, "mid")?, form_xy(item, "end")?));
+    }
+    let mut points = Vec::new();
+    for head in ["start", "end"] {
+        if item.child(head).is_some() {
+            points.push(form_xy(item, head)?);
+        }
+    }
+    Ok(points)
+}
+
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // Circle through three points.
     let d = 2.0

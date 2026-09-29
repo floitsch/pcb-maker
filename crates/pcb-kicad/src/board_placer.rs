@@ -236,10 +236,8 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
                 if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
             {
                 straight += 1;
-                for head in ["start", "mid", "end"] {
-                    if child.child(head).is_some() {
-                        include(form_xy(child, head)?, 0.0);
-                    }
+                for point in outline::outline_points(child)? {
+                    include(point, 0.0);
                 }
             }
             Some("fp_circle")
@@ -323,11 +321,9 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
             {
                 continue;
             }
-            let mut points = Vec::new();
-            for head in ["start", "mid", "end", "center"] {
-                if child.child(head).is_some() {
-                    points.push(form_xy(child, head)?);
-                }
+            let mut points = outline::outline_points(child)?;
+            if child.child("center").is_some() {
+                points.push(form_xy(child, "center")?);
             }
             for point in child
                 .child("pts")
@@ -626,10 +622,8 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
         let mut ends = Vec::new();
         match child.head() {
             Some("fp_line" | "fp_arc") => {
-                for head in ["start", "mid", "end"] {
-                    if child.child(head).is_some() {
-                        grow(&mut bounds, form_xy(child, head)?, 0.0);
-                    }
+                for point in outline::outline_points(child)? {
+                    grow(&mut bounds, point, 0.0);
                 }
                 ends = vec![form_xy(child, "start")?, form_xy(child, "end")?];
                 for end in &ends {
@@ -725,10 +719,8 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
         let on_courtyard = form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd"));
         match child.head() {
             Some("fp_line" | "fp_rect" | "fp_arc") if on_courtyard => {
-                for head in ["start", "mid", "end"] {
-                    if child.child(head).is_some() {
-                        grow(&mut courtyard, form_xy(child, head)?, [0.0, 0.0]);
-                    }
+                for point in outline::outline_points(child)? {
+                    grow(&mut courtyard, point, [0.0, 0.0]);
                 }
             }
             Some("fp_poly") if on_courtyard => {
@@ -979,12 +971,7 @@ pub(super) fn lower_placement(
                     .and_then(|stroke| form_atom(stroke, "width", 1))
                     .and_then(|width| width.parse::<f64>().ok())
                     .unwrap_or(0.0);
-                let mut points = Vec::new();
-                for head in ["start", "mid", "end"] {
-                    if child.child(head).is_some() {
-                        points.push(form_xy(child, head)?);
-                    }
-                }
+                let mut points = outline::outline_points(child)?;
                 if child.head() == Some("fp_circle") {
                     let center = form_xy(child, "center")?;
                     let radius = distance_squared(center, form_xy(child, "end")?).sqrt();

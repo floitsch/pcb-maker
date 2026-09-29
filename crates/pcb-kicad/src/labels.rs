@@ -185,11 +185,9 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
                 }
                 continue;
             }
-            let mut points = Vec::new();
-            for head in ["start", "mid", "end", "center"] {
-                if child.child(head).is_some() {
-                    points.push(place(form_xy(child, head)?));
-                }
+            let mut points: Vec<[f64; 2]> = outline::outline_points(child)?.into_iter().map(|point| place(point)).collect();
+            if child.child("center").is_some() {
+                points.push(place(form_xy(child, "center")?));
             }
             if child.head() == Some("fp_circle") {
                 let (center, end) = (form_xy(child, "center")?, form_xy(child, "end")?);
@@ -279,11 +277,9 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         if !matches!(item.head(), Some("gr_poly" | "gr_line" | "gr_rect" | "gr_circle" | "gr_arc" | "gr_curve")) {
             continue;
         }
-        let mut points = Vec::new();
-        for head in ["start", "mid", "end", "center"] {
-            if item.child(head).is_some() {
-                points.push(form_xy(item, head)?);
-            }
+        let mut points = outline::outline_points(item)?;
+        if item.child("center").is_some() {
+            points.push(form_xy(item, "center")?);
         }
         for point in item.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|p| p.head() == Some("xy")) {
             points.push([expression_coordinate(point, 1, "silk x")?, expression_coordinate(point, 2, "silk y")?]);
