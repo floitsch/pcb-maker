@@ -40,6 +40,15 @@ router and placer items.
   every board tried (PIC 2 → 0, Multichannel 18 → 14, Interf-U 28 → 24).
   Idle cores could run seeds in parallel and keep the best board.
 
+## Layout
+
+- **Moves that cannot close the last opens cost the whole budget.** On the
+  esp-usb-corner task (four layers, 107 connections) the first route left 8
+  open. 15 moves of about 40 s each spent the 600 s budget without closing
+  them, and route mode's ladder then finished the board in 276 s: 1119 s
+  in all. Try the ladder first when the first route leaves opens, or stop
+  moves early when they do not reduce the opens.
+
 ## Placer
 
 - **Alignment beyond rows.** `row` places parts in a line at a pitch as
