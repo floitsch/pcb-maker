@@ -28,6 +28,9 @@ pub struct KiCadBoardLayoutConfig {
     pub steps_mm: Vec<f64>,
     /// Wall-clock budget for the move phase, in seconds.
     pub move_seconds: f64,
+    /// Once every connection is routed, moves only polish (fewer vias,
+    /// less copper): they stop after this many seconds of the move phase.
+    pub polish_seconds: f64,
     pub placer: KiCadBoardPlacerConfig,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted after placement.
@@ -42,6 +45,7 @@ impl Default for KiCadBoardLayoutConfig {
             patience: 12,
             steps_mm: vec![0.5, 1.0, 2.0, 4.0],
             move_seconds: 600.0,
+            polish_seconds: 60.0,
             placer: KiCadBoardPlacerConfig::default(),
             pin_swaps: None,
             pin_swap: KiCadPinSwapConfig::default(),
@@ -273,9 +277,12 @@ pub fn layout_kicad_board(
         if best.0 == 0 && since_improvement >= config.patience {
             break;
         }
-        if since_improvement >= 2 * config.patience
-            || move_started.elapsed().as_secs_f64() > config.move_seconds
-        {
+        let budget = if best.0 == 0 {
+            config.move_seconds.min(config.polish_seconds)
+        } else {
+            config.move_seconds
+        };
+        if since_improvement >= 2 * config.patience || move_started.elapsed().as_secs_f64() > budget {
             break;
         }
         // The most congested movable footprint that was not tried lately.

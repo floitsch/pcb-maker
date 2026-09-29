@@ -92,8 +92,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   2. Make a draft: `{"moves": 0, "placer": {...}}` in `layout.json` places
      and routes once, skipping the router-driven part moves. Those moves
      take most of a layout's time.
-  3. Make the final run with the defaults (40 moves, at most 600 s of
-     them).
+  3. Make the final run with the defaults. It makes up to 40 moves, for
+     at most 600 s while connections are open and 60 s
+     (`polish_seconds`) once everything is routed.
 
 ## 3. Read the verdict: `<out-dir>/board-layout.json`
 

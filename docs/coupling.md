@@ -10,7 +10,8 @@ small legal moves for them (axis steps of 0.5-4 mm, quarter turns), ranked by
 the congestion they would land in, the router reroutes only the nets the move
 invalidated (`Router::update` and `Router::reroute` in `pcb-router`), and the
 move is kept when the board improves (open connections first, then vias and
-copper). Moves keep to the relaxation the placement needed (its spacing,
+copper). Once every connection is routed, moves only polish, for at most
+`polish_seconds` (60 s). Moves keep to the relaxation the placement needed (its spacing,
 grid, halos, edge margin and bodies): checked against the full spacing, no
 move on a crowded board would ever be legal. If connections are still open
 at the end, route mode's whole ladder (pours as tracks, finer pitches,
