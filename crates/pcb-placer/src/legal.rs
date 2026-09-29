@@ -93,7 +93,8 @@ fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
 /// board.
 fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
     if problem.constraints.is_empty() {
-        return inside_outline(problem, bare(problem, index, pose, problem.edge_margin));
+        let margin = problem.components[index].edge_margin(problem.edge_margin);
+        return inside_outline(problem, bare(problem, index, pose, margin));
     }
     let inner = constraints::inner_box(problem, index, pose).unwrap_or_else(|| {
         let (center, half) = (
@@ -238,6 +239,13 @@ pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {
 /// Moves every movable component to the nearest legal, grid-snapped position,
 /// largest bodies first. Returns the components that found no position.
 pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
+    legalize_first(problem, poses, &[])
+}
+
+/// `legalize`, placing the parts of `first` before all others (the ones a
+/// previous pass could not place: the big parts, placed first, can leave
+/// them no room).
+pub fn legalize_first(problem: &Problem, poses: &mut [Pose], first: &[usize]) -> Vec<usize> {
     let count = problem.components.len();
     let mut placed: Vec<usize> = (0..count)
         .filter(|index| problem.components[*index].fixed)
@@ -250,7 +258,8 @@ pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
             let size = problem.components[*index].body_size;
             size[0] * size[1]
         };
-        area(b).total_cmp(&area(a)).then(a.cmp(b))
+        let rank = |index: &usize| first.iter().position(|part| part == index).unwrap_or(usize::MAX);
+        rank(a).cmp(&rank(b)).then(area(b).total_cmp(&area(a))).then(a.cmp(b))
     });
     let bounds = problem.bounds();
     let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };

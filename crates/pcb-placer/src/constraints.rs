@@ -116,7 +116,7 @@ const OVERHANG_SLACK: f64 = 0.5;
 /// Edge margin per side (left, top, right, bottom) for a part: none on
 /// sides an edge or overhang constraint puts it against.
 pub fn side_margins(problem: &Problem, index: usize) -> [f64; 4] {
-    let mut margins = [problem.edge_margin; 4];
+    let mut margins = [problem.components[index].edge_margin(problem.edge_margin); 4];
     let constraints = &problem.constraints;
     let sides = constraints
         .edges

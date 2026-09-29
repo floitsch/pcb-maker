@@ -63,6 +63,13 @@ pub struct Component {
     /// outline around its header pads) lets other parts sit inside it.
     /// Empty: the whole body blocks.
     pub hollow: Vec<[f64; 4]>,
+    /// The body without the courtyard's margin ([min x, min y, max x, max
+    /// y], own frame: fabrication outline and pads), for boards whose rules
+    /// let courtyards overlap. Used only when nothing else fits.
+    pub tight: Option<[f64; 4]>,
+    /// How far the part's copper stays inside its body on every side: the
+    /// body may come that much closer to the board edge than the copper.
+    pub edge_inset: f64,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -147,6 +154,23 @@ impl Component {
     /// Board-space boxes (centre, half extent) of `hollow` at a pose.
     pub fn hollow_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
         self.boxes(&self.hollow, pose)
+    }
+
+    /// How far the body stays from the board edge for the copper to keep
+    /// `margin` (the problem's edge margin).
+    pub fn edge_margin(&self, margin: f64) -> f64 {
+        (margin - self.edge_inset).max(0.0)
+    }
+
+    /// Switches the body to the tight one, if the part has one.
+    pub fn use_tight_body(&mut self) {
+        if let Some(tight) = self.tight {
+            // The tight body holds the pads at its edges.
+            self.edge_inset = 0.0;
+            self.body_center = [(tight[0] + tight[2]) / 2.0, (tight[1] + tight[3]) / 2.0];
+            self.body_size = [tight[2] - tight[0], tight[3] - tight[1]];
+            self.round = false;
+        }
     }
 
     /// Whether the part has holes (a through-hole part, a mounting hole).

@@ -23,6 +23,8 @@ fn chain(parts: usize) -> Problem {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -56,6 +58,8 @@ fn chain(parts: usize) -> Problem {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -169,6 +173,8 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         angle_options: vec![0.0],
         far_side,
         hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -205,6 +211,8 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -227,4 +235,45 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
     // Without the hollow boxes the body blocks.
     problem.components[0].hollow.clear();
     assert!(!legal(&problem, 25.0));
+}
+
+#[test]
+fn tight_bodies_are_the_last_resort() {
+    // Two parts with 4 mm courtyards around 2 mm bodies on a 7 x 4 mm board:
+    // the courtyards do not fit side by side, the bodies do.
+    let part = |net: usize| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [4.0, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin { offset: [0.0, 0.0], net }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: Some([-1.0, -1.0, 1.0, 1.0]),
+        edge_inset: 0.0,
+    };
+    let mut problem = Problem {
+        outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
+        components: vec![part(0), part(0)],
+        net_weights: vec![1.0],
+        poses: vec![Pose { position: [3.5, 2.0], angle: 0.0 }; 2],
+        spacing: 0.2,
+        grid: 0.1,
+        edge_margin: 0.0,
+        min_spacing: 0.2,
+        constraints: Default::default(),
+    };
+    let placement = place(&problem, &Config::new());
+    assert!(placement.unplaced.is_empty() && placement.illegal.is_empty(), "{:?}", placement.unplaced);
+    assert!(placement.tight);
+    // Without them, one part finds no place.
+    for component in &mut problem.components {
+        component.tight = None;
+    }
+    let placement = place(&problem, &Config::new());
+    assert!(!placement.unplaced.is_empty() && !placement.tight);
 }

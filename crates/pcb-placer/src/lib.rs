@@ -52,6 +52,8 @@ pub struct Placement {
     pub illegal: Vec<usize>,
     /// Every placement constraint with whether the result keeps it.
     pub constraints: Vec<constraints::Status>,
+    /// Whether the placement needed the tight bodies (courtyards overlap).
+    pub tight: bool,
 }
 
 /// Area of the outline polygon.
@@ -117,14 +119,22 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The last level also snaps to a finer grid: on small, crowded boards
     // the regular grid leaves no legal spot where a finer one does.
     let fine = problem.grid.min(0.1);
-    for (halo_scale, spacing_scale, grid) in [
-        (1.0, 1.0, problem.grid),
-        (0.5, 1.0, problem.grid),
-        (0.0, 1.0, problem.grid),
-        (0.0, 0.0, problem.grid),
-        (0.0, 0.0, fine),
-    ] {
-        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && best.is_some() {
+    // Last, where the board's rules let courtyards overlap: bodies without
+    // the courtyard's margin.
+    let tight = problem.components.iter().any(|component| component.tight.is_some());
+    let mut levels = vec![
+        (1.0, 1.0, problem.grid, false),
+        (0.5, 1.0, problem.grid, false),
+        (0.0, 1.0, problem.grid, false),
+        (0.0, 0.0, problem.grid, false),
+        (0.0, 0.0, fine, false),
+    ];
+    if tight {
+        levels.push((0.0, 0.0, fine, true));
+    }
+    let mut used_tight = false;
+    for (halo_scale, spacing_scale, grid, tight) in levels {
+        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !tight && best.is_some() {
             // Same as the previous level.
             continue;
         }
@@ -133,16 +143,30 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
+            if tight {
+                component.use_tight_body();
+            }
         }
         let mut poses = global_poses.clone();
         anneal::anneal(&relaxed, &mut poses, &config.anneal);
-        let failed = legal::legalize(&relaxed, &mut poses);
+        let annealed = poses.clone();
+        let mut failed = legal::legalize(&relaxed, &mut poses);
+        // The parts that found no room go first in a second pass.
+        if !failed.is_empty() {
+            let mut retry = annealed;
+            let again = legal::legalize_first(&relaxed, &mut retry, &failed);
+            if again.len() < failed.len() {
+                poses = retry;
+                failed = again;
+            }
+        }
         let better = best
             .as_ref()
             .is_none_or(|(unplaced, _, _)| failed.len() < unplaced.len());
         let done = failed.is_empty();
         if better {
             best = Some((failed, poses, relaxed));
+            used_tight = tight;
         }
         if done {
             break;
@@ -187,5 +211,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         unplaced,
         illegal,
         constraints,
+        tight: used_tight,
     }
 }

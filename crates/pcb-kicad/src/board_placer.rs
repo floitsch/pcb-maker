@@ -56,6 +56,11 @@ pub struct KiCadBoardPlacerConfig {
     /// placed closer than this (pads may sit on a body's edge). Read from
     /// the project when not given.
     pub copper_clearance_mm: Option<f64>,
+    /// When nothing else fits, bodies may shrink to their fabrication
+    /// outline and pads (courtyards overlap). Read from the project when
+    /// not given: allowed unless KiCad's DRC treats a courtyard overlap as
+    /// an error.
+    pub tight_bodies: Option<bool>,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
@@ -82,6 +87,7 @@ impl Default for KiCadBoardPlacerConfig {
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
+            tight_bodies: None,
             placement_seeds: 3,
         }
     }
@@ -123,6 +129,8 @@ pub struct KiCadBoardPlacerResult {
     /// Share of the board the parts' bodies (with spacing) take, front and
     /// back.
     pub utilization: [f64; 2],
+    /// Whether the placement needed bodies without their courtyard margin.
+    pub tight_bodies: bool,
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
@@ -144,6 +152,20 @@ fn normalize_angle(angle: f64) -> f64 {
     }
 }
 
+/// Whether the project's DRC lets courtyards overlap (its severity is not
+/// `error`; KiCad's default is).
+pub(super) fn courtyards_may_overlap(project: &Path) -> bool {
+    fs::read_to_string(project)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|project| {
+            project["board"]["design_settings"]["rule_severities"]["courtyards_overlap"]
+                .as_str()
+                .map(|severity| severity != "error")
+        })
+        .unwrap_or(false)
+}
+
 /// The largest copper clearance of a router configuration's rules.
 pub(super) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
     config
@@ -156,6 +178,29 @@ pub(super) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
 
 /// Bounding box, in the footprint's own frame, of its courtyard and pads.
 pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool), String> {
+    body_with_outline(footprint, ".CrtYd").map(|(center, size, round, _)| (center, size, round))
+}
+
+/// The body without the courtyard's margin: fabrication outline and pads
+/// ([min x, min y, max x, max y], own frame). `None` without a fabrication
+/// outline, or where it is no smaller than the courtyard.
+fn tight_body(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
+    let (center, size, _, outlined) = body_with_outline(footprint, ".Fab")?;
+    let (_, courtyard, _) = local_body(footprint)?;
+    if outlined == 0 || size[0] * size[1] >= courtyard[0] * courtyard[1] - 1.0e-9 {
+        return Ok(None);
+    }
+    Ok(Some([
+        center[0] - size[0] / 2.0,
+        center[1] - size[1] / 2.0,
+        center[0] + size[0] / 2.0,
+        center[1] + size[1] / 2.0,
+    ]))
+}
+
+/// The box around the graphics on layers ending in `outline` and the pads,
+/// whether it is a disc, and how many outline graphics there are.
+fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     let mut include = |point: [f64; 2], radius: f64| {
@@ -170,7 +215,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
     for child in footprint.children() {
         match child.head() {
             Some("fp_line" | "fp_rect" | "fp_arc")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")) =>
+                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
             {
                 straight += 1;
                 for head in ["start", "mid", "end"] {
@@ -180,7 +225,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
                 }
             }
             Some("fp_circle")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")) =>
+                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
             {
                 circles += 1;
                 let center = form_xy(child, "center")?;
@@ -188,7 +233,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
                 include(center, distance_squared(center, end).sqrt());
             }
             Some("fp_poly")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")) =>
+                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
             {
                 straight += 1;
                 for point in child
@@ -284,7 +329,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
         }
     }
     if !minimum[0].is_finite() {
-        return Ok(([0.0, 0.0], [1.0, 1.0], false));
+        return Ok(([0.0, 0.0], [1.0, 1.0], false, 0));
     }
     let size = [
         (maximum[0] - minimum[0]).max(0.2),
@@ -296,6 +341,7 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
         [(minimum[0] + maximum[0]) / 2.0, (minimum[1] + maximum[1]) / 2.0],
         size,
         round,
+        circles + straight,
     ))
 }
 
@@ -551,6 +597,26 @@ pub(super) fn lower_placement(
                 .map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64))
                 .collect()
         };
+        // How far the copper stays inside the body: the body may come that
+        // much closer to the board edge.
+        let edge_inset = if own_pads.is_empty() {
+            0.0
+        } else {
+            let pads = own_pads.iter().fold(
+                [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+                |bounds, pad| [bounds[0].min(pad[0]), bounds[1].min(pad[1]), bounds[2].max(pad[2]), bounds[3].max(pad[3])],
+            );
+            let body = [
+                body_center[0] - body_size[0] / 2.0,
+                body_center[1] - body_size[1] / 2.0,
+                body_center[0] + body_size[0] / 2.0,
+                body_center[1] + body_size[1] / 2.0,
+            ];
+            [pads[0] - body[0], pads[1] - body[1], body[2] - pads[2], body[3] - pads[3]]
+                .into_iter()
+                .fold(f64::INFINITY, f64::min)
+                .max(0.0)
+        };
         connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
@@ -578,6 +644,8 @@ pub(super) fn lower_placement(
             angle_options,
             far_side: if through { far_side } else { Vec::new() },
             hollow: Vec::new(),
+            tight: if config.tight_bodies == Some(true) { tight_body(footprint)? } else { None },
+            edge_inset,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -657,6 +725,8 @@ pub(super) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
         });
         poses.push(core::Pose {
             position: [
@@ -709,6 +779,8 @@ pub(super) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
         });
         poses.push(core::Pose {
             position: [
@@ -750,6 +822,8 @@ pub(super) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
         });
         poses.push(core::Pose {
             position: [
@@ -853,6 +927,9 @@ pub fn place_kicad_board(
         )
         .ok()
         .map(|rules| largest_clearance(&rules));
+    }
+    if config.tight_bodies.is_none() {
+        config.tight_bodies = Some(courtyards_may_overlap(&source_directory.join(format!("{board_id}.kicad_pro"))));
     }
     let config = &config;
     let mut outline_size = None;
@@ -1058,6 +1135,7 @@ pub fn place_kicad_board(
         hints.dedup();
     }
     let result = KiCadBoardPlacerResult {
+        tight_bodies: placement.tight,
         utilization,
         hints,
         board_id: board_id.into(),

@@ -135,7 +135,7 @@ impl State<'_> {
         // Leaving the board is as bad as overlapping something (for an
         // overhanging part, only with what belongs on the board).
         let component = &self.problem.components[index];
-        let margin = component.halo + self.problem.spacing / 2.0 - self.problem.edge_margin;
+        let margin = component.halo + self.problem.spacing / 2.0 - component.edge_margin(self.problem.edge_margin);
         let mut bare = [rect.half[0] - margin, rect.half[1] - margin];
         let mut rect = rect;
         if !self.problem.constraints.is_empty() {

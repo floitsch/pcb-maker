@@ -754,6 +754,8 @@ mod tests {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],

@@ -205,7 +205,14 @@ pub fn layout_kicad_board(
     let layers = LayerTable::from_pcb(&pcb)?;
     let has_pours = !pours(&pcb, &layers)?.is_empty();
     let connect = has_pours && router_config.pours != KiCadPourMode::Tracks;
+    // The moves that follow keep the bodies the placement needed.
+    placer_config.tight_bodies = Some(placement.tight_bodies);
     let mut problem = lower_placement(&pcb, &placer_config)?;
+    if placement.tight_bodies {
+        for component in &mut problem.problem.components {
+            component.use_tight_body();
+        }
+    }
     let core_config = core_config(router_config);
 
     let first_started = std::time::Instant::now();
