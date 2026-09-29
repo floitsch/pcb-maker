@@ -2488,6 +2488,14 @@ fn run() -> Result<(), String> {
                 &config,
                 &router,
             )?;
+            if let Some(size) = result.outline_sizing.iter().find(|trial| trial.used).and_then(|trial| trial.size_mm) {
+                println!(
+                    "outline: {:.1} x {:.1} mm, sized from the parts ({} tried)",
+                    size[0],
+                    size[1],
+                    result.outline_sizing.len()
+                );
+            }
             println!(
                 "placed in {:.1}s; first route {:.1}s: {} open, {} vias, {:.0} mm",
                 result.placement_seconds,

@@ -13,7 +13,7 @@
 use super::*;
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
-use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, resolve_constraints};
+use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints};
 use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, pours};
 use pcb_placer as placer;
 use pcb_router as core;
@@ -140,6 +140,10 @@ pub struct KiCadBoardLayoutResult {
     /// `score-kicad-board` reports them).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quality: Option<crate::quality::KiCadQualityReport>,
+    /// Outline sizes tried when the outline is sized from the parts,
+    /// smallest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub outline_sizing: Vec<KiCadOutlineTrial>,
     /// Open terminals after the first route of the kept placement and of
     /// each other seed's placement tried (only when the first left some).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -148,6 +152,114 @@ pub struct KiCadBoardLayoutResult {
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub routed: KiCadBoardRouterResult,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadOutlineTrial {
+    pub area_factor: f64,
+    pub size_mm: Option<[f64; 2]>,
+    /// Whether every part found a legal place.
+    pub legal: bool,
+    /// Open terminals after a quick first route (legal placements only).
+    pub open: Option<usize>,
+    /// The size the layout went on with.
+    pub used: bool,
+}
+
+/// For an outline sized from the parts (no size, no `area_factor`): starts
+/// at the size designers use and grows it by a quarter while the parts do
+/// not fit or a quick route leaves connections open. Sets the chosen
+/// factor in `placer_config` and returns the sizes tried.
+fn size_outline(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    placer_config: &mut KiCadBoardPlacerConfig,
+    router_config: &KiCadBoardRouterConfig,
+) -> Result<Vec<KiCadOutlineTrial>, String> {
+    if automatic_outline(placer_config).is_none() {
+        return Ok(Vec::new());
+    }
+    let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let start = default_area_factor(&parse(
+        &fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?,
+    )?);
+    let mut quick = core_config(router_config);
+    quick.verbose = false;
+    quick.negotiation_seconds = quick.negotiation_seconds.min(60.0);
+    quick.cleanup_passes = 0;
+    quick.via_reduction_rounds = 0;
+    let sizing = output_directory.join("sizing");
+    fs::create_dir_all(&sizing).map_err(|error| format!("failed to create {}: {error}", sizing.display()))?;
+    let mut trials = Vec::new();
+    let mut chosen = None;
+    for step in 0..4 {
+        let factor = (start * 1.25f64.powi(step) * 100.0).round() / 100.0;
+        let mut config = placer_config.clone();
+        if let Some(outline) = automatic_outline(&mut config) {
+            outline.area_factor = Some(factor);
+        }
+        let directory = sizing.join(format!("{factor}"));
+        let placement = place_kicad_board(source_directory, board_id, &directory, &config)?;
+        let legal = placement.unplaced.is_empty() && placement.illegal.is_empty();
+        let open = if legal {
+            let placed = directory.join(format!("{board_id}.kicad_pcb"));
+            let mut pcb = parse(
+                &fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?,
+            )?;
+            if !router_config.add_pours.is_empty() {
+                add_pour_zones(&mut pcb, &router_config.add_pours)?;
+            }
+            let layers = LayerTable::from_pcb(&pcb)?;
+            let connect = !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
+            let board = lower(&pcb, router_config, connect)?.board;
+            let result = core::router::Router::new(&board, &quick).run_in_place();
+            Some(score(&result, &board).0)
+        } else {
+            None
+        };
+        eprintln!(
+            "outline at {factor} times the parts' area{}: {}",
+            placement.outline_mm.map_or(String::new(), |size| format!(" ({:.1} x {:.1} mm)", size[0], size[1])),
+            match open {
+                Some(open) => format!("{open} open"),
+                None => "parts do not fit".into(),
+            }
+        );
+        trials.push(KiCadOutlineTrial { area_factor: factor, size_mm: placement.outline_mm, legal, open, used: false });
+        chosen = Some(factor);
+        if open == Some(0) {
+            break;
+        }
+    }
+    // None routed completely: the size with the fewest open connections
+    // (the larger one on a tie), for the moves to finish.
+    if trials.iter().all(|trial| trial.open != Some(0))
+        && let Some(best) = trials
+            .iter()
+            .filter(|trial| trial.open.is_some())
+            .min_by(|a, b| a.open.cmp(&b.open).then(b.area_factor.total_cmp(&a.area_factor)))
+    {
+        chosen = Some(best.area_factor);
+    }
+    if let (Some(factor), Some(outline)) = (chosen, automatic_outline(placer_config)) {
+        outline.area_factor = Some(factor);
+        for trial in &mut trials {
+            trial.used = trial.area_factor == factor;
+        }
+    }
+    Ok(trials)
+}
+
+/// The constraints' outline when it is sized from the parts alone.
+fn automatic_outline(config: &mut KiCadBoardPlacerConfig) -> Option<&mut crate::placement_constraints::KiCadOutlineConstraint> {
+    match &mut config.constraints {
+        Some(KiCadConstraintsSource::Inline(constraints)) => constraints
+            .outline
+            .as_mut()
+            .filter(|outline| outline.width.is_none() && outline.height.is_none() && outline.area_factor.is_none()),
+        _ => None,
+    }
 }
 
 /// Lower ordering is better: open connections first, then vias and copper.
@@ -241,6 +353,7 @@ pub fn layout_kicad_board(
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
     }
     placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
+    let outline_sizing = size_outline(source_directory, board_id, output_directory, &mut placer_config, router_config)?;
     let placed_directory = output_directory.join("placed");
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
@@ -667,6 +780,7 @@ pub fn layout_kicad_board(
         first_vias: first.1,
         first_length_mm: first.2,
         moves,
+        outline_sizing,
         placement_race: race,
         labels,
         quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),

@@ -33,9 +33,11 @@ fn text_half(text: &str, size: [f64; 2], thickness: f64) -> [f64; 2] {
         _ => 1.0,
     };
     let width = 1.08 * text.chars().map(advance).sum::<f64>() * size[1];
-    // Capitals and digits: 0.65 of the height above the baseline; the box is
-    // centred on the text's anchor for centred labels.
-    [(width + thickness) / 2.0, (0.75 * size[0] + thickness) / 2.0]
+    // Centred on the anchor, capitals and digits are one font height tall
+    // (KiCad's DRC keeps two lines of "HH" apart below 1.15 mm at size 1
+    // and thickness 0.15, and scales exactly); descenders reach 0.3 below.
+    let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
+    [(width + thickness) / 2.0, (if descends { 1.6 } else { 1.0 } * size[0] + thickness) / 2.0]
 }
 
 /// Silkscreen layer of a label and the copper layer its pads are on.
@@ -144,6 +146,29 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
             let Some(back) = form_atom(child, "layer", 1).and_then(silk_side) else {
                 continue;
             };
+            // The footprint's own texts (a diode's "K", a visible value):
+            // everything but the label itself.
+            let own_text = match child.head() {
+                Some("fp_text") => child.children().get(1).and_then(Expr::atom) != Some("reference"),
+                Some("property") => child.children().get(1).and_then(Expr::atom) != Some("Reference") && visible(child),
+                _ => false,
+            };
+            if own_text {
+                let text = child.children().get(2).and_then(Expr::atom).unwrap_or("");
+                if !text.is_empty()
+                    && let Ok(text_at) = form_at(child)
+                {
+                    let font = child.child("effects").and_then(|effects| effects.child("font"));
+                    let size = font.and_then(|font| form_xy(font, "size").ok()).unwrap_or([1.0, 1.0]);
+                    let thickness = font.and_then(|font| form_f64(font, "thickness", 1).ok()).unwrap_or(0.15);
+                    let [along, across] = text_half(text, size, thickness);
+                    let (sin, cos) = text_at[2].to_radians().sin_cos();
+                    let half = [cos.abs() * along + sin.abs() * across, sin.abs() * along + cos.abs() * across];
+                    let center = place([text_at[0], text_at[1]]);
+                    blocked[back as usize].push([center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]);
+                }
+                continue;
+            }
             let mut points = Vec::new();
             for head in ["start", "mid", "end", "center"] {
                 if child.child(head).is_some() {

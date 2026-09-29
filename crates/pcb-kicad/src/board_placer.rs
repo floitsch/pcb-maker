@@ -435,6 +435,8 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
         .collect();
     let prefix = |reference: &str| reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_').to_string();
     let mut supplies: Vec<Supply> = Vec::new();
+    // Capacitors between ground and another net: decoupling when that net
+    // is a rail (by name, or an IC's supply pin is on it).
     let mut capacitors: Vec<(usize, String, bool)> = Vec::new();
     // Crystals and the nets on their signal pins; IC pads by net.
     let mut crystals: Vec<(usize, Vec<String>)> = Vec::new();
@@ -532,8 +534,8 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
                     continue;
                 };
                 let rail = match (ground(a), ground(b)) {
-                    (false, true) if rail_name(a) => a.clone(),
-                    (true, false) if rail_name(b) => b.clone(),
+                    (false, true) => a.clone(),
+                    (true, false) => b.clone(),
                     _ => continue,
                 };
                 let value = footprint

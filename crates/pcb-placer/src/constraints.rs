@@ -91,6 +91,15 @@ impl Relation {
             Relation::NearAny { part, .. } => [Some(*part), None],
         }
     }
+
+    /// Whether moving `index` can change the relation: its part, or the part
+    /// of any anchor.
+    pub fn involves(&self, index: usize) -> bool {
+        match self {
+            Relation::NearAny { part, anchors, .. } => *part == index || anchors.iter().any(|anchor| anchor.part() == index),
+            other => other.parts().contains(&Some(index)),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -480,7 +489,7 @@ pub fn relation_penalty(problem: &Problem, poses: &[Pose], index: Option<usize>)
     constraints
         .relations
         .iter()
-        .filter(|relation| index.is_none_or(|index| relation.parts().contains(&Some(index))))
+        .filter(|relation| index.is_none_or(|index| relation.involves(index)))
         .map(|relation| relation_violation(problem, poses, relation))
         .sum::<f64>()
         * constraints.relation_weight

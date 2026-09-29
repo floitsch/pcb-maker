@@ -19,6 +19,9 @@ pub struct KiCadNetlistImport {
     /// Footprints not in the library the schematic names, taken from
     /// another library or under KiCad 9's name: `C1: <asked> -> <used>`.
     pub substituted: Vec<String>,
+    /// Footprints whose own pads are closer than the board's clearance (a
+    /// solder jumper's) and got their pads' gap as their own clearance.
+    pub clearances: Vec<String>,
 }
 
 const HEADER: &str = r#"(kicad_pcb
@@ -311,13 +314,16 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
         items.insert(layer_index, parse(&format!("(uuid \"{}\")", uuid_of(&format!("footprint {reference}"))))?);
         items.insert(layer_index + 1, parse("(at 0 0)")?);
+        // The links to the symbol, where KiCad keeps them: before `attr`
+        // and the drawings.
+        let mut links = Vec::new();
         let sheet_path = component.child("sheetpath");
         let sheet = sheet_path.and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
         if let Some(stamp) = text_of(component, "tstamps").or_else(|| text_of(component, "tstamp")) {
-            items.push(parse(&format!("(path {})", quote(&format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }))))?);
+            links.push(parse(&format!("(path {})", quote(&format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }))))?);
         }
         if let Some(names) = sheet_path.and_then(|sheet| text_of(sheet, "names")) {
-            items.push(parse(&format!("(sheetname {})", quote(&names)))?);
+            links.push(parse(&format!("(sheetname {})", quote(&names)))?);
         }
         let sheet_file = component
             .children()
@@ -326,8 +332,13 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             .find(|item| form_atom(item, "name", 1) == Some("Sheetfile"))
             .and_then(|item| text_of(item, "value"));
         if let Some(sheet_file) = sheet_file {
-            items.push(parse(&format!("(sheetfile {})", quote(&sheet_file)))?);
+            links.push(parse(&format!("(sheetfile {})", quote(&sheet_file)))?);
         }
+        let at = items
+            .iter()
+            .position(|item| matches!(item.head(), Some("attr" | "clearance" | "zone_connect" | "solder_mask_margin" | "solder_paste_margin" | "pad") ) || item.head().is_some_and(|head| head.starts_with("fp_")))
+            .unwrap_or(items.len());
+        items.splice(at..at, links);
         // The symbol's fields (datasheet, description, LCSC numbers, ...).
         set_property(items, "Reference", &reference, &reference)?;
         set_property(items, "Value", &value, &reference)?;
@@ -371,7 +382,130 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     }
     let board_path = output.join(format!("{board_id}.kicad_pcb"));
     fs::write(&board_path, format!("{}\n", encode(&board))).map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
-    Ok(KiCadNetlistImport { board: board_path, footprints, nets, missing, substituted })
+    // Pads of one footprint closer than the board's clearance (a solder
+    // jumper's): no placement or routing changes that. The footprint gets
+    // its pads' gap as its own clearance, as designers do.
+    let mut clearances = Vec::new();
+    let gaps = own_pad_gaps(&board, output, board_id)?;
+    if !gaps.is_empty() {
+        let Expr::List(items) = &mut board else {
+            unreachable!("the board is a list")
+        };
+        for footprint in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+            let reference = footprint
+                .children()
+                .iter()
+                .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Reference"))
+                .and_then(|item| item.children().get(2).and_then(Expr::atom))
+                .unwrap_or("")
+                .to_string();
+            let Some((gap, rule)) = gaps.get(&reference) else {
+                continue;
+            };
+            let clearance = (gap * 100.0).floor() / 100.0;
+            let Expr::List(parts) = footprint else {
+                continue;
+            };
+            parts.retain(|item| item.head() != Some("clearance"));
+            let at = parts.iter().position(|item| item.head() == Some("attr")).unwrap_or(parts.len());
+            parts.insert(at, parse(&format!("(clearance {clearance})"))?);
+            clearances.push(format!("{reference}: {clearance} mm (its pads are {gap} mm apart, the rule is {rule} mm)"));
+        }
+        fs::write(&board_path, format!("{}\n", encode(&board))).map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+    }
+    Ok(KiCadNetlistImport { board: board_path, footprints, nets, missing, substituted, clearances })
+}
+
+/// Per footprint, the smallest gap between its own pads that KiCad's DRC
+/// finds below the clearance rule, and that rule. The footprints are
+/// checked apart from each other, in rows, with the project's rules (on a
+/// stack of footprints KiCad stops reporting after 499 clearance errors).
+fn own_pad_gaps(board: &Expr, project: &Path, board_id: &str) -> Result<BTreeMap<String, (f64, f64)>, String> {
+    let mut spread = board.clone();
+    let Expr::List(items) = &mut spread else {
+        return Ok(BTreeMap::new());
+    };
+    let (mut x, mut y, mut row) = (0.0f64, 0.0f64, 0.0f64);
+    for footprint in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+        // Pads reach this far from the origin.
+        let reach = footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+            .map(|pad| {
+                let at = form_at(pad).unwrap_or([0.0; 3]);
+                let size = form_f64(pad, "size", 1).unwrap_or(0.0).max(form_f64(pad, "size", 2).unwrap_or(0.0));
+                at[0].abs().max(at[1].abs()) + size
+            })
+            .fold(0.0, f64::max)
+            + 5.0;
+        if x + 2.0 * reach > 1000.0 {
+            (x, y, row) = (0.0, y + row, 0.0);
+        }
+        if let Expr::List(parts) = footprint
+            && let Some(at) = parts.iter_mut().find(|item| item.head() == Some("at"))
+        {
+            *at = parse(&format!("(at {} {})", x + reach, y + reach))?;
+        }
+        x += 2.0 * reach;
+        row = row.max(2.0 * reach);
+    }
+    let directory = project.join(".pad-check");
+    fs::create_dir_all(&directory).map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
+    let settings = project.join(format!("{board_id}.kicad_pro"));
+    if settings.exists() {
+        fs::copy(&settings, directory.join(format!("{board_id}.kicad_pro"))).map_err(|error| error.to_string())?;
+    }
+    let board = directory.join(format!("{board_id}.kicad_pcb"));
+    fs::write(&board, format!("{}\n", encode(&spread))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
+    let report = directory.join("drc.json");
+    // Without kicad-cli (a netlist from elsewhere) there is no check.
+    let Ok(output) = Command::new("kicad-cli")
+        .args(["pcb", "drc", "--format", "json", "--severity-error", "-o"])
+        .arg(&report)
+        .arg(&board)
+        .output()
+    else {
+        let _ = fs::remove_dir_all(&directory);
+        return Ok(BTreeMap::new());
+    };
+    let text = fs::read_to_string(&report);
+    let _ = fs::remove_dir_all(&directory);
+    if !output.status.success() {
+        return Err(format!("kicad-cli pcb drc failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    let text = text.map_err(|error| format!("failed to read the pad check's DRC report: {error}"))?;
+    let drc: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    // "Clearance violation (netclass 'Default' clearance 0.2800 mm; actual 0.2496 mm)"
+    let number_after = |text: &str, key: &str| -> Option<f64> {
+        let rest = &text[text.find(key)? + key.len()..];
+        rest.trim_start().split_whitespace().next()?.parse().ok()
+    };
+    let mut gaps: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for violation in drc["violations"].as_array().into_iter().flatten() {
+        if violation["type"] != "clearance" {
+            continue;
+        }
+        let owners: Vec<Option<&str>> = violation["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| {
+                let description = item["description"].as_str()?;
+                description.starts_with("Pad ").then_some(())?;
+                description.rsplit_once(" of ")?.1.split_whitespace().next()
+            })
+            .collect();
+        let description = violation["description"].as_str().unwrap_or("");
+        if let ([Some(a), Some(b)], Some(gap), Some(rule)) =
+            (owners.as_slice(), number_after(description, "actual"), number_after(description, "clearance"))
+            && a == b
+        {
+            let entry = gaps.entry(a.to_string()).or_insert((gap, rule));
+            entry.0 = entry.0.min(gap);
+        }
+    }
+    Ok(gaps)
 }
 
 #[cfg(test)]

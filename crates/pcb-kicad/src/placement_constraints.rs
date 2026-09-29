@@ -169,8 +169,10 @@ pub struct KiCadOutlineConstraint {
     pub width: Option<f64>,
     #[serde(default)]
     pub height: Option<f64>,
-    /// Board area per unit of part area when sizing automatically
-    /// (default 3: room for routing on two layers).
+    /// Board area per unit of part area when sizing automatically.
+    /// Default: 2 on two layers, 1.5 on more, the median of 616 open-source
+    /// boards (1.9 and 1.4); `layout-kicad-board` grows it while the parts
+    /// do not fit or the first route leaves connections open.
     #[serde(default)]
     pub area_factor: Option<f64>,
     /// Width over height when sizing automatically (default 1.5).
@@ -322,6 +324,22 @@ pub(super) fn resolve_constraints(
     Ok(resolved)
 }
 
+/// Board area per unit of part area for an outline sized from the parts:
+/// about what designers use (median 1.9 on two layers, 1.4 on more).
+pub(super) fn default_area_factor(pcb: &Expr) -> f64 {
+    let copper = pcb
+        .child("layers")
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .filter(|layer| layer.children().get(1).and_then(Expr::atom).is_some_and(|name| name.ends_with(".Cu")))
+                .count()
+        })
+        .unwrap_or(2);
+    if copper > 2 { 1.5 } else { 2.0 }
+}
+
 /// Replaces the board's Edge.Cuts graphics by the constraint's rectangle.
 /// `part_area` is the parts' total body area, for automatic sizing.
 /// Returns the size used.
@@ -333,7 +351,7 @@ pub(super) fn apply_outline(
     let (width, height) = match (outline.width, outline.height) {
         (Some(width), Some(height)) => (width, height),
         (None, None) => {
-            let area = part_area * outline.area_factor.unwrap_or(3.0);
+            let area = part_area * outline.area_factor.unwrap_or_else(|| default_area_factor(pcb));
             let aspect = outline.aspect.unwrap_or(1.5).max(0.1);
             let mut width = (area * aspect).sqrt();
             // Both sides within 100 mm keeps the cheap fabs' flat price
@@ -1229,9 +1247,10 @@ mod tests {
     fn an_outline_without_size_is_sized_from_the_parts() {
         let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)) (gr_line (start 0 0) (end 1 0) (layer \"Edge.Cuts\")))").unwrap();
         let outline: KiCadOutlineConstraint = serde_json::from_str(r#"{"aspect": 2.0}"#).unwrap();
-        // 150 mm2 of parts at the default factor 3: 450 mm2, 30 x 15.
-        let size = apply_outline(&mut pcb, &outline, 150.0).unwrap();
-        assert_eq!(size, [30.0, 15.0]);
+        // 200 mm2 of parts at the default factor 2 (two layers): 400 mm2,
+        // 28.5 x 14.5 (whole half millimetres, rounded up).
+        let size = apply_outline(&mut pcb, &outline, 200.0).unwrap();
+        assert_eq!(size, [28.5, 14.5]);
         let edges: Vec<_> = pcb
             .children()
             .iter()
@@ -1241,10 +1260,13 @@ mod tests {
         assert_eq!(edges[0].head(), Some("gr_rect"));
         let only_width: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 10}"#).unwrap();
         assert!(apply_outline(&mut pcb, &only_width, 1.0).is_err());
-        // 3000 mm2 of parts, 9000 mm2 of board: 116 x 78 at 1.5, but both
+        // 4500 mm2 of parts, 9000 mm2 of board: 116 x 78 at 1.5, but both
         // sides stay within 100 mm (the flat price at JLCPCB and PCBWay).
         let automatic: KiCadOutlineConstraint = serde_json::from_str("{}").unwrap();
-        assert_eq!(apply_outline(&mut pcb, &automatic, 3000.0).unwrap(), [100.0, 90.0]);
+        assert_eq!(apply_outline(&mut pcb, &automatic, 4500.0).unwrap(), [100.0, 90.0]);
+        // On four layers, 1.5 times the parts.
+        let mut four = parse("(kicad_pcb (layers (0 \"F.Cu\" signal) (4 \"In1.Cu\" signal) (6 \"In2.Cu\" signal) (2 \"B.Cu\" signal)))").unwrap();
+        assert_eq!(apply_outline(&mut four, &outline, 300.0).unwrap(), [30.0, 15.0]);
     }
 
     #[test]

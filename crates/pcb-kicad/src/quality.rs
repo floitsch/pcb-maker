@@ -169,13 +169,18 @@ pub(crate) fn esd_protector(value: &str) -> bool {
         .any(|word| NAMES.iter().any(|name| word.starts_with(name)))
 }
 
+/// A net's own name, without its sheet path (`/power/3V3` is `3V3`).
+fn own_name(net: &str) -> String {
+    net.rsplit('/').next().unwrap_or(net).to_ascii_uppercase()
+}
+
 pub(crate) fn ground(net: &str) -> bool {
-    let name = net.trim_start_matches('/').to_ascii_uppercase();
+    let name = own_name(net);
     name.contains("GND") || name == "VSS" || name == "0V" || name.starts_with("VSS")
 }
 
 pub(crate) fn rail_name(net: &str) -> bool {
-    let name = net.trim_start_matches('/').to_ascii_uppercase();
+    let name = own_name(net);
     // A voltage first: 3V3, 5V, 3.3V, 12V_IN, 3V3_DUT.
     let rest = name.trim_start_matches('+');
     let number = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
@@ -724,10 +729,10 @@ mod tests {
         for value in ["CONN_02X20_DIP40", "100n", "ATmega328P"] {
             assert!(!esd_protector(value), "{value}");
         }
-        for net in ["GND", "/AGND", "GNDA", "VSS"] {
+        for net in ["GND", "/AGND", "GNDA", "VSS", "/power/GND"] {
             assert!(ground(net), "{net}");
         }
-        for net in ["+3V3", "3V3", "/VCC", "VDD_IO", "VBUS", "5V", "+12V", "3V3_DUT", "3.3V"] {
+        for net in ["+3V3", "3V3", "/VCC", "VDD_IO", "VBUS", "5V", "+12V", "3V3_DUT", "3.3V", "/pic_sockets/VCC_PIC"] {
             assert!(rail_name(net), "{net}");
         }
         for net in ["/SDA", "Net-(U1-Pad3)", "LED1", "V_SENSE"] {
