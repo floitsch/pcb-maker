@@ -253,6 +253,9 @@ puts the same report into `board-layout.json` as `quality`. It covers:
   crystals, antenna modules and analog parts (op-amps, ADCs, codecs,
   references);
 - how much other copper cuts the ground pours (return paths);
+- hot parts (a regulator's tab, an exposed pad): the pad's area, the
+  planes of its net over it, vias in it and track copper near it. A pour
+  of that net (`add_pours`) is the cheapest heat sink;
 - orientation consistency, parts near the edge, connectors facing out;
 - vias in pads, tombstoning risk, KiCad DRC counts;
 - the estimated price of 10 boards at common fabs, and the price

@@ -72,7 +72,7 @@ term.
 | 11 | I/O protection | ESD diode or filter ≤≈3 mm from the connector pin and on the path; interface IC ≤2 cm from its connector ([TI SLVA680](https://www.ti.com/lit/pdf/slva680)) | P, R |
 | 12 | Stubs and pairs | USB ≤100 mm, stubs <5 mm, pair matched and coupled | R |
 | 13 | Tombstoning and via-in-pad | On ≤0603 parts, conductive width into one pad ≤2× the other; no vias in non-exposed pads | R |
-| 14 | Hot parts | Exposed-pad via array per datasheet (≈0.3 mm drill, 1-1.2 mm pitch, solid); copper area around hot parts ([TI SLMA002](https://www.ti.com/lit/slma002)) | P, R |
+| 14 | Hot parts | Exposed-pad via array per datasheet (≈0.3 mm drill, 1-1.2 mm pitch, solid); copper area around hot parts ([TI SLMA002](https://www.ti.com/lit/slma002)). Reported: parts whose largest pad is ≥2 mm² and 2.5× their median pad, with same-net planes over it, vias in it and track copper within 5 mm | P, R |
 | 15 | Assembly | ≥90 % of polarized parts at one orientation per side (IPC-2221B §8.1.3); spacing per the assembler's table; bodies ≥2.5 mm from the edge (else rails); SMD on one side ([JLCPCB](https://jlcpcb.com/help/article/minimum-spacing-for-smd-components)) | P |
 
 Almost free: KiCad's own DRC covers most manufacturability (slivers, mask

@@ -2563,6 +2563,18 @@ fn run() -> Result<(), String> {
                         println!("{label} {}: {} mm from its pins", name.as_str().unwrap_or("?"), distance);
                     }
                 }
+                for hot in report["hot_parts"].as_array().into_iter().flatten() {
+                    let planes: Vec<&str> = hot["planes"].as_array().into_iter().flatten().filter_map(|layer| layer.as_str()).collect();
+                    println!(
+                        "hot part {}: {} mm² pad on {}, {}, {} vias in the pad, {} mm² of tracks near it",
+                        hot["reference"].as_str().unwrap_or("?"),
+                        hot["pad_mm2"],
+                        hot["net"].as_str().unwrap_or("?"),
+                        if planes.is_empty() { "no plane".to_string() } else { format!("planes on {}", planes.join(", ")) },
+                        hot["vias_in_pad"],
+                        hot["track_mm2"]
+                    );
+                }
                 let cost = &report["cost"];
                 let totals: Vec<String> = cost["fabs"]
                     .as_array()

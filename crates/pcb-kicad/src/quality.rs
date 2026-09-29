@@ -27,8 +27,28 @@ pub struct KiCadQualityReport {
     /// Inductors on a switch node (one pad on a net that is neither ground
     /// nor a rail) and their distance to the IC pin on that net.
     pub switch_inductors: Vec<(String, Option<f64>)>,
+    /// Parts that shed heat through one large pad and the copper it reaches.
+    pub hot_parts: Vec<KiCadHotPart>,
     /// Estimated price of 10 boards at common fabs (docs/cost.md).
     pub cost: crate::cost::KiCadCost,
+}
+
+/// A part that sheds its heat through one large pad (a regulator's tab, an
+/// exposed pad under a QFN or a module), and the copper that pad reaches:
+/// heat leaves through copper area and through vias to the other layers
+/// ([TI SLMA002](https://www.ti.com/lit/slma002)).
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadHotPart {
+    pub reference: String,
+    pub net: Option<String>,
+    pub pad_mm2: f64,
+    /// Copper layers where a zone of the pad's net covers the pad.
+    pub planes: Vec<String>,
+    /// Track copper of the pad's net that starts or ends within 5 mm of
+    /// the pad, in mm².
+    pub track_mm2: f64,
+    /// Vias inside the pad (thermal vias).
+    pub vias_in_pad: usize,
 }
 
 /// What the board costs to make, in the terms fabs price by.
@@ -665,6 +685,73 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             .reduce(f64::min);
         switch_inductors.push((part.reference.clone(), nearest.map(round)));
     }
+    // Hot parts: an IC or transistor whose largest pad is at least 2 mm²
+    // and 2.5 times its median pad.
+    let zones: Vec<(String, Vec<String>, Vec<[f64; 2]>)> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("zone") && item.child("keepout").is_none())
+        .filter_map(|zone| {
+            let net = form_atom(zone, "net_name", 1).or_else(|| node_net(zone)).map(|raw| normalize_net(raw).to_string())?;
+            let layers: Vec<String> = zone
+                .child("layers")
+                .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).map(str::to_owned).collect())
+                .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
+                .unwrap_or_default();
+            let outline: Vec<[f64; 2]> = zone
+                .child("polygon")
+                .and_then(|polygon| polygon.child("pts"))
+                .map(|points| {
+                    points
+                        .children()
+                        .iter()
+                        .filter(|point| point.head() == Some("xy"))
+                        .filter_map(|point| Some([expression_coordinate(point, 1, "zone x").ok()?, expression_coordinate(point, 2, "zone y").ok()?]))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (outline.len() >= 3).then_some((net, layers, outline))
+        })
+        .collect();
+    let mut hot_parts = Vec::new();
+    for part in parts.iter().filter(|part| matches!(part.prefix(), "U" | "IC" | "Q" | "VR" | "REG") && part.pads.len() >= 3) {
+        let area = |pad: &Pad| 4.0 * pad.half[0] * pad.half[1];
+        let mut areas: Vec<f64> = part.pads.iter().map(area).collect();
+        areas.sort_by(f64::total_cmp);
+        let median = areas[areas.len() / 2];
+        let Some(pad) = part.pads.iter().max_by(|a, b| area(a).total_cmp(&area(b))) else {
+            continue;
+        };
+        if area(pad) < 2.0 || area(pad) < 2.5 * median || !pad.smd || pad.net.is_none() {
+            continue;
+        }
+        let planes: Vec<String> = zones
+            .iter()
+            .filter(|(net, _, outline)| pad.net.as_ref() == Some(net) && point_in_polygon(pad.center, outline))
+            .flat_map(|(_, layers, _)| layers.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let near = |point: [f64; 2]| distance(point, pad.center) <= 5.0 + pad.half[0].max(pad.half[1]);
+        let track_mm2 = tracks
+            .iter()
+            .filter(|track| track.net.is_some() && track.net == pad.net && (near(track.start) || near(track.end)))
+            .map(|track| distance(track.start, track.end) * track.width)
+            .sum::<f64>()
+            + 0.0;
+        let vias_in_pad = vias
+            .iter()
+            .filter(|(at, _)| (at[0] - pad.center[0]).abs() <= pad.half[0] && (at[1] - pad.center[1]).abs() <= pad.half[1])
+            .count();
+        hot_parts.push(KiCadHotPart {
+            reference: part.reference.clone(),
+            net: pad.net.clone(),
+            pad_mm2: round(area(pad)),
+            planes,
+            track_mm2: round(track_mm2),
+            vias_in_pad,
+        });
+    }
     let mut esd = Vec::new();
     for part in parts.iter().filter(|part| esd_protector(&part.value)) {
         let mut nearest: Option<f64> = None;
@@ -748,6 +835,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         planes,
         esd,
         switch_inductors,
+        hot_parts,
         cost,
     })
 }
