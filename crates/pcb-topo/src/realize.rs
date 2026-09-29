@@ -2,20 +2,35 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! Geometry for topological wires ("metrization"). On each layer the pieces
-//! of wire assigned to it are pulled tight in their homotopy class: every
-//! obstacle corner (and via) is a disc of the clearance it needs from the
-//! wire plus the room of the wires already passing closer to it, and the
-//! wire becomes tangent segments between those discs and arcs around them.
-//! Arcs are emitted as polylines circumscribing them, so the copper never
-//! comes closer than the arc would.
+//! Geometry for topological wires ("metrization"). A wire is cut at its
+//! vias into pieces, one per layer; each piece comes with an embedding, a
+//! polyline that fixes on which side of every obstacle it passes. On each
+//! layer the pieces are pulled tight in their homotopy class ([`taut`]):
+//!
+//! - the layer's obstacles and the vias are triangulated; circles and
+//!   round ends are single points with a radius;
+//! - a piece's embedding traced through that triangulation gives its
+//!   channel, and the order in which pieces cross each edge;
+//! - every vertex of a channel is a disc of the room the piece needs from
+//!   it: the obstacle's clearance plus half the width, grown by the pieces
+//!   of other nets that pass it on the inside (their actual distance plus
+//!   their width and clearance). Pieces are pulled tight again until those
+//!   radii settle;
+//! - exact distances to the obstacles' shapes add the corners of any
+//!   obstacle a path still comes too close to.
+//!
+//! Arcs are emitted as polylines circumscribing them.
 
-use crate::layers::Assignment;
-use crate::mesh::Mesh;
-use crate::topo::Topology;
-use pcb_router::{Board, NetId, NetRoute, ObstacleKind, Point, Segment, Shape, Via};
+use crate::taut::{self, Disc, Path, Portal, cross, distance, sub};
+use pcb_router::{Board, ClassId, NetId, NetRoute, ObstacleKind, Point, Segment, Shape, Via};
 use spade::{ConstrainedDelaunayTriangulation, HasPosition, Intersection, LineIntersectionIterator, Point2, Triangulation};
 use std::collections::HashMap;
+
+/// Room kept beyond every clearance, for rounding in the output.
+pub const MARGIN: f64 = 0.001;
+/// How far an arc's polyline may stray outside the arc.
+const BULGE: f64 = 0.0005;
+const ROUNDS: usize = 40;
 
 #[derive(Clone, Copy, Debug)]
 struct Vertex {
@@ -29,277 +44,159 @@ impl HasPosition for Vertex {
     }
 }
 
-/// What a per-layer vertex stands for.
-#[derive(Clone, Debug)]
-enum Feature {
-    /// A corner or centre of an obstacle; `radius` of the obstacle around
-    /// this point (circles and round ends are single points).
-    Obstacle { obstacle: usize, radius: f64 },
-    Via { net: NetId, radius: f64, clearance: f64 },
-    Outline,
-}
-
-/// A piece of wire on one layer, as a polyline in its homotopy class.
+/// A stretch of wire on one layer.
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub wire: usize,
     pub net: NetId,
+    pub class: ClassId,
     pub layer: usize,
+    pub width: f64,
+    /// A polyline in the piece's homotopy class, from its start to its end.
     pub points: Vec<Point>,
-    /// The piece starts or ends at a via of its own.
-    pub via_at: [Option<Point>; 2],
 }
 
-/// A wire's pieces and vias.
-pub struct Layout {
-    pub pieces: Vec<Piece>,
-    pub vias: Vec<(usize, Point)>,
+#[derive(Clone, Debug)]
+pub struct PlacedVia {
+    pub wire: usize,
+    pub net: NetId,
+    pub class: ClassId,
+    pub at: Point,
 }
 
-fn cross(a: Point, b: Point) -> f64 {
-    a[0] * b[1] - a[1] * b[0]
+/// What a vertex of a layer's triangulation stands for.
+#[derive(Clone, Copy, Debug)]
+enum Feature {
+    /// A corner (radius 0) or centre of an obstacle's shape.
+    Obstacle { obstacle: usize, radius: f64 },
+    Via { via: usize },
+    Outline,
 }
 
-fn sub(a: Point, b: Point) -> Point {
-    [a[0] - b[0], a[1] - b[1]]
-}
-
-fn length(a: Point) -> f64 {
-    (a[0] * a[0] + a[1] * a[1]).sqrt()
-}
-
-fn lerp(a: Point, b: Point, t: f64) -> Point {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-}
-
-/// Splits every routed wire into per-layer pieces at its vias, as polylines
-/// through its crossing points.
-pub fn pieces(board: &Board, mesh: &Mesh, topology: &Topology, assignment: &Assignment) -> Layout {
-    let mut layout = Layout { pieces: Vec::new(), vias: Vec::new() };
-    // Crossing positions per layer: which wires cross each edge on which
-    // layer, so a piece's points spread only among its layer's wires.
-    let mut edge_layer: HashMap<(usize, usize), usize> = HashMap::new();
-    let mut via_points: Vec<Vec<(usize, Point)>> = vec![Vec::new(); topology.wires.len()];
-    for (wire, path) in topology.wires.iter().enumerate() {
-        if !path.routed || assignment.tokens[wire].is_empty() {
-            continue;
-        }
-        let tokens = &assignment.tokens[wire];
-        let layers = &assignment.layers[wire];
-        // The layer each crossed edge is on, and where the vias go.
-        for step in 1..path.faces.len() {
-            // Last token of step - 1 and first of step.
-            let before = tokens.iter().rposition(|token| token.step == step - 1).expect("token before");
-            let after = before + 1;
-            let edge = path.edges[step - 1];
-            let layer = if layers[before] == layers[after] {
-                layers[before]
-            } else {
-                // The via goes where both layers may meet; the crossing then
-                // takes the other side's layer.
-                let both = (1 << layers[before]) | (1 << layers[after]);
-                if tokens[before].via_mask & both == both { layers[after] } else { layers[before] }
-            };
-            edge_layer.insert((edge, wire), layer);
-        }
-        for index in 0..tokens.len().saturating_sub(1) {
-            if layers[index] == layers[index + 1] {
-                continue;
-            }
-            let both = (1 << layers[index]) | (1 << layers[index + 1]);
-            let (step, from, to) = if tokens[index].step == tokens[index + 1].step {
-                (tokens[index].step, tokens[index].along, tokens[index + 1].along)
-            } else if tokens[index].via_mask & both == both {
-                (tokens[index].step, tokens[index].along, 1.0)
-            } else {
-                let next = tokens.get(index + 2).filter(|token| token.step == tokens[index + 1].step).map_or(1.0, |token| token.along);
-                (tokens[index + 1].step, 0.0, next)
-            };
-            let (p, q) = crate::layers::chord(board, mesh, topology, wire, step);
-            via_points[wire].push((index, lerp(p, q, (from + to) / 2.0)));
-        }
-    }
-    let portal_on = |edge: usize, wire: usize, layer: usize| -> Point {
-        let [a, b] = mesh.edges[edge].map(|vertex| mesh.points[vertex]);
-        let same: Vec<usize> = topology.order[edge]
-            .iter()
-            .copied()
-            .filter(|&other| edge_layer.get(&(edge, other)) == Some(&layer))
-            .collect();
-        let rooms: Vec<f64> = same.iter().map(|&other| Topology::room(board, topology.wires[other].class)).collect();
-        let total: f64 = rooms.iter().sum();
-        let index = same.iter().position(|&other| other == wire).unwrap_or(0);
-        let before: f64 = rooms.iter().take(index).sum::<f64>() + rooms.get(index).copied().unwrap_or(0.0) / 2.0;
-        let length = mesh.edge_length(edge);
-        let t = if total <= length { (length - total) / 2.0 + before } else { before * length / total.max(1.0e-12) };
-        lerp(a, b, (t / length.max(1.0e-12)).clamp(0.02, 0.98))
-    };
-    for (wire, path) in topology.wires.iter().enumerate() {
-        if !path.routed || assignment.tokens[wire].is_empty() {
-            continue;
-        }
-        let tokens = &assignment.tokens[wire];
-        let layers = &assignment.layers[wire];
-        // Walk the tokens; cut a piece at every via.
-        let mut current = Piece { wire, net: path.net, layer: layers[0], points: vec![path.from], via_at: [None, None] };
-        let mut vias = via_points[wire].iter().peekable();
-        for step in 0..path.faces.len() {
-            // Vias inside this step, in token order.
-            while let Some(&&(index, point)) = vias.peek() {
-                let at_step = if tokens[index].step == tokens[index + 1].step
-                    || tokens[index].via_mask & ((1 << layers[index]) | (1 << layers[index + 1])) == ((1 << layers[index]) | (1 << layers[index + 1]))
-                {
-                    tokens[index].step
-                } else {
-                    tokens[index + 1].step
-                };
-                if at_step != step {
-                    break;
-                }
-                vias.next();
-                current.points.push(point);
-                current.via_at[1] = Some(point);
-                layout.pieces.push(current);
-                layout.vias.push((wire, point));
-                current = Piece { wire, net: path.net, layer: layers[index + 1], points: vec![point], via_at: [Some(point), None] };
-            }
-            if step + 1 < path.faces.len() {
-                let edge = path.edges[step];
-                let layer = edge_layer.get(&(edge, wire)).copied().unwrap_or(current.layer);
-                current.points.push(portal_on(edge, wire, layer));
-            }
-        }
-        current.points.push(path.to);
-        layout.pieces.push(current);
-    }
-    layout
-}
-
-/// A layer's obstacles and vias, triangulated, with what each vertex is.
 struct LayerMesh {
     cdt: ConstrainedDelaunayTriangulation<Vertex>,
-    features: HashMap<usize, Vec<Feature>>,
     positions: Vec<Point>,
+    features: Vec<Vec<Feature>>,
+    /// Vertex by position, for obstacle corners found by exact checks.
+    at: HashMap<(i64, i64), usize>,
 }
 
-fn add_ring(cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, ring: &[Point]) -> Vec<usize> {
-    let handles: Vec<_> = ring.iter().filter_map(|point| cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok()).collect();
-    for index in 0..handles.len() {
-        let (from, to) = (handles[index], handles[(index + 1) % handles.len()]);
-        if from != to && handles.len() > 1 {
-            cdt.add_constraint_and_split(from, to, |position| Vertex { position });
-        }
-    }
-    handles.iter().map(|handle| handle.index()).collect()
+fn key(point: Point) -> (i64, i64) {
+    ((point[0] * 1.0e6).round() as i64, (point[1] * 1.0e6).round() as i64)
 }
 
-fn layer_mesh(board: &Board, layer: usize, vias: &[(NetId, Point, f64, f64)]) -> LayerMesh {
-    let mut cdt: ConstrainedDelaunayTriangulation<Vertex> = ConstrainedDelaunayTriangulation::new();
-    let mut features: HashMap<usize, Vec<Feature>> = HashMap::new();
-    for vertex in add_ring(&mut cdt, &board.outline) {
-        features.entry(vertex).or_default().push(Feature::Outline);
-    }
-    fn add_shape(cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, features: &mut HashMap<usize, Vec<Feature>>, obstacle: usize, shape: &Shape) {
-        match shape {
-            Shape::Circle { center, radius } => {
-                if let Ok(handle) = cdt.insert(Vertex { position: Point2::new(center[0], center[1]) }) {
-                    features.entry(handle.index()).or_default().push(Feature::Obstacle { obstacle, radius: *radius });
+impl LayerMesh {
+    fn new(board: &Board, layer: usize, vias: &[PlacedVia]) -> Self {
+        let mut cdt: ConstrainedDelaunayTriangulation<Vertex> = ConstrainedDelaunayTriangulation::new();
+        let mut features: HashMap<usize, Vec<Feature>> = HashMap::new();
+        let insert = |cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, point: Point| {
+            cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok()
+        };
+        let ring = |cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, points: &[Point], features: &mut HashMap<usize, Vec<Feature>>, feature: Feature| {
+            let handles: Vec<_> = points.iter().filter_map(|&point| cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok()).collect();
+            for handle in &handles {
+                features.entry(handle.index()).or_default().push(feature);
+            }
+            for index in 0..handles.len() {
+                let (from, to) = (handles[index], handles[(index + 1) % handles.len()]);
+                if from != to && handles.len() > 1 {
+                    cdt.add_constraint_and_split(from, to, |position| Vertex { position });
                 }
             }
-            Shape::Capsule { start, end, radius } => {
-                let a = cdt.insert(Vertex { position: Point2::new(start[0], start[1]) });
-                let b = cdt.insert(Vertex { position: Point2::new(end[0], end[1]) });
-                if let (Ok(a), Ok(b)) = (a, b) {
-                    if a != b {
-                        cdt.add_constraint_and_split(a, b, |position| Vertex { position });
-                    }
-                    for handle in [a, b] {
+        };
+        ring(&mut cdt, &board.outline, &mut features, Feature::Outline);
+        fn add_shape(
+            cdt: &mut ConstrainedDelaunayTriangulation<Vertex>,
+            features: &mut HashMap<usize, Vec<Feature>>,
+            obstacle: usize,
+            shape: &Shape,
+            ring: &dyn Fn(&mut ConstrainedDelaunayTriangulation<Vertex>, &[Point], &mut HashMap<usize, Vec<Feature>>, Feature),
+        ) {
+            match shape {
+                Shape::Circle { center, radius } => {
+                    if let Ok(handle) = cdt.insert(Vertex { position: Point2::new(center[0], center[1]) }) {
                         features.entry(handle.index()).or_default().push(Feature::Obstacle { obstacle, radius: *radius });
                     }
                 }
-            }
-            Shape::Polygon { points } => {
-                for vertex in add_ring(cdt, points) {
-                    features.entry(vertex).or_default().push(Feature::Obstacle { obstacle, radius: 0.0 });
+                Shape::Capsule { start, end, radius } => {
+                    let a = cdt.insert(Vertex { position: Point2::new(start[0], start[1]) });
+                    let b = cdt.insert(Vertex { position: Point2::new(end[0], end[1]) });
+                    if let (Ok(a), Ok(b)) = (a, b) {
+                        if a != b {
+                            cdt.add_constraint_and_split(a, b, |position| Vertex { position });
+                        }
+                        for handle in [a, b] {
+                            features.entry(handle.index()).or_default().push(Feature::Obstacle { obstacle, radius: *radius });
+                        }
+                    }
+                }
+                Shape::Polygon { points } => ring(cdt, points, features, Feature::Obstacle { obstacle, radius: 0.0 }),
+                Shape::Union { parts } => {
+                    for part in parts {
+                        add_shape(cdt, features, obstacle, part, ring);
+                    }
                 }
             }
-            Shape::Union { parts } => {
-                for part in parts {
-                    add_shape(cdt, features, obstacle, part);
-                }
-            }
         }
-    }
-    for (index, obstacle) in board.obstacles.iter().enumerate() {
-        if obstacle.layers & (1 << layer) == 0 || !obstacle.blocks_tracks {
-            continue;
-        }
-        add_shape(&mut cdt, &mut features, index, &obstacle.shape);
-    }
-    for &(net, at, radius, clearance) in vias {
-        if let Ok(handle) = cdt.insert(Vertex { position: Point2::new(at[0], at[1]) }) {
-            features.entry(handle.index()).or_default().push(Feature::Via { net, radius, clearance });
-        }
-    }
-    let positions: Vec<Point> = cdt.vertices().map(|vertex| [vertex.position().x, vertex.position().y]).collect();
-    // Vertices made by splitting constraints lie on an obstacle's boundary
-    // (or the outline): they are corners of what they lie on.
-    for (vertex, &point) in positions.iter().enumerate() {
-        if features.contains_key(&vertex) {
-            continue;
-        }
-        let mut found = Vec::new();
         for (index, obstacle) in board.obstacles.iter().enumerate() {
-            if obstacle.layers & (1 << layer) == 0 || !obstacle.blocks_tracks {
+            if obstacle.layers & (1 << layer) != 0 && obstacle.blocks_tracks {
+                add_shape(&mut cdt, &mut features, index, &obstacle.shape, &ring);
+            }
+        }
+        for (index, via) in vias.iter().enumerate() {
+            if let Some(handle) = insert(&mut cdt, via.at) {
+                features.entry(handle.index()).or_default().push(Feature::Via { via: index });
+            }
+        }
+        let positions: Vec<Point> = cdt.vertices().map(|vertex| [vertex.position().x, vertex.position().y]).collect();
+        let mut list = vec![Vec::new(); positions.len()];
+        for (vertex, found) in features {
+            list[vertex] = found;
+        }
+        // Vertices made by splitting constraints lie on an obstacle's
+        // boundary (or the outline) without being one of its corners.
+        for (vertex, &point) in positions.iter().enumerate() {
+            if !list[vertex].is_empty() {
                 continue;
             }
-            let bounds = obstacle.shape.aabb().inflated(1.0e-6);
-            if point[0] < bounds.minimum[0] || point[0] > bounds.maximum[0] || point[1] < bounds.minimum[1] || point[1] > bounds.maximum[1] {
-                continue;
+            for (index, obstacle) in board.obstacles.iter().enumerate() {
+                if obstacle.layers & (1 << layer) == 0 || !obstacle.blocks_tracks {
+                    continue;
+                }
+                let bounds = obstacle.shape.aabb().inflated(1.0e-6);
+                if point[0] < bounds.minimum[0] || point[0] > bounds.maximum[0] || point[1] < bounds.minimum[1] || point[1] > bounds.maximum[1] {
+                    continue;
+                }
+                if obstacle.shape.distance_to_point(point) < 1.0e-6 {
+                    list[vertex].push(Feature::Obstacle { obstacle: index, radius: 0.0 });
+                }
             }
-            if obstacle.shape.distance_to_point(point) < 1.0e-6 {
-                found.push(Feature::Obstacle { obstacle: index, radius: 0.0 });
+            if pcb_router::geometry::polygon_edges(&board.outline).any(|(a, b)| pcb_router::geometry::point_segment_distance(point, a, b) < 1.0e-6) {
+                list[vertex].push(Feature::Outline);
             }
         }
-        let on_outline = pcb_router::geometry::polygon_edges(&board.outline)
-            .any(|(a, b)| pcb_router::geometry::point_segment_distance(point, a, b) < 1.0e-6);
-        if on_outline {
-            found.push(Feature::Outline);
-        }
-        if !found.is_empty() {
-            features.insert(vertex, found);
-        }
+        let at = positions.iter().enumerate().map(|(index, &point)| (key(point), index)).collect();
+        Self { cdt, positions, features: list, at }
     }
-    LayerMesh { cdt, features, positions }
 }
 
-/// A disc the wire must pass on one side.
+/// Where a piece crosses an edge of the layer's triangulation.
 #[derive(Clone, Copy, Debug)]
-struct Disc {
-    center: Point,
-    radius: f64,
-    /// +1: the disc lies to the left of the wire, -1: to the right.
-    side: f64,
-    vertex: usize,
-}
-
-/// One portal of a piece's channel: the vertices on its left and right.
-#[derive(Clone, Copy, Debug)]
-struct Portal {
+struct Crossing {
+    edge: usize,
     left: usize,
     right: usize,
-    edge: usize,
-    /// Where the piece's polyline crosses, 0 at `left` to 1 at `right`.
+    /// From `left` (0) to `right` (1).
     at: f64,
 }
 
-/// The channel of a polyline through the layer mesh: the edges it crosses,
-/// with the homotopic back-and-forth crossings cancelled.
-fn channel(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Portal>> {
-    let mut portals: Vec<Portal> = Vec::new();
+/// The edges a polyline crosses, with back-and-forth crossings (no vertex
+/// between) cancelled: its channel.
+fn trace(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Crossing>> {
+    let mut crossings: Vec<Crossing> = Vec::new();
     for pair in points.windows(2) {
         let (from, to) = (pair[0], pair[1]);
-        if length(sub(to, from)) < 1.0e-9 {
+        if distance(from, to) < 1.0e-9 {
             continue;
         }
         let direction = sub(to, from);
@@ -314,25 +211,21 @@ fn channel(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Portal>> {
                     } else {
                         (b.fix().index(), a.fix().index(), pb, pa)
                     };
-                    // Where the segment meets the portal.
-                    let d2 = sub(pr, pl);
-                    let denominator = cross(direction, d2);
+                    let span = sub(pr, pl);
+                    let denominator = cross(direction, span);
                     let at = if denominator.abs() < 1.0e-15 { 0.5 } else { cross(sub(pl, from), direction) / denominator };
                     let undirected = edge.as_undirected().fix().index();
-                    if let Some(last) = portals.last()
-                        && last.edge == undirected
-                    {
-                        portals.pop();
+                    if crossings.last().is_some_and(|last| last.edge == undirected) {
+                        crossings.pop();
                         continue;
                     }
-                    portals.push(Portal { left, right, edge: undirected, at: at.clamp(0.0, 1.0) });
+                    crossings.push(Crossing { edge: undirected, left, right, at: at.clamp(0.0, 1.0) });
                 }
                 Intersection::VertexIntersection(vertex) => {
-                    let p = vertex.position();
-                    let at = [p.x, p.y];
-                    // Starting or ending on a vertex (a via) is expected;
-                    // passing through one is degenerate.
-                    if length(sub(at, from)) > 1.0e-7 && length(sub(at, to)) > 1.0e-7 {
+                    let p = [vertex.position().x, vertex.position().y];
+                    // Starting or ending on a vertex (a via, a round pad's
+                    // centre) is expected; passing through one is not.
+                    if distance(p, from) > 1.0e-7 && distance(p, to) > 1.0e-7 {
                         return None;
                     }
                 }
@@ -340,124 +233,129 @@ fn channel(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Portal>> {
             }
         }
     }
-    Some(portals)
+    Some(crossings)
 }
 
-/// Pulls a piece tight: the funnel over portals shrunk by each vertex's
-/// radius picks the discs the wire wraps; the path is then exact tangents
-/// and arcs.
-fn tighten(start: Point, end: Point, portals: &[(Point, Point, Disc, Disc)]) -> Vec<Disc> {
-    // Simple stupid funnel algorithm on shrunk points.
-    let mut apexes: Vec<Disc> = Vec::new();
-    let mut points: Vec<(Point, Point, Option<Disc>, Option<Disc>)> = vec![(start, start, None, None)];
-    for &(left, right, disc_left, disc_right) in portals {
-        points.push((left, right, Some(disc_left), Some(disc_right)));
+/// `trace`, retried with the inner points nudged off vertices and edges.
+fn trace_nudged(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Crossing>> {
+    if let Some(found) = trace(mesh, points) {
+        return Some(found);
     }
-    points.push((end, end, None, None));
-    let mut apex = start;
-    let (mut left, mut right) = (start, start);
-    let (mut left_index, mut right_index) = (0usize, 0usize);
-    let mut index = 1;
-    let mut guard = 0;
-    while index < points.len() {
-        guard += 1;
-        if guard > 100_000 {
-            break;
-        }
-        let (portal_left, portal_right, disc_left, disc_right) = points[index];
-        // Tighten the right side.
-        if cross(sub(right, apex), sub(portal_right, apex)) >= 0.0 {
-            if length(sub(apex, right)) < 1.0e-12 || cross(sub(left, apex), sub(portal_right, apex)) < 0.0 {
-                right = portal_right;
-                right_index = index;
-            } else {
-                // The right side passes the left: the left disc is a corner.
-                if let Some(disc) = points[left_index].2 {
-                    apexes.push(disc);
+    for attempt in 1..4 {
+        let count = points.len();
+        let nudged: Vec<Point> = points
+            .iter()
+            .enumerate()
+            .map(|(index, &point)| {
+                if index == 0 || index + 1 == count {
+                    point
+                } else {
+                    let offset = 1.0e-6 * attempt as f64;
+                    [point[0] + offset * 1.3, point[1] + offset * 0.7]
                 }
-                apex = left;
-                let restart = left_index;
-                left = apex;
-                right = apex;
-                left_index = restart;
-                right_index = restart;
-                index = restart + 1;
-                continue;
-            }
-        }
-        // Tighten the left side.
-        if cross(sub(left, apex), sub(portal_left, apex)) <= 0.0 {
-            if length(sub(apex, left)) < 1.0e-12 || cross(sub(right, apex), sub(portal_left, apex)) > 0.0 {
-                left = portal_left;
-                left_index = index;
-            } else {
-                if let Some(disc) = points[right_index].3 {
-                    apexes.push(disc);
-                }
-                apex = right;
-                let restart = right_index;
-                left = apex;
-                right = apex;
-                left_index = restart;
-                right_index = restart;
-                index = restart + 1;
-                continue;
-            }
-        }
-        let _ = (disc_left, disc_right);
-        index += 1;
-    }
-    apexes
-}
-
-/// The directed tangent from disc `a` to disc `b`: its two touch points.
-/// A disc's `side` says which side of the tangent its centre lies on.
-fn tangent(a: Disc, b: Disc) -> Option<(Point, Point)> {
-    let d = sub(b.center, a.center);
-    let distance = length(d);
-    if distance < 1.0e-12 {
-        return None;
-    }
-    // With `n` the left normal of the tangent's direction, the centres lie
-    // at signed distances side * radius: n . (b - a) = k.
-    let k = b.side * b.radius - a.side * a.radius;
-    if k.abs() > distance {
-        return None;
-    }
-    let phi = d[1].atan2(d[0]);
-    let delta = (k / distance).acos();
-    for theta in [phi + delta, phi - delta] {
-        let n = [theta.cos(), theta.sin()];
-        let direction = [n[1], -n[0]];
-        let p = [a.center[0] - a.side * a.radius * n[0], a.center[1] - a.side * a.radius * n[1]];
-        let q = [b.center[0] - b.side * b.radius * n[0], b.center[1] - b.side * b.radius * n[1]];
-        let run = sub(q, p);
-        if run[0] * direction[0] + run[1] * direction[1] > -1.0e-12 {
-            return Some((p, q));
+            })
+            .collect();
+        if let Some(found) = trace(mesh, &nudged) {
+            return Some(found);
         }
     }
     None
 }
 
-/// Points of an arc around `disc` from `from` to `to`, circumscribing it.
-fn arc(disc: Disc, from: Point, to: Point, output: &mut Vec<Point>) {
-    let a0 = (from[1] - disc.center[1]).atan2(from[0] - disc.center[0]);
-    let a1 = (to[1] - disc.center[1]).atan2(to[0] - disc.center[0]);
-    let tau = std::f64::consts::TAU;
-    // Discs on the left are passed counter-clockwise (positive angles).
-    let sweep = if disc.side > 0.0 { (a1 - a0).rem_euclid(tau) } else { -(a0 - a1).rem_euclid(tau) };
-    if sweep.abs() < 1.0e-9 || disc.radius < 1.0e-9 {
-        output.push(to);
-        return;
+/// The room a piece needs from a feature (0 for its own copper).
+fn required(board: &Board, vias: &[PlacedVia], feature: Feature, piece: &Piece) -> f64 {
+    let (net, rule) = (piece.net, &board.classes[piece.class]);
+    let half = piece.width / 2.0 + MARGIN;
+    match feature {
+        Feature::Obstacle { obstacle, radius } => {
+            let obstacle = &board.obstacles[obstacle];
+            if obstacle.kind == ObstacleKind::Copper && obstacle.net == Some(net) {
+                return 0.0;
+            }
+            let gap = match obstacle.kind {
+                ObstacleKind::Copper => board.copper_clearance(rule, obstacle),
+                ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+                ObstacleKind::Keepout => 0.0,
+            };
+            radius + gap + half
+        }
+        Feature::Via { via } => {
+            let via = &vias[via];
+            if via.net == net {
+                return 0.0;
+            }
+            let other = &board.classes[via.class];
+            other.via_diameter / 2.0 + rule.clearance.max(other.clearance) + half
+        }
+        Feature::Outline => board.edge_clearance + half,
     }
-    let pieces = ((sweep.abs() / 10f64.to_radians()).ceil() as usize).max(1);
-    let step = sweep / pieces as f64;
-    let outer = disc.radius / (step.abs() / 2.0).cos();
-    for index in 0..pieces {
-        let angle = a0 + step * (index as f64 + 0.5);
-        output.push([disc.center[0] + outer * angle.cos(), disc.center[1] + outer * angle.sin()]);
+}
+
+/// Obstacles and vias of one layer in buckets, for exact checks.
+struct Nearby {
+    buckets: HashMap<(i64, i64), Vec<usize>>,
+}
+
+const BUCKET: f64 = 2.0;
+
+impl Nearby {
+    fn new(board: &Board, layer: usize) -> Self {
+        let mut buckets: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+        for (index, obstacle) in board.obstacles.iter().enumerate() {
+            if obstacle.layers & (1 << layer) == 0 || !obstacle.blocks_tracks {
+                continue;
+            }
+            let bounds = obstacle.shape.aabb();
+            for x in (bounds.minimum[0] / BUCKET).floor() as i64..=(bounds.maximum[0] / BUCKET).floor() as i64 {
+                for y in (bounds.minimum[1] / BUCKET).floor() as i64..=(bounds.maximum[1] / BUCKET).floor() as i64 {
+                    buckets.entry((x, y)).or_default().push(index);
+                }
+            }
+        }
+        Self { buckets }
     }
-    output.push(to);
+
+    fn around(&self, a: Point, b: Point, reach: f64) -> Vec<usize> {
+        let mut found = Vec::new();
+        let x0 = ((a[0].min(b[0]) - reach) / BUCKET).floor() as i64;
+        let x1 = ((a[0].max(b[0]) + reach) / BUCKET).floor() as i64;
+        let y0 = ((a[1].min(b[1]) - reach) / BUCKET).floor() as i64;
+        let y1 = ((a[1].max(b[1]) + reach) / BUCKET).floor() as i64;
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                for &index in self.buckets.get(&(x, y)).map(Vec::as_slice).unwrap_or(&[]) {
+                    if !found.contains(&index) {
+                        found.push(index);
+                    }
+                }
+            }
+        }
+        found
+    }
+}
+
+/// The discs of an obstacle's outline nearest to `near`: a polygon's
+/// closest edge's two corners, a capsule's ends, a circle's centre.
+fn corner_discs(shape: &Shape, near: Point) -> Vec<(Point, f64)> {
+    match shape {
+        Shape::Circle { center, radius } => vec![(*center, *radius)],
+        Shape::Capsule { start, end, radius } => vec![(*start, *radius), (*end, *radius)],
+        Shape::Polygon { points } => {
+            let mut best = (f64::INFINITY, 0);
+            for index in 0..points.len() {
+                let d = taut::point_segment_distance(near, points[index], points[(index + 1) % points.len()]);
+                if d < best.0 {
+                    best = (d, index);
+                }
+            }
+            vec![(points[best.1], 0.0), (points[(best.1 + 1) % points.len()], 0.0)]
+        }
+        Shape::Union { parts } => parts
+            .iter()
+            .min_by(|a, b| a.distance_to_point(near).total_cmp(&b.distance_to_point(near)))
+            .map(|part| corner_discs(part, near))
+            .unwrap_or_default(),
+    }
 }
 
 /// Copper per net, and which wire each segment and via belongs to.
@@ -465,214 +363,207 @@ pub struct Realized {
     pub routes: Vec<NetRoute>,
     pub segment_wire: Vec<Vec<usize>>,
     pub via_wire: Vec<Vec<usize>>,
-    /// Wires with a piece that could not be realized (a squeezed channel).
-    pub failed: Vec<usize>,
+    /// Pieces (by index) that could not be pulled tight legally, and why.
+    pub failed: Vec<(usize, String)>,
+    /// Per piece: its path, if one was found.
+    pub paths: Vec<Option<Vec<Point>>>,
 }
 
-/// Realizes every piece on its layer.
-pub fn realize(board: &Board, layout: &Layout, topology: &Topology) -> Realized {
+/// Pulls every piece tight on its layer.
+pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized {
     let mut routes = vec![NetRoute::default(); board.nets.len()];
     let mut segment_wire: Vec<Vec<usize>> = vec![Vec::new(); board.nets.len()];
     let mut via_wire: Vec<Vec<usize>> = vec![Vec::new(); board.nets.len()];
     let mut failed = Vec::new();
-    let via_list: Vec<(NetId, Point, f64, f64)> = layout
-        .vias
-        .iter()
-        .map(|&(wire, at)| {
-            let class = &board.classes[topology.wires[wire].class];
-            (topology.wires[wire].net, at, class.via_diameter / 2.0, class.clearance)
-        })
-        .collect();
-    for &(wire, at) in &layout.vias {
-        let class = &board.classes[topology.wires[wire].class];
-        routes[topology.wires[wire].net as usize].vias.push(Via { at, diameter: class.via_diameter, drill: class.via_drill });
-        via_wire[topology.wires[wire].net as usize].push(wire);
+    let mut paths = vec![None; pieces.len()];
+    for via in vias {
+        let class = &board.classes[via.class];
+        routes[via.net as usize].vias.push(Via { at: via.at, diameter: class.via_diameter, drill: class.via_drill });
+        via_wire[via.net as usize].push(via.wire);
     }
     for layer in 0..board.layer_count {
-        let pieces: Vec<&Piece> = layout.pieces.iter().filter(|piece| piece.layer == layer).collect();
-        if pieces.is_empty() {
+        let on_layer: Vec<usize> = (0..pieces.len()).filter(|&index| pieces[index].layer == layer).collect();
+        if on_layer.is_empty() {
             continue;
         }
-        let mesh = layer_mesh(board, layer, &via_list);
-        // Channels, then which pieces cross each edge where.
-        let mut channels: Vec<Option<Vec<Portal>>> = Vec::with_capacity(pieces.len());
-        for piece in &pieces {
-            let mut found = channel(&mesh, &piece.points);
-            if found.is_none() {
-                // Nudge the inner points off a vertex or edge and retry.
-                let mut nudged = piece.points.clone();
-                let count = nudged.len();
-                for (index, point) in nudged.iter_mut().enumerate() {
-                    if index > 0 && index + 1 < count {
-                        point[0] += 1.3e-6;
-                        point[1] += 0.7e-6;
-                    }
-                }
-                found = channel(&mesh, &nudged);
-            }
-            channels.push(found);
-        }
-        let mut on_edge: HashMap<usize, Vec<(f64, usize)>> = HashMap::new();
-        for (index, found) in channels.iter().enumerate() {
-            let Some(portals) = found else { continue };
-            for portal in portals {
-                // Parameter from the edge's lower vertex id, comparable
-                // between pieces crossing either way.
-                let at = if portal.left < portal.right { portal.at } else { 1.0 - portal.at };
-                on_edge.entry(portal.edge).or_default().push((at, index));
-            }
-        }
-        for list in on_edge.values_mut() {
-            list.sort_by(|a, b| a.0.total_cmp(&b.0));
-        }
-        let room = |index: usize| {
-            let class = &board.classes[topology.wires[pieces[index].wire].class];
-            (class.trace_width, class.clearance)
-        };
-        // Radius a piece keeps from a vertex: the vertex's own clearance
-        // plus the pieces of other nets passing between.
-        let base = |vertex: usize, index: usize| -> f64 {
-            let piece = pieces[index];
-            let (width, clearance) = room(index);
-            let class = &board.classes[topology.wires[piece.wire].class];
-            let mut radius: f64 = 0.0;
-            for feature in mesh.features.get(&vertex).map(Vec::as_slice).unwrap_or(&[]) {
-                let needed = match feature {
-                    Feature::Obstacle { obstacle, radius } => {
-                        let obstacle_ref = &board.obstacles[*obstacle];
-                        if obstacle_ref.kind == ObstacleKind::Copper && obstacle_ref.net == Some(piece.net) {
-                            0.0
-                        } else {
-                            let gap = match obstacle_ref.kind {
-                                ObstacleKind::Copper => board.copper_clearance(class, obstacle_ref),
-                                ObstacleKind::Hole => board.hole_clearance.max(clearance),
-                                ObstacleKind::Keepout => 0.0,
-                            };
-                            radius + gap + width / 2.0
+        let results = realize_layer(board, pieces, &on_layer, vias, layer);
+        for (index, result) in on_layer.into_iter().zip(results) {
+            let piece = &pieces[index];
+            match result {
+                Ok(points) => {
+                    let width = piece.width;
+                    for pair in points.windows(2) {
+                        if distance(pair[0], pair[1]) < 1.0e-6 {
+                            continue;
                         }
+                        routes[piece.net as usize].segments.push(Segment { layer, start: pair[0], end: pair[1], width });
+                        segment_wire[piece.net as usize].push(piece.wire);
                     }
-                    Feature::Via { net, radius, clearance: other } => {
-                        if *net == piece.net { 0.0 } else { radius + clearance.max(*other) + width / 2.0 }
-                    }
-                    Feature::Outline => board.edge_clearance + width / 2.0,
-                };
-                radius = radius.max(needed);
-            }
-            radius
-        };
-        for (index, piece) in pieces.iter().enumerate() {
-            let debug = std::env::var("PCB_TOPO_DEBUG").is_ok();
-            let Some(portals) = &channels[index] else {
-                if debug {
-                    eprintln!("  piece of wire {} on layer {layer}: no channel", piece.wire);
+                    paths[index] = Some(points);
                 }
-                failed.push(piece.wire);
-                continue;
-            };
-            let (width, clearance) = room(index);
-            let mut shrunk = Vec::with_capacity(portals.len());
-            let mut squeezed = false;
-            for portal in portals {
-                let stack = |vertex: usize| -> f64 {
-                    let list = &on_edge[&portal.edge];
-                    let mine = list.iter().position(|&(_, other)| other == index).unwrap_or(0);
-                    let lower_is_vertex = vertex == portal.left.min(portal.right);
-                    let range: Vec<usize> = if lower_is_vertex { (0..mine).collect() } else { (mine + 1..list.len()).collect() };
-                    range
-                        .into_iter()
-                        .map(|position| list[position].1)
-                        .filter(|&other| pieces[other].net != piece.net)
-                        .map(|other| {
-                            let (w, c) = room(other);
-                            w + c.max(clearance)
-                        })
-                        .sum()
-                };
-                let left_radius = base(portal.left, index) + stack(portal.left);
-                let right_radius = base(portal.right, index) + stack(portal.right);
-                let (pl, pr) = (mesh.positions[portal.left], mesh.positions[portal.right]);
-                let span = length(sub(pr, pl));
-                let (mut a, mut b) = (left_radius / span.max(1.0e-12), 1.0 - right_radius / span.max(1.0e-12));
-                if a > b {
-                    if debug {
-                        eprintln!(
-                            "  piece of wire {} on layer {layer}: squeezed between {:?} (r {:.3}) and {:?} (r {:.3}), span {:.3}",
-                            piece.wire, pl, left_radius, pr, right_radius, span
-                        );
-                    }
-                    squeezed = true;
-                    let middle = (a + b) / 2.0;
-                    a = middle;
-                    b = middle;
-                }
-                shrunk.push((
-                    lerp(pl, pr, a),
-                    lerp(pl, pr, b),
-                    Disc { center: pl, radius: left_radius, side: 1.0, vertex: portal.left },
-                    Disc { center: pr, radius: right_radius, side: -1.0, vertex: portal.right },
-                ));
-            }
-            let _ = width;
-            let start = piece.points[0];
-            let end = *piece.points.last().expect("piece end");
-            // The funnel can name the piece's own end points, or one vertex
-            // several times in a row: keep each wrapped disc once.
-            let mut apexes: Vec<Disc> = Vec::new();
-            for disc in tighten(start, end, &shrunk) {
-                if length(sub(disc.center, start)) < 1.0e-9 || length(sub(disc.center, end)) < 1.0e-9 {
-                    continue;
-                }
-                if let Some(last) = apexes.last_mut()
-                    && last.vertex == disc.vertex
-                {
-                    last.radius = last.radius.max(disc.radius);
-                    continue;
-                }
-                apexes.push(disc);
-            }
-            // Exact path: tangents between consecutive discs, arcs around.
-            let mut discs = vec![Disc { center: start, radius: 0.0, side: 1.0, vertex: usize::MAX }];
-            discs.extend(apexes);
-            discs.push(Disc { center: end, radius: 0.0, side: 1.0, vertex: usize::MAX });
-            let mut polyline = vec![start];
-            let mut ok = !squeezed;
-            let mut entry = start;
-            for pair in 0..discs.len() - 1 {
-                let (a, b) = (discs[pair], discs[pair + 1]);
-                let Some((p, q)) = tangent(a, b) else {
-                    if debug {
-                        eprintln!("  piece of wire {} on layer {layer}: no tangent from {:?} to {:?}", piece.wire, a, b);
-                    }
-                    ok = false;
-                    polyline.push(b.center);
-                    entry = b.center;
-                    continue;
-                };
-                if pair > 0 {
-                    arc(a, entry, p, &mut polyline);
-                } else if length(sub(p, start)) > 1.0e-9 {
-                    polyline.push(p);
-                }
-                polyline.push(q);
-                entry = q;
-            }
-            if length(sub(*polyline.last().unwrap(), end)) > 1.0e-9 {
-                polyline.push(end);
-            }
-            if !ok {
-                failed.push(piece.wire);
-            }
-            let route = &mut routes[piece.net as usize];
-            for pair in polyline.windows(2) {
-                if length(sub(pair[1], pair[0])) < 1.0e-6 {
-                    continue;
-                }
-                route.segments.push(Segment { layer, start: pair[0], end: pair[1], width });
-                segment_wire[piece.net as usize].push(piece.wire);
+                Err(reason) => failed.push((index, reason)),
             }
         }
     }
-    failed.sort_unstable();
-    failed.dedup();
-    Realized { routes, segment_wire, via_wire, failed }
+    Realized { routes, segment_wire, via_wire, failed, paths }
+}
+
+fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[PlacedVia], layer: usize) -> Vec<Result<Vec<Point>, String>> {
+    let mesh = LayerMesh::new(board, layer, vias);
+    let nearby = Nearby::new(board, layer);
+    let count = on_layer.len();
+    let channels: Vec<Option<Vec<Crossing>>> = on_layer.iter().map(|&index| trace_nudged(&mesh, &pieces[index].points)).collect();
+    // Per edge: (position from the edge's lower vertex, piece) in order.
+    let mut on_edge: HashMap<usize, Vec<(f64, usize)>> = HashMap::new();
+    for (local, channel) in channels.iter().enumerate() {
+        for crossing in channel.iter().flatten() {
+            let at = if crossing.left < crossing.right { crossing.at } else { 1.0 - crossing.at };
+            on_edge.entry(crossing.edge).or_default().push((at, local));
+        }
+    }
+    for list in on_edge.values_mut() {
+        list.sort_by(|a, b| a.0.total_cmp(&b.0));
+    }
+    let piece = |local: usize| &pieces[on_layer[local]];
+    let base = |local: usize, vertex: usize| -> f64 {
+        let piece = piece(local);
+        mesh.features[vertex].iter().map(|&feature| required(board, vias, feature, piece)).fold(0.0, f64::max)
+    };
+    // Radius per piece and vertex: the base, grown by nested pieces.
+    let mut radii: Vec<HashMap<usize, f64>> = vec![HashMap::new(); count];
+    for (local, channel) in channels.iter().enumerate() {
+        for crossing in channel.iter().flatten() {
+            for vertex in [crossing.left, crossing.right] {
+                let radius = base(local, vertex);
+                radii[local].insert(vertex, radius);
+            }
+        }
+    }
+    let mut results: Vec<Result<Path, String>> = vec![Err("not realized".into()); count];
+    let mut dirty = vec![true; count];
+    for _round in 0..ROUNDS {
+        for local in 0..count {
+            if !dirty[local] {
+                continue;
+            }
+            dirty[local] = false;
+            let Some(channel) = &channels[local] else {
+                results[local] = Err("no channel (the embedding passes through a vertex)".into());
+                continue;
+            };
+            results[local] = pull(board, &mesh, &nearby, vias, piece(local), channel, &radii[local]);
+        }
+        // Grow radii by the pieces of other nets nested inside.
+        let mut changed = false;
+        for local in 0..count {
+            let Some(channel) = &channels[local] else { continue };
+            let own = piece(local);
+            let own_class = &board.classes[own.class];
+            for crossing in channel {
+                let list = &on_edge[&crossing.edge];
+                let mine = list.iter().position(|&(_, other)| other == local).expect("own crossing");
+                for vertex in [crossing.left, crossing.right] {
+                    let lower = vertex == crossing.left.min(crossing.right);
+                    let inside: &[(f64, usize)] = if lower { &list[..mine] } else { &list[mine + 1..] };
+                    let mut need = radii[local][&vertex];
+                    for &(_, other) in inside {
+                        let other_piece = piece(other);
+                        if other_piece.net == own.net {
+                            continue;
+                        }
+                        let Ok(path) = &results[other] else { continue };
+                        let other_class = &board.classes[other_piece.class];
+                        let (gap, _) = taut::closest(path, mesh.positions[vertex]);
+                        let wanted = gap + other_piece.width / 2.0 + own_class.clearance.max(other_class.clearance) + own.width / 2.0 + MARGIN;
+                        need = need.max(wanted);
+                    }
+                    if need > radii[local][&vertex] + 1.0e-6 {
+                        radii[local].insert(vertex, need);
+                        dirty[local] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    results
+        .into_iter()
+        .map(|result| result.map(|path| taut::polyline(&path, BULGE)))
+        .collect()
+}
+
+/// A piece pulled tight through its channel, then kept clear of the exact
+/// shapes of the layer's obstacles.
+fn pull(
+    board: &Board,
+    mesh: &LayerMesh,
+    nearby: &Nearby,
+    vias: &[PlacedVia],
+    piece: &Piece,
+    channel: &[Crossing],
+    radii: &HashMap<usize, f64>,
+) -> Result<Path, String> {
+    let start = piece.points[0];
+    let end = *piece.points.last().expect("piece end");
+    let portals: Vec<Portal> = channel
+        .iter()
+        .map(|crossing| Portal {
+            left: mesh.positions[crossing.left],
+            right: mesh.positions[crossing.right],
+            left_vertex: crossing.left,
+            right_vertex: crossing.right,
+            left_radius: radii[&crossing.left],
+            right_radius: radii[&crossing.right],
+        })
+        .collect();
+    let rule = &board.classes[piece.class];
+    let mut extra: Vec<Disc> = Vec::new();
+    for _ in 0..20 {
+        let path = taut::taut_with(start, end, &portals, &extra).map_err(|failure| format!("{failure:?}"))?;
+        // The closest obstacle the path comes too close to.
+        let points = taut::polyline(&path, BULGE);
+        let mut worst: Option<(f64, usize, Point, Point)> = None;
+        for pair in points.windows(2) {
+            for index in nearby.around(pair[0], pair[1], 3.0) {
+                let obstacle = &board.obstacles[index];
+                if obstacle.kind == ObstacleKind::Copper && obstacle.net == Some(piece.net) {
+                    continue;
+                }
+                let gap = match obstacle.kind {
+                    ObstacleKind::Copper => board.copper_clearance(rule, obstacle),
+                    ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+                    ObstacleKind::Keepout => 0.0,
+                };
+                let deficit = gap + piece.width / 2.0 - obstacle.shape.distance_to_segment(pair[0], pair[1]);
+                if deficit > 1.0e-7 && worst.is_none_or(|w| deficit > w.0) {
+                    worst = Some((deficit, index, pair[0], pair[1]));
+                }
+            }
+        }
+        let Some((_, index, a, b)) = worst else {
+            return Ok(path);
+        };
+        let obstacle = &board.obstacles[index];
+        let direction = sub(b, a);
+        let middle = taut::lerp(a, b, 0.5);
+        let mut added = false;
+        for (center, radius) in corner_discs(&obstacle.shape, middle) {
+            let vertex = mesh.at.get(&key(center)).copied().unwrap_or(usize::MAX / 2 + index * 64 + extra.len());
+            if extra.iter().any(|disc| disc.vertex == vertex) {
+                continue;
+            }
+            let side = if cross(direction, sub(center, a)) >= 0.0 { 1.0 } else { -1.0 };
+            let feature = Feature::Obstacle { obstacle: index, radius };
+            let needed = required(board, vias, feature, piece).max(radii.get(&vertex).copied().unwrap_or(0.0));
+            extra.push(Disc { center, radius: needed, side, vertex });
+            added = true;
+        }
+        if !added {
+            return Err(format!("too close to {}", obstacle.label));
+        }
+    }
+    Err("unsettled against obstacles".into())
 }

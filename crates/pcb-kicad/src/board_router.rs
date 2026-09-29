@@ -95,6 +95,11 @@ pub struct KiCadBoardRouterConfig {
     /// Rip-up rounds of the topological engine (default 30).
     #[serde(default)]
     pub topological_rounds: Option<usize>,
+    /// Pull the lattice router's tracks tight afterwards (any-angle tracks
+    /// with arcs, as the topological engine draws them), wherever the
+    /// result stays legal.
+    #[serde(default)]
+    pub tighten: bool,
     /// How nets with copper pours are connected.
     #[serde(default)]
     pub pours: KiCadPourMode,
@@ -1805,6 +1810,20 @@ fn route_kicad_board_once(
             router.run()
         }
     };
+    let mut result = result;
+    if config.tighten && config.engine.as_deref() != Some("topological") {
+        let tightening = std::time::Instant::now();
+        let (routes, report) = pcb_topo::tighten::tighten(&board, &result.routes);
+        eprintln!(
+            "tighten: {} of {} pieces pulled tight, {:.1} mm -> {:.1} mm, {:.2}s",
+            report.tightened,
+            report.pieces,
+            report.length_before,
+            report.length_after,
+            tightening.elapsed().as_secs_f64()
+        );
+        result.routes = routes;
+    }
     let routing_seconds = routing_started.elapsed().as_secs_f64();
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     finish_routed_board(

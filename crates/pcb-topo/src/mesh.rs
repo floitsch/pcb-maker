@@ -157,7 +157,11 @@ impl Index {
 }
 
 impl Mesh {
-    pub fn build(board: &Board, index: &Index) -> Self {
+    /// The triangulation of `board`'s obstacles and outline, with free
+    /// points on a grid of `spacing` wherever the board is open (so wires
+    /// in open areas pass several small faces: room for vias between the
+    /// wires they cross). A `spacing` of 0 adds none.
+    pub fn build(board: &Board, index: &Index, spacing: f64) -> Self {
         let mut cdt: ConstrainedDelaunayTriangulation<Vertex> = ConstrainedDelaunayTriangulation::new();
         let mut rings: Vec<Vec<Point>> = Vec::new();
         rings.push(board.outline.clone());
@@ -174,6 +178,33 @@ impl Mesh {
                 if from != to {
                     cdt.add_constraint_and_split(from, to, |position| Vertex { position });
                 }
+            }
+        }
+        if spacing > 0.0 && board.outline.len() >= 3 {
+            let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for point in &board.outline {
+                for axis in 0..2 {
+                    minimum[axis] = minimum[axis].min(point[axis]);
+                    maximum[axis] = maximum[axis].max(point[axis]);
+                }
+            }
+            let mut y = minimum[1] + spacing / 2.0;
+            let mut row = 0;
+            while y < maximum[1] {
+                // Rows offset by half a step: a triangular lattice.
+                let mut x = minimum[0] + spacing * if row % 2 == 0 { 0.5 } else { 1.0 };
+                while x < maximum[0] {
+                    let point = [x, y];
+                    let open = point_in_polygon(point, &board.outline)
+                        && ring_distance(point, &board.outline) >= spacing / 2.0
+                        && index.near(point, spacing / 2.0).into_iter().all(|obstacle| board.obstacles[obstacle].shape.distance_to_point(point) >= spacing / 2.0);
+                    if open {
+                        let _ = cdt.insert(Vertex { position: Point2::new(x, y) });
+                    }
+                    x += spacing;
+                }
+                y += spacing * 0.866;
+                row += 1;
             }
         }
 
@@ -299,12 +330,28 @@ impl Mesh {
         if left == face { right } else { left }
     }
 
-    /// The face containing `point` (a linear walk; boards have few queries).
-    pub fn locate(&self, point: Point) -> Option<usize> {
-        (0..self.faces.len()).find(|&face| {
+    /// A face containing `point`, preferring one covered by obstacle `pad`
+    /// (a terminal's own pad) when the point lies on a shared edge.
+    pub fn locate(&self, point: Point, pad: Option<usize>) -> Option<usize> {
+        let mut found = None;
+        for face in 0..self.faces.len() {
             let [a, b, c] = self.faces[face].map(|vertex| self.points[vertex]);
             let side = |p: Point, q: Point| (q[0] - p[0]) * (point[1] - p[1]) - (q[1] - p[1]) * (point[0] - p[0]);
-            side(a, b) >= -1.0e-12 && side(b, c) >= -1.0e-12 && side(c, a) >= -1.0e-12
+            if side(a, b) >= -1.0e-12 && side(b, c) >= -1.0e-12 && side(c, a) >= -1.0e-12 {
+                if pad.is_none_or(|pad| self.face_blockers[face].contains(&pad)) {
+                    return Some(face);
+                }
+                found.get_or_insert(face);
+            }
+        }
+        found
+    }
+
+    /// Whether a via may stand on `edge`: both faces inside the board and
+    /// free of anything that blocks vias.
+    pub fn via_allowed(&self, board: &Board, edge: usize) -> bool {
+        self.edge_faces[edge].iter().all(|&face| {
+            face != NONE && self.inside[face] && self.face_blockers[face].iter().all(|&blocker| !board.obstacles[blocker].blocks_vias)
         })
     }
 }
