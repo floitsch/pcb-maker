@@ -18,6 +18,7 @@ pub struct KiCadNetlistImport {
     pub missing: Vec<String>,
     /// Footprints not in the library the schematic names, taken from
     /// another library or under KiCad 9's name: `C1: <asked> -> <used>`.
+    /// The board and the copied schematic use the new name.
     pub substituted: Vec<String>,
     /// Symbol pins on a net that the footprint has no pad for (`J1: M1
     /// (GND)`): the footprint does not match the symbol.
@@ -402,6 +403,8 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     let mut missing = Vec::new();
     let mut substituted = Vec::new();
     let mut unmatched_pins = Vec::new();
+    // Footprint ids the libraries know under another name, old to new.
+    let mut renamed: BTreeMap<String, String> = BTreeMap::new();
     let mut footprints = 0;
     let components = netlist.child("components").map(Expr::children).unwrap_or_default();
     for component in components.iter().filter(|item| item.head() == Some("comp")) {
@@ -427,6 +430,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         };
         if found != footprint_id {
             substituted.push(format!("{reference}: {footprint_id} -> {found}"));
+            renamed.insert(footprint_id.clone(), found.clone());
         }
         let mut footprint = match fs::read_to_string(&file).map_err(|error| error.to_string()).and_then(|text| parse(&text)) {
             Ok(footprint) => footprint,
@@ -439,7 +443,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             continue;
         };
         items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version")));
-        items[1] = Expr::Atom(requote(&footprint_id));
+        items[1] = Expr::Atom(requote(&found));
         // Placement fields after the layer.
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
         items.insert(layer_index, parse(&format!("(uuid \"{}\")", uuid_of(&format!("footprint {reference}"))))?);
@@ -544,6 +548,27 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     }
     let board_path = output.join(format!("{board_id}.kicad_pcb"));
     fs::write(&board_path, format!("{}\n", encode(&board))).map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+    // The copied schematic links the footprints the board has, so the new
+    // project checks clean (the original is left as it is).
+    if is_schematic && !renamed.is_empty() {
+        let mut folders = vec![output.to_path_buf()];
+        while let Some(folder) = folders.pop() {
+            for path in fs::read_dir(&folder).map_err(|error| error.to_string())?.flatten().map(|entry| entry.path()) {
+                if path.is_dir() {
+                    folders.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "kicad_sch") {
+                    let text = fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+                    let mut changed = text.clone();
+                    for (old, new) in &renamed {
+                        changed = changed.replace(&format!("(property \"Footprint\" \"{old}\""), &format!("(property \"Footprint\" \"{new}\""));
+                    }
+                    if changed != text {
+                        fs::write(&path, changed).map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+                    }
+                }
+            }
+        }
+    }
     // Pads of one footprint closer than the board's clearance (a solder
     // jumper's): no placement or routing changes that. The footprint gets
     // its pads' gap as its own clearance, as designers do.
