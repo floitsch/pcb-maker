@@ -50,12 +50,13 @@ router and placer items.
   (894 s). Each trial still costs 30-60 s there (150-230 s on Interf-U):
   the incremental reroute is the cost to attack.
 
-- **Interf-U layout is 109/110 again.** On 2026-09-22 two nudges took it to
-  110/110. Since commit f07b3fa or earlier (identical on 2026-09-29 with
-  every change of that day), the placement routes with 6 open. Moves at
-  about 84 s each keep nothing, and the ladder ends with PC-A3 open. The
-  placer changes of 2026-09-28 (the spacing floor, copper artwork, three
-  seeds) are the suspects; try the other seeds' placements.
+- **Interf-U layout: 110/110 again (2026-09-29, commit 5fdbd3e).** The
+  placement kept for the least wire (seed 1) ended 109/110. The placement
+  race now switches to seed 2's (5 open after the first route instead of
+  6), and two moves close the rest: 110/110, 32 vias, 4669 mm. KiCad
+  reports 3 starved thermals (the designer's board has 2). First-route
+  opens are a weak predictor (seed 3: 22 open, yet it also completes), so
+  racing further (after moves) may pay on other boards.
 
 ## Placer
 
