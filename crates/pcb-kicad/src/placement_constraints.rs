@@ -334,7 +334,12 @@ pub(super) fn apply_outline(
         (None, None) => {
             let area = part_area * outline.area_factor.unwrap_or(3.0);
             let aspect = outline.aspect.unwrap_or(1.5).max(0.1);
-            let width = (area * aspect).sqrt();
+            let mut width = (area * aspect).sqrt();
+            // Both sides within 100 mm keeps the cheap fabs' flat price
+            // (docs/cost.md): give up the aspect before that.
+            if width > 100.0 && area <= 100.0 * 100.0 {
+                width = 100.0;
+            }
             // Whole half millimetres, rounded up.
             ((width * 2.0).ceil() / 2.0, (area / width * 2.0).ceil() / 2.0)
         }
@@ -1180,6 +1185,10 @@ mod tests {
         assert_eq!(edges[0].head(), Some("gr_rect"));
         let only_width: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 10}"#).unwrap();
         assert!(apply_outline(&mut pcb, &only_width, 1.0).is_err());
+        // 3000 mm2 of parts, 9000 mm2 of board: 116 x 78 at 1.5, but both
+        // sides stay within 100 mm (the flat price at JLCPCB and PCBWay).
+        let automatic: KiCadOutlineConstraint = serde_json::from_str("{}").unwrap();
+        assert_eq!(apply_outline(&mut pcb, &automatic, 3000.0).unwrap(), [100.0, 90.0]);
     }
 
     #[test]
