@@ -54,7 +54,9 @@ The file lists what constraints refer to:
   size, whether it is through-hole or locked, and its pads with their
   nets;
 - every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
-  width and clearance.
+  width and clearance;
+- `swap_candidates`: parts whose general-purpose pins the layout could
+  reassign (see pin swapping below).
 
 ## 2. Say what you want: `constraints.json`
 
@@ -155,7 +157,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   interchangeable pins (pad functions or numbers, globs); `"pin_swaps":
   "pin-swaps.json"` takes the full format (resistor networks, groups
   across parts, restrictions). The schematic is rewritten to match
-  ([pin-swap.md](pin-swap.md)).
+  ([pin-swap.md](pin-swap.md)). `describe-kicad-board` lists
+  `swap_candidates`: parts (not connectors) with three or more connected
+  general-purpose pins (`GPIO12`, `IO5`, `PA3`, `P0.13`) and the globs for
+  them. Ask whether the firmware can use any of them for any signal (a
+  GPIO matrix, PIO, bit-banged buses) and which pins are special (boot
+  straps, a UART the bootloader uses, ADC-only pins): those go in
+  `except`.
 - **Output.** `<out-dir>/result/` holds the finished project, copied, with
   the placement and the copper. `<out-dir>/placed/placement.html` animates
   the placement.
