@@ -140,6 +140,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 A ground plane is one line of router config, used in place of `auto`:
 `{"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]}`.
 
+`export-kicad-fab` then writes the Gerbers, drill files, BOM and
+placement file a fab takes, with the estimated price at common fabs.
+
 The result reports every constraint as kept or missed, by how much. When
 parts find no place, the error says why: how full each side is, or which
 constraint holds the part. When connections stay open, `board-router.json` says which pads are unreachable

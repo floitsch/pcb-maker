@@ -91,6 +91,8 @@ mod cost;
 pub use cost::{KiCadCost, KiCadFabQuote};
 mod labels;
 pub use labels::KiCadLabelReport;
+mod fab_export;
+pub use fab_export::{KiCadFabExport, export_kicad_fab};
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{

@@ -174,6 +174,21 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   touches the edge; its pads still need the board's copper-to-edge
   clearance, which DRC reports.
 
+## 4. Order it
+
+```sh
+pcb-maker export-kicad-fab <out-dir>/result <board-id> <fab-dir>
+```
+
+writes what a fab takes: `<board-id>-gerbers.zip` (copper, mask, paste,
+silkscreen, outline, drill files; zones filled as KiCad fills them),
+`<board-id>-bom.csv` and `<board-id>-cpl.csv` in JLCPCB's assembly format,
+and `fab-export.json` with the estimated price at common fabs. BOM lines
+take the LCSC part number from a footprint property (`LCSC`, `LCSC Part`,
+`JLCPCB Part #`); parts without one are listed in `without_lcsc`. Check the
+rotations of polarised parts in the fab's preview: library orientations
+differ between KiCad and assemblers.
+
 ## Score a board
 
 ```sh
