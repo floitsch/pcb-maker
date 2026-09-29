@@ -63,7 +63,9 @@ def main():
         return value
 
     rows = [
-        ("decoupling: median pin-cap distance (mm)", ("decoupling", "median_mm"), get, "lower"),
+        ("decoupling: median cap-to-pin distance (mm)", ("decoupling", "capacitor_median_mm"), get, "lower"),
+        ("decoupling: caps within 3 mm of a supply pin", ("decoupling", "capacitors_within_3mm"), get, "higher"),
+        ("decoupling: median pin-to-cap distance (mm)", ("decoupling", "median_mm"), get, "lower"),
         ("decoupling: supply pins with a cap within 3 mm", ("decoupling", "within_3mm"), get, "higher"),
         ("decoupling: within 5 mm", ("decoupling", "within_5mm"), get, "higher"),
         ("crystal: longest path (mm)", ("crystals",),

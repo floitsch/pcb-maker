@@ -52,6 +52,11 @@ pub struct KiCadDecoupling {
     /// The farthest pins: `REF:PAD` and distance (none: no capacitor on
     /// that rail).
     pub worst: Vec<(String, Option<f64>)>,
+    /// The other way round, for boards with fewer capacitors than pins: for
+    /// every decoupling capacitor, the distance to the nearest supply pin on
+    /// its rail. Median, and share within 3 mm.
+    pub capacitor_median_mm: Option<f64>,
+    pub capacitors_within_3mm: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -329,6 +334,17 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     }
     let ic = |part: &Part| matches!(part.prefix(), "U" | "IC") && part.pads.len() >= 3;
     let mut capacitor_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
+    let mut supply_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
+    for part in parts.iter().filter(|part| ic(part)) {
+        for pad in &part.pads {
+            if let Some(net) = &pad.net
+                && rails.contains(net)
+                && (pad.power_pin || rail(net))
+            {
+                supply_pads.entry(net.clone()).or_default().push(pad.center);
+            }
+        }
+    }
     let mut capacitors = 0;
     for part in parts.iter().filter(|part| part.prefix() == "C" && part.pads.len() == 2) {
         let nets: Vec<Option<&String>> = part.pads.iter().map(|pad| pad.net.as_ref()).collect();
@@ -364,6 +380,20 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             pin_distances.push((format!("{}:{}", part.reference, pad.name), nearest));
         }
     }
+    let mut capacitor_distances: Vec<f64> = capacitor_pads
+        .iter()
+        .flat_map(|(net, pads)| {
+            let pins = supply_pads.get(net);
+            pads.iter().filter_map(move |pad| {
+                pins?.iter().map(|pin| distance(*pin, *pad)).reduce(f64::min)
+            })
+        })
+        .collect();
+    let capacitors_within_3mm = share(
+        capacitor_distances.iter().filter(|d| **d <= 3.0).count(),
+        capacitor_distances.len(),
+    );
+    let capacitor_median_mm = median(&mut capacitor_distances).map(round);
     let mut found: Vec<f64> = pin_distances.iter().filter_map(|(_, d)| *d).collect();
     let supply_pins = pin_distances.len();
     let within = |limit: f64| share(pin_distances.iter().filter(|(_, d)| d.is_some_and(|d| d <= limit)).count(), supply_pins);
@@ -376,6 +406,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         within_3mm,
         within_5mm,
         worst: pin_distances.iter().take(5).map(|(pin, d)| (pin.clone(), d.map(round))).collect(),
+        capacitor_median_mm,
+        capacitors_within_3mm,
     };
 
     // Crystals: pads to the IC pins on the same nets.
