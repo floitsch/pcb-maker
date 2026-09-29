@@ -235,6 +235,7 @@ dependencies = [
  "pcb-grid-router",
  "pcb-placer",
  "pcb-router",
+ "pcb-topo",
  "serde",
  "serde_json",
  "sha2",
@@ -300,6 +301,14 @@ dependencies = [
  "pcb-validate",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pcb-topo"
+version = "0.1.0"
+dependencies = [
+ "pcb-router",
+ "spade",
 ]
 
 [[package]]

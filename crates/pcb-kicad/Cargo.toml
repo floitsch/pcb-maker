@@ -13,6 +13,7 @@ pcb-engine = { path = "../pcb-engine" }
 pcb-grid-router = { path = "../pcb-grid-router" }
 pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }
+pcb-topo = { path = "../pcb-topo" }
 serde = { version = "1.0", features = ["derive"] }
 # Candidate coordinates must parse identically in standalone library consumers
 # and the main executable, without relying on workspace feature unification.

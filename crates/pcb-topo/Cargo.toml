@@ -1,0 +1,11 @@
+[package]
+name = "pcb-topo"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Topological (TopoR-style) router for pcb-maker: triangulation, crossings, layer assignment, rubber-band geometry"
+publish = false
+
+[dependencies]
+pcb-router = { path = "../pcb-router" }
+spade = "2.15.1"

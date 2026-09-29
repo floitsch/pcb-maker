@@ -87,6 +87,14 @@ pub struct KiCadBoardRouterConfig {
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
+    /// The routing engine: `lattice` (default, negotiated congestion on a
+    /// lattice) or `topological` (TopoR-style: triangulation, crossings,
+    /// layer assignment, any-angle tracks with arcs; pour nets as tracks).
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Rip-up rounds of the topological engine (default 30).
+    #[serde(default)]
+    pub topological_rounds: Option<usize>,
     /// How nets with copper pours are connected.
     #[serde(default)]
     pub pours: KiCadPourMode,
@@ -1173,6 +1181,13 @@ pub fn route_kicad_board(
         }
         None => (source_directory, None),
     };
+    // The topological engine makes one attempt, pour nets as tracks.
+    if config.engine.as_deref() == Some("topological") {
+        let mut report = route_kicad_board_once(source_directory, board_id, output_directory, config, false)?;
+        report.pin_swaps = pin_swaps;
+        report.pours = "topological (pour nets as tracks)".into();
+        return Ok(report);
+    }
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
@@ -1752,6 +1767,15 @@ fn route_kicad_board_once(
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
     let result = match &config.frame_directory {
+        _ if config.engine.as_deref() == Some("topological") => pcb_topo::route(
+            &board,
+            &pcb_topo::Config {
+                iterations: config.topological_rounds.unwrap_or(30),
+                seed: config.first_seed.unwrap_or(1).max(1),
+                verbose: true,
+                ..pcb_topo::Config::default()
+            },
+        ),
         None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => route_seeds(
             &board,
             &core_config(config),
