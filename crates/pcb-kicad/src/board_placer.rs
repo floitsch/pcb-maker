@@ -814,25 +814,42 @@ fn default_edge_keep_mm() -> f64 {
     3.0
 }
 
-/// `*` matches any run of characters, `?` one character.
+/// `*` matches any run of characters, `?` one character, and a backslash
+/// makes the next character literal (`REF\\*\\*` is KiCad's unannotated
+/// `REF**` itself).
 pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
+    #[derive(Clone, Copy, PartialEq)]
+    enum Token {
+        Any,
+        One,
+        Literal(char),
+    }
+    let mut tokens = Vec::new();
+    let mut characters = pattern.chars();
+    while let Some(character) = characters.next() {
+        tokens.push(match character {
+            '*' => Token::Any,
+            '?' => Token::One,
+            '\\' => Token::Literal(characters.next().unwrap_or('\\')),
+            other => Token::Literal(other),
+        });
+    }
     let text: Vec<char> = text.chars().collect();
-    let mut table = vec![vec![false; text.len() + 1]; pattern.len() + 1];
+    let mut table = vec![vec![false; text.len() + 1]; tokens.len() + 1];
     table[0][0] = true;
-    for p in 1..=pattern.len() {
-        if pattern[p - 1] == '*' {
+    for p in 1..=tokens.len() {
+        if tokens[p - 1] == Token::Any {
             table[p][0] = table[p - 1][0];
         }
         for t in 1..=text.len() {
-            table[p][t] = match pattern[p - 1] {
-                '*' => table[p - 1][t] || table[p][t - 1],
-                '?' => table[p - 1][t - 1],
-                c => table[p - 1][t - 1] && c == text[t - 1],
+            table[p][t] = match tokens[p - 1] {
+                Token::Any => table[p - 1][t] || table[p][t - 1],
+                Token::One => table[p - 1][t - 1],
+                Token::Literal(c) => table[p - 1][t - 1] && c == text[t - 1],
             };
         }
     }
-    table[pattern.len()][text.len()]
+    table[tokens.len()][text.len()]
 }
 
 pub(super) fn lower_placement(
@@ -1713,5 +1730,18 @@ mod tests {
         ))
         .unwrap();
         assert!(courtyard_shapes(&footprint).unwrap().1);
+    }
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use super::glob_matches;
+
+    #[test]
+    fn globs_match_runs_single_characters_and_escaped_literals() {
+        assert!(glob_matches("U*", "U12"));
+        assert!(glob_matches("R?", "R1") && !glob_matches("R?", "R12"));
+        assert!(glob_matches("REF**", "REF**_2"));
+        assert!(glob_matches("REF\\*\\*", "REF**") && !glob_matches("REF\\*\\*", "REF**_2") && !glob_matches("REF\\*\\*", "REF12"));
     }
 }

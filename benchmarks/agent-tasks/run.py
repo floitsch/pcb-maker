@@ -64,7 +64,7 @@ def unplace(board, point, remove_outline, keep=()):
             movable = re.search(r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block) and not re.search(
                 r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
                 reference and reference.group(1) in keep)
-            if reference and reference.group(1) and not re.search(r"[*?\[]", reference.group(1)) and not re.search(
+            if reference and reference.group(1) and not re.search(
                     r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block):
                 netless.append(reference.group(1))
             if movable:
@@ -125,7 +125,10 @@ def run_task(task, arguments):
                                           outline.get("y", 0) + outline.get("height", 40) / 2]
         netless = unplace(board, point, task.get("remove_outline", False), set(constraints.get("fixed", [])))
         # move_all would move them too.
-        constraints["fixed"] = constraints.get("fixed", []) + [r for r in netless if r not in constraints.get("fixed", [])]
+        # Fixed parts are glob patterns: references like KiCad's REF** are
+        # escaped to match only themselves.
+        escaped = [re.sub(r"([*?\\])", r"\\\1", r) for r in netless]
+        constraints["fixed"] = constraints.get("fixed", []) + [r for r in escaped if r not in constraints.get("fixed", [])]
     (source / "constraints.json").write_text(json.dumps(constraints))
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {})}, **task.get("layout", {})}
     (work / "layout.json").write_text(json.dumps(layout))
