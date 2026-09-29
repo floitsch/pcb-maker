@@ -48,6 +48,10 @@ pub struct Config {
     pub costs: layers::Costs,
     /// Spacing of the free points in open areas (0: none).
     pub spacing: f64,
+    /// Price of a via, in millimetres, while improving a legal board.
+    pub improve_via: f64,
+    /// Passes over all wires while improving.
+    pub improve_passes: usize,
 }
 
 impl Default for Config {
@@ -57,9 +61,11 @@ impl Default for Config {
             seconds: 300.0,
             seed: 1,
             verbose: false,
-            weights: Weights { crossing: 2.0, via: 3.0, overflow: 50.0, history: 5.0 },
-            costs: layers::Costs { via: 3.0, overflow: 50.0 },
+            weights: Weights { crossing: 2.0, via: 8.0, overflow: 50.0, history: 5.0 },
+            costs: layers::Costs { via: 8.0, overflow: 50.0 },
             spacing: 2.0,
+            improve_via: 25.0,
+            improve_passes: 4,
         }
     }
 }
@@ -314,6 +320,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 
     let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let mut best: Option<Attempt> = None;
+    let mut best_topology = topology.clone();
     let mut iterations = 0;
     for round in 0..=config.iterations {
         iterations = round;
@@ -337,6 +344,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         let bad = attempt.bad.clone();
         if better {
             best = Some(attempt);
+            best_topology = topology.clone();
         }
         if bad.is_empty() || round == config.iterations || started.elapsed().as_secs_f64() > config.seconds {
             break;
@@ -373,6 +381,57 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
             }
         }
         layers::assign(board, &mesh, &mut topology, config.costs, config.seed.wrapping_add(round as u64 + 1));
+    }
+
+    // TopoR's optimization: every wire in turn ripped up and rerouted with
+    // vias priced high, kept if it gets cheaper; layers reassigned; a pass
+    // is kept only if the board got no worse.
+    let mut topology = best_topology;
+    for pass in 0..config.improve_passes {
+        if started.elapsed().as_secs_f64() > config.seconds {
+            break;
+        }
+        let known = best.as_ref().expect("at least one round");
+        let before = topology.clone();
+        let weights = Weights { crossing: 0.5, via: config.improve_via, overflow: 0.0, history: 0.0 };
+        let mut order: Vec<usize> = (0..topology.wires.len()).filter(|&wire| topology.wires[wire].routed && !known.bad.contains(&wire)).collect();
+        for index in (1..order.len()).rev() {
+            let other = (random.next() % (index as u64 + 1)) as usize;
+            order.swap(index, other);
+        }
+        let mut changed = 0;
+        for wire in order {
+            let old = topology.cost(board, &mesh, wire, config.improve_via);
+            let saved = topology.save(wire);
+            topology.rip_up(wire);
+            let (start, end) = terminal_layers(&topology, wire);
+            let routed = topology.route(board, &mesh, wire, ends[wire].0, ends[wire].1, weights, Mode::Strict, start, end);
+            if routed && topology.cost(board, &mesh, wire, config.improve_via) + 1.0e-6 < old {
+                changed += 1;
+            } else {
+                topology.restore(saved);
+            }
+        }
+        layers::assign(board, &mesh, &mut topology, layers::Costs { via: config.improve_via, overflow: config.costs.overflow }, config.seed.wrapping_add(1000 + pass as u64));
+        let attempt = realize_all(board, &mesh, &topology, Some(&format!("improve-{pass}")));
+        if config.verbose {
+            eprintln!(
+                "improve {pass}: {changed} wires rerouted; {} wires in trouble, {} vias, {:.1} mm, {:.2}s",
+                attempt.bad.len(),
+                attempt.vias,
+                attempt.length,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        let better = (attempt.bad.len(), attempt.vias as f64 * config.improve_via + attempt.length) < (known.bad.len(), known.vias as f64 * config.improve_via + known.length);
+        if better {
+            best = Some(attempt);
+        } else {
+            topology = before;
+            if changed == 0 {
+                break;
+            }
+        }
     }
 
     // The best board, without the wires still in trouble: drop them one

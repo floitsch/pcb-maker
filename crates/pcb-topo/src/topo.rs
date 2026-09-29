@@ -71,8 +71,19 @@ pub struct Weights {
 pub enum Mode {
     Planar,
     Layered,
+    /// Layered, and no edge may overflow: for improving a legal board.
+    Strict,
 }
 
+/// A wire as it was, to put it back exactly.
+pub struct Saved {
+    wire: usize,
+    path: Wire,
+    /// Its index in the order of each edge it crosses.
+    places: Vec<usize>,
+}
+
+#[derive(Clone)]
 pub struct Topology {
     pub wires: Vec<Wire>,
     /// Per edge: the wires crossing it, ordered from `edges[e][0]`.
@@ -419,7 +430,7 @@ impl Topology {
         let Some(a) = a else { return Some(0.0) };
         let mut cost = 0.0;
         for other in self.separating(mesh, face, request.net, a, b) {
-            if request.mode == Mode::Layered && self.layer_in(other, face) == Some(layer) {
+            if request.mode != Mode::Planar && self.layer_in(other, face) == Some(layer) {
                 return None;
             }
             cost += request.weights.crossing;
@@ -450,7 +461,7 @@ impl Topology {
     /// Queues the successors of `parent`, which entered `face` on `layer`.
     fn expand(&self, board: &Board, mesh: &Mesh, search: &mut Search, request: &Request, parent: usize) {
         let Node { face, layer, point: from_point, cost, portal: entry, gap: entry_gap, .. } = search.nodes[parent];
-        let layered = request.mode == Mode::Layered;
+        let layered = request.mode != Mode::Planar;
         let entry_coordinate = entry.map(|portal| match portal {
             Portal::Edge(edge) => self.coordinate(mesh, face, edge, 2 * entry_gap),
             Portal::Vertex(vertex) => Self::corner(mesh, face, vertex),
@@ -482,6 +493,9 @@ impl Topology {
                 continue;
             }
             let over = (self.used(board, edge, on, request.net) + request.room - capacity).clamp(0.0, request.room);
+            if request.mode == Mode::Strict && over > 1.0e-9 {
+                continue;
+            }
             let fixed = request.weights.overflow * over + request.weights.history * self.history[edge];
             for gap in 0..=self.order[edge].len() {
                 let target = self.coordinate(mesh, face, edge, 2 * gap);
@@ -549,12 +563,12 @@ impl Topology {
         let end_mask = end_layers & mesh.face_layers(board, to_face, request.net);
         let starts: Vec<usize> = match mode {
             Mode::Planar => vec![0],
-            Mode::Layered => (0..board.layer_count).filter(|&l| start_mask & (1 << l) != 0).collect(),
+            Mode::Layered | Mode::Strict => (0..board.layer_count).filter(|&l| start_mask & (1 << l) != 0).collect(),
         };
         if from_face == to_face {
             let layer = match mode {
                 Mode::Planar => None,
-                Mode::Layered => match (0..board.layer_count).find(|&l| start_mask & end_mask & (1 << l) != 0) {
+                Mode::Layered | Mode::Strict => match (0..board.layer_count).find(|&l| start_mask & end_mask & (1 << l) != 0) {
                     Some(layer) => Some(layer),
                     None => return false,
                 },
@@ -620,9 +634,64 @@ impl Topology {
         let path = &mut self.wires[wire];
         path.faces = faces;
         path.portals = portals;
-        path.layers = if mode == Mode::Layered { layers } else { Vec::new() };
+        path.layers = if mode == Mode::Planar { Vec::new() } else { layers };
         path.routed = true;
         true
+    }
+
+    /// `wire` as it is now, with its places on the edges.
+    pub fn save(&self, wire: usize) -> Saved {
+        let path = self.wires[wire].clone();
+        let places = path
+            .portals
+            .iter()
+            .filter_map(|&portal| match portal {
+                Portal::Edge(edge) => Some(self.order[edge].iter().position(|&w| w == wire).expect("wire on edge")),
+                Portal::Vertex(_) => None,
+            })
+            .collect();
+        Saved { wire, path, places }
+    }
+
+    /// Puts a saved wire back (after ripping it up again, if needed).
+    pub fn restore(&mut self, saved: Saved) {
+        let wire = saved.wire;
+        if self.wires[wire].routed {
+            self.rip_up(wire);
+        }
+        let mut places = saved.places.iter();
+        for &portal in &saved.path.portals {
+            match portal {
+                Portal::Edge(edge) => {
+                    let place = *places.next().expect("place");
+                    let at = place.min(self.order[edge].len());
+                    self.order[edge].insert(at, wire);
+                }
+                Portal::Vertex(vertex) => self.occupant[vertex] = Some(wire),
+            }
+        }
+        for &face in &saved.path.faces {
+            if !self.face_wires[face].contains(&wire) {
+                self.face_wires[face].push(wire);
+            }
+        }
+        self.wires[wire] = saved.path;
+    }
+
+    /// Length of `wire` through its places, plus `via` per via.
+    pub fn cost(&self, board: &Board, mesh: &Mesh, wire: usize, via: f64) -> f64 {
+        let path = &self.wires[wire];
+        let mut previous = path.from;
+        let mut total = 0.0;
+        for (step, &portal) in path.portals.iter().enumerate() {
+            let point = self.place(board, mesh, wire, portal);
+            total += distance(previous, point);
+            previous = point;
+            if path.via_at(step) {
+                total += via;
+            }
+        }
+        total + distance(previous, path.to)
     }
 
     /// Takes a wire out of the topology.
