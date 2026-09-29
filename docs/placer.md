@@ -41,7 +41,13 @@ less copper); on PIC and the hierarchy board the automatic one is.
    rectangular or round) with pins at their true offsets. Locked footprints,
    footprints without nets, and footprints on the board edge (connectors) stay
    fixed; everything else may move and turn in 90° steps. Large nets get a
-   smaller weight so power does not collapse the layout.
+   smaller weight so power does not collapse the layout. Pad boxes cover
+   the drill. A through-hole part blocks the other side only with its
+   holes and pads. A hollow part (a shield outline) blocks only with its
+   pads, and with its courtyard against parts with holes, since KiCad
+   forbids holes in a courtyard unless the courtyard is malformed and
+   KiCad skips it. A board cutout keeps only copper away: a connector body
+   may reach over its peg holes.
 2. **Routing halos.** A PCB routes in the same plane it places in. Every body
    gets a halo proportional to its pin count; halos count as body area and as
    spacing. If the board cannot afford them they shrink uniformly.
@@ -57,8 +63,18 @@ less copper); on PIC and the hierarchy board the automatic one is.
 4. **Annealing legalization.** Moves, quarter turns and swaps are judged on
    wirelength plus an overlap penalty that grows until no overlap survives.
    It starts cold so the global result is refined, not scrambled. An exact
-   nearest-legal-position pass is the safety net, with relaxation levels
-   (smaller halos, then no spacing) for crowded boards.
+   nearest-legal-position pass is the safety net. When it fails, it runs
+   again with the stuck parts first. Crowded boards then walk down
+   relaxation levels:
+   - smaller halos, then none;
+   - spacing down to the copper clearance;
+   - a 0.1 mm grid;
+   - bodies closer to the edge, as far as their copper allows;
+   - where the project lets courtyards overlap, bodies shrunk to their
+     fabrication outline and pads.
+
+   The level used is reported, and the router-driven moves keep to it.
+   Three seeds run in parallel; the best placement is kept.
 5. **Refinement.** Greedy legal moves, rotations and swaps that strictly
    reduce wirelength.
 6. **Coupling.** `layout-kicad-board` routes the placement once, then the
@@ -82,10 +98,11 @@ angles as absolute values).
 
 ## Known limits / next steps
 
-- Bodies are rectangles or discs; rotations are quarter turns; the board side
-  of a footprint is never changed.
-- No constraint language yet (regions, groups, alignment, decoupling
-  proximity, keep-near-edge); fixed/free lists are the only user control.
+- Bodies are rectangles or discs; rotations are quarter turns; the placer
+  never changes a footprint's side by itself (`back`/`front` constraints
+  do, see [constraints.md](constraints.md)).
+- Constraints: see [constraints.md](constraints.md). No alignment
+  constraints yet.
 - Congestion drives nudges of individual parts, but does not yet feed the
   global placer's density term (coupling step 3).
 - Silkscreen labels are not placed; the separate repair tool handles most.
