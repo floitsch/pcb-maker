@@ -46,8 +46,9 @@ router and placer items.
   esp-usb-corner task (four layers, 107 connections) the first route left 8
   open. 15 moves of about 40 s each spent the 600 s budget without closing
   them, and route mode's ladder then finished the board in 276 s: 1119 s
-  in all. Try the ladder first when the first route leaves opens, or stop
-  moves early when they do not reduce the opens.
+  in all. Moves now stop when six trials in a row close no open connection
+  (894 s). Each trial still costs 30-60 s there (150-230 s on Interf-U):
+  the incremental reroute is the cost to attack.
 
 - **Interf-U layout is 109/110 again.** On 2026-09-22 two nudges took it to
   110/110. Since commit f07b3fa or earlier (identical on 2026-09-29 with
