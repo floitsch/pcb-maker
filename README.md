@@ -72,6 +72,25 @@ verification) and either a [snapshot build](https://github.com/floitsch/pcb-make
 cargo build --release          # target/release/pcb-maker
 ```
 
+### From a schematic to fab files
+
+```sh
+pcb-maker import-kicad-netlist myproject/myboard.kicad_sch board myboard
+pcb-maker layout-kicad-board board myboard layout auto board/layout.json
+pcb-maker export-kicad-fab layout/result myboard fab
+```
+
+1. `import-kicad-netlist` makes the board KiCad's "Update PCB from
+   Schematic" would: footprints from the libraries, on their nets, linked
+   to their symbols. Next to it go a starter `constraints.json` (every part
+   placed, the board sized from the parts, USB and other plug-in connectors
+   on an edge) and the `layout.json` that uses it. Say where things go in
+   `constraints.json` before the next step.
+2. `layout-kicad-board` places and routes the board and has KiCad check
+   it: `layout/result` is the finished project.
+3. `export-kicad-fab` writes Gerbers, drill files, a BOM and a placement
+   file in JLCPCB's format, and the estimated price at six fabs.
+
 ### Route a board
 
 ```sh
