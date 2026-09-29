@@ -596,7 +596,26 @@ fn pull(
     let rule = &board.classes[piece.class];
     let mut extra: Vec<Disc> = Vec::new();
     for _ in 0..20 {
-        let path = taut::taut_with(start, end, &portals, &extra).map_err(|failure| format!("{failure:?}"))?;
+        let path = taut::taut_with(start, end, &portals, &extra).map_err(|failure| {
+            let describe = |vertex: usize| -> String {
+                let Some(features) = mesh.features.get(vertex) else { return "end".into() };
+                features
+                    .iter()
+                    .map(|feature| match *feature {
+                        Feature::Obstacle { obstacle, radius } => format!("{} r{radius:.2} (r {:.3})", board.obstacles[obstacle].label, radii.get(&vertex).copied().unwrap_or(0.0)),
+                        Feature::Via { via } => format!("via of wire {} (r {:.3})", vias[via].wire, radii.get(&vertex).copied().unwrap_or(0.0)),
+                        Feature::Outline => "outline".into(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("+")
+            };
+            match failure {
+                taut::Failure::Squeezed { vertices, at, need, have } => {
+                    format!("squeezed between {} and {} at [{:.3}, {:.3}]: {need:.3} > {have:.3}", describe(vertices.0), describe(vertices.1), at[0], at[1])
+                }
+                other => format!("{other:?}"),
+            }
+        })?;
         // The closest obstacle the path comes too close to.
         let points = taut::polyline(&path, BULGE);
         let mut worst: Option<(f64, usize, Point, Point)> = None;

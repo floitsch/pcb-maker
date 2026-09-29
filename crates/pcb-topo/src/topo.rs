@@ -273,6 +273,46 @@ impl Topology {
         total
     }
 
+    /// Whether a via of `net`/`class` at `vertex` leaves every wire of
+    /// another net crossing an edge around it its room.
+    pub fn via_fits(&self, board: &Board, mesh: &Mesh, vertex: usize, net: NetId, class: ClassId) -> bool {
+        let rule = &board.classes[class];
+        for &face in &mesh.vertex_faces[vertex] {
+            for &edge in &mesh.face_edges[face] {
+                if !mesh.edges[edge].contains(&vertex) {
+                    continue;
+                }
+                for layer in 0..board.layer_count {
+                    let mut crossing = 0.0;
+                    let mut widest_gap: f64 = 0.0;
+                    for &wire in &self.order[edge] {
+                        let path = &self.wires[wire];
+                        if path.net == net {
+                            continue;
+                        }
+                        let step = self.step_of(wire, edge).expect("wire on edge");
+                        if !path.layers.is_empty() && path.layers[step] != layer {
+                            continue;
+                        }
+                        crossing += Self::track_room(board, path.class);
+                        widest_gap = widest_gap.max(board.classes[path.class].clearance);
+                    }
+                    if crossing == 0.0 {
+                        continue;
+                    }
+                    let other = mesh.edges[edge][0] + mesh.edges[edge][1] - vertex;
+                    let fixed = mesh.cut[edge][layer] - Self::fixed_keep_off(board, mesh, other, layer, net, class) + widest_gap;
+                    let via = rule.via_diameter / 2.0 + rule.clearance.max(widest_gap);
+                    let occupied = self.occupant_keep_off(board, other, layer, u32::MAX, class);
+                    if crossing > fixed - via - occupied + 1.0e-9 {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
     /// Whether a track of `net`/`class` fits across `edge` at all, on
     /// `layer` (on some layer with `None`), whatever else is there.
     pub fn passable(board: &Board, mesh: &Mesh, edge: usize, layer: Option<usize>, net: NetId, class: ClassId) -> bool {
@@ -432,14 +472,16 @@ impl Topology {
             if Self::is_ancestor(search, parent, Portal::Edge(edge)) {
                 continue;
             }
-            if !Self::passable(board, mesh, edge, if layered { Some(layer) } else { None }, request.net, request.class) {
+            let on = if layered { Some(layer) } else { None };
+            if !Self::passable(board, mesh, edge, on, request.net, request.class) {
                 continue;
             }
-            let over = {
-                let used = self.used(board, edge, if layered { Some(layer) } else { None }, request.net);
-                let capacity = self.capacity(board, mesh, edge, if layered { Some(layer) } else { None }, request.net, request.class);
-                (used + request.room - capacity).clamp(0.0, request.room)
-            };
+            // Wires through the ends (vias above all) may leave no room.
+            let capacity = self.capacity(board, mesh, edge, on, request.net, request.class);
+            if layered && capacity + 1.0e-9 < request.room {
+                continue;
+            }
+            let over = (self.used(board, edge, on, request.net) + request.room - capacity).clamp(0.0, request.room);
             let fixed = request.weights.overflow * over + request.weights.history * self.history[edge];
             for gap in 0..=self.order[edge].len() {
                 let target = self.coordinate(mesh, face, edge, 2 * gap);
@@ -455,6 +497,10 @@ impl Topology {
         // any layer (a change of layer is a via).
         for &vertex in &mesh.faces[face] {
             if !mesh.via_site[vertex] || self.occupant[vertex].is_some() || entry_vertex == Some(vertex) {
+                continue;
+            }
+            // A via here must leave room for the wires already passing it.
+            if layered && !self.via_fits(board, mesh, vertex, request.net, request.class) {
                 continue;
             }
             if Self::is_ancestor(search, parent, Portal::Vertex(vertex)) {
