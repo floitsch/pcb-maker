@@ -11,7 +11,11 @@ the congestion they would land in, the router reroutes only the nets the move
 invalidated (`Router::update` and `Router::reroute` in `pcb-router`), and the
 move is kept when the board improves (open connections first, then vias and
 copper). Once every connection is routed, moves only polish, for at most
-`polish_seconds` (60 s). Moves keep to the relaxation the placement needed (its spacing,
+`polish_seconds` (60 s). Before the moves, if the first route leaves
+connections open, the other seeds' legal placements are routed once too,
+and the one that leaves the fewest open carries on (`placement_race` in
+`board-layout.json`): the placement kept for the least wire is not always
+the one that routes. Moves keep to the relaxation the placement needed (its spacing,
 grid, halos, edge margin and bodies): checked against the full spacing, no
 move on a crowded board would ever be legal. If connections are still open
 at the end, route mode's whole ladder (pours as tracks, finer pitches,

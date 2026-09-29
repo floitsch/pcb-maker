@@ -137,6 +137,10 @@ pub struct KiCadBoardPlacerResult {
     pub grid_mm: f64,
     pub halo_scale: f64,
     pub edge_inset: bool,
+    /// The other seeds' legal placements (poses and relaxation), next best
+    /// first.
+    #[serde(skip)]
+    pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation)>,
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
@@ -1123,7 +1127,7 @@ pub fn place_kicad_board(
     // wins. Placement takes seconds; the constraints are what the user asked
     // for.
     let seeds = config.placement_seeds.max(1) as u64;
-    let placement = std::thread::scope(|scope| {
+    let mut placements: Vec<core::Placement> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..seeds)
             .map(|offset| {
                 let mut seeded = placer_config.clone();
@@ -1133,18 +1137,21 @@ pub fn place_kicad_board(
                 scope.spawn(move || core::place(problem, &seeded))
             })
             .collect();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("placement thread"))
-            .min_by(|a, b| {
-                let key = |placement: &core::Placement| {
-                    let missed: f64 = placement.constraints.iter().map(|status| status.violation).sum();
-                    (placement.unplaced.len() + placement.illegal.len(), missed, placement.wirelength_final)
-                };
-                key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .expect("at least one seed")
+        handles.into_iter().map(|handle| handle.join().expect("placement thread")).collect()
     });
+    let key = |placement: &core::Placement| {
+        let missed: f64 = placement.constraints.iter().map(|status| status.violation).sum();
+        (placement.unplaced.len() + placement.illegal.len(), missed, placement.wirelength_final)
+    };
+    placements.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+    let placement = placements.remove(0);
+    // The other legal placements, for layout to race when the best one by
+    // wirelength does not route: wirelength is not routability.
+    let alternatives = placements
+        .into_iter()
+        .filter(|other| other.unplaced.is_empty() && other.illegal.is_empty())
+        .map(|other| (other.poses, other.relaxation))
+        .collect();
 
     let Expr::List(items) = &mut pcb else {
         return Err("PCB root is not a list".into());
@@ -1306,6 +1313,7 @@ pub fn place_kicad_board(
         hints.dedup();
     }
     let result = KiCadBoardPlacerResult {
+        alternatives,
         tight_bodies: placement.relaxation.tight,
         spacing_mm: placement.relaxation.spacing,
         grid_mm: placement.relaxation.grid,

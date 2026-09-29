@@ -75,6 +75,10 @@ pub struct KiCadBoardLayoutResult {
     pub first_vias: usize,
     pub first_length_mm: f64,
     pub moves: Vec<KiCadBoardLayoutMove>,
+    /// Open terminals after the first route of the kept placement and of
+    /// each other seed's placement tried (only when the first left some).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub placement_race: Vec<usize>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
@@ -229,32 +233,68 @@ pub fn layout_kicad_board(
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
-    let (mut router, mut result) = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..seeds)
-            .map(|index| {
-                let mut seeded = core_config.clone();
-                seeded.seed = (index > 0).then_some(index);
-                seeded.verbose = core_config.verbose && index == 0;
-                let board = &board;
-                scope.spawn(move || {
-                    let mut router = core::router::Router::new(board, &seeded);
-                    let result = router.run_in_place();
-                    (router, result)
+    let route_once = |board: &core::Board| {
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..seeds)
+                .map(|index| {
+                    let mut seeded = core_config.clone();
+                    seeded.seed = (index > 0).then_some(index);
+                    seeded.verbose = core_config.verbose && index == 0;
+                    scope.spawn(move || {
+                        let mut router = core::router::Router::new(board, &seeded);
+                        let result = router.run_in_place();
+                        (router, result)
+                    })
                 })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("routing thread"))
-            .min_by(|a, b| {
-                score(&a.1, &board)
-                    .partial_cmp(&score(&b.1, &board))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .expect("at least one seed")
-    });
-    let first_route_seconds = first_started.elapsed().as_secs_f64();
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("routing thread"))
+                .min_by(|a, b| {
+                    score(&a.1, board)
+                        .partial_cmp(&score(&b.1, board))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("at least one seed")
+        })
+    };
+    let (mut router, mut result) = route_once(&board);
     let mut best = score(&result, &board);
+    // Wirelength is not routability: when the placement kept for the least
+    // wire leaves connections open, route the other seeds' placements once
+    // and go on with the one that leaves fewer open.
+    let mut race = Vec::new();
+    if best.0 > 0 && pin_swaps.is_none() {
+        race.push(best.0);
+        for (poses, relaxation) in &placement.alternatives {
+            let mut candidate = pcb.clone();
+            {
+                let mut footprints = footprint_items(&mut candidate)?;
+                for (footprint, pose) in footprints.iter_mut().zip(poses) {
+                    write_footprint_pose(footprint, *pose)?;
+                }
+            }
+            let candidate_board = lower(&candidate, router_config, connect)?.board;
+            let (candidate_router, candidate_result) = route_once(&candidate_board);
+            let candidate_score = score(&candidate_result, &candidate_board);
+            race.push(candidate_score.0);
+            eprintln!("placement race: another seed's placement leaves {} open (best {})", candidate_score.0, best.0);
+            if candidate_score.0 < best.0 {
+                pcb = candidate;
+                board = candidate_board;
+                router = candidate_router;
+                result = candidate_result;
+                best = candidate_score;
+                placer_config.tight_bodies = Some(relaxation.tight);
+                problem = lower_placement(&pcb, &placer_config)?;
+                relaxation.apply(&mut problem.problem);
+            }
+            if best.0 == 0 {
+                break;
+            }
+        }
+    }
+    let first_route_seconds = first_started.elapsed().as_secs_f64();
     let first = (
         best.0,
         result.routes.iter().map(|route| route.vias.len()).sum::<usize>(),
@@ -509,6 +549,7 @@ pub fn layout_kicad_board(
         first_vias: first.1,
         first_length_mm: first.2,
         moves,
+        placement_race: race,
         pin_swaps,
         constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
         routed,
