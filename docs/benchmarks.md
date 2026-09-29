@@ -76,7 +76,10 @@ tiny_tapeout's source fails KiCad's own checks.
   0.1 mm lattice the 17-pin +3.3 V net does not fit once the other nets are
   in; the 0.075 mm rung completes the cold board (45/45, 47 vias, 41 s) and
   with the small +3.3 V pour regions kept the 0.05 mm rung gets to one open
-  pad. The placer needs side assignment for a board this dense.
+  pad. Since 2026-09-29 automatic placement is legal (bodies closer to
+  the edge as their copper allows, legalization retried with the stuck
+  parts first). Placed and routed it reaches 41/45, with solder-mask
+  bridges as in route mode.
 - **ngdevkit** (174 x 134 mm, 186 footprints, about 1070 pads, two layers,
   0.15 mm escape rules): two separate problems. First, its PSRAM is a 48-ball
   0.75 mm BGA whose inter-ball channels leave a 0.15 mm track 0.01 mm of
@@ -100,8 +103,9 @@ tiny_tapeout's source fails KiCad's own checks.
 - **ColdFire / video** (4 layers): the remaining opens are ground pads whose
   inner-plane island cannot be stitched back to the main plane; same cause as
   ngdevkit, on inner layers.
-- **Automatic placement on dense two-sided boards** (StickHub, openair,
-  tiny_tapeout) cannot be legalized without side assignment.
+- **Automatic placement on dense two-sided boards.** Since 2026-09-29
+  StickHub and openair-max place legally. tiny_tapeout still leaves one
+  connector (J4) without a place, with its front 78 % full.
 
 ## Coupled loop (2026-09-22, later the same day)
 
