@@ -866,6 +866,9 @@ pub(super) fn lower_placement(
         let mut far_side = Vec::new();
         let mut own_pads = Vec::new();
         let mut named = BTreeMap::new();
+        // The copper layer of the side the part is not on: an edge-mount
+        // connector's SMD pads there occupy that side too.
+        let other_copper = if on_back(footprint) { "F.Cu" } else { "B.Cu" };
         for pad in footprint
             .children()
             .iter()
@@ -912,7 +915,10 @@ pub(super) fn lower_placement(
                 (copper[1] + half[1]).max(pad_at[1] + half[0].min(half[1])),
             ];
             own_pads.push(pad_box);
-            if matches!(pad_type, "thru_hole" | "np_thru_hole") {
+            let on_other_side = pad.child("layers").is_some_and(|layers| {
+                layers.children().iter().skip(1).filter_map(Expr::atom).any(|layer| layer == other_copper || layer == "F&B.Cu")
+            });
+            if matches!(pad_type, "thru_hole" | "np_thru_hole") || on_other_side {
                 through = true;
                 // What the part occupies on the other side.
                 far_side.push(pad_box);
