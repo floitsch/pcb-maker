@@ -615,7 +615,21 @@ pub fn realize(board: &Board, layout: &Layout, topology: &Topology) -> Realized 
             let _ = width;
             let start = piece.points[0];
             let end = *piece.points.last().expect("piece end");
-            let apexes = tighten(start, end, &shrunk);
+            // The funnel can name the piece's own end points, or one vertex
+            // several times in a row: keep each wrapped disc once.
+            let mut apexes: Vec<Disc> = Vec::new();
+            for disc in tighten(start, end, &shrunk) {
+                if length(sub(disc.center, start)) < 1.0e-9 || length(sub(disc.center, end)) < 1.0e-9 {
+                    continue;
+                }
+                if let Some(last) = apexes.last_mut()
+                    && last.vertex == disc.vertex
+                {
+                    last.radius = last.radius.max(disc.radius);
+                    continue;
+                }
+                apexes.push(disc);
+            }
             // Exact path: tangents between consecutive discs, arcs around.
             let mut discs = vec![Disc { center: start, radius: 0.0, side: 1.0, vertex: usize::MAX }];
             discs.extend(apexes);
