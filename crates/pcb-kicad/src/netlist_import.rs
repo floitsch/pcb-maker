@@ -54,7 +54,7 @@ fn edge_connector(footprint_name: &str) -> bool {
         })
     };
     words.into_iter().any(word)
-        || ["coax", "displayport", "dsub", "d-sub", "barrel", "jack", "cardedge", "card_edge", "terminalblock", "terminal_block"]
+        || ["coax", "displayport", "dsub", "d-sub", "barrel", "jack", "cardedge", "card_edge", "pcie", "pciexpress", "pci_express", "terminalblock", "terminal_block"]
             .iter()
             .any(|key| name.contains(key))
 }
@@ -760,6 +760,7 @@ mod tests {
             "Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal",
             "Connector_Dsub:DSUB-9_Socket_Horizontal",
             "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2",
+            "Main:PCIEXPRESS-X1",
         ] {
             assert!(edge_connector(name), "{name}");
         }
