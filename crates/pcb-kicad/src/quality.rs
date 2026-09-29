@@ -19,6 +19,8 @@ pub struct KiCadQualityReport {
     pub assembly: KiCadAssembly,
     pub connectors: KiCadConnectors,
     pub manufacturing: KiCadManufacturing,
+    /// Estimated price of 10 boards at common fabs (docs/cost.md).
+    pub cost: crate::cost::KiCadCost,
 }
 
 /// What the board costs to make, in the terms fabs price by.
@@ -565,6 +567,28 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let manufacturing = KiCadManufacturing { vias_in_pads, tombstone_risk, drc };
+    let joints = |through: bool| {
+        parts
+            .iter()
+            .flat_map(|part| &part.pads)
+            .filter(|pad| pad.net.is_some() && pad.smd != through)
+            .count()
+    };
+    let cost = crate::cost::estimate(
+        &crate::cost::CostInputs {
+            width_mm: economy.width_mm,
+            height_mm: economy.height_mm,
+            layers: economy.copper_layers,
+            smallest_drill_mm: economy.smallest_via_drill_mm,
+            narrowest_track_mm: economy.narrowest_track_mm,
+            vias_in_pads: manufacturing.vias_in_pads,
+            smd_sides: economy.smd_sides,
+            unique_parts: economy.unique_parts,
+            smd_joints: joints(false),
+            tht_joints: joints(true),
+        },
+        10,
+    );
 
     Ok(KiCadQualityReport {
         board_id: board_id.into(),
@@ -575,6 +599,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         assembly,
         connectors,
         manufacturing,
+        cost,
     })
 }
 
