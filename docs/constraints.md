@@ -34,8 +34,8 @@ takes the constraints inline.
  "row":      [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}]}
 ```
 
-Parts are named by reference. `fixed` and `region.parts` also take glob patterns
-(`*`, `?`). Coordinates are millimetres, in KiCad's orientation: y grows
+Parts are named by reference. `fixed`, `back`, `front`, `hollow` and the
+`parts` of `region`, `group` and `row` also take glob patterns (`*`, `?`). Coordinates are millimetres, in KiCad's orientation: y grows
 downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |
