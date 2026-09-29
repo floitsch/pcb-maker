@@ -2323,6 +2323,17 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "score-kicad-board" => {
+            let usage = "usage: pcb-maker score-kicad-board <project-dir> <board-id>";
+            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let report = pcb_kicad::score_kicad_board(Path::new(&directory), &board_id)?;
+            println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+            Ok(())
+        }
         "describe-kicad-board" => {
             let usage = "usage: pcb-maker describe-kicad-board <project-dir> <board-id>";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;

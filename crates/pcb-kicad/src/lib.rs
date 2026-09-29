@@ -85,6 +85,8 @@ mod describe;
 mod flip;
 mod net_classes;
 pub use net_classes::KiCadNetClassRequest;
+mod quality;
+pub use quality::{KiCadQualityReport, score_kicad_board};
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{

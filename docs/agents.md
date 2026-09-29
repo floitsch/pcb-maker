@@ -174,6 +174,20 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   touches the edge; its pads still need the board's copper-to-edge
   clearance, which DRC reports.
 
+## Score a board
+
+```sh
+pcb-maker score-kicad-board <project-dir> <board-id>
+```
+
+reports objective measures ([quality.md](quality.md)): decoupling capacitor
+distance to every IC supply pin, crystal path lengths, inductors near
+crystals and antennas, orientation consistency, parts near the edge,
+connectors facing out, vias in pads, tombstoning risk, KiCad DRC counts,
+and what drives the price (board size, layers, smallest drill and track,
+assembly sides, unique and through-hole parts; see [cost.md](cost.md)).
+Score the designer's board and yours side by side.
+
 ## Quality you can expect
 
 Measured results are in [benchmarks.md](benchmarks.md) (corpus) and

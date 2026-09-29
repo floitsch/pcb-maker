@@ -486,7 +486,7 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
 /// Which way a connector opens, in its own frame: the side where the
 /// courtyard reaches farthest beyond the pads (a USB receptacle's shell, a
 /// barrel jack's body), if one side clearly does.
-fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, String> {
+pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, String> {
     let footprint_angle = form_at(footprint)?[2];
     let mut courtyard = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     let mut pads = courtyard;
