@@ -602,10 +602,51 @@ pub(super) fn lower_placement(
         let edge_inset = if own_pads.is_empty() {
             0.0
         } else {
-            let pads = own_pads.iter().fold(
+            let mut pads = own_pads.iter().fold(
                 [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
                 |bounds, pad| [bounds[0].min(pad[0]), bounds[1].min(pad[1]), bounds[2].max(pad[2]), bounds[3].max(pad[3])],
             );
+            // Copper graphics of the footprint count as copper too.
+            for child in footprint.children() {
+                if !(matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
+                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
+                {
+                    continue;
+                }
+                let width = child
+                    .child("stroke")
+                    .and_then(|stroke| form_atom(stroke, "width", 1))
+                    .and_then(|width| width.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                let mut points = Vec::new();
+                for head in ["start", "mid", "end"] {
+                    if child.child(head).is_some() {
+                        points.push(form_xy(child, head)?);
+                    }
+                }
+                if child.head() == Some("fp_circle") {
+                    let center = form_xy(child, "center")?;
+                    let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
+                    points.extend([[center[0] - radius, center[1] - radius], [center[0] + radius, center[1] + radius]]);
+                }
+                for point in child
+                    .child("pts")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                {
+                    points.push([expression_coordinate(point, 1, "copper x")?, expression_coordinate(point, 2, "copper y")?]);
+                }
+                for point in points {
+                    pads = [
+                        pads[0].min(point[0] - width / 2.0),
+                        pads[1].min(point[1] - width / 2.0),
+                        pads[2].max(point[0] + width / 2.0),
+                        pads[3].max(point[1] + width / 2.0),
+                    ];
+                }
+            }
             let body = [
                 body_center[0] - body_size[0] / 2.0,
                 body_center[1] - body_size[1] / 2.0,
