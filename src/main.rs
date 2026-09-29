@@ -2568,7 +2568,13 @@ fn run() -> Result<(), String> {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|fab| format!("{} {} {}", fab["fab"].as_str().unwrap_or(""), fab["total"], fab["currency"].as_str().unwrap_or("")))
+                    .map(|fab| {
+                        let currency = fab["currency"].as_str().unwrap_or("");
+                        let assembly = fab["assembly"].as_f64();
+                        let board = fab["total"].as_f64().unwrap_or(0.0) - assembly.unwrap_or(0.0);
+                        let assembly = assembly.map_or(String::new(), |assembly| format!(" (+ {assembly} {currency} assembly)"));
+                        format!("{} {:.2} {currency}{assembly}", fab["fab"].as_str().unwrap_or(""), board)
+                    })
                     .collect();
                 println!("cost of {} boards (estimate, parts excluded): {}", cost["quantity"], totals.join(", "));
                 for hint in cost["hints"].as_array().into_iter().flatten() {

@@ -22,10 +22,25 @@ does what KiCad's "Update PCB from Schematic" does for a new board:
 
 A KiCad netlist (`.net`, from `kicad-cli sch export netlist`) works in
 place of the schematic. All footprints sit at one point and there is no
-outline: lay the board out with `"move_all": true` and `"outline": {}`
-(or a size). The report lists footprints it could not find (`missing`) and
-those it found in another library or under KiCad 9's name (`substituted`,
-such as `DSUB-25_Female` now `DSUB-25_Socket`).
+outline. Next to the board it writes, unless they exist:
+- `constraints.json`: `"move_all": true`, `"outline": {}` (sized from the
+  parts), and the plug-in connectors (USB, RF, audio and barrel jacks,
+  D-sub, network, video, card edges, terminal blocks) on `"edge": "any"`,
+  facing out. Edit it: it is where what the user wants goes.
+- `layout.json`, which uses it, so that
+  `pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto <project-dir>/layout.json`
+  lays the board out.
+
+The report lists what needs a look:
+- `missing`: footprints not found in any library (the board leaves them
+  out), or unreadable;
+- `substituted`: footprints found in another library or under KiCad 9's
+  name (`DSUB-25_Female` is now `DSUB-25_Socket`);
+- `unmatched_pins`: symbol pins on a net that the footprint has no pad
+  for (a library that changed since the schematic was drawn);
+- `clearances`: footprints whose own pads are closer than the board's
+  clearance (a solder jumper's), given their pads' gap as their own
+  clearance, as designers do.
 
 ## 1. Look at the board
 
@@ -79,6 +94,7 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "The buttons are at the front, the front is the left side" | `"device_front": "left"`, `"place": [{"part": "SW1", "at": "front"}]` |
 | "Power jack at the back" | `"place": [{"part": "J2", "at": "rear"}]` (with `device_front`) |
 | "USB-C on the bottom edge, plug from outside" | `"edge": [{"part": "J1", "edge": "bottom", "flush": true, "opening_outwards": true}]` |
+| "The connectors on the edge, whichever suits" | `"edge": [{"part": "J1", "edge": "any", "flush": true, "opening_outwards": true}, ...]` |
 | "Mounting holes 3.5 mm in from each corner" | `"place": [{"part": "H1", "x": 3.5, "y": 3.5}, ...]` |
 | "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
@@ -92,7 +108,7 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "No copper under the antenna" | `"keepout": [{"x": [...], "y": [...], "copper": true}]` |
 | "Battery holder on the back" | `"back": ["BT1"]` |
 | "A HAT: the Pi's outline is fixed, parts go inside it" | `"fixed": ["J5"]`, `"hollow": ["J5"]` |
-| "As small as possible" | `"outline": {}` (sized from the parts), then lower `area_factor` until it no longer fits |
+| "As small as possible" | `"outline": {"shrink": true}`: the smallest board a quick route completes (each size tried costs a placement and a route) |
 
 Router side (the file passed in place of `auto`):
 

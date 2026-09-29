@@ -19,9 +19,43 @@ pub struct KiCadNetlistImport {
     /// Footprints not in the library the schematic names, taken from
     /// another library or under KiCad 9's name: `C1: <asked> -> <used>`.
     pub substituted: Vec<String>,
+    /// Symbol pins on a net that the footprint has no pad for (`J1: M1
+    /// (GND)`): the footprint does not match the symbol.
+    pub unmatched_pins: Vec<String>,
     /// Footprints whose own pads are closer than the board's clearance (a
     /// solder jumper's) and got their pads' gap as their own clearance.
     pub clearances: Vec<String>,
+    /// Connectors the starter constraints put on an edge (USB, RF, audio,
+    /// barrel and D-sub, network, video, card edge, terminal blocks).
+    pub edge_connectors: Vec<String>,
+    /// The starter constraints and layout config, when written (never over
+    /// existing files).
+    pub constraints: Option<PathBuf>,
+    pub layout: Option<PathBuf>,
+}
+
+/// Connectors people plug something into from outside the device, by
+/// footprint name: designers put 90 % of USB and RF connectors and all
+/// audio jacks and card edges of 616 open-source boards at an edge.
+fn edge_connector(footprint_name: &str) -> bool {
+    let name = footprint_name.to_ascii_lowercase();
+    let name = name.rsplit(':').next().unwrap_or(&name);
+    if name.contains("u.fl") {
+        return false;
+    }
+    // Short names as whole words (`USB_C`, `USB2`, `SMA_Amphenol`, not
+    // `Small`), longer ones anywhere (`BarrelJack`, `AudioJack`).
+    let words = name.split(|c: char| !c.is_ascii_alphanumeric());
+    let short = ["usb", "sma", "bnc", "rj45", "rj11", "rj12", "hdmi"];
+    let word = |word: &str| {
+        short.iter().any(|key| {
+            word.strip_prefix(key).is_some_and(|rest| rest.is_empty() || rest.starts_with(|c: char| c.is_ascii_digit()))
+        })
+    };
+    words.into_iter().any(word)
+        || ["coax", "displayport", "dsub", "d-sub", "barrel", "jack", "cardedge", "card_edge", "terminalblock", "terminal_block"]
+            .iter()
+            .any(|key| name.contains(key))
 }
 
 const HEADER: &str = r#"(kicad_pcb
@@ -91,8 +125,48 @@ fn uuid_of(text: &str) -> String {
     )
 }
 
-/// Footprint libraries by name, from fp-lib-tables (the project's first,
-/// then the user's), with KiCad's usual variables.
+/// Expands `${VAR}` and `$(VAR)`: the project directory, KiCad's footprint
+/// directory under any version's name, else the environment.
+fn expand(uri: &str, project: &Path, system: &str) -> String {
+    let mut path = String::new();
+    let mut rest = uri;
+    while let Some(start) = rest.find('$') {
+        path.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let close = match after.chars().next() {
+            Some('{') => '}',
+            Some('(') => ')',
+            _ => {
+                path.push('$');
+                rest = after;
+                continue;
+            }
+        };
+        let Some(end) = after.find(close) else {
+            path.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        let variable = &after[1..end];
+        if variable == "KIPRJMOD" {
+            path.push_str(&project.display().to_string());
+        } else if variable.starts_with("KICAD") && variable.ends_with("_FOOTPRINT_DIR") {
+            path.push_str(system);
+        } else if let Ok(value) = std::env::var(variable) {
+            path.push_str(&value);
+        } else {
+            path.push_str(&rest[start..start + 2 + end]);
+        }
+        rest = &after[end + 1..];
+    }
+    path.push_str(rest);
+    path
+}
+
+/// Footprint libraries by name: from fp-lib-tables (the project's first,
+/// then the user's), then `.pretty` folders in the project, then KiCad's
+/// own libraries. A table entry whose folder does not exist here falls back
+/// to the others.
 fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
     let system = std::env::var("KICAD10_FOOTPRINT_DIR")
         .or_else(|_| std::env::var("KICAD9_FOOTPRINT_DIR"))
@@ -115,16 +189,30 @@ fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
             let (Some(name), Some(uri)) = (form_atom(lib, "name", 1), form_atom(lib, "uri", 1)) else {
                 continue;
             };
-            let mut path = uri.to_string();
-            for (variable, value) in [
-                ("KIPRJMOD", project.display().to_string()),
-                ("KICAD10_FOOTPRINT_DIR", system.clone()),
-                ("KICAD9_FOOTPRINT_DIR", system.clone()),
-                ("KICAD8_FOOTPRINT_DIR", system.clone()),
-            ] {
-                path = path.replace(&format!("${{{variable}}}"), &value).replace(&format!("$({variable})"), &value);
+            let path = PathBuf::from(expand(uri, project, &system));
+            if path.is_dir() {
+                libraries.entry(name.to_string()).or_insert(path);
             }
-            libraries.entry(name.to_string()).or_insert_with(|| PathBuf::from(path));
+        }
+    }
+    // Libraries shipped in the project without a table entry.
+    let mut folders = vec![(project.to_path_buf(), 0)];
+    while let Some((folder, depth)) = folders.pop() {
+        let Ok(entries) = fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            match path.file_name().and_then(|name| name.to_str()).and_then(|name| name.strip_suffix(".pretty")) {
+                Some(name) => {
+                    libraries.entry(name.to_string()).or_insert(path);
+                }
+                None if depth < 3 => folders.push((path, depth + 1)),
+                None => {}
+            }
         }
     }
     // KiCad's own libraries, even without a table.
@@ -164,7 +252,7 @@ fn set_property(items: &mut Vec<Expr>, name: &str, value: &str, reference: &str)
             && parts.get(1).and_then(Expr::atom) == Some(name)
             && parts.len() > 2
         {
-            parts[2] = Expr::Atom(quote(value));
+            parts[2] = Expr::Atom(requote(value));
             return Ok(());
         }
     }
@@ -173,8 +261,8 @@ fn set_property(items: &mut Vec<Expr>, name: &str, value: &str, reference: &str)
         last,
         parse(&format!(
             "(property {} {} (at 0 0 0) (unlocked yes) (layer \"F.Fab\") (hide yes) (uuid \"{}\") (effects (font (size 1.27 1.27) (thickness 0.15))))",
-            quote(name),
-            quote(value),
+            requote(name),
+            requote(value),
             uuid_of(&format!("property {reference} {name}"))
         ))?,
     );
@@ -196,8 +284,14 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A string from the netlist, still escaped as KiCad writes strings.
 fn text_of(node: &Expr, head: &str) -> Option<String> {
     form_atom(node, head, 1).map(str::to_owned)
+}
+
+/// A string `text_of` read, as an atom again.
+fn requote(escaped: &str) -> String {
+    format!("\"{escaped}\"")
 }
 
 /// Writes `<output>/<board_id>.kicad_pcb` (and copies the schematic and
@@ -233,6 +327,35 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
                 continue;
             };
             fs::copy(&path, output.join(target)).map_err(|error| error.to_string())?;
+        }
+        // Sheets in subfolders (`sch/power.kicad_sch`), where the root
+        // expects them.
+        let skip = fs::canonicalize(output).ok();
+        let mut folders: Vec<(PathBuf, usize)> = fs::read_dir(&project)
+            .map_err(|error| error.to_string())?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .map(|path| (path, 1))
+            .collect();
+        while let Some((folder, depth)) = folders.pop() {
+            if fs::canonicalize(&folder).ok() == skip {
+                continue;
+            }
+            let Ok(entries) = fs::read_dir(&folder) else {
+                continue;
+            };
+            for path in entries.flatten().map(|entry| entry.path()) {
+                if path.is_dir() {
+                    if depth < 3 {
+                        folders.push((path, depth + 1));
+                    }
+                } else if path.extension().is_some_and(|extension| extension == "kicad_sch")
+                    && let Ok(relative) = path.strip_prefix(&project)
+                {
+                    copy_tree(&path, &output.join(relative))?;
+                }
+            }
         }
         // And the project's own libraries its tables name.
         for table in ["fp-lib-table", "sym-lib-table"] {
@@ -278,6 +401,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     ))?;
     let mut missing = Vec::new();
     let mut substituted = Vec::new();
+    let mut unmatched_pins = Vec::new();
     let mut footprints = 0;
     let components = netlist.child("components").map(Expr::children).unwrap_or_default();
     for component in components.iter().filter(|item| item.head() == Some("comp")) {
@@ -304,12 +428,18 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         if found != footprint_id {
             substituted.push(format!("{reference}: {footprint_id} -> {found}"));
         }
-        let mut footprint = parse(&fs::read_to_string(&file).map_err(|error| format!("failed to read {}: {error}", file.display()))?)?;
+        let mut footprint = match fs::read_to_string(&file).map_err(|error| error.to_string()).and_then(|text| parse(&text)) {
+            Ok(footprint) => footprint,
+            Err(error) => {
+                missing.push(format!("{reference} ({found} unreadable: {error})"));
+                continue;
+            }
+        };
         let Expr::List(items) = &mut footprint else {
             continue;
         };
         items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version")));
-        items[1] = Expr::Atom(quote(&footprint_id));
+        items[1] = Expr::Atom(requote(&footprint_id));
         // Placement fields after the layer.
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
         items.insert(layer_index, parse(&format!("(uuid \"{}\")", uuid_of(&format!("footprint {reference}"))))?);
@@ -320,10 +450,10 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         let sheet_path = component.child("sheetpath");
         let sheet = sheet_path.and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
         if let Some(stamp) = text_of(component, "tstamps").or_else(|| text_of(component, "tstamp")) {
-            links.push(parse(&format!("(path {})", quote(&format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }))))?);
+            links.push(parse(&format!("(path {})", requote(&format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }))))?);
         }
         if let Some(names) = sheet_path.and_then(|sheet| text_of(sheet, "names")) {
-            links.push(parse(&format!("(sheetname {})", quote(&names)))?);
+            links.push(parse(&format!("(sheetname {})", requote(&names)))?);
         }
         let sheet_file = component
             .children()
@@ -332,7 +462,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             .find(|item| form_atom(item, "name", 1) == Some("Sheetfile"))
             .and_then(|item| text_of(item, "value"));
         if let Some(sheet_file) = sheet_file {
-            links.push(parse(&format!("(sheetfile {})", quote(&sheet_file)))?);
+            links.push(parse(&format!("(sheetfile {})", requote(&sheet_file)))?);
         }
         let at = items
             .iter()
@@ -348,13 +478,29 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             };
             set_property(items, &name, field.children().get(2).and_then(Expr::atom).unwrap_or(""), &reference)?;
         }
-        for flag in ["dnp", "exclude_from_bom", "exclude_from_pos_files"] {
-            if flags.contains(flag)
-                && let Some(Expr::List(attr)) = items.iter_mut().find(|item| item.head() == Some("attr"))
-                && !attr.iter().any(|item| item.atom() == Some(flag))
-            {
-                attr.push(Expr::Atom(flag.into()));
+        // The symbol says whether the part is fitted and in the BOM (a
+        // mounting hole's footprint may say otherwise).
+        let attr = match items.iter().position(|item| item.head() == Some("attr")) {
+            Some(index) => index,
+            None => {
+                let at = items
+                    .iter()
+                    .position(|item| item.head() == Some("pad") || item.head().is_some_and(|head| head.starts_with("fp_")))
+                    .unwrap_or(items.len());
+                items.insert(at, Expr::List(vec![Expr::Atom("attr".into())]));
+                at
             }
+        };
+        if let Expr::List(parts) = &mut items[attr] {
+            parts.retain(|item| !matches!(item.atom(), Some("dnp" | "exclude_from_bom")));
+            for flag in ["exclude_from_bom", "dnp", "exclude_from_pos_files"] {
+                if flags.contains(flag) && !parts.iter().any(|item| item.atom() == Some(flag)) {
+                    parts.push(Expr::Atom(flag.into()));
+                }
+            }
+        }
+        if items[attr].children().len() == 1 {
+            items.remove(attr);
         }
         for item in items.iter_mut() {
             match item.head() {
@@ -363,17 +509,33 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
                     if let Some((net, function, kind)) = pins.get(&(reference.clone(), number))
                         && let Expr::List(parts) = item
                     {
-                        parts.push(parse(&format!("(net {})", quote(net)))?);
+                        parts.push(parse(&format!("(net {})", requote(net)))?);
                         if let Some(function) = function {
-                            parts.push(parse(&format!("(pinfunction {})", quote(function)))?);
+                            parts.push(parse(&format!("(pinfunction {})", requote(function)))?);
                         }
                         if let Some(kind) = kind {
-                            parts.push(parse(&format!("(pintype {})", quote(kind)))?);
+                            parts.push(parse(&format!("(pintype {})", requote(kind)))?);
                         }
                     }
                 }
                 _ => {}
             }
+        }
+        // Symbol pins the footprint has no pad for (a library that changed).
+        let numbers: BTreeSet<&str> = footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+            .filter_map(|pad| pad.children().get(1).and_then(Expr::atom))
+            .collect();
+        let lost: Vec<String> = pins
+            .range((reference.clone(), String::new())..)
+            .take_while(|((owner, _), _)| *owner == reference)
+            .filter(|((_, pin), _)| !numbers.contains(pin.as_str()))
+            .map(|((_, pin), (net, _, _))| format!("{pin} ({net})"))
+            .collect();
+        if !lost.is_empty() {
+            unmatched_pins.push(format!("{reference}: {}", lost.join(", ")));
         }
         if let Expr::List(board_items) = &mut board {
             board_items.push(footprint);
@@ -413,7 +575,57 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         }
         fs::write(&board_path, format!("{}\n", encode(&board))).map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
     }
-    Ok(KiCadNetlistImport { board: board_path, footprints, nets, missing, substituted, clearances })
+    // Starter constraints: every part placed, the outline sized from the
+    // parts, the plug-in connectors on an edge (facing out when the
+    // footprint shows which way it opens).
+    let mut edges = Vec::new();
+    let mut edge_connectors = Vec::new();
+    for footprint in board.children().iter().filter(|item| item.head() == Some("footprint")) {
+        let name = footprint.children().get(1).and_then(Expr::atom).unwrap_or("");
+        let reference = footprint
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Reference"))
+            .and_then(|item| item.children().get(2).and_then(Expr::atom))
+            .unwrap_or("");
+        let wired = footprint.children().iter().any(|item| item.head() == Some("pad") && item.child("net").is_some());
+        if reference.is_empty() || !wired || !edge_connector(name) {
+            continue;
+        }
+        let mut edge = serde_json::json!({"part": reference, "edge": "any", "flush": true});
+        if crate::board_placer::connector_mouth(footprint)?.is_some() {
+            edge["opening_outwards"] = true.into();
+        }
+        edges.push(edge);
+        edge_connectors.push(format!("{reference} ({name})"));
+    }
+    let write_new = |name: &str, value: serde_json::Value| -> Result<Option<PathBuf>, String> {
+        let path = output.join(name);
+        if path.exists() {
+            return Ok(None);
+        }
+        fs::write(&path, serde_json::to_string_pretty(&value).map_err(|error| error.to_string())? + "\n")
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        Ok(Some(path))
+    };
+    let mut starter = serde_json::json!({"version": 1, "move_all": true, "outline": {}});
+    if !edges.is_empty() {
+        starter["edge"] = edges.into();
+    }
+    let constraints = write_new("constraints.json", starter)?;
+    let layout = write_new("layout.json", serde_json::json!({"placer": {"constraints": "constraints.json"}}))?;
+    Ok(KiCadNetlistImport {
+        board: board_path,
+        footprints,
+        nets,
+        missing,
+        substituted,
+        unmatched_pins,
+        clearances,
+        edge_connectors,
+        constraints,
+        layout,
+    })
 }
 
 /// Per footprint, the smallest gap between its own pads that KiCad's DRC
@@ -511,6 +723,30 @@ fn own_pad_gaps(board: &Expr, project: &Path, board_id: &str) -> Result<BTreeMap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plug_in_connectors_are_told_by_their_footprint_names() {
+        for name in [
+            "Connector_USB:USB_C_Receptacle_GCT_USB4105",
+            "x:USB2.0_TYPE-C",
+            "Connector_Coaxial:SMA_Amphenol_901-144_Vertical",
+            "Connector_BarrelJack:BarrelJack_Horizontal",
+            "Connector_Audio:Jack_3.5mm_CUI_SJ-3523-SMT_Horizontal",
+            "Connector_RJ:RJ45_Amphenol_54602-x08_Horizontal",
+            "Connector_Dsub:DSUB-9_Socket_Horizontal",
+            "TerminalBlock_Phoenix:TerminalBlock_Phoenix_MKDS-1,5-2",
+        ] {
+            assert!(edge_connector(name), "{name}");
+        }
+        for name in [
+            "Logos:LordsBoardsLogo_Small_Silk",
+            "Connector_Coaxial:U.FL_Hirose_U.FL-R-SMT-1_Vertical",
+            "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
+            "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+        ] {
+            assert!(!edge_connector(name), "{name}");
+        }
+    }
 
     #[test]
     fn netlist_becomes_a_board_with_nets_fields_and_symbol_links() {

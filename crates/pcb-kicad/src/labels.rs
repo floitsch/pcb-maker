@@ -146,11 +146,13 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
             let Some(back) = form_atom(child, "layer", 1).and_then(silk_side) else {
                 continue;
             };
-            // The footprint's own texts (a diode's "K", a visible value):
-            // everything but the label itself.
+            // The footprint's own texts (a diode's "K"): everything but the
+            // labels (reference and value), which move.
             let own_text = match child.head() {
-                Some("fp_text") => child.children().get(1).and_then(Expr::atom) != Some("reference"),
-                Some("property") => child.children().get(1).and_then(Expr::atom) != Some("Reference") && visible(child),
+                Some("fp_text") => !matches!(child.children().get(1).and_then(Expr::atom), Some("reference" | "value")),
+                Some("property") => {
+                    !matches!(child.children().get(1).and_then(Expr::atom), Some("Reference" | "Value")) && visible(child)
+                }
                 _ => false,
             };
             if own_text {
@@ -218,7 +220,7 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         let body = [middle[0] - half[0], middle[1] - half[1], middle[0] + half[0], middle[1] + half[1]];
         for (child_index, child) in footprint.children().iter().enumerate() {
             if child.head() != Some("property")
-                || child.children().get(1).and_then(Expr::atom) != Some("Reference")
+                || !matches!(child.children().get(1).and_then(Expr::atom), Some("Reference" | "Value"))
                 || !visible(child)
             {
                 continue;

@@ -149,6 +149,9 @@ pub struct KiCadBoardPlacerResult {
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
+    /// The edges parts on `"edge": "any"` were given, by part.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub edges_chosen: BTreeMap<String, String>,
     pub seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
@@ -1330,6 +1333,68 @@ pub(super) fn lower_placement(
 /// Places the movable footprints of `<source>/<board_id>.kicad_pcb`, removes
 /// all routed copper, and writes the project plus an HTML playback to
 /// `output`.
+/// Parts on `"edge": "any"` settle first without that constraint (in a
+/// placement thrown away); each then keeps to the board edge nearest to
+/// where it settled, the one along its long side on a near tie. Rewrites
+/// the constraints and returns the choices.
+fn choose_any_edges(
+    source_directory: &Path,
+    board_id: &str,
+    config: &mut KiCadBoardPlacerConfig,
+) -> Result<BTreeMap<String, String>, String> {
+    let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints else {
+        return Ok(BTreeMap::new());
+    };
+    if !constraints.edge.iter().any(|entry| entry.edge == "any") {
+        return Ok(BTreeMap::new());
+    }
+    let mut free = config.clone();
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut free.constraints {
+        constraints.edge.retain(|entry| entry.edge != "any");
+    }
+    let directory = std::env::temp_dir().join(format!(
+        "pcb-maker-any-edge-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0)
+    ));
+    let trial = place_kicad_board(source_directory, board_id, &directory, &free);
+    let bounds = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
+        .ok()
+        .and_then(|text| parse(&text).ok())
+        .and_then(|pcb| outline::board_loops(&pcb).ok())
+        .map(|loops| {
+            loops.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
+                [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+            })
+        });
+    let _ = fs::remove_dir_all(&directory);
+    let trial = trial?;
+    let bounds = bounds.ok_or("\"edge\": \"any\" needs a board outline (or an `outline` constraint)")?;
+    let mut chosen = BTreeMap::new();
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
+        for entry in constraints.edge.iter_mut().filter(|entry| entry.edge == "any") {
+            let placed = trial
+                .footprints
+                .iter()
+                .find(|footprint| footprint.reference == entry.part)
+                .ok_or_else(|| format!("constraint names unknown part {:?}", entry.part))?;
+            let ([x, y], [half_x, half_y]) = (placed.body_center, placed.body_half);
+            let along_x = half_x >= half_y;
+            let edges = [
+                ("left", x - half_x - bounds[0], !along_x),
+                ("top", y - half_y - bounds[1], along_x),
+                ("right", bounds[2] - x - half_x, !along_x),
+                ("bottom", bounds[3] - y - half_y, along_x),
+            ];
+            let cost = |(_, distance, along): &(&str, f64, bool)| distance - if *along { 1.0 } else { 0.0 };
+            let (name, _, _) = edges.iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).expect("four edges");
+            entry.edge = name.to_string();
+            chosen.insert(entry.part.clone(), name.to_string());
+        }
+    }
+    Ok(chosen)
+}
+
 pub fn place_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -1353,6 +1418,7 @@ pub fn place_kicad_board(
     if config.tight_bodies.is_none() {
         config.tight_bodies = Some(courtyards_may_overlap(&source_directory.join(format!("{board_id}.kicad_pro"))));
     }
+    let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)?;
     let config = &config;
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
@@ -1599,6 +1665,7 @@ pub fn place_kicad_board(
         constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references),
         constraint_warnings: lowered.constraint_warnings.clone(),
         outline_mm: outline_size,
+        edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
         footprints,
     };

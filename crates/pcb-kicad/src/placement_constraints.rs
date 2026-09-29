@@ -178,6 +178,11 @@ pub struct KiCadOutlineConstraint {
     /// Width over height when sizing automatically (default 1.5).
     #[serde(default)]
     pub aspect: Option<f64>,
+    /// When sizing automatically, `layout-kicad-board` goes on shrinking the
+    /// board by a fifth while a quick route still completes: the smallest
+    /// board that routes.
+    #[serde(default)]
+    pub shrink: bool,
     /// Top-left corner in board coordinates. Default: the old outline's
     /// top-left corner, or, without one, centred on the footprints.
     #[serde(default)]
@@ -202,7 +207,9 @@ pub struct KiCadRotationConstraint {
 #[serde(deny_unknown_fields)]
 pub struct KiCadEdgeConstraint {
     pub part: String,
-    /// `left`, `right`, `top` or `bottom` of the board outline's bounding box.
+    /// `left`, `right`, `top` or `bottom` of the board outline's bounding
+    /// box, or `any`: the edge nearest to where the part settles without
+    /// this constraint.
     pub edge: String,
     /// The body touches the edge (keeping the edge margin).
     #[serde(default)]
@@ -522,7 +529,7 @@ fn edge(name: &str) -> Result<Edge, String> {
         "right" => Ok(Edge::Right),
         "top" => Ok(Edge::Top),
         "bottom" => Ok(Edge::Bottom),
-        other => Err(format!("unknown edge {other:?} (left, right, top or bottom)")),
+        other => Err(format!("unknown edge {other:?} (left, right, top, bottom or any)")),
     }
 }
 

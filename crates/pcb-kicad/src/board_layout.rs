@@ -168,8 +168,9 @@ pub struct KiCadOutlineTrial {
 
 /// For an outline sized from the parts (no size, no `area_factor`): starts
 /// at the size designers use and grows it by a quarter while the parts do
-/// not fit or a quick route leaves connections open. Sets the chosen
-/// factor in `placer_config` and returns the sizes tried.
+/// not fit or a quick route leaves connections open; with `shrink`, when
+/// the first size routes, shrinks it by a fifth while it still does. Sets
+/// the chosen factor in `placer_config` and returns the sizes tried.
 fn size_outline(
     source_directory: &Path,
     board_id: &str,
@@ -177,9 +178,9 @@ fn size_outline(
     placer_config: &mut KiCadBoardPlacerConfig,
     router_config: &KiCadBoardRouterConfig,
 ) -> Result<Vec<KiCadOutlineTrial>, String> {
-    if automatic_outline(placer_config).is_none() {
+    let Some(shrink) = automatic_outline(placer_config).map(|outline| outline.shrink) else {
         return Ok(Vec::new());
-    }
+    };
     let board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let start = default_area_factor(&parse(
         &fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?,
@@ -193,8 +194,17 @@ fn size_outline(
     fs::create_dir_all(&sizing).map_err(|error| format!("failed to create {}: {error}", sizing.display()))?;
     let mut trials = Vec::new();
     let mut chosen = None;
-    for step in 0..4 {
-        let factor = (start * 1.25f64.powi(step) * 100.0).round() / 100.0;
+    // Grow from the start; with `shrink`, once the start routes, shrink.
+    let steps: Vec<f64> = (0..4).map(|step| 1.25f64.powi(step)).chain((1..5).map(|step| 0.8f64.powi(step))).collect();
+    for scale in steps {
+        let routed_first = trials.first().is_some_and(|trial: &KiCadOutlineTrial| trial.open == Some(0));
+        if scale < 1.0 && !(shrink && routed_first) {
+            break;
+        }
+        if scale > 1.0 && routed_first {
+            continue;
+        }
+        let factor = (start * scale * 100.0).round() / 100.0;
         let mut config = placer_config.clone();
         if let Some(outline) = automatic_outline(&mut config) {
             outline.area_factor = Some(factor);
@@ -227,8 +237,18 @@ fn size_outline(
             }
         );
         trials.push(KiCadOutlineTrial { area_factor: factor, size_mm: placement.outline_mm, legal, open, used: false });
+        if scale < 1.0 {
+            // Shrinking: stop at the first size that no longer routes.
+            if open != Some(0) {
+                break;
+            }
+            chosen = Some(factor);
+            continue;
+        }
         chosen = Some(factor);
-        if open == Some(0) {
+        // Growing stops at the first size that routes; the start size with
+        // `shrink` goes on to smaller ones.
+        if open == Some(0) && !(shrink && scale == 1.0) {
             break;
         }
     }
@@ -356,6 +376,14 @@ pub fn layout_kicad_board(
     let outline_sizing = size_outline(source_directory, board_id, output_directory, &mut placer_config, router_config)?;
     let placed_directory = output_directory.join("placed");
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
+    // The moves keep parts on `"edge": "any"` at the edges they were given.
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut placer_config.constraints {
+        for entry in &mut constraints.edge {
+            if let Some(edge) = placement.edges_chosen.get(&entry.part) {
+                entry.edge = edge.clone();
+            }
+        }
+    }
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
         return Err(format!(
             "placement is not legal (unplaced {:?}, illegal {:?}); {}",
