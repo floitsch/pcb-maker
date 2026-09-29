@@ -123,9 +123,15 @@ def run_task(task, arguments):
         (work / "router.json").write_text(json.dumps(router))
         router_argument = str(work / "router.json")
     started = time.monotonic()
-    process = subprocess.run([str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
-                              str(work / "layout"), router_argument, str(work / "layout.json")],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=arguments.timeout)
+    try:
+        process = subprocess.run([str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
+                                  str(work / "layout"), router_argument, str(work / "layout.json")],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=arguments.timeout)
+    except subprocess.TimeoutExpired as expired:
+        output = expired.stdout.decode(errors="replace") if isinstance(expired.stdout, bytes) else (expired.stdout or "")
+        (work / "layout.log").write_text(output)
+        return {"name": name, "seconds": round(time.monotonic() - started, 1),
+                "error": f"timed out after {arguments.timeout} s", "pass": False}
     (work / "layout.log").write_text(process.stdout)
     row = {"name": name, "seconds": round(time.monotonic() - started, 1)}
     report = work / "layout/board-layout.json"
