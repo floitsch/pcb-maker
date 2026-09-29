@@ -27,6 +27,8 @@ fn chain(parts: usize) -> Problem {
         edge_inset: 0.0,
         courtyards: Vec::new(),
         holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -64,6 +66,8 @@ fn chain(parts: usize) -> Problem {
             edge_inset: 0.0,
             courtyards: Vec::new(),
             holes_inside: false,
+            pads: Vec::new(),
+            copper_only: false,
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -181,6 +185,8 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         edge_inset: 0.0,
         courtyards: Vec::new(),
         holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -221,6 +227,8 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         edge_inset: 0.0,
         courtyards: Vec::new(),
         holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -265,6 +273,8 @@ fn tight_bodies_are_the_last_resort() {
         edge_inset: 0.0,
         courtyards: Vec::new(),
         holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
@@ -286,4 +296,49 @@ fn tight_bodies_are_the_last_resort() {
     }
     let placement = place(&problem, &Config::new());
     assert!(!placement.unplaced.is_empty() && !placement.relaxation.tight);
+}
+
+#[test]
+fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
+    use pcb_placer::legal::is_legal;
+    let mut problem = chain(1);
+    let part = |size: f64, side: Side, fixed: bool| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [size, size],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side,
+        fixed,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+    };
+    // A 2 mm hole in the board, and a 10 mm connector with a pad at its
+    // left end.
+    let cutout = Component { copper_only: true, ..part(2.0, Side::Both, true) };
+    let connector = Component { pads: vec![[-5.0, -1.0, -3.0, 1.0]], ..part(10.0, Side::Front, false) };
+    problem.components = vec![cutout, connector];
+    problem.poses = vec![
+        Pose { position: [25.0, 25.0], angle: 0.0 },
+        Pose { position: [25.0, 25.0], angle: 0.0 },
+    ];
+    problem.edge_margin = 0.5;
+    let legal = |problem: &Problem, x: f64| {
+        is_legal(problem, &problem.poses, 1, Pose { position: [x, 25.0], angle: 0.0 }, 0..2)
+    };
+    // Body over the hole, pad 3 mm away: fine.
+    assert!(legal(&problem, 23.0));
+    // Pad within the edge margin of the hole: not.
+    assert!(!legal(&problem, 28.5));
+    // A solid obstacle blocks the body.
+    problem.components[0].copper_only = false;
+    assert!(!legal(&problem, 23.0));
 }

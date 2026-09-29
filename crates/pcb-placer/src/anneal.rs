@@ -94,7 +94,20 @@ impl State<'_> {
             }
             let other_component = &self.problem.components[other];
             if side.collides(other_component.side) {
-                if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
+                if component.copper_only || other_component.copper_only {
+                    // A cutout keeps only copper away.
+                    let margin = self.problem.edge_margin;
+                    let (hole, part, part_pose) = if component.copper_only {
+                        ((rect.center, rect.half), other_component, self.poses[other])
+                    } else {
+                        ((body.center, body.half), component, pose)
+                    };
+                    if !part.copper_only {
+                        for (center, half) in part.pad_boxes(part_pose) {
+                            total += area((center, [half[0] + margin, half[1] + margin]), hole);
+                        }
+                    }
+                } else if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
                     total += area((rect.center, rect.half), (body.center, body.half));
                 } else {
                     // A hollow part blocks with its boxes (grown by half the

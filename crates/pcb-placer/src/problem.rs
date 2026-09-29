@@ -77,6 +77,13 @@ pub struct Component {
     /// Other parts' holes may lie inside the courtyard: KiCad cannot build
     /// it (a malformed outline) and does not check it.
     pub holes_inside: bool,
+    /// The part's pads (and holes), [min x, min y, max x, max y] in its own
+    /// frame.
+    pub pads: Vec<[f64; 4]>,
+    /// A hole in the board (a cutout): it keeps other parts' copper an edge
+    /// margin away, while their bodies may reach over it (a connector's
+    /// pegs, a shield tab).
+    pub copper_only: bool,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -156,6 +163,11 @@ impl Component {
     /// Board-space boxes (centre, half extent) of `far_side` at a pose.
     pub fn far_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
         self.boxes(&self.far_side, pose)
+    }
+
+    /// Board-space boxes (centre, half extent) of the pads at a pose.
+    pub fn pad_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
+        self.boxes(&self.pads, pose)
     }
 
     /// Board-space boxes (centre, half extent) of `hollow` at a pose.

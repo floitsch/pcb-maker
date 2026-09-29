@@ -795,6 +795,8 @@ pub(super) fn lower_placement(
             edge_inset,
             courtyards: courtyard.0,
             holes_inside: courtyard.1,
+            pads: own_pads.clone(),
+            copper_only: false,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -878,6 +880,8 @@ pub(super) fn lower_placement(
             edge_inset: 0.0,
             courtyards: Vec::new(),
             holes_inside: false,
+            pads: Vec::new(),
+            copper_only: false,
         });
         poses.push(core::Pose {
             position: [
@@ -934,6 +938,8 @@ pub(super) fn lower_placement(
             edge_inset: 0.0,
             courtyards: Vec::new(),
             holes_inside: false,
+            pads: Vec::new(),
+            copper_only: false,
         });
         poses.push(core::Pose {
             position: [
@@ -979,6 +985,8 @@ pub(super) fn lower_placement(
             edge_inset: 0.0,
             courtyards: Vec::new(),
             holes_inside: false,
+            pads: Vec::new(),
+            copper_only: true,
         });
         poses.push(core::Pose {
             position: [

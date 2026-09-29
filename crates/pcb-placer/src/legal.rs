@@ -164,6 +164,12 @@ pub fn is_legal(
         let other_side = problem.components[other].side;
         if side.collides(other_side) {
             let (mine, theirs) = (&problem.components[index], &problem.components[other]);
+            if mine.copper_only || theirs.copper_only {
+                if copper_meets_cutout(problem, index, pose, other, poses[other]) {
+                    return false;
+                }
+                continue;
+            }
             let hollow = mine.hollow_for(theirs) || theirs.hollow_for(mine);
             if if hollow {
                 hollow_overlap(problem, index, pose, other, poses[other])
@@ -177,6 +183,32 @@ pub fn is_legal(
         }
     }
     true
+}
+
+/// Whether a part's copper comes closer than the edge margin to a cutout
+/// (either way round); its body may reach over the hole.
+fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
+    let (hole, pose_hole, part, pose_part) = if problem.components[a].copper_only {
+        (a, pose_a, b, pose_b)
+    } else {
+        (b, pose_b, a, pose_a)
+    };
+    if problem.components[part].copper_only {
+        return false;
+    }
+    let hole = rect(problem, hole, pose_hole);
+    let margin = problem.edge_margin;
+    problem.components[part].pad_boxes(pose_part).into_iter().any(|(center, half)| {
+        overlaps(
+            Rect {
+                center,
+                half: [half[0] + margin, half[1] + margin],
+                round: false,
+            },
+            hole,
+            0.0,
+        )
+    })
 }
 
 /// Whether two parts on the same side meet where one of them is hollow:
