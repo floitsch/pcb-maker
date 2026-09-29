@@ -119,6 +119,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   `max_mm`, parts on the other side, or unfix a neighbour.
   `placed/board-placer.json` has the same `hints` and the `utilization`
   per side.
+  Before giving up, the placer shrinks the halos and the spacing (down to
+  the copper clearance) and retries legalization with the stuck parts
+  first. As a last resort it lets courtyards overlap: bodies shrink to
+  their fabrication outline and pads (`"tight_bodies": true` in
+  `board-placer.json`). It does that only where the project's DRC does not
+  treat a courtyard overlap as an error; `"tight_bodies": false` in the
+  placer config forbids it.
 - **A `near` or `relative` constraint is not `satisfied`.** Geometry forbids
   it, or it conflicts with another constraint; `violation_mm` says by how
   much. Relax the distance, or fix the part yourself.
