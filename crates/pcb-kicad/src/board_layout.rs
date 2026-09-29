@@ -75,6 +75,8 @@ pub struct KiCadBoardLayoutResult {
     pub first_vias: usize,
     pub first_length_mm: f64,
     pub moves: Vec<KiCadBoardLayoutMove>,
+    /// Reference labels moved off pads and other silkscreen.
+    pub labels: crate::labels::KiCadLabelReport,
     /// Open terminals after the first route of the kept placement and of
     /// each other seed's placement tried (only when the first left some).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -504,6 +506,11 @@ pub fn layout_kicad_board(
     if !polished {
         result = router.reroute(true);
     }
+    // Reference labels off pads and other silkscreen.
+    let labels = crate::labels::place_labels(&mut pcb)?;
+    if !labels.stuck.is_empty() {
+        eprintln!("labels without a free spot: {:?}", labels.stuck);
+    }
     let layer_names = layers.names.clone();
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     let result_directory = output_directory.join("result");
@@ -592,6 +599,7 @@ pub fn layout_kicad_board(
         first_length_mm: first.2,
         moves,
         placement_race: race,
+        labels,
         pin_swaps,
         constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
         routed,

@@ -89,6 +89,8 @@ mod quality;
 pub use quality::{KiCadQualityReport, score_kicad_board};
 mod cost;
 pub use cost::{KiCadCost, KiCadFabQuote};
+mod labels;
+pub use labels::KiCadLabelReport;
 pub use describe::{KiCadBoardDescription, describe_kicad_board};
 mod placement_constraints;
 pub use placement_constraints::{

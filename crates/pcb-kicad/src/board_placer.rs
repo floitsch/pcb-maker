@@ -1078,7 +1078,8 @@ pub(super) fn lower_placement(
 
     // Copper-layer text and graphics are part of the board: parts must not
     // be placed on top of them. They follow the footprints, so footprint
-    // indices stay aligned with the board file.
+    // indices stay aligned with the board file. (Silkscreen text moves off
+    // pads after placement instead: see `labels`.)
     for item in pcb.children() {
         let Some(layer) = form_atom(item, "layer", 1).and_then(copper_layer_index) else {
             continue;
