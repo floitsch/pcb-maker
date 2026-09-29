@@ -26,10 +26,10 @@ Not finished, but already useful.
 - **Agent tasks.** Boards reduced to what an agent starts from (parts
   stacked, no outline) are laid out from a `constraints.json`
   ([agent tasks](benchmarks/agent-tasks/README.md)).
-  - On the 114 D3 test boards pcb-maker places and routes 109 (96 %)
-    clean.
-  - The median task takes 12 s. The layouts use 0.80 × the designers'
-    copper and 0.53 × their vias.
+  - On the 114 D3 test boards pcb-maker places and routes 110 (96 %)
+    clean. The other 4 have no legal placement.
+  - The median task takes 9 s. The layouts use 0.80 × the designers'
+    copper and 0.52 × their vias.
 
 On the [18-board corpus](docs/benchmarks.md) built from the KiCad demos,
 Olimex and generated ESP32 boards:

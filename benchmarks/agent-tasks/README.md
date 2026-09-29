@@ -58,13 +58,14 @@ benchmarks/agent-tasks/run.py build/agent-pcbench-run --tasks build/agent-pcbenc
 
 ### 2026-09-29, the 114 D3 test boards
 
-Commit 6529af9, one binary for all tasks: **109/114 pass (96 %)**.
+Commit 93d331e, one binary for all tasks: **110/114 pass (96 %)**. Every
+board that could be placed legally was routed clean.
 
 | | This run |
 | --- | --- |
-| Time per task | median 12 s, mean 27 s, longest 243 s (3 in parallel) |
-| Copper (109 passing boards) | 0.80 × the designer's; route mode on the designer's placement: 0.96 × |
-| Vias | 0.53 × the designer's (302 against 567) |
+| Time per task | median 9 s, mean 25 s, longest 290 s (3 in parallel) |
+| Copper (110 passing boards) | 0.80 × the designer's; route mode on the designer's placement: 0.96 × |
+| Vias | 0.52 × the designer's (295 against 569) |
 
 - **Other methods.** For comparison, route mode on the designer's placement
   (the same boards) is 112/112 clean, and PCBWorld's Freerouting Clean Pass
@@ -81,15 +82,16 @@ Commit 6529af9, one binary for all tasks: **109/114 pass (96 %)**.
     stayed open;
   - legalization gave up on parts a big part had left no room for (it
     now retries with them first);
+  - the placement kept for the least wire is not always one that routes:
+    when the first route leaves connections open, the other seeds'
+    placements are routed too;
   - parts inside a shield's outline, parts with holes inside a courtyard
     (KiCad forbids it, unless the courtyard is malformed and KiCad skips
     it), connector bodies over the board's peg holes.
-- **Progress.** 71/114 in the first run, 97 (with mixed binaries) and now
-  109; no board has a copper error.
+- **Progress.** 71/114 in the first run, 97 (with mixed binaries), 109,
+  and now 110; no board has a copper error.
 - **What is left:**
-  - **4 boards cannot be placed legally.** FogDrive and HaveSome fill a side
+  - **4 boards cannot be placed legally**, all four by geometry. FogDrive and HaveSome fill a side
     to 82-93 %, the hint says to move parts to the other side. A 4.8 mm
     wide board whose parts are as wide as the board. An 18.6 mm capacitor
     between mounting holes and copper text on a 22 mm board.
-  - **1 leaves a connection open.** ESP8266-WS2811 carries 0.9 mm tracks
-    with 0.4 mm clearance on a small board.
