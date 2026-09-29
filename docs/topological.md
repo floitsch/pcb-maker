@@ -177,6 +177,18 @@ engine falls well behind the lattice router:
 The errors KiCad reports on Olimex (fiducials too close to mounting holes)
 are the design's own.
 
+`tighten` on the same boards leaves completion and KiCad errors exactly
+as the lattice router has them. Copper gets 2-4 % shorter, and it takes
+0.02-0.16 s:
+
+| board | pieces tightened | length |
+| --- | --- | --- |
+| Olimex ESP32-C3 | 480 of 480 | 936 → 901 mm |
+| DUT C3 (pours) | 323 of 325 | 1319 → 1275 mm |
+| multichannel | 604 of 616 | 2603 → 2532 mm |
+| StickHub | 702 of 718 | 796 → 778 mm |
+| ColdFire (4 layers) | 1620 of 1645 | 9083 → 8793 mm |
+
 **Verdict (2026-09-30).** The engine is TopoR's algorithm, and it works:
 - on simple two-layer boards, it matches the lattice router on completion
   and beats it on length;
