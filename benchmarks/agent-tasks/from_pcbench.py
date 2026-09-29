@@ -88,7 +88,12 @@ def main():
                 continue
             if not is_connector(footprint):
                 continue
-            side, distance = min(distances.items(), key=lambda item: item[1])
+            # Ties (a header along a whole side touches two edges): the edge
+            # along the part's long side.
+            long_horizontal = (body[2] - body[0]) >= (body[3] - body[1])
+            along = {"top": long_horizontal, "bottom": long_horizontal,
+                     "left": not long_horizontal, "right": not long_horizontal}
+            side, distance = min(distances.items(), key=lambda item: (round(item[1], 2), not along[item[0]]))
             if distance <= arguments.reach:
                 edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2)})
                 rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360})
