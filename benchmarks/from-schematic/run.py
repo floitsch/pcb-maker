@@ -7,12 +7,14 @@
 Each board goes the way an agent's would: `import-kicad-netlist` from the
 demo's schematic, `layout-kicad-board` with the starter `layout.json` it
 writes (every part placed, outline sized from the parts, plug-in connectors
-on an edge), unchanged. A board passes when every connection is routed and
-KiCad reports it complete (no unconnected item, no DRC error, schematic
-parity). The designer's own board is scored alongside for size, vias and
-copper."""
+on an edge), unchanged, on as many copper layers as the designer used. A
+board passes when every connection is routed and KiCad finds no unconnected
+item, no DRC error (warnings, such as a library footprint's silkscreen on
+its own pads, are reported apart) and no schematic parity issue. The
+designer's own board is scored alongside for size, vias and copper."""
 
 import argparse
+import collections
 import json
 import re
 import shutil
@@ -44,9 +46,12 @@ def board(arguments, entry):
     work = arguments.output / name
     shutil.rmtree(work, ignore_errors=True)
     project = work / "project"
+    designer = subprocess.run([str(arguments.binary), "score-kicad-board", str(schematic.parent), name], capture_output=True, text=True)
+    theirs = json.loads(designer.stdout)["economy"] if designer.returncode == 0 else None
+    layers = theirs["copper_layers"] if theirs else 2
     started = time.monotonic()
-    imported = subprocess.run([str(arguments.binary), "import-kicad-netlist", str(schematic), str(project), name],
-                              capture_output=True, text=True)
+    imported = subprocess.run([str(arguments.binary), "import-kicad-netlist", str(schematic), str(project), name,
+                               "--layers", str(layers)], capture_output=True, text=True)
     if imported.returncode:
         row["error"] = imported.stderr.strip()[-300:]
         return row
@@ -70,22 +75,25 @@ def board(arguments, entry):
     result = json.loads(result_path.read_text())
     routed = result["routed"]
     native = routed["native"]
+    drc = json.loads((work / "layout/result/drc.json").read_text())
+    severities = collections.Counter(violation["severity"] for violation in drc["violations"])
     row.update({
         "routed": f"{routed['routed_connections']}/{routed['routable_connections']}",
-        "complete": native["complete"],
-        "drc": native["drc_design_violations"],
+        "unconnected": len(drc.get("unconnected_items", [])),
+        "drc_errors": severities.get("error", 0),
+        "drc_warnings": severities.get("warning", 0),
         "parity": native["schematic_parity_issues"],
+        "erc": native["erc_violations"],
     })
     quality = result.get("quality") or {}
     economy = quality.get("economy") or {}
     row["ours"] = {"size_mm": [economy.get("width_mm"), economy.get("height_mm")], "vias": economy.get("vias"),
                    "copper_mm": economy.get("track_length_mm")}
-    designer = subprocess.run([str(arguments.binary), "score-kicad-board", str(schematic.parent), name], capture_output=True, text=True)
-    if designer.returncode == 0:
-        theirs = json.loads(designer.stdout)["economy"]
+    if theirs:
         row["designer"] = {"size_mm": [theirs.get("width_mm"), theirs.get("height_mm")], "vias": theirs.get("vias"),
-                           "copper_mm": theirs.get("track_length_mm"), "layers": theirs.get("copper_layers")}
-    row["pass"] = routed["routed_connections"] == routed["routable_connections"] and native["complete"]
+                           "copper_mm": theirs.get("track_length_mm"), "layers": layers}
+    row["pass"] = (routed["routed_connections"] == routed["routable_connections"] and row["unconnected"] == 0
+                   and row["drc_errors"] == 0 and row["parity"] == 0)
     return row
 
 
