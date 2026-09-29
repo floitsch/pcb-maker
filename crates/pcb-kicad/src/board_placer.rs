@@ -131,6 +131,12 @@ pub struct KiCadBoardPlacerResult {
     pub utilization: [f64; 2],
     /// Whether the placement needed bodies without their courtyard margin.
     pub tight_bodies: bool,
+    /// The spacing, grid and halo factor the placement ended with, and
+    /// whether bodies came closer to the edge than the full margin.
+    pub spacing_mm: f64,
+    pub grid_mm: f64,
+    pub halo_scale: f64,
+    pub edge_inset: bool,
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
@@ -1176,7 +1182,11 @@ pub fn place_kicad_board(
         hints.dedup();
     }
     let result = KiCadBoardPlacerResult {
-        tight_bodies: placement.tight,
+        tight_bodies: placement.relaxation.tight,
+        spacing_mm: placement.relaxation.spacing,
+        grid_mm: placement.relaxation.grid,
+        halo_scale: placement.relaxation.halo_scale,
+        edge_inset: placement.relaxation.edge_inset,
         utilization,
         hints,
         board_id: board_id.into(),

@@ -205,14 +205,19 @@ pub fn layout_kicad_board(
     let layers = LayerTable::from_pcb(&pcb)?;
     let has_pours = !pours(&pcb, &layers)?.is_empty();
     let connect = has_pours && router_config.pours != KiCadPourMode::Tracks;
-    // The moves that follow keep the bodies the placement needed.
+    // The moves that follow keep to the rules the placement needed: on a
+    // board placed with relaxed spacing, a move checked against the full
+    // spacing is never legal.
     placer_config.tight_bodies = Some(placement.tight_bodies);
     let mut problem = lower_placement(&pcb, &placer_config)?;
-    if placement.tight_bodies {
-        for component in &mut problem.problem.components {
-            component.use_tight_body();
-        }
+    placer::Relaxation {
+        spacing: placement.spacing_mm,
+        grid: placement.grid_mm,
+        halo_scale: placement.halo_scale,
+        edge_inset: placement.edge_inset,
+        tight: placement.tight_bodies,
     }
+    .apply(&mut problem.problem);
     let core_config = core_config(router_config);
 
     let first_started = std::time::Instant::now();

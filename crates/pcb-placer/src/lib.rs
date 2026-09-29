@@ -52,8 +52,39 @@ pub struct Placement {
     pub illegal: Vec<usize>,
     /// Every placement constraint with whether the result keeps it.
     pub constraints: Vec<constraints::Status>,
-    /// Whether the placement needed the tight bodies (courtyards overlap).
+    /// The relaxation the placement needed: work on it (moves after
+    /// routing) must keep to the same rules.
+    pub relaxation: Relaxation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Relaxation {
+    /// Spacing between bodies and the placement grid.
+    pub spacing: f64,
+    pub grid: f64,
+    /// Factor on every part's halo.
+    pub halo_scale: f64,
+    /// Bodies come closer to the edge as far as their copper allows.
+    pub edge_inset: bool,
+    /// Bodies shrank to their tight boxes (courtyards overlap).
     pub tight: bool,
+}
+
+impl Relaxation {
+    /// Applies the relaxation to `problem`, whose halos are unscaled.
+    pub fn apply(&self, problem: &mut Problem) {
+        problem.spacing = self.spacing;
+        problem.grid = self.grid;
+        for component in &mut problem.components {
+            component.halo *= self.halo_scale;
+            if !self.edge_inset {
+                component.edge_inset = 0.0;
+            }
+            if self.tight {
+                component.use_tight_body();
+            }
+        }
+    }
 }
 
 /// Area of the outline polygon.
@@ -72,7 +103,7 @@ fn outline_area(problem: &Problem) -> f64 {
 /// Shrinks the routing halos until bodies, halos and spacing together need
 /// no more than `limit` of the free board area. Halos are a wish; a crowded
 /// board cannot afford them in full.
-fn fit_halos(problem: &Problem, limit: f64) -> Problem {
+fn fit_halos(problem: &Problem, limit: f64) -> (Problem, f64) {
     let demand = |problem: &Problem, scale: f64, fixed: bool| -> f64 {
         problem
             .components
@@ -101,11 +132,11 @@ fn fit_halos(problem: &Problem, limit: f64) -> Problem {
     for component in &mut fitted.components {
         component.halo *= scale.max(0.0);
     }
-    fitted
+    (fitted, scale.max(0.0))
 }
 
 pub fn place(problem: &Problem, config: &Config) -> Placement {
-    let fitted = fit_halos(problem, config.maximum_utilization);
+    let (fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     let problem = &fitted;
     let wirelength_initial = problem.wirelength(&problem.poses);
     let global = global::global_place(problem, &config.global);
@@ -138,7 +169,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     if tight {
         levels.push((0.0, 0.0, fine, true, true));
     }
-    let mut used_tight = false;
+    let mut relaxation = None;
     for (halo_scale, spacing_scale, grid, inset, tight) in levels {
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
             // Same as the previous level.
@@ -174,8 +205,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             .is_none_or(|(unplaced, _, _)| failed.len() < unplaced.len());
         let done = failed.is_empty();
         if better {
+            relaxation = Some(Relaxation {
+                spacing: relaxed.spacing,
+                grid,
+                halo_scale: fit_scale * halo_scale,
+                edge_inset: inset,
+                tight,
+            });
             best = Some((failed, poses, relaxed));
-            used_tight = tight;
         }
         if done {
             break;
@@ -220,6 +257,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         unplaced,
         illegal,
         constraints,
-        tight: used_tight,
+        relaxation: relaxation.expect("at least one relaxation level ran"),
     }
 }

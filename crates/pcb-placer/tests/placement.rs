@@ -269,11 +269,11 @@ fn tight_bodies_are_the_last_resort() {
     };
     let placement = place(&problem, &Config::new());
     assert!(placement.unplaced.is_empty() && placement.illegal.is_empty(), "{:?}", placement.unplaced);
-    assert!(placement.tight);
+    assert!(placement.relaxation.tight);
     // Without them, one part finds no place.
     for component in &mut problem.components {
         component.tight = None;
     }
     let placement = place(&problem, &Config::new());
-    assert!(!placement.unplaced.is_empty() && !placement.tight);
+    assert!(!placement.unplaced.is_empty() && !placement.relaxation.tight);
 }
