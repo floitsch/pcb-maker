@@ -241,6 +241,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let problem = &relaxed;
     legal::refine(problem, &mut poses, config.refine_passes);
+    legal::center_edge_copper(problem, &mut poses);
     // Moving one part can break a relation repaired before; repeat while
     // it helps.
     for _ in 0..5 {

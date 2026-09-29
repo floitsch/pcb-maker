@@ -690,3 +690,50 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
     }
     improvements
 }
+
+/// Parts placed by their copper at an edge (a card edge in its tab) have
+/// little play along that edge: each with less than 2 mm moves to the
+/// middle of the stretch where it stays legal, away from the tab's sides.
+pub fn center_edge_copper(problem: &Problem, poses: &mut [Pose]) {
+    if !problem.constraints.edge_copper {
+        return;
+    }
+    let step = if problem.grid > 0.0 { problem.grid } else { 0.05 };
+    let everyone = 0..problem.components.len();
+    for (part, edge, _) in problem.constraints.edges.clone() {
+        if problem.components[part].fixed || problem.components[part].pads.is_empty() {
+            continue;
+        }
+        let pose = poses[part];
+        if !is_legal(problem, poses, part, pose, everyone.clone()) {
+            continue;
+        }
+        // Along the edge: x for the top and bottom, y for the sides.
+        let axis = match edge {
+            constraints::Edge::Top | constraints::Edge::Bottom => 0,
+            constraints::Edge::Left | constraints::Edge::Right => 1,
+        };
+        let reach = |direction: f64| {
+            let mut last = 0.0;
+            for count in 1..=200 {
+                let mut moved = pose;
+                moved.position[axis] += direction * step * count as f64;
+                if !is_legal(problem, poses, part, moved, everyone.clone()) {
+                    break;
+                }
+                last = direction * step * count as f64;
+            }
+            last
+        };
+        let (low, high) = (reach(-1.0), reach(1.0));
+        if high - low > 2.0 {
+            continue;
+        }
+        let middle = ((low + high) / 2.0 / step).round() * step;
+        let mut centered = pose;
+        centered.position[axis] += middle;
+        if middle != 0.0 && is_legal(problem, poses, part, centered, everyone.clone()) {
+            poses[part] = centered;
+        }
+    }
+}
