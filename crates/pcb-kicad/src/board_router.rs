@@ -41,6 +41,16 @@ pub struct KiCadBoardRouterConfig {
     /// cleanup pass always searches exactly.
     #[serde(default)]
     pub heuristic_weight: Option<f64>,
+    /// Negotiation's starting price of shared lattice cells.
+    #[serde(default)]
+    pub present_factor: Option<f64>,
+    /// Growth of that price per iteration.
+    #[serde(default)]
+    pub present_growth: Option<f64>,
+    /// Iterations negotiation waits for fewer conflicts once the price is
+    /// at its cap.
+    #[serde(default)]
+    pub stall_at_cap: Option<usize>,
     #[serde(default)]
     pub present_cap: Option<f64>,
     /// Narrowest track the board allows (neck-downs out of small pads).
@@ -1625,6 +1635,15 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(cap) = config.present_cap {
         router_config.present_cap = cap;
+    }
+    if let Some(factor) = config.present_factor {
+        router_config.present_factor = factor;
+    }
+    if let Some(growth) = config.present_growth {
+        router_config.present_growth = growth;
+    }
+    if let Some(stall) = config.stall_at_cap {
+        router_config.stall_at_cap = stall;
     }
     if let Some(cost) = config.cleanup_via_cost_mm {
         router_config.cleanup_via_cost = cost;

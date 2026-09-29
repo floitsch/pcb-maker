@@ -36,6 +36,9 @@ pub struct Config {
     /// nodes act as walls the heuristic knows nothing about, and searches
     /// flood; history cost keeps separating the nets instead.
     pub present_cap: f64,
+    /// Iterations without fewer conflicted nets that negotiation waits
+    /// once the price of sharing is at its cap.
+    pub stall_at_cap: usize,
     pub history_increment: f64,
     pub max_iterations: usize,
     /// Minimum search window margin around a net's terminals.
@@ -100,6 +103,7 @@ impl Default for Config {
             present_factor: 0.5,
             present_growth: 1.5,
             present_cap: 1.0e4,
+            stall_at_cap: 25,
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
@@ -2832,7 +2836,10 @@ impl Router {
             pending = conflicted;
             present =
                 (present * self.config.present_growth as f32).min(self.config.present_cap as f32);
-            if stalled > 25 || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
+            // At the price cap only history still moves anything: give up
+            // sooner there.
+            let patience = if present >= self.config.present_cap as f32 { self.config.stall_at_cap } else { 25 };
+            if stalled > patience || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
                 break;
             }
         }
@@ -2952,7 +2959,14 @@ impl Router {
         self.resolve_remaining(order);
         let cleanup_started = std::time::Instant::now();
         let improved = self.clean_up(order);
+        let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.reduce_vias(order);
+        if self.config.verbose {
+            eprintln!(
+                "clean up {cleaned:.2}s, via reduction {:.2}s",
+                cleanup_started.elapsed().as_secs_f64() - cleaned
+            );
+        }
         let plane_nets: Vec<NetId> = order
             .iter()
             .copied()
@@ -3525,25 +3539,63 @@ impl Router {
         let mut improvements = 0;
         for _ in 0..self.config.cleanup_passes {
             let mut improved = false;
-            for net in order {
-                if !self.nets[*net as usize].complete {
-                    continue;
+            let complete: Vec<NetId> = order.iter().copied().filter(|net| self.nets[*net as usize].complete).collect();
+            // Nets whose windows do not overlap are cleaned up at once; a
+            // new route that leaves its window is not kept.
+            let batches: Vec<Vec<NetId>> = if self.config.parallel {
+                self.batches(&complete, 1.0).into_iter().map(|(members, _)| members).collect()
+            } else {
+                complete.iter().map(|net| vec![*net]).collect()
+            };
+            for batch in batches {
+                let before: Vec<f64> = batch.iter().map(|net| self.geometric_cost(*net)).collect();
+                let saved: Vec<Vec<Branch>> = batch.iter().map(|net| self.nets[*net as usize].branches.clone()).collect();
+                for net in &batch {
+                    self.rip_up(*net);
                 }
-                let before = self.geometric_cost(*net);
-                let saved = self.nets[*net as usize].branches.clone();
-                self.rip_up(*net);
-                self.route_net_seq(*net, 0.0, true, 1.0);
-                let state = &self.nets[*net as usize];
-                if state.complete && self.geometric_cost(*net) < before - 1.0e-6 {
-                    improved = true;
-                    improvements += 1;
+                let mut inside = vec![true; batch.len()];
+                if batch.len() == 1 {
+                    self.route_net_seq(batch[0], 0.0, true, 1.0);
                 } else {
-                    let state = &mut self.nets[*net as usize];
-                    state.branches = saved;
-                    state.connected.fill(true);
-                    state.complete = true;
+                    let states = self.grid.cells() * self.board.layer_count;
+                    let cells = self.grid.cells();
+                    let this: &Self = self;
+                    let routed: Vec<(NetState, bool)> = batch
+                        .par_iter()
+                        .map(|net| {
+                            with_thread_scratch(states, cells, |scratch| {
+                                let mut net_state = this.nets[*net as usize].clone();
+                                this.route_net(scratch, *net, &mut net_state, 0.0, true, 1.0);
+                                // Batch windows are kept two tiles apart:
+                                // routes inside their own window stay clear
+                                // of each other.
+                                let window = this.window(*net, 1.0);
+                                let within = net_state.branches.iter().flat_map(|branch| &branch.nodes).all(|node| {
+                                    let (x, y) = this.grid.xy(node.cell as usize);
+                                    x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
+                                });
+                                (net_state, within)
+                            })
+                        })
+                        .collect();
+                    for (index, (net_state, within)) in routed.into_iter().enumerate() {
+                        self.nets[batch[index] as usize] = net_state;
+                        inside[index] = within;
+                    }
                 }
-                self.stamp(*net);
+                for (index, net) in batch.iter().enumerate() {
+                    let state = &self.nets[*net as usize];
+                    if inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6 {
+                        improved = true;
+                        improvements += 1;
+                    } else {
+                        let state = &mut self.nets[*net as usize];
+                        state.branches = saved[index].clone();
+                        state.connected.fill(true);
+                        state.complete = true;
+                    }
+                    self.stamp(*net);
+                }
             }
             if !improved {
                 break;
