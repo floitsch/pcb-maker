@@ -249,7 +249,9 @@ reports objective measures ([quality.md](quality.md)); `layout-kicad-board`
 puts the same report into `board-layout.json` as `quality`. It covers:
 - decoupling capacitor distance to every IC supply pin, and each
   capacitor's distance to its nearest supply pin;
-- crystal path lengths, inductors near crystals and antennas;
+- crystal path lengths; switching inductors (a regulator's) near
+  crystals, antenna modules and analog parts (op-amps, ADCs, codecs,
+  references);
 - how much other copper cuts the ground pours (return paths);
 - orientation consistency, parts near the edge, connectors facing out;
 - vias in pads, tombstoning risk, KiCad DRC counts;

@@ -81,7 +81,10 @@ pub struct KiCadCrystal {
 /// antenna modules).
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadSeparation {
+    /// Switching inductors: one side on a node (not a rail) with an IC pin.
     pub inductors: usize,
+    /// Crystals, antenna modules and analog parts (op-amps, ADCs, codecs,
+    /// references, ICs with AIN/VREF/IN+ pins).
     pub sensitive: usize,
     /// Smallest body-to-body gap between an inductor and a sensitive part.
     pub closest_mm: Option<f64>,
@@ -139,6 +142,8 @@ struct Pad {
     half: [f64; 2],
     smd: bool,
     power_pin: bool,
+    /// Pin function without KiCad's appended pin number (`AIN0`, `SW`).
+    function: String,
 }
 
 struct Part {
@@ -266,6 +271,14 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
                 ],
                 smd: kind == "smd",
                 power_pin: matches!(form_atom(pad, "pintype", 1), Some("power_in")),
+                function: {
+                    let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
+                    function
+                        .rsplit_once('_')
+                        .filter(|(_, number)| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))
+                        .map_or(function, |(name, _)| name)
+                        .to_ascii_uppercase()
+                },
             });
         }
         let property = |name: &str| {
@@ -473,14 +486,41 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         crystals.push(KiCadCrystal { reference: part.reference.clone(), longest_mm: longest.map(round) });
     }
 
-    // Separation: inductors against crystals and antenna modules.
+    // Separation: switching inductors against crystals, antenna modules and
+    // analog parts.
     let antenna = |part: &Part| {
         let name = part.footprint.to_ascii_lowercase();
         name.contains("esp32") || name.contains("esp8266") || name.contains("wroom") || name.contains("antenna")
             || name.contains("rf_module") || name.contains("nrf24") || name.contains("rfm")
     };
-    let inductors: Vec<&Part> = parts.iter().filter(|part| part.prefix() == "L" && part.pads.len() == 2).collect();
-    let sensitive: Vec<&Part> = parts.iter().filter(|part| crystal(part) || antenna(part)).collect();
+    let analog = |part: &Part| {
+        if !ic(part) {
+            return false;
+        }
+        let value = part.value.to_ascii_uppercase();
+        let named = ["OPA", "LM358", "LM324", "TL07", "TL08", "NE5532", "MCP60", "AD8", "INA", "ADS1", "ADC", "PCM", "WM8", "CS42", "CODEC", "REF", "LM4040", "TL431"]
+            .iter()
+            .any(|key| value.starts_with(key) || value.contains(&format!(" {key}")));
+        let pins = part.pads.iter().any(|pad| {
+            let function = pad.function.as_str();
+            function.starts_with("AIN") || function.starts_with("VREF") || function.starts_with("MIC")
+                || matches!(function, "IN+" | "IN-" | "+IN" | "-IN" | "INP" | "INN" | "V+IN" | "V-IN")
+        });
+        named || pins
+    };
+    // An inductor switches when one side is a node (neither ground nor a
+    // rail) it shares with an IC pin: a regulator's switch node.
+    let ic_nets: BTreeSet<&String> = parts.iter().filter(|part| ic(part)).flat_map(|part| part.pads.iter().filter_map(|pad| pad.net.as_ref())).collect();
+    let inductors: Vec<&Part> = parts
+        .iter()
+        .filter(|part| part.prefix() == "L" && part.pads.len() == 2)
+        .filter(|part| {
+            part.pads.iter().any(|pad| {
+                pad.net.as_ref().is_some_and(|net| !ground(net) && !rails.contains(net) && ic_nets.contains(net))
+            })
+        })
+        .collect();
+    let sensitive: Vec<&Part> = parts.iter().filter(|part| crystal(part) || antenna(part) || analog(part)).collect();
     let mut too_close = Vec::new();
     let mut closest: Option<f64> = None;
     for inductor in &inductors {
