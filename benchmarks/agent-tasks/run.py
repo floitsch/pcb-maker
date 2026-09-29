@@ -25,10 +25,14 @@ COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|miss
 
 
 def block_end(text, start):
-    depth, quoted = 0, False
+    depth, quoted, escaped = 0, False, False
     for index in range(start, len(text)):
         character = text[index]
-        if character == '"' and text[index - 1] != "\\":
+        if escaped:
+            escaped = False
+        elif quoted and character == "\\":
+            escaped = True
+        elif character == '"':
             quoted = not quoted
         elif not quoted:
             if character == "(":
@@ -187,7 +191,14 @@ def main():
     rows = []
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(arguments.jobs) as pool:
-        for row in pool.map(lambda task: run_task(task, arguments), tasks):
+        def guarded(task):
+            # A runner failure on one task fails that task, not the run.
+            try:
+                return run_task(task, arguments)
+            except Exception as error:
+                return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}"}
+
+        for row in pool.map(guarded, tasks):
             rows.append(row)
             print(json.dumps(row), flush=True)
     (arguments.output / "results.json").write_text(json.dumps(rows, indent=1))
