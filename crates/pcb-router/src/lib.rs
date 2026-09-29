@@ -11,6 +11,7 @@
 
 pub mod board;
 pub mod geometry;
+pub(crate) mod global;
 pub mod grid;
 pub mod pour;
 pub mod router;

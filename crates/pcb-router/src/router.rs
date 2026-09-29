@@ -36,6 +36,9 @@ pub struct Config {
     /// nodes act as walls the heuristic knows nothing about, and searches
     /// flood; history cost keeps separating the nets instead.
     pub present_cap: f64,
+    /// Plan every net on the tile graph first and confine its lattice
+    /// search to that plan's corridor; conflicts teach the plan.
+    pub global_routing: bool,
     /// Iterations without fewer conflicted nets that negotiation waits
     /// once the price of sharing is at its cap.
     pub stall_at_cap: usize,
@@ -71,6 +74,8 @@ pub struct Config {
     /// Heuristic weight while reducing vias (searches there are long
     /// same-layer detours; a little greed keeps them cheap).
     pub via_reduction_weight: f64,
+    /// Price of sharing when a via reduction round starts.
+    pub via_reduction_present: f64,
     /// Via reduction stops once it has used this many times the main
     /// negotiation's time (at least 60 s).
     pub via_reduction_budget: f64,
@@ -104,6 +109,7 @@ impl Default for Config {
             present_growth: 1.5,
             present_cap: 1.0e4,
             stall_at_cap: 25,
+            global_routing: false,
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
@@ -116,6 +122,7 @@ impl Default for Config {
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,
             via_reduction_weight: 1.0,
+            via_reduction_present: 0.5,
             via_reduction_budget: 3.0,
             negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
@@ -418,6 +425,9 @@ pub struct Router {
     tiles_y: usize,
     tile_claimed: Vec<Vec<u32>>,
     tile_routable: Vec<Vec<u32>>,
+    /// The global plan (the upper layer): per net a route on the tile
+    /// graph whose corridor confines the lattice search.
+    global: Option<crate::global::GlobalPlan>,
     /// Per layer (last entry: vias): where conflicts kept happening, so the
     /// corridor planner learns to send some nets another way.
     tile_history: Vec<Vec<f32>>,
@@ -574,6 +584,7 @@ impl Router {
             tiles_y,
             tile_claimed: vec![vec![0; tiles_x * tiles_y]; maps],
             tile_routable,
+            global: None,
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
             guard: vec![Vec::new(); layers],
             covered: vec![Vec::new(); layers],
@@ -1399,7 +1410,33 @@ impl Router {
             // on failure, and only then the plain window and the full board.
             let mut planned = None;
             let reroutes = net_state.reroutes;
-            if self.config.corridors && !self.cleanup {
+            let global = self.global.as_ref().filter(|_| !self.cleanup && !hard);
+            if let Some(plan) = global {
+                // The global plan's corridor, wider for stubborn nets.
+                let margin = 1 + reroutes / 4;
+                for margin in [margin, margin + 2] {
+                    let Some(corridor) = plan.corridor(net as usize, margin) else {
+                        break;
+                    };
+                    scratch.corridor = Some(corridor);
+                    planned = self.search(
+                        scratch,
+                        net,
+                        net_state,
+                        &tree,
+                        &targets,
+                        points.as_deref(),
+                        false,
+                        present,
+                        hard,
+                        full,
+                    );
+                    scratch.corridor = None;
+                    if planned.is_some() {
+                        break;
+                    }
+                }
+            } else if self.config.corridors && !self.cleanup {
                 let margin = (1 + reroutes / 3).min(10);
                 for margin in [margin, margin + 3] {
                     let Some(corridor) =
@@ -2430,6 +2467,110 @@ impl Router {
         result
     }
 
+    /// Builds the tile graph and negotiates every net's plan on it (pour
+    /// nets are left to the lattice).
+    fn plan_globally(&mut self, order: &[NetId]) {
+        let started = std::time::Instant::now();
+        let layers = self.board.layer_count;
+        let cells = self.grid.cells();
+        // The reference class: the one most nets use.
+        let mut counts = vec![0usize; self.board.classes.len()];
+        for net in order {
+            counts[self.board.nets[*net as usize].class] += 1;
+        }
+        let reference = (0..counts.len()).max_by_key(|&class| counts[class]).unwrap_or(0);
+        let rules = self.board.classes[reference];
+        let free: Vec<Vec<bool>> = (0..layers)
+            .map(|layer| self.statics[reference].trace[layer].iter().map(|&value| value == crate::grid::FREE).collect())
+            .collect();
+        let via_free: Vec<bool> = self.statics[reference].via_blocked.iter().map(|&blocked| !blocked).collect();
+        let tiles_x = self.tiles_x;
+        let tiles = self.tiles_x * self.tiles_y;
+        let tile_of = |cell: u32| (cell as usize / self.grid.nx / TILE) * tiles_x + (cell as usize % self.grid.nx) / TILE;
+        let nets: Vec<crate::global::GlobalNet> = (0..self.board.nets.len())
+            .map(|net| {
+                let state = &self.nets[net];
+                if !state.routable || !state.plane.is_empty() {
+                    return crate::global::GlobalNet::default();
+                }
+                let class = self.board.classes[self.board.nets[net].class];
+                crate::global::GlobalNet {
+                    terminals: state
+                        .terminal_nodes
+                        .iter()
+                        .map(|nodes| {
+                            let mut list: Vec<usize> = nodes.iter().map(|node| node.layer as usize * tiles + tile_of(node.cell)).collect();
+                            list.sort_unstable();
+                            list.dedup();
+                            list
+                        })
+                        .collect(),
+                    demand: ((class.trace_width + class.clearance) / (rules.trace_width + rules.clearance)) as f32,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        let inputs = crate::global::Inputs {
+            nx: self.grid.nx,
+            ny: self.grid.ny,
+            tile: TILE,
+            pitch: self.grid.pitch,
+            layers,
+            free: free.iter().map(Vec::as_slice).collect(),
+            via_free: &via_free,
+            room: rules.trace_width + rules.clearance,
+            via_cost: self.config.via_cost,
+        };
+        let mut plan = crate::global::GlobalPlan::new(&inputs, nets);
+        let planned: Vec<usize> = order
+            .iter()
+            .map(|net| *net as usize)
+            .filter(|&net| plan.nets[net].terminals.iter().filter(|terminal| !terminal.is_empty()).count() > 1)
+            .collect();
+        let overflow = plan.negotiate(&planned, 40);
+        let _ = cells;
+        if self.config.verbose {
+            eprintln!(
+                "global plan: {} nets on {} x {} tiles x {layers} layers, overflow {overflow:.1} tracks, {:.2}s",
+                planned.len(),
+                self.tiles_x,
+                self.tiles_y,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        self.global = Some(plan);
+    }
+
+    /// Teaches the plan where `conflicted` nets collide on the lattice and
+    /// plans them again.
+    fn replan(&mut self, conflicted: &[NetId]) {
+        let tiles_x = self.tiles_x;
+        let nx = self.grid.nx;
+        let mut hits: Vec<(usize, usize)> = Vec::new();
+        for net in conflicted {
+            for (layer, cell) in self.conflicts(*net) {
+                let cell = cell as usize;
+                hits.push((layer, (cell / nx / TILE) * tiles_x + (cell % nx) / TILE));
+            }
+        }
+        hits.sort_unstable();
+        hits.dedup();
+        let Some(plan) = self.global.as_mut() else { return };
+        for (layer, tile) in hits {
+            if layer < plan.layers {
+                plan.learn(layer, tile, 0.5);
+            }
+        }
+        for net in conflicted {
+            let net = *net as usize;
+            if plan.nets[net].terminals.is_empty() {
+                continue;
+            }
+            plan.rip_up(net);
+            plan.route(net, 4.0);
+        }
+    }
+
     /// Nets in routing order: pour nets first (their connections are local
     /// stubs and vias that must claim the sites next to their pads), then
     /// small nets by span, then the large ones.
@@ -2469,6 +2610,9 @@ impl Router {
     pub fn run_in_place(&mut self) -> RoutingResult {
         let order = self.routing_order();
         self.route_skeletons(&order);
+        if self.config.global_routing {
+            self.plan_globally(&order);
+        }
         self.negotiate(&order, order.clone());
         self.finish(&order)
     }
@@ -2644,9 +2788,14 @@ impl Router {
 
     /// Negotiated congestion over `pending` (which grows to whatever those
     /// nets conflict with) until the board is conflict free or stalls.
-    fn negotiate(&mut self, order: &[NetId], mut pending: Vec<NetId>) {
+    fn negotiate(&mut self, order: &[NetId], pending: Vec<NetId>) {
+        self.negotiate_from(order, pending, self.config.present_factor as f32);
+    }
+
+    /// `negotiate`, with sharing priced at `present` from the start.
+    fn negotiate_from(&mut self, order: &[NetId], mut pending: Vec<NetId>, present: f32) {
         let started = std::time::Instant::now();
-        let mut present = self.config.present_factor as f32;
+        let mut present = present;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
         for iteration in 0..self.config.max_iterations {
@@ -2772,6 +2921,12 @@ impl Router {
             self.last_conflicted = conflicted.clone();
             if conflicted.is_empty() {
                 break;
+            }
+            // The plan did not survive the lattice where nets conflict:
+            // those tiles lose room on the graph and the nets are planned
+            // again around them.
+            if self.global.is_some() && iteration % 2 == 1 {
+                self.replan(&conflicted);
             }
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && iteration % 10 == 9 {
                 // The most contested tiles: where history piled up.
@@ -2922,7 +3077,9 @@ impl Router {
             for net in &pending {
                 self.rip_up(*net);
             }
-            self.negotiate(order, pending.clone());
+            // The rerouted nets find their way around the settled ones
+            // rather than through them.
+            self.negotiate_from(order, pending.clone(), self.config.via_reduction_present as f32);
             self.resolve_remaining(order);
             self.config.heuristic_weight = weight;
             // Only the nets this round touched can have got worse.

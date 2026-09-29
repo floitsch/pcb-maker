@@ -51,6 +51,12 @@ pub struct KiCadBoardRouterConfig {
     /// at its cap.
     #[serde(default)]
     pub stall_at_cap: Option<usize>,
+    /// Plan nets on the tile graph first (global routing).
+    #[serde(default)]
+    pub global_routing: Option<bool>,
+    /// Price of sharing when a via reduction round starts.
+    #[serde(default)]
+    pub via_reduction_present: Option<f64>,
     #[serde(default)]
     pub present_cap: Option<f64>,
     /// Narrowest track the board allows (neck-downs out of small pads).
@@ -1644,6 +1650,12 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(stall) = config.stall_at_cap {
         router_config.stall_at_cap = stall;
+    }
+    if let Some(global) = config.global_routing {
+        router_config.global_routing = global;
+    }
+    if let Some(present) = config.via_reduction_present {
+        router_config.via_reduction_present = present;
     }
     if let Some(cost) = config.cleanup_via_cost_mm {
         router_config.cleanup_via_cost = cost;
