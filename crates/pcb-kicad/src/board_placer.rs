@@ -142,6 +142,9 @@ pub struct KiCadBoardPlacerResult {
     pub grid_mm: f64,
     pub halo_scale: f64,
     pub edge_inset: bool,
+    /// Parts held at an edge were placed by their copper alone (their
+    /// courtyard may overhang the outline, as a card edge's does its tab).
+    pub edge_copper: bool,
     /// The other seeds' legal placements (poses, relaxation and how far
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
@@ -1636,6 +1639,7 @@ pub fn place_kicad_board(
         grid_mm: placement.relaxation.grid,
         halo_scale: placement.relaxation.halo_scale,
         edge_inset: placement.relaxation.edge_inset,
+        edge_copper: placement.relaxation.edge_copper,
         utilization,
         hints,
         board_id: board_id.into(),

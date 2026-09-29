@@ -92,6 +92,42 @@ fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
 /// overhanging part only with the share of its body that belongs on the
 /// board.
 fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
+    let component = &problem.components[index];
+    if problem.constraints.edge_copper && !component.pads.is_empty() {
+        let mut touching = [false; 4];
+        for (part, edge, _) in &problem.constraints.edges {
+            if *part == index {
+                touching[match edge {
+                    constraints::Edge::Left => 0,
+                    constraints::Edge::Top => 1,
+                    constraints::Edge::Right => 2,
+                    constraints::Edge::Bottom => 3,
+                }] = true;
+            }
+        }
+        if touching.iter().any(|touch| *touch) {
+            // Copper on the constrained side may reach the edge; elsewhere it
+            // keeps the copper clearance (the edge margin is room for
+            // routing, which a tab does not need).
+            let margins = touching.map(|touch| if touch { -1.0e-6 } else { problem.min_spacing.min(problem.edge_margin) });
+            return component.pad_boxes(pose).iter().all(|(center, half)| {
+                let grown = [
+                    center[0] - half[0] - margins[0],
+                    center[1] - half[1] - margins[1],
+                    center[0] + half[0] + margins[2],
+                    center[1] + half[1] + margins[3],
+                ];
+                inside_outline(
+                    problem,
+                    Rect {
+                        center: [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0],
+                        half: [(grown[2] - grown[0]) / 2.0, (grown[3] - grown[1]) / 2.0],
+                        round: false,
+                    },
+                )
+            });
+        }
+    }
     if problem.constraints.is_empty() {
         let margin = problem.components[index].edge_margin(problem.edge_margin);
         return inside_outline(problem, bare(problem, index, pose, margin));

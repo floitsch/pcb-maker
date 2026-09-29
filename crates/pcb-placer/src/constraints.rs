@@ -129,6 +129,10 @@ pub struct Constraints {
     /// Pairs (smaller index first) a `near` relation ties together: their
     /// routing halos do not keep them apart. Filled by `link_pairs`.
     pub linked: BTreeSet<(usize, usize)>,
+    /// Parts held at an edge are on the board when their copper is: a card
+    /// edge's fingers fill a tab their courtyard overhangs, key notch and
+    /// all. The last relaxation level.
+    pub edge_copper: bool,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the

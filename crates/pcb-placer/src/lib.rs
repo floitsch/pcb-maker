@@ -68,6 +68,8 @@ pub struct Relaxation {
     pub edge_inset: bool,
     /// Bodies shrank to their tight boxes (courtyards overlap).
     pub tight: bool,
+    /// Parts held at an edge are on the board when their copper is.
+    pub edge_copper: bool,
 }
 
 impl Relaxation {
@@ -84,6 +86,7 @@ impl Relaxation {
                 component.use_tight_body();
             }
         }
+        problem.constraints.edge_copper = self.edge_copper;
     }
 }
 
@@ -170,8 +173,15 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     if tight {
         levels.push((0.0, 0.0, fine, true, true));
     }
+    // Last, parts held at an edge only need their copper on the board (a
+    // card edge in its tab).
+    let mut levels: Vec<(f64, f64, f64, bool, bool, bool)> =
+        levels.into_iter().map(|(halo, spacing, grid, inset, tight)| (halo, spacing, grid, inset, tight, false)).collect();
+    if !problem.constraints.edges.is_empty() {
+        levels.push((0.0, 0.0, fine, true, tight, true));
+    }
     let mut relaxation = None;
-    for (halo_scale, spacing_scale, grid, inset, tight) in levels {
+    for (halo_scale, spacing_scale, grid, inset, tight, edge_copper) in levels {
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
             // Same as the previous level.
             continue;
@@ -179,6 +189,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let mut relaxed = problem.clone();
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
+        relaxed.constraints.edge_copper = edge_copper;
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
             if !inset {
@@ -212,6 +223,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 halo_scale: fit_scale * halo_scale,
                 edge_inset: inset,
                 tight,
+                edge_copper,
             });
             best = Some((failed, poses, relaxed));
         }

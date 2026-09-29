@@ -211,7 +211,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   their fabrication outline and pads (`"tight_bodies": true` in
   `board-placer.json`). It does that only where the project's DRC does not
   treat a courtyard overlap as an error; `"tight_bodies": false` in the
-  placer config forbids it.
+  placer config forbids it. Parts held at an edge then need only their
+  copper on the board (`"edge_copper": true`): a card edge's fingers fill
+  a tab of the outline that their courtyard overhangs, key notch and all.
 - **A `near` or `relative` constraint is not `satisfied`.** Geometry forbids
   it, or it conflicts with another constraint; `violation_mm` says by how
   much. Relax the distance, or fix the part yourself.
