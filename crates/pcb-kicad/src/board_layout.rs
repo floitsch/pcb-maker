@@ -266,7 +266,14 @@ pub fn layout_kicad_board(
     let mut race = Vec::new();
     if best.0 > 0 && pin_swaps.is_none() {
         race.push(best.0);
-        for (poses, relaxation) in &placement.alternatives {
+        // What the user asked for comes first: only placements that keep
+        // the constraints as well as this one may take over.
+        let missed: f64 = placement.constraints.iter().map(|status| status.violation_mm).sum();
+        for (poses, relaxation, _) in placement
+            .alternatives
+            .iter()
+            .filter(|(_, _, other_missed)| *other_missed <= missed + 1.0e-6)
+        {
             let mut candidate = pcb.clone();
             {
                 let mut footprints = footprint_items(&mut candidate)?;
@@ -309,6 +316,9 @@ pub fn layout_kicad_board(
     let move_started = std::time::Instant::now();
     let mut moves = Vec::new();
     let mut since_improvement = 0;
+    // Trials since a move last closed an open connection: when moves stop
+    // closing them, the final ladder is the better use of the time.
+    let mut since_fewer_open = 0;
     let mut recently: Vec<usize> = Vec::new();
     let movable: Vec<usize> = (0..problem.problem.components.len())
         .filter(|index| !problem.problem.components[*index].fixed && !problem.problem.components[*index].pins.is_empty())
@@ -322,7 +332,10 @@ pub fn layout_kicad_board(
         } else {
             config.move_seconds
         };
-        if since_improvement >= 2 * config.patience || move_started.elapsed().as_secs_f64() > budget {
+        if since_improvement >= 2 * config.patience
+            || (best.0 > 0 && since_fewer_open >= config.patience / 2)
+            || move_started.elapsed().as_secs_f64() > budget
+        {
             break;
         }
         // The most congested movable footprint that was not tried lately.
@@ -443,6 +456,11 @@ pub fn layout_kicad_board(
             let trial = router.reroute(true);
             let trial_score = score(&trial, &trial_board);
             let kept = trial_score < best;
+            if kept && trial_score.0 < best.0 {
+                since_fewer_open = 0;
+            } else {
+                since_fewer_open += 1;
+            }
             moves.push(KiCadBoardLayoutMove {
                 reference: problem.references[index].clone(),
                 from: [saved_pose.position[0], saved_pose.position[1], saved_pose.angle],

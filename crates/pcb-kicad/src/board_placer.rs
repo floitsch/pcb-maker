@@ -137,10 +137,10 @@ pub struct KiCadBoardPlacerResult {
     pub grid_mm: f64,
     pub halo_scale: f64,
     pub edge_inset: bool,
-    /// The other seeds' legal placements (poses and relaxation), next best
-    /// first.
+    /// The other seeds' legal placements (poses, relaxation and how far
+    /// they miss the constraints in all), next best first.
     #[serde(skip)]
-    pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation)>,
+    pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation, f64)>,
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
@@ -1150,7 +1150,10 @@ pub fn place_kicad_board(
     let alternatives = placements
         .into_iter()
         .filter(|other| other.unplaced.is_empty() && other.illegal.is_empty())
-        .map(|other| (other.poses, other.relaxation))
+        .map(|other| {
+            let missed = other.constraints.iter().map(|status| status.violation).sum();
+            (other.poses, other.relaxation, missed)
+        })
         .collect();
 
     let Expr::List(items) = &mut pcb else {
