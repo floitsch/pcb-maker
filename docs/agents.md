@@ -180,12 +180,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 pcb-maker score-kicad-board <project-dir> <board-id>
 ```
 
-reports objective measures ([quality.md](quality.md)): decoupling capacitor
-distance to every IC supply pin, crystal path lengths, inductors near
-crystals and antennas, orientation consistency, parts near the edge,
-connectors facing out, vias in pads, tombstoning risk, KiCad DRC counts,
-and what drives the price (board size, layers, smallest drill and track,
-assembly sides, unique and through-hole parts; see [cost.md](cost.md)).
+reports objective measures ([quality.md](quality.md)); `layout-kicad-board`
+puts the same report into `board-layout.json` as `quality`. It covers:
+- decoupling capacitor distance to every IC supply pin, and each
+  capacitor's distance to its nearest supply pin;
+- crystal path lengths, inductors near crystals and antennas;
+- how much other copper cuts the ground pours (return paths);
+- orientation consistency, parts near the edge, connectors facing out;
+- vias in pads, tombstoning risk, KiCad DRC counts;
+- the estimated price of 10 boards at common fabs, and the price
+  thresholds the board crosses ([cost.md](cost.md)).
+
 Score the designer's board and yours side by side.
 
 ## Quality you can expect

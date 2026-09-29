@@ -77,6 +77,10 @@ pub struct KiCadBoardLayoutResult {
     pub moves: Vec<KiCadBoardLayoutMove>,
     /// Reference labels moved off pads and other silkscreen.
     pub labels: crate::labels::KiCadLabelReport,
+    /// The result's quality measures and cost estimate (as
+    /// `score-kicad-board` reports them).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<crate::quality::KiCadQualityReport>,
     /// Open terminals after the first route of the kept placement and of
     /// each other seed's placement tried (only when the first left some).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -600,6 +604,7 @@ pub fn layout_kicad_board(
         moves,
         placement_race: race,
         labels,
+        quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),
         pin_swaps,
         constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
         routed,
