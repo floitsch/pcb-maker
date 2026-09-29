@@ -439,6 +439,8 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
     // Crystals and the nets on their signal pins; IC pads by net.
     let mut crystals: Vec<(usize, Vec<String>)> = Vec::new();
     let mut ic_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
+    // Inductors and their switch-node nets.
+    let mut inductors: Vec<(usize, Vec<String>)> = Vec::new();
     // ESD protection and the nets it guards; connector pads by net.
     let mut protectors: Vec<(usize, Vec<String>)> = Vec::new();
     let mut connector_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
@@ -508,6 +510,20 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
                     .collect();
                 crystals.push((index, nets));
             }
+            "L" if pads.len() == 2 => {
+                if named.contains(&index) || problem.components[index].fixed {
+                    continue;
+                }
+                // The switch node: the net that is neither ground nor a rail.
+                let nets: Vec<String> = pads
+                    .iter()
+                    .filter_map(|(net, _, _)| net.clone())
+                    .filter(|net| !ground(net) && !rail_name(net))
+                    .collect();
+                if nets.len() == 1 {
+                    inductors.push((index, nets));
+                }
+            }
             "C" if pads.len() == 2 => {
                 if named.contains(&index) || problem.components[index].fixed {
                     continue;
@@ -545,6 +561,17 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
             continue;
         }
         relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { 2.5 } });
+    }
+    // A switcher's inductor at the IC's switch pin: a small hot loop.
+    for (index, nets) in inductors {
+        let anchors: Vec<Anchor> = nets
+            .iter()
+            .flat_map(|net| ic_pads.get(net).into_iter().flatten())
+            .map(|(ic, offset)| Anchor::Point(*ic, *offset))
+            .collect();
+        if !anchors.is_empty() {
+            relations.push(Relation::NearAny { part: index, anchors, max: 3.0 });
+        }
     }
     // ESD protection at the connector pins it guards: a surge should meet
     // it before anything else.

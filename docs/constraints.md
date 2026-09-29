@@ -102,6 +102,8 @@ the placer also pulls:
   supply pin of an IC on that rail (5 mm for 4.7 µF and more), whichever
   pin suits;
 - every crystal to within 3 mm of the IC pins it drives;
+- every inductor between a rail and an IC pin (a switcher's switch node)
+  to within 3 mm of that pin;
 - every ESD or surge protector (TVS, USBLC6, TPD4E001, ... by value) to
   within 3 mm of a connector pin it guards.
 

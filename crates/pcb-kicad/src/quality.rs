@@ -24,6 +24,9 @@ pub struct KiCadQualityReport {
     /// ESD protectors and their distance to the nearest connector pin they
     /// guard (pad centre to pad centre).
     pub esd: Vec<(String, Option<f64>)>,
+    /// Inductors on a switch node (one pad on a net that is neither ground
+    /// nor a rail) and their distance to the IC pin on that net.
+    pub switch_inductors: Vec<(String, Option<f64>)>,
     /// Estimated price of 10 boards at common fabs (docs/cost.md).
     pub cost: crate::cost::KiCadCost,
 }
@@ -598,6 +601,25 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let manufacturing = KiCadManufacturing { vias_in_pads, tombstone_risk, drc };
+    let mut switch_inductors = Vec::new();
+    for part in parts.iter().filter(|part| part.prefix() == "L" && part.pads.len() == 2) {
+        let switch: Vec<&Pad> = part
+            .pads
+            .iter()
+            .filter(|pad| pad.net.as_ref().is_some_and(|net| !ground(net) && !rail_name(net)))
+            .collect();
+        if switch.len() != 1 {
+            continue;
+        }
+        let nearest = parts
+            .iter()
+            .filter(|other| ic(other))
+            .flat_map(|other| &other.pads)
+            .filter(|pad| pad.net == switch[0].net)
+            .map(|pad| distance(pad.center, switch[0].center))
+            .reduce(f64::min);
+        switch_inductors.push((part.reference.clone(), nearest.map(round)));
+    }
     let mut esd = Vec::new();
     for part in parts.iter().filter(|part| esd_protector(&part.value)) {
         let mut nearest: Option<f64> = None;
@@ -680,6 +702,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         manufacturing,
         planes,
         esd,
+        switch_inductors,
         cost,
     })
 }
