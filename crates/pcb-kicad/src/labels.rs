@@ -134,7 +134,21 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
                 .child("layers")
                 .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
                 .unwrap_or_default();
-            let bounds = [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]];
+            // A drill offset moves the copper away from the hole: the box
+            // covers both.
+            let offset = pad
+                .child("drill")
+                .and_then(|drill| drill.child("offset"))
+                .and_then(|offset| Some([expression_coordinate(offset, 1, "pad offset x").ok()?, expression_coordinate(offset, 2, "pad offset y").ok()?]))
+                .map(|offset| rotate_vector(offset, -pad_at[2]))
+                .unwrap_or([0.0, 0.0]);
+            let copper = [center[0] + offset[0], center[1] + offset[1]];
+            let bounds = [
+                center[0].min(copper[0]) - half[0],
+                center[1].min(copper[1]) - half[1],
+                center[0].max(copper[0]) + half[0],
+                center[1].max(copper[1]) + half[1],
+            ];
             if layers.iter().any(|layer| matches!(*layer, "F.Cu" | "*.Cu" | "F&B.Cu")) {
                 blocked[0].push(bounds);
             }
