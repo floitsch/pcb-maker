@@ -30,6 +30,9 @@ pub struct Costs {
     pub via: f64,
     /// Per millimetre of overflow of a layer's room on an edge.
     pub overflow: f64,
+    /// Factor on length across a layer's preferred axis (see
+    /// [`crate::topo::directed_length`]); 1 for none.
+    pub against: f64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -117,6 +120,8 @@ struct Context<'a> {
     topology: &'a Topology,
     usage: &'a Usage,
     costs: Costs,
+    /// Per wire and step: where it enters and leaves that face.
+    chords: &'a [Vec<(pcb_router::Point, pcb_router::Point)>],
 }
 
 impl Context<'_> {
@@ -128,6 +133,11 @@ impl Context<'_> {
 
     fn state(&self, wire: usize, step: usize, layer: usize, partners: &[Vec<(usize, usize)>], allowed: &[u32]) -> f64 {
         let mut cost = if allowed[step] & (1 << layer) == 0 { INFEASIBLE } else { 0.0 };
+        if self.costs.against > 1.0 {
+            let (from, to) = self.chords[wire][step];
+            let plain = ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2)).sqrt();
+            cost += crate::topo::directed_length(from, to, layer, self.costs.against) - plain;
+        }
         for &(other, other_step) in &partners[step] {
             if other != wire && self.topology.wires[other].layers.get(other_step) == Some(&layer) {
                 cost += CONFLICT;
@@ -201,6 +211,20 @@ impl Context<'_> {
 /// start from them.
 pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs, seed: u64) -> Stats {
     let partners = partners(mesh, topology);
+    let chords: Vec<Vec<(pcb_router::Point, pcb_router::Point)>> = topology
+        .wires
+        .iter()
+        .enumerate()
+        .map(|(wire, path)| {
+            if !path.routed {
+                return Vec::new();
+            }
+            let mut places = vec![path.from];
+            places.extend(path.portals.iter().map(|&portal| topology.place(board, mesh, wire, portal)));
+            places.push(path.to);
+            places.windows(2).map(|pair| (pair[0], pair[1])).collect()
+        })
+        .collect();
     let routed: Vec<usize> = (0..topology.wires.len()).filter(|&wire| topology.wires[wire].routed).collect();
     let allowed: Vec<Vec<u32>> = (0..topology.wires.len())
         .map(|wire| if topology.wires[wire].routed { allowed(board, mesh, topology, wire) } else { Vec::new() })
@@ -217,7 +241,7 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
     let mut fresh: Vec<usize> = routed.iter().copied().filter(|&wire| topology.wires[wire].layers.is_empty()).collect();
     fresh.sort_by_key(|&wire| std::cmp::Reverse(partners[wire].iter().map(Vec::len).sum::<usize>()));
     for wire in fresh {
-        let context = Context { board, mesh, topology, usage: &usage, costs };
+        let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
         let (layers, _) = context.best(wire, &partners[wire], &allowed[wire]);
         topology.wires[wire].layers = layers;
         usage.add(board, topology, wire);
@@ -236,7 +260,7 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
         let mut improved = false;
         for &wire in &order {
             usage.remove(board, topology, wire);
-            let context = Context { board, mesh, topology, usage: &usage, costs };
+            let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
             let current = context.current(wire, &partners[wire], &allowed[wire]);
             let (layers, cost) = context.best(wire, &partners[wire], &allowed[wire]);
             if cost + 1.0e-9 < current {
@@ -259,7 +283,7 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             let mut improved = false;
             for &wire in &order {
                 usage.remove(board, topology, wire);
-                let context = Context { board, mesh, topology, usage: &usage, costs };
+                let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
                 let current = context.current(wire, &partners[wire], &allowed[wire]);
                 let (layers, cost) = context.best(wire, &partners[wire], &allowed[wire]);
                 if cost + 1.0e-9 < current {
@@ -273,7 +297,7 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             }
         }
     }
-    let context = Context { board, mesh, topology, usage: &usage, costs };
+    let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
     let mut stats = Stats::default();
     for &wire in &routed {
         let path = &topology.wires[wire];

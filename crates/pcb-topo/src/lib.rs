@@ -65,8 +65,8 @@ impl Default for Config {
             seconds: 300.0,
             seed: 1,
             verbose: false,
-            weights: Weights { crossing: 2.0, via: 8.0, overflow: 50.0, history: 5.0 },
-            costs: layers::Costs { via: 8.0, overflow: 50.0 },
+            weights: Weights { crossing: 2.0, via: 8.0, overflow: 50.0, history: 5.0, against: 1.6 },
+            costs: layers::Costs { via: 8.0, overflow: 50.0, against: 1.6 },
             spacing: 2.0,
             improve_via: 25.0,
             improve_passes: 4,
@@ -402,6 +402,7 @@ impl Run<'_> {
             via: config.weights.via * (0.5 + self.random.unit()),
             overflow: config.weights.overflow * present,
             history: config.weights.history,
+            against: config.weights.against,
         };
         let mut again = wires.to_vec();
         for index in (1..again.len()).rev() {
@@ -454,7 +455,7 @@ impl Run<'_> {
     /// layers reassigned. Returns how many wires changed.
     fn improve(&mut self, topology: &mut Topology, pass: usize) -> usize {
         let (board, mesh, config) = (self.board, self.mesh, self.config);
-        let weights = Weights { crossing: 0.5, via: config.improve_via, overflow: 0.0, history: 0.0 };
+        let weights = Weights { crossing: 0.5, via: config.improve_via, overflow: 0.0, history: 0.0, against: config.weights.against };
         let mut order: Vec<usize> = (0..topology.wires.len()).filter(|&wire| topology.wires[wire].routed).collect();
         for index in (1..order.len()).rev() {
             let other = (self.random.next() % (index as u64 + 1)) as usize;
@@ -474,7 +475,7 @@ impl Run<'_> {
                 topology.restore(saved);
             }
         }
-        layers::assign(board, mesh, topology, layers::Costs { via: config.improve_via, overflow: config.costs.overflow }, config.seed.wrapping_add(1000 + pass as u64));
+        layers::assign(board, mesh, topology, layers::Costs { via: config.improve_via, ..config.costs }, config.seed.wrapping_add(1000 + pass as u64));
         changed
     }
 }

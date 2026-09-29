@@ -160,12 +160,19 @@ pub struct KiCadTopologicalConfig {
     /// Route the first time layer by layer rather than TopoR's way.
     #[serde(default)]
     pub layered_start: Option<bool>,
+    /// Factor on length across a layer's preferred axis (1: none).
+    #[serde(default)]
+    pub against: Option<f64>,
 }
 
 impl KiCadTopologicalConfig {
     pub fn apply(&self, config: &mut pcb_topo::Config) {
         if let Some(layered) = self.layered_start {
             config.layered_start = layered;
+        }
+        if let Some(against) = self.against {
+            config.weights.against = against;
+            config.costs.against = against;
         }
         if let Some(crossing) = self.crossing {
             config.weights.crossing = crossing;

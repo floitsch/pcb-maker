@@ -65,6 +65,17 @@ pub struct Weights {
     /// Per unit of an edge's or site's history (how often it was in
     /// trouble).
     pub history: f64,
+    /// Factor on length across a layer's preferred axis (layers alternate
+    /// horizontal and vertical, as a two-layer board is routed by hand);
+    /// 1 for none.
+    pub against: f64,
+}
+
+/// Length of a move on `layer`, stretched by `against` across the layer's
+/// preferred axis (even layers horizontal, odd ones vertical).
+pub fn directed_length(from: Point, to: Point, layer: usize, against: f64) -> f64 {
+    let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
+    if layer % 2 == 0 { (dx * dx + (against * dy).powi(2)).sqrt() } else { ((against * dx).powi(2) + dy * dy).sqrt() }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -447,6 +458,15 @@ impl Topology {
         Some(cost)
     }
 
+    /// Cost of moving from `from` to `to` on `layer`.
+    fn step(&self, request: &Request, from: Point, to: Point, layer: usize) -> f64 {
+        if request.mode == Mode::Planar || request.weights.against <= 1.0 {
+            distance(from, to)
+        } else {
+            directed_length(from, to, layer, request.weights.against)
+        }
+    }
+
     fn is_ancestor(search: &Search, mut node: usize, portal: Portal) -> bool {
         while node != NONE {
             if search.nodes[node].portal == Some(portal) {
@@ -517,7 +537,7 @@ impl Topology {
                     continue;
                 };
                 let point = self.portal(board, mesh, edge, 2 * gap, request.room);
-                let total = cost + distance(from_point, point) + crossings + fixed;
+                let total = cost + self.step(request, from_point, point, layer) + crossings + fixed;
                 Self::push(search, request, Node { portal: Some(Portal::Edge(edge)), gap, layer, face: next, point, cost: total, parent });
             }
         }
@@ -548,7 +568,7 @@ impl Topology {
                 continue;
             };
             let point = mesh.points[vertex];
-            let base = cost + distance(from_point, point) + crossings + request.weights.history * self.vertex_history[vertex];
+            let base = cost + self.step(request, from_point, point, layer) + crossings + request.weights.history * self.vertex_history[vertex];
             for &next in &mesh.vertex_faces[vertex] {
                 if next == face {
                     continue;
