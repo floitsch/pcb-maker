@@ -12,6 +12,7 @@
 
 use super::*;
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
+use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, resolve_constraints};
 use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, pours};
 use pcb_placer as placer;
@@ -35,7 +36,64 @@ pub struct KiCadBoardLayoutConfig {
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted after placement.
     pub pin_swaps: Option<PathBuf>,
+    /// Interchangeable pins, the short way: per part, the pins (pad
+    /// functions such as `GPIO*` or pad numbers, globs) whose nets may be
+    /// permuted. Used when `pin_swaps` is not given.
+    pub swappable: Vec<KiCadSwappable>,
     pub pin_swap: KiCadPinSwapConfig,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadSwappable {
+    pub part: String,
+    /// Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs.
+    pub pins: Vec<String>,
+    /// Pads to leave alone (strapping pins, a UART the bootloader uses).
+    #[serde(default)]
+    pub except: Vec<String>,
+}
+
+/// A pin-swap spec from the short form: one group per part, each matching
+/// pad a unit of its own.
+fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSwapSpec, String> {
+    let mut components = BTreeMap::new();
+    for entry in swappable {
+        let footprint = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .find(|footprint| footprint_reference(footprint).as_deref() == Some(entry.part.as_str()))
+            .ok_or_else(|| format!("swappable: no part {:?}", entry.part))?;
+        let mut units = Vec::new();
+        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+            let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("");
+            let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
+            let matches = |patterns: &[String]| {
+                patterns
+                    .iter()
+                    .any(|pattern| board_placer::glob_matches(pattern, number) || board_placer::glob_matches(pattern, function))
+            };
+            if matches(&entry.pins) && !matches(&entry.except) && !units.iter().any(|unit: &Vec<String>| unit[0] == number) {
+                units.push(vec![number.to_string()]);
+            }
+        }
+        if units.len() < 2 {
+            return Err(format!("swappable {}: fewer than two pins match {:?}", entry.part, entry.pins));
+        }
+        components.insert(
+            entry.part.clone(),
+            KiCadPinSwapComponent {
+                groups: vec![KiCadPinSwapGroup {
+                    name: "swappable".into(),
+                    units,
+                    restrictions: BTreeMap::new(),
+                    cross_component: false,
+                }],
+            },
+        );
+    }
+    Ok(KiCadPinSwapSpec { version: 1, components })
 }
 
 impl Default for KiCadBoardLayoutConfig {
@@ -48,6 +106,7 @@ impl Default for KiCadBoardLayoutConfig {
             polish_seconds: 60.0,
             placer: KiCadBoardPlacerConfig::default(),
             pin_swaps: None,
+            swappable: Vec::new(),
             pin_swap: KiCadPinSwapConfig::default(),
         }
     }
@@ -198,6 +257,12 @@ pub fn layout_kicad_board(
     let pin_swaps = match &config.pin_swaps {
         Some(path) => {
             let spec = read_pin_swap_spec(&source_directory.join(path))?;
+            Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
+        }
+        None if !config.swappable.is_empty() => {
+            let placed = placed_directory.join(format!("{board_id}.kicad_pcb"));
+            let text = fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?;
+            let spec = swappable_spec(&parse(&text)?, &config.swappable)?;
             Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
         }
         None => None,

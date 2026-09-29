@@ -115,7 +115,7 @@ def run_task(task, arguments):
                                           outline.get("y", 0) + outline.get("height", 40) / 2]
         unplace(board, point, task.get("remove_outline", False), set(constraints.get("fixed", [])))
     (source / "constraints.json").write_text(json.dumps(constraints))
-    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {})}}
+    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {})}, **task.get("layout", {})}
     (work / "layout.json").write_text(json.dumps(layout))
     router = task.get("router") or {}
     router_argument = "auto"

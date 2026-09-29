@@ -111,9 +111,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
   - `pin_swaps`: see below.
-- **Pin swapping.** `"pin_swaps": "pin-swaps.json"` lets pcb-maker reassign
-  interchangeable pins (GPIOs, resistor-network elements). The schematic is
-  rewritten to match ([pin-swap.md](pin-swap.md)).
+- **Pin swapping.** `"swappable": [{"part": "U1", "pins": ["GPIO*"],
+  "except": ["GPIO0"]}]` in the layout config lets pcb-maker reassign
+  interchangeable pins (pad functions or numbers, globs); `"pin_swaps":
+  "pin-swaps.json"` takes the full format (resistor networks, groups
+  across parts, restrictions). The schematic is rewritten to match
+  ([pin-swap.md](pin-swap.md)).
 - **Output.** `<out-dir>/result/` holds the finished project, copied, with
   the placement and the copper. `<out-dir>/placed/placement.html` animates
   the placement.
