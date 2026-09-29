@@ -42,6 +42,16 @@ router and placer items.
 
 ## Placer
 
+- **Alignment constraints.** A row of parts at a pitch (LED bars, key rows,
+  test points) cannot be said yet. Best built as a macro body in the
+  lowering: the row moves and turns as one part and is expanded back to
+  its footprints after placement.
+- **Parts as wide as the board.** On raspberry_pi_pullup (a 4.8 mm wide
+  board) the parts' copper reaches both edges; the placer's grid cannot
+  hit the 0.002 mm of room. Snapping to both edges at once would.
+- **Crowded single sides.** FogDrive, HaveSome and tiny_tapeout leave a
+  part unplaced with a side 78-93 % full. The hint tells the agent to move
+  parts to the other side; the placer does not choose sides by itself.
 - **Legalization loses 30-90 % of the global placement's wirelength.**
   Examples: PIC 678 → 1306 mm, hierarchy 493 → 907-1169 mm, Interf-U
   3206 → 4077 mm; measured 2026-09-26/28, graph-first experiment on branch
