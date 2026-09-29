@@ -109,7 +109,9 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             // Copper on the constrained side may reach the edge; elsewhere it
             // keeps the copper clearance (the edge margin is room for
             // routing, which a tab does not need).
-            let margins = touching.map(|touch| if touch { -1.0e-6 } else { problem.min_spacing.min(problem.edge_margin) });
+            let margins = touching.map(|touch| {
+                if touch { problem.constraints.copper_edge - 1.0e-6 } else { problem.min_spacing.min(problem.edge_margin) }
+            });
             return component.pad_boxes(pose).iter().all(|(center, half)| {
                 let grown = [
                     center[0] - half[0] - margins[0],
@@ -141,7 +143,7 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
     });
     // A side against a constrained edge may touch it: shrink by a hair so
     // the outline test does not sit on the boundary.
-    let margins = constraints::side_margins(problem, index).map(|margin| {
+    let margins = constraints::side_margins(problem, index, pose.angle).map(|margin| {
         if margin > 0.0 { margin } else { -1.0e-6 }
     });
     let grown = [

@@ -373,6 +373,9 @@ pub fn layout_kicad_board(
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
     }
     placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
+    if placer_config.copper_edge_clearance_mm.is_none() {
+        placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
+    }
     let outline_sizing = size_outline(source_directory, board_id, output_directory, &mut placer_config, router_config)?;
     let placed_directory = output_directory.join("placed");
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;

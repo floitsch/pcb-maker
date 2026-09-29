@@ -168,7 +168,7 @@ impl State<'_> {
                 let (center, half) = (component.center(pose), component.half_extent(pose.angle));
                 [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
             });
-            let margins = constraints::side_margins(self.problem, index);
+            let margins = constraints::side_margins(self.problem, index, pose.angle);
             let grown = [
                 inner[0] - margins[0],
                 inner[1] - margins[1],

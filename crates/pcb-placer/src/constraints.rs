@@ -133,6 +133,9 @@ pub struct Constraints {
     /// edge's fingers fill a tab their courtyard overhangs, key notch and
     /// all. The last relaxation level.
     pub edge_copper: bool,
+    /// Copper-to-edge clearance: on a side an edge constraint puts a part
+    /// against, its pads (not its body) keep this far from the edge.
+    pub copper_edge: f64,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the
@@ -184,24 +187,56 @@ impl Constraints {
 /// How far an overhanging box may stay short of the edge (mm).
 const OVERHANG_SLACK: f64 = 0.5;
 
-/// Edge margin per side (left, top, right, bottom) for a part: none on
-/// sides an edge or overhang constraint puts it against.
-pub fn side_margins(problem: &Problem, index: usize) -> [f64; 4] {
+/// How far the body stays from an edge it is held against, per side (left,
+/// top, right, bottom) at `angle`, so that its pads keep the copper-to-edge
+/// clearance: the clearance less how far the pads sit inside the body.
+pub fn copper_edge_offsets(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
+    let clearance = problem.constraints.copper_edge;
+    let component = &problem.components[index];
+    if clearance <= 0.0 || component.pads.is_empty() {
+        return [0.0; 4];
+    }
+    let pose = Pose { position: [0.0, 0.0], angle };
+    let (center, half) = (component.center(pose), component.half_extent(angle));
+    let body = [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]];
+    let mut copper = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for (center, half) in component.pad_boxes(pose) {
+        copper = [
+            copper[0].min(center[0] - half[0]),
+            copper[1].min(center[1] - half[1]),
+            copper[2].max(center[0] + half[0]),
+            copper[3].max(center[1] + half[1]),
+        ];
+    }
+    [
+        (clearance - (copper[0] - body[0])).max(0.0),
+        (clearance - (copper[1] - body[1])).max(0.0),
+        (clearance - (body[2] - copper[2])).max(0.0),
+        (clearance - (body[3] - copper[3])).max(0.0),
+    ]
+}
+
+fn side_index(edge: Edge) -> usize {
+    match edge {
+        Edge::Left => 0,
+        Edge::Top => 1,
+        Edge::Right => 2,
+        Edge::Bottom => 3,
+    }
+}
+
+/// Edge margin per side (left, top, right, bottom) for a part at `angle`:
+/// on sides an edge constraint puts it against only what its copper needs,
+/// none on the side it overhangs.
+pub fn side_margins(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
     let mut margins = [problem.components[index].edge_margin(problem.edge_margin); 4];
     let constraints = &problem.constraints;
-    let sides = constraints
-        .edges
-        .iter()
-        .filter(|(part, _, _)| *part == index)
-        .map(|(_, edge, _)| *edge)
-        .chain(constraints.overhang(index).map(|(edge, _)| edge));
-    for edge in sides {
-        margins[match edge {
-            Edge::Left => 0,
-            Edge::Top => 1,
-            Edge::Right => 2,
-            Edge::Bottom => 3,
-        }] = 0.0;
+    let offsets = copper_edge_offsets(problem, index, angle);
+    for (_, edge, _) in constraints.edges.iter().filter(|(part, _, _)| *part == index) {
+        margins[side_index(*edge)] = offsets[side_index(*edge)];
+    }
+    if let Some((edge, _)) = constraints.overhang(index) {
+        margins[side_index(edge)] = 0.0;
     }
     margins
 }
@@ -357,6 +392,7 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     let high = [center[0] + half[0], center[1] + half[1]];
     let bounds = problem.bounds();
     let mut violation: f64 = overhang_violation(problem, index, pose);
+    let offsets = copper_edge_offsets(problem, index, pose.angle);
     for (part, edge, reach) in &constraints.edges {
         if *part != index {
             continue;
@@ -367,8 +403,9 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
             Edge::Right => bounds[2] - high[0],
             Edge::Bottom => bounds[3] - high[1],
         };
-        // Beyond the edge is the outline check's business.
-        violation = violation.max(distance - reach);
+        // Beyond the edge is the outline check's business; the reach counts
+        // from where the copper keeps its clearance.
+        violation = violation.max(distance - reach - offsets[side_index(*edge)]);
     }
     for (part, region) in &constraints.regions {
         if *part != index {
@@ -416,12 +453,15 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
             center[axis] = high;
         }
     }
-    // An edge with a reach: keep the near side within reach of the edge.
+    // An edge with a reach: keep the near side within reach of the edge
+    // (counted from where the copper keeps its clearance).
     let bounds = problem.bounds();
+    let offsets = copper_edge_offsets(problem, index, angle);
     for (part, edge, reach) in &problem.constraints.edges {
         if *part != index {
             continue;
         }
+        let reach = reach + offsets[side_index(*edge)];
         match edge {
             Edge::Left => center[0] = center[0].min(bounds[0] + reach + half[0]),
             Edge::Top => center[1] = center[1].min(bounds[1] + reach + half[1]),
@@ -679,15 +719,17 @@ fn grid_phase(problem: &Problem, index: usize, angle: f64) -> Point {
     let component = &problem.components[index];
     let half = component.half_extent(angle);
     let bounds = problem.bounds();
+    let offsets = copper_edge_offsets(problem, index, angle);
     for (part, edge, _) in &constraints.edges {
         if *part != index {
             continue;
         }
+        let offset = offsets[side_index(*edge)];
         let (axis, coordinate) = match edge {
-            Edge::Left => (0, bounds[0] + half[0]),
-            Edge::Right => (0, bounds[2] - half[0]),
-            Edge::Top => (1, bounds[1] + half[1]),
-            Edge::Bottom => (1, bounds[3] - half[1]),
+            Edge::Left => (0, bounds[0] + half[0] + offset),
+            Edge::Right => (0, bounds[2] - half[0] - offset),
+            Edge::Top => (1, bounds[1] + half[1] + offset),
+            Edge::Bottom => (1, bounds[3] - half[1] - offset),
         };
         let mut center = [0.0, 0.0];
         center[axis] = coordinate;

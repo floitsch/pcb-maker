@@ -56,6 +56,10 @@ pub struct KiCadBoardPlacerConfig {
     /// placed closer than this (pads may sit on a body's edge). Read from
     /// the project when not given.
     pub copper_clearance_mm: Option<f64>,
+    /// The board's copper-to-edge clearance: pads of parts held at an edge
+    /// keep it. Read from the project when not given.
+    #[serde(default)]
+    pub copper_edge_clearance_mm: Option<f64>,
     /// When nothing else fits, bodies may shrink to their fabrication
     /// outline and pads (courtyards overlap). Read from the project when
     /// not given: allowed unless KiCad's DRC treats a courtyard overlap as
@@ -91,6 +95,7 @@ impl Default for KiCadBoardPlacerConfig {
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
+            copper_edge_clearance_mm: None,
             tight_bodies: None,
             auto_decoupling: true,
             placement_seeds: 3,
@@ -1269,6 +1274,7 @@ pub(super) fn lower_placement(
         min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
         constraints: Default::default(),
     };
+    problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.0);
     for index in 0..footprint_count {
         let reference = &references[index];
         let component = &problem.components[index];
@@ -1403,13 +1409,14 @@ pub fn place_kicad_board(
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let mut pcb = parse(&source)?;
     let mut config = resolve_constraints(config, source_directory)?;
-    if config.copper_clearance_mm.is_none() {
-        config.copper_clearance_mm = project_rules::resolve_project_rules(
-            &source_directory.join(format!("{board_id}.kicad_pro")),
-            &source_board,
-        )
-        .ok()
-        .map(|rules| largest_clearance(&rules));
+    if config.copper_clearance_mm.is_none() || config.copper_edge_clearance_mm.is_none() {
+        let rules = project_rules::resolve_project_rules(&source_directory.join(format!("{board_id}.kicad_pro")), &source_board).ok();
+        if config.copper_clearance_mm.is_none() {
+            config.copper_clearance_mm = rules.as_ref().map(largest_clearance);
+        }
+        if config.copper_edge_clearance_mm.is_none() {
+            config.copper_edge_clearance_mm = rules.as_ref().map(|rules| rules.edge_clearance_mm);
+        }
     }
     if config.tight_bodies.is_none() {
         config.tight_bodies = Some(courtyards_may_overlap(&source_directory.join(format!("{board_id}.kicad_pro"))));
