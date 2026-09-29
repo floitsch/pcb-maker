@@ -8855,6 +8855,12 @@ fn copy_directory_tree(source: &Path, destination: &Path) -> Result<(), String> 
             destination.display()
         )
     })?;
+    // An output directory inside the project is not copied into itself.
+    let root = fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf());
+    copy_directory_entries(source, destination, &root)
+}
+
+fn copy_directory_entries(source: &Path, destination: &Path, root: &Path) -> Result<(), String> {
     for entry in fs::read_dir(source)
         .map_err(|error| format!("failed to read {}: {error}", source.display()))?
     {
@@ -8867,7 +8873,12 @@ fn copy_directory_tree(source: &Path, destination: &Path) -> Result<(), String> 
         })?;
         let target = destination.join(entry.file_name());
         if file_type.is_dir() {
-            copy_directory_tree(&entry.path(), &target)?;
+            if fs::canonicalize(entry.path()).is_ok_and(|path| root.starts_with(path)) {
+                continue;
+            }
+            fs::create_dir(&target)
+                .map_err(|error| format!("failed to create KiCad action artifact {}: {error}", target.display()))?;
+            copy_directory_entries(&entry.path(), &target, root)?;
         } else if file_type.is_file() {
             fs::copy(entry.path(), &target).map_err(|error| {
                 format!(
