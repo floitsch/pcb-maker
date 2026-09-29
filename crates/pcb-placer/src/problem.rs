@@ -188,7 +188,8 @@ impl Component {
             self.edge_inset = 0.0;
             self.body_center = [(tight[0] + tight[2]) / 2.0, (tight[1] + tight[3]) / 2.0];
             self.body_size = [tight[2] - tight[0], tight[3] - tight[1]];
-            self.round = false;
+            // A disc stays a disc (a radial capacitor's outline).
+            self.round = self.round && (self.body_size[0] - self.body_size[1]).abs() < 1.0e-6;
         }
     }
 
