@@ -96,3 +96,25 @@ Compute every measure on the designers' boards and on ours for the same
 netlists, and report per-measure deltas and "no worse than the human"
 rates rather than absolute pass/fail. Human boards break many rules of
 thumb too; calibrate those thresholds on their distribution.
+
+## Where we stand (2026-09-29)
+
+`score-kicad-board` on the designers' boards and on pcb-maker's layouts of
+the same 110 D3 test boards (`benchmarks/agent-tasks/quality.py`, commit
+489b8e0), before and after the placer learned to put decoupling capacitors
+and crystals at their pins:
+
+| Measure (median) | Designer | pcb-maker before | pcb-maker now | Ours no worse |
+| --- | --- | --- | --- | --- |
+| Supply pin to nearest decoupling capacitor | 5.6 mm | 8.8 mm | 4.2 mm | 22/36 |
+| Decoupling capacitor to nearest supply pin | 4.2 mm | | 3.3 mm | 24/36 |
+| Crystal to the IC pins it drives (4 boards) | 6.1 mm | worse on 3 of 4 | 5.3 mm | 2/4 |
+| Polarised parts at their kind's common angle | 100 % | | 100 % | 62/75 |
+| Connectors facing out | | | | 105/110 |
+| Vias in pads | 0 | | 0 | 110/110 |
+| Vias (sum) | 569 | 295 | 375 | 99/110 |
+| Copper (sum) | 33.4 m | 26.6 m | 27.5 m | 92/110 |
+
+Better decoupling and crystals cost some vias and copper, still well under
+the designers'. Silkscreen: layout mode now moves reference labels and
+board texts off pads and other silkscreen (dut-c3: 22 findings to 1).
