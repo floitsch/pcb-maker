@@ -91,7 +91,9 @@ board that could be placed legally was routed clean.
 - **Progress.** 71/114 in the first run, 97 (with mixed binaries), 109,
   and now 110; no board has a copper error.
 - **What is left:**
-  - **4 boards cannot be placed legally**, all four by geometry. FogDrive and HaveSome fill a side
-    to 82-93 %, the hint says to move parts to the other side. A 4.8 mm
-    wide board whose parts are as wide as the board. An 18.6 mm capacitor
-    between mounting holes and copper text on a 22 mm board.
+  - **4 boards cannot be placed legally**, all four by geometry:
+    - FogDrive and HaveSome fill a side to 82-93 %; the hint says to move
+      parts to the other side.
+    - A 4.8 mm wide board whose parts are as wide as the board.
+    - An 18.6 mm capacitor between mounting holes and copper text on a
+      22 mm board.
