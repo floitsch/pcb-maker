@@ -61,6 +61,10 @@ pub struct KiCadBoardPlacerConfig {
     /// not given: allowed unless KiCad's DRC treats a courtyard overlap as
     /// an error.
     pub tight_bodies: Option<bool>,
+    /// Decoupling capacitors (small capacitors between a supply rail and
+    /// ground) are pulled to the supply pins of the ICs on their rail,
+    /// unless a constraint already names them.
+    pub auto_decoupling: bool,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
@@ -88,6 +92,7 @@ impl Default for KiCadBoardPlacerConfig {
             constraint_weight: 50.0,
             copper_clearance_mm: None,
             tight_bodies: None,
+            auto_decoupling: true,
             placement_seeds: 3,
         }
     }
@@ -400,6 +405,134 @@ fn pad_extent(pad: &Expr) -> [f64; 2] {
     [size[0].max(drill[0]), size[1].max(drill[1])]
 }
 
+/// Decoupling capacitors pulled to IC supply pins: every capacitor between
+/// a rail and ground goes near a supply pin of an IC on that rail, whichever
+/// suits; up to 4.7 µF within 2.5 mm of the pin, bulk capacitors within
+/// 5 mm. Crystals go within 3 mm of the IC pins they drive. Capacitors that a user
+/// constraint names, fixed ones and ones a row carries keep to those.
+fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core::constraints::Relation>, String> {
+    use crate::quality::{capacitance, ground, rail_name};
+    use core::constraints::{Anchor, Relation};
+    struct Supply {
+        part: usize,
+        offset: [f64; 2],
+        net: String,
+    }
+    let footprints: Vec<&Expr> = pcb.children().iter().filter(|item| item.head() == Some("footprint")).collect();
+    // A user's "near that part" leaves room for "at its supply pin";
+    // anything else a user said about a capacitor stands.
+    let named: BTreeSet<usize> = problem
+        .constraints
+        .relations
+        .iter()
+        .filter_map(|relation| match relation {
+            Relation::Near { anchor: Anchor::Body(_), .. } => None,
+            other => other.parts()[0],
+        })
+        .chain(problem.constraints.edges.iter().map(|(part, _, _)| *part))
+        .chain(problem.constraints.regions.iter().map(|(part, _)| *part))
+        .chain(problem.constraints.followers.iter().map(|follower| follower.part))
+        .collect();
+    let prefix = |reference: &str| reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_').to_string();
+    let mut supplies: Vec<Supply> = Vec::new();
+    let mut capacitors: Vec<(usize, String, bool)> = Vec::new();
+    // Crystals and the nets on their signal pins; IC pads by net.
+    let mut crystals: Vec<(usize, Vec<String>)> = Vec::new();
+    let mut ic_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
+    for (index, footprint) in footprints.iter().enumerate() {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let pads: Vec<(Option<String>, [f64; 2], bool)> = footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+            .map(|pad| {
+                let at = form_at(pad).unwrap_or([0.0; 3]);
+                (
+                    node_net(pad).filter(|raw| placer_net(raw)).map(|raw| normalize_net(raw).to_string()),
+                    [at[0], at[1]],
+                    form_atom(pad, "pintype", 1) == Some("power_in"),
+                )
+            })
+            .collect();
+        match prefix(&reference).as_str() {
+            "U" | "IC" if pads.len() >= 3 => {
+                let mut seen = BTreeSet::new();
+                for (net, offset, power) in &pads {
+                    let Some(net) = net else {
+                        continue;
+                    };
+                    ic_pads.entry(net.clone()).or_default().push((index, *offset));
+                    // One anchor per rail and IC: its first supply pin.
+                    if !ground(net) && (*power || rail_name(net)) && seen.insert(net.clone()) {
+                        supplies.push(Supply { part: index, offset: *offset, net: net.clone() });
+                    }
+                }
+            }
+            _ if {
+                let name = footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_ascii_lowercase();
+                prefix(&reference) == "Y" || name.contains("crystal") || name.contains("resonator")
+            } =>
+            {
+                if named.contains(&index) || problem.components[index].fixed {
+                    continue;
+                }
+                let nets: Vec<String> = pads
+                    .iter()
+                    .filter_map(|(net, _, _)| net.clone())
+                    .filter(|net| !ground(net) && !rail_name(net))
+                    .collect();
+                crystals.push((index, nets));
+            }
+            "C" if pads.len() == 2 => {
+                if named.contains(&index) || problem.components[index].fixed {
+                    continue;
+                }
+                let (Some(a), Some(b)) = (&pads[0].0, &pads[1].0) else {
+                    continue;
+                };
+                let rail = match (ground(a), ground(b)) {
+                    (false, true) if rail_name(a) => a.clone(),
+                    (true, false) if rail_name(b) => b.clone(),
+                    _ => continue,
+                };
+                let value = footprint
+                    .children()
+                    .iter()
+                    .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Value"))
+                    .and_then(|item| item.children().get(2).and_then(Expr::atom))
+                    .unwrap_or("");
+                let bulk = capacitance(value).is_some_and(|farads| farads >= 4.7e-6);
+                capacitors.push((index, rail, bulk));
+            }
+            _ => {}
+        }
+    }
+    // Each capacitor near whichever supply pin of its rail the placer finds
+    // best: the netlist does not say which IC a capacitor serves.
+    let mut relations = Vec::new();
+    for (index, rail, bulk) in capacitors {
+        let anchors: Vec<Anchor> = supplies
+            .iter()
+            .filter(|supply| supply.net == rail)
+            .map(|supply| Anchor::Point(supply.part, supply.offset))
+            .collect();
+        if anchors.is_empty() {
+            continue;
+        }
+        relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { 2.5 } });
+    }
+    // A crystal close to the IC pins it drives (short, quiet oscillator
+    // traces).
+    for (index, nets) in crystals {
+        for net in nets {
+            for (ic, offset) in ic_pads.get(&net).into_iter().flatten() {
+                relations.push(Relation::Near { part: index, anchor: Anchor::Point(*ic, *offset), max: 3.0 });
+            }
+        }
+    }
+    Ok(relations)
+}
+
 /// Boxes ([min x, min y, max x, max y], own frame) of the separate shapes
 /// a footprint's courtyard is drawn as (empty when it is one shape, or
 /// none), and whether the courtyard is malformed: lines and arcs whose end
@@ -481,6 +614,29 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
         return Ok((Vec::new(), malformed));
     }
     Ok((shapes.into_iter().map(|(_, bounds)| bounds).collect(), malformed))
+}
+
+/// Whether a footprint sits on the bottom side. Its SMD pads decide when
+/// they all sit on one outer layer: converted footprints (EasyEDA) may claim
+/// the front while their copper is on the back.
+pub(crate) fn on_back(footprint: &Expr) -> bool {
+    let (mut front, mut back) = (0, 0);
+    for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+        if pad.children().get(2).and_then(Expr::atom) != Some("smd") {
+            continue;
+        }
+        let layers: Vec<&str> = pad
+            .child("layers")
+            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+            .unwrap_or_default();
+        front += layers.contains(&"F.Cu") as usize;
+        back += layers.contains(&"B.Cu") as usize;
+    }
+    match (front, back) {
+        (0, 1..) => true,
+        (1.., 0) => false,
+        _ => form_atom(footprint, "layer", 1) == Some("B.Cu"),
+    }
 }
 
 /// Which way a connector opens, in its own frame: the side where the
@@ -664,7 +820,28 @@ pub(super) fn lower_placement(
                 (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
                 (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
             ];
-            let pad_box = [pad_at[0] - half[0], pad_at[1] - half[1], pad_at[0] + half[0], pad_at[1] + half[1]];
+            // A drill offset moves the copper away from the hole (castellated
+            // module pads): the box covers both.
+            let offset = pad
+                .child("drill")
+                .and_then(|drill| drill.child("offset"))
+                .and_then(|offset| {
+                    Some([
+                        expression_coordinate(offset, 1, "pad offset x").ok()?,
+                        expression_coordinate(offset, 2, "pad offset y").ok()?,
+                    ])
+                })
+                .unwrap_or([0.0, 0.0]);
+            let copper = [
+                pad_at[0] + cos * offset[0] - sin * offset[1],
+                pad_at[1] + sin * offset[0] + cos * offset[1],
+            ];
+            let pad_box = [
+                (copper[0] - half[0]).min(pad_at[0] - half[0].min(half[1])),
+                (copper[1] - half[1]).min(pad_at[1] - half[0].min(half[1])),
+                (copper[0] + half[0]).max(pad_at[0] + half[0].min(half[1])),
+                (copper[1] + half[1]).max(pad_at[1] + half[0].min(half[1])),
+            ];
             own_pads.push(pad_box);
             if matches!(pad_type, "thru_hole" | "np_thru_hole") {
                 through = true;
@@ -694,7 +871,7 @@ pub(super) fn lower_placement(
         // side only its holes and pads (`far_side`) are in the way.
         let side = if artwork {
             core::Side::Neither
-        } else if form_atom(footprint, "layer", 1) == Some("B.Cu") {
+        } else if on_back(footprint) {
             core::Side::Back
         } else {
             core::Side::Front
@@ -1064,6 +1241,17 @@ pub(super) fn lower_placement(
             return Err(format!("constraints file {} was not resolved", path.display()));
         }
     };
+    if config.auto_decoupling {
+        let automatic = decoupling_relations(pcb, &problem)?;
+        if !automatic.is_empty() {
+            if problem.constraints.relation_weight == 0.0 {
+                problem.constraints.relation_weight = config.constraint_weight;
+            }
+            problem.constraints.automatic = automatic.len();
+            problem.constraints.relations.extend(automatic);
+        }
+    }
+    problem.constraints.link_pairs();
     Ok(LoweredPlacement {
         problem,
         references,

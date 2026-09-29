@@ -174,7 +174,17 @@ pub fn is_legal(
             if if hollow {
                 hollow_overlap(problem, index, pose, other, poses[other])
             } else {
-                overlaps(body, rect(problem, other, poses[other]), problem.spacing)
+                if problem.constraints.linked(index, other) {
+                    // Parts tied together meet without their halos.
+                    let bare = |part: usize, pose: Pose| {
+                        let rect = rect(problem, part, pose);
+                        let halo = problem.components[part].halo;
+                        Rect { half: [rect.half[0] - halo, rect.half[1] - halo], ..rect }
+                    };
+                    overlaps(bare(index, pose), bare(other, poses[other]), problem.spacing)
+                } else {
+                    overlaps(body, rect(problem, other, poses[other]), problem.spacing)
+                }
             } {
                 return false;
             }

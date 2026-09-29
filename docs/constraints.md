@@ -94,6 +94,20 @@ list every constraint:
 `constraint_warnings` lists accepted but unused inputs. An unknown key, part
 or pad is an error, never ignored.
 
+## What pcb-maker adds by itself
+
+Unless told otherwise (`"auto_decoupling": false` in the placer config),
+the placer also pulls:
+- every capacitor between a supply rail and ground to within 2.5 mm of a
+  supply pin of an IC on that rail (5 mm for 4.7 µF and more), whichever
+  pin suits;
+- every crystal to within 3 mm of the IC pins it drives.
+
+These are soft, like `near`, and are not reported among the constraints.
+Parts a constraint already places keep to it; a `near` to a part's body
+still leaves room for its pin. Parts tied together by `near` (yours or
+these) may come closer than the routing halo of a big IC keeps others.
+
 ## Not supported yet
 
 - A non-rectangular `outline` (draw it in KiCad instead: the placer

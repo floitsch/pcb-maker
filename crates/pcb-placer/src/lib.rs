@@ -136,7 +136,8 @@ fn fit_halos(problem: &Problem, limit: f64) -> (Problem, f64) {
 }
 
 pub fn place(problem: &Problem, config: &Config) -> Placement {
-    let (fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
+    let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
+    fitted.constraints.link_pairs();
     let problem = &fitted;
     let wirelength_initial = problem.wirelength(&problem.poses);
     let global = global::global_place(problem, &config.global);

@@ -16,6 +16,7 @@
 //! each constraint whether it holds and by how much it is missed.
 
 use crate::problem::{Point, Pose, Problem};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edge {
@@ -46,6 +47,14 @@ pub enum Anchor {
     Point(usize, Point),
 }
 
+impl Anchor {
+    pub fn part(&self) -> usize {
+        match self {
+            Anchor::Body(index) | Anchor::Point(index, _) => *index,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Relation {
     /// The gap between `part`'s body and the anchor is at most `max`.
@@ -62,6 +71,9 @@ pub enum Relation {
     /// The gap between `part`'s body and `anchor`'s body is at least `min`
     /// (a temperature sensor away from a regulator).
     Apart { part: usize, anchor: usize, min: f64 },
+    /// `Near`, to whichever of the anchors is closest (a decoupling
+    /// capacitor at any supply pin of its rail).
+    NearAny { part: usize, anchors: Vec<Anchor>, max: f64 },
 }
 
 impl Relation {
@@ -76,6 +88,7 @@ impl Relation {
             Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
                 [Some(*part), Some(*anchor)]
             }
+            Relation::NearAny { part, .. } => [Some(*part), None],
         }
     }
 }
@@ -100,6 +113,13 @@ pub struct Constraints {
     /// Parts carried by others (a row): placed as part of their leader's
     /// body, their poses follow the leader's.
     pub followers: Vec<Follower>,
+    /// How many of the last `relations` are the tool's own preferences
+    /// (decoupling capacitors at their pins) rather than the user's: they
+    /// act like any other relation but are not reported as constraints.
+    pub automatic: usize,
+    /// Pairs (smaller index first) a `near` relation ties together: their
+    /// routing halos do not keep them apart. Filled by `link_pairs`.
+    pub linked: BTreeSet<(usize, usize)>,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the
@@ -113,6 +133,26 @@ pub struct Follower {
 }
 
 impl Constraints {
+    /// Records which parts `near` relations tie together (see `linked`).
+    pub fn link_pairs(&mut self) {
+        self.linked.clear();
+        for relation in &self.relations {
+            let anchors: Vec<usize> = match relation {
+                Relation::Near { anchor, .. } => vec![anchor.part()],
+                Relation::NearAny { anchors, .. } => anchors.iter().map(Anchor::part).collect(),
+                _ => continue,
+            };
+            let part = relation.parts()[0].expect("a near relation has a part");
+            for anchor in anchors {
+                self.linked.insert((part.min(anchor), part.max(anchor)));
+            }
+        }
+    }
+
+    pub fn linked(&self, a: usize, b: usize) -> bool {
+        !self.linked.is_empty() && self.linked.contains(&(a.min(b), a.max(b)))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.edges.is_empty()
             && self.regions.is_empty()
@@ -393,6 +433,14 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
             let gap = box_gap(body(problem, *part, poses[*part]), body(problem, *anchor, poses[*anchor]));
             (min - gap).max(0.0)
         }
+        Relation::NearAny { part, anchors, max } => {
+            let own = body(problem, *part, poses[*part]);
+            anchors
+                .iter()
+                .map(|anchor| (box_gap(own, anchor_point(problem, poses, *anchor)) - max).max(0.0))
+                .fold(f64::INFINITY, f64::min)
+                .min(f64::MAX)
+        }
         Relation::Near { part, anchor, max } => {
             let gap = box_gap(
                 body(problem, *part, poses[*part]),
@@ -469,6 +517,21 @@ pub fn add_relation_gradient(
                 let unit = if length > 1.0e-9 { [delta[0] / length, delta[1] / length] } else { [1.0, 0.0] };
                 push(*part, [-unit[0], -unit[1]]);
                 push(*anchor, unit);
+            }
+            Relation::NearAny { part, anchors, .. } => {
+                let own = body(problem, *part, poses[*part]);
+                let nearest = anchors
+                    .iter()
+                    .min_by(|a, b| {
+                        box_gap(own, anchor_point(problem, poses, **a))
+                            .total_cmp(&box_gap(own, anchor_point(problem, poses, **b)))
+                    });
+                if let Some(anchor) = nearest {
+                    let (b, _) = anchor_point(problem, poses, *anchor);
+                    let delta = [own.0[0] - b[0], own.0[1] - b[1]];
+                    let length = delta[0].hypot(delta[1]).max(1.0e-9);
+                    push(*part, [delta[0] / length, delta[1] / length]);
+                }
             }
             Relation::Near { part, anchor, .. } => {
                 let (a, _) = body(problem, *part, poses[*part]);
@@ -561,12 +624,13 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
             violation,
         });
     }
-    for relation in &constraints.relations {
+    let own = constraints.relations.len() - constraints.automatic.min(constraints.relations.len());
+    for relation in &constraints.relations[..own] {
         let violation = relation_violation(problem, poses, relation);
         let [part, other] = relation.parts();
         statuses.push(Status {
             kind: match relation {
-                Relation::Near { .. } => "near",
+                Relation::Near { .. } | Relation::NearAny { .. } => "near",
                 Relation::Beside { .. } => "relative",
                 Relation::Apart { .. } => "apart",
             },
@@ -644,6 +708,17 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
             [b[0] + unit[0] * distance, b[1] + unit[1] * distance]
         }
         Relation::Near { anchor, .. } => anchor_point(problem, poses, *anchor).0,
+        Relation::NearAny { part, anchors, .. } => {
+            let own = body(problem, *part, poses[*part]);
+            anchors
+                .iter()
+                .map(|anchor| anchor_point(problem, poses, *anchor).0)
+                .min_by(|a, b| {
+                    let gap = |point: &Point| (own.0[0] - point[0]).hypot(own.0[1] - point[1]);
+                    gap(a).total_cmp(&gap(b))
+                })
+                .unwrap_or(own.0)
+        }
         Relation::Beside {
             part,
             anchor,

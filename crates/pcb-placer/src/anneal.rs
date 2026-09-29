@@ -108,7 +108,16 @@ impl State<'_> {
                         }
                     }
                 } else if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
-                    total += area((rect.center, rect.half), (body.center, body.half));
+                    if self.problem.constraints.linked(index, other) {
+                        // Parts tied together meet without their halos.
+                        let (mine, theirs) = (component.halo, other_component.halo);
+                        total += area(
+                            (rect.center, [rect.half[0] - mine, rect.half[1] - mine]),
+                            (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                        );
+                    } else {
+                        total += area((rect.center, rect.half), (body.center, body.half));
+                    }
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
                     // spacing, as the rectangles are) only.

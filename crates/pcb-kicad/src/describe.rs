@@ -124,7 +124,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             value: property(footprint, "Value"),
             footprint: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
             at,
-            side: if form_atom(footprint, "layer", 1) == Some("B.Cu") { "back" } else { "front" }.into(),
+            side: if crate::board_placer::on_back(footprint) { "back" } else { "front" }.into(),
             size_mm: [round(size[0]), round(size[1])],
             body,
             through_hole,

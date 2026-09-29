@@ -132,12 +132,12 @@ impl Part {
     }
 }
 
-fn ground(net: &str) -> bool {
+pub(crate) fn ground(net: &str) -> bool {
     let name = net.trim_start_matches('/').to_ascii_uppercase();
     name.contains("GND") || name == "VSS" || name == "0V" || name.starts_with("VSS")
 }
 
-fn rail_name(net: &str) -> bool {
+pub(crate) fn rail_name(net: &str) -> bool {
     let name = net.trim_start_matches('/').to_ascii_uppercase();
     // A voltage first: 3V3, 5V, 3.3V, 12V_IN, 3V3_DUT.
     let rest = name.trim_start_matches('+');
@@ -151,7 +151,7 @@ fn rail_name(net: &str) -> bool {
 }
 
 /// A capacitor's value in farads ("100n", "0.1uF", "4u7", "10 µF").
-fn capacitance(value: &str) -> Option<f64> {
+pub(crate) fn capacitance(value: &str) -> Option<f64> {
     let value = value.trim().replace('µ', "u").replace("μ", "u");
     let value = value.trim_end_matches(['F', 'f']).trim();
     let unit = value.find(|c: char| c.is_ascii_alphabetic())?;
@@ -240,7 +240,7 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
             value: property("Value"),
             footprint: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
             angle: at[2],
-            back: form_atom(footprint, "layer", 1) == Some("B.Cu"),
+            back: crate::board_placer::on_back(footprint),
             through_hole,
             body: [middle[0] - half[0], middle[1] - half[1], middle[0] + half[0], middle[1] + half[1]],
             pads,
