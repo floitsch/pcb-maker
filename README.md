@@ -117,8 +117,9 @@ For agents and people alike, `constraints.json` states placement intent:
   from the parts.
 - **Edges.** Parts on an edge: flush, with a connector opening outwards, or
   an antenna reaching beyond it.
-- **Placement.** Regions, keepouts, rotations, fixed parts, and the side
-  a part goes on.
+- **Placement.** Parts put in words ("front", "top-left", "center") or at
+  an exact spot, regions, keepouts, rotations, fixed parts, and the side a
+  part goes on.
 - **Proximity.** Parts near other parts or near a given pad, groups kept
   together, and rows of parts at a pitch.
 - **Shields and modules.** Parts inside a hollow part's outline, where

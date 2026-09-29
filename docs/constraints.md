@@ -31,7 +31,10 @@ takes the constraints inline.
               {"part": "U2", "part_of": "J4", "max_mm": 10}],
  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
  "group":    [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
- "row":      [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}]}
+ "row":      [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}],
+ "device_front": "left",
+ "place":    [{"part": "SW1", "at": "front"}, {"part": "D1", "at": "top-right"},
+              {"part": "J1", "x": 10, "y": 5, "angle": 90}]}
 ```
 
 Parts are named by reference. `fixed`, `back`, `front`, `hollow` and the
@@ -43,6 +46,8 @@ downwards, so `top` is the smaller y.
 | `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. Leave out `width` and `height` and the board is sized from its parts: `area_factor` (default 3) times their total body area, at `aspect` width/height (default 1.5). The size used is reported as `outline_mm`. | board |
 | `move_all` | Every footprint with nets is placed, unless locked or named by `fixed`. Use it for a board fresh from a netlist. Without it, default rules keep parts that look deliberately placed: connectors at the edge, parts over the outline. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
+| `place` | Where one part goes, in words or exactly. `at`: `left`, `right`, `top`, `bottom` (on that edge, as `edge` with the default 1 mm), `top-left`, `top-right`, `bottom-left`, `bottom-right` (in that corner), `center` (the middle third both ways), `left-half`, `right-half`, `top-half`, `bottom-half`, or `front`/`rear`. Or `x`, `y` (the footprint's origin; `origin` as for `region`) and optionally `angle`: the part is put there and kept. | hard |
+| `device_front` | The board edge the device's front is at (`left`, `right`, `top`, `bottom`), so that `place` can say `front` (a button the user presses) and `rear` (the power jack). | board |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box. On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
 | `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |

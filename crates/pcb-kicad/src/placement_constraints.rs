@@ -15,7 +15,9 @@
 //!           {"part": "U2", "part_of": "J4", "max_mm": 10}],
 //!  "relative": [{"part": "J4", "below": "U3", "max_gap_mm": 3}],
 //!  "group": [{"parts": ["U3", "L1", "C5?"], "max_mm": 4}],
-//!  "row": [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}]}
+//!  "row": [{"parts": ["D1", "D2", "D3", "D4"], "pitch_mm": 5, "axis": "x"}],
+//!  "device_front": "left",
+//!  "place": [{"part": "SW1", "at": "front"}, {"part": "J1", "x": 10, "y": 5, "angle": 90}]}
 //! ```
 //!
 //! Parts named by a constraint may move even where a default rule would
@@ -71,6 +73,37 @@ pub struct KiCadPlacementConstraints {
     pub group: Vec<KiCadGroupConstraint>,
     #[serde(default)]
     pub row: Vec<KiCadRowConstraint>,
+    /// The board edge the device's front is at (`left`, `right`, `top`,
+    /// `bottom`): `place` then understands `front` and `rear`.
+    #[serde(default)]
+    pub device_front: Option<String>,
+    #[serde(default)]
+    pub place: Vec<KiCadPlaceConstraint>,
+}
+
+/// Where one part goes, in words (`at`) or exactly (`x`, `y`, `angle`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadPlaceConstraint {
+    pub part: String,
+    /// `left`, `right`, `top`, `bottom` (on that edge), `top-left`,
+    /// `top-right`, `bottom-left`, `bottom-right` (in that corner),
+    /// `center` (the middle third both ways), `left-half`, `right-half`,
+    /// `top-half`, `bottom-half`, or `front`/`rear` (the edge
+    /// `device_front` names, and the opposite one).
+    #[serde(default)]
+    pub at: Option<String>,
+    /// The footprint's origin, exactly: the part is put there and kept.
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    /// KiCad orientation in degrees (default: the part's current one).
+    #[serde(default)]
+    pub angle: Option<f64>,
+    /// For `x`/`y`, as for regions: `board` (default) or `absolute`.
+    #[serde(default)]
+    pub origin: Option<String>,
 }
 
 /// Parts in a line at a fixed pitch, turned alike (LED bars, key rows, test
@@ -656,6 +689,82 @@ pub(super) fn apply_constraints(
         problem.components[index].angle_options = angles;
         constrained.insert(index);
     }
+    // Parts put somewhere in words become edge and region constraints;
+    // parts put at a pose stay there.
+    let mut pinned = Vec::new();
+    let opposite = |name: &str| match name {
+        "left" => Ok("right"),
+        "right" => Ok("left"),
+        "top" => Ok("bottom"),
+        "bottom" => Ok("top"),
+        other => Err(format!("unknown device_front {other:?} (left, right, top or bottom)")),
+    };
+    for entry in &constraints.place {
+        let index = find(&entry.part)?;
+        match (&entry.at, entry.x, entry.y) {
+            (Some(at), None, None) => {
+                let word = match at.as_str() {
+                    "front" | "rear" => {
+                        let front = constraints
+                            .device_front
+                            .as_deref()
+                            .ok_or_else(|| format!("place {}: {at:?} needs device_front", entry.part))?;
+                        opposite(front)?;
+                        if at == "front" { front.to_string() } else { opposite(front)?.to_string() }
+                    }
+                    other => other.to_string(),
+                };
+                let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
+                let region = |x0: f64, y0: f64, x1: f64, y1: f64| {
+                    [bounds[0] + x0 * width, bounds[1] + y0 * height, bounds[0] + x1 * width, bounds[1] + y1 * height]
+                };
+                let (edges, area): (Vec<Edge>, Option<[f64; 4]>) = match word.as_str() {
+                    "left" | "right" | "top" | "bottom" => (vec![edge(&word)?], None),
+                    "top-left" => (vec![Edge::Top, Edge::Left], None),
+                    "top-right" => (vec![Edge::Top, Edge::Right], None),
+                    "bottom-left" => (vec![Edge::Bottom, Edge::Left], None),
+                    "bottom-right" => (vec![Edge::Bottom, Edge::Right], None),
+                    "center" => (Vec::new(), Some(region(1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0))),
+                    "left-half" => (Vec::new(), Some(region(0.0, 0.0, 0.5, 1.0))),
+                    "right-half" => (Vec::new(), Some(region(0.5, 0.0, 1.0, 1.0))),
+                    "top-half" => (Vec::new(), Some(region(0.0, 0.0, 1.0, 0.5))),
+                    "bottom-half" => (Vec::new(), Some(region(0.0, 0.5, 1.0, 1.0))),
+                    other => {
+                        return Err(format!(
+                            "place {}: unknown position {other:?} (an edge, a corner like top-left, center, a half like left-half, front or rear)",
+                            entry.part
+                        ))
+                    }
+                };
+                for side in edges {
+                    problem.constraints.edges.push((index, side, 1.0 + 1.0e-3));
+                }
+                if let Some(area) = area {
+                    problem.constraints.regions.push((index, area));
+                }
+                constrained.insert(index);
+            }
+            (None, Some(x), Some(y)) => {
+                let offset = match entry.origin.as_deref() {
+                    None | Some("board") => [bounds[0], bounds[1]],
+                    Some("absolute") => [0.0, 0.0],
+                    Some(other) => return Err(format!("unknown place origin {other:?} (board or absolute)")),
+                };
+                let angle = entry.angle.unwrap_or(problem.poses[index].angle).rem_euclid(360.0);
+                problem.poses[index] = core::Pose {
+                    position: [offset[0] + x, offset[1] + y],
+                    angle,
+                };
+                pinned.push(index);
+            }
+            _ => {
+                return Err(format!(
+                    "place {}: give either `at` or both `x` and `y`",
+                    entry.part
+                ))
+            }
+        }
+    }
     for entry in &constraints.edge {
         let index = find(&entry.part)?;
         let reach = entry.max_mm.unwrap_or(if entry.flush { 0.0 } else { 1.0 });
@@ -887,6 +996,9 @@ pub(super) fn apply_constraints(
             }
         }
     }
+    for index in pinned {
+        problem.components[index].fixed = true;
+    }
     for pattern in &constraints.fixed {
         let matched = matching(pattern);
         if matched.is_empty() {
@@ -1048,6 +1160,37 @@ mod tests {
             r#"{"version": 1, "hollow": ["U*"]}"#,
             r#"{"version": 1, "group": [{"parts": ["C1", "U9"], "max_mm": 2}]}"#,
             r#"{"version": 1, "hollow": ["C1"]}"#,
+        ] {
+            assert!(apply(bad).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn place_takes_words_and_exact_poses() {
+        let (problem, _) = apply(
+            r#"{"version": 1, "device_front": "left",
+                "place": [{"part": "C1", "at": "front"}, {"part": "C2", "at": "bottom-right"},
+                          {"part": "J1", "x": 5, "y": 6, "angle": 90}]}"#,
+        )
+        .unwrap();
+        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
+        assert_eq!(edges, vec![(1, Edge::Left), (2, Edge::Bottom), (2, Edge::Right)]);
+        assert!(!problem.components[1].fixed && !problem.components[2].fixed);
+        assert_eq!(problem.poses[0], core::Pose { position: [5.0, 6.0], angle: 90.0 });
+        assert!(problem.components[0].fixed);
+        let (problem, _) = apply(r#"{"version": 1, "place": [{"part": "C1", "at": "center"}, {"part": "C2", "at": "top-half"}]}"#).unwrap();
+        let expected = [(1, [10.0, 20.0 / 3.0, 20.0, 40.0 / 3.0]), (2, [0.0, 0.0, 30.0, 10.0])];
+        assert_eq!(problem.constraints.regions.len(), 2);
+        for ((part, region), (want_part, want)) in problem.constraints.regions.iter().zip(expected) {
+            assert_eq!(*part, want_part);
+            assert!(region.iter().zip(want).all(|(a, b)| (a - b).abs() < 1.0e-9), "{region:?}");
+        }
+        for bad in [
+            r#"{"version": 1, "place": [{"part": "C1", "at": "front"}]}"#,
+            r#"{"version": 1, "place": [{"part": "C1", "at": "somewhere"}]}"#,
+            r#"{"version": 1, "place": [{"part": "C1", "at": "left", "x": 1, "y": 2}]}"#,
+            r#"{"version": 1, "place": [{"part": "C1", "x": 1}]}"#,
+            r#"{"version": 1, "device_front": "north", "place": [{"part": "C1", "at": "front"}]}"#,
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }

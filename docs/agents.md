@@ -32,6 +32,9 @@ The file lists what constraints refer to:
 Full reference: [constraints.md](constraints.md).
 - **`move_all`** places every part, except locked ones and those named in
   `fixed`. Use it for a board straight from a netlist.
+- **`place`** says where a part goes in words (`"at": "top-left"`,
+  `"center"`, `"front"` with `device_front`) or exactly (`x`, `y`,
+  `angle`, for a part that must match an enclosure).
 - **`outline`** sets the board size.
 - **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be;
   **`back`/`front`** on which side.
