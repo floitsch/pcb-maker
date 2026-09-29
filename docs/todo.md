@@ -49,6 +49,13 @@ router and placer items.
   in all. Try the ladder first when the first route leaves opens, or stop
   moves early when they do not reduce the opens.
 
+- **Interf-U layout is 109/110 again.** On 2026-09-22 two nudges took it to
+  110/110. Since commit f07b3fa or earlier (identical on 2026-09-29 with
+  every change of that day), the placement routes with 6 open. Moves at
+  about 84 s each keep nothing, and the ladder ends with PC-A3 open. The
+  placer changes of 2026-09-28 (the spacing floor, copper artwork, three
+  seeds) are the suspects; try the other seeds' placements.
+
 ## Placer
 
 - **Alignment beyond rows.** `row` places parts in a line at a pitch as
