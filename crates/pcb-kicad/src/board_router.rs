@@ -127,6 +127,10 @@ pub struct KiCadBoardRouterConfig {
     /// ran 1180 s with 222 open, and no other rung ran).
     #[serde(default)]
     pub negotiation_seconds: Option<f64>,
+    /// Fixed escape stubs for fine-pitch pad rows, this long in mm (router
+    /// `escape_stub_mm`; off by default).
+    #[serde(default)]
+    pub escape_stub_mm: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -1767,6 +1771,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(seconds) = config.negotiation_seconds {
         router_config.negotiation_seconds = seconds;
+    }
+    if let Some(length) = config.escape_stub_mm {
+        router_config.escape_stub_mm = length;
     }
     if let Some(global) = config.global_routing {
         router_config.global_routing = global;

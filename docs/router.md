@@ -77,7 +77,16 @@ Interf-U were re-run during the audit.
    reconnected. A net in conflict for eight iterations running is ripped up
    whole every eighth: the branches it kept may be what boxes the other net
    in (Interf-U's edge fingers, where a kept branch fenced the neighbour's
-   finger on the only layer that reaches it). Under `PCB_ROUTER_DEBUG` the
+   finger on the only layer that reaches it). Branches a rip-up keeps stay
+   stamped while the net is searched again; the search masks its own stamps
+   (`mask_own`, an epoch that never repeats: the old Jacobi mask reused
+   generation 1 for every net, so a previous net's stamps passed for the
+   current one's). Fixed branches (plane skeletons, escape stubs) therefore
+   hold their ground even in the hard rerouting at the end, where a bulk
+   rip-up used to unstamp them and other nets crossed them.
+   `escape_stub_mm` (off) fixes a straight stub outward for every pad of a
+   fine-pitch row before negotiation; it did not gain on Tiny Tapeout or
+   ColdFire yet. Under `PCB_ROUTER_DEBUG` the
    conflict spots of stuck nets name the nets stamping them, and
    `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm) prints the lattice of that region per
    layer once few nets remain (statics, occupancy, the stuck nets' nodes).
