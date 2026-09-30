@@ -203,8 +203,19 @@ README is updated. State of the router work that followed:
   pads with tracks along the rows to 1 GND and 3 +3.3V vias. Pour nets
   need to form such trees; the fixed-stub pre-pass (`fixed_plane_stubs`,
   off) did not settle.
-- **Brushless_ESC** (agent task): 44/50 in 1177 s, passed at v48.
-- **PCB_constant_current_ac_hv**: one capacitor finds no legal spot.
+- **Brushless_ESC** (agent task): bisected to 43273fb, the switcher
+  inductor pull; now only pins whose function says `SW`/`LX` pull. Being
+  rerun.
+- **Fixed since:** PCB_constant_current_ac_hv (copper texts now move like
+  labels), raspberry_pi_pullup_button (bodies may overhang the edge when
+  their copper fits; a last level keeps only the rules' edge clearance),
+  and a bad regression where every layout move failed ("incremental
+  update needs the same nets and rules": the neck classes).
+- **FogDrive, HaveSome_PCB** ("side 82-93 % full"): their designers put
+  part bodies over other parts' outlines (resistors over a DIP), which the
+  projects allow (courtyard overlap ignored; only holes may not lie inside
+  a courtyard). Reproducing that needs hole-versus-courtyard legality in
+  the placer instead of body boxes. Not done.
 
 ### Timings (unloaded machine, stripped boards)
 Interf-U 63 s (via reduction is most of it), multichannel 96 s, ColdFire
