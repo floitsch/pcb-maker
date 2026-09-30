@@ -265,8 +265,11 @@ from GitHub, strip and reroute, and place under constraints.
 shredded outer pours (hence the pre-pass), a few boards with dead 0.4 mm
 pads under a 0.2 mm clearance (krishveercard: 9 of 19 nets pathless),
 and big boards hitting the 900 s runner timeout (jetson 8L/391 fp,
-ATAT1800). Rerun the errored and open boards with the newest binary when
-the sweep ends (`--only` names) and put the table in benchmarks.md.
+ATAT1800). A second sweep with the newest snapshot (`build/bin/pcb-maker-x8`:
+plane-stub rung, 0.127 mm neck when no minimum is stated, padstacks on
+surface pads) is queued behind the first (`build/github-v2.sh`, output
+`build/github-route-v2`); summarise both with `summary.py`, put the table
+in benchmarks.md, then run the layout tasks (`build/github-tasks`).
 
 ## Where things are
 
