@@ -2496,7 +2496,7 @@ impl Router {
 
             let via_occupied = self.occupancy_seen(scratch, class, via_map, cell) as f32;
             if layers > 1
-                && !statics.via_blocked[cell]
+                && statics.via_allowed(cell, net)
                 && !(hard && via_occupied > 0.0)
                 && scratch.own_via_near[cell] != generation
             {
@@ -2589,7 +2589,7 @@ impl Router {
             }
             let previous = branch.nodes[index - 1];
             if previous.cell == node.cell {
-                if statics.via_blocked[node.cell as usize] {
+                if !statics.via_allowed(node.cell as usize, net) {
                     return false;
                 }
                 continue;
@@ -3429,22 +3429,55 @@ impl Router {
         if pour_nets.is_empty() {
             return;
         }
+        // On the empty board every pad touches its layer's pour; the pours
+        // on the outer layers are what the signals cut to pieces later. So
+        // only the inner planes count here: a pad on an outer layer has to
+        // reach one through a via, as a designer places one next to every
+        // ground pad. Boards without an inner plane are left alone.
+        let layers = self.board.layer_count;
+        let mut saved = Vec::new();
+        for net in &pour_nets {
+            let state = &mut self.nets[*net as usize];
+            let inner = (1..layers.saturating_sub(1)).any(|layer| !state.plane[layer].is_empty());
+            if !inner {
+                continue;
+            }
+            saved.push((*net, state.plane.clone(), state.on_plane.clone()));
+            state.plane[0] = Vec::new();
+            state.plane[layers - 1] = Vec::new();
+            for (index, nodes) in state.terminal_nodes.iter().enumerate() {
+                state.on_plane[index] = nodes.iter().any(|node| {
+                    state.plane.get(node.layer as usize).is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
+                });
+            }
+        }
+        if saved.is_empty() {
+            return;
+        }
+        let pour_nets: Vec<NetId> = saved.iter().map(|(net, _, _)| *net).collect();
         // The pour nets negotiate among themselves (their vias compete for
         // the same spots next to alternating pads), then stay.
         let seconds = self.config.negotiation_seconds;
         self.config.negotiation_seconds = seconds.min(60.0);
         self.negotiate(&pour_nets, pour_nets.clone());
         self.config.negotiation_seconds = seconds;
+        for (net, plane, on_plane) in saved {
+            let state = &mut self.nets[net as usize];
+            state.plane = plane;
+            state.on_plane = on_plane;
+        }
         for net in &pour_nets {
             // Only what is in conflict with nothing stays fixed.
             let conflicted = !self.conflicts(*net).is_empty();
             let state = &mut self.nets[*net as usize];
             if conflicted {
                 state.blocked = false;
+                state.complete = false;
                 continue;
             }
             state.fixed = state.branches.len();
             state.blocked = false;
+            state.complete = false;
             if self.config.verbose {
                 eprintln!(
                     "plane stubs {}: {} fixed branches, {} of {} terminals connected, {:.2}s",
@@ -4303,7 +4336,7 @@ impl Router {
                         if *piece == 0 || find(&mut parent, *piece as usize) != island {
                             continue;
                         }
-                        if self.statics[class_index].via_blocked[cell]
+                        if !self.statics[class_index].via_allowed(cell, net)
                             || self.occupancy[via_map][cell] as usize
                                 != own.contains(&(via_map as u32, cell as u32)) as usize
                             || !pours.solid_around(&self.grid, layer, cell, via_reach)

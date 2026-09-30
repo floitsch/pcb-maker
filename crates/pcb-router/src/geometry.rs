@@ -156,6 +156,21 @@ impl Shape {
     pub fn contains(&self, point: Point) -> bool {
         self.distance_to_point(point) <= 0.0
     }
+
+    /// Whether the whole disc of `radius` around `center` lies inside the
+    /// shape (for a union: inside one of its parts, which is enough for
+    /// the pads it is asked about).
+    pub fn contains_disc(&self, center: Point, radius: f64) -> bool {
+        match self {
+            Self::Circle { center: c, radius: r } => distance(center, *c) + radius <= *r,
+            Self::Capsule { start, end, radius: r } => point_segment_distance(center, *start, *end) + radius <= *r,
+            Self::Polygon { points } => {
+                point_in_polygon(center, points)
+                    && polygon_edges(points).all(|(a, b)| point_segment_distance(center, a, b) >= radius)
+            }
+            Self::Union { parts } => parts.iter().any(|part| part.contains_disc(center, radius)),
+        }
+    }
 }
 
 pub fn polygon_edges(points: &[Point]) -> impl Iterator<Item = (Point, Point)> + '_ {

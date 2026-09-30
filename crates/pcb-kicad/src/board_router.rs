@@ -131,6 +131,10 @@ pub struct KiCadBoardRouterConfig {
     /// `escape_stub_mm`; off by default).
     #[serde(default)]
     pub escape_stub_mm: Option<f64>,
+    /// Connect every pour-net pad to its plane by a fixed stub and via
+    /// before the signals route (router `fixed_plane_stubs`).
+    #[serde(default)]
+    pub fixed_plane_stubs: Option<bool>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -1774,6 +1778,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
+    }
+    if let Some(fixed) = config.fixed_plane_stubs {
+        router_config.fixed_plane_stubs = fixed;
     }
     if let Some(global) = config.global_routing {
         router_config.global_routing = global;

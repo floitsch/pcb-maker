@@ -340,6 +340,10 @@ pub struct StaticMaps {
     pub edge_owner: Vec<Vec<u32>>,
     /// Per node: a via of this class is forbidden.
     pub via_blocked: Vec<bool>,
+    /// Where `via_blocked` holds only for other nets: inside a net's own
+    /// surface pad, deep enough for the whole via (a thermal via in a
+    /// ground pad, as designers place them).
+    pub via_owner: Vec<u32>,
 }
 
 fn claim(cell: &mut u32, net: Option<NetId>) {
@@ -384,6 +388,7 @@ impl StaticMaps {
             .map(|inside| if *inside { FREE } else { BLOCKED })
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
+        let mut via_owner: Vec<u32> = vec![FREE; cells];
         let trace_edge = half_width + board.edge_clearance + SAFETY;
         let via_edge = via_radius + board.edge_clearance + SAFETY;
         // A unit step between two legal nodes can cut an outline corner by
@@ -444,10 +449,25 @@ impl StaticMaps {
             if obstacle.blocks_vias
                 && let Some((x0, y0, x1, y1)) = grid.node_range(bounds.inflated(via_reach))
             {
+                // A surface pad of a net may hold that net's own vias where
+                // the whole via lies inside its copper.
+                let own_vias = obstacle.net.filter(|_| {
+                    obstacle.kind == ObstacleKind::Copper && obstacle.layers.count_ones() == 1
+                });
                 for y in y0..=y1 {
                     for x in x0..=x1 {
-                        if obstacle.shape.distance_to_point(grid.center(x, y)) < via_reach {
-                            via_blocked[grid.index(x, y)] = true;
+                        let center = grid.center(x, y);
+                        if obstacle.shape.distance_to_point(center) < via_reach {
+                            let index = grid.index(x, y);
+                            if let Some(net) = own_vias
+                                && !via_blocked[index]
+                                && obstacle.shape.contains_disc(center, via_radius + SAFETY)
+                            {
+                                via_owner[index] = owner(net);
+                            } else {
+                                via_owner[index] = FREE;
+                            }
+                            via_blocked[index] = true;
                         }
                     }
                 }
@@ -492,7 +512,13 @@ impl StaticMaps {
             edge_block,
             edge_owner,
             via_blocked,
+            via_owner,
         }
+    }
+
+    /// Whether `net` may put a via on this node.
+    pub fn via_allowed(&self, index: usize, net: NetId) -> bool {
+        !self.via_blocked[index] || self.via_owner[index] == owner(net)
     }
 
     /// Whether `net` may have a trace centreline on this node.
