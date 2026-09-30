@@ -36,6 +36,11 @@ pub struct Config {
     /// nodes act as walls the heuristic knows nothing about, and searches
     /// flood; history cost keeps separating the nets instead.
     pub present_cap: f64,
+    /// Connect pour nets' pads to their planes first (the pour nets
+    /// negotiating among themselves) and keep those stubs and vias fixed
+    /// through negotiation. Off: on ColdFire the pre-pass never settles and
+    /// fixed stubs left clearance violations.
+    pub fixed_plane_stubs: bool,
     /// Within this distance of a net's own narrow pads (narrower than its
     /// track plus clearance) the net routes at the board's neck width: the
     /// fan-out of a fine-pitch part. 0 turns it off.
@@ -115,6 +120,7 @@ impl Default for Config {
             stall_at_cap: 25,
             global_routing: false,
             neck_reach: 1.5,
+            fixed_plane_stubs: false,
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
@@ -1276,10 +1282,16 @@ impl Router {
             let base = querying * (layers + 1);
             for (which, branch) in branches.iter().enumerate() {
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                    if let Some((cells, _, _)) = escapes.get(&end) {
+                    if let Some((cells, width, _)) = escapes.get(&end) {
+                        // A stub at the neck width stamps the neck's footprint.
+                        let stub_class = match self.neck_of[class] {
+                            Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
+                            _ => class,
+                        };
+                        let stub_stamps = &self.stamps[stub_class][querying];
                         for cell in cells {
-                            apply(base + end.layer as usize, *cell, &stamps.stub_to_trace);
-                            apply(base + layers, *cell, &stamps.stub_to_via);
+                            apply(base + end.layer as usize, *cell, &stub_stamps.stub_to_trace);
+                            apply(base + layers, *cell, &stub_stamps.stub_to_via);
                         }
                     }
                 }
@@ -1322,8 +1334,12 @@ impl Router {
             .skip(self.nets[net as usize].fixed)
         {
             for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                if let Some((cells, _, _)) = self.nets[net as usize].escapes.get(&end) {
-                    let map = self.map_index(class, end.layer as usize);
+                if let Some((cells, width, _)) = self.nets[net as usize].escapes.get(&end) {
+                    let stub_class = match self.neck_of[class] {
+                        Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
+                        _ => class,
+                    };
+                    let map = self.map_index(stub_class, end.layer as usize);
                     for cell in cells {
                         if self.occupancy[map][*cell as usize] > 1 {
                             result.push((end.layer as usize, *cell));
@@ -2725,6 +2741,7 @@ impl Router {
     pub fn run_in_place(&mut self) -> RoutingResult {
         let order = self.routing_order();
         self.route_skeletons(&order);
+        self.fix_plane_stubs(&order);
         if self.config.global_routing {
             self.plan_globally(&order);
         }
@@ -2901,6 +2918,55 @@ impl Router {
         }
     }
 
+    /// Connects every pad of a pour net to its plane on the empty board (a
+    /// stub and a via next to the pad, as a designer places them) and keeps
+    /// those connections fixed: signals route around them instead of
+    /// pushing them off the via sites next to the pads.
+    fn fix_plane_stubs(&mut self, order: &[NetId]) {
+        if !self.config.fixed_plane_stubs {
+            return;
+        }
+        let started = std::time::Instant::now();
+        let pour_nets: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                !state.plane.is_empty() && state.fixed == 0 && state.branches.is_empty()
+            })
+            .collect();
+        if pour_nets.is_empty() {
+            return;
+        }
+        // The pour nets negotiate among themselves (their vias compete for
+        // the same spots next to alternating pads), then stay.
+        let seconds = self.config.negotiation_seconds;
+        self.config.negotiation_seconds = seconds.min(60.0);
+        self.negotiate(&pour_nets, pour_nets.clone());
+        self.config.negotiation_seconds = seconds;
+        for net in &pour_nets {
+            // Only what is in conflict with nothing stays fixed.
+            let conflicted = !self.conflicts(*net).is_empty();
+            let state = &mut self.nets[*net as usize];
+            if conflicted {
+                state.blocked = false;
+                continue;
+            }
+            state.fixed = state.branches.len();
+            state.blocked = false;
+            if self.config.verbose {
+                eprintln!(
+                    "plane stubs {}: {} fixed branches, {} of {} terminals connected, {:.2}s",
+                    self.board.nets[*net as usize].name,
+                    state.fixed,
+                    state.connected.iter().filter(|done| **done).count(),
+                    state.connected.len(),
+                    started.elapsed().as_secs_f64()
+                );
+            }
+        }
+    }
+
     /// Negotiated congestion over `pending` (which grows to whatever those
     /// nets conflict with) until the board is conflict free or stalls.
     fn negotiate(&mut self, order: &[NetId], pending: Vec<NetId>) {
@@ -2996,6 +3062,17 @@ impl Router {
             let mut conflicted = Vec::new();
             for net in order {
                 let conflicts = self.conflicts(*net);
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && order.len() <= 3 && !conflicts.is_empty() {
+                    let spots: Vec<String> = conflicts
+                        .iter()
+                        .take(8)
+                        .map(|(layer, cell)| {
+                            let at = self.grid.center_of(*cell as usize);
+                            format!("L{layer}({:.2},{:.2})", at[0], at[1])
+                        })
+                        .collect();
+                    eprintln!("  {} conflicts at {}", self.board.nets[*net as usize].name, spots.join(" "));
+                }
                 if conflicts.is_empty()
                     && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
                 {
