@@ -35,7 +35,9 @@ enum Item {
     Obstacle { index: usize },
 }
 
-const TOLERANCE: f64 = 1.0e-6;
+/// Well under KiCad's DRC epsilon (0.5 µm): positions are written in
+/// nanometres, and two tracks at exactly their clearance are legal.
+const TOLERANCE: f64 = 1.0e-5;
 const BUCKET: f64 = 2.0;
 
 fn buckets(bounds: Aabb) -> impl Iterator<Item = (i64, i64)> {

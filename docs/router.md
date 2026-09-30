@@ -57,12 +57,30 @@ Interf-U were re-run during the audit.
    eating narrow channels.
 4. **Occupancy.** Routed copper is stamped into per-class occupancy maps as the
    zone where another net's centreline or via may not be. Stamps are reference
-   counted per net, so rip-up is an exact decrement.
+   counted per net, so rip-up is an exact decrement. They are exact: a node's
+   disc covers the cells closer than the clearance (in whole nanometres), so
+   two tracks at exactly their clearance are legal, as KiCad has it (0.4 mm
+   pad pitch with 0.2 mm tracks and clearance). On a lattice no node lies
+   closer to an axis step than to its ends; a diagonal step passes the nodes
+   on its bisector closer, so it stamps those too, and every node stamps,
+   into a second family of maps, the start cells of the diagonal steps that
+   would pass it too closely (one lookup per diagonal move in the search).
+   The distance between two segments of a lattice is always attained at a
+   node of one of them, so these two stamps together are exact. What stays
+   quantised is the spacing of parallel diagonals: multiples of pitch/√2,
+   so on a 0.127 mm lattice three 0.25 mm tracks with 0.2 mm clearance fit
+   an axis channel of 1.15 mm but not a diagonal one (5 steps are 0.449 mm).
 5. **Negotiated congestion.** Every net is routed allowing overlaps at a cost.
    Contested nodes get more expensive from iteration to iteration (present
    factor and history). Only nets still in conflict are touched, and of those
    only the conflicting branches; the remaining tree components are
-   reconnected.
+   reconnected. A net in conflict for eight iterations running is ripped up
+   whole every eighth: the branches it kept may be what boxes the other net
+   in (Interf-U's edge fingers, where a kept branch fenced the neighbour's
+   finger on the only layer that reaches it). Under `PCB_ROUTER_DEBUG` the
+   conflict spots of stuck nets name the nets stamping them, and
+   `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm) prints the lattice of that region per
+   layer once few nets remain (statics, occupancy, the stuck nets' nodes).
 6. **Search.** A* over (layer, node) with preferred layer axes, bend and via
    costs. Few-target searches use a layer-direction-aware bound; many-target
    searches (power nets, tree components) use an exact coarse octile distance

@@ -248,6 +248,10 @@ struct NetState {
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
+    /// Consecutive iterations in conflict. A net stuck this long is ripped
+    /// up whole now and then: the branches it kept may be what boxes the
+    /// other net in.
+    stuck: usize,
     /// Per layer: the rule class describing the pour there.
     plane_class: Vec<usize>,
     /// When set, only these pour nodes (the main piece) are valid targets.
@@ -269,6 +273,19 @@ struct Stamps {
     trace_to_via: Vec<(i32, i32)>,
     via_to_trace: Vec<(i32, i32)>,
     via_to_via: Vec<(i32, i32)>,
+    /// Cells a diagonal trace step from a node covers beyond the discs at
+    /// its ends: the nodes on the step's perpendicular bisector closer to
+    /// its middle than the clearance (relative to the step's start, for
+    /// the step direction (+1, +1); mirrored for the others). No node of
+    /// the lattice lies closer to an axis step than to its ends.
+    diagonal_to_trace: Vec<(i32, i32)>,
+    diagonal_to_via: Vec<(i32, i32)>,
+    /// The reverse: the start cells (relative to a node, a via, a stub
+    /// cell) of the diagonal steps of the querying class that pass it too
+    /// closely, per orientation (see `Router::diagonal_map`).
+    diagonal_block: [Vec<(i32, i32)>; 2],
+    diagonal_block_via: [Vec<(i32, i32)>; 2],
+    stub_diagonal_block: [Vec<(i32, i32)>; 2],
 }
 
 /// KiCad connects a track to a pad when the track ends inside the pad's
@@ -321,17 +338,62 @@ fn find(parent: &mut [usize], mut element: usize) -> usize {
     element
 }
 
+/// Cells whose centre lies closer than `radius` to a node, in exact
+/// nanometres: a node at exactly the radius (two tracks at exactly their
+/// clearance, as a 0.4 mm pad pitch with 0.2 mm tracks and clearance
+/// demands) is not covered, as KiCad accepts it.
 fn disc(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
-    let reach = (radius / pitch).ceil() as i32;
+    let reach = (radius / pitch).ceil() as i32 + 1;
+    let pitch_nm = (pitch * 1.0e6).round() as i64;
+    let radius_nm = (radius * 1.0e6).round() as i64;
     let mut offsets = Vec::new();
     for dy in -reach..=reach {
         for dx in -reach..=reach {
-            if ((dx * dx + dy * dy) as f64).sqrt() * pitch < radius {
+            let d2 = (dx as i64 * dx as i64 + dy as i64 * dy as i64) * pitch_nm * pitch_nm;
+            if d2 < radius_nm * radius_nm {
                 offsets.push((dx, dy));
             }
         }
     }
     offsets
+}
+
+/// Cells on the perpendicular bisector of the diagonal step from (0, 0) to
+/// (1, 1) that are closer than `radius` to its middle: the only nodes a
+/// diagonal step passes closer than its ends do (they lie at odd multiples
+/// of half the diagonal from the middle).
+fn diagonal_extra(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
+    let half = pitch * std::f64::consts::SQRT_2 / 2.0;
+    let reach = (radius / half).ceil() as i32 + 1;
+    let pitch_nm = (pitch * 1.0e6).round() as i64;
+    let radius_nm = (radius * 1.0e6).round() as i64;
+    let mut offsets = Vec::new();
+    for k in -reach..=reach {
+        // The cell (i, j) with i + j = 1 and i - j = 2k + 1.
+        let (i, j) = (k + 1, -k);
+        // Distance to the middle (0.5, 0.5): |i - j| * pitch / sqrt 2.
+        let d2 = (2 * k as i64 + 1).pow(2) * pitch_nm * pitch_nm / 2;
+        if d2 < radius_nm * radius_nm {
+            offsets.push((i, j));
+        }
+    }
+    offsets
+}
+
+/// `diagonal_extra` offsets turned to the diagonal direction (dx, dy).
+fn turned(offsets: &[(i32, i32)], dx: i32, dy: i32) -> Vec<(i32, i32)> {
+    offsets.iter().map(|(i, j)| (i * dx, j * dy)).collect()
+}
+
+/// The start cells, relative to a node, of the diagonal steps that pass it
+/// closer than `radius`: the node is on their bisector. Per orientation
+/// (0: the step (+1, +1), 1: the step (+1, -1)).
+fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
+    let extra = diagonal_extra(radius, pitch);
+    [
+        extra.iter().map(|(i, j)| (-i, -j)).collect(),
+        extra.iter().map(|(i, j)| (-i, *j)).collect(),
+    ]
 }
 
 /// Per-thread search state: A* arrays, generation marks and counters.
@@ -426,6 +488,9 @@ pub struct Router {
     statics: Vec<StaticMaps>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
     /// is the via map. A value counts the nets forbidding that class there.
+    /// After the class maps follow the diagonal maps (see `diagonal_map`):
+    /// the cells from which a diagonal step of that class would pass a
+    /// node too closely.
     occupancy: Vec<Vec<u16>>,
     stamp_mark: Vec<Vec<u32>>,
     stamp_generation: u32,
@@ -520,7 +585,7 @@ impl Router {
         let statics: Vec<_> = (0..board.classes.len())
             .map(|class| StaticMaps::build(board, &grid, class))
             .collect();
-        let maps = board.classes.len() * (layers + 1);
+        let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
         let step = grid.pitch * std::f64::consts::SQRT_2;
         let stamps = board
             .classes
@@ -531,12 +596,20 @@ impl Router {
                     .iter()
                     .map(|other| {
                         let clearance = own.clearance.max(other.clearance);
-                        let with_margin = |radius: f64| {
-                            // Both polylines contribute one chord sagitta.
-                            radius + SAFETY + step * step / (4.0 * radius)
-                        };
-                        let snap = grid.pitch * 0.75;
+                        // Exact: a node at the radius is legal, and the
+                        // steps between nodes are covered apart (see
+                        // `diagonal_extra`; the search checks the cells a
+                        // diagonal step cuts).
+                        let with_margin = |radius: f64| radius;
+                        let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
+                        let trace_radius = own.trace_width / 2.0 + other.trace_width / 2.0 + clearance;
+                        let via_radius = own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance;
                         Stamps {
+                            diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
+                            diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
+                            diagonal_block: diagonal_block(trace_radius, grid.pitch),
+                            diagonal_block_via: diagonal_block(via_radius, grid.pitch),
+                            stub_diagonal_block: diagonal_block(trace_radius + snap, grid.pitch),
                             stub_to_trace: disc(
                                 with_margin(
                                     own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
@@ -573,8 +646,7 @@ impl Router {
                                         own.via_drill / 2.0
                                             + other.via_drill / 2.0
                                             + board.hole_to_hole,
-                                    )
-                                    + SAFETY,
+                                    ),
                                 grid.pitch,
                             ),
                         }
@@ -677,6 +749,16 @@ impl Router {
 
     fn map_index(&self, class: usize, layer: usize) -> usize {
         class * (self.board.layer_count + 1) + layer
+    }
+
+    /// The map counting the nets whose copper a diagonal step of `class`
+    /// on `layer` starting at a cell would pass too closely (`orientation`
+    /// 0: the step towards +x +y, 1: towards +x -y; a step towards -x is
+    /// the same step from its other end). A diagonal step passes the nodes
+    /// on its bisector closer than its ends do; those nodes stamp here.
+    fn diagonal_map(&self, class: usize, layer: usize, orientation: usize) -> usize {
+        let layers = self.board.layer_count;
+        self.board.classes.len() * (layers + 1) + (class * layers + layer) * 2 + orientation
     }
 
     /// Access for a pad too narrow to hold a lattice node: nearby legal
@@ -1191,6 +1273,15 @@ impl Router {
         state.complete = false;
     }
 
+    /// Whether a rip-up of `net` takes every branch: every `STUCK_WHOLE`th
+    /// iteration of a net stuck in conflict. The branches a partial rip-up
+    /// keeps may be what leaves the other net no way through.
+    fn rip_up_whole(&self, net: NetId) -> bool {
+        const STUCK_WHOLE: usize = 8;
+        let stuck = self.nets[net as usize].stuck;
+        stuck > 0 && stuck % STUCK_WHOLE == 0
+    }
+
     /// Removes only the branches of `net` that are in conflict, plus any
     /// branch left dangling at a junction on a removed branch.
     fn rip_up_conflicted(&mut self, net: NetId) {
@@ -1206,22 +1297,15 @@ impl Router {
     /// Which branches of `net` are free of conflict and not left dangling
     /// at a junction on a conflicted branch (the skeleton always is).
     fn unconflicted_branches(&self, net: NetId) -> Vec<bool> {
-        let class = self.board.nets[net as usize].class;
-        let layers = self.board.layer_count;
         let branches = &self.nets[net as usize].branches;
+        let whole = self.rip_up_whole(net);
+        let mut found = Vec::new();
         let mut keep: Vec<bool> = branches
             .iter()
             .map(|branch| {
-                !branch.nodes.iter().enumerate().any(|(index, node)| {
-                    let is_via = index > 0
-                        && branch.nodes[index - 1].cell == node.cell
-                        && branch.nodes[index - 1].layer != node.layer;
-                    self.occupancy[self.map_index(class, node.layer as usize)][node.cell as usize]
-                        > 1
-                        || (is_via
-                            && self.occupancy[self.map_index(class, layers)][node.cell as usize]
-                                > 1)
-                })
+                found.clear();
+                self.branch_conflicts(net, branch, &mut found);
+                found.is_empty() && !whole
             })
             .collect();
         for flag in keep.iter_mut().take(self.nets[net as usize].fixed) {
@@ -1264,6 +1348,7 @@ impl Router {
             .iter()
             .map(|branch| branch.nodes.iter().map(|node| self.node_class(net, node.cell)).collect())
             .collect();
+        let diagonal_base = self.board.classes.len() * (layers + 1);
         for querying in 0..self.board.classes.len() {
             let stamps = &self.stamps[class][querying];
             let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)]| {
@@ -1301,6 +1386,13 @@ impl Router {
                         for cell in cells {
                             apply(base + end.layer as usize, *cell, &stub_stamps.stub_to_trace);
                             apply(base + layers, *cell, &stub_stamps.stub_to_via);
+                            for orientation in 0..2 {
+                                apply(
+                                    diagonal_base + (querying * layers + end.layer as usize) * 2 + orientation,
+                                    *cell,
+                                    &stub_stamps.stub_diagonal_block[orientation],
+                                );
+                            }
                         }
                     }
                 }
@@ -1313,6 +1405,13 @@ impl Router {
                         &own.trace_to_trace,
                     );
                     apply(base + layers, node.cell, &own.trace_to_via);
+                    for orientation in 0..2 {
+                        apply(
+                            diagonal_base + (querying * layers + node.layer as usize) * 2 + orientation,
+                            node.cell,
+                            &own.diagonal_block[orientation],
+                        );
+                    }
                     let is_via = index > 0
                         && branch.nodes[index - 1].cell == node.cell
                         && branch.nodes[index - 1].layer != node.layer;
@@ -1321,6 +1420,28 @@ impl Router {
                             apply(base + layer, node.cell, &stamps.via_to_trace);
                         }
                         apply(base + layers, node.cell, &stamps.via_to_via);
+                        for layer in 0..layers {
+                            for orientation in 0..2 {
+                                apply(
+                                    diagonal_base + (querying * layers + layer) * 2 + orientation,
+                                    node.cell,
+                                    &stamps.diagonal_block_via[orientation],
+                                );
+                            }
+                        }
+                    }
+                    // A diagonal step covers the nodes on its bisector too.
+                    if index > 0 && !is_via {
+                        let previous = branch.nodes[index - 1];
+                        let (dx, dy) = (
+                            node.cell as i64 % nx - previous.cell as i64 % nx,
+                            node.cell as i64 / nx - previous.cell as i64 / nx,
+                        );
+                        if dx != 0 && dy != 0 {
+                            let own = &self.stamps[node_classes[which][index]][querying];
+                            apply(base + node.layer as usize, previous.cell, &turned(&own.diagonal_to_trace, dx as i32, dy as i32));
+                            apply(base + layers, previous.cell, &turned(&own.diagonal_to_via, dx as i32, dy as i32));
+                        }
                     }
                 }
             }
@@ -1333,8 +1454,6 @@ impl Router {
 
     /// Nodes of `net` that lie inside another net's clearance zone.
     fn conflicts(&self, net: NetId) -> Vec<(usize, u32)> {
-        let class = self.board.nets[net as usize].class;
-        let layers = self.board.layer_count;
         let mut result = Vec::new();
         // Skeleton branches are fixed: an overlap is the other net's conflict.
         for branch in self.nets[net as usize]
@@ -1342,34 +1461,102 @@ impl Router {
             .iter()
             .skip(self.nets[net as usize].fixed)
         {
-            for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                if let Some((cells, width, _)) = self.nets[net as usize].escapes.get(&end) {
-                    let stub_class = match self.neck_of[class] {
-                        Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
-                        _ => class,
-                    };
-                    let map = self.map_index(stub_class, end.layer as usize);
-                    for cell in cells {
-                        if self.occupancy[map][*cell as usize] > 1 {
-                            result.push((end.layer as usize, *cell));
-                        }
+            self.branch_conflicts(net, branch, &mut result);
+        }
+        result
+    }
+
+    /// The cells of `branch` that another net's clearance zone covers
+    /// (`(layer, cell)`, the layer count standing for the via map): its
+    /// escape stubs, its nodes and its vias. Another net's diagonal step
+    /// passing a node too closely shows here as well, through the stamps
+    /// of that step's bisector. The one judge of a conflict: what rips a
+    /// branch up must be what the negotiation counts.
+    fn branch_conflicts(&self, net: NetId, branch: &Branch, result: &mut Vec<(usize, u32)>) {
+        let class = self.board.nets[net as usize].class;
+        let layers = self.board.layer_count;
+        let state = &self.nets[net as usize];
+        for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
+            if let Some((cells, width, _)) = state.escapes.get(&end) {
+                let stub_class = match self.neck_of[class] {
+                    Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
+                    _ => class,
+                };
+                let map = self.map_index(stub_class, end.layer as usize);
+                for cell in cells {
+                    if self.occupancy[map][*cell as usize] > 1 {
+                        result.push((end.layer as usize, *cell));
                     }
                 }
             }
-            for (index, node) in branch.nodes.iter().enumerate() {
-                let map = self.map_index(self.node_class(net, node.cell), node.layer as usize);
-                if self.occupancy[map][node.cell as usize] > 1 {
-                    result.push((node.layer as usize, node.cell));
-                }
-                let is_via = index > 0
-                    && branch.nodes[index - 1].cell == node.cell
-                    && branch.nodes[index - 1].layer != node.layer;
-                if is_via && self.occupancy[self.map_index(class, layers)][node.cell as usize] > 1 {
-                    result.push((layers, node.cell));
+        }
+        for (index, node) in branch.nodes.iter().enumerate() {
+            let map = self.map_index(self.node_class(net, node.cell), node.layer as usize);
+            if self.occupancy[map][node.cell as usize] > 1 {
+                result.push((node.layer as usize, node.cell));
+            }
+            let is_via = index > 0
+                && branch.nodes[index - 1].cell == node.cell
+                && branch.nodes[index - 1].layer != node.layer;
+            if is_via && self.occupancy[self.map_index(class, layers)][node.cell as usize] > 1 {
+                result.push((layers, node.cell));
+            }
+        }
+    }
+
+    /// Debug: with `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm), prints the lattice
+    /// of that region per layer: `#` static block, `x` the nets' own
+    /// pads, `.` free, a digit the occupancy, `*` an occupied node of one
+    /// of `nets`, `v` where a via may not go.
+    fn dump_region(&self, nets: &[NetId]) {
+        let Some(spec) = std::env::var_os("PCB_ROUTER_DUMP") else {
+            return;
+        };
+        let bounds: Vec<f64> = spec.to_string_lossy().split(',').filter_map(|v| v.parse().ok()).collect();
+        if bounds.len() != 4 {
+            return;
+        }
+        let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb {
+            minimum: [bounds[0], bounds[1]],
+            maximum: [bounds[2], bounds[3]],
+        }) else {
+            return;
+        };
+        let layers = self.board.layer_count;
+        let mut own_nodes: HashSet<(usize, u32)> = HashSet::new();
+        for net in nets {
+            for branch in &self.nets[*net as usize].branches {
+                for node in &branch.nodes {
+                    own_nodes.insert((node.layer as usize, node.cell));
                 }
             }
         }
-        result
+        for layer in 0..layers {
+            eprintln!("  layer {layer}, x {:.2}..{:.2}, y {:.2}..{:.2}", bounds[0], bounds[2], bounds[1], bounds[3]);
+            for y in y0..=y1 {
+                let mut line = String::new();
+                for x in x0..=x1 {
+                    let cell = self.grid.index(x, y);
+                    let class = self.board.nets[nets[0] as usize].class;
+                    let allowed = self.statics[class].trace[layer][cell];
+                    let occupancy = self.occupancy[self.map_index(class, layer)][cell];
+                    line.push(if own_nodes.contains(&(layer, cell as u32)) {
+                        '*'
+                    } else if allowed == crate::grid::BLOCKED {
+                        '#'
+                    } else if allowed != crate::grid::FREE {
+                        if nets.iter().any(|net| allowed == crate::grid::owner(*net)) { 'x' } else { 'o' }
+                    } else if occupancy > 0 {
+                        char::from_digit(occupancy.min(9) as u32, 10).unwrap()
+                    } else if self.statics[class].via_blocked[cell] {
+                        'v'
+                    } else {
+                        '.'
+                    });
+                }
+                eprintln!("  {line}");
+            }
+        }
     }
 
     fn window(&self, net: NetId, growth: f64) -> (usize, usize, usize, usize) {
@@ -2201,11 +2388,31 @@ impl Router {
                 if scratch.closed[target_state] == generation {
                     continue;
                 }
-                let mut occupied = self.occupancy[target_class * (layers + 1) + layer][target_cell] as f32;
-                if own_generation != 0
-                    && scratch.own_mark[layer * cells + target_cell] == own_generation
-                {
-                    occupied -= 1.0;
+                let map = target_class * (layers + 1) + layer;
+                let occupancy_at = |cell: usize| -> f32 {
+                    let mut occupied = self.occupancy[map][cell] as f32;
+                    if own_generation != 0 && scratch.own_mark[layer * cells + cell] == own_generation {
+                        occupied -= 1.0;
+                    }
+                    occupied
+                };
+                let mut occupied = occupancy_at(target_cell);
+                // A diagonal step passes the nodes on its bisector closer
+                // than its ends do: none of another net may lie there
+                // within the clearance (exact clearance; an axis step
+                // passes no node closer than its ends).
+                if *dx != 0 && *dy != 0 {
+                    let (start, orientation) = if *dx > 0 {
+                        (cell, (*dy < 0) as usize)
+                    } else {
+                        (target_cell, (*dy > 0) as usize)
+                    };
+                    let kind = layers + 1 + (layer * 2 + orientation);
+                    let mut blocked = self.occupancy[self.diagonal_map(target_class, layer, orientation)][start] as f32;
+                    if own_generation != 0 && scratch.own_mark[kind * cells + start] == own_generation {
+                        blocked -= 1.0;
+                    }
+                    occupied = occupied.max(blocked);
                 }
                 if hard && occupied > 0.0 {
                     continue;
@@ -2511,16 +2718,27 @@ impl Router {
                     net_state.connected.fill(false);
                     net_state.complete = false;
                     // The old stamps stay in the shared occupancy; mask them.
-                    if scratch.own_mark.len() != (layers + 1) * cells {
-                        scratch.own_mark = vec![0; (layers + 1) * cells];
+                    // (Class maps by layer, then diagonal maps by layer
+                    // and orientation.)
+                    if scratch.own_mark.len() != (layers + 1 + 2 * layers) * cells {
+                        scratch.own_mark = vec![0; (layers + 1 + 2 * layers) * cells];
                         scratch.own_generation = 0;
                     }
                     scratch.own_generation += 1;
                     let generation = scratch.own_generation;
                     let class = this.board.nets[*net as usize].class;
                     let bases: Vec<usize> = [Some(class), this.neck_of[class]].into_iter().flatten().map(|c| c * (layers + 1)).collect();
+                    let diagonal_base = this.board.classes.len() * (layers + 1);
                     for (map, cell) in &net_state.stamped {
                         let map = *map as usize;
+                        if map >= diagonal_base {
+                            let querying = (map - diagonal_base) / (2 * layers);
+                            if bases.contains(&(querying * (layers + 1))) {
+                                let kind = layers + 1 + (map - diagonal_base) % (2 * layers);
+                                scratch.own_mark[kind * cells + *cell as usize] = generation;
+                            }
+                            continue;
+                        }
                         for &base in &bases {
                             if map >= base && map <= base + layers {
                                 scratch.own_mark[(map - base) * cells + *cell as usize] = generation;
@@ -3076,16 +3294,27 @@ impl Router {
             let mut conflicted = Vec::new();
             for net in order {
                 let conflicts = self.conflicts(*net);
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && order.len() <= 3 && !conflicts.is_empty() {
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && (order.len() <= 3 || iteration % 10 == 9) && !conflicts.is_empty() {
                     let spots: Vec<String> = conflicts
                         .iter()
                         .take(8)
                         .map(|(layer, cell)| {
                             let at = self.grid.center_of(*cell as usize);
-                            format!("L{layer}({:.2},{:.2})", at[0], at[1])
+                            let map = self.map_index(self.node_class(*net, *cell), *layer) as u32;
+                            let others: Vec<&str> = (0..self.nets.len())
+                                .filter(|other| *other != *net as usize)
+                                .filter(|other| self.nets[*other].stamped.contains(&(map, *cell)))
+                                .map(|other| self.board.nets[other].name.as_str())
+                                .collect();
+                            format!("L{layer}({:.2},{:.2})x{}[{}]", at[0], at[1], self.occupancy[map as usize][*cell as usize], others.join(","))
                         })
                         .collect();
                     eprintln!("  {} conflicts at {}", self.board.nets[*net as usize].name, spots.join(" "));
+                }
+                if conflicts.is_empty() {
+                    self.nets[*net as usize].stuck = 0;
+                } else {
+                    self.nets[*net as usize].stuck += 1;
                 }
                 if conflicts.is_empty()
                     && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
@@ -3170,6 +3399,17 @@ impl Router {
                     })
                     .collect();
                 eprintln!("  conflicted (! = incomplete): {}", names.join(" "));
+                if conflicted.len() <= 4 {
+                    for net in &conflicted {
+                        let terminals: Vec<String> = self.board.nets[*net as usize]
+                            .terminals
+                            .iter()
+                            .map(|t| format!("({:.2},{:.2})", t.anchor[0], t.anchor[1]))
+                            .collect();
+                        eprintln!("    {} terminals {}", self.board.nets[*net as usize].name, terminals.join(" "));
+                    }
+                    self.dump_region(&conflicted);
+                }
             }
             if conflicted.len() < best_conflicted {
                 best_conflicted = conflicted.len();
@@ -3245,6 +3485,18 @@ impl Router {
         // Fewer vias are worth nothing while connections are open, and the
         // renegotiation would take as long as the one that failed.
         if self.quality().0 > 0 {
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                for net in order {
+                    let conflicts = self.conflicts(*net);
+                    if !conflicts.is_empty() {
+                        let spots: Vec<String> = conflicts.iter().take(6).map(|(layer, cell)| {
+                            let at = self.grid.center_of(*cell as usize);
+                            format!("L{layer}({:.2},{:.2})", at[0], at[1])
+                        }).collect();
+                        eprintln!("no via reduction: {} conflicts at {}", self.board.nets[*net as usize].name, spots.join(" "));
+                    }
+                }
+            }
             return;
         }
         let budget = (self.config.via_reduction_budget * self.negotiation_seconds).max(60.0);

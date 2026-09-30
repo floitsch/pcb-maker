@@ -323,3 +323,92 @@ fn a_pad_straddling_the_board_edge_is_reached_from_inside() {
             .any(|segment| segment.start[0] < 0.71 || segment.end[0] < 0.71)
     );
 }
+
+#[test]
+fn a_gap_of_exactly_two_clearances_holds_two_tracks_at_exactly_their_clearance() {
+    // A wall with a gap that holds two 0.25 mm tracks only if they sit at
+    // exactly the 0.2 mm clearance from each other and from the wall: the
+    // lattice is 0.1 mm, so the tracks sit 0.45 mm apart. KiCad accepts a
+    // clearance met exactly; the stamps must too.
+    let mut builder = Builder::new(30.0, 20.0, 1);
+    let gap = 2.0 * 0.25 + 3.0 * 0.2 + 0.05;
+    let (bottom, top) = (10.0 - gap / 2.0, 10.0 + gap / 2.0);
+    // Track centrelines at 10 - 0.225 and 10 + 0.225 keep exactly 0.2 from
+    // each other; the wall sits 0.2 (+ 0.025) from their edges.
+    for (y0, y1) in [(0.0, bottom), (top, 20.0)] {
+        builder.board.obstacles.push(Obstacle {
+            shape: Shape::rectangle([15.0, (y0 + y1) / 2.0], [0.5, (y1 - y0) / 2.0], 0.0),
+            layers: 0b1,
+            kind: ObstacleKind::Keepout,
+            net: None,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "wall".into(),
+        });
+    }
+    builder.net("A", &[([3.0, 9.55], 0b1), ([27.0, 9.55], 0b1)]);
+    builder.net("B", &[([3.0, 10.45], 0b1), ([27.0, 10.45], 0b1)]);
+    let mut config = config();
+    config.pitches = vec![0.1];
+    let result = route(&builder.board, &config);
+    assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed], "{:?}", result.status);
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    // Both went through the gap, not around (there is no way around).
+    for route in &result.routes {
+        assert!(route.segments.iter().any(|segment| segment.start[0].min(segment.end[0]) < 15.0 && segment.start[0].max(segment.end[0]) > 15.0 && (segment.start[1] - 10.0).abs() < gap));
+    }
+}
+
+#[test]
+fn diagonal_steps_keep_their_clearance_from_nodes_beside_them() {
+    // Many nets crossing a small board on one layer diagonally past each
+    // other's pads: whatever the router chooses, the exact verifier must
+    // find nothing (the stamps and the corner-cell rule are exact).
+    let mut builder = Builder::new(24.0, 24.0, 1);
+    for index in 0..6 {
+        let y = 3.0 + index as f64 * 3.3;
+        builder.net(&format!("D{index}"), &[([2.0, y], 0b1), ([22.0, 24.0 - y], 0b1)]);
+    }
+    let result = route(&builder.board, &config());
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    assert!(result.status.iter().filter(|status| **status == NetStatus::Routed).count() >= 4, "{:?}", result.status);
+}
+
+#[test]
+fn parallel_diagonal_tracks_in_a_channel_keep_their_clearance() {
+    // Two pad areas joined by a diagonal channel of the board wide enough
+    // for three tracks at exactly their clearance (1.15 mm plus the edge
+    // clearance on both sides). On a 0.127 mm lattice, diagonal tracks
+    // five lattice steps apart are 0.449 mm apart: 1 µm too close. The
+    // router must never take that spacing (it settles for two tracks
+    // here), and whatever it routes verifies clean.
+    let mut builder = Builder::new(30.0, 30.0, 1);
+    let half = (1.15 + 2.0 * 0.2) / 2.0 * std::f64::consts::SQRT_2;
+    builder.board.outline = vec![
+        [0.0, 0.0],
+        [6.0, 0.0],
+        [6.0, 6.0 - half],
+        [24.0 + half, 24.0],
+        [30.0, 24.0],
+        [30.0, 30.0],
+        [24.0, 30.0],
+        [24.0, 24.0 + half],
+        [6.0 - half, 6.0],
+        [0.0, 6.0],
+    ];
+    for index in 0..3 {
+        let offset = index as f64 * 1.5;
+        builder.net(&format!("P{index}"), &[([1.5, 1.5 + offset], 0b1), ([28.5, 25.5 + offset], 0b1)]);
+    }
+    let mut config = config();
+    config.pitches = vec![0.127];
+    let result = route(&builder.board, &config);
+    let violations = verify(&builder.board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+    let routed = result.status.iter().filter(|status| **status == NetStatus::Routed).count();
+    assert!(routed >= 2, "{:?}", result.status);
+}

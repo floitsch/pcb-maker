@@ -311,7 +311,10 @@ impl Grid {
         let mut origin = [0.0; 2];
         for axis in 0..2 {
             let steps = ((bounds.minimum[axis] - phase[axis]) / pitch).floor();
-            origin[axis] = phase[axis] + steps * pitch;
+            // On whole nanometres, as the board file holds positions: node
+            // distances then come out exact (two tracks at exactly their
+            // clearance stay legal).
+            origin[axis] = ((phase[axis] + steps * pitch) * 1.0e6).round() / 1.0e6;
         }
         let nx = ((bounds.maximum[0] - origin[0]) / pitch).ceil() as usize + 1;
         let ny = ((bounds.maximum[1] - origin[1]) / pitch).ceil() as usize + 1;
