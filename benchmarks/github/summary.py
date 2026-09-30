@@ -64,6 +64,15 @@ def main():
         else:
             classes["clean"].append((name, summary, designer))
     total = sum(len(v) for v in classes.values())
+    if arguments.markdown:
+        print("| Board | Layers | Footprints | Result | Vias (designer) | Time |")
+        print("| --- | --- | --- | --- | --- | --- |")
+        for kind in ("clean", "open", "drc", "mismatch", "error"):
+            for name, text, designer in sorted(classes.get(kind, [])):
+                print(f"| {name} | {designer.get('copper_layers', '?')} | {designer.get('footprints', '?')} | {kind}: {text} | {designer.get('vias', '?')} | |")
+        counts = ", ".join(f"{kind} {len(classes.get(kind, []))}" for kind in ("clean", "open", "drc", "mismatch", "error"))
+        print(f"\n{total} boards: {counts}")
+        return
     for kind in ("clean", "open", "drc", "mismatch", "error"):
         entries = classes.get(kind, [])
         if not entries:
