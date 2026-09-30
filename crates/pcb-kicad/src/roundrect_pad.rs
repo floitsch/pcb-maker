@@ -9,8 +9,23 @@ pub(super) fn geometry(
     size: [f64; 2],
     angle_degrees: f64,
 ) -> Result<ObstacleGeometry, String> {
-    if pad.child("chamfer").is_some() || pad.child("chamfer_ratio").is_some() {
-        return Err("chamfered roundrect pads have no exact geometry lowering".into());
+    // Chamfered corners (`chamfer_ratio`, `chamfer top_left ...`): each
+    // named corner is cut straight across at chamfer_ratio * min(size)
+    // from the corner along both edges; the other corners keep the
+    // rounding. KiCad's corner names are in the pad's own frame, y down.
+    let chamfered: Vec<&str> = pad
+        .child("chamfer")
+        .map(|list| list.children().iter().skip(1).filter_map(|item| item.atom()).collect())
+        .unwrap_or_default();
+    if !chamfered.is_empty() {
+        // KiCad's default when the file does not say.
+        let chamfer_ratio = form_f64(pad, "chamfer_ratio", 1).unwrap_or(0.2);
+        if !chamfer_ratio.is_finite() || !(0.0..=0.5).contains(&chamfer_ratio) {
+            return Err("chamfer_ratio must be finite and between zero and 0.5".into());
+        }
+        if chamfer_ratio > 0.0 {
+            return chamfered_geometry(pad, center, size, angle_degrees, &chamfered, chamfer_ratio);
+        }
     }
     if pad.child("padstack").is_some() {
         return Err("per-layer roundrect padstacks have no exact geometry lowering".into());
@@ -77,9 +92,108 @@ pub(super) fn geometry(
     Ok(ObstacleGeometry::Union { parts })
 }
 
+/// A rectangle with the `chamfered` corners cut straight and the others
+/// rounded by `roundrect_rratio`: the polygon with every corner cut (by the
+/// chamfer, or by the radius) plus a disc of the radius at each rounded
+/// corner, which is exactly the rounded corner's quarter disc there and
+/// inside the polygon elsewhere.
+fn chamfered_geometry(
+    pad: &Expr,
+    center: [f64; 2],
+    size: [f64; 2],
+    angle_degrees: f64,
+    chamfered: &[&str],
+    chamfer_ratio: f64,
+) -> Result<ObstacleGeometry, String> {
+    let ratio = form_f64(pad, "roundrect_rratio", 1).unwrap_or(0.0);
+    if !ratio.is_finite() || !(0.0..=0.5).contains(&ratio) {
+        return Err("roundrect_rratio must be finite and between zero and 0.5".into());
+    }
+    let size_iu = size.map(|v| (v * 1_000_000.0).round());
+    if size_iu.iter().any(|v| *v < 1.0 || *v > i32::MAX as f64) {
+        return Err("roundrect pad dimensions exceed native integer coordinate range".into());
+    }
+    let shortest = size_iu[0].min(size_iu[1]);
+    let radius_iu = (shortest * ratio).round();
+    let chamfer_iu = (shortest * chamfer_ratio).round();
+    let half = size_iu.map(|v| (v / 2.0).floor());
+    let place = |p: [f64; 2]| {
+        let rotated = rotate_vector(p, angle_degrees);
+        [
+            center[0] + rotated[0].round() / 1_000_000.0,
+            center[1] + rotated[1].round() / 1_000_000.0,
+        ]
+    };
+    // Corners counter-clockwise in the pad frame (y down): top left, bottom
+    // left, bottom right, top right.
+    let corners = [
+        ("top_left", [-1.0, -1.0]),
+        ("bottom_left", [-1.0, 1.0]),
+        ("bottom_right", [1.0, 1.0]),
+        ("top_right", [1.0, -1.0]),
+    ];
+    let mut points = Vec::new();
+    let mut parts = Vec::new();
+    for (index, (name, sign)) in corners.iter().enumerate() {
+        let cut = if chamfered.contains(name) {
+            chamfer_iu
+        } else {
+            radius_iu
+        };
+        let corner = [sign[0] * half[0], sign[1] * half[1]];
+        if cut <= 0.0 {
+            points.push(place(corner));
+            continue;
+        }
+        // The two cut points, in the polygon's winding: coming along the
+        // previous edge, leaving along the next.
+        let along_x = [corner[0] - sign[0] * cut, corner[1]];
+        let along_y = [corner[0], corner[1] - sign[1] * cut];
+        let (first, second) = if index % 2 == 0 { (along_x, along_y) } else { (along_y, along_x) };
+        points.push(place(first));
+        points.push(place(second));
+        if !chamfered.contains(name) {
+            parts.push(ObstacleGeometry::Circle {
+                center: place([corner[0] - sign[0] * cut, corner[1] - sign[1] * cut]),
+                radius: cut / 1_000_000.0,
+            });
+        }
+    }
+    parts.insert(0, ObstacleGeometry::Polygon { points });
+    Ok(ObstacleGeometry::Union { parts })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_chamfered_corner_is_cut_straight_and_the_others_stay_rounded() {
+        let pad = parse(
+            "(pad \"1\" smd roundrect (at 0 0) (size 2 1) (layers \"F.Cu\") (roundrect_rratio 0.25) (chamfer_ratio 0.2) (chamfer top_left))",
+        )
+        .unwrap();
+        let geometry = geometry(&pad, [0.0, 0.0], [2.0, 1.0], 0.0).unwrap();
+        let ObstacleGeometry::Union { parts } = geometry else {
+            panic!("union expected");
+        };
+        // The polygon plus three discs (the three rounded corners).
+        assert_eq!(parts.len(), 4);
+        let ObstacleGeometry::Polygon { points } = &parts[0] else {
+            panic!("polygon first");
+        };
+        // Top left is cut 0.2 mm in from the corner (-1, -0.5), the others
+        // 0.25 mm (the radius).
+        assert!(points.contains(&[-0.8, -0.5]) && points.contains(&[-1.0, -0.3]), "{points:?}");
+        assert!(points.contains(&[-1.0, 0.25]) && points.contains(&[-0.75, 0.5]), "{points:?}");
+        assert!(matches!(parts[1], ObstacleGeometry::Circle { center: [-0.75, 0.25], radius } if (radius - 0.25).abs() < 1e-9));
+        assert!(geometry_contains(&parts, [-0.95, -0.45]) == false, "the chamfer cuts the corner");
+        assert!(geometry_contains(&parts, [0.97, 0.47]) == false, "a rounded corner is round");
+        assert!(geometry_contains(&parts, [0.9, 0.4]), "inside the rounded corner's disc");
+    }
+
     use super::*;
+    fn geometry_contains(parts: &[ObstacleGeometry], point: [f64; 2]) -> bool {
+        parts.iter().any(|part| part.contains(point, 0.0))
+    }
     fn pad(ratio: &str) -> Expr {
         parse(&format!("(pad \"1\" smd roundrect (at 0 0) (size 2 2) (layers \"F.Cu\") (roundrect_rratio {ratio}))")).unwrap()
     }
@@ -160,11 +274,11 @@ mod tests {
     }
 
     #[test]
-    fn roundrect_invalid_and_chamfered_shapes_are_rejected() {
+    fn roundrect_invalid_and_padstack_shapes_are_rejected() {
         for ratio in ["NaN", "inf", "-0.1", "0.6", "garbage"] {
             assert!(geometry(&pad(ratio), [0.0; 2], [2.0; 2], 0.0).is_err());
         }
-        for extra in ["(chamfer top_left)", "(chamfer_ratio 0.2)", "(padstack)"] {
+        for extra in ["(chamfer top_left) (chamfer_ratio 0.7)", "(padstack)"] {
             let p = parse(&format!(
                 "(pad \"1\" smd roundrect (roundrect_rratio 0.25) {extra})"
             ))

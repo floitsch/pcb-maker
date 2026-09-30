@@ -233,6 +233,12 @@ def fetch(arguments):
         hashes.add(digest)
         name = f'{repository.replace("/", "__")}__{stem}'
         name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+        if any(board["name"] == name for board in manifest["boards"]):
+            # The same stem twice in one repository (revisions in
+            # directories): the directory tells them apart.
+            name += "__" + re.sub(r"[^A-Za-z0-9_.-]", "_", Path(path).parent.name or "root")
+            if any(board["name"] == name for board in manifest["boards"]):
+                name += "__" + hashlib.sha256(path.encode()).hexdigest()[:6]
         target = STORE / name
         target.mkdir(parents=True, exist_ok=True)
         (target / f"{stem}.kicad_pcb").write_bytes(board_bytes)

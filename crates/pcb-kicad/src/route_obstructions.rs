@@ -626,13 +626,13 @@ mod tests {
     }
 
     #[test]
-    fn malformed_or_chamfered_roundrect_query_is_explicitly_unsupported() {
+    fn malformed_roundrect_query_is_explicitly_unsupported() {
         let original = fixture("");
         let candidate = candidate(&original);
         for fields in [
             "(roundrect_rratio NaN)",
             "(roundrect_rratio 0.6)",
-            "(roundrect_rratio 0.25) (chamfer top_left)",
+            "(roundrect_rratio 0.25) (chamfer top_left) (chamfer_ratio 0.9)",
             "",
         ] {
             let pcb = fixture(&format!(
