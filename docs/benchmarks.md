@@ -234,7 +234,57 @@ What the first boards found, before any full run finished (fixed the same
 day): chamfered roundrect pads were refused (4 boards), a rule area's holes
 were read as more keepouts (Glasgow's rim keepout covered the whole board,
 0/226), and the ladder's first rung could spend the whole budget on a
-hopeless configuration (video). Results of the first full run go here.
+hopeless configuration (video).
+
+### First sweep, 38 boards, before the day's fixes (`pcb-maker-x4`, 900 s each)
+
+Stopped after 38 boards once its failure classes were clear, so the machine
+could rerun everything with the fixes (`build/github-route-v2`, table to
+follow). Times are under a loaded machine.
+
+| Board | Layers | Footprints | Result | Vias (designer) | Time |
+| --- | --- | --- | --- | --- | --- |
+| ISSUIUC__ISS-PCB__BAGEL-MK1 | 4 | 199 | clean: 138/138, 156 vias (designer 525), 420 s | 525 | |
+| CRImier__MyKiCad__framework_mobo_lefthalf | 6 | 45 | open: 1 open; 70/71, 81 vias (designer 203), 41 s | 203 | |
+| CRImier__MyKiCad__vaio_re | 4 | 289 | open: 31 open; 236/267, 405 vias (designer 523), 485 s | 523 | |
+| CRImier__MyKiCad__zpn_devboard | 4 | 168 | open: 1 open; 166/167, 164 vias (designer 298), 348 s | 298 | |
+| GlasgowEmbedded__glasgow__glasgow | ? | ? | open: 226 open; 0/226, 0 vias (designer None), 2 s | ? | |
+| GlasgowEmbedded__glasgow__glasgow | ? | ? | open: 226 open; 0/226, 0 vias (designer None), 2 s | ? | |
+| ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado | 4 | 212 | open: 10 open; 134/144, 269 vias (designer 820), 170 s | 820 | |
+| Neotron-Compute__Neotron-Pico__neotron-pico | 4 | 242 | open: 14 open; 176/190, 185 vias (designer 0), 298 s | 0 | |
+| OpenDrone-hw__OpenFC-Lite__OpenFC | 6 | 164 | open: 1 open; 81/82, 121 vias (designer 596), 82 s | 596 | |
+| OpenDrone-hw__OpenRX__OpenRX-panel-rev2 | 6 | 254 | open: 47 open; 56/103, 117 vias (designer 538), 482 s | 538 | |
+| Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1 | 4 | 92 | open: 2 open; 54/56, 44 vias (designer 334), 18 s | 334 | |
+| Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard | 4 | 143 | open: 3 open; 105/108, 73 vias (designer 269), 82 s | 269 | |
+| Twisted-Fields__rp2040-motor-controller__RP2040_base | 4 | 325 | open: 71 open; 115/186, 243 vias (designer 553), 98 s | 553 | |
+| apfaudio__eurorack-pmod__eurorack-pmod-pcb | 6 | 155 | open: 2 open; 131/133, 130 vias (designer 331), 279 s | 331 | |
+| bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV | 4 | 122 | open: 12 open; 57/69, 83 vias (designer 541), 64 s | 541 | |
+| briskspirit__Sisu_SSE-9__Sisu_SSE-9 | 6 | 296 | open: 10 open; 182/192, 466 vias (designer 1076), 303 s | 1076 | |
+| byrantech__laptop__motherboard | 6 | 264 | open: 3 open; 233/236, 378 vias (designer 734), 656 s | 734 | |
+| emertcakir__OpenAirScope__OpenAirScope | 4 | 282 | open: 6 open; 178/184, 150 vias (designer 473), 328 s | 473 | |
+| greatscottgadgets__hackrf__hackrf-one | 4 | 437 | open: 4 open; 315/319, 394 vias (designer 0), 150 s | 0 | |
+| hackclub__OnBoard__krishveercard | 4 | 39 | open: 30 open; 13/43, 27 vias (designer 87), 2 s | 87 | |
+| maniekx86__M8SBC-486__homebrew_486 | 4 | 130 | open: 6 open; 184/190, 1018 vias (designer 1150), 713 s | 1150 | |
+| ohdsp__DSP-ADAU1452__DSP-ADAU1452 | 4 | 377 | open: 28 open; 162/190, 48 vias (designer 355), 166 s | 355 | |
+| wntrblm__Castor_and_Pollux__mainboard | 4 | 235 | open: 1 open; 125/126, 125 vias (designer 358), 239 s | 358 | |
+| 0xCB-dev__0xCB-1337__pcb | 4 | 119 | error: error: chamfered roundrect pads have no exact geometry lowering | 0 | |
+| Huaqiu-Electronics__ecad-viewer__video | 4 | 189 | error: cleanup: 582 improvements, 72.89s | 808 | |
+| ISSUIUC__ISS-PCB__MIDAS-MK2 | 4 | 217 | error: error: chamfered roundrect pads have no exact geometry lowering | 401 | |
+| MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub | 4 | 235 | error: error: chamfered roundrect pads have no exact geometry lowering | 331 | |
+| antmicro__jetson-nano-baseboard__jetson-nano-baseboard | 8 | 391 | error: iteration 17: rerouted 72, conflicted 60, present 492.63, 607.19s (search 603.21s, stamp 3.93s, 8240 | 794 | |
+| byrantech__laptop__power | 4 | 179 | error: error: chamfered roundrect pads have no exact geometry lowering | 167 | |
+| crmaykish__mackerel-68k__mackerel-30-proto | 4 | 133 | error: iteration 20: rerouted 6, conflicted 0, present 1662.63, 230.77s (search 509.21s, stamp 14.17s, 1548 | 294 | |
+| earth75__atat-1800__ATAT1800 | 4 | 342 | error: iteration 32: rerouted 56, conflicted 53, present 10000.00, 605.68s (search 590.51s, stamp 15.06s, 4 | 680 | |
+| hackclub__OnBoard__koeg-board-pcb | 4 | 290 | error: error: chamfered roundrect pads have no exact geometry lowering | 417 | |
+| oro-os__link__link | 8 | 381 | error: error: chamfered roundrect pads have no exact geometry lowering | 806 | |
+| tengigabytes__MokyaLora__MokyaLora | 6 | 443 | error: error: per-layer roundrect padstacks have no exact geometry lowering | 836 | |
+| thpoll83__PolyKybd__poly_corne_split42_right | 4 | 573 | error: error: chamfered roundrect pads have no exact geometry lowering | 1372 | |
+| thpoll83__PolyKybd__poly_kybd_split72_left | 4 | 573 | error: error: chamfered roundrect pads have no exact geometry lowering | 1354 | |
+| thpoll83__PolyKybd__poly_kybd_split72_right | 4 | 573 | error: error: chamfered roundrect pads have no exact geometry lowering | 1368 | |
+| vd-rd__sbc_allwinner_a13__module | 4 | 179 | error: error: chamfered roundrect pads have no exact geometry lowering | 501 | |
+
+38 boards: clean 1, open 22, drc 0, mismatch 0, error 15
+
 
 ## Breadboard fence boards (added 2026-09-25)
 
