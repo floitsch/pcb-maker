@@ -85,6 +85,9 @@ pub struct Plane {
     /// Other nets are discouraged from coming this close to pads that
     /// connect to the pour, so their thermal spokes survive. 0 disables.
     pub thermal_reach: f64,
+    /// A plane layer: other nets' tracks may not run inside the pour (vias
+    /// pass through), so it stays whole.
+    pub exclusive: bool,
 }
 
 #[derive(Clone, Debug)]

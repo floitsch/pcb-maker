@@ -189,6 +189,7 @@ fn pour_connects_pads_with_stub_vias_only() {
         excluded: Vec::new(),
         connect: true,
         thermal_reach: 0.0,
+        exclusive: false,
     });
     let result = route(&builder.board, &config());
     assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);
@@ -228,6 +229,7 @@ fn plane_skeleton_is_trimmed_back_to_what_the_pour_cannot_provide() {
         excluded: Vec::new(),
         connect: true,
         thermal_reach: 0.0,
+        exclusive: false,
     });
     let config = Config {
         plane_skeleton: true,

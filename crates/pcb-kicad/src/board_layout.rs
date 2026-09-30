@@ -14,7 +14,7 @@ use super::*;
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
 use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints};
-use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, pours};
+use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, planned_pours, pours};
 use pcb_placer as placer;
 use pcb_router as core;
 
@@ -217,8 +217,9 @@ fn size_outline(
             let mut pcb = parse(
                 &fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?,
             )?;
-            if !router_config.add_pours.is_empty() {
-                add_pour_zones(&mut pcb, &router_config.add_pours)?;
+            let planned = planned_pours(&pcb, router_config)?;
+            if !planned.is_empty() {
+                add_pour_zones(&mut pcb, &planned)?;
             }
             let layers = LayerTable::from_pcb(&pcb)?;
             let connect = !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
@@ -417,8 +418,15 @@ pub fn layout_kicad_board(
         .map_err(|error| format!("failed to read {}: {error}", placed_board.display()))?;
     let mut pcb = parse(&source)?;
     // Requested pours (a ground plane) join the placed board.
-    if !router_config.add_pours.is_empty() {
-        add_pour_zones(&mut pcb, &router_config.add_pours)?;
+    let planned = planned_pours(&pcb, router_config)?;
+    if !planned.is_empty() {
+        if router_config.add_pours.is_empty() {
+            eprintln!(
+                "automatic planes: {}",
+                planned.iter().map(|pour| format!("{} on {}", pour.net, pour.layers.join(", "))).collect::<Vec<_>>().join("; ")
+            );
+        }
+        add_pour_zones(&mut pcb, &planned)?;
         fs::write(&placed_board, format!("{}\n", encode(&pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
     }

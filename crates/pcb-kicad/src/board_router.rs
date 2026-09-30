@@ -54,6 +54,12 @@ pub struct KiCadBoardRouterConfig {
     /// Plan nets on the tile graph first (global routing).
     #[serde(default)]
     pub global_routing: Option<bool>,
+    /// On a board with four or more copper layers and no copper pours,
+    /// ground becomes a plane on the first inner layer and the supply rail
+    /// with the most pads one on the second (default true; ignored when
+    /// `add_pours` is given).
+    #[serde(default)]
+    pub automatic_planes: Option<bool>,
     /// Price of sharing when a via reduction round starts.
     #[serde(default)]
     pub via_reduction_present: Option<f64>,
@@ -825,6 +831,17 @@ pub(super) fn lower(
         });
     }
     let pours = pours(pcb, &layers)?;
+    let polygon_area = |points: &[[f64; 2]]| {
+        (0..points.len())
+            .map(|index| {
+                let (a, b) = (points[index], points[(index + 1) % points.len()]);
+                a[0] * b[1] - a[1] * b[0]
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    let board_area = polygon_area(&loops.outline);
     let mut planes = Vec::new();
     for pour in &pours {
         // A pour without pads has nothing to connect.
@@ -864,6 +881,9 @@ pub(super) fn lower(
                     .collect(),
                 connect: connect_pours,
                 thermal_reach: pour.thermal_reach,
+                // An inner layer poured over nearly the whole board is a
+                // plane: it carries no signals.
+                exclusive: layers.names[layer].starts_with("In") && polygon_area(&pour.polygon) >= 0.9 * board_area,
             });
         }
     }
@@ -1228,7 +1248,18 @@ pub fn route_kicad_board(
     // Requested pours and net classes go into a copy of the project that the
     // attempts use.
     let poured_directory = output_directory.with_extension("poured");
-    let prepared = !config.add_pours.is_empty() || !config.net_classes.is_empty();
+    let planned = {
+        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        planned_pours(&parse(&text)?, config)?
+    };
+    if config.add_pours.is_empty() && !planned.is_empty() {
+        eprintln!(
+            "automatic planes: {}",
+            planned.iter().map(|pour| format!("{} on {}", pour.net, pour.layers.join(", "))).collect::<Vec<_>>().join("; ")
+        );
+    }
+    let prepared = !planned.is_empty() || !config.net_classes.is_empty();
     let source_directory = if !prepared {
         source_directory
     } else {
@@ -1239,7 +1270,7 @@ pub fn route_kicad_board(
         let board = poured_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         let mut pcb = parse(&text)?;
-        add_pour_zones(&mut pcb, &config.add_pours)?;
+        add_pour_zones(&mut pcb, &planned)?;
         fs::write(&board, format!("{}\n", encode(&pcb))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
             crate::net_classes::write_net_classes(&poured_directory, board_id, &pcb, &config.net_classes)?;
@@ -1498,6 +1529,41 @@ pub struct KiCadPourRequest {
     /// Clearance between the pour and other nets (default 0.3 mm).
     #[serde(default)]
     pub clearance_mm: Option<f64>,
+}
+
+/// The pours to add to `pcb`: the requested ones, or else the automatic
+/// planes of a multilayer board (see `automatic_planes`).
+pub(crate) fn planned_pours(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Vec<KiCadPourRequest>, String> {
+    if !config.add_pours.is_empty() {
+        return Ok(config.add_pours.clone());
+    }
+    if config.automatic_planes == Some(false) {
+        return Ok(Vec::new());
+    }
+    let layers = LayerTable::from_pcb(pcb)?;
+    let inner: Vec<&String> = layers.names.iter().filter(|name| name.starts_with("In")).collect();
+    if inner.len() < 2 || !pours(pcb, &layers)?.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pads: BTreeMap<String, usize> = BTreeMap::new();
+    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+        for pad in footprint.children().iter().filter(|item| item.head() == Some("pad")) {
+            if let Some(net) = node_net(pad).filter(|net| routable_net(net)) {
+                *pads.entry(net.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let busiest = |accept: &dyn Fn(&str) -> bool| {
+        pads.iter().filter(|(net, count)| accept(net) && **count >= 3).max_by_key(|(_, count)| **count).map(|(net, _)| net.clone())
+    };
+    let mut requests = Vec::new();
+    if let Some(ground) = busiest(&|net| crate::quality::ground(net)) {
+        requests.push(KiCadPourRequest { net: ground, layers: vec![inner[0].clone()], clearance_mm: None });
+    }
+    if let Some(rail) = busiest(&|net| crate::quality::rail_name(net) && !crate::quality::ground(net)) {
+        requests.push(KiCadPourRequest { net: rail, layers: vec![inner[inner.len() - 1].clone()], clearance_mm: None });
+    }
+    Ok(requests)
 }
 
 /// Adds a zone over the board outline for every request.
@@ -1937,6 +2003,31 @@ fn route_kicad_board_once(
 #[cfg(test)]
 mod pour_request_tests {
     use super::*;
+
+    #[test]
+    fn multilayer_boards_without_pours_get_ground_and_rail_planes() {
+        let board = |layers: &str, zone: &str| {
+            let pad = |number: usize, net: &str| format!(r#"(pad "{number}" smd rect (at {number} 0) (size 0.5 0.5) (layers "F.Cu") (net "{net}"))"#);
+            let pads: String = (1..=4).map(|n| pad(n, "GND")).chain((5..=7).map(|n| pad(n, "+3V3"))).chain((8..=10).map(|n| pad(n, "/SIG"))).collect();
+            parse(&format!(
+                r#"(kicad_pcb (layers {layers} (25 "Edge.Cuts" user))
+                  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                  (footprint "a" (at 5 5) {pads}) {zone})"#
+            ))
+            .unwrap()
+        };
+        let four = r#"(0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal)"#;
+        let config = KiCadBoardRouterConfig::default();
+        let planned = planned_pours(&board(four, ""), &config).unwrap();
+        let summary: Vec<(String, Vec<String>)> = planned.into_iter().map(|pour| (pour.net, pour.layers)).collect();
+        assert_eq!(summary, vec![("GND".into(), vec!["In1.Cu".into()]), ("+3V3".into(), vec!["In2.Cu".into()])]);
+        // Two layers, an existing pour, or switched off: none.
+        assert!(planned_pours(&board(r#"(0 "F.Cu" signal) (2 "B.Cu" signal)"#, ""), &config).unwrap().is_empty());
+        let zone = r#"(zone (net "GND") (layer "In1.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10))))"#;
+        assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
+        let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
+        assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
+    }
 
     #[test]
     fn requested_pours_cover_the_outline_once_per_net_and_layer() {

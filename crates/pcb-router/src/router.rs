@@ -441,6 +441,9 @@ pub struct Router {
     /// Per layer: cost factor for cutting a pour there. Relative to the
     /// least covered layer, so a board poured on every layer has no penalty.
     layer_cut: Vec<f32>,
+    /// Per layer: an exclusive plane there (other nets' tracks may not run
+    /// on its covered nodes).
+    exclusive: Vec<bool>,
     /// Per layer: step cost multiplier while a plane skeleton is routed
     /// (empty otherwise).
     layer_bias: Vec<f32>,
@@ -590,6 +593,7 @@ impl Router {
             covered: vec![Vec::new(); layers],
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
+            exclusive: (0..layers).map(|layer| board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
             frame_hook: None,
@@ -2092,6 +2096,9 @@ impl Router {
                 if !self.covered[layer].is_empty() {
                     let pour = self.covered[layer][target_cell];
                     if pour != 0 && pour != own {
+                        if self.exclusive[layer] {
+                            continue;
+                        }
                         step *= self.layer_cut[layer];
                     }
                 }
