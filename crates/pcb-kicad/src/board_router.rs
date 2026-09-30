@@ -116,6 +116,11 @@ pub struct KiCadBoardRouterConfig {
     /// connections are open.
     #[serde(default)]
     pub refine_budget_seconds: Option<f64>,
+    /// No further attempt of any kind starts after the ladder has run this
+    /// long (default 1200 s): ColdFire from its schematic spent 50 min in
+    /// three pour rungs with their seed retries.
+    #[serde(default)]
+    pub ladder_budget_seconds: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -1385,6 +1390,8 @@ pub fn route_kicad_board(
     // the cost of a finer lattice.
     let mut slowest: Option<(f64, f64)> = None;
     let mut extra_rung_tried = false;
+    let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
+    let ladder_started = std::time::Instant::now();
     'ladder: for pitch in &pitches {
         if let (Some(pitch), Some((seconds, previous))) = (pitch, slowest) {
             let projected = seconds * (previous / pitch[0]).powi(2);
@@ -1521,6 +1528,10 @@ pub fn route_kicad_board(
                 continue;
             }
             if opens.0 == 0 || extra_rung_tried {
+                break 'ladder;
+            }
+            if ladder_started.elapsed().as_secs_f64() > ladder_budget {
+                eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 break 'ladder;
             }
         }

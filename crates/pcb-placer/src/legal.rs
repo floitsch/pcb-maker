@@ -326,12 +326,19 @@ pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
 /// previous pass could not place: the big parts, placed first, can leave
 /// them no room).
 pub fn legalize_first(problem: &Problem, poses: &mut [Pose], first: &[usize]) -> Vec<usize> {
+    legalize_keeping(problem, poses, first, &[])
+}
+
+/// `legalize_first`, with the parts of `keep` left at their poses (legal
+/// already: a looser level of the same placement) and placed before all
+/// others.
+pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], keep: &[usize]) -> Vec<usize> {
     let count = problem.components.len();
     let mut placed: Vec<usize> = (0..count)
-        .filter(|index| problem.components[*index].fixed)
+        .filter(|index| problem.components[*index].fixed || keep.contains(index))
         .collect();
     let mut order: Vec<usize> = (0..count)
-        .filter(|index| !problem.components[*index].fixed)
+        .filter(|index| !problem.components[*index].fixed && !keep.contains(index))
         .collect();
     order.sort_by(|a, b| {
         let area = |index: &usize| {
@@ -343,7 +350,13 @@ pub fn legalize_first(problem: &Problem, poses: &mut [Pose], first: &[usize]) ->
     });
     let bounds = problem.bounds();
     let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
-    let rings = (((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / step).ceil() as i64 + 1;
+    let mut rings = (((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / step).ceil() as i64 + 1;
+    // A fine grid is a last resort after the coarse one searched the whole
+    // board: it only looks near where the part wants to be (a part with no
+    // spot scanned millions of positions otherwise).
+    if step < 0.3 {
+        rings = rings.min((15.0 / step).ceil() as i64);
+    }
     let mut failed = Vec::new();
     for index in order {
         let component = &problem.components[index];

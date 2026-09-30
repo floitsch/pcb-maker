@@ -147,7 +147,12 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     fitted.constraints.link_pairs();
     let problem = &fitted;
     let wirelength_initial = problem.wirelength(&problem.poses);
+    let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
+    let started = std::time::Instant::now();
     let global = global::global_place(problem, &config.global);
+    if debug {
+        eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
+    }
     let global_poses = global.poses;
     let wirelength_global = problem.wirelength(&global_poses);
     let mut frames = global.frames;
@@ -212,10 +217,52 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 component.use_tight_body();
             }
         }
+        let level_started = std::time::Instant::now();
+        // Every level is looser than the one before: what was legal there
+        // stays legal. First only the parts that failed look for room.
+        if let Some((known_failed, known_poses, _)) = best.as_ref()
+            && !known_failed.is_empty()
+        {
+            let mut kept = known_poses.clone();
+            let keep: Vec<usize> = (0..relaxed.components.len()).filter(|index| !known_failed.contains(index)).collect();
+            let failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
+            if debug {
+                eprintln!(
+                    "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
+                    level_started.elapsed().as_secs_f64(),
+                    failed.len()
+                );
+            }
+            if failed.len() < known_failed.len() {
+                relaxation = Some(Relaxation {
+                    spacing: relaxed.spacing,
+                    grid,
+                    halo_scale: fit_scale * halo_scale,
+                    edge_inset: inset,
+                    tight,
+                    edge_copper,
+                    edge_rule,
+                });
+                let done = failed.is_empty();
+                best = Some((failed, kept, relaxed.clone()));
+                if done {
+                    break;
+                }
+            }
+        }
         let mut poses = global_poses.clone();
+        let level_started = std::time::Instant::now();
         anneal::anneal(&relaxed, &mut poses, &config.anneal);
         let annealed = poses.clone();
+        let anneal_seconds = level_started.elapsed().as_secs_f64();
         let mut failed = legal::legalize(&relaxed, &mut poses);
+        if debug {
+            eprintln!(
+                "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed",
+                level_started.elapsed().as_secs_f64() - anneal_seconds,
+                failed.len()
+            );
+        }
         // The parts that found no room go first in a second pass.
         if !failed.is_empty() {
             let mut retry = annealed;
