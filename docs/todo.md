@@ -40,22 +40,30 @@ router and placer items.
   every board tried (PIC 2 → 0, Multichannel 18 → 14, Interf-U 28 → 24).
   Idle cores could run seeds in parallel and keep the best board.
 
-- **Exact clearance for fine pitch (Tiny Tapeout, 0.4 mm QFN with
-  0.2/0.2 rules).** Two 0.2 mm tracks at the 0.4 mm pad pitch are exactly
-  the clearance apart, which KiCad accepts and our stamps forbid: a node's
-  stamp is a disc of radius `R + SAFETY + 2 * chord sagitta`, and the
-  sagitta (12.5 µm at R 0.4 mm on the 0.1 mm lattice) is there because a
-  diagonal segment passes closer to a node than its endpoints do. Design:
-  stamp discs of radius `R + SAFETY` only, and pay for the chord error where
-  it arises. A diagonal move `A -> B` also requires the two cells cutting
-  the corner (`A + dx`, `A + dy`) to be free, which bounds the segment's
-  closest approach at `R - p²/(8R)` (3 µm short at 0.4 mm); the remaining
-  3 µm needs either a half-lattice occupancy map for segment midpoints or
-  stamps that know the stamping node's own segment directions (a straight
-  run stamps a capsule, a corner a disc). Check first what KiCad's DRC
-  epsilon is (`DRC_EPSILON`); if it is larger than the residual, the
-  corner-cell rule alone is exact enough. `SAFETY` can drop to below that
-  epsilon (files carry nanometres).
+- **Fan-out phase for dense parts (Tiny Tapeout's QFN-56, ColdFire's
+  LQFP-100, BGAs).** Exact clearance (done, [router.md](router.md)) made
+  Tiny Tapeout's pad escapes legal but not its completion (82/108): the
+  dump of the QFN's right side shows every pad escaping outward on the top
+  layer and then nets turning to run *along* the pad row 1-2 mm out,
+  fencing the other escapes; 45 nets sit at the present cap for 30
+  iterations. Negotiation cannot discover the structured pattern the
+  situation needs: escapes straight out to vias in staggered rows (at
+  0.4 mm pitch with 0.62 mm vias and 0.2 mm clearance, three rows, each
+  via passing two 0.16 mm neck tracks between it and its row neighbour),
+  so that every net leaves the dense area on an inner or the far layer.
+  Design: after `prepare_net`, cluster narrow pads (those with neck zones)
+  into rows by proximity and orientation, take the outward direction from
+  the cluster's centroid, assign via rows along each row (`k mod m`, m the
+  smallest count with `m * pitch >= via + clearance + (m - 1) * (neck +
+  clearance)`), place each via at the first row whose spot is free of
+  statics and of the other fan-out vias, and emit pad -> stub -> via as a
+  fixed branch (`NetState.fixed`, like plane skeletons) so negotiation
+  starts from the via on every layer. Skip pads whose net's other terminals
+  all lie within ~3 mm on the outward side (decoupling, crystals). Same-net
+  neighbours in a row (ColdFire's alternating GND/+3.3V pairs) share one
+  via through a short bus along the row at the stub ends; that is the pour
+  net pad tree below. Measure on Tiny Tapeout, ColdFire and whatever the
+  GitHub harvest brings with BGAs; keep it off where no cluster exists.
 - **Pour nets forming trees among their pads (ColdFire GND).** GND and
   +3.3V alternate on the LQFP-100 at 0.5 mm; one 0.8 mm via per pad can
   never fit, and the designer joins the power pads with tracks along the

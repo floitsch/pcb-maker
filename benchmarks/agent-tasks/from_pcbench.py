@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # Copyright (C) 2026 Toit contributors.
-"""Generates agent layout tasks from PCBench boards.
+"""Generates agent layout tasks from PCBench boards, or from any board list
+in the corpus runner's format (`--corpus benchmarks/github/boards.json`).
 
     benchmarks/agent-tasks/from_pcbench.py <output-dir> [--subset d3-test] [--limit N]
+    benchmarks/agent-tasks/from_pcbench.py <output-dir> --corpus <boards.json>
 
 For each board the task is: keep the outline, put every connector the
 designer placed at an edge on that edge (in the designer's orientation),
@@ -39,19 +41,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--subset", default="d3-test")
+    parser.add_argument("--corpus", type=Path, help="a boards.json in the corpus runner's format instead of PCBench")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--binary", type=Path, default=ROOT / "target/release/pcb-maker")
     parser.add_argument("--reach", type=float, default=2.0, help="distance to an edge that counts as at the edge")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads((ROOT / "benchmarks/pcbench/manifest.json").read_text())
-    boards = pcbench.subset(manifest, arguments.subset)
+    if arguments.corpus:
+        boards = []
+        for board in json.loads(arguments.corpus.read_text())["boards"]:
+            directory = Path(board["directory"])
+            boards.append({"name": board["name"], "directory": directory if directory.is_absolute() else ROOT / directory,
+                           "board_id": board["board_id"]})
+    else:
+        manifest = json.loads((ROOT / "benchmarks/pcbench/manifest.json").read_text())
+        boards = [{"name": b["name"], "directory": WORK / b["name"], "board_id": STEM}
+                  for b in pcbench.subset(manifest, arguments.subset)]
     if arguments.limit:
         boards = boards[:arguments.limit]
     tasks = []
     for board in boards:
         name = board["name"]
-        described = subprocess.run([str(arguments.binary), "describe-kicad-board", str(WORK / name), STEM],
+        if not (board["directory"] / f'{board["board_id"]}.kicad_pcb').exists():
+            print(f"skipping {name}: {board['directory']} not found", file=sys.stderr)
+            continue
+        described = subprocess.run([str(arguments.binary), "describe-kicad-board", str(board["directory"]), board["board_id"]],
                                    capture_output=True, text=True)
         if described.returncode != 0:
             print(f"skipping {name}: {described.stderr.strip()[-200:]}", file=sys.stderr)
@@ -101,7 +115,7 @@ def main():
         if hollow:
             constraints["hollow"] = hollow
         (arguments.output / f"{name}.json").write_text(json.dumps(constraints, indent=1))
-        tasks.append({"name": name, "directory": str(WORK / name), "board_id": STEM,
+        tasks.append({"name": name, "directory": str(board["directory"]), "board_id": board["board_id"],
                       "unplace": True, "remove_outline": False,
                       "stack_at": [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2],
                       "constraints": f"{name}.json", "router": {}})

@@ -3399,8 +3399,8 @@ impl Router {
                     })
                     .collect();
                 eprintln!("  conflicted (! = incomplete): {}", names.join(" "));
-                if conflicted.len() <= 4 {
-                    for net in &conflicted {
+                if conflicted.len() <= 4 || iteration % 10 == 9 {
+                    for net in conflicted.iter().take(4) {
                         let terminals: Vec<String> = self.board.nets[*net as usize]
                             .terminals
                             .iter()
