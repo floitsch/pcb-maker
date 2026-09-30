@@ -203,9 +203,14 @@ README is updated. State of the router work that followed:
   pads with tracks along the rows to 1 GND and 3 +3.3V vias. Pour nets
   need to form such trees; the fixed-stub pre-pass (`fixed_plane_stubs`,
   off) did not settle.
-- **Brushless_ESC** (agent task): bisected to 43273fb, the switcher
-  inductor pull; now only pins whose function says `SW`/`LX` pull. Being
-  rerun.
+- **Brushless_ESC** (agent task, 46/50): its placement changed with
+  43273fb (the switcher inductor pull, now limited to pins whose function
+  says `SW`/`LX`) and 412f724 (rails by their own name, which changes the
+  decoupling pulls). Both changes are right; the placement they give routes
+  worse (5 -> 18 open on the first route). The placer does not optimise
+  for routability, so heuristic changes swing completion on tight boards.
+  The fix is a routability term in placement (congestion, crossings), not
+  tuning against this board.
 - **Fixed since:** PCB_constant_current_ac_hv (copper texts now move like
   labels), raspberry_pi_pullup_button (bodies may overhang the edge when
   their copper fits; a last level keeps only the rules' edge clearance),
