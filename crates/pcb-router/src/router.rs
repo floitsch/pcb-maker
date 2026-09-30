@@ -54,6 +54,9 @@ pub struct Config {
     /// Iterations without fewer conflicted nets that negotiation waits
     /// once the price of sharing is at its cap.
     pub stall_at_cap: usize,
+    /// Stop negotiating when a quarter of the nets have no path at all
+    /// after the first iteration (see `Router::hopeless`).
+    pub abandon_hopeless: bool,
     pub history_increment: f64,
     pub max_iterations: usize,
     /// Minimum search window margin around a net's terminals.
@@ -121,6 +124,7 @@ impl Default for Config {
             present_growth: 1.5,
             present_cap: 1.0e4,
             stall_at_cap: 25,
+            abandon_hopeless: true,
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,
@@ -538,6 +542,10 @@ pub struct Router {
     search_seconds: f64,
     /// Wall time of the last full negotiation.
     negotiation_seconds: f64,
+    /// Negotiation gave up early: a quarter of the nets found no path at
+    /// all. The polish is skipped then; the ladder's next rung is what
+    /// matters.
+    hopeless: bool,
     stamp_seconds: f64,
     iterations: usize,
     /// Nets in conflict after the last negotiation iteration.
@@ -717,6 +725,7 @@ impl Router {
             frame_hook: None,
             search_seconds: 0.0,
             negotiation_seconds: 0.0,
+            hopeless: false,
             stamp_seconds: 0.0,
             iterations: 0,
             last_conflicted: Vec::new(),
@@ -3443,6 +3452,24 @@ impl Router {
             if stalled > patience || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
                 break;
             }
+            // Nets without any path are not congestion; when a quarter of
+            // the board has none after the first iterations, this rung of
+            // the ladder cannot succeed and the next one should get the
+            // time (video's exclusive-plane rung: 275 open searches from
+            // iteration 0, 895 s).
+            if iteration >= 1 && self.config.abandon_hopeless {
+                let (routable, pathless) = self.nets.iter().filter(|state| state.routable).fold(
+                    (0usize, 0usize),
+                    |(routable, pathless), state| (routable + 1, pathless + usize::from(!state.complete && state.blocked)),
+                );
+                if pathless * 4 > routable {
+                    if self.config.verbose {
+                        eprintln!("hopeless: {pathless} of {routable} nets have no path at all");
+                    }
+                    self.hopeless = true;
+                    break;
+                }
+            }
         }
         self.negotiation_seconds = started.elapsed().as_secs_f64();
     }
@@ -3573,7 +3600,7 @@ impl Router {
     fn finish(&mut self, order: &[NetId]) -> RoutingResult {
         self.resolve_remaining(order);
         let cleanup_started = std::time::Instant::now();
-        let improved = self.clean_up(order);
+        let improved = if self.hopeless { 0 } else { self.clean_up(order) };
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.reduce_vias(order);
         if self.config.verbose {
