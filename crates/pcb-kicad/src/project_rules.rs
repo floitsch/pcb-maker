@@ -172,11 +172,13 @@ pub fn resolve_project_rules(
         .map(|class| class.trace_width_mm)
         .fold(f64::INFINITY, f64::min);
     Ok(KiCadBoardRouterConfig {
-        // Designers neck down to the board minimum where a pad demands it.
+        // Designers neck down to the board minimum where a pad demands it;
+        // a project that states none gets a fab's usual 0.127 mm (KiCad's
+        // DRC checks widths against the stated minimum only).
         neck_width_mm: Some(if minimum("min_track_width") > 0.0 {
             minimum("min_track_width").max(0.1)
         } else {
-            narrowest.max(0.1)
+            narrowest.min(0.127).max(0.1)
         }),
         connection_rules,
         default_rules: Some(classes["Default"].clone()),
