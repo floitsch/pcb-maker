@@ -227,6 +227,47 @@ Interf-U 63 s (via reduction is most of it), multichannel 96 s, ColdFire
 375-415 s, video 730 s; Freerouting: ColdFire 1457 s with 8 unrouted,
 video unfinished at 1800 s.
 
+## 2026-09-30, later: more boards, fewer special cases
+
+Florian: "we are focusing (specializing) too much on tiny-tapeout": get
+other difficult boards, consider a fan-out phase; then: more benchmarks
+from GitHub, strip and reroute, and place under constraints.
+
+### Done (committed)
+- **Exact clearance** (`2b96c06`): nanometre discs, bisector stamps for
+  diagonal steps, a second map family for "a diagonal step from here would
+  pass a node too closely". One conflict judge for rip-up and negotiation
+  (they had diverged). A net stuck eight iterations is ripped up whole.
+- **Ladder**: each attempt gets half the remaining budget; a rung where a
+  quarter of the nets have no path is abandoned (`abandon_hopeless`).
+- **GitHub harvest** (`benchmarks/github/`): 109 boards, 4-8 layers,
+  BGAs/QFNs; route sweep `build/github-route-v1` (log of the same name)
+  with `pcb-maker-x4` (before the fixes below), `summary.py` for the
+  causes. Adapter gaps it found and their fixes: chamfered roundrect pads
+  (exact union), rule-area holes (KiCad's further polygons; Glasgow's rim
+  keepout covered the board). Open: per-layer padstacks (1 board).
+- **Fixed branches hold their stamps through every rip-up** and the net's
+  own search masks them (`mask_own`, epoch): the bulk rip-up before the
+  hard rerouting used to unstamp plane skeletons and stubs, and other nets
+  crossed them. The Jacobi mask reused generation 1 (a real bug).
+- **Plane-stub pre-pass** (`fixed_plane_stubs`, in the KiCad config now)
+  counts only inner planes, so every surface pad of a pour net gets its
+  via before the signals route; unconflicted stubs stay fixed. A net may
+  put its own vias inside its surface pads (`via_owner`). Framework
+  mainboard half: GND 7 open -> 0. Eurorack: GND solved, connect rungs
+  tighter, tracks rung wins 131/133 (as before). ColdFire: being measured.
+- **Escape stubs** for fine-pitch rows (`escape_stub_mm`, off): no gain on
+  Tiny Tapeout (82/108 either way) or ColdFire; the 0.4 mm QFN cannot
+  stagger 0.62 mm vias at all (the designer vias 17 of 56 pads).
+
+### What the harvested boards say (first 30 of 109, `pcb-maker-x4`)
+1 clean, 17 open, 12 errors. Opens are mostly pour nets stranded on
+shredded outer pours (hence the pre-pass), a few boards with dead 0.4 mm
+pads under a 0.2 mm clearance (krishveercard: 9 of 19 nets pathless),
+and big boards hitting the 900 s runner timeout (jetson 8L/391 fp,
+ATAT1800). Rerun the errored and open boards with the newest binary when
+the sweep ends (`--only` names) and put the table in benchmarks.md.
+
 ## Where things are
 
 | What | Where |

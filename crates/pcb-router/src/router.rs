@@ -3439,6 +3439,10 @@ impl Router {
         for net in &pour_nets {
             let state = &mut self.nets[*net as usize];
             let inner = (1..layers.saturating_sub(1)).any(|layer| !state.plane[layer].is_empty());
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                let covered: Vec<usize> = (0..layers).filter(|layer| !state.plane[*layer].is_empty()).collect();
+                eprintln!("  plane stubs {}: pour layers {covered:?}, inner {inner}", self.board.nets[*net as usize].name);
+            }
             if !inner {
                 continue;
             }
@@ -3467,17 +3471,19 @@ impl Router {
             state.on_plane = on_plane;
         }
         for net in &pour_nets {
-            // Only what is in conflict with nothing stays fixed.
-            let conflicted = !self.conflicts(*net).is_empty();
+            // Only what is in conflict with nothing stays fixed: the
+            // branches still contested (ColdFire's alternating GND and
+            // +3.3V pads, whose vias compete for the same spots) go, and
+            // those pads are left to the stitching at the end.
+            let keep = self.unconflicted_branches(*net);
+            let mut keep = keep.into_iter();
             let state = &mut self.nets[*net as usize];
-            if conflicted {
-                state.blocked = false;
-                state.complete = false;
-                continue;
-            }
+            state.branches.retain(|_| keep.next().unwrap());
             state.fixed = state.branches.len();
             state.blocked = false;
             state.complete = false;
+            self.stamp(*net);
+            let state = &mut self.nets[*net as usize];
             if self.config.verbose {
                 eprintln!(
                     "plane stubs {}: {} fixed branches, {} of {} terminals connected, {:.2}s",
