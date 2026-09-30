@@ -466,6 +466,7 @@ pub fn layout_kicad_board(
         edge_inset: placement.edge_inset,
         tight: placement.tight_bodies,
         edge_copper: placement.edge_copper,
+        edge_rule: placement.edge_rule_mm,
     }
     .apply(&mut problem.problem);
     let core_config = core_config(router_config);

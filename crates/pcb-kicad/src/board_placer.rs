@@ -150,6 +150,10 @@ pub struct KiCadBoardPlacerResult {
     /// Parts held at an edge were placed by their copper alone (their
     /// courtyard may overhang the outline, as a card edge's does its tab).
     pub edge_copper: bool,
+    /// Distance movable bodies kept from the edge (the placement's margin,
+    /// or the rules' copper-to-edge clearance when nothing else fit).
+    #[serde(default = "default_edge_rule")]
+    pub edge_rule_mm: f64,
     /// The other seeds' legal placements (poses, relaxation and how far
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
@@ -824,6 +828,10 @@ pub(super) struct LoweredPlacement {
     pub references: Vec<String>,
     pub source_at: Vec<[f64; 3]>,
     pub constraint_warnings: Vec<String>,
+}
+
+fn default_edge_rule() -> f64 {
+    f64::INFINITY
 }
 
 fn default_edge_keep_mm() -> f64 {
@@ -1678,6 +1686,7 @@ pub fn place_kicad_board(
         halo_scale: placement.relaxation.halo_scale,
         edge_inset: placement.relaxation.edge_inset,
         edge_copper: placement.relaxation.edge_copper,
+        edge_rule_mm: placement.relaxation.edge_rule,
         utilization,
         hints,
         board_id: board_id.into(),

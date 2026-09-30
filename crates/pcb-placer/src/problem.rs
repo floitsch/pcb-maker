@@ -190,9 +190,11 @@ impl Component {
     }
 
     /// How far the body stays from the board edge for the copper to keep
-    /// `margin` (the problem's edge margin).
+    /// `margin` (the problem's edge margin); negative when the copper sits
+    /// deeper inside the body than that: the body may then overhang the
+    /// edge (a header wider than a narrow board).
     pub fn edge_margin(&self, margin: f64) -> f64 {
-        (margin - self.edge_inset).max(0.0)
+        margin - self.edge_inset
     }
 
     /// Switches the body to the tight one, if the part has one.

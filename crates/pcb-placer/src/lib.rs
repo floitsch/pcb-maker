@@ -70,6 +70,9 @@ pub struct Relaxation {
     pub tight: bool,
     /// Parts held at an edge are on the board when their copper is.
     pub edge_copper: bool,
+    /// Movable bodies keep only the rules' copper-to-edge clearance from
+    /// the edge (not the placement's larger margin).
+    pub edge_rule: f64,
 }
 
 impl Relaxation {
@@ -87,6 +90,7 @@ impl Relaxation {
             }
         }
         problem.constraints.edge_copper = self.edge_copper;
+        problem.edge_margin = problem.edge_margin.min(self.edge_rule);
     }
 }
 
@@ -173,15 +177,23 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     if tight {
         levels.push((0.0, 0.0, fine, true, true));
     }
-    // Last, parts held at an edge only need their copper on the board (a
-    // card edge in its tab).
-    let mut levels: Vec<(f64, f64, f64, bool, bool, bool)> =
-        levels.into_iter().map(|(halo, spacing, grid, inset, tight)| (halo, spacing, grid, inset, tight, false)).collect();
+    // Then bodies keep only the rules' copper-to-edge clearance from the
+    // edge (a narrow board whose parts' copper barely fits). Last, parts
+    // held at an edge only need their copper on the board (a card edge in
+    // its tab).
+    let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
+    let mut levels: Vec<(f64, f64, f64, bool, bool, bool, f64)> = levels
+        .into_iter()
+        .map(|(halo, spacing, grid, inset, tight)| (halo, spacing, grid, inset, tight, false, problem.edge_margin))
+        .collect();
+    if rule_margin < problem.edge_margin {
+        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin));
+    }
     if !problem.constraints.edges.is_empty() {
-        levels.push((0.0, 0.0, fine, true, tight, true));
+        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin));
     }
     let mut relaxation = None;
-    for (halo_scale, spacing_scale, grid, inset, tight, edge_copper) in levels {
+    for (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule) in levels {
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
             // Same as the previous level.
             continue;
@@ -190,6 +202,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         relaxed.constraints.edge_copper = edge_copper;
+        relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
             if !inset {
@@ -224,6 +237,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_inset: inset,
                 tight,
                 edge_copper,
+                edge_rule,
             });
             best = Some((failed, poses, relaxed));
         }
