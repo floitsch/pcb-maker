@@ -108,8 +108,9 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub refine_pitches_mm: Option<Vec<f64>>,
     /// A finer lattice is only tried when the routing time projected from
-    /// the previous attempt stays below this (default 240 s); no attempt of
-    /// any kind follows one that took longer than twice this.
+    /// the previous attempt stays below this (default 240 s). Other ways
+    /// of connecting the pours are tried whatever the time while
+    /// connections are open.
     #[serde(default)]
     pub refine_budget_seconds: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
@@ -1047,9 +1048,9 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 .unwrap_or(0.15);
             // KiCad's stroke font, measured on its own plots: glyph
             // advances in units of the font width (`i` 0.48 ... `m` 1.33);
-            // glyphs ascend 0.65 and descend up to 0.89 font heights, and
-            // lines are 1.6 heights apart. The sum gets 8 % on top so the
-            // box stays outside every measured text.
+            // capitals and digits are one font height tall, descenders
+            // reach 0.3 below, and lines are 1.6 heights apart. The sum
+            // gets 8 % on top so the box stays outside every measured text.
             let advance = |character: char| match character {
                 'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
                 'l' => 0.52,
@@ -1070,9 +1071,10 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 .split("\\n")
                 .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
                 .fold(0.0, f64::max);
+            let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
             let half = [
                 (widest * size[1] + thickness) / 2.0,
-                (lines - 1.0) * 1.62 * size[0] / 2.0 + 0.9 * size[0] + thickness / 2.0,
+                (lines - 1.0) * 1.62 * size[0] / 2.0 + (if descends { 0.8 } else { 0.5 }) * size[0] + thickness / 2.0,
             ];
             let justify: Vec<&str> = item
                 .child("effects")
@@ -1504,17 +1506,18 @@ pub fn route_kicad_board(
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
             }
-            // Another way of connecting the pours is worth trying up to
-            // twice the budget; a board that slow gets no more attempts.
-            // A clean board from the plane skeleton still gets the next
-            // rung when time allows: the fixed tree often costs many vias
-            // that routing the pour nets as tracks does not.
+            // Another way of connecting the pours is always worth trying
+            // while connections are open (a complete board matters more
+            // than the time; the finer pitches below are what the budget
+            // limits). A clean board from the plane skeleton still gets the
+            // next rung when time allows: the fixed tree often costs many
+            // vias that routing the pour nets as tracks does not.
             let skeleton_clean = opens.0 == 0 && *connect && *skeleton && !extra_rung_tried;
             if skeleton_clean && mode + 1 < modes.len() && seconds <= budget / 2.0 {
                 extra_rung_tried = true;
                 continue;
             }
-            if opens.0 == 0 || extra_rung_tried || seconds > 2.0 * budget {
+            if opens.0 == 0 || extra_rung_tried {
                 break 'ladder;
             }
         }

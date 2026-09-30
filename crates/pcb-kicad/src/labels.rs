@@ -70,7 +70,8 @@ fn translate(item: &mut Expr, shift: [f64; 2]) {
     };
     for child in children.iter_mut() {
         match child.head() {
-            Some("start" | "mid" | "end" | "center" | "xy") => {
+            // A text's `at` keeps its angle.
+            Some("start" | "mid" | "end" | "center" | "xy" | "at") => {
                 if let Expr::List(values) = child {
                     for (index, delta) in [(1, shift[0]), (2, shift[1])] {
                         if let Some(number) = values.get(index).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()) {
@@ -551,4 +552,184 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         report.moved += 1;
     }
     Ok(report)
+}
+
+/// Moves the board's copper texts (a title, a "+" next to a terminal) to
+/// where they are clear of the copper on their layer: pads, tracks, vias
+/// and the parts' courtyards. They stay where they are if that is free.
+/// `routes` are the routed tracks (not yet in `pcb`), `layer_names` the
+/// copper layers in the router's order.
+pub(crate) fn place_copper_texts(
+    pcb: &mut Expr,
+    routes: &[pcb_router::NetRoute],
+    layer_names: &[String],
+) -> Result<KiCadLabelReport, String> {
+    let mut report = KiCadLabelReport { labels: 0, moved: 0, stuck: Vec::new() };
+    let outline = outline::board_loops(pcb).ok().map(|loops| {
+        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
+            [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+        })
+    });
+    let inside = |bounds: Box2| outline.is_none_or(|board| bounds[0] >= board[0] + 0.5 && bounds[1] >= board[1] + 0.5 && bounds[2] <= board[2] - 0.5 && bounds[3] <= board[3] - 0.5);
+    // Per copper layer: what a text must keep off (copper), and what it
+    // had better keep off (the parts' bodies).
+    let mut blocked: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
+    let mut bodies: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
+    let layer_index = |name: &str| layer_names.iter().position(|layer| layer == name);
+    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+        let at = form_at(footprint)?;
+        let place = |local: [f64; 2]| {
+            let offset = rotate_vector(local, -at[2]);
+            [at[0] + offset[0], at[1] + offset[1]]
+        };
+        // The courtyard, on the part's side.
+        if let Ok((center, size, _)) = crate::board_placer::local_body(footprint) {
+            let corners = [[-size[0] / 2.0, -size[1] / 2.0], [size[0] / 2.0, -size[1] / 2.0], [size[0] / 2.0, size[1] / 2.0], [-size[0] / 2.0, size[1] / 2.0]]
+                .map(|corner| place([center[0] + corner[0], center[1] + corner[1]]));
+            let body = corners.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
+                [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+            });
+            let side = if form_atom(footprint, "layer", 1) == Some("B.Cu") { "B.Cu" } else { "F.Cu" };
+            if let Some(index) = layer_index(side) {
+                bodies[index].push(body);
+            }
+        }
+        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+            let pad_at = form_at(pad)?;
+            let center = place([pad_at[0], pad_at[1]]);
+            let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
+            let (sin, cos) = (-pad_at[2]).to_radians().sin_cos();
+            let half = [(cos.abs() * size[0] + sin.abs() * size[1]) / 2.0, (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0];
+            let bounds = [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]];
+            let layers: Vec<&str> = pad
+                .child("layers")
+                .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+                .unwrap_or_default();
+            for (index, name) in layer_names.iter().enumerate() {
+                if layers.iter().any(|layer| *layer == name || matches!(*layer, "*.Cu" | "F&B.Cu")) {
+                    blocked[index].push(bounds);
+                }
+            }
+        }
+    }
+    for route in routes {
+        for segment in &route.segments {
+            let half = segment.width / 2.0;
+            let bounds = [
+                segment.start[0].min(segment.end[0]) - half,
+                segment.start[1].min(segment.end[1]) - half,
+                segment.start[0].max(segment.end[0]) + half,
+                segment.start[1].max(segment.end[1]) + half,
+            ];
+            if let Some(list) = blocked.get_mut(segment.layer) {
+                list.push(bounds);
+            }
+        }
+        for via in &route.vias {
+            let half = via.diameter / 2.0;
+            for list in blocked.iter_mut() {
+                list.push([via.at[0] - half, via.at[1] - half, via.at[0] + half, via.at[1] + half]);
+            }
+        }
+    }
+    let mut taken: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
+    let mut text_moves: Vec<(usize, [f64; 2], bool)> = Vec::new();
+    for (item_index, item) in pcb.children().iter().enumerate() {
+        if item.head() != Some("gr_text") {
+            continue;
+        }
+        let Some(layer) = form_atom(item, "layer", 1).and_then(layer_index) else {
+            continue;
+        };
+        let Some(bounds) = board_router::copper_graphic_shapes(item)?
+            .iter()
+            .map(pcb_router::Shape::aabb)
+            .reduce(pcb_router::geometry::Aabb::union)
+        else {
+            continue;
+        };
+        report.labels += 1;
+        let bounds = [bounds.minimum[0], bounds.minimum[1], bounds.maximum[0], bounds.maximum[1]];
+        let free = |bounds: Box2, taken: &[Box2], off_bodies: bool| {
+            !blocked[layer].iter().any(|b| overlaps(bounds, *b, 0.3))
+                && !taken.iter().any(|b| overlaps(bounds, *b, 0.3))
+                && (!off_bodies || !bodies[layer].iter().any(|b| overlaps(bounds, *b, 0.1)))
+        };
+        if free(bounds, &taken[layer], true) {
+            taken[layer].push(bounds);
+            continue;
+        }
+        // Off the parts if a spot exists, else only off the copper; as it
+        // is, else turned by a quarter.
+        let center = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0];
+        let half = [(bounds[2] - bounds[0]) / 2.0, (bounds[3] - bounds[1]) / 2.0];
+        let mut found = None;
+        'passes: for (off_bodies, turned) in [(true, false), (true, true), (false, false), (false, true)] {
+            let half = if turned { [half[1], half[0]] } else { half };
+            let boxed = |at: [f64; 2]| [at[0] - half[0], at[1] - half[1], at[0] + half[0], at[1] + half[1]];
+            if !off_bodies && !turned && free(bounds, &taken[layer], false) {
+                found = Some(([0.0, 0.0], bounds, false));
+                break;
+            }
+            for ring in 0..=80 {
+                let radius = ring as f64 * 0.5;
+                let directions = if ring == 0 { 1 } else { 8 * ring.min(6) };
+                for step in 0..directions {
+                    let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
+                    let shift = [radius * angle.cos(), radius * angle.sin()];
+                    let moved = boxed([center[0] + shift[0], center[1] + shift[1]]);
+                    if inside(moved) && free(moved, &taken[layer], off_bodies) {
+                        found = Some((shift, moved, turned));
+                        break 'passes;
+                    }
+                }
+            }
+        }
+        match found {
+            Some((shift, moved, turned)) => {
+                taken[layer].push(moved);
+                text_moves.push((item_index, shift, turned));
+            }
+            None => {
+                taken[layer].push(bounds);
+                if std::env::var_os("PCB_LABELS_DEBUG").is_some() {
+                    eprintln!("copper text {:?} stuck: box {:.1} x {:.1} mm at {:?}", item.children().get(1).and_then(Expr::atom), bounds[2] - bounds[0], bounds[3] - bounds[1], bounds);
+                }
+                report.stuck.push(item.children().get(1).and_then(Expr::atom).unwrap_or("").to_string());
+            }
+        }
+    }
+    let Expr::List(items) = pcb else {
+        return Ok(report);
+    };
+    for (index, shift, turned) in text_moves {
+        translate(&mut items[index], shift);
+        if turned {
+            turn_quarter(&mut items[index]);
+        }
+        report.moved += 1;
+    }
+    Ok(report)
+}
+
+/// Adds a quarter turn to a text's `at`.
+fn turn_quarter(item: &mut Expr) {
+    let Expr::List(children) = item else {
+        return;
+    };
+    for child in children.iter_mut() {
+        if child.head() != Some("at") {
+            continue;
+        }
+        let Expr::List(values) = child else {
+            continue;
+        };
+        let angle = values.get(3).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()).unwrap_or(0.0);
+        let turned = Expr::Atom(((angle + 90.0) % 360.0).to_string());
+        if values.len() > 3 {
+            values[3] = turned;
+        } else {
+            values.push(turned);
+        }
+    }
 }

@@ -1163,18 +1163,16 @@ pub(super) fn lower_placement(
         locked.push(true);
     }
 
-    // Copper-layer text and graphics are part of the board: parts must not
-    // be placed on top of them. They follow the footprints, so footprint
-    // indices stay aligned with the board file. (Silkscreen text moves off
-    // pads after placement instead: see `labels`.)
+    // Copper-layer graphics are part of the board: parts must not be
+    // placed on top of them. They follow the footprints, so footprint
+    // indices stay aligned with the board file. (Copper and silkscreen
+    // texts move off the parts and the copper after placement instead:
+    // see `labels`.)
     for item in pcb.children() {
         let Some(layer) = form_atom(item, "layer", 1).and_then(copper_layer_index) else {
             continue;
         };
-        if !matches!(
-            item.head(),
-            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
-        ) {
+        if !matches!(item.head(), Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")) {
             continue;
         }
         let Some(bounds) = board_router::copper_graphic_shapes(item)?

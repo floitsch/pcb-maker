@@ -223,7 +223,7 @@ fn size_outline(
             }
             let layers = LayerTable::from_pcb(&pcb)?;
             let connect = !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
-            let board = lower(&pcb, router_config, connect)?.board;
+            let board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
             let result = core::router::Router::new(&board, &quick).run_in_place();
             Some(score(&result, &board).0)
         } else {
@@ -343,6 +343,24 @@ fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
 
 /// Places and routes `<source>/<board_id>.kicad_pcb`. The placement goes to
 /// `output/placed`, the final routed board to `output/result`.
+/// The board without its copper texts: while laying out, they are
+/// decoration that moves off the copper afterwards (`labels`), not
+/// obstacles at their old spots.
+fn without_copper_texts(pcb: &Expr) -> Expr {
+    let Expr::List(items) = pcb else {
+        return pcb.clone();
+    };
+    Expr::List(
+        items
+            .iter()
+            .filter(|item| {
+                !(item.head() == Some("gr_text") && form_atom(item, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 pub fn layout_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -453,7 +471,7 @@ pub fn layout_kicad_board(
     let core_config = core_config(router_config);
 
     let first_started = std::time::Instant::now();
-    let mut board = lower(&pcb, router_config, connect)?.board;
+    let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
@@ -505,7 +523,7 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
-            let candidate_board = lower(&candidate, router_config, connect)?.board;
+            let candidate_board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
             let (candidate_router, candidate_result) = route_once(&candidate_board);
             let candidate_score = score(&candidate_result, &candidate_board);
             race.push(candidate_score.0);
@@ -671,7 +689,7 @@ pub fn layout_kicad_board(
                 }
             }
             problem.problem.poses = poses;
-            let trial_board = lower(&pcb, router_config, connect)?.board;
+            let trial_board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
             let rerouted = match router.update(&trial_board) {
                 Ok(count) => count,
                 Err(error) => {
@@ -734,6 +752,11 @@ pub fn layout_kicad_board(
         eprintln!("labels without a free spot: {:?}", labels.stuck);
     }
     let layer_names = layers.names.clone();
+    // Copper texts (decoration on copper) off the copper and the parts.
+    let copper_texts = crate::labels::place_copper_texts(&mut pcb, &result.routes, &layer_names)?;
+    if copper_texts.moved > 0 || !copper_texts.stuck.is_empty() {
+        eprintln!("copper texts: {} moved, {} without a free spot", copper_texts.moved, copper_texts.stuck.len());
+    }
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     let result_directory = output_directory.join("result");
     let mut routed = finish_routed_board(
