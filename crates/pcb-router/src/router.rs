@@ -16,7 +16,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::board::{Board, NetId, NetRoute, Segment, Via};
+use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
 
 #[derive(Clone, Debug)]
@@ -36,6 +36,10 @@ pub struct Config {
     /// nodes act as walls the heuristic knows nothing about, and searches
     /// flood; history cost keeps separating the nets instead.
     pub present_cap: f64,
+    /// Within this distance of a net's own narrow pads (narrower than its
+    /// track plus clearance) the net routes at the board's neck width: the
+    /// fan-out of a fine-pitch part. 0 turns it off.
+    pub neck_reach: f64,
     /// Plan every net on the tile graph first and confine its lattice
     /// search to that plan's corridor; conflicts teach the plan.
     pub global_routing: bool,
@@ -110,6 +114,7 @@ impl Default for Config {
             present_cap: 1.0e4,
             stall_at_cap: 25,
             global_routing: false,
+            neck_reach: 1.5,
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
@@ -239,6 +244,9 @@ struct NetState {
     plane_target: Vec<Vec<bool>>,
     /// Leading branches that are the plane skeleton; never ripped up.
     fixed: usize,
+    /// Node ranges (x0, y0, x1, y1) around the net's narrow pads where it
+    /// routes at the neck width.
+    neck_zones: Vec<(usize, usize, usize, usize)>,
 }
 
 #[derive(Clone)]
@@ -444,6 +452,9 @@ pub struct Router {
     /// Per layer: an exclusive plane there (other nets' tracks may not run
     /// on its covered nodes).
     exclusive: Vec<bool>,
+    /// Per rule class: the class with the neck width instead of the track
+    /// width (an added class), if the track is wider.
+    neck_of: Vec<Option<usize>>,
     /// Per layer: step cost multiplier while a plane skeleton is routed
     /// (empty otherwise).
     layer_bias: Vec<f32>,
@@ -463,6 +474,25 @@ pub struct Router {
 
 impl Router {
     pub fn new(board: &Board, config: &Config) -> Self {
+        // Every class wider than the neck gets a neck variant, for routing
+        // next to fine-pitch pads.
+        let mut board = board.clone();
+        let mut neck_of = vec![None; board.classes.len()];
+        if config.neck_reach > 0.0 {
+            for class in 0..neck_of.len() {
+                let rules = board.classes[class];
+                if rules.trace_width > board.neck_width + 1.0e-9 {
+                    let neck = RuleClass { trace_width: board.neck_width, ..rules };
+                    let index = board.classes.iter().position(|existing| *existing == neck).unwrap_or_else(|| {
+                        board.classes.push(neck);
+                        board.classes.len() - 1
+                    });
+                    neck_of[class] = Some(index);
+                }
+            }
+        }
+        neck_of.resize(board.classes.len(), None);
+        let board = &board;
         let grid = Grid::choose(board, &config.pitches);
         if config.verbose {
             eprintln!(
@@ -593,6 +623,7 @@ impl Router {
             covered: vec![Vec::new(); layers],
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
+            neck_of,
             exclusive: (0..layers).map(|layer| board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
@@ -738,6 +769,31 @@ impl Router {
                 }
             }
             let candidate_count = candidates.len();
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && candidates.len() > 0 {
+                // What blocks the narrowest stub to the nearest candidates.
+                for (distance, cell) in candidates.iter().take(3) {
+                    let center = self.grid.center_of(*cell);
+                    let blockers: Vec<String> = self
+                        .board
+                        .obstacles
+                        .iter()
+                        .filter(|obstacle| {
+                            obstacle.net != Some(net) && obstacle.layers & (1 << layer) != 0 && obstacle.blocks_tracks && {
+                                let required = narrowest / 2.0
+                                    + SAFETY
+                                    + match obstacle.kind {
+                                        crate::board::ObstacleKind::Copper => self.board.copper_clearance(&class, obstacle),
+                                        crate::board::ObstacleKind::Keepout => 0.0,
+                                        crate::board::ObstacleKind::Hole => self.board.hole_clearance.max(obstacle.clearance),
+                                    };
+                                obstacle.shape.distance_to_segment(terminal.anchor, center) < required
+                            }
+                        })
+                        .map(|obstacle| format!("{} ({:.3})", obstacle.label, obstacle.shape.distance_to_segment(terminal.anchor, center)))
+                        .collect();
+                    eprintln!("  escape {} candidate at {:?} ({distance:.3} mm): stub of {narrowest} blocked by {blockers:?}", terminal.label, center);
+                }
+            }
             for (_, cell) in candidates.into_iter().take(600) {
                 let center = self.grid.center_of(cell);
                 let mut found: Option<(f64, Vec<crate::geometry::Point>)> = None;
@@ -950,6 +1006,23 @@ impl Router {
             terminal_reach.push(reach);
             terminal_nodes.push(nodes);
         }
+        // Neck zones around pads narrower than the net's track plus its
+        // clearance (a fine-pitch part's), where the net routes at the neck
+        // width.
+        let mut neck_zones = Vec::new();
+        if self.neck_of[description.class].is_some() {
+            let rules = self.board.classes[description.class];
+            for terminal in &description.terminals {
+                let bounds = self.board.obstacles[terminal.pad].shape.aabb();
+                let narrow = (bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1]);
+                if narrow < rules.trace_width + rules.clearance {
+                    let reach = crate::geometry::Aabb { minimum: terminal.anchor, maximum: terminal.anchor }.inflated(self.config.neck_reach);
+                    if let Some(range) = self.grid.node_range(reach) {
+                        neck_zones.push(range);
+                    }
+                }
+            }
+        }
         let mut plane: Vec<Vec<bool>> = Vec::new();
         let mut plane_class = vec![description.class; self.board.layer_count];
         for pour in self
@@ -1054,8 +1127,31 @@ impl Router {
             terminal_nodes,
             terminal_reach,
             routable,
+            neck_zones,
             ..Default::default()
         }
+    }
+
+    /// The rule class `net` routes with at `cell`: its neck class inside
+    /// its neck zones, else its own.
+    fn class_at(&self, net: NetId, state: &NetState, cell: u32) -> usize {
+        let class = self.board.nets[net as usize].class;
+        match self.neck_of[class] {
+            Some(neck) if !state.neck_zones.is_empty() => {
+                let (x, y) = self.grid.xy(cell as usize);
+                if state.neck_zones.iter().any(|&(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) { neck } else { class }
+            }
+            _ => class,
+        }
+    }
+
+    fn node_class(&self, net: NetId, cell: u32) -> usize {
+        self.class_at(net, &self.nets[net as usize], cell)
+    }
+
+    /// Track width of `net` at `node`.
+    fn width_at(&self, net: NetId, cell: u32) -> f64 {
+        self.board.classes[self.node_class(net, cell)].trace_width
     }
 
     fn unstamp(&mut self, net: NetId) {
@@ -1149,6 +1245,10 @@ impl Router {
         let ny = self.grid.ny as i64;
         let branches = std::mem::take(&mut self.nets[net as usize].branches);
         let escapes = std::mem::take(&mut self.nets[net as usize].escapes);
+        let node_classes: Vec<Vec<usize>> = branches
+            .iter()
+            .map(|branch| branch.nodes.iter().map(|node| self.node_class(net, node.cell)).collect())
+            .collect();
         for querying in 0..self.board.classes.len() {
             let stamps = &self.stamps[class][querying];
             let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)]| {
@@ -1174,7 +1274,7 @@ impl Router {
                 }
             };
             let base = querying * (layers + 1);
-            for branch in &branches {
+            for (which, branch) in branches.iter().enumerate() {
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
                     if let Some((cells, _, _)) = escapes.get(&end) {
                         for cell in cells {
@@ -1184,12 +1284,14 @@ impl Router {
                     }
                 }
                 for (index, node) in branch.nodes.iter().enumerate() {
+                    // A node in a neck zone stamps its narrower footprint.
+                    let own = &self.stamps[node_classes[which][index]][querying];
                     apply(
                         base + node.layer as usize,
                         node.cell,
-                        &stamps.trace_to_trace,
+                        &own.trace_to_trace,
                     );
-                    apply(base + layers, node.cell, &stamps.trace_to_via);
+                    apply(base + layers, node.cell, &own.trace_to_via);
                     let is_via = index > 0
                         && branch.nodes[index - 1].cell == node.cell
                         && branch.nodes[index - 1].layer != node.layer;
@@ -1230,7 +1332,7 @@ impl Router {
                 }
             }
             for (index, node) in branch.nodes.iter().enumerate() {
-                let map = self.map_index(class, node.layer as usize);
+                let map = self.map_index(self.node_class(net, node.cell), node.layer as usize);
                 if self.occupancy[map][node.cell as usize] > 1 {
                     result.push((node.layer as usize, node.cell));
                 }
@@ -2003,6 +2105,7 @@ impl Router {
         let own = crate::grid::owner(net);
         let trace_base = class * (layers + 1);
         let via_map = trace_base + layers;
+        let necks = !net_state.neck_zones.is_empty();
         let own_generation = scratch.own_generation;
         let mut found = None;
         while let Some(Reverse((_, state))) = heap.pop() {
@@ -2038,10 +2141,11 @@ impl Router {
             let y = cell / nx;
             let here = scratch.cost[state];
             let arrived = scratch.parent[state];
-            let blocked_edges = if statics.edge_owner[layer][cell] == own {
+            let here_statics = if necks { &self.statics[self.class_at(net, net_state, cell as u32)] } else { statics };
+            let blocked_edges = if here_statics.edge_owner[layer][cell] == own {
                 0
             } else {
-                statics.edge_block[layer][cell]
+                here_statics.edge_block[layer][cell]
             };
 
             for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
@@ -2063,7 +2167,8 @@ impl Router {
                     continue;
                 }
                 let target_cell = ty as usize * nx + tx as usize;
-                let allowed = statics.trace[layer][target_cell];
+                let target_class = if necks { self.class_at(net, net_state, target_cell as u32) } else { class };
+                let allowed = self.statics[target_class].trace[layer][target_cell];
                 if allowed != crate::grid::FREE && allowed != own {
                     continue;
                 }
@@ -2071,7 +2176,7 @@ impl Router {
                 if scratch.closed[target_state] == generation {
                     continue;
                 }
-                let mut occupied = self.occupancy[trace_base + layer][target_cell] as f32;
+                let mut occupied = self.occupancy[target_class * (layers + 1) + layer][target_cell] as f32;
                 if own_generation != 0
                     && scratch.own_mark[layer * cells + target_cell] == own_generation
                 {
@@ -2141,15 +2246,16 @@ impl Router {
                     }
                 }
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
+                let cell_class = if necks { self.class_at(net, net_state, cell as u32) } else { class };
                 for target_layer in 0..layers {
                     if target_layer == layer {
                         continue;
                     }
-                    let allowed = statics.trace[target_layer][cell];
+                    let allowed = self.statics[cell_class].trace[target_layer][cell];
                     if allowed != crate::grid::FREE && allowed != own {
                         continue;
                     }
-                    if hard && self.occupancy[trace_base + target_layer][cell] > 0 {
+                    if hard && self.occupancy[cell_class * (layers + 1) + target_layer][cell] > 0 {
                         continue;
                     }
                     let target_state = target_layer * cells + cell;
@@ -2205,10 +2311,9 @@ impl Router {
 
     /// Whether a retained branch is still legal against the fixed copper.
     fn branch_is_legal(&self, net: NetId, branch: &Branch) -> bool {
-        let class = self.board.nets[net as usize].class;
-        let statics = &self.statics[class];
         let nx = self.grid.nx as i64;
         for (index, node) in branch.nodes.iter().enumerate() {
+            let statics = &self.statics[self.node_class(net, node.cell)];
             if !statics.trace_allowed(node.layer as usize, node.cell as usize, net) {
                 return false;
             }
@@ -2382,11 +2487,14 @@ impl Router {
                     }
                     scratch.own_generation += 1;
                     let generation = scratch.own_generation;
-                    let base = this.board.nets[*net as usize].class * (layers + 1);
+                    let class = this.board.nets[*net as usize].class;
+                    let bases: Vec<usize> = [Some(class), this.neck_of[class]].into_iter().flatten().map(|c| c * (layers + 1)).collect();
                     for (map, cell) in &net_state.stamped {
                         let map = *map as usize;
-                        if map >= base && map <= base + layers {
-                            scratch.own_mark[(map - base) * cells + *cell as usize] = generation;
+                        for &base in &bases {
+                            if map >= base && map <= base + layers {
+                                scratch.own_mark[(map - base) * cells + *cell as usize] = generation;
+                            }
                         }
                     }
                     this.route_net(scratch, *net, &mut net_state, present, false, growth);
@@ -3913,23 +4021,22 @@ impl Router {
                             width: *width,
                         });
                     }
-                } else if crate::geometry::distance(anchor, center) > 1.0e-7
-                    && self.stub_is_clear(
-                        net,
-                        node.layer as usize,
-                        anchor,
-                        center,
-                        rules.trace_width,
-                    )
-                    && self.stub_keeps_edge(anchor, center, rules.trace_width)
-                {
-                    stubs.push(route.segments.len());
-                    route.segments.push(Segment {
-                        layer: node.layer as usize,
-                        start: anchor,
-                        end: center,
-                        width: rules.trace_width,
-                    });
+                } else if crate::geometry::distance(anchor, center) > 1.0e-7 {
+                    // The pad stub at the node's width, or the neck if the
+                    // full width does not fit.
+                    let mut widths = vec![self.width_at(net, node.cell)];
+                    if self.board.neck_width < widths[0] {
+                        widths.push(self.board.neck_width);
+                    }
+                    for width in widths {
+                        if self.stub_is_clear(net, node.layer as usize, anchor, center, width)
+                            && self.stub_keeps_edge(anchor, center, width)
+                        {
+                            stubs.push(route.segments.len());
+                            route.segments.push(Segment { layer: node.layer as usize, start: anchor, end: center, width });
+                            break;
+                        }
+                    }
                 }
             };
             stub(first, branch.start_terminal);
@@ -3943,6 +4050,7 @@ impl Router {
                     continue;
                 }
                 self.emit_run(
+                    net,
                     &branch.nodes[run_start..index],
                     &junctions,
                     &rules,
@@ -3967,6 +4075,7 @@ impl Router {
 
     fn emit_run(
         &self,
+        net: NetId,
         nodes: &[Node],
         junctions: &HashSet<Node>,
         rules: &crate::board::RuleClass,
@@ -3982,17 +4091,29 @@ impl Router {
                 b.cell as i64 / nx - a.cell as i64 / nx,
             )
         };
+        let widths: Vec<f64> = if self.nets[net as usize].neck_zones.is_empty() {
+            vec![rules.trace_width; nodes.len()]
+        } else {
+            nodes.iter().map(|node| self.width_at(net, node.cell)).collect()
+        };
+        // A segment is as wide as its narrowest node: a run is cut at a
+        // wide node next to a narrow one, so the wide segment ends at a
+        // node checked at the full width and the narrow one reaches it.
+        let wide = rules.trace_width;
         let mut start = 0;
         for index in 1..nodes.len() {
             let turning = index + 1 < nodes.len()
                 && delta(nodes[index - 1], nodes[index]) != delta(nodes[index], nodes[index + 1]);
             let last = index + 1 == nodes.len();
-            if turning || last || junctions.contains(&nodes[index]) {
+            let width_edge = widths[index] >= wide
+                && ((index + 1 < nodes.len() && widths[index + 1] < wide) || widths[index - 1] < wide);
+            if turning || last || width_edge || junctions.contains(&nodes[index]) {
+                let width = widths[start..=index].iter().copied().fold(f64::INFINITY, f64::min);
                 route.segments.push(Segment {
                     layer: nodes[start].layer as usize,
                     start: self.grid.center_of(nodes[start].cell as usize),
                     end: self.grid.center_of(nodes[index].cell as usize),
-                    width: rules.trace_width,
+                    width,
                 });
                 start = index;
             }

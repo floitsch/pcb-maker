@@ -196,11 +196,28 @@ impl Grid {
     /// lattice, and a one-track channel between two pads is only usable when
     /// a node row falls in its centre.
     pub fn choose(board: &Board, candidates: &[f64]) -> Self {
-        let anchors: Vec<Point> = board
+        // Pad centres vote for the lattice phase. Only narrow pads (a
+        // fine-pitch part's, where only an aligned node row can leave the
+        // pad) vote when there are any: a wide pad has legal nodes inside
+        // it whatever the phase.
+        // A pad narrow across an axis needs a node line aligned on that
+        // axis (tracks leave it along the other one).
+        let mut anchors: Vec<(Point, [f64; 2])> = board
             .nets
             .iter()
-            .flat_map(|net| net.terminals.iter().map(|terminal| terminal.anchor))
+            .flat_map(|net| {
+                net.terminals.iter().map(|terminal| {
+                    let bounds = board.obstacles[terminal.pad].shape.aabb();
+                    let extent = [bounds.maximum[0] - bounds.minimum[0], bounds.maximum[1] - bounds.minimum[1]];
+                    (terminal.anchor, extent.map(|width| if width < 0.35 { 1.0 } else { 0.0 }))
+                })
+            })
             .collect();
+        for axis in 0..2 {
+            if anchors.iter().all(|(_, weight)| weight[axis] == 0.0) {
+                anchors.iter_mut().for_each(|(_, weight)| weight[axis] = 1.0);
+            }
+        }
         let mut bounds = Aabb {
             minimum: [f64::INFINITY; 2],
             maximum: [f64::NEG_INFINITY; 2],
@@ -223,16 +240,17 @@ impl Grid {
             let mut phase = [0.0; 2];
             let mut score = 0.0;
             for axis in 0..2 {
-                let mut histogram = std::collections::BTreeMap::<i64, usize>::new();
-                for anchor in &anchors {
+                let anchor_weight: f64 = anchors.iter().map(|(_, weight)| weight[axis]).sum();
+                let mut histogram = std::collections::BTreeMap::<i64, f64>::new();
+                for (anchor, weight) in &anchors {
                     let residue = anchor[axis].rem_euclid(pitch);
                     *histogram
                         .entry((residue * 1.0e4).round() as i64)
-                        .or_default() += 1;
+                        .or_default() += weight[axis];
                 }
                 // Residues wrap around: 0 and `pitch` are the same phase.
                 let wrap = (pitch * 1.0e4).round() as i64;
-                let mut merged = std::collections::BTreeMap::<i64, usize>::new();
+                let mut merged = std::collections::BTreeMap::<i64, f64>::new();
                 for (residue, count) in histogram {
                     *merged.entry(residue % wrap).or_default() += count;
                 }
@@ -247,9 +265,9 @@ impl Grid {
                     })
                     .map(|(_, centre, slack)| (centre.rem_euclid(pitch), *slack))
                     .collect();
-                let mut phases: Vec<(i64, usize)> = merged.into_iter().collect();
+                let mut phases: Vec<(i64, f64)> = merged.into_iter().collect();
                 for (centre, _) in &tight {
-                    phases.push(((centre * 1.0e4).round() as i64 % wrap, 0));
+                    phases.push(((centre * 1.0e4).round() as i64 % wrap, 0.0));
                 }
                 let mut axis_best: Option<(f64, i64)> = None;
                 for (residue, count) in phases {
@@ -261,19 +279,20 @@ impl Grid {
                             offset.min(pitch - offset) <= *slack + 1.0e-6
                         })
                         .count();
-                    let aligned_anchors = if count == 0 {
+                    let aligned_anchors = if count == 0.0 {
                         anchors
                             .iter()
-                            .filter(|anchor| {
+                            .filter(|(anchor, _)| {
                                 let offset = (anchor[axis] - phase).rem_euclid(pitch);
                                 offset.min(pitch - offset) <= 1.0e-4
                             })
-                            .count()
+                            .map(|(_, weight)| weight[axis])
+                            .sum()
                     } else {
                         count
                     };
                     let value = 2.0 * aligned as f64 / tight.len().max(1) as f64
-                        + aligned_anchors as f64 / anchors.len().max(1) as f64;
+                        + aligned_anchors / anchor_weight.max(1.0e-9);
                     if axis_best.is_none_or(|(best, best_residue)| {
                         value > best + 1e-9 || (value > best - 1e-9 && residue < best_residue)
                     }) {
