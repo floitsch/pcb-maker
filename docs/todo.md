@@ -40,6 +40,37 @@ router and placer items.
   every board tried (PIC 2 → 0, Multichannel 18 → 14, Interf-U 28 → 24).
   Idle cores could run seeds in parallel and keep the best board.
 
+- **Exact clearance for fine pitch (Tiny Tapeout, 0.4 mm QFN with
+  0.2/0.2 rules).** Two 0.2 mm tracks at the 0.4 mm pad pitch are exactly
+  the clearance apart, which KiCad accepts and our stamps forbid: a node's
+  stamp is a disc of radius `R + SAFETY + 2 * chord sagitta`, and the
+  sagitta (12.5 µm at R 0.4 mm on the 0.1 mm lattice) is there because a
+  diagonal segment passes closer to a node than its endpoints do. Design:
+  stamp discs of radius `R + SAFETY` only, and pay for the chord error where
+  it arises. A diagonal move `A -> B` also requires the two cells cutting
+  the corner (`A + dx`, `A + dy`) to be free, which bounds the segment's
+  closest approach at `R - p²/(8R)` (3 µm short at 0.4 mm); the remaining
+  3 µm needs either a half-lattice occupancy map for segment midpoints or
+  stamps that know the stamping node's own segment directions (a straight
+  run stamps a capsule, a corner a disc). Check first what KiCad's DRC
+  epsilon is (`DRC_EPSILON`); if it is larger than the residual, the
+  corner-cell rule alone is exact enough. `SAFETY` can drop to below that
+  epsilon (files carry nanometres).
+- **Pour nets forming trees among their pads (ColdFire GND).** GND and
+  +3.3V alternate on the LQFP-100 at 0.5 mm; one 0.8 mm via per pad can
+  never fit, and the designer joins the power pads with tracks along the
+  rows to 1 GND and 3 +3.3V vias. `connect_to_plane` can join a pad to
+  another pad's copper already; the hard reroute of stranded pads fails
+  because the ways out are taken by then. Route the pour nets' pad trees
+  before the signals (as `fixed_plane_stubs` tries, but as trees, not one
+  via per pad), or let a stranded pad reach the nearest own copper at neck
+  width.
+- **Routability-aware placement (Brushless_ESC).** Heuristic placement
+  changes (rails by their own name, inductor pulls) swing the first route
+  between 5 and 18 open on this board. The placer has no routability term;
+  add congestion (pin density per tile) and crossing estimates to the
+  global objective, or race more seeds when the first route leaves opens.
+
 ## Layout
 
 - **Moves that cannot close the last opens cost the whole budget.** On the
