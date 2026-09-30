@@ -62,8 +62,17 @@ router and placer items.
   all lie within ~3 mm on the outward side (decoupling, crystals). Same-net
   neighbours in a row (ColdFire's alternating GND/+3.3V pairs) share one
   via through a short bus along the row at the stub ends; that is the pour
-  net pad tree below. Measure on Tiny Tapeout, ColdFire and whatever the
-  GitHub harvest brings with BGAs; keep it off where no cluster exists.
+  net pad tree below. Measure on ColdFire and whatever the GitHub harvest
+  brings with BGAs; keep it off where no cluster exists.
+  Caveat found on Tiny Tapeout: at 0.4 mm pitch with 0.62 mm vias no
+  stagger fits (a via takes 1.18 mm of lateral room and gives back 0.4;
+  the tracks between two row vias would need 0.36 mm each and have less
+  than that). The designer fanned out 17 of the 56 pads with vias and took
+  the rest straight to nearby parts on the top layer, which is what the
+  placement was made for; so on that board the win is a negotiation that
+  keeps escapes straight (no net running along a pad row within the
+  escape zone), not a via pattern. A fan-out phase pays on 0.5 mm pitch
+  and up (ColdFire's LQFP: 0.5 mm, 0.8 mm vias, m = 5) and on BGAs.
 - **Pour nets forming trees among their pads (ColdFire GND).** GND and
   +3.3V alternate on the LQFP-100 at 0.5 mm; one 0.8 mm via per pad can
   never fit, and the designer joins the power pads with tracks along the

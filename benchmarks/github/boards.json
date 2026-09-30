@@ -1,0 +1,725 @@
+{
+ "comment": "Open-source boards harvested from GitHub by harvest.py; sources under benchmarks/real/external/github (gitignored), origins in manifest.json.",
+ "boards": [
+  {
+   "name": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "directory": "benchmarks/real/external/github/antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "board_id": "jetson-nano-baseboard",
+   "note": "antmicro/jetson-nano-baseboard @ d8d0b2d7, Apache-2.0: 8 layers, 391 footprints, 618 fine pads, designer 15624 segments / 794 vias"
+  },
+  {
+   "name": "oro-os__link__link",
+   "directory": "benchmarks/real/external/github/oro-os__link__link",
+   "board_id": "link",
+   "note": "oro-os/link @ 00edd4dc, MIT: 8 layers, 381 footprints, 391 fine pads, designer 3112 segments / 806 vias"
+  },
+  {
+   "name": "byrantech__laptop__motherboard",
+   "directory": "benchmarks/real/external/github/byrantech__laptop__motherboard",
+   "board_id": "motherboard",
+   "note": "byrantech/laptop @ 007e853d, MIT: 6 layers, 264 footprints, 778 fine pads, designer 4080 segments / 734 vias"
+  },
+  {
+   "name": "GlasgowEmbedded__glasgow__glasgow",
+   "directory": "benchmarks/real/external/github/GlasgowEmbedded__glasgow__glasgow",
+   "board_id": "glasgow",
+   "note": "GlasgowEmbedded/glasgow @ 6e9bd3a1, 0BSD: 6 layers, 782 footprints, 520 fine pads, designer 7215 segments / 1532 vias"
+  },
+  {
+   "name": "GlasgowEmbedded__glasgow__glasgow",
+   "directory": "benchmarks/real/external/github/GlasgowEmbedded__glasgow__glasgow",
+   "board_id": "glasgow",
+   "note": "GlasgowEmbedded/glasgow @ 6e9bd3a1, 0BSD: 6 layers, 722 footprints, 496 fine pads, designer 7621 segments / 1429 vias"
+  },
+  {
+   "name": "OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+   "directory": "benchmarks/real/external/github/OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+   "board_id": "OpenRX-panel-rev2",
+   "note": "OpenDrone-hw/OpenRX @ cb257a34, CERN-OHL-S-2.0: 6 layers, 254 footprints, 419 fine pads, designer 1587 segments / 538 vias"
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1-panel",
+   "directory": "benchmarks/real/external/github/OpenDrone-hw__OpenESC-30x30__4in1-panel",
+   "board_id": "4in1-panel",
+   "note": "OpenDrone-hw/OpenESC-30x30 @ 683f1759, CERN-OHL-S-2.0: 6 layers, 404 footprints, 392 fine pads, designer 2655 segments / 2604 vias"
+  },
+  {
+   "name": "tengigabytes__MokyaLora__MokyaLora",
+   "directory": "benchmarks/real/external/github/tengigabytes__MokyaLora__MokyaLora",
+   "board_id": "MokyaLora",
+   "note": "tengigabytes/MokyaLora @ 0783a3b3, NOASSERTION: 6 layers, 443 footprints, 277 fine pads, designer 2066 segments / 836 vias"
+  },
+  {
+   "name": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "directory": "benchmarks/real/external/github/briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "board_id": "Sisu_SSE-9",
+   "note": "briskspirit/Sisu_SSE-9 @ ca686749, Unlicense: 6 layers, 296 footprints, 242 fine pads, designer 2419 segments / 1076 vias"
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-20x20__4in1-mini",
+   "directory": "benchmarks/real/external/github/OpenDrone-hw__OpenESC-20x20__4in1-mini",
+   "board_id": "4in1-mini",
+   "note": "OpenDrone-hw/OpenESC-20x20 @ 104ea51e, NOASSERTION: 6 layers, 191 footprints, 200 fine pads, designer 1194 segments / 1129 vias"
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1",
+   "directory": "benchmarks/real/external/github/OpenDrone-hw__OpenESC-30x30__4in1",
+   "board_id": "4in1",
+   "note": "OpenDrone-hw/OpenESC-30x30 @ 683f1759, CERN-OHL-S-2.0: 6 layers, 222 footprints, 192 fine pads, designer 1220 segments / 1702 vias"
+  },
+  {
+   "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "directory": "benchmarks/real/external/github/apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "board_id": "eurorack-pmod-pcb",
+   "note": "apfaudio/eurorack-pmod @ ddb9aa92, NOASSERTION: 6 layers, 155 footprints, 154 fine pads, designer 1920 segments / 331 vias"
+  },
+  {
+   "name": "OpenDrone-hw__OpenFC-Lite__OpenFC",
+   "directory": "benchmarks/real/external/github/OpenDrone-hw__OpenFC-Lite__OpenFC",
+   "board_id": "OpenFC",
+   "note": "OpenDrone-hw/OpenFC-Lite @ b5294405, CERN-OHL-S-2.0: 6 layers, 164 footprints, 117 fine pads, designer 1157 segments / 596 vias"
+  },
+  {
+   "name": "CRImier__MyKiCad__framework_mobo_lefthalf",
+   "directory": "benchmarks/real/external/github/CRImier__MyKiCad__framework_mobo_lefthalf",
+   "board_id": "framework_mobo_lefthalf",
+   "note": "CRImier/MyKiCad @ 4f01eaa6, GPL-3.0: 6 layers, 45 footprints, 101 fine pads, designer 1653 segments / 203 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_right",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kybd_split72_right",
+   "board_id": "poly_kybd_split72_right",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 4 layers, 573 footprints, 723 fine pads, designer 7242 segments / 1368 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_left",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kybd_split72_left",
+   "board_id": "poly_kybd_split72_left",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 4 layers, 573 footprints, 723 fine pads, designer 7524 segments / 1354 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_corne_split42_right",
+   "board_id": "poly_corne_split42_right",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 4 layers, 573 footprints, 714 fine pads, designer 7488 segments / 1372 vias"
+  },
+  {
+   "name": "CRImier__MyKiCad__vaio_re",
+   "directory": "benchmarks/real/external/github/CRImier__MyKiCad__vaio_re",
+   "board_id": "vaio_re",
+   "note": "CRImier/MyKiCad @ 4f01eaa6, GPL-3.0: 4 layers, 289 footprints, 604 fine pads, designer 7149 segments / 523 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_left",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_corne_split42_left",
+   "board_id": "poly_corne_split42_left",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 4 layers, 334 footprints, 416 fine pads, designer 4264 segments / 753 vias"
+  },
+  {
+   "name": "vd-rd__sbc_allwinner_a13__module",
+   "directory": "benchmarks/real/external/github/vd-rd__sbc_allwinner_a13__module",
+   "board_id": "module",
+   "note": "vd-rd/sbc_allwinner_a13 @ 8973c32c, None: 4 layers, 179 footprints, 230 fine pads, designer 4511 segments / 501 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado",
+   "board_id": "BAGEL-MK1.1-Avocado",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 212 footprints, 228 fine pads, designer 2054 segments / 820 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__BAGEL-MK1",
+   "board_id": "BAGEL-MK1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 199 footprints, 228 fine pads, designer 1079 segments / 525 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__krishveercard",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__krishveercard",
+   "board_id": "krishveercard",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 4 layers, 39 footprints, 226 fine pads, designer 680 segments / 87 vias"
+  },
+  {
+   "name": "earth75__atat-1800__ATAT1800",
+   "directory": "benchmarks/real/external/github/earth75__atat-1800__ATAT1800",
+   "board_id": "ATAT1800",
+   "note": "earth75/atat-1800 @ 5aa435a7, None: 4 layers, 342 footprints, 224 fine pads, designer 2202 segments / 680 vias"
+  },
+  {
+   "name": "emertcakir__OpenAirScope__OpenAirScope",
+   "directory": "benchmarks/real/external/github/emertcakir__OpenAirScope__OpenAirScope",
+   "board_id": "OpenAirScope",
+   "note": "emertcakir/OpenAirScope @ 239d0f50, MIT: 4 layers, 282 footprints, 204 fine pads, designer 1797 segments / 473 vias"
+  },
+  {
+   "name": "CRImier__MyKiCad__zpn_devboard",
+   "directory": "benchmarks/real/external/github/CRImier__MyKiCad__zpn_devboard",
+   "board_id": "zpn_devboard",
+   "note": "CRImier/MyKiCad @ 4f01eaa6, GPL-3.0: 4 layers, 168 footprints, 202 fine pads, designer 4033 segments / 298 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2.1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK2.1",
+   "board_id": "MIDAS-MK2.1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 219 footprints, 188 fine pads, designer 1196 segments / 432 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2.1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK2.1",
+   "board_id": "MIDAS-MK2.1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 215 footprints, 188 fine pads, designer 1223 segments / 478 vias"
+  },
+  {
+   "name": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "directory": "benchmarks/real/external/github/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "board_id": "reCamera S101 v1.1",
+   "note": "Seeed-Studio/OSHW-reCamera-Series @ f5fcf0ab, Apache-2.0: 4 layers, 92 footprints, 186 fine pads, designer 711 segments / 334 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK2",
+   "board_id": "MIDAS-MK2",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 217 footprints, 176 fine pads, designer 1192 segments / 401 vias"
+  },
+  {
+   "name": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "directory": "benchmarks/real/external/github/MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "board_id": "Hub",
+   "note": "MbFredys/PCB-Modular-Multi-Protocol-Hub @ 0413cb48, NOASSERTION: 4 layers, 235 footprints, 171 fine pads, designer 2027 segments / 331 vias"
+  },
+  {
+   "name": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "directory": "benchmarks/real/external/github/Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "board_id": "RP2040_base",
+   "note": "Twisted-Fields/rp2040-motor-controller @ d51dc544, NOASSERTION: 4 layers, 325 footprints, 148 fine pads, designer 4544 segments / 553 vias"
+  },
+  {
+   "name": "maniekx86__M8SBC-486__homebrew_486",
+   "directory": "benchmarks/real/external/github/maniekx86__M8SBC-486__homebrew_486",
+   "board_id": "homebrew_486",
+   "note": "maniekx86/M8SBC-486 @ 8dc20b49, None: 4 layers, 130 footprints, 144 fine pads, designer 10279 segments / 1150 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__koeg-board-pcb",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__koeg-board-pcb",
+   "board_id": "koeg-board-pcb",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 4 layers, 290 footprints, 128 fine pads, designer 2438 segments / 417 vias"
+  },
+  {
+   "name": "ikajdan__katia__katia",
+   "directory": "benchmarks/real/external/github/ikajdan__katia__katia",
+   "board_id": "katia",
+   "note": "ikajdan/katia @ bb9ef033, CERN-OHL-P-2.0: 4 layers, 230 footprints, 128 fine pads, designer 2109 segments / 1301 vias"
+  },
+  {
+   "name": "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+   "directory": "benchmarks/real/external/github/Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+   "board_id": "TelemetryOnboard",
+   "note": "Spaceflight-Rocketry-Giessen-e-V/Telemetry @ ee4886d1, CERN-OHL-S-2.0: 4 layers, 143 footprints, 112 fine pads, designer 671 segments / 269 vias"
+  },
+  {
+   "name": "Huaqiu-Electronics__ecad-viewer__video",
+   "directory": "benchmarks/real/external/github/Huaqiu-Electronics__ecad-viewer__video",
+   "board_id": "video",
+   "note": "Huaqiu-Electronics/ecad-viewer @ a2679a11, MIT: 4 layers, 189 footprints, 100 fine pads, designer 7932 segments / 808 vias"
+  },
+  {
+   "name": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "directory": "benchmarks/real/external/github/ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "board_id": "DSP-ADAU1452",
+   "note": "ohdsp/DSP-ADAU1452 @ f9dd8f79, NOASSERTION: 4 layers, 377 footprints, 72 fine pads, designer 1992 segments / 355 vias"
+  },
+  {
+   "name": "rosco-m68k__rosco_m68k__rosco_m68k",
+   "directory": "benchmarks/real/external/github/rosco-m68k__rosco_m68k__rosco_m68k",
+   "board_id": "rosco_m68k",
+   "note": "rosco-m68k/rosco_m68k @ ec229f9e, NOASSERTION: 4 layers, 140 footprints, 72 fine pads, designer 3716 segments / 402 vias"
+  },
+  {
+   "name": "byrantech__laptop__power",
+   "directory": "benchmarks/real/external/github/byrantech__laptop__power",
+   "board_id": "power",
+   "note": "byrantech/laptop @ 007e853d, MIT: 4 layers, 179 footprints, 64 fine pads, designer 1129 segments / 167 vias"
+  },
+  {
+   "name": "wntrblm__Castor_and_Pollux__mainboard",
+   "directory": "benchmarks/real/external/github/wntrblm__Castor_and_Pollux__mainboard",
+   "board_id": "mainboard",
+   "note": "wntrblm/Castor_and_Pollux @ 652b28c9, NOASSERTION: 4 layers, 235 footprints, 58 fine pads, designer 1820 segments / 358 vias"
+  },
+  {
+   "name": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "directory": "benchmarks/real/external/github/bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "board_id": "SUMEC_MK_IV",
+   "note": "bismarx-v1/Sumec-MiniSumo @ 70f835fc, None: 4 layers, 122 footprints, 24 fine pads, designer 573 segments / 541 vias"
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__pcb-panel",
+   "directory": "benchmarks/real/external/github/0xCB-dev__0xCB-1337__pcb-panel",
+   "board_id": "pcb-panel",
+   "note": "0xCB-dev/0xCB-1337 @ 57ba92df, NOASSERTION: 4 layers, 485 footprints, 0 fine pads, designer 2876 segments / 0 vias"
+  },
+  {
+   "name": "greatscottgadgets__hackrf__hackrf-one",
+   "directory": "benchmarks/real/external/github/greatscottgadgets__hackrf__hackrf-one",
+   "board_id": "hackrf-one",
+   "note": "greatscottgadgets/hackrf @ 7f96cc8e, GPL-2.0: 4 layers, 437 footprints, 0 fine pads, designer 3817 segments / 0 vias"
+  },
+  {
+   "name": "GlasgowEmbedded__glasgow__glasgow",
+   "directory": "benchmarks/real/external/github/GlasgowEmbedded__glasgow__glasgow",
+   "board_id": "glasgow",
+   "note": "GlasgowEmbedded/glasgow @ 6e9bd3a1, 0BSD: 4 layers, 272 footprints, 0 fine pads, designer 4715 segments / 0 vias"
+  },
+  {
+   "name": "Neotron-Compute__Neotron-Pico__neotron-pico",
+   "directory": "benchmarks/real/external/github/Neotron-Compute__Neotron-Pico__neotron-pico",
+   "board_id": "neotron-pico",
+   "note": "Neotron-Compute/Neotron-Pico @ f078d997, None: 4 layers, 242 footprints, 0 fine pads, designer 1627 segments / 0 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1.1",
+   "board_id": "MIDAS-MK1.1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 221 footprints, 0 fine pads, designer 1160 segments / 0 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1",
+   "board_id": "MIDAS-MK1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 221 footprints, 0 fine pads, designer 1110 segments / 0 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1",
+   "board_id": "MIDAS-MK1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 221 footprints, 0 fine pads, designer 1104 segments / 0 vias"
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1",
+   "directory": "benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1.1",
+   "board_id": "MIDAS-MK1.1",
+   "note": "ISSUIUC/ISS-PCB @ a78651e3, None: 4 layers, 216 footprints, 0 fine pads, designer 1144 segments / 0 vias"
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-30-proto",
+   "directory": "benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-30-proto",
+   "board_id": "mackerel-30-proto",
+   "note": "crmaykish/mackerel-68k @ 50786ed6, MIT: 4 layers, 133 footprints, 0 fine pads, designer 2615 segments / 294 vias"
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__pcb",
+   "directory": "benchmarks/real/external/github/0xCB-dev__0xCB-1337__pcb",
+   "board_id": "pcb",
+   "note": "0xCB-dev/0xCB-1337 @ 57ba92df, NOASSERTION: 4 layers, 119 footprints, 0 fine pads, designer 719 segments / 0 vias"
+  },
+  {
+   "name": "sporkus__capybully_keyboard__capybully",
+   "directory": "benchmarks/real/external/github/sporkus__capybully_keyboard__capybully",
+   "board_id": "capybully",
+   "note": "sporkus/capybully_keyboard @ 32ee7add, CERN-OHL-W-2.0: 4 layers, 114 footprints, 0 fine pads, designer 715 segments / 0 vias"
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-10-v1",
+   "directory": "benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-10-v1",
+   "board_id": "mackerel-10-v1",
+   "note": "crmaykish/mackerel-68k @ 50786ed6, MIT: 4 layers, 114 footprints, 0 fine pads, designer 2261 segments / 200 vias"
+  },
+  {
+   "name": "rosco-m68k__rosco_m68k__rosco_m68k",
+   "directory": "benchmarks/real/external/github/rosco-m68k__rosco_m68k__rosco_m68k",
+   "board_id": "rosco_m68k",
+   "note": "rosco-m68k/rosco_m68k @ ec229f9e, NOASSERTION: 4 layers, 100 footprints, 0 fine pads, designer 3017 segments / 0 vias"
+  },
+  {
+   "name": "rosco-m68k__rosco_m68k__rosco_m68k",
+   "directory": "benchmarks/real/external/github/rosco-m68k__rosco_m68k__rosco_m68k",
+   "board_id": "rosco_m68k",
+   "note": "rosco-m68k/rosco_m68k @ ec229f9e, NOASSERTION: 4 layers, 99 footprints, 0 fine pads, designer 3771 segments / 0 vias"
+  },
+  {
+   "name": "transistorfet__computie__k30-SBC",
+   "directory": "benchmarks/real/external/github/transistorfet__computie__k30-SBC",
+   "board_id": "k30-SBC",
+   "note": "transistorfet/computie @ 760e1b80, GPL-3.0: 4 layers, 88 footprints, 0 fine pads, designer 3635 segments / 0 vias"
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-08-v1",
+   "directory": "benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-08-v1",
+   "board_id": "mackerel-08-v1",
+   "note": "crmaykish/mackerel-68k @ 50786ed6, MIT: 4 layers, 86 footprints, 0 fine pads, designer 2060 segments / 208 vias"
+  },
+  {
+   "name": "CDFER__Business-Cards__Batch_1",
+   "directory": "benchmarks/real/external/github/CDFER__Business-Cards__Batch_1",
+   "board_id": "Batch 1",
+   "note": "CDFER/Business-Cards @ 1f6432d7, NOASSERTION: 2 layers, 479 footprints, 250 fine pads, designer 24906 segments / 374 vias"
+  },
+  {
+   "name": "byrantech__laptop__keyboard",
+   "directory": "benchmarks/real/external/github/byrantech__laptop__keyboard",
+   "board_id": "keyboard",
+   "note": "byrantech/laptop @ 007e853d, MIT: 2 layers, 220 footprints, 90 fine pads, designer 1484 segments / 571 vias"
+  },
+  {
+   "name": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "directory": "benchmarks/real/external/github/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "note": "obsilab/Quanta75 @ fe456307, CERN-OHL-P-2.0: 2 layers, 276 footprints, 80 fine pads, designer 1905 segments / 95 vias"
+  },
+  {
+   "name": "CDFER__Business-Cards__USB_Keypad",
+   "directory": "benchmarks/real/external/github/CDFER__Business-Cards__USB_Keypad",
+   "board_id": "USB Keypad",
+   "note": "CDFER/Business-Cards @ 1f6432d7, NOASSERTION: 2 layers, 98 footprints, 72 fine pads, designer 5815 segments / 78 vias"
+  },
+  {
+   "name": "CDFER__Business-Cards__WLED_Matrix",
+   "directory": "benchmarks/real/external/github/CDFER__Business-Cards__WLED_Matrix",
+   "board_id": "WLED Matrix",
+   "note": "CDFER/Business-Cards @ 1f6432d7, NOASSERTION: 2 layers, 153 footprints, 58 fine pads, designer 9048 segments / 111 vias"
+  },
+  {
+   "name": "iandchasse__silkscreen-pcb__silkscreen_pcb",
+   "directory": "benchmarks/real/external/github/iandchasse__silkscreen-pcb__silkscreen_pcb",
+   "board_id": "silkscreen_pcb",
+   "note": "iandchasse/silkscreen-pcb @ b916ffa7, CERN-OHL-S-2.0: 2 layers, 188 footprints, 50 fine pads, designer 1734 segments / 192 vias"
+  },
+  {
+   "name": "anyshake__explorer__Explorer",
+   "directory": "benchmarks/real/external/github/anyshake__explorer__Explorer",
+   "board_id": "Explorer",
+   "note": "anyshake/explorer @ 0404bea9, NOASSERTION: 2 layers, 266 footprints, 48 fine pads, designer 1687 segments / 1057 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__woagboard",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__woagboard",
+   "board_id": "woagboard",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 2 layers, 104 footprints, 48 fine pads, designer 813 segments / 119 vias"
+  },
+  {
+   "name": "CDFER__Business-Cards__USB_Cable_Tester",
+   "directory": "benchmarks/real/external/github/CDFER__Business-Cards__USB_Cable_Tester",
+   "board_id": "USB Cable Tester",
+   "note": "CDFER/Business-Cards @ 1f6432d7, NOASSERTION: 2 layers, 89 footprints, 48 fine pads, designer 7966 segments / 57 vias"
+  },
+  {
+   "name": "CDFER__Business-Cards__USB_Cable_Tester",
+   "directory": "benchmarks/real/external/github/CDFER__Business-Cards__USB_Cable_Tester",
+   "board_id": "USB Cable Tester",
+   "note": "CDFER/Business-Cards @ 1f6432d7, NOASSERTION: 2 layers, 92 footprints, 34 fine pads, designer 13018 segments / 110 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__PixelWave",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__PixelWave",
+   "board_id": "PixelWave",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 2 layers, 663 footprints, 32 fine pads, designer 3180 segments / 705 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__MotionCubeViewAllForces",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__MotionCubeViewAllForces",
+   "board_id": "MotionCubeViewAllForces",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 2 layers, 30 footprints, 32 fine pads, designer 299 segments / 29 vias"
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "directory": "benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "board_id": "OM-FlexGrid-Flex",
+   "note": "Open-Muscle/OpenMuscle-FlexGrid @ 912e6e61, CERN-OHL-S-2.0: 2 layers, 61 footprints, 20 fine pads, designer 209 segments / 132 vias"
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "directory": "benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "board_id": "OM-FlexGrid-Flex",
+   "note": "Open-Muscle/OpenMuscle-FlexGrid @ 912e6e61, CERN-OHL-S-2.0: 2 layers, 61 footprints, 20 fine pads, designer 136 segments / 132 vias"
+  },
+  {
+   "name": "doudar__SmartSpin2k__SmartSpin2k_Panelized",
+   "directory": "benchmarks/real/external/github/doudar__SmartSpin2k__SmartSpin2k_Panelized",
+   "board_id": "SmartSpin2k_Panelized",
+   "note": "doudar/SmartSpin2k @ 8e861fbb, GPL-2.0: 2 layers, 749 footprints, 0 fine pads, designer 6759 segments / 0 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x5",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_4x5",
+   "board_id": "poly_kb_molecule_4x5",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 2 layers, 716 footprints, 0 fine pads, designer 10331 segments / 0 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left",
+   "board_id": "poly_kb_molecule_7x5_wave_left",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 2 layers, 629 footprints, 0 fine pads, designer 14059 segments / 0 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x4",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_4x4",
+   "board_id": "poly_kb_molecule_4x4",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 2 layers, 576 footprints, 0 fine pads, designer 8270 segments / 0 vias"
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__panel",
+   "directory": "benchmarks/real/external/github/0xCB-dev__0xCB-1337__panel",
+   "board_id": "panel",
+   "note": "0xCB-dev/0xCB-1337 @ 57ba92df, NOASSERTION: 2 layers, 466 footprints, 0 fine pads, designer 1432 segments / 0 vias"
+  },
+  {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-01",
+   "directory": "benchmarks/real/external/github/stonedDiscord__nonSNES__SNSP-CPU-01",
+   "board_id": "SNSP-CPU-01",
+   "note": "stonedDiscord/nonSNES @ cf2e70b3, GPL-3.0: 2 layers, 400 footprints, 0 fine pads, designer 8639 segments / 1197 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+   "board_id": "poly_kb_molecule_5x4_wave",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 2 layers, 393 footprints, 0 fine pads, designer 9969 segments / 0 vias"
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted",
+   "directory": "benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted",
+   "board_id": "poly_kb_molecule_5x2_shifted",
+   "note": "thpoll83/PolyKybd @ 77e3f508, CERN-OHL-W-2.0: 2 layers, 392 footprints, 0 fine pads, designer 5224 segments / 0 vias"
+  },
+  {
+   "name": "stonedDiscord__MegaDrive__MegaDrive",
+   "directory": "benchmarks/real/external/github/stonedDiscord__MegaDrive__MegaDrive",
+   "board_id": "MegaDrive",
+   "note": "stonedDiscord/MegaDrive @ 937baed3, None: 2 layers, 291 footprints, 0 fine pads, designer 9611 segments / 785 vias"
+  },
+  {
+   "name": "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "directory": "benchmarks/real/external/github/obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "board_id": "Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "note": "obsilab/Quanta75 @ fe456307, CERN-OHL-P-2.0: 2 layers, 253 footprints, 0 fine pads, designer 1708 segments / 0 vias"
+  },
+  {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-1CHIP",
+   "directory": "benchmarks/real/external/github/stonedDiscord__nonSNES__SNSP-CPU-1CHIP",
+   "board_id": "SNSP-CPU-1CHIP",
+   "note": "stonedDiscord/nonSNES @ cf2e70b3, GPL-3.0: 2 layers, 241 footprints, 0 fine pads, designer 4345 segments / 686 vias"
+  },
+  {
+   "name": "CRImier__MyKiCad__protoesp",
+   "directory": "benchmarks/real/external/github/CRImier__MyKiCad__protoesp",
+   "board_id": "protoesp",
+   "note": "CRImier/MyKiCad @ 4f01eaa6, GPL-3.0: 2 layers, 228 footprints, 0 fine pads, designer 2743 segments / 0 vias"
+  },
+  {
+   "name": "tzarc__keyboards__ghoul",
+   "directory": "benchmarks/real/external/github/tzarc__keyboards__ghoul",
+   "board_id": "ghoul",
+   "note": "tzarc/keyboards @ 21dd5861, CERN-OHL-S-2.0: 2 layers, 191 footprints, 0 fine pads, designer 2087 segments / 0 vias"
+  },
+  {
+   "name": "zli117__CyberKeeb2040__MainBoard",
+   "directory": "benchmarks/real/external/github/zli117__CyberKeeb2040__MainBoard",
+   "board_id": "MainBoard",
+   "note": "zli117/CyberKeeb2040 @ 519856dd, CC-BY-SA-4.0: 2 layers, 182 footprints, 0 fine pads, designer 2145 segments / 0 vias"
+  },
+  {
+   "name": "headblockhead__slab-pcb__interchange-pcb-right",
+   "directory": "benchmarks/real/external/github/headblockhead__slab-pcb__interchange-pcb-right",
+   "board_id": "interchange-pcb-right",
+   "note": "headblockhead/slab-pcb @ c71d1f6a, CERN-OHL-S-2.0: 2 layers, 178 footprints, 0 fine pads, designer 1725 segments / 203 vias"
+  },
+  {
+   "name": "ebastler__osprey__osprey_rev_a",
+   "directory": "benchmarks/real/external/github/ebastler__osprey__osprey_rev_a",
+   "board_id": "osprey_rev_a",
+   "note": "ebastler/osprey @ 0765a0c2, NOASSERTION: 2 layers, 160 footprints, 0 fine pads, designer 1350 segments / 0 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__keyboar_",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__keyboar_",
+   "board_id": "keyboar!",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 2 layers, 158 footprints, 0 fine pads, designer 1030 segments / 0 vias"
+  },
+  {
+   "name": "baldengineer__bit-preserve__coco2",
+   "directory": "benchmarks/real/external/github/baldengineer__bit-preserve__coco2",
+   "board_id": "coco2",
+   "note": "baldengineer/bit-preserve @ 8de51fb1, NOASSERTION: 2 layers, 156 footprints, 0 fine pads, designer 3563 segments / 0 vias"
+  },
+  {
+   "name": "Ladniy__jiran-ble-lite__jiran-ble-lite",
+   "directory": "benchmarks/real/external/github/Ladniy__jiran-ble-lite__jiran-ble-lite",
+   "board_id": "jiran-ble-lite",
+   "note": "Ladniy/jiran-ble-lite @ c2a5ef42, CERN-OHL-P-2.0: 2 layers, 154 footprints, 0 fine pads, designer 1176 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_core",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_core",
+   "board_id": "bumwings_v001_core",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 153 footprints, 0 fine pads, designer 979 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd",
+   "board_id": "bumwings_v001R64_nano_sd",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 135 footprints, 0 fine pads, designer 855 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd",
+   "board_id": "bumwings_v001R64_xiao_sd",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 132 footprints, 0 fine pads, designer 884 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd",
+   "board_id": "bumwings_v001R64_rp2040zero_sd",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 130 footprints, 0 fine pads, designer 866 segments / 0 vias"
+  },
+  {
+   "name": "0xCB-dev__0xCB-Static__0xcb-static",
+   "directory": "benchmarks/real/external/github/0xCB-dev__0xCB-Static__0xcb-static",
+   "board_id": "0xcb-static",
+   "note": "0xCB-dev/0xCB-Static @ 4cad7a89, NOASSERTION: 2 layers, 129 footprints, 0 fine pads, designer 725 segments / 0 vias"
+  },
+  {
+   "name": "headblockhead__slab-pcb__slab-pcb-left",
+   "directory": "benchmarks/real/external/github/headblockhead__slab-pcb__slab-pcb-left",
+   "board_id": "slab-pcb-left",
+   "note": "headblockhead/slab-pcb @ c71d1f6a, CERN-OHL-S-2.0: 2 layers, 128 footprints, 0 fine pads, designer 1572 segments / 239 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_xiao",
+   "board_id": "bumwings_v001_xiao",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 127 footprints, 0 fine pads, designer 887 segments / 0 vias"
+  },
+  {
+   "name": "Goga64__ULK__ULK_sl_PG1316s",
+   "directory": "benchmarks/real/external/github/Goga64__ULK__ULK_sl_PG1316s",
+   "board_id": "ULK_sl_PG1316s",
+   "note": "Goga64/ULK @ 32fccf46, MIT: 2 layers, 124 footprints, 0 fine pads, designer 736 segments / 60 vias"
+  },
+  {
+   "name": "Goga64__ULK__ULK",
+   "directory": "benchmarks/real/external/github/Goga64__ULK__ULK",
+   "board_id": "ULK",
+   "note": "Goga64/ULK @ 32fccf46, MIT: 2 layers, 124 footprints, 0 fine pads, designer 618 segments / 63 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_xiao_s",
+   "board_id": "bumwings_v001_xiao_s",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 122 footprints, 0 fine pads, designer 828 segments / 0 vias"
+  },
+  {
+   "name": "duckyb__urchin__main",
+   "directory": "benchmarks/real/external/github/duckyb__urchin__main",
+   "board_id": "main",
+   "note": "duckyb/urchin @ aef241da, MIT: 2 layers, 122 footprints, 0 fine pads, designer 469 segments / 53 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd",
+   "board_id": "bumwings_v001R55_xiao_sd",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 121 footprints, 0 fine pads, designer 787 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001",
+   "board_id": "bumwings_v001",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 120 footprints, 0 fine pads, designer 801 segments / 0 vias"
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd",
+   "directory": "benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd",
+   "board_id": "bumwings_v001R55_rp2040zero_sd",
+   "note": "tubbytwins/bumwings-kbd @ 70c0a9d5, MIT: 2 layers, 120 footprints, 0 fine pads, designer 738 segments / 0 vias"
+  },
+  {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys",
+   "directory": "benchmarks/real/external/github/sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys",
+   "board_id": "stm32_chiffre_36keys",
+   "note": "sporkus/le_chiffre_keyboard_stm32 @ 57f64495, CERN-OHL-W-2.0: 2 layers, 118 footprints, 0 fine pads, designer 1068 segments / 0 vias"
+  },
+  {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre",
+   "directory": "benchmarks/real/external/github/sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre",
+   "board_id": "stm32_hotswap_chiffre",
+   "note": "sporkus/le_chiffre_keyboard_stm32 @ 57f64495, CERN-OHL-W-2.0: 2 layers, 110 footprints, 0 fine pads, designer 957 segments / 0 vias"
+  },
+  {
+   "name": "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard",
+   "directory": "benchmarks/real/external/github/siderakb__ergo-snm-keyboard__ErgoSNM_keyboard",
+   "board_id": "ErgoSNM_keyboard",
+   "note": "siderakb/ergo-snm-keyboard @ 20e9e51e, CERN-OHL-P-2.0: 2 layers, 98 footprints, 0 fine pads, designer 1154 segments / 0 vias"
+  },
+  {
+   "name": "duckyb__eternal-keypad__eternal-keypad",
+   "directory": "benchmarks/real/external/github/duckyb__eternal-keypad__eternal-keypad",
+   "board_id": "eternal-keypad",
+   "note": "duckyb/eternal-keypad @ bf11c1d5, MIT: 2 layers, 93 footprints, 0 fine pads, designer 554 segments / 0 vias"
+  },
+  {
+   "name": "ASH-ART__Qfwfq__qfwfq",
+   "directory": "benchmarks/real/external/github/ASH-ART__Qfwfq__qfwfq",
+   "board_id": "qfwfq",
+   "note": "ASH-ART/Qfwfq @ 664c586c, GPL-3.0: 2 layers, 91 footprints, 0 fine pads, designer 718 segments / 0 vias"
+  },
+  {
+   "name": "little-red-rover__little-red-rover__little_red_rover",
+   "directory": "benchmarks/real/external/github/little-red-rover__little-red-rover__little_red_rover",
+   "board_id": "little_red_rover",
+   "note": "little-red-rover/little-red-rover @ 1509a7a9, None: 2 layers, 65 footprints, 0 fine pads, designer 1096 segments / 0 vias"
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__1337-v4.0",
+   "directory": "benchmarks/real/external/github/0xCB-dev__0xCB-1337__1337-v4.0",
+   "board_id": "1337-v4.0",
+   "note": "0xCB-dev/0xCB-1337 @ 57ba92df, NOASSERTION: 2 layers, 64 footprints, 0 fine pads, designer 358 segments / 0 vias"
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex",
+   "directory": "benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex",
+   "board_id": "OM-60-Flex",
+   "note": "Open-Muscle/OpenMuscle-FlexGrid @ 912e6e61, CERN-OHL-S-2.0: 2 layers, 62 footprints, 0 fine pads, designer 418 segments / 120 vias"
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "directory": "benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "board_id": "OM-FlexGrid-Flex",
+   "note": "Open-Muscle/OpenMuscle-FlexGrid @ 912e6e61, CERN-OHL-S-2.0: 2 layers, 61 footprints, 0 fine pads, designer 284 segments / 120 vias"
+  },
+  {
+   "name": "Jana-Marie__ligra__ligra_back",
+   "directory": "benchmarks/real/external/github/Jana-Marie__ligra__ligra_back",
+   "board_id": "ligra_back",
+   "note": "Jana-Marie/ligra @ 8a98f393, CERN-OHL-S-2.0: 2 layers, 61 footprints, 0 fine pads, designer 380 segments / 251 vias"
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "directory": "benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex",
+   "board_id": "OM-FlexGrid-Flex",
+   "note": "Open-Muscle/OpenMuscle-FlexGrid @ 912e6e61, CERN-OHL-S-2.0: 2 layers, 61 footprints, 0 fine pads, designer 498 segments / 120 vias"
+  },
+  {
+   "name": "bitshiftcrazy__d20_pcb__d20_pcb",
+   "directory": "benchmarks/real/external/github/bitshiftcrazy__d20_pcb__d20_pcb",
+   "board_id": "d20_pcb",
+   "note": "bitshiftcrazy/d20_pcb @ 220807c9, None: 2 layers, 39 footprints, 0 fine pads, designer 453 segments / 46 vias"
+  },
+  {
+   "name": "hackclub__OnBoard__E-Fidget-Lite",
+   "directory": "benchmarks/real/external/github/hackclub__OnBoard__E-Fidget-Lite",
+   "board_id": "E-Fidget-Lite",
+   "note": "hackclub/OnBoard @ 4d3caeea, None: 2 layers, 29 footprints, 0 fine pads, designer 226 segments / 0 vias"
+  },
+  {
+   "name": "tomunderwood99__CharlieBoard__Blue_Line",
+   "directory": "benchmarks/real/external/github/tomunderwood99__CharlieBoard__Blue_Line",
+   "board_id": "Blue Line",
+   "note": "tomunderwood99/CharlieBoard @ 9e019f0e, MIT: 2 layers, 25 footprints, 0 fine pads, designer 135 segments / 28 vias"
+  },
+  {
+   "name": "bitshiftcrazy__spell_tome__spell_tome_bottom",
+   "directory": "benchmarks/real/external/github/bitshiftcrazy__spell_tome__spell_tome_bottom",
+   "board_id": "spell_tome_bottom",
+   "note": "bitshiftcrazy/spell_tome @ 0eefa7cf, NOASSERTION: 2 layers, 25 footprints, 0 fine pads, designer 137 segments / 6 vias"
+  }
+ ]
+}

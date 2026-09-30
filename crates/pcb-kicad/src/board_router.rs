@@ -121,6 +121,12 @@ pub struct KiCadBoardRouterConfig {
     /// three pour rungs with their seed retries.
     #[serde(default)]
     pub ladder_budget_seconds: Option<f64>,
+    /// Seconds one negotiation may run (default 900 s). The ladder sets it
+    /// per attempt from what is left of its budget, so that a hopeless
+    /// first rung leaves time for the next (video's exclusive-plane rung
+    /// ran 1180 s with 222 open, and no other rung ran).
+    #[serde(default)]
+    pub negotiation_seconds: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -1420,6 +1426,14 @@ pub fn route_kicad_board(
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
+            // An attempt with rungs after it gets half of what is left of
+            // the ladder's budget; the last one gets it all.
+            if config.negotiation_seconds.is_none() {
+                let remaining = (ladder_budget - ladder_started.elapsed().as_secs_f64()).max(0.0);
+                let last = mode + 1 == modes.len() && std::ptr::eq(pitch, pitches.last().unwrap());
+                let share = if last { remaining } else { remaining / 2.0 };
+                attempt.negotiation_seconds = Some(share.clamp(60.0, 900.0));
+            }
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
             }
@@ -1750,6 +1764,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(stall) = config.stall_at_cap {
         router_config.stall_at_cap = stall;
+    }
+    if let Some(seconds) = config.negotiation_seconds {
+        router_config.negotiation_seconds = seconds;
     }
     if let Some(global) = config.global_routing {
         router_config.global_routing = global;
