@@ -27,8 +27,32 @@ pub(super) fn geometry(
             return chamfered_geometry(pad, center, size, angle_degrees, &chamfered, chamfer_ratio);
         }
     }
-    if pad.child("padstack").is_some() {
-        return Err("per-layer roundrect padstacks have no exact geometry lowering".into());
+    let mut size = size;
+    let mut ratio_of = pad;
+    if let Some(padstack) = pad.child("padstack") {
+        // A padstack (KiCad 9) gives other copper layers their own shapes;
+        // the pad's own shape is the front one. On a front-only surface
+        // pad the other entries are inert (footprints edited in that mode
+        // keep them); a back-only surface pad (a flipped footprint) is
+        // what its `B.Cu` entry says.
+        let copper: Vec<&str> = pad
+            .child("layers")
+            .map(|layers| {
+                layers.children().iter().skip(1).filter_map(Expr::atom).filter(|name| name.ends_with(".Cu")).collect()
+            })
+            .unwrap_or_default();
+        let back = padstack
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("layer") && item.children().get(1).and_then(Expr::atom) == Some("B.Cu"));
+        match (copper.as_slice(), back) {
+            (["F.Cu"], _) => {}
+            (["B.Cu"], Some(entry)) if entry.child("shape").and_then(|shape| shape.children().get(1)).and_then(Expr::atom) == Some("roundrect") && entry.child("chamfer").is_none() => {
+                size = form_xy(entry, "size")?;
+                ratio_of = entry;
+            }
+            _ => return Err("per-layer roundrect padstacks have no exact geometry lowering".into()),
+        }
     }
     if !size.iter().all(|v| v.is_finite() && *v > 0.0)
         || !center.iter().all(|v| v.is_finite())
@@ -36,7 +60,7 @@ pub(super) fn geometry(
     {
         return Err("roundrect pad requires finite positive dimensions and finite pose".into());
     }
-    let ratio = form_f64(pad, "roundrect_rratio", 1)
+    let ratio = form_f64(ratio_of, "roundrect_rratio", 1)
         .map_err(|_| "roundrect pad requires an explicit numeric roundrect_rratio".to_string())?;
     if !ratio.is_finite() || !(0.0..=0.5).contains(&ratio) {
         return Err("roundrect_rratio must be finite and between zero and 0.5".into());
@@ -278,7 +302,7 @@ mod tests {
         for ratio in ["NaN", "inf", "-0.1", "0.6", "garbage"] {
             assert!(geometry(&pad(ratio), [0.0; 2], [2.0; 2], 0.0).is_err());
         }
-        for extra in ["(chamfer top_left) (chamfer_ratio 0.7)", "(padstack)"] {
+        for extra in ["(chamfer top_left) (chamfer_ratio 0.7)", "(layers \"*.Cu\") (padstack)"] {
             let p = parse(&format!(
                 "(pad \"1\" smd roundrect (roundrect_rratio 0.25) {extra})"
             ))
