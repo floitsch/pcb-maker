@@ -211,6 +211,31 @@ footprints, 10-12 layers) as long-term targets. More open boards (Olimex and
 others) can be added to `corpus.json`; boards whose source fails KiCad's checks
 for other reasons than the baseline subtraction covers should be skipped.
 
+## Boards harvested from GitHub (added 2026-09-30)
+
+Florian's direction: more benchmarks, from open-source boards on GitHub,
+routed on the designer's placement and placed under constraints derived from
+it. [benchmarks/github/README.md](../benchmarks/github/README.md) describes
+the harvest (`harvest.py search | fetch | boards`): KiCad 7+ boards found by
+code search (generator version and package kind) and by repository topic
+(files over 300 kB), fetched at the head commit, kept when they are finished
+designs of some size. First harvest: 109 boards from 62 repositories, 44
+with four copper layers, 12 with six, 2 with eight; 38 with 100 or more
+fine pads (a side of 0.3 mm or less). `manifest.json` records origin,
+commit, licence and the designer's numbers; the files stay out of the
+repository.
+
+Route mode: `benchmarks/corpus/run.py <out> --corpus benchmarks/github/boards.json --skip-layout`,
+summarised by cause with `benchmarks/github/summary.py <out>`. Layout tasks:
+`benchmarks/agent-tasks/from_pcbench.py <tasks> --corpus benchmarks/github/boards.json`
+then `benchmarks/agent-tasks/run.py <out> --tasks <tasks>/tasks.json`.
+
+What the first boards found, before any full run finished (fixed the same
+day): chamfered roundrect pads were refused (4 boards), a rule area's holes
+were read as more keepouts (Glasgow's rim keepout covered the whole board,
+0/226), and the ladder's first rung could spend the whole budget on a
+hopeless configuration (video). Results of the first full run go here.
+
 ## Breadboard fence boards (added 2026-09-25)
 
 [`benchmarks/fence/`](../benchmarks/fence/README.md) holds the boards of a
