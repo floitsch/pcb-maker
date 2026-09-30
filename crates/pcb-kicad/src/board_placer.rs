@@ -448,6 +448,8 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
     // Crystals and the nets on their signal pins; IC pads by net.
     let mut crystals: Vec<(usize, Vec<String>)> = Vec::new();
     let mut ic_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
+    // IC pads whose pin function names a switch node (`SW`, `LX`), by net.
+    let mut switch_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
     // Inductors and their switch-node nets.
     let mut inductors: Vec<(usize, Vec<String>)> = Vec::new();
     // ESD protection and the nets it guards; connector pads by net.
@@ -455,16 +457,24 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
     let mut connector_pads: BTreeMap<String, Vec<(usize, [f64; 2])>> = BTreeMap::new();
     for (index, footprint) in footprints.iter().enumerate() {
         let reference = footprint_reference(footprint).unwrap_or_default();
-        let pads: Vec<(Option<String>, [f64; 2], bool)> = footprint
+        let pads: Vec<(Option<String>, [f64; 2], bool, bool)> = footprint
             .children()
             .iter()
             .filter(|child| child.head() == Some("pad"))
             .map(|pad| {
                 let at = form_at(pad).unwrap_or([0.0; 3]);
+                // The pin function without KiCad's appended pin number.
+                let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
+                let function = function.rsplit_once('_').filter(|(_, number)| number.chars().all(|c| c.is_ascii_digit())).map_or(function, |(name, _)| name);
+                let function = function.to_ascii_uppercase();
+                let switch = matches!(function.as_str(), "SW" | "LX" | "SWITCH" | "PH" | "SWN" | "SWP" | "BST" | "VSW")
+                    || function.starts_with("SW") && function[2..].chars().all(|c| c.is_ascii_digit())
+                    || function.starts_with("LX") && function[2..].chars().all(|c| c.is_ascii_digit());
                 (
                     node_net(pad).filter(|raw| placer_net(raw)).map(|raw| normalize_net(raw).to_string()),
                     [at[0], at[1]],
                     form_atom(pad, "pintype", 1) == Some("power_in"),
+                    switch,
                 )
             })
             .collect();
@@ -479,25 +489,28 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
             && !problem.components[index].fixed
             && !named.contains(&index);
         if matches!(prefix(&reference).as_str(), "J" | "P" | "CN" | "CON" | "USB") {
-            for (net, offset, _) in &pads {
+            for (net, offset, _, _) in &pads {
                 if let Some(net) = net.as_ref().filter(|net| !ground(net)) {
                     connector_pads.entry(net.clone()).or_default().push((index, *offset));
                 }
             }
         }
         if protector {
-            let nets: Vec<String> = pads.iter().filter_map(|(net, _, _)| net.clone()).filter(|net| !ground(net)).collect();
+            let nets: Vec<String> = pads.iter().filter_map(|(net, _, _, _)| net.clone()).filter(|net| !ground(net)).collect();
             protectors.push((index, nets));
             continue;
         }
         match prefix(&reference).as_str() {
             "U" | "IC" if pads.len() >= 3 => {
                 let mut seen = BTreeSet::new();
-                for (net, offset, power) in &pads {
+                for (net, offset, power, switch) in &pads {
                     let Some(net) = net else {
                         continue;
                     };
                     ic_pads.entry(net.clone()).or_default().push((index, *offset));
+                    if *switch {
+                        switch_pads.entry(net.clone()).or_default().push((index, *offset));
+                    }
                     // One anchor per rail and IC: its first supply pin.
                     if !ground(net) && (*power || rail_name(net)) && seen.insert(net.clone()) {
                         supplies.push(Supply { part: index, offset: *offset, net: net.clone() });
@@ -514,7 +527,7 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
                 }
                 let nets: Vec<String> = pads
                     .iter()
-                    .filter_map(|(net, _, _)| net.clone())
+                    .filter_map(|(net, _, _, _)| net.clone())
                     .filter(|net| !ground(net) && !rail_name(net))
                     .collect();
                 crystals.push((index, nets));
@@ -526,7 +539,7 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
                 // The switch node: the net that is neither ground nor a rail.
                 let nets: Vec<String> = pads
                     .iter()
-                    .filter_map(|(net, _, _)| net.clone())
+                    .filter_map(|(net, _, _, _)| net.clone())
                     .filter(|net| !ground(net) && !rail_name(net))
                     .collect();
                 if nets.len() == 1 {
@@ -571,11 +584,14 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
         }
         relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { 2.5 } });
     }
-    // A switcher's inductor at the IC's switch pin: a small hot loop.
+    // A switcher's inductor at the IC's switch pin: a small hot loop. Only
+    // where a pin function says the pin switches (a supply filter's
+    // inductor also sits between an IC pin and a rail, and pulling it in
+    // costs routability: Brushless_ESC).
     for (index, nets) in inductors {
         let anchors: Vec<Anchor> = nets
             .iter()
-            .flat_map(|net| ic_pads.get(net).into_iter().flatten())
+            .flat_map(|net| switch_pads.get(net).into_iter().flatten())
             .map(|(ic, offset)| Anchor::Point(*ic, *offset))
             .collect();
         if !anchors.is_empty() {

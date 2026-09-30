@@ -66,6 +66,9 @@ pub struct KiCadBoardRouterConfig {
     /// Keep other nets' tracks off inner-layer planes entirely.
     #[serde(default)]
     pub exclusive_planes: Option<bool>,
+    /// Reach of the neck width around narrow pads (default 1.5 mm; 0 off).
+    #[serde(default)]
+    pub neck_reach_mm: Option<f64>,
     /// Cost factor of a track (or via) cutting a plane (default 3).
     #[serde(default)]
     pub plane_cut_cost: Option<f64>,
@@ -1745,6 +1748,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(exclusive) = config.exclusive_planes {
         router_config.exclusive_planes = exclusive;
+    }
+    if let Some(reach) = config.neck_reach_mm {
+        router_config.neck_reach = reach;
     }
     if let Some(cost) = config.plane_cut_cost {
         router_config.plane_cut_cost = cost;

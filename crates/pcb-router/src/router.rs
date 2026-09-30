@@ -483,9 +483,9 @@ pub struct Router {
 }
 
 impl Router {
-    pub fn new(board: &Board, config: &Config) -> Self {
-        // Every class wider than the neck gets a neck variant, for routing
-        // next to fine-pitch pads.
+    /// `board` with a neck variant of every class wider than the neck (for
+    /// routing next to fine-pitch pads), and per class its neck class.
+    fn with_neck_classes(board: &Board, config: &Config) -> (Board, Vec<Option<usize>>) {
         let mut board = board.clone();
         let mut neck_of = vec![None; board.classes.len()];
         if config.neck_reach > 0.0 {
@@ -502,6 +502,11 @@ impl Router {
             }
         }
         neck_of.resize(board.classes.len(), None);
+        (board, neck_of)
+    }
+
+    pub fn new(board: &Board, config: &Config) -> Self {
+        let (board, neck_of) = Self::with_neck_classes(board, config);
         let board = &board;
         let grid = Grid::choose(board, &config.pitches);
         if config.verbose {
@@ -2375,6 +2380,11 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
+        let (board, neck_of) = Self::with_neck_classes(board, &self.config);
+        let board = &board;
+        if neck_of != self.neck_of {
+            return Err("incremental update needs the same nets and rules".into());
+        }
         if board.nets.len() != self.board.nets.len()
             || board.classes != self.board.classes
             || board.layer_count != self.board.layer_count
