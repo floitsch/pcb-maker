@@ -167,6 +167,50 @@ Two debugging lessons came out of this work:
 - `PCB_TOPO_SVG=<dir>` pictures made the realization bugs obvious. Build
   pictures early.
 
+## 2026-09-30: completeness first
+
+Florian's direction after the TopoR work: **completeness before speed**
+(speed only where it is cheap); Freerouting comparisons only when the
+README is updated. State of the router work that followed:
+
+### Done (committed)
+- **Automatic planes** on 4+ layer boards without pours (GND on the first
+  inner layer, busiest rail on the last; `automatic_planes: false`).
+- **Exclusive planes** as a ladder rung: inner planes kept free of signals
+  first, then open to them, then pour nets as tracks (`exclusive_planes`,
+  `plane_cut_cost`). ColdFire wants exclusive, video wants open.
+- **Neck zones**: within 1.5 mm of narrow pads a net routes at the board's
+  neck width (`neck_reach`); escape stubs stamp at their real width (a bug:
+  adjacent 0.5 mm pads' stubs collided at the full class width).
+- Lattice phase: narrow pads vote per axis.
+- Clean-up in parallel over disjoint windows; `present_factor`,
+  `present_growth`, `stall_at_cap`, `via_reduction_present` (4 saves a
+  third of Interf-U's time for 3 more vias; off) in the router config.
+- Global tile-graph planner (`global_routing`, off: no gain yet, ColdFire
+  slower).
+- Agent-task runner: `REF**` parts really fixed (glob escapes); a runner
+  failure fails its task only. 6 of 8 regressed tasks pass again.
+
+### Open, with root causes found
+- **Tiny Tapeout 82/108.** RP2040 QFN, 0.4 mm pitch, 0.2/0.2 rules. Nine
+  +3V3/GND pads (0.23 mm class clearance) cannot be reached under the
+  board's rules at all (the designer's board has those DRC errors). The
+  rest need tracks at *exactly* the clearance next to each other, which
+  the round clearance stamps (plus margin) forbid although KiCad accepts
+  them. Needs direction-aware clearance in the lattice.
+- **ColdFire GND 11-13 open.** GND and +3.3V alternate on the LQFP-100 at
+  0.5 mm; one 0.8 mm via per pad cannot fit. The designer joins the power
+  pads with tracks along the rows to 1 GND and 3 +3.3V vias. Pour nets
+  need to form such trees; the fixed-stub pre-pass (`fixed_plane_stubs`,
+  off) did not settle.
+- **Brushless_ESC** (agent task): 44/50 in 1177 s, passed at v48.
+- **PCB_constant_current_ac_hv**: one capacitor finds no legal spot.
+
+### Timings (unloaded machine, stripped boards)
+Interf-U 63 s (via reduction is most of it), multichannel 96 s, ColdFire
+375-415 s, video 730 s; Freerouting: ColdFire 1457 s with 8 unrouted,
+video unfinished at 1800 s.
+
 ## Where things are
 
 | What | Where |
