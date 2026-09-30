@@ -143,9 +143,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a
-    designer would lay it out. `add_pours` replaces this. An inner-layer
-    pour over the whole board is a plane: no other net's tracks run in
-    it, only vias pass.
+    designer would lay it out. `add_pours` replaces this.
+  - `exclusive_planes`: an inner-layer pour over the whole board is a
+    plane. Left unset, the router first keeps other nets' tracks out of it
+    (it stays whole) and, if connections stay open, then lets them cut it
+    as designers do (`plane_cut_cost`, default 3, prices that). `true` or
+    `false` picks one.
   - `net_classes`: track widths and clearances for named nets, such as
     `[{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.6,
     "clearance_mm": 0.3}]`. The fields are `via_diameter_mm` and

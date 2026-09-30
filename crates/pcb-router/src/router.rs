@@ -41,6 +41,9 @@ pub struct Config {
     /// through negotiation. Off: on ColdFire the pre-pass never settles and
     /// fixed stubs left clearance violations.
     pub fixed_plane_stubs: bool,
+    /// Keep other nets' tracks off exclusive planes entirely (else they pay
+    /// `plane_cut_cost` there, as designers do cut planes locally).
+    pub exclusive_planes: bool,
     /// Within this distance of a net's own narrow pads (narrower than its
     /// track plus clearance) the net routes at the board's neck width: the
     /// fan-out of a fine-pitch part. 0 turns it off.
@@ -121,6 +124,7 @@ impl Default for Config {
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,
+            exclusive_planes: false,
             history_increment: 0.3,
             max_iterations: 80,
             window_margin: 10.0,
@@ -630,7 +634,7 @@ impl Router {
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             neck_of,
-            exclusive: (0..layers).map(|layer| board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
+            exclusive: (0..layers).map(|layer| config.exclusive_planes && board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
             frame_hook: None,

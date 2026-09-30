@@ -63,6 +63,12 @@ pub struct KiCadBoardRouterConfig {
     /// Price of sharing when a via reduction round starts.
     #[serde(default)]
     pub via_reduction_present: Option<f64>,
+    /// Keep other nets' tracks off inner-layer planes entirely.
+    #[serde(default)]
+    pub exclusive_planes: Option<bool>,
+    /// Cost factor of a track (or via) cutting a plane (default 3).
+    #[serde(default)]
+    pub plane_cut_cost: Option<f64>,
     #[serde(default)]
     pub present_cap: Option<f64>,
     /// Narrowest track the board allows (neck-downs out of small pads).
@@ -1336,12 +1342,21 @@ pub fn route_kicad_board(
     // only blocks vias.
     let skeleton = config.plane_skeleton.unwrap_or(false);
     let two_layers = layer_table.names.len() == 2;
-    let modes: Vec<(bool, bool)> = match (has_pours, config.pours) {
-        (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false)],
-        (true, KiCadPourMode::Connect) => vec![(true, skeleton)],
-        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true), (false, false)],
-        (true, KiCadPourMode::Auto) if two_layers => vec![(true, false), (true, true), (false, false)],
-        (true, KiCadPourMode::Auto) => vec![(true, false), (false, false)],
+    // (connect pours, plane skeleton, exclusive planes). On four or more
+    // layers, inner planes are first kept free of signals (they stay whole:
+    // ColdFire 13 open against 43), then opened to them (video needs the
+    // room: 9 open against 110), then pour nets go as tracks.
+    let exclusive = config.exclusive_planes;
+    let modes: Vec<(bool, bool, bool)> = match (has_pours, config.pours) {
+        (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false, false)],
+        (true, KiCadPourMode::Connect) => vec![(true, skeleton, exclusive.unwrap_or(false))],
+        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true, false), (false, false, false)],
+        (true, KiCadPourMode::Auto) if two_layers => vec![(true, false, false), (true, true, false), (false, false, false)],
+        (true, KiCadPourMode::Auto) => match exclusive {
+            Some(true) => vec![(true, false, true), (false, false, false)],
+            Some(false) => vec![(true, false, false), (false, false, false)],
+            None => vec![(true, false, true), (true, false, false), (false, false, false)],
+        },
     };
     let refine = config
         .refine_pitches_mm
@@ -1376,7 +1391,7 @@ pub fn route_kicad_board(
                 break;
             }
         }
-        for (mode, (connect, skeleton)) in modes.iter().enumerate() {
+        for (mode, (connect, skeleton, exclusive)) in modes.iter().enumerate() {
             // The skeleton only helps when the plain pour connection left
             // pads of a pour net open; elsewhere it just takes room.
             if *skeleton
@@ -1392,6 +1407,7 @@ pub fn route_kicad_board(
             }
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
+            attempt.exclusive_planes = Some(*exclusive);
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
             }
@@ -1457,8 +1473,9 @@ pub fn route_kicad_board(
                 }
             }
             eprintln!(
-                "attempt pours={} pitch={}: {} open, {} starved, {} vias, {:.1} s",
+                "attempt pours={}{} pitch={}: {} open, {} starved, {} vias, {:.1} s",
                 result.pours,
+                if *exclusive { " (exclusive planes)" } else { "" },
                 pitch
                     .as_ref()
                     .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
@@ -1722,6 +1739,12 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(present) = config.via_reduction_present {
         router_config.via_reduction_present = present;
+    }
+    if let Some(exclusive) = config.exclusive_planes {
+        router_config.exclusive_planes = exclusive;
+    }
+    if let Some(cost) = config.plane_cut_cost {
+        router_config.plane_cut_cost = cost;
     }
     if let Some(cost) = config.cleanup_via_cost_mm {
         router_config.cleanup_via_cost = cost;
