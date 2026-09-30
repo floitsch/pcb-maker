@@ -11891,33 +11891,56 @@ fn rule_area_layer_mask(zone: &Expr) -> Result<[bool; 2], String> {
     }
 }
 
+/// A rule area's outline as one simple polygon. KiCad writes the zone's
+/// outline as its first `polygon` and every hole as a further `polygon`
+/// (Glasgow keeps tracks off a 1.7 mm rim this way: a board-sized outline
+/// with the inside cut out). Each hole is joined to the outline by a slit
+/// between their closest vertices, walked in and out again, which the
+/// even-odd point test and the edge distances treat as the ring it is.
 fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
-    let points = zone
-        .child("polygon")
-        .and_then(|polygon| polygon.child("pts"))
-        .ok_or_else(|| "rule area has no polygon points".to_string())?
-        .children()
-        .iter()
-        .skip(1)
-        .filter(|point| point.head() == Some("xy"))
-        .map(|point| {
-            let coordinate = |index: usize| {
-                point
-                    .children()
-                    .get(index)
-                    .and_then(Expr::atom)
-                    .ok_or_else(|| "rule-area xy point is missing a coordinate".to_string())?
-                    .parse::<f64>()
-                    .map_err(|error| format!("invalid rule-area xy coordinate: {error}"))
-            };
-            Ok::<[f64; 2], String>([coordinate(1)?, coordinate(2)?])
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if points.len() < 3 {
-        Err("rule area polygon has fewer than three points".into())
-    } else {
-        Ok(points)
+    let mut polygons: Vec<Vec<[f64; 2]>> = Vec::new();
+    for polygon in zone.children().iter().filter(|item| item.head() == Some("polygon")) {
+        let points = polygon
+            .child("pts")
+            .ok_or_else(|| "rule area has no polygon points".to_string())?
+            .children()
+            .iter()
+            .skip(1)
+            .filter(|point| point.head() == Some("xy"))
+            .map(|point| {
+                let coordinate = |index: usize| {
+                    point
+                        .children()
+                        .get(index)
+                        .and_then(Expr::atom)
+                        .ok_or_else(|| "rule-area xy point is missing a coordinate".to_string())?
+                        .parse::<f64>()
+                        .map_err(|error| format!("invalid rule-area xy coordinate: {error}"))
+                };
+                Ok::<[f64; 2], String>([coordinate(1)?, coordinate(2)?])
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if points.len() >= 3 {
+            polygons.push(points);
+        }
     }
+    let mut polygons = polygons.into_iter();
+    let mut outline = polygons.next().ok_or_else(|| "rule area polygon has fewer than three points".to_string())?;
+    for hole in polygons {
+        let (i, j) = (0..outline.len())
+            .flat_map(|i| (0..hole.len()).map(move |j| (i, j)))
+            .min_by(|(a, b), (c, d)| {
+                let da = (outline[*a][0] - hole[*b][0]).powi(2) + (outline[*a][1] - hole[*b][1]).powi(2);
+                let dc = (outline[*c][0] - hole[*d][0]).powi(2) + (outline[*c][1] - hole[*d][1]).powi(2);
+                da.partial_cmp(&dc).unwrap()
+            })
+            .unwrap();
+        let mut joined = outline[..=i].to_vec();
+        joined.extend(hole[j..].iter().chain(hole[..=j].iter()));
+        joined.extend_from_slice(&outline[i..]);
+        outline = joined;
+    }
+    Ok(outline)
 }
 
 struct LoweredPad {
