@@ -140,6 +140,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `[{"net": "GND", "layers": ["B.Cu"]}]`. Each covers the board outline;
     pads connect to it, and islands are stitched with vias. A layer where
     that net already has a zone is skipped.
+  - `automatic_planes` (default true): a board with four or more copper
+    layers and no pours gets ground as a plane on the first inner layer
+    and the supply rail with the most pads on the last inner layer, as a
+    designer would lay it out. `add_pours` replaces this. An inner-layer
+    pour over the whole board is a plane: no other net's tracks run in
+    it, only vias pass.
   - `net_classes`: track widths and clearances for named nets, such as
     `[{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.6,
     "clearance_mm": 0.3}]`. The fields are `via_diameter_mm` and
