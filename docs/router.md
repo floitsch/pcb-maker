@@ -86,7 +86,12 @@ Interf-U were re-run during the audit.
    rip-up used to unstamp them and other nets crossed them.
    `escape_stub_mm` (off) fixes a straight stub outward for every pad of a
    fine-pitch row before negotiation; it did not gain on Tiny Tapeout or
-   ColdFire yet. Under `PCB_ROUTER_DEBUG` the
+   ColdFire yet. `fixed_plane_stubs` connects every surface pad of a pour
+   net to an inner plane by a stub and via before the signals route (only
+   inner planes count: on the empty board every pad touches its own
+   layer's pour, which the signals then cut to pieces); the KiCad ladder
+   runs it as a rung when the plain pour connection left pour-net pads
+   open (Framework mainboard half: 13 open -> 3, then complete as tracks). Under `PCB_ROUTER_DEBUG` the
    conflict spots of stuck nets name the nets stamping them, and
    `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm) prints the lattice of that region per
    layer once few nets remain (statics, occupancy, the stuck nets' nodes).

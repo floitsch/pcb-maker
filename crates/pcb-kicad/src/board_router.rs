@@ -1371,16 +1371,32 @@ pub fn route_kicad_board(
     // ColdFire 13 open against 43), then opened to them (video needs the
     // room: 9 open against 110), then pour nets go as tracks.
     let exclusive = config.exclusive_planes;
-    let modes: Vec<(bool, bool, bool)> = match (has_pours, config.pours) {
-        (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false, false)],
-        (true, KiCadPourMode::Connect) => vec![(true, skeleton, exclusive.unwrap_or(false))],
-        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true, false), (false, false, false)],
-        (true, KiCadPourMode::Auto) if two_layers => vec![(true, false, false), (true, true, false), (false, false, false)],
-        (true, KiCadPourMode::Auto) => match exclusive {
-            Some(true) => vec![(true, false, true), (false, false, false)],
-            Some(false) => vec![(true, false, false), (false, false, false)],
-            None => vec![(true, false, true), (true, false, false), (false, false, false)],
-        },
+    // Rungs: (connect pours, plane skeleton, exclusive planes, plane
+    // stubs). The stub rung (a via next to every surface pad of a pour
+    // net before the signals route; boards with inner planes) runs when
+    // the plain pour connection left pour-net pads open, like the
+    // skeleton rung: it saves those pads on some boards (Framework
+    // mainboard half, GND 7 -> 0) and takes room on others (ColdFire).
+    let stubs = config.fixed_plane_stubs;
+    let modes: Vec<(bool, bool, bool, bool)> = match (has_pours, config.pours) {
+        (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false, false, false)],
+        (true, KiCadPourMode::Connect) => vec![(true, skeleton, exclusive.unwrap_or(false), stubs.unwrap_or(false))],
+        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true, false, false), (false, false, false, false)],
+        (true, KiCadPourMode::Auto) if two_layers => {
+            vec![(true, false, false, false), (true, true, false, false), (false, false, false, false)]
+        }
+        (true, KiCadPourMode::Auto) => {
+            let mut modes = match exclusive {
+                Some(true) => vec![(true, false, true, false)],
+                Some(false) => vec![(true, false, false, false)],
+                None => vec![(true, false, true, false), (true, false, false, false)],
+            };
+            if stubs != Some(false) {
+                modes.push((true, false, false, true));
+            }
+            modes.push((false, false, false, false));
+            modes
+        }
     };
     let refine = config
         .refine_pitches_mm
@@ -1417,11 +1433,12 @@ pub fn route_kicad_board(
                 break;
             }
         }
-        for (mode, (connect, skeleton, exclusive)) in modes.iter().enumerate() {
-            // The skeleton only helps when the plain pour connection left
-            // pads of a pour net open; elsewhere it just takes room.
-            if *skeleton
-                && !config.plane_skeleton.unwrap_or(false)
+        for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
+            // The skeleton and the plane stubs only help when the plain
+            // pour connection left pads of a pour net open; elsewhere they
+            // just take room.
+            if ((*skeleton && !config.plane_skeleton.unwrap_or(false))
+                || (*plane_stubs && !config.fixed_plane_stubs.unwrap_or(false)))
                 && best.as_ref().is_some_and(|(_, result)| {
                     result.pours == "connect"
                         && !result.nets.iter().any(|net| {
@@ -1434,6 +1451,7 @@ pub fn route_kicad_board(
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
+            attempt.fixed_plane_stubs = Some(*plane_stubs);
             // An attempt with rungs after it gets half of what is left of
             // the ladder's budget; the last one gets it all.
             if config.negotiation_seconds.is_none() {
@@ -1509,7 +1527,7 @@ pub fn route_kicad_board(
             eprintln!(
                 "attempt pours={}{} pitch={}: {} open, {} starved, {} vias, {:.1} s",
                 result.pours,
-                if *exclusive { " (exclusive planes)" } else { "" },
+                if *exclusive { " (exclusive planes)" } else if *plane_stubs { " (plane stubs)" } else { "" },
                 pitch
                     .as_ref()
                     .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
