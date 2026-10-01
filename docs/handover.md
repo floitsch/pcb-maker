@@ -265,7 +265,16 @@ from GitHub, strip and reroute, and place under constraints.
 shredded outer pours (hence the pre-pass), a few boards with dead 0.4 mm
 pads under a 0.2 mm clearance (krishveercard: 9 of 19 nets pathless),
 and big boards hitting the 900 s runner timeout (jetson 8L/391 fp,
-ATAT1800). A second sweep with the newest snapshot (`build/bin/pcb-maker-x8`:
+ATAT1800). 2026-10-01: the second sweep is in benchmarks.md (92 boards: 25 clean,
+42 open, 4 mismatch, 21 errors). From its failures, fixed the same day:
+`unconnected-(...)` nets shared by two pads are routed (the 4 mismatches),
+copper layers absent from the stackup are ignored (6 boards), KiCad 6/7
+per-class net lists assign classes (clearance errors), via reduction is
+capped by the attempt's budget (13 timeouts were mostly polish). Queued:
+the layout tasks (`build/github-layout`, 107 tasks, `pcb-maker-x8`) and
+then a rerun of the 67 not-clean boards with `pcb-maker-x10`
+(`build/github-v3.sh` -> `build/github-route-v3`).
+A second sweep with the newest snapshot (`build/bin/pcb-maker-x8`:
 plane-stub rung, 0.127 mm neck when no minimum is stated, padstacks on
 surface pads) is queued behind the first (`build/github-v2.sh`, output
 `build/github-route-v2`); summarise both with `summary.py`, put the table
