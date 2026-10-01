@@ -236,6 +236,113 @@ were read as more keepouts (Glasgow's rim keepout covered the whole board,
 0/226), and the ladder's first rung could spend the whole budget on a
 hopeless configuration (video).
 
+### Second sweep, 92 boards, with the day's fixes (`pcb-maker-x8`, 900 s each, 2026-10-01)
+
+25 clean, 42 open, 4 mismatch (KiCad finds an unconnected item the router
+does not), 21 errors (13 hit the runner's 900 s, 6 are one repository's
+boards naming `In1.Cu` on a two-layer stackup, 1 fails to load in
+kicad-cli, 1 pour with 2242 pieces). Via counts are mostly below the
+designer's. 17 of the 109 boards were skipped (directories renamed after
+the sweep's list was read); rerun them with `--only`.
+
+| Board | Layers | Footprints | Result | Vias (designer) | Time |
+| --- | --- | --- | --- | --- | --- |
+| 0xCB-dev__0xCB-1337__1337-v4.0 | 2 | 64 | clean: 47/47, 44 vias (designer 0), 161 s | 0 | |
+| 0xCB-dev__0xCB-1337__pcb | 4 | 119 | clean: 85/85, 87 vias (designer 0), 107 s | 0 | |
+| 0xCB-dev__0xCB-Static__0xcb-static | 2 | 129 | clean: 74/74, 2 vias (designer 0), 25 s | 0 | |
+| CRImier__MyKiCad__framework_mobo_lefthalf | 6 | 45 | clean: 71/71, 76 vias (designer 203), 101 s | 203 | |
+| ISSUIUC__ISS-PCB__BAGEL-MK1 | 4 | 199 | clean: 138/138, 151 vias (designer 525), 395 s | 525 | |
+| Jana-Marie__ligra__ligra_back | 2 | 61 | clean: 33/33, 11 vias (designer 251), 62 s | 251 | |
+| Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex | 2 | 62 | clean: 21/21, 39 vias (designer 120), 146 s | 120 | |
+| Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex | 2 | 61 | clean: 19/19, 65 vias (designer 120), 275 s | 120 | |
+| anyshake__explorer__Explorer | 2 | 266 | clean: 150/150, 117 vias (designer 1057), 265 s | 1057 | |
+| bitshiftcrazy__d20_pcb__d20_pcb | 2 | 39 | clean: 19/19, 34 vias (designer 46), 57 s | 46 | |
+| bitshiftcrazy__spell_tome__spell_tome_bottom | 2 | 25 | clean: 18/18, 7 vias (designer 6), 15 s | 6 | |
+| byrantech__laptop__power | 4 | 179 | clean: 115/115, 91 vias (designer 167), 285 s | 167 | |
+| crmaykish__mackerel-68k__mackerel-08-v1 | 4 | 86 | clean: 96/96, 64 vias (designer 208), 488 s | 208 | |
+| duckyb__urchin__main | 2 | 122 | clean: 68/68, 7 vias (designer 53), 14 s | 53 | |
+| hackclub__OnBoard__E-Fidget-Lite | 2 | 29 | clean: 20/20, 7 vias (designer 0), 7 s | 0 | |
+| hackclub__OnBoard__MotionCubeViewAllForces | 2 | 30 | clean: 20/20, 35 vias (designer 29), 56 s | 29 | |
+| hackclub__OnBoard__PixelWave | 2 | 663 | clean: 343/343, 708 vias (designer 705), 117 s | 705 | |
+| hackclub__OnBoard__keyboar_ | 2 | 158 | clean: 104/104, 20 vias (designer 0), 176 s | 0 | |
+| siderakb__ergo-snm-keyboard__ErgoSNM_keyboard | 2 | 98 | clean: 58/58, 12 vias (designer 0), 39 s | 0 | |
+| sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys | 2 | 118 | clean: 76/76, 61 vias (designer 0), 175 s | 0 | |
+| sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre | 2 | 110 | clean: 75/75, 42 vias (designer 0), 111 s | 0 | |
+| tomunderwood99__CharlieBoard__Blue_Line | 2 | 25 | clean: 26/26, 26 vias (designer 28), 4 s | 28 | |
+| tubbytwins__bumwings-kbd__bumwings_v001 | 2 | 120 | clean: 72/72, 22 vias (designer 0), 93 s | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001_core | 2 | 153 | clean: 98/98, 71 vias (designer 0), 119 s | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001_xiao | 2 | 127 | clean: 81/81, 47 vias (designer 0), 127 s | 0 | |
+| CRImier__MyKiCad__vaio_re | 4 | 289 | open: 37 open; 230/267, 397 vias (designer 523), 464 s | 523 | |
+| CRImier__MyKiCad__zpn_devboard | 4 | 168 | open: 1 open; 166/167, 149 vias (designer 298), 641 s | 298 | |
+| GlasgowEmbedded__glasgow__glasgow__revC3 | 4 | 272 | open: 61 open; 165/226, 206 vias (designer 0), 454 s | 0 | |
+| Huaqiu-Electronics__ecad-viewer__video | 4 | 189 | open: 48 open; 323/371, 990 vias (designer 808), 846 s | 808 | |
+| ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado | 4 | 212 | open: 9 open; 135/144, 266 vias (designer 820), 322 s | 820 | |
+| ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA | 4 | 216 | open: 5 open; 151/156, 131 vias (designer 0), 73 s | 0 | |
+| ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA | 4 | 221 | open: 5 open; 154/159, 139 vias (designer 0), 45 s | 0 | |
+| ISSUIUC__ISS-PCB__MIDAS-MK2 | 4 | 217 | open: 1 open; 155/156, 167 vias (designer 401), 157 s | 401 | |
+| ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA | 4 | 219 | open: 1 open; 153/154, 163 vias (designer 432), 337 s | 432 | |
+| Ladniy__jiran-ble-lite__jiran-ble-lite | 2 | 154 | open: 1 open; 104/105, 54 vias (designer 0), 48 s | 0 | |
+| MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub | 4 | 235 | open: 56 open; 103/159, 102 vias (designer 331), 224 s | 331 | |
+| Neotron-Compute__Neotron-Pico__neotron-pico | 4 | 242 | open: 14 open; 176/190, 155 vias (designer 0), 505 s | 0 | |
+| OpenDrone-hw__OpenFC-Lite__OpenFC | 6 | 164 | open: 1 open; 81/82, 121 vias (designer 596), 140 s | 596 | |
+| OpenDrone-hw__OpenRX__OpenRX-panel-rev2 | 6 | 254 | open: 50 open; 53/103, 125 vias (designer 538), 465 s | 538 | |
+| Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1 | 4 | 92 | open: 2 open; 54/56, 44 vias (designer 334), 17 s | 334 | |
+| Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard | 4 | 143 | open: 3 open; 105/108, 71 vias (designer 269), 148 s | 269 | |
+| Twisted-Fields__rp2040-motor-controller__RP2040_base | 4 | 325 | open: 71 open; 115/186, 233 vias (designer 553), 82 s | 553 | |
+| apfaudio__eurorack-pmod__eurorack-pmod-pcb | 6 | 155 | open: 2 open; 131/133, 133 vias (designer 331), 242 s | 331 | |
+| baldengineer__bit-preserve__coco2 | 2 | 156 | open: 1 open; 172/173, 315 vias (designer 0), 713 s | 0 | |
+| bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV | 4 | 122 | open: 12 open; 57/69, 89 vias (designer 541), 33 s | 541 | |
+| briskspirit__Sisu_SSE-9__Sisu_SSE-9 | 6 | 296 | open: 8 open; 184/192, 239 vias (designer 1076), 492 s | 1076 | |
+| byrantech__laptop__keyboard | 2 | 220 | open: 4 open; 132/136, 173 vias (designer 571), 276 s | 571 | |
+| byrantech__laptop__motherboard | 6 | 264 | open: 3 open; 233/236, 378 vias (designer 734), 641 s | 734 | |
+| ebastler__osprey__osprey_rev_a | 2 | 160 | open: 3 open; 100/103, 120 vias (designer 0), 87 s | 0 | |
+| emertcakir__OpenAirScope__OpenAirScope | 4 | 282 | open: 6 open; 178/184, 146 vias (designer 473), 254 s | 473 | |
+| greatscottgadgets__hackrf__hackrf-one | 4 | 437 | open: 3 open; 316/319, 396 vias (designer 0), 664 s | 0 | |
+| hackclub__OnBoard__krishveercard | 4 | 39 | open: 14 open; 29/43, 38 vias (designer 87), 167 s | 87 | |
+| headblockhead__slab-pcb__interchange-pcb-right | 2 | 178 | open: 2 open; 81/83, 242 vias (designer 203), 236 s | 203 | |
+| headblockhead__slab-pcb__slab-pcb-left | 2 | 128 | open: 2 open; 76/78, 192 vias (designer 239), 192 s | 239 | |
+| little-red-rover__little-red-rover__little_red_rover | 2 | 65 | open: 1 open; 63/64, 110 vias (designer 0), 76 s | 0 | |
+| maniekx86__M8SBC-486__homebrew_486 | 4 | 130 | open: 2 open; 188/190, 1102 vias (designer 1150), 717 s | 1150 | |
+| obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized | 2 | 276 | open: 25 open; 147/172, 53 vias (designer 95), 769 s | 95 | |
+| obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized | 2 | 253 | open: 1 open; 161/162, 31 vias (designer 0), 290 s | 0 | |
+| ohdsp__DSP-ADAU1452__DSP-ADAU1452 | 4 | 377 | open: 27 open; 163/190, 41 vias (designer 355), 94 s | 355 | |
+| rosco-m68k__rosco_m68k__rosco_m68k__kicad | 4 | 140 | open: 1 open; 147/148, 416 vias (designer 402), 648 s | 402 | |
+| stonedDiscord__nonSNES__SNSP-CPU-01 | 2 | 400 | open: 2 open; 361/363, 1202 vias (designer 1197), 319 s | 1197 | |
+| stonedDiscord__nonSNES__SNSP-CPU-1CHIP | 2 | 241 | open: 1 open; 211/212, 359 vias (designer 686), 555 s | 686 | |
+| tengigabytes__MokyaLora__MokyaLora | 6 | 443 | open: 4 open; 258/262, 172 vias (designer 836), 611 s | 836 | |
+| thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted | 2 | 392 | open: 23 open; 4/27, 199 vias (designer 0), 701 s | 0 | |
+| tzarc__keyboards__ghoul | 2 | 191 | open: 6 open; 142/148, 244 vias (designer 0), 57 s | 0 | |
+| vd-rd__sbc_allwinner_a13__module | 4 | 179 | open: 41 open; 182/223, 361 vias (designer 501), 366 s | 501 | |
+| wntrblm__Castor_and_Pollux__mainboard | 4 | 235 | open: 1 open; 125/126, 121 vias (designer 358), 234 s | 358 | |
+| duckyb__eternal-keypad__eternal-keypad | 2 | 93 | mismatch: 2 unconnected in KiCad; 63/63, 35 vias (designer 0), 73 s | 0 | |
+| iandchasse__silkscreen-pcb__silkscreen_pcb | 2 | 188 | mismatch: 1 unconnected in KiCad; 113/113, 138 vias (designer 192), 28 s | 192 | |
+| sporkus__capybully_keyboard__capybully | 4 | 114 | mismatch: 5 unconnected in KiCad; 32/32, 19 vias (designer 0), 236 s | 0 | |
+| zli117__CyberKeeb2040__MainBoard | 2 | 182 | mismatch: 1 unconnected in KiCad; 118/118, 169 vias (designer 0), 474 s | 0 | |
+| antmicro__jetson-nano-baseboard__jetson-nano-baseboard | 8 | 391 | error: iteration 24: rerouted 31, conflicted 28, present 8417.06, 613.61s (search 609.15s, stamp 4.41s, 887 | 794 | |
+| crmaykish__mackerel-68k__mackerel-10-v1 | 4 | 114 | error: iteration 18: rerouted 2, conflicted 0, present 738.95, 284.20s (search 618.13s, stamp 23.70s, 12682 | 200 | |
+| crmaykish__mackerel-68k__mackerel-30-proto | 4 | 133 | error: iteration 25: rerouted 2, conflicted 0, present 10000.00, 235.74s (search 544.77s, stamp 14.97s, 156 | 294 | |
+| earth75__atat-1800__ATAT1800 | 4 | 342 | error: iteration 33: rerouted 58, conflicted 57, present 10000.00, 613.74s (search 598.48s, stamp 15.17s, 5 | 680 | |
+| hackclub__OnBoard__koeg-board-pcb | 4 | 290 | error: error: kicad-cli failed with exit status: 3: Failed to load board: One or more items were found on u | 417 | |
+| oro-os__link__link | 8 | 381 | error: cleanup: 329 improvements, 181.95s | 806 | |
+| stonedDiscord__MegaDrive__MegaDrive | 2 | 291 | error: pour GND: 2242 pieces, 70 stranded terminals (62 touch a piece) | 785 | |
+| thpoll83__PolyKybd__poly_corne_split42_right | 4 | 573 | error: iteration 79: rerouted 8, conflicted 7, present 10000.00, 602.03s (search 586.43s, stamp 15.18s, 131 | 1372 | |
+| thpoll83__PolyKybd__poly_kb_molecule_4x4 | 2 | 576 | error: iteration 26: rerouted 26, conflicted 26, present 10000.00, 315.43s (search 307.18s, stamp 8.12s, 23 | 0 | |
+| thpoll83__PolyKybd__poly_kb_molecule_4x5 | 2 | 716 | error: iteration 26: rerouted 26, conflicted 26, present 10000.00, 453.07s (search 442.42s, stamp 10.47s, 2 | 0 | |
+| thpoll83__PolyKybd__poly_kb_molecule_5x4_wave | 2 | 393 | error: iteration 26: rerouted 26, conflicted 26, present 10000.00, 349.15s (search 339.69s, stamp 9.33s, 22 | 0 | |
+| thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left | 2 | 629 | error: iteration 24: rerouted 26, conflicted 26, present 8417.06, 626.26s (search 612.42s, stamp 13.62s, 30 | 0 | |
+| thpoll83__PolyKybd__poly_kybd_split72_left | 4 | 573 | error: iteration 49: rerouted 2, conflicted 0, present 10000.00, 351.86s (search 343.13s, stamp 8.51s, 1082 | 1354 | |
+| thpoll83__PolyKybd__poly_kybd_split72_right | 4 | 573 | error: iteration 79: rerouted 4, conflicted 4, present 10000.00, 488.28s (search 477.32s, stamp 10.63s, 113 | 1368 | |
+| transistorfet__computie__k30-SBC | 4 | 88 | error: iteration 18: rerouted 4, conflicted 0, present 738.95, 480.52s (search 665.08s, stamp 10.06s, 12090 | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd | 2 | 120 | error: error: unknown copper layer "In1.Cu" | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd | 2 | 121 | error: error: unknown copper layer "In1.Cu" | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd | 2 | 135 | error: error: unknown copper layer "In1.Cu" | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd | 2 | 130 | error: error: unknown copper layer "In1.Cu" | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd | 2 | 132 | error: error: unknown copper layer "In1.Cu" | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001_xiao_s | 2 | 122 | error: error: unknown copper layer "In1.Cu" | 0 | |
+
+92 boards: clean 25, open 42, drc 0, mismatch 4, error 21
+
+
 ### First sweep, 38 boards, before the day's fixes (`pcb-maker-x4`, 900 s each)
 
 Stopped after 38 boards once its failure classes were clear, so the machine
