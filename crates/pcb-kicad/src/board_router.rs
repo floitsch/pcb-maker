@@ -507,11 +507,12 @@ impl LayerTable {
             match name {
                 "*.Cu" => mask |= self.all(),
                 "F&B.Cu" => mask |= 1 | 1 << (self.len() - 1),
+                // A copper layer the stackup does not have (a footprint
+                // made for more layers) carries nothing, as in KiCad.
                 name if name.ends_with(".Cu") => {
-                    mask |= 1
-                        << self
-                            .index(name)
-                            .ok_or_else(|| format!("unknown copper layer {name:?}"))?;
+                    if let Some(index) = self.index(name) {
+                        mask |= 1 << index;
+                    }
                 }
                 _ => {}
             }
@@ -536,12 +537,39 @@ impl LayerTable {
     }
 }
 
+thread_local! {
+    /// `unconnected-(...)` nets that nevertheless join two or more pads: a
+    /// reversible footprint's duplicate pad numbers on both sides. KiCad
+    /// wants them connected and reports them unconnected otherwise.
+    static JUMPER_NETS: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+/// Records the `unconnected-(...)` nets of `pcb` that hold two or more
+/// pads, for `routable_net` (on this thread, for the lowering that follows).
+fn note_jumper_nets(pcb: &Expr) {
+    let mut pads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+        for pad in footprint.children().iter().filter(|item| item.head() == Some("pad")) {
+            if let Some(net) = node_net(pad)
+                && net.rsplit('/').next().unwrap_or(net).starts_with("unconnected-(")
+            {
+                *pads.entry(net).or_default() += 1;
+            }
+        }
+    }
+    JUMPER_NETS.with(|jumpers| {
+        *jumpers.borrow_mut() = pads.into_iter().filter(|(_, count)| *count >= 2).map(|(net, _)| net.to_string()).collect();
+    });
+}
+
 /// Whether a net (by its raw name, sheet path included) is routed. Bare
-/// numbers are placeholders for single pins; `/1` is a labelled net.
+/// numbers are placeholders for single pins; `/1` is a labelled net; an
+/// `unconnected-(...)` net is a single pin unless two pads share it.
 pub(super) fn routable_net(raw: &str) -> bool {
     !raw.is_empty()
         && !raw.bytes().all(|byte| byte.is_ascii_digit())
-        && !raw.rsplit('/').next().unwrap_or(raw).starts_with("unconnected-(")
+        && (!raw.rsplit('/').next().unwrap_or(raw).starts_with("unconnected-(")
+            || JUMPER_NETS.with(|jumpers| jumpers.borrow().contains(raw)))
 }
 
 /// The drilled hole of a pad: a circle, or a capsule for a slot
@@ -592,6 +620,7 @@ pub(super) fn lower(
     config: &KiCadBoardRouterConfig,
     connect_pours: bool,
 ) -> Result<Lowered, String> {
+    note_jumper_nets(pcb);
     let loops = outline::board_loops(pcb)?;
     let layers = LayerTable::from_pcb(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
@@ -1793,6 +1822,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(seconds) = config.negotiation_seconds {
         router_config.negotiation_seconds = seconds;
+        // The polish after it may not take longer than the negotiation was
+        // allowed.
+        router_config.via_reduction_seconds = seconds.min(300.0);
     }
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;

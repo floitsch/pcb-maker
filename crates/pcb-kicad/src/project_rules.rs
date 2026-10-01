@@ -135,6 +135,21 @@ pub fn resolve_project_rules(
         })
         .collect();
 
+    // KiCad 6 and 7 list a class's nets in the class itself.
+    let listed: BTreeMap<String, String> = project["net_settings"]["classes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|class| {
+            let name = class["name"].as_str().unwrap_or("Default").to_string();
+            class["nets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|net| net.as_str().map(|net| (net.to_string(), name.clone())))
+                .collect::<Vec<_>>()
+        })
+        .collect();
     let mut nets = BTreeSet::<String>::new();
     for footprint in pcb
         .children()
@@ -163,6 +178,7 @@ pub fn resolve_project_rules(
                     .find(|(pattern, _)| wildcard_match(pattern, &raw))
                     .map(|(_, class)| class.clone())
             })
+            .or_else(|| listed.get(&raw).or_else(|| listed.get(normalize_net(&raw))).cloned())
             .filter(|class| classes.contains_key(class))
             .unwrap_or_else(|| "Default".into());
         connection_rules.insert(normalize_net(&raw).to_string(), classes[&class].clone());

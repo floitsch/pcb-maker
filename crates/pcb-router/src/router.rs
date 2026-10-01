@@ -101,6 +101,11 @@ pub struct Config {
     /// Via reduction stops once it has used this many times the main
     /// negotiation's time (at least 60 s).
     pub via_reduction_budget: f64,
+    /// Seconds via reduction may take at most, whatever the negotiation
+    /// took (default 300 s; the KiCad ladder sets it from what is left of
+    /// its budget: a 210 x 170 mm board routed clean in 130 s and then
+    /// spent the runner's remaining 770 s polishing).
+    pub via_reduction_seconds: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
@@ -151,6 +156,7 @@ impl Default for Config {
             via_reduction_weight: 1.0,
             via_reduction_present: 0.5,
             via_reduction_budget: 3.0,
+            via_reduction_seconds: 300.0,
             negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
@@ -3819,7 +3825,9 @@ impl Router {
             }
             return;
         }
-        let budget = (self.config.via_reduction_budget * self.negotiation_seconds).max(60.0);
+        let budget = (self.config.via_reduction_budget * self.negotiation_seconds)
+            .max(60.0)
+            .min(self.config.via_reduction_seconds);
         let started = std::time::Instant::now();
         for round in 0..self.config.via_reduction_rounds {
             if started.elapsed().as_secs_f64() > budget {
