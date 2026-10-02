@@ -60,7 +60,7 @@ def unplace(board, point, remove_outline, keep=()):
         block = text[start:end]
         pieces.append(text[last:start])
         if match.group(1) == "footprint":
-            reference = re.search(r'\(property "Reference" "([^"]*)"', block)
+            reference = re.search(r'\((?:property "Reference"|fp_text reference) "([^"]*)"', block)
             movable = re.search(r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block) and not re.search(
                 r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
                 reference and reference.group(1) in keep)

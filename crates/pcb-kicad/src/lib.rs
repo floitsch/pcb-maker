@@ -13639,12 +13639,16 @@ fn read_pad_nets(path: &Path) -> Result<BTreeMap<(String, String), PadInfo>, Str
     Ok(result)
 }
 
+/// A footprint's reference: KiCad 8 and later write it as a property,
+/// KiCad 6 and 7 as `(fp_text reference "R1" ...)`.
 fn footprint_reference(node: &Expr) -> Option<String> {
     node.children().iter().find_map(|item| {
-        if item.head() != Some("property") || item.children().get(1)?.atom()? != "Reference" {
-            return None;
+        let kind = item.children().get(1)?.atom()?;
+        match item.head()? {
+            "property" if kind == "Reference" => Some(item.children().get(2)?.atom()?.to_string()),
+            "fp_text" if kind == "reference" => Some(item.children().get(2)?.atom()?.to_string()),
+            _ => None,
         }
-        Some(item.children().get(2)?.atom()?.to_string())
     })
 }
 

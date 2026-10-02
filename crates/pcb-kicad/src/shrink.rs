@@ -140,17 +140,7 @@ fn round6(value: f64) -> f64 {
 }
 
 fn reference_of(footprint: &Expr) -> String {
-    footprint
-        .children()
-        .iter()
-        .find(|child| {
-            child.head() == Some("property")
-                && child.children().get(1).and_then(Expr::atom) == Some("Reference")
-        })
-        .and_then(|property| property.children().get(2))
-        .and_then(Expr::atom)
-        .unwrap_or("?")
-        .to_string()
+    footprint_reference(footprint).unwrap_or_else(|| "?".into())
 }
 
 /// Rewrites every `at`, `start`, `mid`, `end`, `center` and `xy` form under
