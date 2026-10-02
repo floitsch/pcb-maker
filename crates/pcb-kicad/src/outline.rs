@@ -65,6 +65,32 @@ pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[
     points
 }
 
+/// Appends the points after the first of a cubic Bezier curve, flattened
+/// until its control points lie within `ARC_TOLERANCE` of each chord (which
+/// bounds the curve's distance from it), by halving (de Casteljau).
+fn bezier_points(controls: [[f64; 2]; 4], depth: usize, points: &mut Vec<[f64; 2]>) {
+    let [a, b, c, d] = controls;
+    let deviation = |point: [f64; 2]| {
+        let (dx, dy) = (d[0] - a[0], d[1] - a[1]);
+        let length = (dx * dx + dy * dy).sqrt();
+        if length < 1.0e-12 {
+            distance_squared(point, a).sqrt()
+        } else {
+            ((point[0] - a[0]) * dy - (point[1] - a[1]) * dx).abs() / length
+        }
+    };
+    if depth >= 16 || deviation(b).max(deviation(c)) <= ARC_TOLERANCE {
+        points.push(d);
+        return;
+    }
+    let half = |p: [f64; 2], q: [f64; 2]| [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0];
+    let (ab, bc, cd) = (half(a, b), half(b, c), half(c, d));
+    let (abc, bcd) = (half(ab, bc), half(bc, cd));
+    let middle = half(abc, bcd);
+    bezier_points([a, ab, abc, middle], depth + 1, points);
+    bezier_points([middle, bcd, cd, d], depth + 1, points);
+}
+
 fn polygon_area(points: &[[f64; 2]]) -> f64 {
     (0..points.len())
         .map(|index| {
@@ -168,7 +194,25 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 }
             }
             Some("gr_curve" | "fp_curve") => {
-                return Err("Edge.Cuts bezier curves are not supported yet".into());
+                let mut controls = Vec::new();
+                for point in item
+                    .child("pts")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                {
+                    controls.push(place([
+                        expression_coordinate(point, 1, "outline x")?,
+                        expression_coordinate(point, 2, "outline y")?,
+                    ]));
+                }
+                let [a, b, c, d] = controls[..] else {
+                    return Err("Edge.Cuts bezier curve needs four points".into());
+                };
+                let mut points = vec![a];
+                bezier_points([a, b, c, d], 0, &mut points);
+                open.push(points);
             }
             _ => {}
         }
@@ -182,6 +226,11 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     // the other end of its own piece, so outlines drawn from 0.01 mm
     // segments keep their shape.
     const CHAIN_TOLERANCE: f64 = 0.02;
+    // A piece shorter than that (a 3 um sliver some drawings carry) is
+    // no edge: dropped, its neighbours' ends then chain to each other.
+    open.retain(|piece| {
+        piece.windows(2).map(|pair| distance_squared(pair[0], pair[1]).sqrt()).sum::<f64>() > CHAIN_TOLERANCE
+    });
     let mut anchors: Vec<[f64; 2]> = Vec::new();
     for piece in &mut open {
         let mut own: Option<usize> = None;
@@ -274,6 +323,38 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sliver_shorter_than_the_chain_tolerance_is_dropped() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_line (start 0 0) (end 10 0) (layer "Edge.Cuts"))
+          (gr_line (start 10 0) (end 10 10) (layer "Edge.Cuts"))
+          (gr_line (start 10 10) (end 0.002 10.002) (layer "Edge.Cuts"))
+          (gr_line (start 0.002 10.002) (end 0 10) (layer "Edge.Cuts"))
+          (gr_line (start 0 10) (end 0 0) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        assert!((polygon_area(&loops.outline) - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_bezier_edge_is_flattened_within_the_tolerance() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_line (start 0 0) (end 10 0) (layer "Edge.Cuts"))
+          (gr_curve (pts (xy 10 0) (xy 14 3) (xy 14 7) (xy 10 10)) (layer "Edge.Cuts"))
+          (gr_line (start 10 10) (end 0 10) (layer "Edge.Cuts"))
+          (gr_line (start 0 10) (end 0 0) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        // The curve bulges 3 * 0.75 * 4 / 4 = 3 mm out at its middle.
+        let widest = loops.outline.iter().map(|point| point[0]).fold(0.0, f64::max);
+        assert!((widest - 13.0).abs() < 0.01, "{widest}");
+        assert!(loops.outline.len() > 10);
+    }
 
     #[test]
     fn end_points_a_few_micrometres_apart_are_chained() {

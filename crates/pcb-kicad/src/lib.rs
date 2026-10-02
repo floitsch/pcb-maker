@@ -2126,8 +2126,13 @@ fn track_arc_length(item: &Expr) -> Result<f64, String> {
         * (start[0] * (middle[1] - end[1])
             + middle[0] * (end[1] - start[1])
             + end[0] * (start[1] - middle[1]));
-    if !denominator.is_finite() || denominator.abs() <= 1.0e-12 {
-        return Err("start/mid/end are collinear".into());
+    if !denominator.is_finite() {
+        return Err("track arc has non-finite points".into());
+    }
+    if denominator.abs() <= 1.0e-12 {
+        // A degenerate arc (its three points on a line, as some boards
+        // carry) is the straight track KiCad draws for it.
+        return Ok(distance_squared(start, middle).sqrt() + distance_squared(middle, end).sqrt());
     }
     let start_norm = start[0] * start[0] + start[1] * start[1];
     let middle_norm = middle[0] * middle[0] + middle[1] * middle[1];

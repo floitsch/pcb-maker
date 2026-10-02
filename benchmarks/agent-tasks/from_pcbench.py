@@ -17,6 +17,7 @@ constraints file per board; run them with
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,10 +26,34 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(ROOT / "benchmarks/pcbench"))
 import run as pcbench  # noqa: E402
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("agent_run", HERE / "run.py")
+agent_run = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(agent_run)
 
 WORK = ROOT / "benchmarks/real/external/pcbench-work/newdrc"
 STEM = "processed_v9_guide_v3"
 CONNECTOR_PREFIXES = ("J", "P", "CN", "CON", "USB", "X")
+
+
+def outline_carriers(board_file):
+    """References of footprints that draw on Edge.Cuts (cutouts in key
+    switch footprints, connector slots): they are part of the outline, so
+    they stay."""
+    text = board_file.read_text()
+    carriers = set()
+    last = 0
+    for match in re.finditer(r'\(footprint "', text):
+        if match.start() < last:
+            continue
+        last = agent_run.block_end(text, match.start())
+        block = text[match.start():last]
+        if '"Edge.Cuts"' in block:
+            reference = re.search(r'(?:property "Reference"|fp_text reference) "([^"]*)"', block)
+            if reference and reference.group(1):
+                carriers.add(reference.group(1))
+    return carriers
 
 
 def is_connector(footprint):
@@ -73,7 +98,9 @@ def main():
         description = json.loads(described.stdout)
         outline = description["outline"]
         if outline is None:
+            print(f"skipping {name}: no outline", file=sys.stderr)
             continue
+        carriers = outline_carriers(board["directory"] / f'{board["board_id"]}.kicad_pcb')
         low, high = outline["minimum"], outline["maximum"]
         edges, rotations, fixed, hollow = [], [], [], []
         footprints = [f for f in description["footprints"] if f["reference"]]
@@ -90,7 +117,7 @@ def main():
         for footprint in description["footprints"]:
             if not footprint["reference"] or not any(net for _, net in footprint["pads"]):
                 continue
-            if footprint["reference"] in hollow:
+            if footprint["reference"] in hollow or footprint["reference"] in carriers:
                 fixed.append(footprint["reference"])
                 continue
             body = footprint["body"]
