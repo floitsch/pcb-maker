@@ -280,6 +280,23 @@ surface pads) is queued behind the first (`build/github-v2.sh`, output
 `build/github-route-v2`); summarise both with `summary.py`, put the table
 in benchmarks.md, then run the layout tasks (`build/github-tasks`).
 
+## 2026-10-01/02: layout on the harvested boards
+
+The first layout run (`build/github-layout`, 89 tasks, `pcb-maker-x8`)
+passed 5. Causes and fixes (all committed): KiCad 6/7 references in
+`fp_text reference` were never read (every part on those boards was
+nameless: no constraint could address it); `(at x y unlocked)` lock flags
+parsed as rotations (15 boards); Bezier outlines (8 boards), sliver outline
+pieces, degenerate track arcs (5 boards failed to strip); footprints that
+draw on Edge.Cuts moved with their parts (tasks now fix them); unnamed
+netless parts stay under `move_all`; harvested-board tasks allow the
+designer's own DRC findings (`designer_budget`). Speed: pour stitching
+batched per pass (was one board-wide flood per via: 300 stranded GND pads),
+clean-up budgeted (`cleanup_seconds`), via reduction capped. Running at the
+hand-over: route sweep `build/github-route-v4` and layout
+`build/github-layout-v2` (109 tasks, 2 jobs), both with `pcb-maker-x13`;
+29 layout tasks had timed out at 1800 s before the speed fixes.
+
 ## Where things are
 
 | What | Where |
