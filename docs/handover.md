@@ -312,7 +312,9 @@ total budget. Route sweep restarted as `build/github-route-v5`
 Later the same day: seed retries only for attempts of at most 120 s (on
 MIDAS-MK2 two retries took 740 s, both worse, and starved the rung that
 completes it; now 156/156, clean apart from the designer's own findings).
-Sweep restarted as `build/github-route-v6` (`pcb-maker-x18`). Of the 42
+The ladder's rungs now share its budget evenly (zpn_devboard completes,
+ColdFire unchanged and faster). Sweep restarted as `build/github-route-v7`
+(`pcb-maker-x19`, runner timeout 1500 s so the 1200 s ladder can finish). Of the 42
 boards open in v2, jiran-ble-lite is limited by keepouts its designer
 violates (`items_not_allowed` 40 in their DRC).
 
