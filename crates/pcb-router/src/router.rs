@@ -2721,13 +2721,7 @@ impl Router {
             })
             .collect();
         self.negotiate(&order, pending);
-        let cleanup = self.config.cleanup_passes;
-        if !polish {
-            self.config.cleanup_passes = 0;
-        }
-        let result = self.finish(&order);
-        self.config.cleanup_passes = cleanup;
-        result
+        self.finish_polished(&order, polish)
     }
 
     /// Routes one net with the router's own scratch (sequential callers).
@@ -3069,6 +3063,13 @@ impl Router {
 
     /// Like `run`, keeping the router for later `update` calls.
     pub fn run_in_place(&mut self) -> RoutingResult {
+        self.run_in_place_polished(true)
+    }
+
+    /// `run_in_place`; without `polish` the clean-up and the via reduction
+    /// are skipped (for trials judged on what stays open, which the polish
+    /// does not change; a later `reroute(true)` polishes).
+    pub fn run_in_place_polished(&mut self, polish: bool) -> RoutingResult {
         let order = self.routing_order();
         self.fix_escapes(&order);
         self.route_skeletons(&order);
@@ -3077,7 +3078,21 @@ impl Router {
             self.plan_globally(&order);
         }
         self.negotiate(&order, order.clone());
-        self.finish(&order)
+        self.finish_polished(&order, polish)
+    }
+
+    /// `finish`, skipping the clean-up and the via reduction without
+    /// `polish`.
+    fn finish_polished(&mut self, order: &[NetId], polish: bool) -> RoutingResult {
+        let (cleanup, rounds) = (self.config.cleanup_passes, self.config.via_reduction_rounds);
+        if !polish {
+            self.config.cleanup_passes = 0;
+            self.config.via_reduction_rounds = 0;
+        }
+        let result = self.finish(order);
+        self.config.cleanup_passes = cleanup;
+        self.config.via_reduction_rounds = rounds;
+        result
     }
 
     /// Registers a hook called after every negotiation iteration with the

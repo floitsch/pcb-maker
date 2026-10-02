@@ -32,6 +32,11 @@ pub struct KiCadBoardLayoutConfig {
     /// Once every connection is routed, moves only polish (fewer vias,
     /// less copper): they stop after this many seconds of the move phase.
     pub polish_seconds: f64,
+    /// Wall-clock budget for the whole layout, in seconds: the placement
+    /// race stops at 40 % of it, the moves at 65 %, and the final ladder
+    /// gets what is left (at least 120 s). An agent waits for this; the
+    /// best board so far is what it gets.
+    pub total_seconds: f64,
     pub placer: KiCadBoardPlacerConfig,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted after placement.
@@ -104,6 +109,7 @@ impl Default for KiCadBoardLayoutConfig {
             steps_mm: vec![0.5, 1.0, 2.0, 4.0],
             move_seconds: 600.0,
             polish_seconds: 60.0,
+            total_seconds: 1500.0,
             placer: KiCadBoardPlacerConfig::default(),
             pin_swaps: None,
             swappable: Vec::new(),
@@ -376,6 +382,8 @@ pub fn layout_kicad_board(
     }
     fs::create_dir_all(output_directory)
         .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
+    let layout_started = std::time::Instant::now();
+    let elapsed = || layout_started.elapsed().as_secs_f64();
     // Requested net classes set their nets' rules (and the spacing).
     let with_classes;
     let router_config = if router_config.net_classes.is_empty() {
@@ -484,8 +492,10 @@ pub fn layout_kicad_board(
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = core_config.verbose && index == 0;
                     scope.spawn(move || {
+                        // Placements are compared on what stays open; the
+                        // polish waits for the one kept.
                         let mut router = core::router::Router::new(board, &seeded);
-                        let result = router.run_in_place();
+                        let result = router.run_in_place_polished(false);
                         (router, result)
                     })
                 })
@@ -539,7 +549,7 @@ pub fn layout_kicad_board(
                 problem = lower_placement(&pcb, &placer_config)?;
                 relaxation.apply(&mut problem.problem);
             }
-            if best.0 == 0 {
+            if best.0 == 0 || elapsed() > 0.4 * config.total_seconds {
                 break;
             }
         }
@@ -561,8 +571,9 @@ pub fn layout_kicad_board(
     let mut since_improvement = 0;
     // While connections are open, trials are judged on the open ones, which
     // the polish (an exact cleanup of every net, up to minutes on a big
-    // board) does not change: it waits until the end.
-    let mut polished = true;
+    // board) does not change: it waits until the end. The first route was
+    // not polished either.
+    let mut polished = false;
     // Trials since a move last closed an open connection: when moves stop
     // closing them, the final ladder is the better use of the time.
     let mut since_fewer_open = 0;
@@ -578,7 +589,8 @@ pub fn layout_kicad_board(
             config.move_seconds.min(config.polish_seconds)
         } else {
             config.move_seconds
-        };
+        }
+        .min((0.65 * config.total_seconds - (elapsed() - move_started.elapsed().as_secs_f64())).max(0.0));
         if since_improvement >= 2 * config.patience
             || (best.0 > 0 && since_fewer_open >= config.patience / 2)
             || move_started.elapsed().as_secs_f64() > budget
@@ -818,6 +830,9 @@ pub fn layout_kicad_board(
         };
         fs::write(&placed_board, format!("{}\n", encode(&placed_pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
+        let mut fallback_config = fallback_config;
+        let left = (config.total_seconds - elapsed()).max(120.0);
+        fallback_config.ladder_budget_seconds = Some(fallback_config.ladder_budget_seconds.unwrap_or(1200.0).min(left));
         let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
         if quality(&fallback, &fallback_directory) < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
