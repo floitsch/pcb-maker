@@ -1481,13 +1481,15 @@ pub fn route_kicad_board(
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
             attempt.fixed_plane_stubs = Some(*plane_stubs);
-            // An attempt with rungs after it gets half of what is left of
-            // the ladder's budget; the last one gets it all.
+            // The rungs left at this pitch share what is left of the
+            // ladder's budget evenly; an attempt spends up to about three
+            // times its negotiation in repair and polish, so negotiation
+            // gets a third of the share (zpn_devboard: two rungs took 1300
+            // s and the two that complete such boards never ran).
             if config.negotiation_seconds.is_none() {
                 let remaining = (ladder_budget - ladder_started.elapsed().as_secs_f64()).max(0.0);
-                let last = mode + 1 == modes.len() && std::ptr::eq(pitch, pitches.last().unwrap());
-                let share = if last { remaining } else { remaining / 2.0 };
-                attempt.negotiation_seconds = Some(share.clamp(60.0, 900.0));
+                let rungs_left = (modes.len() - mode) as f64;
+                attempt.negotiation_seconds = Some((remaining / rungs_left / 3.0).clamp(60.0, 900.0));
             }
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
