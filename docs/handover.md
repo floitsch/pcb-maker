@@ -297,6 +297,19 @@ hand-over: route sweep `build/github-route-v4` and layout
 `build/github-layout-v2` (109 tasks, 2 jobs), both with `pcb-maker-x13`;
 29 layout tasks had timed out at 1800 s before the speed fixes.
 
+## 2026-10-03: memory and the hidden repair time
+
+A layout check was killed by Claude Code for low memory: one route of
+ATAT1800 (4 layers, 3952 x 1227 nodes) peaked at 8.65 GB. Bitset marks and
+16-bit search generations bring it to 5.52 GB with identical results
+(docs/router.md, "Memory"). The same board showed where large boards lose
+their time: `resolve_remaining` (hard reroute after negotiation) took 960 s
+for 107 nets; it is now budgeted by the negotiation's time and skipped on
+hopeless rungs. Layout trial routes no longer polish, and the layout has a
+total budget. Route sweep restarted as `build/github-route-v5`
+(`pcb-maker-x17`); the layout sweep has not been rerun since the fixes
+(run it with `--jobs 1` for memory).
+
 ## Where things are
 
 | What | Where |
