@@ -1053,6 +1053,13 @@ pub(super) fn apply_constraints(
             if locked[index] || leaders.contains_key(&index) || component.side == core::Side::Neither {
                 continue;
             }
+            // A part without nets and without a reference (a keyboard's
+            // case holes, drawn by hand) is something no constraint can
+            // name, so nobody can say where it goes: it stays. A netlist
+            // gives every part a reference.
+            if references[index].is_empty() && component.pins.is_empty() {
+                continue;
+            }
             let mounting_hole = component.pins.is_empty() && component.has_holes();
             if mounting_hole && !constrained.contains(&index) && !named.contains(&index) && !pinned.contains(&index) {
                 for side in spots.next().unwrap_or_default() {

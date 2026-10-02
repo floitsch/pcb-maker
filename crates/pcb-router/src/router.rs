@@ -106,6 +106,10 @@ pub struct Config {
     /// its budget: a 210 x 170 mm board routed clean in 130 s and then
     /// spent the runner's remaining 770 s polishing).
     pub via_reduction_seconds: f64,
+    /// Seconds the clean-up may take at most: no batch starts later than
+    /// this, nor later than the negotiation took (at least 60 s). A
+    /// 130 x 90 mm six-layer board spent 470 s in clean-up.
+    pub cleanup_seconds: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
@@ -157,6 +161,7 @@ impl Default for Config {
             via_reduction_present: 0.5,
             via_reduction_budget: 3.0,
             via_reduction_seconds: 300.0,
+            cleanup_seconds: 180.0,
             negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
@@ -4335,21 +4340,31 @@ impl Router {
                 self.nets[net as usize].stamped.iter().copied().collect();
             let via_map = self.map_index(class_index, layers);
             // Per stranded island, the via closest to its terminal that joins
-            // it to the main piece. Islands without room stay for rerouting.
-            let mut best: Option<(f64, usize, usize, usize)> = None;
-            let mut tried: Vec<usize> = Vec::new();
+            // it to another piece (the main piece is worth a detour), all
+            // found in one pass over the board and added together: one via
+            // per pass and island made a ground net with 300 stranded pads
+            // cost 300 board-wide floods. Islands without room stay for
+            // rerouting.
+            let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
             for terminal in &islands {
                 let island = find(&mut parent, terminal_base + terminal);
-                if tried.contains(&island) || layers < 2 {
-                    continue;
-                }
-                tried.push(island);
-                let anchor = self.board.nets[net as usize].terminals[*terminal].anchor;
+                anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
+            }
+            let mut best: HashMap<usize, (f64, usize, usize, usize)> = HashMap::new();
+            if layers >= 2 {
+                let roots: Vec<Vec<usize>> = (0..layers)
+                    .map(|layer| {
+                        pours.label[layer]
+                            .iter()
+                            .map(|piece| if *piece == 0 { 0 } else { find(&mut parent, *piece as usize) })
+                            .collect()
+                    })
+                    .collect();
                 for layer in 0..layers {
-                    for (cell, piece) in pours.label[layer].iter().enumerate() {
-                        if *piece == 0 || find(&mut parent, *piece as usize) != island {
+                    for (cell, island) in roots[layer].iter().enumerate() {
+                        let Some(anchor) = anchors.get(island) else {
                             continue;
-                        }
+                        };
                         if !self.statics[class_index].via_allowed(cell, net)
                             || self.occupancy[via_map][cell] as usize
                                 != own.contains(&(via_map as u32, cell as u32)) as usize
@@ -4358,50 +4373,53 @@ impl Router {
                             continue;
                         }
                         for other in (0..layers).filter(|other| *other != layer) {
-                            let target = pours.label[other].get(cell).copied().unwrap_or(0);
-                            if target == 0
-                                || find(&mut parent, target as usize) == island
-                                || !pours.solid_around(&self.grid, other, cell, via_reach)
-                            {
+                            let target = roots[other].get(cell).copied().unwrap_or(0);
+                            if target == 0 || target == *island || !pours.solid_around(&self.grid, other, cell, via_reach) {
                                 continue;
                             }
-                            // Any other piece helps (islands merge step by
-                            // step); the main piece is worth a detour.
-                            let bonus = if find(&mut parent, target as usize) == main {
-                                0.0
-                            } else {
-                                5.0
-                            };
-                            let distance = bonus
-                                + crate::geometry::distance(anchor, self.grid.center_of(cell));
-                            if best.is_none_or(|(best, ..)| distance < best) {
-                                best = Some((distance, layer, other, cell));
+                            let bonus = if target == main { 0.0 } else { 5.0 };
+                            let distance = bonus + crate::geometry::distance(*anchor, self.grid.center_of(cell));
+                            let entry = best.entry(*island).or_insert((f64::INFINITY, 0, 0, 0));
+                            if distance < entry.0 {
+                                *entry = (distance, layer, other, cell);
                             }
                         }
                     }
                 }
-                if best.is_some() {
-                    break;
-                }
             }
-            if let Some((_, layer, other, cell)) = best {
-                self.unstamp(net);
-                self.nets[net as usize].branches.push(Branch {
-                    nodes: vec![
-                        Node {
-                            layer: layer as u8,
-                            cell: cell as u32,
-                        },
-                        Node {
-                            layer: other as u8,
-                            cell: cell as u32,
-                        },
-                    ],
-                    start_terminal: PLANE_TERMINAL,
-                    end_terminal: PLANE_TERMINAL,
-                });
+            // Two new vias keep the hole-to-hole distance between them.
+            let spacing = class.via_drill + self.board.hole_to_hole;
+            let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
+            let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
+            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            for (_, layer, other, cell) in candidates {
+                let at = self.grid.center_of(cell);
+                if chosen.iter().any(|(_, _, placed)| {
+                    *placed == cell || crate::geometry::distance(at, self.grid.center_of(*placed)) < spacing.max(class.via_diameter)
+                }) {
+                    continue;
+                }
+                chosen.push((layer, other, cell));
+            }
+            if !chosen.is_empty() {
+                for (layer, other, cell) in &chosen {
+                    self.nets[net as usize].branches.push(Branch {
+                        nodes: vec![
+                            Node {
+                                layer: *layer as u8,
+                                cell: *cell as u32,
+                            },
+                            Node {
+                                layer: *other as u8,
+                                cell: *cell as u32,
+                            },
+                        ],
+                        start_terminal: PLANE_TERMINAL,
+                        end_terminal: PLANE_TERMINAL,
+                    });
+                }
                 self.stamp(net);
-                stitches += 1;
+                stitches += chosen.len();
                 continue;
             }
             if rerouted {
@@ -4480,7 +4498,9 @@ impl Router {
     fn clean_up(&mut self, order: &[NetId]) -> usize {
         self.cleanup = true;
         let mut improvements = 0;
-        for _ in 0..self.config.cleanup_passes {
+        let started = std::time::Instant::now();
+        let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
+        'passes: for _ in 0..self.config.cleanup_passes {
             let mut improved = false;
             let complete: Vec<NetId> = order.iter().copied().filter(|net| self.nets[*net as usize].complete).collect();
             // Nets whose windows do not overlap are cleaned up at once; a
@@ -4491,6 +4511,12 @@ impl Router {
                 complete.iter().map(|net| vec![*net]).collect()
             };
             for batch in batches {
+                if started.elapsed().as_secs_f64() > budget {
+                    if self.config.verbose {
+                        eprintln!("clean-up budget of {budget:.0} s used");
+                    }
+                    break 'passes;
+                }
                 let before: Vec<f64> = batch.iter().map(|net| self.geometric_cost(*net)).collect();
                 let saved: Vec<Vec<Branch>> = batch.iter().map(|net| self.nets[*net as usize].branches.clone()).collect();
                 for net in &batch {

@@ -92,7 +92,9 @@ def unplace(board, point, remove_outline, keep=()):
     return netless
 
 
-def native(result_directory):
+def native(result_directory, allowed=None):
+    """KiCad's copper errors and unconnected items on the result; `allowed`
+    errors per type (the designer's own board's) are not counted."""
     report = result_directory / "drc.json"
     if not report.exists():
         return None
@@ -101,7 +103,37 @@ def native(result_directory):
     for violation in drc.get("violations", []):
         if violation.get("severity") == "error" and not COSMETIC.match(violation["type"]):
             errors[violation["type"]] = errors.get(violation["type"], 0) + 1
+    for kind, count in (allowed or {}).items():
+        if kind in errors:
+            errors[kind] -= count
+            if errors[kind] <= 0:
+                del errors[kind]
     return {"errors": errors, "unconnected": len(drc.get("unconnected_items", []))}
+
+
+def designer_findings(directory, board_id, work):
+    """Copper errors per type on the designer's own routed board, which a
+    task from a real board need not do better than (harvested boards come
+    with their makers' DRC findings: fiducials near holes, rules tightened
+    later)."""
+    reference = work / "reference"
+    shutil.copytree(directory, reference, ignore=shutil.ignore_patterns(
+        ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+    try:
+        subprocess.run(["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
+                        "-o", "drc.json", f"{board_id}.kicad_pcb"], cwd=reference,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    report = reference / "drc.json"
+    if not report.exists():
+        return {}
+    counts = {}
+    for violation in json.loads(report.read_text()).get("violations", []):
+        if violation.get("severity") == "error" and not COSMETIC.match(violation["type"]):
+            counts[violation["type"]] = counts.get(violation["type"], 0) + 1
+    shutil.rmtree(reference, ignore_errors=True)
+    return counts
 
 
 def run_task(task, arguments):
@@ -116,6 +148,7 @@ def run_task(task, arguments):
     shutil.copytree(directory, source, ignore=shutil.ignore_patterns(
         ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
     board = source / f"{task['board_id']}.kicad_pcb"
+    allowed = designer_findings(directory, task["board_id"], work) if task.get("designer_budget") else {}
     subprocess.run([str(arguments.binary), "strip-kicad-tracks", str(board), str(board)],
                    capture_output=True, check=True)
     constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
@@ -159,7 +192,9 @@ def run_task(task, arguments):
     expected = {tuple(miss) for miss in task.get("expected_misses", [])}
     missed = [(c["kind"], c["part"], c.get("other")) for c in result["constraints"] if not c["satisfied"]]
     unexpected = [miss for miss in missed if miss not in expected]
-    copper = native(work / "layout/result")
+    copper = native(work / "layout/result", allowed)
+    if allowed:
+        row["designer_findings"] = allowed
     row.update(
         routed=f"{routed['routed_connections']}/{routed['routable_connections']}",
         vias=routed["vias"], length_mm=round(routed["length_mm"], 1),

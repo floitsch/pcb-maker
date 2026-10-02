@@ -12406,12 +12406,14 @@ fn form_at(node: &Expr) -> Result<[f64; 3], String> {
     Ok([
         form_f64(node, "at", 1)?,
         form_f64(node, "at", 2)?,
-        at.children()
-            .get(3)
-            .and_then(Expr::atom)
-            .unwrap_or("0")
-            .parse::<f64>()
-            .map_err(|error| format!("invalid at rotation: {error}"))?,
+        // KiCad 6 writes `(at x y unlocked)` and `(at x y angle unlocked)`
+        // for texts: the flag is not a rotation.
+        match at.children().get(3).and_then(Expr::atom) {
+            None | Some("unlocked" | "locked") => 0.0,
+            Some(angle) => angle
+                .parse::<f64>()
+                .map_err(|error| format!("invalid at rotation: {error}"))?,
+        },
     ])
 }
 

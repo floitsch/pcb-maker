@@ -116,6 +116,9 @@ def main():
             constraints["hollow"] = hollow
         (arguments.output / f"{name}.json").write_text(json.dumps(constraints, indent=1))
         tasks.append({"name": name, "directory": str(board["directory"]), "board_id": board["board_id"],
+                      # Harvested boards keep their makers' DRC findings;
+                      # PCBench's were cleaned by the D3 chain.
+                      **({"designer_budget": True} if arguments.corpus else {}),
                       "unplace": True, "remove_outline": False,
                       "stack_at": [(low[0] + high[0]) / 2, (low[1] + high[1]) / 2],
                       "constraints": f"{name}.json", "router": {}})
