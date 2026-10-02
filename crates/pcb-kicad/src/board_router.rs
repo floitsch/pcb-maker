@@ -1519,11 +1519,14 @@ pub fn route_kicad_board(
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
+            // Four seeds in parallel cost about twice the attempt; on a
+            // board whose attempt takes minutes that time is better spent
+            // on the next rung (MIDAS-MK2: two retries, 740 s, both worse).
             if opens.0 > 0
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
-                && result.routing_seconds <= budget
+                && result.routing_seconds <= budget / 2.0
             {
                 let mut seeded = attempt.clone();
                 seeded.seeds = Some(retry);

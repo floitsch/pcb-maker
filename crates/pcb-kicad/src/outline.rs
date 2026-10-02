@@ -314,6 +314,13 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         .max_by(|a, b| polygon_area(&loops[*a]).total_cmp(&polygon_area(&loops[*b])))
         .unwrap();
     let outline = loops.swap_remove(largest);
+    if std::env::var_os("PCB_OUTLINE_DEBUG").is_some() {
+        eprintln!("outline: area {:.1}, {} other loops", polygon_area(&outline).abs(), loops.len());
+        for other in &loops {
+            let inside = point_in_polygon(other[0], &outline);
+            eprintln!("  loop area {:.1} at {:?} inside {inside}", polygon_area(other).abs(), other[0]);
+        }
+    }
     Ok(BoardLoops {
         outline,
         cutouts: loops,
