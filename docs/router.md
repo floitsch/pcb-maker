@@ -107,6 +107,18 @@ Interf-U were re-run during the audit.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
+### Memory (2026-10-03)
+
+A thread's search scratch is the largest part of a big board's footprint
+(cost, parent and generation marks per lattice state, one scratch per
+worker thread), followed by the per-class occupancy and static maps. Marks
+that only deduplicate within one operation are bitsets cleared from the
+list of what was touched (stamp marks per map, the own-stamp mask per
+thread); search generations are 16-bit and cleared on wrap. ATAT1800 (four
+layers, 3952 x 1227 nodes): 8.65 GB -> 5.52 GB peak, identical result.
+Next candidates: the static maps per class (41 bytes per node and class)
+and fewer scratches on boards where parallel batches are small.
+
 ## Two-level search
 
 Every connection is first planned on a coarse graph of 16 x 16-node tiles
