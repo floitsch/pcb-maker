@@ -309,6 +309,12 @@ hopeless rungs. Layout trial routes no longer polish, and the layout has a
 total budget. Route sweep restarted as `build/github-route-v5`
 (`pcb-maker-x17`); the layout sweep has not been rerun since the fixes
 (run it with `--jobs 1` for memory).
+Later the same day: seed retries only for attempts of at most 120 s (on
+MIDAS-MK2 two retries took 740 s, both worse, and starved the rung that
+completes it; now 156/156, clean apart from the designer's own findings).
+Sweep restarted as `build/github-route-v6` (`pcb-maker-x18`). Of the 42
+boards open in v2, jiran-ble-lite is limited by keepouts its designer
+violates (`items_not_allowed` 40 in their DRC).
 
 ## Where things are
 
