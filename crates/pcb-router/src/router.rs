@@ -348,6 +348,20 @@ fn experiment_seed() -> Option<u64> {
 }
 
 impl Scratch {
+    /// The next search generation; when the 16-bit counter wraps, the
+    /// marks it guards are cleared.
+    fn next_generation(&mut self) -> u16 {
+        if self.generation == u16::MAX {
+            self.seen.fill(0);
+            self.closed.fill(0);
+            self.target_mark.fill(0);
+            self.own_via_near.fill(0);
+            self.generation = 0;
+        }
+        self.generation += 1;
+        self.generation
+    }
+
     /// Clears the routed net's own-stamp mask (`Router::mask_own`).
     fn unmask_own(&mut self) {
         for bit in self.own_set.drain(..) {
@@ -436,14 +450,18 @@ fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
 #[derive(Clone, Default)]
 pub struct Scratch {
     cost: Vec<f32>,
-    seen: Vec<u32>,
-    closed: Vec<u32>,
+    /// Search generation marks: 16 bits (half the memory of a word per
+    /// state; a thread's scratch is the biggest part of a large board's
+    /// footprint), cleared when the counter wraps.
+    seen: Vec<u16>,
+    closed: Vec<u16>,
     parent: Vec<u8>,
-    target_mark: Vec<u32>,
+    target_mark: Vec<u16>,
     target_terminal: Vec<u16>,
+    /// Tree marks live across the searches of one net: their own counter.
     tree_mark: Vec<u32>,
     tree_terminal: Vec<u16>,
-    own_via_near: Vec<u32>,
+    own_via_near: Vec<u16>,
     /// Bits per (class or neck class, map kind, cell): set for the routed
     /// net's own stamps while its search is to ignore them (see `mask_own`;
     /// a bit per entry, cleared again from `own_set`, so a thread's mask
@@ -455,7 +473,8 @@ pub struct Scratch {
     own_claimed: Vec<u32>,
     /// Whether `own_mark` holds the routed net's stamps.
     own_active: bool,
-    generation: u32,
+    generation: u16,
+    tree_generation: u32,
     corridor: Option<Vec<bool>>,
     expansions: u64,
     searches: u64,
@@ -483,6 +502,7 @@ impl Scratch {
             own_set: Vec::new(),
             own_active: false,
             generation: 0,
+            tree_generation: 0,
             corridor: None,
             expansions: 0,
             searches: 0,
@@ -1688,8 +1708,8 @@ impl Router {
             .map(|element| find(&mut parent, element))
             .collect();
 
-        scratch.generation += 1;
-        let tree_generation = scratch.generation;
+        scratch.tree_generation += 1;
+        let tree_generation = scratch.tree_generation;
         let mut tree: Vec<Node> = Vec::new();
         let mut in_tree = vec![false; parent.len()];
         let cells = self.grid.cells();
@@ -1967,8 +1987,8 @@ impl Router {
             else {
                 break;
             };
-            scratch.generation += 1;
-            let tree_generation = scratch.generation;
+            scratch.tree_generation += 1;
+            let tree_generation = scratch.tree_generation;
             let mut sources: Vec<Node> = Vec::new();
             let mut targets: Vec<(Node, u16)> = Vec::new();
             for element in (0..parent.len()).filter(|element| *element != plane_element) {
@@ -2215,8 +2235,7 @@ impl Router {
     ) -> Option<Vec<Node>> {
         scratch.searches += 1;
         let expansions_before = scratch.expansions;
-        scratch.generation += 1;
-        let generation = scratch.generation;
+        let generation = scratch.next_generation();
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
