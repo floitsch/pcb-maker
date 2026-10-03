@@ -873,6 +873,28 @@ pub(super) fn lower(
                     });
                 }
             }
+            // Graphics on a solder mask layer are openings in the mask:
+            // copper of two nets under one opening is a solder bridge
+            // (KiCad's solder_mask_bridge). Routed copper stays out from
+            // under them on that side.
+            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
+                if matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask")) =>
+            {
+                let layer = if form_atom(item, "layer", 1) == Some("F.Mask") { 0 } else { layers.len() - 1 };
+                for shape in copper_graphic_shapes(item)? {
+                    obstacles.push(core::Obstacle {
+                        shape,
+                        layers: 1 << layer,
+                        kind: core::ObstacleKind::Keepout,
+                        net: None,
+                        clearance: 0.0,
+                        clearance_override: None,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: format!("solder mask opening ({})", item.head().unwrap_or("graphic")),
+                    });
+                }
+            }
             Some("zone") if is_rule_area(item) => {
                 if let Some(obstacle) = rule_area_obstacle(item, &layers, "unnamed rule area")? {
                     obstacles.push(obstacle);
