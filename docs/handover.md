@@ -353,7 +353,11 @@ the newest binary: 7 of them clean now (hole clearance, KiCad 6/7 net
 classes, and custom-pad arcs swept to cover KiCad's outside arc
 approximation). Starved thermals remain the one class: 0xCB-1337 6
 (designer 3, USB-C GND pads), ErgoSNM 5 (designer 2), plus the boards
-noted above.
+noted above. Later: text on a solder mask layer is an opening; routed
+copper now stays out from under it (eurorack-pmod: 21 solder_mask_bridge
+errors -> none). Tried and reverted: retrying the best rung with the
+board's smallest legal via (eurorack's corner pad still had no room under
+the hole clearance; 4 open instead of 2).
 
 ## Where things are
 
