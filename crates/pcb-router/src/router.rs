@@ -110,6 +110,9 @@ pub struct Config {
     /// this, nor later than the negotiation took (at least 60 s). A
     /// 130 x 90 mm six-layer board spent 470 s in clean-up.
     pub cleanup_seconds: f64,
+    /// Cost factor for another net's step on the ring around a pad that
+    /// joins its pour by thermal spokes (copper there starves the spokes).
+    pub thermal_guard_cost: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
@@ -162,6 +165,7 @@ impl Default for Config {
             via_reduction_budget: 3.0,
             via_reduction_seconds: 300.0,
             cleanup_seconds: 180.0,
+            thermal_guard_cost: 4.0,
             negotiation_seconds: 900.0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
@@ -2506,7 +2510,7 @@ impl Router {
                 if !self.guard[layer].is_empty() {
                     let guarded = self.guard[layer][target_cell];
                     if guarded != 0 && guarded != own {
-                        step *= 4.0;
+                        step *= self.config.thermal_guard_cost as f32;
                     }
                 }
                 if !self.covered[layer].is_empty() {
@@ -2552,6 +2556,11 @@ impl Router {
                     if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
                         cut *= factor;
                     }
+                }
+                // A via is copper on every layer: inside another net's
+                // thermal ring on any of them it starves the spokes there.
+                if self.guard.iter().any(|guard| !guard.is_empty() && guard[cell] != 0 && guard[cell] != own) {
+                    cut *= self.config.thermal_guard_cost as f32;
                 }
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 let cell_class = if necks { self.class_at(net, net_state, cell as u32) } else { class };

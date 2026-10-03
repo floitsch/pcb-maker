@@ -135,6 +135,9 @@ pub struct KiCadBoardRouterConfig {
     /// before the signals route (router `fixed_plane_stubs`).
     #[serde(default)]
     pub fixed_plane_stubs: Option<bool>,
+    /// Router `thermal_guard_cost`.
+    #[serde(default)]
+    pub thermal_guard_cost: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -1836,6 +1839,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
+    }
+    if let Some(cost) = config.thermal_guard_cost {
+        router_config.thermal_guard_cost = cost;
     }
     if let Some(global) = config.global_routing {
         router_config.global_routing = global;
