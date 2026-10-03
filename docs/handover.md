@@ -319,8 +319,9 @@ Near misses of v2 rerouted with x19 (`build/near.sh`): MIDAS-MK2,
 zpn_devboard, coco2, little-red-rover, Castor_and_Pollux, rosco_m68k all
 complete now; the last two keep 6 and 5 `starved_thermal` findings beyond
 the designer's (pour-net pads joined by tracks whose thermal spokes other
-copper blocks). Next: keep the spoke directions of such pads free, or
-count a same-net track into the pour as a spoke where KiCad does. Of the 42
+copper blocks). Vias now pay the thermal guard too: Castor_and_Pollux is
+clean. rosco_m68k's starved pads reach only pour islands that signal
+tracks cut off: stitch such islands with vias in tracks mode next. Of the 42
 boards open in v2, jiran-ble-lite is limited by keepouts its designer
 violates (`items_not_allowed` 40 in their DRC).
 
