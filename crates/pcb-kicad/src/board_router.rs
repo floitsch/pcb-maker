@@ -1466,7 +1466,8 @@ pub fn route_kicad_board(
     // rungs). Every rung negotiates briefly first; the one with the fewest
     // unfinished nets gets the rest of the budget and goes on from where
     // its probe stopped. Only the leading router is kept (memory).
-    let mut regular_done = false;
+    // The rung the probe continued: the regular ladder skips it.
+    let mut probed_mode: Option<usize> = None;
     let mut probe_complete = false;
     if config.probe_ladder.unwrap_or(true) && modes.len() >= 3 && config.negotiation_seconds.is_none() {
         let probe_seconds = config.probe_seconds.unwrap_or(75.0);
@@ -1542,11 +1543,11 @@ pub fn route_kicad_board(
             slowest = Some((result.routing_seconds, result.grid_pitch_mm));
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
-            regular_done = true;
+            probed_mode = Some(mode);
         }
     }
     'ladder: for pitch in &pitches {
-        if probe_complete || (regular_done && pitch.is_none()) {
+        if probe_complete {
             continue;
         }
         if let (Some(pitch), Some((seconds, previous))) = (pitch, slowest) {
@@ -1560,6 +1561,12 @@ pub fn route_kicad_board(
             }
         }
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
+            // A probed rung continued with what it had is not run again;
+            // the other rungs still get their turn when it left
+            // connections open.
+            if pitch.is_none() && probed_mode == Some(mode) {
+                continue;
+            }
             // The skeleton and the plane stubs only help when the plain
             // pour connection left pads of a pour net open; elsewhere they
             // just take room.
