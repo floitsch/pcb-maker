@@ -116,6 +116,9 @@ pub struct Config {
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
+    /// Search expansions one negotiation may spend (0: no limit but the
+    /// seconds). Unlike seconds, independent of the machine's load.
+    pub negotiation_expansions: u64,
     /// Route spatially disjoint nets of one iteration in parallel.
     pub parallel: bool,
     /// Batch size when overlap is ignored (0 keeps batches disjoint). Nets in
@@ -167,6 +170,7 @@ impl Default for Config {
             cleanup_seconds: 180.0,
             thermal_guard_cost: 4.0,
             negotiation_seconds: 900.0,
+            negotiation_expansions: 0,
             plane_cut_cost: 3.0,
             plane_skeleton: false,
             skeleton_bias: 6.0,
@@ -239,6 +243,12 @@ struct Node {
 }
 
 const NO_TERMINAL: u16 = u16::MAX;
+/// Search expansions an idle 8-core machine does per second of negotiation
+/// (ATAT1800: 52M in 29 s; Interf-U: 19M in 7.8 s), to turn a time budget
+/// into work, and how much longer than that the clock may run before it
+/// stops a negotiation anyway (a loaded machine).
+pub const EXPANSIONS_PER_SECOND: f64 = 2.0e6;
+pub const GUARD: f64 = 4.0;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -608,6 +618,8 @@ pub struct Router {
     search_seconds: f64,
     /// Wall time of the last full negotiation.
     negotiation_seconds: f64,
+    /// The price of sharing where the last negotiation stopped.
+    present_reached: f32,
     /// Negotiation gave up early: a quarter of the nets found no path at
     /// all. The polish is skipped then; the ladder's next rung is what
     /// matters.
@@ -781,6 +793,7 @@ impl Router {
             frame_hook: None,
             search_seconds: 0.0,
             negotiation_seconds: 0.0,
+            present_reached: 0.0,
             hopeless: false,
             stamp_seconds: 0.0,
             iterations: 0,
@@ -3126,33 +3139,87 @@ impl Router {
         if self.config.global_routing {
             self.plan_globally(&order);
         }
-        let limit = self.config.negotiation_seconds;
-        self.config.negotiation_seconds = seconds;
+        let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        self.config.negotiation_seconds = seconds * GUARD;
+        self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
         self.negotiate(&order, order.clone());
-        self.config.negotiation_seconds = limit;
+        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
         self.unfinished()
     }
 
-    /// After `probe`: negotiates on for at most `seconds` (the history of
-    /// the probe is kept; the price of sharing starts low again), then
-    /// finishes and polishes as `run` does.
+    /// After `probe`: negotiates on for at most `seconds` where the probe
+    /// stopped (its history and its price of sharing: starting the price
+    /// low again undid the probe's progress, and a board a fresh run
+    /// completes stayed at 20 conflicted nets), then finishes and polishes
+    /// as `run` does.
     pub fn resume(&mut self, seconds: f64) -> RoutingResult {
-        let limit = self.config.negotiation_seconds;
-        self.config.negotiation_seconds = seconds;
+        let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        self.config.negotiation_seconds = seconds * GUARD;
+        self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
         self.hopeless = false;
-        let result = self.reroute(true);
-        self.config.negotiation_seconds = limit;
+        let order = self.routing_order();
+        let pending: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                !state.complete || !self.conflicts(*net).is_empty()
+            })
+            .collect();
+        let present = self.present_reached.max(self.config.present_factor as f32);
+        self.negotiate_from(&order, pending, present);
+        let result = self.finish_polished(&order, true);
+        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
         result
     }
 
-    /// Routable nets in conflict or not complete.
+    /// Search expansions so far (all phases, all threads).
+    pub fn expansions(&self) -> u64 {
+        self.scratch.expansions
+    }
+
+    /// The work done so far, in seconds of an idle machine (search
+    /// expansions at `EXPANSIONS_PER_SECOND`): budgets measured in it do
+    /// not depend on how busy the machine is.
+    fn work_seconds(&self) -> f64 {
+        self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND
+    }
+
+    /// A budget's start: the work and the wall clock at this point.
+    fn clock(&self) -> (f64, std::time::Instant) {
+        (self.work_seconds(), std::time::Instant::now())
+    }
+
+    /// Whether `budget` (work seconds) is spent since `clock`; the wall
+    /// clock stops it too, at `GUARD` times the budget.
+    fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
+        self.work_seconds() - clock.0 > budget || clock.1.elapsed().as_secs_f64() > budget * GUARD
+    }
+
+    /// Routable nets in conflict or not complete, plus the pads of pour
+    /// nets that their pour does not reach yet (a pour net counts as
+    /// complete while its pads touch the pour anywhere; whether the pieces
+    /// they touch hang together only shows when it is stitched, and a probe
+    /// that ignores it ranks a rung that ends with 120 pads stranded first).
     pub fn unfinished(&self) -> usize {
-        (0..self.nets.len() as NetId)
-            .filter(|net| {
-                let state = &self.nets[*net as usize];
-                state.routable && (!state.complete || !self.conflicts(*net).is_empty())
-            })
-            .count()
+        let mut count = 0;
+        for net in 0..self.nets.len() as NetId {
+            let state = &self.nets[net as usize];
+            if !state.routable {
+                continue;
+            }
+            if !state.complete || !self.conflicts(net).is_empty() {
+                count += 1;
+            }
+            if !state.plane.is_empty() {
+                let (pours, mut parent, main) = self.analyze_pours(net);
+                let terminal_base = pours.pieces + 1;
+                count += (0..state.terminal_nodes.len())
+                    .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+                    .count();
+            }
+        }
+        count
     }
 
     /// `finish`, skipping the clean-up and the via reduction without
@@ -3606,6 +3673,8 @@ impl Router {
     /// `negotiate`, with sharing priced at `present` from the start.
     fn negotiate_from(&mut self, order: &[NetId], mut pending: Vec<NetId>, present: f32) {
         let started = std::time::Instant::now();
+        let expansions_before = self.scratch.expansions;
+        let work_before = self.work_seconds();
         let mut present = present;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
@@ -3842,7 +3911,12 @@ impl Router {
             // At the price cap only history still moves anything: give up
             // sooner there.
             let patience = if present >= self.config.present_cap as f32 { self.config.stall_at_cap } else { 25 };
-            if stalled > patience || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
+            // Work, not seconds, when the caller gives it: the same board
+            // then routes the same way however busy the machine is; the
+            // seconds stay as the last guard.
+            let worked_out = self.config.negotiation_expansions > 0
+                && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
+            if stalled > patience || worked_out || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
                 break;
             }
             // Nets without any path are not congestion; when a quarter of
@@ -3864,7 +3938,10 @@ impl Router {
                 }
             }
         }
-        self.negotiation_seconds = started.elapsed().as_secs_f64();
+        // In work seconds: the budgets of the repair, the clean-up and the
+        // via reduction follow from it.
+        self.negotiation_seconds = self.work_seconds() - work_before;
+        self.present_reached = present;
     }
 
     /// Resolves what negotiation left, cleans up, stitches pours and
@@ -3922,9 +3999,9 @@ impl Router {
         let budget = (self.config.via_reduction_budget * self.negotiation_seconds)
             .max(60.0)
             .min(self.config.via_reduction_seconds);
-        let started = std::time::Instant::now();
+        let started = self.clock();
         for round in 0..self.config.via_reduction_rounds {
-            if started.elapsed().as_secs_f64() > budget {
+            if self.spent(&started, budget) {
                 if self.config.verbose {
                     eprintln!(
                         "via reduction: budget of {budget:.0}s used, stopping before round {round}"
@@ -4480,7 +4557,8 @@ impl Router {
             let spacing = class.via_drill + self.board.hole_to_hole;
             let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
             let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
-            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            // Ties broken by the cell: a hash map's order must not decide.
+            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)));
             for (_, layer, other, cell) in candidates {
                 let at = self.grid.center_of(cell);
                 if chosen.iter().any(|(_, _, placed)| {
@@ -4587,7 +4665,7 @@ impl Router {
     fn clean_up(&mut self, order: &[NetId]) -> usize {
         self.cleanup = true;
         let mut improvements = 0;
-        let started = std::time::Instant::now();
+        let started = self.clock();
         let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
         'passes: for _ in 0..self.config.cleanup_passes {
             let mut improved = false;
@@ -4600,7 +4678,7 @@ impl Router {
                 complete.iter().map(|net| vec![*net]).collect()
             };
             for batch in batches {
-                if started.elapsed().as_secs_f64() > budget {
+                if self.spent(&started, budget) {
                     if self.config.verbose {
                         eprintln!("clean-up budget of {budget:.0} s used");
                     }
@@ -4618,7 +4696,7 @@ impl Router {
                     let states = self.grid.cells() * self.board.layer_count;
                     let cells = self.grid.cells();
                     let this: &Self = self;
-                    let routed: Vec<(NetState, bool)> = batch
+                    let routed: Vec<(NetState, bool, u64)> = batch
                         .par_iter()
                         .map(|net| {
                             with_thread_scratch(states, cells, |scratch| {
@@ -4626,7 +4704,9 @@ impl Router {
                                 if !net_state.stamped.is_empty() {
                                     this.mask_own(scratch, *net, &net_state);
                                 }
+                                let before = scratch.expansions;
                                 this.route_net(scratch, *net, &mut net_state, 0.0, true, 1.0);
+                                let expansions = scratch.expansions - before;
                                 scratch.unmask_own();
                                 // Batch windows are kept two tiles apart:
                                 // routes inside their own window stay clear
@@ -4636,13 +4716,15 @@ impl Router {
                                     let (x, y) = this.grid.xy(node.cell as usize);
                                     x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
                                 });
-                                (net_state, within)
+                                (net_state, within, expansions)
                             })
                         })
                         .collect();
-                    for (index, (net_state, within)) in routed.into_iter().enumerate() {
+                    for (index, (net_state, within, expansions)) in routed.into_iter().enumerate() {
                         self.nets[batch[index] as usize] = net_state;
                         inside[index] = within;
+                        // The work of the threads counts on the shared clock.
+                        self.scratch.expansions += expansions;
                     }
                 }
                 for (index, net) in batch.iter().enumerate() {
@@ -4700,9 +4782,10 @@ impl Router {
         // ripped up (open, as they were in conflict).
         let budget = if self.hopeless { 0.0 } else { self.negotiation_seconds.max(60.0) };
         let started = std::time::Instant::now();
+        let clock = self.clock();
         let mut skipped = 0;
         for net in &removed {
-            if started.elapsed().as_secs_f64() > budget {
+            if self.spent(&clock, budget) {
                 skipped += 1;
                 continue;
             }
@@ -4712,7 +4795,7 @@ impl Router {
         let rerouted = started.elapsed().as_secs_f64();
         let mut forced = 0;
         for net in removed.iter().copied() {
-            if !self.nets[net as usize].complete && started.elapsed().as_secs_f64() <= 2.0 * budget {
+            if !self.nets[net as usize].complete && !self.spent(&clock, 2.0 * budget) {
                 forced += 1;
                 if self.force_connect(net, order) {
                     continue;

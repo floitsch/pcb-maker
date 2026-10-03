@@ -1461,6 +1461,12 @@ pub fn route_kicad_board(
     let mut extra_rung_tried = false;
     let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
     let ladder_started = std::time::Instant::now();
+    // The ladder's budget is spent in work (search expansions in seconds of
+    // an idle machine), so that a busy machine routes the same way; the
+    // wall clock counts only beyond `GUARD` times that.
+    let mut ladder_work = 0.0f64;
+    let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
+    let spent = |work: f64| work.max(ladder_started.elapsed().as_secs_f64() / core::router::GUARD);
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -1486,6 +1492,7 @@ pub fn route_kicad_board(
             let started = std::time::Instant::now();
             let mut router = core::router::Router::new(&board, &core_config(&attempt));
             let unfinished = router.probe(probe_seconds);
+            ladder_work += work_of(router.expansions());
             eprintln!(
                 "probe pours={}{}: {unfinished} nets unfinished after {:.0} s",
                 if *connect { "connect" } else { "tracks" },
@@ -1502,8 +1509,10 @@ pub fn route_kicad_board(
         }
         if let Some((_, mode, mut router, board, attempt)) = leader {
             let started = std::time::Instant::now();
-            let remaining = (ladder_budget - ladder_started.elapsed().as_secs_f64()).max(60.0);
+            let remaining = (ladder_budget - spent(ladder_work)).max(60.0);
+            let probed = router.expansions();
             let routed = router.resume((remaining / 3.0).clamp(60.0, 900.0));
+            ladder_work += work_of(router.expansions() - probed);
             drop(router);
             if output_directory.exists() {
                 fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
@@ -1540,7 +1549,7 @@ pub fn route_kicad_board(
                 result.vias,
                 ladder_started.elapsed().as_secs_f64()
             );
-            slowest = Some((result.routing_seconds, result.grid_pitch_mm));
+            slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
             probed_mode = Some(mode);
@@ -1591,7 +1600,7 @@ pub fn route_kicad_board(
             // gets a third of the share (zpn_devboard: two rungs took 1300
             // s and the two that complete such boards never ran).
             if config.negotiation_seconds.is_none() {
-                let remaining = (ladder_budget - ladder_started.elapsed().as_secs_f64()).max(0.0);
+                let remaining = (ladder_budget - spent(ladder_work)).max(0.0);
                 let rungs_left = (modes.len() - mode) as f64;
                 attempt.negotiation_seconds = Some((remaining / rungs_left / 3.0).clamp(60.0, 900.0));
             }
@@ -1621,7 +1630,9 @@ pub fn route_kicad_board(
             let mut opens = open(&result, &directory);
             // What one attempt at this pitch costs, for projecting finer
             // pitches; a seed retry does not change it.
-            let attempt_seconds = result.routing_seconds;
+            // In work, as the ladder's budget.
+            let attempt_seconds = work_of(result.expansions);
+            ladder_work += attempt_seconds;
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
@@ -1632,7 +1643,7 @@ pub fn route_kicad_board(
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
-                && result.routing_seconds <= budget / 2.0
+                && attempt_seconds <= budget / 2.0
             {
                 let mut seeded = attempt.clone();
                 seeded.seeds = Some(retry);
@@ -1644,6 +1655,8 @@ pub fn route_kicad_board(
                 let mut other =
                     route_kicad_board_once(source_directory, board_id, &retry_directory, &seeded, *connect)?;
                 other.pours = result.pours.clone();
+                // The seeds run side by side: about `retry` times one's work.
+                ladder_work += work_of(other.expansions) * retry as f64;
                 let other_opens = open(&other, &retry_directory);
                 eprintln!(
                     "attempt again with {retry} seeds: {} open, {} vias, {:.1} s",
@@ -1708,7 +1721,7 @@ pub fn route_kicad_board(
             if opens.0 == 0 || extra_rung_tried {
                 break 'ladder;
             }
-            if ladder_started.elapsed().as_secs_f64() > ladder_budget {
+            if spent(ladder_work) > ladder_budget {
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 break 'ladder;
             }
@@ -1930,7 +1943,11 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         router_config.stall_at_cap = stall;
     }
     if let Some(seconds) = config.negotiation_seconds {
-        router_config.negotiation_seconds = seconds;
+        // A budget given in seconds is turned into work (search
+        // expansions), so that results do not depend on the machine's
+        // load; the clock stays as a guard.
+        router_config.negotiation_expansions = (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+        router_config.negotiation_seconds = seconds * core::router::GUARD;
         // The polish after it may not take longer than the negotiation was
         // allowed.
         router_config.via_reduction_seconds = seconds.min(300.0);
