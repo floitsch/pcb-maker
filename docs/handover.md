@@ -314,7 +314,13 @@ MIDAS-MK2 two retries took 740 s, both worse, and starved the rung that
 completes it; now 156/156, clean apart from the designer's own findings).
 The ladder's rungs now share its budget evenly (zpn_devboard completes,
 ColdFire unchanged and faster). Sweep restarted as `build/github-route-v7`
-(`pcb-maker-x19`, runner timeout 1500 s so the 1200 s ladder can finish). Of the 42
+(`pcb-maker-x19`, runner timeout 1500 s so the 1200 s ladder can finish).
+Near misses of v2 rerouted with x19 (`build/near.sh`): MIDAS-MK2,
+zpn_devboard, coco2, little-red-rover, Castor_and_Pollux, rosco_m68k all
+complete now; the last two keep 6 and 5 `starved_thermal` findings beyond
+the designer's (pour-net pads joined by tracks whose thermal spokes other
+copper blocks). Next: keep the spoke directions of such pads free, or
+count a same-net track into the pour as a spoke where KiCad does. Of the 42
 boards open in v2, jiran-ble-lite is limited by keepouts its designer
 violates (`items_not_allowed` 40 in their DRC).
 
