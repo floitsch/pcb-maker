@@ -332,6 +332,17 @@ rung completing). Of the 42
 boards open in v2, jiran-ble-lite is limited by keepouts its designer
 violates (`items_not_allowed` 40 in their DRC).
 
+## 2026-10-03, later: probe ladder, hole clearance
+
+Three fixed ways of sharing the ladder's budget each failed some large
+board; the probe ladder (all rungs negotiate 75 s, the best continues)
+beats all of them on the laptop motherboard, zpn_devboard and MIDAS-MK2.
+A systematic KiCad finding our verifier missed: copper too close to via
+drills (hole clearance); now in the stamps, the statics and the verifier.
+Island stitching for starved thermals was tried and reverted (worse).
+Sweep restarted as `build/github-route-v8` (`pcb-maker-x25`, 1500 s per
+board). Layout sweep: still to rerun with `--jobs 1`.
+
 ## Where things are
 
 | What | Where |

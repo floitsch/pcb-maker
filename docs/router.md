@@ -107,6 +107,27 @@ Interf-U were re-run during the audit.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
+### The probe ladder (2026-10-03)
+
+On boards with four or more layers and 120 or more connections the KiCad
+adapter does not split the ladder's budget by a fixed rule (each rule tried
+failed some board: docs/todo.md). Every rung (exclusive planes, connected
+pours, plane stubs, pour nets as tracks) is lowered and negotiates for
+`probe_seconds` (75) with `Router::probe`, which keeps its whole state; the
+rung with the fewest unfinished nets (conflicted or incomplete) is resumed
+with `Router::resume` for a third of what is left, then finished and
+polished. A probe that finishes everything stops the probing, and only the
+leading router stays in memory. Finer pitches follow as before when
+connections stay open.
+
+### Hole clearance
+
+Copper keeps two distances from a via: the copper clearance from its ring
+and the board's hole clearance from its drill; with a thin ring the second
+binds. Both enter the stamps (trace and via against via) and the static
+map around pads, and the exact verifier checks copper-to-hole as well as
+hole-to-hole.
+
 ### Memory (2026-10-03)
 
 A thread's search scratch is the largest part of a big board's footprint

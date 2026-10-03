@@ -102,11 +102,10 @@ router and placer items.
     conflicts in five iterations, up to half of what is left): worse on
     both (early iterations do not converge by that measure; the extension
     ate the budget of zpn's completing rung). Reverted.
-  Design: start every rung with a short negotiation (60-90 s each, the
-  router kept alive), rank them by conflicted nets and their trend, then
-  give the rest of the budget to the best one or two, continuing their
-  negotiation where it stopped (`Router::reroute` already continues from a
-  state). Needs `route_kicad_board_once` split into lower/route/finish.
+  Done (2026-10-03): the probe ladder (`probe_ladder`, `probe_seconds`)
+  for 4+ layer boards with 120+ connections; see router.md. Open: rank
+  probes by trend as well as count, and continue the second best when
+  the leader stalls with time left.
 
 ## Layout
 
