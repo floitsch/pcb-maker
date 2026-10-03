@@ -348,6 +348,12 @@ said 25 clean where 17 were (fixed, table corrected). Sweep restarted as
 `build/github-route-v9` (`pcb-maker-x30`, 2700 s per board: work budgets
 take longer in wall time on a busy machine). Layout sweep: still to rerun
 with `--jobs 1`.
+The 11 v2 boards with copper errors beyond the designer's, rechecked on
+the newest binary: 7 of them clean now (hole clearance, KiCad 6/7 net
+classes, and custom-pad arcs swept to cover KiCad's outside arc
+approximation). Starved thermals remain the one class: 0xCB-1337 6
+(designer 3, USB-C GND pads), ErgoSNM 5 (designer 2), plus the boards
+noted above.
 
 ## Where things are
 
