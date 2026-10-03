@@ -321,7 +321,14 @@ complete now; the last two keep 6 and 5 `starved_thermal` findings beyond
 the designer's (pour-net pads joined by tracks whose thermal spokes other
 copper blocks). Vias now pay the thermal guard too: Castor_and_Pollux is
 clean. rosco_m68k's starved pads reach only pour islands that signal
-tracks cut off: stitch such islands with vias in tracks mode next. Of the 42
+tracks cut off. KiCad ignores spokes into an island that connects to one
+item only (drc_test_provider_zone_connections.cpp), but stitching such
+islands with vias was tried and reverted: on Castor_and_Pollux it doubled
+the starved thermals (3 -> 6, the designer's count is 3) and added a
+hole_to_hole error, as the vias cut the fill; rosco's pours are one layer
+per net, so there is nothing to stitch to anyway. The way out there is
+keeping signals off the plane layer near those pads (or the exclusive
+rung completing). Of the 42
 boards open in v2, jiran-ble-lite is limited by keepouts its designer
 violates (`items_not_allowed` 40 in their DRC).
 
