@@ -88,6 +88,26 @@ router and placer items.
   add congestion (pin density per tile) and crossing estimates to the
   global objective, or race more seeds when the first route leaves opens.
 
+- **Ladder: probe the rungs, then continue the best.** How the ladder's
+  1200 s are shared decides big boards, and every fixed rule fails some
+  board (2026-10-03, harvested boards):
+  - half of what is left to each non-last rung: the laptop motherboard's
+    first rung negotiates 600 s and leaves 3 connections open; zpn_devboard
+    spends 1300 s in its first two rungs and the rungs that complete it
+    never run;
+  - an even split (current): zpn_devboard and MIDAS-MK2 complete, ColdFire
+    unchanged and faster, but the laptop motherboard leaves 21 open and
+    OpenRX 69 (from 3 and 50);
+  - an even split that lets a converging negotiation run on (a tenth fewer
+    conflicts in five iterations, up to half of what is left): worse on
+    both (early iterations do not converge by that measure; the extension
+    ate the budget of zpn's completing rung). Reverted.
+  Design: start every rung with a short negotiation (60-90 s each, the
+  router kept alive), rank them by conflicted nets and their trend, then
+  give the rest of the budget to the best one or two, continuing their
+  negotiation where it stopped (`Router::reroute` already continues from a
+  state). Needs `route_kicad_board_once` split into lower/route/finish.
+
 ## Layout
 
 - **Moves that cannot close the last opens cost the whole budget.** On the
