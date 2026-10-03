@@ -12234,12 +12234,17 @@ fn custom_pad_geometry(
                 });
             }
             Some("gr_arc") => {
+                // Our chords lie inside the arc (by up to ARC_TOLERANCE) and
+                // KiCad's approximation outside it (by up to its own 5 um):
+                // the swept width covers both, or tracks end up a fraction
+                // of a micrometre too close (capacitive sensor pads drawn
+                // from arcs: 0.1993 mm against 0.2).
                 let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
                 for pair in outline::arc_points(start, mid, end).windows(2) {
                     parts.push(ObstacleGeometry::Segment {
                         start: pair[0],
                         end: pair[1],
-                        radius: width.max(0.01) / 2.0,
+                        radius: width.max(0.01) / 2.0 + 2.0 * outline::ARC_TOLERANCE,
                     });
                 }
             }
