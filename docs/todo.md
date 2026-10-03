@@ -107,6 +107,15 @@ router and placer items.
   probes by trend as well as count, and continue the second best when
   the leader stalls with time left.
 
+- **Budgets in work, not seconds.** Negotiation, clean-up, repair and the
+  ladder are budgeted in wall-clock seconds, so a board routed while the
+  machine is busy gets less work done and can come out much worse
+  (OpenESC 4in1, 2026-10-03: 150/152 during a sweep, 121/152 when a test
+  ran next to the sweep). Results are not reproducible across loads or
+  machines. Budget by work instead (search expansions, iterations, nets
+  rerouted), calibrated so that an idle machine takes about the time the
+  seconds give now; keep a wall-clock limit only as a last guard.
+
 ## Layout
 
 - **Moves that cannot close the last opens cost the whole budget.** On the
