@@ -677,7 +677,15 @@ impl Router {
                         let with_margin = |radius: f64| radius;
                         let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
                         let trace_radius = own.trace_width / 2.0 + other.trace_width / 2.0 + clearance;
-                        let via_radius = own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance;
+                        // Copper keeps the copper clearance from a via's
+                        // ring and the hole clearance from its drill;
+                        // with a thin ring the hole rule is the larger
+                        // (the laptop motherboard: 154 KiCad findings).
+                        let hole = board.hole_clearance;
+                        let via_radius = (own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance)
+                            .max(own.trace_width / 2.0 + other.via_drill / 2.0 + hole);
+                        let own_via_radius = (own.via_diameter / 2.0 + other.trace_width / 2.0 + clearance)
+                            .max(own.via_drill / 2.0 + other.trace_width / 2.0 + hole);
                         Stamps {
                             diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
                             diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
@@ -690,37 +698,20 @@ impl Router {
                                 ) + snap,
                                 grid.pitch,
                             ),
-                            stub_to_via: disc(
-                                with_margin(
-                                    own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance,
-                                ) + snap,
-                                grid.pitch,
-                            ),
+                            stub_to_via: disc(with_margin(via_radius) + snap, grid.pitch),
                             trace_to_trace: disc(
                                 with_margin(
                                     own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
                                 ),
                                 grid.pitch,
                             ),
-                            trace_to_via: disc(
-                                with_margin(
-                                    own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance,
-                                ),
-                                grid.pitch,
-                            ),
-                            via_to_trace: disc(
-                                with_margin(
-                                    own.via_diameter / 2.0 + other.trace_width / 2.0 + clearance,
-                                ),
-                                grid.pitch,
-                            ),
+                            trace_to_via: disc(with_margin(via_radius), grid.pitch),
+                            via_to_trace: disc(with_margin(own_via_radius), grid.pitch),
                             via_to_via: disc(
                                 (own.via_diameter / 2.0 + other.via_diameter / 2.0 + clearance)
-                                    .max(
-                                        own.via_drill / 2.0
-                                            + other.via_drill / 2.0
-                                            + board.hole_to_hole,
-                                    ),
+                                    .max(own.via_drill / 2.0 + other.via_drill / 2.0 + board.hole_to_hole)
+                                    .max(own.via_drill / 2.0 + other.via_diameter / 2.0 + hole)
+                                    .max(own.via_diameter / 2.0 + other.via_drill / 2.0 + hole),
                                 grid.pitch,
                             ),
                         }
@@ -3121,6 +3112,47 @@ impl Router {
         }
         self.negotiate(&order, order.clone());
         self.finish_polished(&order, polish)
+    }
+
+    /// The first part of `run_in_place`: prepares the nets and negotiates
+    /// for at most `seconds`, keeping every bit of state, so that `resume`
+    /// can go on from here. Returns how many nets are still conflicted or
+    /// incomplete (the measure a caller ranks probes by).
+    pub fn probe(&mut self, seconds: f64) -> usize {
+        let order = self.routing_order();
+        self.fix_escapes(&order);
+        self.route_skeletons(&order);
+        self.fix_plane_stubs(&order);
+        if self.config.global_routing {
+            self.plan_globally(&order);
+        }
+        let limit = self.config.negotiation_seconds;
+        self.config.negotiation_seconds = seconds;
+        self.negotiate(&order, order.clone());
+        self.config.negotiation_seconds = limit;
+        self.unfinished()
+    }
+
+    /// After `probe`: negotiates on for at most `seconds` (the history of
+    /// the probe is kept; the price of sharing starts low again), then
+    /// finishes and polishes as `run` does.
+    pub fn resume(&mut self, seconds: f64) -> RoutingResult {
+        let limit = self.config.negotiation_seconds;
+        self.config.negotiation_seconds = seconds;
+        self.hopeless = false;
+        let result = self.reroute(true);
+        self.config.negotiation_seconds = limit;
+        result
+    }
+
+    /// Routable nets in conflict or not complete.
+    pub fn unfinished(&self) -> usize {
+        (0..self.nets.len() as NetId)
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                state.routable && (!state.complete || !self.conflicts(*net).is_empty())
+            })
+            .count()
     }
 
     /// `finish`, skipping the clean-up and the via reduction without

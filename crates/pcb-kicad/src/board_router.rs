@@ -127,6 +127,13 @@ pub struct KiCadBoardRouterConfig {
     /// ran 1180 s with 222 open, and no other rung ran).
     #[serde(default)]
     pub negotiation_seconds: Option<f64>,
+    /// Large multilayer boards: probe every rung briefly and continue the
+    /// best (default on).
+    #[serde(default)]
+    pub probe_ladder: Option<bool>,
+    /// Seconds of negotiation per probe (default 75).
+    #[serde(default)]
+    pub probe_seconds: Option<f64>,
     /// Fixed escape stubs for fine-pitch pad rows, this long in mm (router
     /// `escape_stub_mm`; off by default).
     #[serde(default)]
@@ -1454,7 +1461,94 @@ pub fn route_kicad_board(
     let mut extra_rung_tried = false;
     let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
     let ladder_started = std::time::Instant::now();
+    // Large multilayer boards: no fixed split of the budget suits them all
+    // (one needs 600 s of negotiation in its first rung, another the last
+    // rungs). Every rung negotiates briefly first; the one with the fewest
+    // unfinished nets gets the rest of the budget and goes on from where
+    // its probe stopped. Only the leading router is kept (memory).
+    let mut regular_done = false;
+    let mut probe_complete = false;
+    if config.probe_ladder.unwrap_or(true) && modes.len() >= 3 && config.negotiation_seconds.is_none() {
+        let probe_seconds = config.probe_seconds.unwrap_or(75.0);
+        let layer_names = LayerTable::from_pcb(&parsed)?.names;
+        let mut leader: Option<(usize, usize, core::router::Router, core::Board, KiCadBoardRouterConfig)> = None;
+        for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
+            let mut attempt = config.clone();
+            attempt.plane_skeleton = Some(*skeleton);
+            attempt.exclusive_planes = Some(*exclusive);
+            attempt.fixed_plane_stubs = Some(*plane_stubs);
+            let board = lower(&parsed, &attempt, *connect)?.board;
+            let connections: usize = board.nets.iter().map(|net| net.terminals.len().saturating_sub(1)).sum();
+            if mode == 0 && (board.layer_count < 4 || connections < 120) {
+                break;
+            }
+            let started = std::time::Instant::now();
+            let mut router = core::router::Router::new(&board, &core_config(&attempt));
+            let unfinished = router.probe(probe_seconds);
+            eprintln!(
+                "probe pours={}{}: {unfinished} nets unfinished after {:.0} s",
+                if *connect { "connect" } else { "tracks" },
+                if *exclusive { " (exclusive planes)" } else if *plane_stubs { " (plane stubs)" } else { "" },
+                started.elapsed().as_secs_f64()
+            );
+            if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
+                leader = Some((unfinished, mode, router, board, attempt));
+            }
+            // A rung that already finishes everything needs no rival.
+            if leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
+                break;
+            }
+        }
+        if let Some((_, mode, mut router, board, attempt)) = leader {
+            let started = std::time::Instant::now();
+            let remaining = (ladder_budget - ladder_started.elapsed().as_secs_f64()).max(60.0);
+            let routed = router.resume((remaining / 3.0).clamp(60.0, 900.0));
+            drop(router);
+            if output_directory.exists() {
+                fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+            }
+            let (connect, skeleton, exclusive, plane_stubs) = modes[mode];
+            let mut result = write_attempt(
+                parsed.clone(),
+                &board,
+                routed,
+                &layer_names,
+                source_directory,
+                board_id,
+                output_directory,
+                &attempt,
+                [0.0, started.elapsed().as_secs_f64()],
+            )?;
+            result.pours = if !has_pours {
+                "none"
+            } else if connect && skeleton {
+                "connect+skeleton"
+            } else if connect {
+                "connect"
+            } else {
+                "tracks"
+            }
+            .into();
+            let opens = open(&result, output_directory);
+            eprintln!(
+                "attempt pours={}{} pitch=regular (probed, continued): {} open, {} starved, {} vias, {:.1} s",
+                result.pours,
+                if exclusive { " (exclusive planes)" } else if plane_stubs { " (plane stubs)" } else { "" },
+                opens.0,
+                opens.1,
+                result.vias,
+                ladder_started.elapsed().as_secs_f64()
+            );
+            slowest = Some((result.routing_seconds, result.grid_pitch_mm));
+            probe_complete = opens.0 == 0;
+            best = Some((opens, result));
+            regular_done = true;
+        }
+    }
     'ladder: for pitch in &pitches {
+        if probe_complete || (regular_done && pitch.is_none()) {
+            continue;
+        }
         if let (Some(pitch), Some((seconds, previous))) = (pitch, slowest) {
             let projected = seconds * (previous / pitch[0]).powi(2);
             if projected > budget {
@@ -2105,6 +2199,35 @@ fn route_kicad_board_once(
             router.run()
         }
     };
+    let routing_seconds = routing_started.elapsed().as_secs_f64();
+    write_attempt(
+        pcb,
+        &board,
+        result,
+        &layer_names,
+        source_directory,
+        board_id,
+        output_directory,
+        config,
+        [lowering_seconds, routing_seconds],
+    )
+}
+
+/// Writes a routed board: the optional tightening, the copper into the
+/// board file, and the checks (`finish_routed_board`).
+#[allow(clippy::too_many_arguments)]
+fn write_attempt(
+    mut pcb: Expr,
+    board: &core::Board,
+    result: core::RoutingResult,
+    layer_names: &[String],
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+    seconds: [f64; 2],
+) -> Result<KiCadBoardRouterResult, String> {
+    let [lowering_seconds, mut routing_seconds] = seconds;
     let mut result = result;
     if config.tighten && config.engine.as_deref() != Some("topological") {
         let tightening = std::time::Instant::now();
@@ -2118,15 +2241,15 @@ fn route_kicad_board_once(
             tightening.elapsed().as_secs_f64()
         );
         result.routes = routes;
+        routing_seconds += tightening.elapsed().as_secs_f64();
     }
-    let routing_seconds = routing_started.elapsed().as_secs_f64();
-    let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
+    let nets = emit_routes(&mut pcb, board, &result, layer_names)?;
     finish_routed_board(
         &pcb,
-        &board,
+        board,
         &result,
         nets,
-        &layer_names,
+        layer_names,
         source_directory,
         board_id,
         output_directory,

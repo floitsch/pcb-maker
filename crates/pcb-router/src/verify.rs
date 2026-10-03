@@ -210,6 +210,20 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 required,
                                 distance - radius,
                             );
+                            // A via's drill keeps the hole clearance from
+                            // copper.
+                            if let (Some(drill), ObstacleKind::Copper) = (drill, obstacle.kind) {
+                                report(
+                                    net,
+                                    own_segment,
+                                    None,
+                                    format!("{} (via hole)", obstacle.label),
+                                    report_layer,
+                                    at,
+                                    board.hole_clearance,
+                                    distance - drill,
+                                );
+                            }
                             if let (Some(drill), ObstacleKind::Hole) = (drill, obstacle.kind) {
                                 report(
                                     net,
@@ -246,6 +260,18 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 class.clearance.max(other_class.clearance),
                                 distance - radius - segment.width / 2.0,
                             );
+                            if let Some(drill) = drill {
+                                report(
+                                    net,
+                                    own_segment,
+                                    Some((other, index)),
+                                    format!("{} (via hole)", board.nets[other as usize].name),
+                                    segment.layer,
+                                    at,
+                                    board.hole_clearance,
+                                    distance - drill - segment.width / 2.0,
+                                );
+                            }
                         }
                         Item::Via { net: other, index } => {
                             if other <= net || seen.contains(&(usize::MAX - other as usize, index))
@@ -281,7 +307,29 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                     board.hole_to_hole,
                                     distance - drill - via.drill / 2.0,
                                 );
+                                report(
+                                    net,
+                                    own_segment,
+                                    None,
+                                    format!("via of {} (hole clearance)", board.nets[other as usize].name),
+                                    report_layer,
+                                    at,
+                                    board.hole_clearance,
+                                    distance - drill - via.diameter / 2.0,
+                                );
                             }
+                            // The other via's drill keeps the hole clearance
+                            // from this copper.
+                            report(
+                                net,
+                                own_segment,
+                                None,
+                                format!("via hole of {} (hole clearance)", board.nets[other as usize].name),
+                                report_layer,
+                                at,
+                                board.hole_clearance,
+                                distance - radius - via.drill / 2.0,
+                            );
                         }
                     }
                 }
