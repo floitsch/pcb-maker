@@ -51,7 +51,9 @@ def main():
             classes["error"].append((name, reason, designer))
             continue
         native = route.get("native") or {}
-        findings = native.get("findings") if isinstance(native, dict) else None
+        # The runner's copper errors beyond the source's and the designer's
+        # own (drc_summary in benchmarks/corpus/run.py).
+        findings = native.get("errors") if isinstance(native, dict) else None
         unconnected = native.get("unconnected") if isinstance(native, dict) else None
         open_ = route["connections"] - route["routed"]
         summary = f'{route["routed"]}/{route["connections"]}, {route["vias"]} vias (designer {designer.get("vias")}), {route["routing_seconds"]:.0f} s'

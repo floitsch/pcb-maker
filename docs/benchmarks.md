@@ -238,40 +238,34 @@ hopeless configuration (video).
 
 ### Second sweep, 92 boards, with the day's fixes (`pcb-maker-x8`, 900 s each, 2026-10-01)
 
-25 clean, 42 open, 4 mismatch (KiCad finds an unconnected item the router
-does not), 21 errors (13 hit the runner's 900 s, 6 are one repository's
-boards naming `In1.Cu` on a two-layer stackup, 1 fails to load in
-kicad-cli, 1 pour with 2242 pieces). Via counts are mostly below the
-designer's. 17 of the 109 boards were skipped (directories renamed after
-the sweep's list was read); rerun them with `--only`.
+17 clean, 42 open, 11 with copper errors beyond the designer's (KiCad DRC),
+1 mismatch (KiCad finds an unconnected item the router does not), 21
+errors. Corrected on 2026-10-03: the first version of this table said 25
+clean, because `summary.py` read a key the runner does not write and so
+never counted DRC errors (one board it called clean had 128 hole
+clearance errors, the copper-to-drill rule the router did not know yet).
+Via counts are mostly below the designer's. 17 of the 109 boards were
+skipped (strip failures since fixed).
 
 | Board | Layers | Footprints | Result | Vias (designer) | Time |
 | --- | --- | --- | --- | --- | --- |
-| 0xCB-dev__0xCB-1337__1337-v4.0 | 2 | 64 | clean: 47/47, 44 vias (designer 0), 161 s | 0 | |
-| 0xCB-dev__0xCB-1337__pcb | 4 | 119 | clean: 85/85, 87 vias (designer 0), 107 s | 0 | |
 | 0xCB-dev__0xCB-Static__0xcb-static | 2 | 129 | clean: 74/74, 2 vias (designer 0), 25 s | 0 | |
 | CRImier__MyKiCad__framework_mobo_lefthalf | 6 | 45 | clean: 71/71, 76 vias (designer 203), 101 s | 203 | |
 | ISSUIUC__ISS-PCB__BAGEL-MK1 | 4 | 199 | clean: 138/138, 151 vias (designer 525), 395 s | 525 | |
 | Jana-Marie__ligra__ligra_back | 2 | 61 | clean: 33/33, 11 vias (designer 251), 62 s | 251 | |
 | Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex | 2 | 62 | clean: 21/21, 39 vias (designer 120), 146 s | 120 | |
 | Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex | 2 | 61 | clean: 19/19, 65 vias (designer 120), 275 s | 120 | |
-| anyshake__explorer__Explorer | 2 | 266 | clean: 150/150, 117 vias (designer 1057), 265 s | 1057 | |
 | bitshiftcrazy__d20_pcb__d20_pcb | 2 | 39 | clean: 19/19, 34 vias (designer 46), 57 s | 46 | |
-| bitshiftcrazy__spell_tome__spell_tome_bottom | 2 | 25 | clean: 18/18, 7 vias (designer 6), 15 s | 6 | |
-| byrantech__laptop__power | 4 | 179 | clean: 115/115, 91 vias (designer 167), 285 s | 167 | |
 | crmaykish__mackerel-68k__mackerel-08-v1 | 4 | 86 | clean: 96/96, 64 vias (designer 208), 488 s | 208 | |
 | duckyb__urchin__main | 2 | 122 | clean: 68/68, 7 vias (designer 53), 14 s | 53 | |
 | hackclub__OnBoard__E-Fidget-Lite | 2 | 29 | clean: 20/20, 7 vias (designer 0), 7 s | 0 | |
 | hackclub__OnBoard__MotionCubeViewAllForces | 2 | 30 | clean: 20/20, 35 vias (designer 29), 56 s | 29 | |
-| hackclub__OnBoard__PixelWave | 2 | 663 | clean: 343/343, 708 vias (designer 705), 117 s | 705 | |
 | hackclub__OnBoard__keyboar_ | 2 | 158 | clean: 104/104, 20 vias (designer 0), 176 s | 0 | |
-| siderakb__ergo-snm-keyboard__ErgoSNM_keyboard | 2 | 98 | clean: 58/58, 12 vias (designer 0), 39 s | 0 | |
 | sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys | 2 | 118 | clean: 76/76, 61 vias (designer 0), 175 s | 0 | |
 | sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre | 2 | 110 | clean: 75/75, 42 vias (designer 0), 111 s | 0 | |
 | tomunderwood99__CharlieBoard__Blue_Line | 2 | 25 | clean: 26/26, 26 vias (designer 28), 4 s | 28 | |
 | tubbytwins__bumwings-kbd__bumwings_v001 | 2 | 120 | clean: 72/72, 22 vias (designer 0), 93 s | 0 | |
 | tubbytwins__bumwings-kbd__bumwings_v001_core | 2 | 153 | clean: 98/98, 71 vias (designer 0), 119 s | 0 | |
-| tubbytwins__bumwings-kbd__bumwings_v001_xiao | 2 | 127 | clean: 81/81, 47 vias (designer 0), 127 s | 0 | |
 | CRImier__MyKiCad__vaio_re | 4 | 289 | open: 37 open; 230/267, 397 vias (designer 523), 464 s | 523 | |
 | CRImier__MyKiCad__zpn_devboard | 4 | 168 | open: 1 open; 166/167, 149 vias (designer 298), 641 s | 298 | |
 | GlasgowEmbedded__glasgow__glasgow__revC3 | 4 | 272 | open: 61 open; 165/226, 206 vias (designer 0), 454 s | 0 | |
@@ -314,10 +308,18 @@ the sweep's list was read); rerun them with `--only`.
 | tzarc__keyboards__ghoul | 2 | 191 | open: 6 open; 142/148, 244 vias (designer 0), 57 s | 0 | |
 | vd-rd__sbc_allwinner_a13__module | 4 | 179 | open: 41 open; 182/223, 361 vias (designer 501), 366 s | 501 | |
 | wntrblm__Castor_and_Pollux__mainboard | 4 | 235 | open: 1 open; 125/126, 121 vias (designer 358), 234 s | 358 | |
+| 0xCB-dev__0xCB-1337__1337-v4.0 | 2 | 64 | drc: {'starved_thermal': 3, 'copper_sliver': 6, 'track_dangling': 1}; 47/47, 44 vias (designer 0), 161 s | 0 | |
+| 0xCB-dev__0xCB-1337__pcb | 4 | 119 | drc: {'connection_width': 3}; 85/85, 87 vias (designer 0), 107 s | 0 | |
+| anyshake__explorer__Explorer | 2 | 266 | drc: {'starved_thermal': 1}; 150/150, 117 vias (designer 1057), 265 s | 1057 | |
+| bitshiftcrazy__spell_tome__spell_tome_bottom | 2 | 25 | drc: {'starved_thermal': 2}; 18/18, 7 vias (designer 6), 15 s | 6 | |
+| byrantech__laptop__power | 4 | 179 | drc: {'hole_clearance': 93}; 115/115, 91 vias (designer 167), 285 s | 167 | |
+| hackclub__OnBoard__PixelWave | 2 | 663 | drc: {'starved_thermal': 5, 'track_dangling': 8}; 343/343, 708 vias (designer 705), 117 s | 705 | |
+| iandchasse__silkscreen-pcb__silkscreen_pcb | 2 | 188 | drc: {'starved_thermal': 2}; 113/113, 138 vias (designer 192), 28 s | 192 | |
+| siderakb__ergo-snm-keyboard__ErgoSNM_keyboard | 2 | 98 | drc: {'clearance': 8}; 58/58, 12 vias (designer 0), 39 s | 0 | |
+| sporkus__capybully_keyboard__capybully | 4 | 114 | drc: {'copper_sliver': 3, 'starved_thermal': 2, 'via_dangling': 4}; 32/32, 19 vias (designer 0), 236 s | 0 | |
+| tubbytwins__bumwings-kbd__bumwings_v001_xiao | 2 | 127 | drc: {'clearance': 15}; 81/81, 47 vias (designer 0), 127 s | 0 | |
+| zli117__CyberKeeb2040__MainBoard | 2 | 182 | drc: {'hole_to_hole': 13, 'via_dangling': 1}; 118/118, 169 vias (designer 0), 474 s | 0 | |
 | duckyb__eternal-keypad__eternal-keypad | 2 | 93 | mismatch: 2 unconnected in KiCad; 63/63, 35 vias (designer 0), 73 s | 0 | |
-| iandchasse__silkscreen-pcb__silkscreen_pcb | 2 | 188 | mismatch: 1 unconnected in KiCad; 113/113, 138 vias (designer 192), 28 s | 192 | |
-| sporkus__capybully_keyboard__capybully | 4 | 114 | mismatch: 5 unconnected in KiCad; 32/32, 19 vias (designer 0), 236 s | 0 | |
-| zli117__CyberKeeb2040__MainBoard | 2 | 182 | mismatch: 1 unconnected in KiCad; 118/118, 169 vias (designer 0), 474 s | 0 | |
 | antmicro__jetson-nano-baseboard__jetson-nano-baseboard | 8 | 391 | error: iteration 24: rerouted 31, conflicted 28, present 8417.06, 613.61s (search 609.15s, stamp 4.41s, 887 | 794 | |
 | crmaykish__mackerel-68k__mackerel-10-v1 | 4 | 114 | error: iteration 18: rerouted 2, conflicted 0, present 738.95, 284.20s (search 618.13s, stamp 23.70s, 12682 | 200 | |
 | crmaykish__mackerel-68k__mackerel-30-proto | 4 | 133 | error: iteration 25: rerouted 2, conflicted 0, present 10000.00, 235.74s (search 544.77s, stamp 14.97s, 156 | 294 | |
@@ -340,7 +342,7 @@ the sweep's list was read); rerun them with `--only`.
 | tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd | 2 | 132 | error: error: unknown copper layer "In1.Cu" | 0 | |
 | tubbytwins__bumwings-kbd__bumwings_v001_xiao_s | 2 | 122 | error: error: unknown copper layer "In1.Cu" | 0 | |
 
-92 boards: clean 25, open 42, drc 0, mismatch 4, error 21
+92 boards: clean 17, open 42, drc 11, mismatch 1, error 21
 
 
 ### First sweep, 38 boards, before the day's fixes (`pcb-maker-x4`, 900 s each)
