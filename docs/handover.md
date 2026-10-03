@@ -340,8 +340,14 @@ beats all of them on the laptop motherboard, zpn_devboard and MIDAS-MK2.
 A systematic KiCad finding our verifier missed: copper too close to via
 drills (hole clearance); now in the stamps, the statics and the verifier.
 Island stitching for starved thermals was tried and reverted (worse).
-Sweep restarted as `build/github-route-v8` (`pcb-maker-x25`, 1500 s per
-board). Layout sweep: still to rerun with `--jobs 1`.
+Then: budgets in work (search expansions), not seconds, so results no
+longer depend on machine load (identical runs verified); probes count
+stranded pour pads; resume keeps the probe's price of sharing. And a
+reporting bug: `summary.py` never counted DRC errors, so the v2 table
+said 25 clean where 17 were (fixed, table corrected). Sweep restarted as
+`build/github-route-v9` (`pcb-maker-x30`, 2700 s per board: work budgets
+take longer in wall time on a busy machine). Layout sweep: still to rerun
+with `--jobs 1`.
 
 ## Where things are
 
