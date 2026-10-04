@@ -11,11 +11,27 @@ findings), **error** (adapter error or timeout), with the designer's via
 count for comparison from manifest.json."""
 
 import argparse
+import importlib.util
 import json
 from collections import defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+_spec = importlib.util.spec_from_file_location("corpus_run", HERE.parent / "corpus" / "run.py")
+corpus_run = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(corpus_run)
+
+
+def recount(directory, row):
+    """The native findings again from the saved reports, so runs made
+    before a counting change read like new ones."""
+    work = directory / row["name"]
+    baseline = frozenset()
+    if (work / "baseline" / "drc.json").exists():
+        baseline = frozenset(
+            corpus_run.finding_key(v)
+            for v in json.loads((work / "baseline" / "drc.json").read_text()).get("violations", []))
+    return corpus_run.drc_summary(work / "routed", baseline, row.get("reference_findings"))
 
 
 def rows_of(path):
@@ -51,6 +67,8 @@ def main():
             classes["error"].append((name, reason, designer))
             continue
         native = route.get("native") or {}
+        if arguments.output.is_dir() and (arguments.output / name / "routed" / "drc.json").exists():
+            native = recount(arguments.output, row) or native
         # The runner's copper errors beyond the source's and the designer's
         # own (drc_summary in benchmarks/corpus/run.py).
         findings = native.get("errors") if isinstance(native, dict) else None

@@ -25,14 +25,16 @@ def finding_key(violation):
 
 def drc_summary(directory, baseline=frozenset(), reference=None):
     """Copper findings that the stripped source did not already have, beyond
-    what the designer's own routed board has of the same type."""
+    what the designer's own routed board has of the same type. Errors only,
+    as the project rates them: the designer's reference is read with
+    --severity-error, and KiCad passes a board with warnings."""
     path = directory / "drc.json"
     if not path.exists():
         return None
     report = json.loads(path.read_text())
     errors = Counter(
         v["type"] for v in report.get("violations", [])
-        if not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
+        if v.get("severity", "error") == "error" and not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
     )
     for kind, allowed in (reference or {}).items():
         errors[kind] = max(0, errors.get(kind, 0) - allowed)
