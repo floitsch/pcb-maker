@@ -1002,6 +1002,7 @@ pub(super) fn lower(
                 // An inner layer poured over nearly the whole board is a
                 // plane: it carries no signals.
                 exclusive: layers.names[layer].starts_with("In") && polygon_area(&pour.polygon) >= 0.9 * board_area,
+                solid: pour.solid,
             });
         }
     }
@@ -1292,6 +1293,8 @@ pub(super) struct Pour {
     clearance: f64,
     min_thickness: f64,
     thermal_reach: f64,
+    /// `(connect_pads yes ...)`: pads join wherever the fill touches.
+    solid: bool,
     polygon: Vec<[f64; 2]>,
 }
 
@@ -1327,6 +1330,11 @@ pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                 .and_then(|form| form_f64(form, "clearance", 1).ok())
                 .unwrap_or(0.0),
             min_thickness: form_f64(zone, "min_thickness", 1).unwrap_or(0.25),
+            solid: zone
+                .child("connect_pads")
+                .and_then(|form| form.children().get(1))
+                .and_then(Expr::atom)
+                == Some("yes"),
             thermal_reach: zone
                 .child("fill")
                 .map(|fill| {

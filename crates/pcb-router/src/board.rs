@@ -88,6 +88,9 @@ pub struct Plane {
     /// A plane layer: other nets' tracks may not run inside the pour (vias
     /// pass through), so it stays whole.
     pub exclusive: bool,
+    /// Pads join the pour wherever its fill touches them (KiCad's solid
+    /// connection), not only through thermal spokes.
+    pub solid: bool,
 }
 
 #[derive(Clone, Debug)]

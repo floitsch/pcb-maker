@@ -4368,12 +4368,65 @@ impl Router {
             let (a, b) = (find(parent, a), find(parent, b));
             parent[a] = b;
         };
+        // A pad joins a pour piece the way KiCad joins it: through a
+        // thermal spoke, straight out from the pad (along its axes, or
+        // diagonally for a round pad), across the thermal gap into fill. A
+        // radius around the pad counted fill that only lies diagonally
+        // beside a fine-pitch pad row, which KiCad leaves unconnected.
+        // A solid pour (KiCad's `connect_pads yes`) joins a pad wherever
+        // its fill comes close.
+        let solid: Vec<bool> = (0..layers)
+            .map(|layer| self.board.planes.iter().any(|plane| plane.net == net && plane.layer == layer && plane.solid))
+            .collect();
+        let description = &self.board.nets[net as usize];
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
-            for node in nodes {
-                if let Some(piece) =
-                    pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
-                {
+            for node in nodes.iter().filter(|node| solid[node.layer as usize]) {
+                if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach) {
                     union(&mut parent, terminal_base + terminal, piece as usize);
+                }
+            }
+        }
+        for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
+            let pad = &self.board.obstacles[description.terminals[terminal].pad];
+            let anchor = description.terminals[terminal].anchor;
+            let bounds = pad.shape.aabb();
+            let round = matches!(pad.shape, crate::geometry::Shape::Circle { .. });
+            let layers_of_nodes: HashSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
+            for layer in layers_of_nodes {
+                if pours.label[layer].is_empty() || solid[layer] {
+                    continue;
+                }
+                let gap = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == layer)
+                    .map(|plane| plane.thermal_reach)
+                    .fold(0.0f64, f64::max)
+                    .max(self.grid.pitch);
+                let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+                let directions: [[f64; 2]; 4] = if round {
+                    let d = std::f64::consts::FRAC_1_SQRT_2;
+                    [[d, d], [d, -d], [-d, d], [-d, -d]]
+                } else {
+                    [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
+                };
+                for direction in directions {
+                    // From the pad's edge along the spoke, the fill must
+                    // begin within the gap and a little more.
+                    let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                    for extra in [gap, gap + self.grid.pitch] {
+                        let distance = edge + extra;
+                        let point = [anchor[0] + direction[0] * distance, anchor[1] + direction[1] * distance];
+                        let Some(cell) = self.grid.nearest_node(point) else {
+                            continue;
+                        };
+                        let piece = pours.label[layer][cell];
+                        if piece != 0 {
+                            union(&mut parent, terminal_base + terminal, piece as usize);
+                            break;
+                        }
+                    }
                 }
             }
         }
