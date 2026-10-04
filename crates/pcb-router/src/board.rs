@@ -109,6 +109,11 @@ pub struct Board {
     /// Indexed by `NetId`.
     pub nets: Vec<Net>,
     pub planes: Vec<Plane>,
+    /// Terminal labels whose pad joins a pour wherever the fill touches it
+    /// (KiCad's per-pad solid connection), and labels whose pad never
+    /// joins a pour (no connection): both sorted.
+    pub solid_pads: Vec<String>,
+    pub isolated_pads: Vec<String>,
 }
 
 impl Board {

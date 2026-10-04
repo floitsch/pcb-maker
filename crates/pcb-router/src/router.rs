@@ -1241,8 +1241,11 @@ impl Router {
         }
         let on_plane: Vec<bool> = terminal_nodes
             .iter()
-            .map(|nodes| {
-                nodes.iter().any(|node| {
+            .enumerate()
+            .map(|(index, nodes)| {
+                // A pad set to no zone connection never joins a pour.
+                self.board.isolated_pads.binary_search(&description.terminals[index].label).is_err()
+                    && nodes.iter().any(|node| {
                     plane
                         .get(node.layer as usize)
                         .is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
@@ -4379,14 +4382,23 @@ impl Router {
             .map(|layer| self.board.planes.iter().any(|plane| plane.net == net && plane.layer == layer && plane.solid))
             .collect();
         let description = &self.board.nets[net as usize];
+        // Per pad, KiCad's own zone connection overrides the pour's.
+        let isolated = |terminal: usize| self.board.isolated_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        let solid_pad = |terminal: usize| self.board.solid_pads.binary_search(&description.terminals[terminal].label).is_ok();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
-            for node in nodes.iter().filter(|node| solid[node.layer as usize]) {
+            if isolated(terminal) {
+                continue;
+            }
+            for node in nodes.iter().filter(|node| solid[node.layer as usize] || solid_pad(terminal)) {
                 if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach) {
                     union(&mut parent, terminal_base + terminal, piece as usize);
                 }
             }
         }
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
+            if isolated(terminal) || solid_pad(terminal) {
+                continue;
+            }
             let pad = &self.board.obstacles[description.terminals[terminal].pad];
             let anchor = description.terminals[terminal].anchor;
             let bounds = pad.shape.aabb();

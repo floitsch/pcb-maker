@@ -647,6 +647,8 @@ pub(super) fn lower(
     let mut nets: Vec<core::Net> = Vec::new();
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
     let mut obstacles = Vec::new();
+    let mut solid_pads: Vec<String> = Vec::new();
+    let mut isolated_pads: Vec<String> = Vec::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
     // ground or a rail) route at the project's smallest predefined width.
     let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
@@ -746,6 +748,13 @@ pub(super) fn lower(
                 {
                     let pad_name = pad.children().get(1).and_then(Expr::atom).unwrap_or("");
                     let label = format!("{reference}.{}", pad_name.trim_matches('"'));
+                    // KiCad's zone connection: the pad's own, else its
+                    // footprint's (0 none, 1 thermal, 2 solid).
+                    match form_atom(pad, "zone_connect", 1).or_else(|| form_atom(item, "zone_connect", 1)) {
+                        Some("0") => isolated_pads.push(label.clone()),
+                        Some("2") => solid_pads.push(label.clone()),
+                        _ => {}
+                    }
                     let lowered = lower_pad(pad, footprint_at)?;
                     let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
                     // Plated holes of pads without a net are just holes to
@@ -1028,6 +1037,14 @@ pub(super) fn lower(
             obstacles,
             nets,
             planes,
+            solid_pads: {
+                solid_pads.sort();
+                solid_pads
+            },
+            isolated_pads: {
+                isolated_pads.sort();
+                isolated_pads
+            },
         },
     })
 }

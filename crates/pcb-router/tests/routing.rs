@@ -34,6 +34,8 @@ impl Builder {
                 obstacles: Vec::new(),
                 nets: Vec::new(),
                 planes: Vec::new(),
+                solid_pads: Vec::new(),
+                isolated_pads: Vec::new(),
             },
         }
     }
