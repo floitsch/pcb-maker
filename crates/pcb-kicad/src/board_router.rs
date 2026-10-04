@@ -727,6 +727,19 @@ pub(super) fn lower(
                 for graphic in item.children().iter().filter(|child| {
                     matches!(child.head(), Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly"))
                 }) {
+                    // Mask graphics open the mask like the board's own
+                    // (Sisu's 190 B.Mask polygons, link's connector).
+                    if let Some(side @ ("F.Mask" | "B.Mask")) = form_atom(graphic, "layer", 1) {
+                        let shapes: Vec<core::Shape> = copper_graphic_shapes(graphic)?
+                            .into_iter()
+                            .map(|shape| place_shape(shape, footprint_at))
+                            .collect();
+                        if !shapes.is_empty() {
+                            let layer = if side == "F.Mask" { 0 } else { layers.len() - 1 };
+                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string()));
+                        }
+                        continue;
+                    }
                     let Some(layer) = form_atom(graphic, "layer", 1).and_then(|name| layers.index(name)) else {
                         continue;
                     };
@@ -954,46 +967,17 @@ pub(super) fn lower(
             _ => {}
         }
     }
-    // A mask opening over copper of one net (a pad exposed on purpose) is
-    // that net's: it may route there, others may not. Over copper of no
-    // net or several, nothing new goes under it. The net is the whole
-    // graphic's: a filled rectangle's bare edges see no pad of their own.
+    // A mask opening exposes the copper under it: pads, or else the fill
+    // of a pour. Over one net (a pad or a pour exposed on purpose)
+    // it is that net's: it may route there, others would bridge to it.
+    // Over several, the designer already bridges them (J_LCD1's opening
+    // over its eight pads in Sisu) and the pads keep their escapes. Over
+    // none, nothing new goes under it. The net is the whole graphic's: a
+    // filled rectangle's bare edges see no pad of their own.
     let pours = pours(pcb, &layers)?;
     for (shapes, layer, kind) in mask_openings {
         let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
-        // Only text's glyph strokes open the mask, and its box would close
-        // whole pad rows (OpenESC's B.Mask label over U11). It matters over
-        // a pour, whose fill shows through it: the pour's net may go there,
-        // others would bridge to the fill (eurorack-pmod's logos on GND).
-        if kind == "gr_text" {
-            let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
-            let under: Vec<&Pour> = pours
-                .iter()
-                .filter(|pour| pour.layers & (1 << layer) != 0 && core::geometry::point_in_polygon(center, &pour.polygon))
-                .collect();
-            let Some(top) = under.iter().map(|pour| pour.priority).max() else {
-                continue;
-            };
-            let nets_under: std::collections::BTreeSet<&str> =
-                under.iter().filter(|pour| pour.priority == top).map(|pour| pour.net.as_str()).collect();
-            let net = match nets_under.into_iter().collect::<Vec<_>>()[..] {
-                [name] => net_ids_lookup(&nets, name),
-                _ => None,
-            };
-            obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
-                shape,
-                layers: 1 << layer,
-                kind: core::ObstacleKind::Keepout,
-                net,
-                clearance: 0.0,
-                clearance_override: None,
-                blocks_tracks: true,
-                blocks_vias: true,
-                label: format!("solder mask opening ({kind})"),
-            }));
-            continue;
-        }
-        let nets: std::collections::BTreeSet<core::NetId> = obstacles
+        let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
             .iter()
             .filter(|obstacle| {
                 obstacle.kind == core::ObstacleKind::Copper
@@ -1002,10 +986,34 @@ pub(super) fn lower(
             })
             .filter_map(|obstacle| obstacle.net)
             .collect();
-        let net = (nets.len() == 1).then(|| *nets.iter().next().unwrap());
-        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-            eprintln!("mask opening ({kind}) on layer {layer}: {:?}, net {net:?} of {}", bounds, nets.len());
+        let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+        let under: Vec<&Pour> = pours
+            .iter()
+            .filter(|pour| pour.layers & (1 << layer) != 0 && core::geometry::point_in_polygon(center, &pour.polygon))
+            .collect();
+        // A pour's fill keeps its clearance from pads: it shows through
+        // only where the opening has no pad of its own.
+        if exposed.is_empty()
+            && let Some(top) = under.iter().map(|pour| pour.priority).max()
+        {
+            exposed.extend(
+                under
+                    .iter()
+                    .filter(|pour| pour.priority == top)
+                    .filter_map(|pour| net_ids_lookup(&nets, &pour.net)),
+            );
         }
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            eprintln!("mask opening ({kind}) on layer {layer}: {:?}, nets {exposed:?}", bounds);
+        }
+        let net = match exposed.len() {
+            1 => exposed.first().copied(),
+            0 if kind != "gr_text" => None,
+            // Only text's glyph strokes open the mask, and its estimated
+            // box would close whole pad rows (OpenESC's B.Mask label over
+            // U11): over bare board it opens nothing that matters.
+            _ => continue,
+        };
         obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
             shape,
             layers: 1 << layer,
@@ -1159,6 +1167,9 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
                 .retain(|child| !matches!(child.head(), Some("filled_polygon" | "fill_segments")));
         }
     }
+    // KiCad refuses a board with items on undefined layers; the stripped
+    // board loads like the routed one will (koeg-board's Rescue layer).
+    move_undefined_layers(&mut pcb);
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
@@ -2609,17 +2620,16 @@ mod pour_request_tests {
         let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
         let net_a = board.nets.iter().position(|net| net.name.ends_with('A')).map(|index| index as core::NetId);
         // The first rectangle (fill and four bare edges) is pad 1's; the
-        // second spans two nets and keeps everything out; text over bare
-        // board opens nothing that matters.
+        // second already bridges two pads and keeps nothing out; text over
+        // bare board opens nothing that matters.
         let bare = openings(&board);
-        assert_eq!(bare.len(), 10);
-        assert!(bare[..5].iter().all(|(net, _)| net.is_some() && *net == net_a));
-        assert!(bare[5..].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
+        assert_eq!(bare.len(), 5);
+        assert!(bare.iter().all(|(net, _)| net.is_some() && *net == net_a));
         // Over a pour, the text exposes the fill: it is the pour's net's.
         let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10))))"#;
         let poured = openings(&lowered(zone));
-        assert_eq!(poured.len(), 11);
-        assert_eq!(poured[10], (net_b, "solder mask opening (gr_text)".to_string()));
+        assert_eq!(poured.len(), 6);
+        assert_eq!(poured[5], (net_b, "solder mask opening (gr_text)".to_string()));
     }
 
     #[test]

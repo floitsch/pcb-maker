@@ -247,6 +247,10 @@ const NO_TERMINAL: u16 = u16::MAX;
 /// (ATAT1800: 52M in 29 s; Interf-U: 19M in 7.8 s), to turn a time budget
 /// into work, and how much longer than that the clock may run before it
 /// stops a negotiation anyway (a loaded machine).
+/// How far an escape stub may come short of a clearance: floating point
+/// noise, far below the verifier's tolerance and KiCad's DRC epsilon.
+const STUB_FIT: f64 = 1.0e-6;
+
 pub const EXPANSIONS_PER_SECOND: f64 = 2.0e6;
 pub const GUARD: f64 = 4.0;
 /// A branch end that lands on one of the net's copper pours.
@@ -4895,8 +4899,10 @@ impl Router {
             {
                 return true;
             }
-            let required = half_width
-                + SAFETY
+            // Stubs are exact geometry: an exact fit passes, as in KiCad
+            // (a 0.2 track out of a 0.4 pitch QFN's 0.2 pad keeps exactly
+            // 0.2 from both neighbours, RP2040's U15).
+            let required = half_width - STUB_FIT
                 + match obstacle.kind {
                     crate::board::ObstacleKind::Copper => {
                         self.board.copper_clearance(&class, obstacle)
