@@ -359,6 +359,18 @@ errors -> none). Tried and reverted: retrying the best rung with the
 board's smallest legal via (eurorack's corner pad still had no room under
 the hole clearance; 4 open instead of 2).
 
+## 2026-10-04
+
+Fixed: items on undefined layers (koeg-board), loops outside the main
+outline are further board pieces (Multi-Protocol Hub: ~340 open -> 111),
+solder mask openings (eurorack), custom-pad arcs (capybully). New:
+`benchmarks/github/guide.py` makes guided copies (each net at its
+designer's width, like PCBench's guide) because designers often route far
+narrower than their class (ohdsp DSP: 160/190 at the class width, 190/190
+guided); running in the background (`build/github-guide.log`), then sweep
+`boards-guided.json`. The unguided sweep `build/github-route-v9` keeps
+running. todo.md: neck down where the class width does not fit.
+
 ## Where things are
 
 | What | Where |

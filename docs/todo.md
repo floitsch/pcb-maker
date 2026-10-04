@@ -116,6 +116,16 @@ router and placer items.
   rerouted), calibrated so that an idle machine takes about the time the
   seconds give now; keep a wall-clock limit only as a last guard.
 
+- **Neck down where the class width does not fit.** Designers often
+  leave the default class wide and draw most tracks narrower (ohdsp's DSP
+  board: class 0.5 mm, 840 of 1992 segments at 0.135 mm). Routed at the
+  class width the board leaves 30 connections open; at the designer's
+  widths (benchmarks/github/guide.py) it routes 190/190. For boards from a
+  netlist there is no designer copper to read: route at the class width
+  but let a net neck down to the board's minimum (or the project's
+  predefined widths) where the class width does not fit, at a cost, as
+  neck zones do near narrow pads today.
+
 ## Layout
 
 - **Moves that cannot close the last opens cost the whole budget.** On the
