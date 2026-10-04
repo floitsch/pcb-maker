@@ -187,7 +187,17 @@ pub fn resolve_project_rules(
         .values()
         .map(|class| class.trace_width_mm)
         .fold(f64::INFINITY, f64::min);
+    // The smallest width of the project's width menu, if it allows any
+    // narrower than a class.
+    let narrow_signal = project["board"]["design_settings"]["track_widths"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_f64())
+        .filter(|width| *width > 0.0 && *width >= minimum("min_track_width"))
+        .fold(f64::INFINITY, f64::min);
     Ok(KiCadBoardRouterConfig {
+        narrow_signal_mm: narrow_signal.is_finite().then_some(narrow_signal),
         // Designers neck down to the board minimum where a pad demands it;
         // a project that states none gets a fab's usual 0.127 mm (KiCad's
         // DRC checks widths against the stated minimum only).

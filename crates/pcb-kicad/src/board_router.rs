@@ -145,6 +145,16 @@ pub struct KiCadBoardRouterConfig {
     /// Router `thermal_guard_cost`.
     #[serde(default)]
     pub thermal_guard_cost: Option<f64>,
+    /// The project's smallest predefined track width (its width menu),
+    /// which designers use for signals where the class width is a power
+    /// width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on
+    /// most tracks).
+    #[serde(default)]
+    pub narrow_signal_mm: Option<f64>,
+    /// Route signal nets at `narrow_signal_mm` (the ladder tries it when
+    /// connections stay open at the class widths).
+    #[serde(default)]
+    pub use_narrow_signals: Option<bool>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -637,6 +647,13 @@ pub(super) fn lower(
     let mut nets: Vec<core::Net> = Vec::new();
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
     let mut obstacles = Vec::new();
+    // With `use_narrow_signals`, signal nets (not poured, not named as a
+    // ground or a rail) route at the project's smallest predefined width.
+    let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
+        pours(pcb, &layers)?.into_iter().map(|pour| pour.net).collect()
+    } else {
+        Default::default()
+    };
 
     let mut net_id = |name: &str,
                       nets: &mut Vec<core::Net>,
@@ -650,8 +667,19 @@ pub(super) fn lower(
             .get(name)
             .or(config.default_rules.as_ref())
             .ok_or_else(|| format!("no routing rules for connection {name:?}"))?;
+        let narrow = match (config.use_narrow_signals, config.narrow_signal_mm) {
+            (Some(true), Some(width))
+                if width < rules.trace_width_mm
+                    && !poured.contains(name)
+                    && !crate::quality::ground(name)
+                    && !crate::quality::rail_name(name) =>
+            {
+                Some(width)
+            }
+            _ => None,
+        };
         let class = core::RuleClass {
-            trace_width: rules.trace_width_mm,
+            trace_width: narrow.unwrap_or(rules.trace_width_mm),
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
@@ -1496,6 +1524,9 @@ pub fn route_kicad_board(
     // its probe stopped. Only the leading router is kept (memory).
     // The rung the probe continued: the regular ladder skips it.
     let mut probed_mode: Option<usize> = None;
+    // The configuration of the best attempt so far (and whether its pours
+    // connected), for the narrow-signal retry at the end.
+    let mut best_attempt: Option<(KiCadBoardRouterConfig, bool)> = None;
     let mut probe_complete = false;
     if config.probe_ladder.unwrap_or(true) && modes.len() >= 3 && config.negotiation_seconds.is_none() {
         let probe_seconds = config.probe_seconds.unwrap_or(75.0);
@@ -1574,6 +1605,7 @@ pub fn route_kicad_board(
             slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
+            best_attempt = Some((attempt.clone(), connect));
             probed_mode = Some(mode);
         }
     }
@@ -1726,6 +1758,7 @@ pub fn route_kicad_board(
                     fs::rename(&directory, output_directory).map_err(|error| error.to_string())?;
                 }
                 best = Some((opens, result));
+                best_attempt = Some((attempt.clone(), *connect));
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
             }
@@ -1747,6 +1780,42 @@ pub fn route_kicad_board(
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 break 'ladder;
             }
+        }
+    }
+    // Connections still open at the class widths: the best attempt once
+    // more with signal nets at the project's smallest predefined width
+    // (designers often keep the default class at a power width and draw
+    // signals narrower).
+    if let (Some((opens, _)), Some((attempt, connect)), Some(narrow)) =
+        (best.as_ref(), best_attempt.as_ref(), config.narrow_signal_mm)
+        && opens.0 > 0
+        && config.use_narrow_signals.is_none()
+        && spent(ladder_work) < 1.5 * ladder_budget
+        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+    {
+        let mut narrowed = attempt.clone();
+        narrowed.use_narrow_signals = Some(true);
+        if scratch.exists() {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
+        }
+        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &narrowed, *connect)?;
+        result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
+        let narrow_opens = open(&result, &scratch);
+        eprintln!(
+            "attempt with signals at {narrow} mm: {} open, {} starved, {} vias, {:.1} s",
+            narrow_opens.0, narrow_opens.1, result.vias, result.routing_seconds
+        );
+        let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
+            (narrow_opens, result.vias, result.length_mm)
+                .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                .is_some_and(|order| order.is_lt())
+        });
+        if better {
+            fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+            fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
+            best = Some((narrow_opens, result));
+        } else {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
     }
     let mut result = best.expect("at least one routing attempt").1;

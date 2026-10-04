@@ -6436,6 +6436,9 @@ fn board_router_config(
                 if config.neck_width_mm.is_none() {
                     config.neck_width_mm = project.neck_width_mm;
                 }
+                if config.narrow_signal_mm.is_none() {
+                    config.narrow_signal_mm = project.narrow_signal_mm;
+                }
             }
             Ok(config)
         }
