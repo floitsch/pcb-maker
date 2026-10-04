@@ -819,6 +819,26 @@ pub(super) fn lower(
                         blocks_vias: true,
                         label: label.clone(),
                     });
+                    // Other nets keep the hole clearance from a plated hole
+                    // too, which reaches past a thin annular ring (a thermal
+                    // via pad: 0.3 drill in 0.5 copper, eurorack-pmod's U1).
+                    // Vias stay with the pad's copper rule.
+                    if pad_type == "thru_hole"
+                        && net.is_some()
+                        && let Some(shape) = drill_shape(pad, lowered.center)?
+                    {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: layers.all(),
+                            kind: core::ObstacleKind::Hole,
+                            net,
+                            clearance: 0.0,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: false,
+                            label: format!("{label} plated hole"),
+                        });
+                    }
                     if let Some(net) = net {
                         // Without a hole, a pad on several layers (an
                         // edge-mount connector's top and bottom pads) does

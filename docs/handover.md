@@ -378,6 +378,25 @@ pad's own zone_connect overrides its pour's (18 boards set pads to no
 connection). Sweep restarted as `build/github-route-v12` (`pcb-maker-x43`);
 v9's first 47 boards are the comparison.
 
+v12 against v9: OpenFC 1 -> 9 open, ESC-mini 4 -> 16. Bisected
+(tracks-only, deterministic: `build/topo-set/tracks-bisect.json`) to the
+solder mask keepouts. Two lowering bugs: a filled mask rectangle's bare
+edges were openings of their own, saw no pad and fenced the pad off from
+its own net (OpenFC's hand-drawn QFN openings; now one net per graphic,
+OpenFC 81/82 again), and mask text was its estimated box, ignoring
+vertical justification (OpenESC's "ESC" label sat over U11's pad row; now
+TrueType text uses its `render_cache` polygons, and text counts only over
+a pour, whose fill shows through: eurorack's logos on GND keep 0 bridges).
+Then plated holes of routed pads are hole obstacles of their net:
+the 0.25 hole clearance reaches past a thin annular ring (eurorack U1's
+thermal vias). Tracks-only on the stripped boards, x43 -> x49: ESC-mini
+136 -> 150 of 152, OpenFC 73 -> 81 of 82. The v12 sweep is frozen at x43
+and keeps running.
+Caution: `build/near.sh` used to route `build/github-route-v2/<board>/source`,
+which still holds the designer's tracks (ESC-mini: 1194 segments, 1130
+vias), so its numbers before 2026-10-04 evening are not comparable to the
+sweeps. It now strips tracks first, as `benchmarks/corpus/run.py` does.
+
 ## Where things are
 
 | What | Where |
