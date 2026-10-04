@@ -149,7 +149,10 @@ router and placer items.
   "route these by tracks"; they then joined the same phantom fill (14
   left). The fix is in the model: test the spoke rectangles against the
   pour map, and count a pad on its pour only with at least one spoke (two
-  for no starved_thermal).
+  for no starved_thermal). Done (2026-10-04) for thermal pours, solid
+  pours keep the touch test: DSP board 15 -> 6 unconnected. Open: per-pad
+  zone_connect overrides, the spoke angle from thermal_bridge_angle, two
+  spokes for no starved thermal.
 
 ## Layout
 
