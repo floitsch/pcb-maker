@@ -132,7 +132,10 @@ router and placer items.
   narrower widths as a cost the search can choose per step (neck cells as
   an alternative class on every node, priced by how much narrower), or a
   ladder rung that routes signal nets at the project's smallest
-  predefined track width.
+  predefined track width. Done (2026-10-04) as the last ladder step:
+  signal nets at the project's smallest predefined width when connections
+  stay open (DSP board 158 -> 189 of 190). Open: a per-step width choice
+  in the search, and boards whose project lists no narrower width.
 
 ## Layout
 
