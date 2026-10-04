@@ -137,6 +137,20 @@ router and placer items.
   stay open (DSP board 158 -> 189 of 190). Open: a per-step width choice
   in the search, and boards whose project lists no narrower width.
 
+- **Pour reach as KiCad's spokes, not a radius.** The router counts a pad
+  as joined to its pour when a pour node lies within 0.8 mm of a pad node
+  (`analyze_pours`, `piece_near`). KiCad joins it only through thermal
+  spokes: straight out from the pad (along its axes, or at the
+  thermal_bridge_angle), as wide as the bridge width, across the thermal
+  gap into fill. In a fine-pitch row the fill reaches the pads diagonally
+  or not at all, so the router believes pads joined that KiCad leaves
+  unconnected (ohdsp's DSP board: 15 GNDD pads of U201). Tried and
+  reverted (2026-10-04): feeding KiCad's unconnected pads back as
+  "route these by tracks"; they then joined the same phantom fill (14
+  left). The fix is in the model: test the spoke rectangles against the
+  pour map, and count a pad on its pour only with at least one spoke (two
+  for no starved_thermal).
+
 ## Layout
 
 - **Moves that cannot close the last opens cost the whole budget.** On the
