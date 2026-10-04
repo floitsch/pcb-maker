@@ -370,6 +370,10 @@ narrower than their class (ohdsp DSP: 160/190 at the class width, 190/190
 guided); running in the background (`build/github-guide.log`), then sweep
 `boards-guided.json`. The unguided sweep `build/github-route-v9` keeps
 running. todo.md: neck down where the class width does not fit.
+Then: the ladder's last step routes signal nets at the project's smallest
+predefined width when connections stay open (DSP board 158 -> 189 of 190
+unguided). Sweep restarted as `build/github-route-v10` (`pcb-maker-x39`);
+v9's first 45 boards are the comparison.
 
 ## Where things are
 
