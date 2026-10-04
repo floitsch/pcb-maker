@@ -373,9 +373,10 @@ running. todo.md: neck down where the class width does not fit.
 Then: the ladder's last step routes signal nets at the project's smallest
 predefined width when connections stay open (DSP board 158 -> 189 of 190
 unguided). Then pads join thermal pours through KiCad-like spokes, solid
-pours by touch (DSP board 15 -> 6 unconnected; MIDAS unchanged). Sweep
-restarted as `build/github-route-v11` (`pcb-maker-x42`); v9's first 47
-boards are the comparison.
+pours by touch (DSP board 15 -> 6 unconnected; MIDAS unchanged), and a
+pad's own zone_connect overrides its pour's (18 boards set pads to no
+connection). Sweep restarted as `build/github-route-v12` (`pcb-maker-x43`);
+v9's first 47 boards are the comparison.
 
 ## Where things are
 
