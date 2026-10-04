@@ -124,7 +124,15 @@ router and placer items.
   netlist there is no designer copper to read: route at the class width
   but let a net neck down to the board's minimum (or the project's
   predefined widths) where the class width does not fit, at a cost, as
-  neck zones do near narrow pads today.
+  neck zones do near narrow pads today. Tried (2026-10-04) and reverted:
+  necking a net down everywhere once it is blocked at its class width or
+  in conflict for 16 iterations. The DSP board stayed at 158/190 (its
+  trouble is congestion spread over many nets, which rarely makes one net
+  blocked or stuck), and Interf-U got 3 more vias. What would work better:
+  narrower widths as a cost the search can choose per step (neck cells as
+  an alternative class on every node, priced by how much narrower), or a
+  ladder rung that routes signal nets at the project's smallest
+  predefined track width.
 
 ## Layout
 
