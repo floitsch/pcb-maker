@@ -310,17 +310,40 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     if loops.is_empty() {
         return Err("the board has no Edge.Cuts outline".into());
     }
-    let largest = (0..loops.len())
-        .max_by(|a, b| polygon_area(&loops[*a]).total_cmp(&polygon_area(&loops[*b])))
-        .unwrap();
-    let outline = loops.swap_remove(largest);
-    if std::env::var_os("PCB_OUTLINE_DEBUG").is_some() {
-        eprintln!("outline: area {:.1}, {} other loops", polygon_area(&outline).abs(), loops.len());
-        for other in &loops {
-            let inside = point_in_polygon(other[0], &outline);
-            eprintln!("  loop area {:.1} at {:?} inside {inside}", polygon_area(other).abs(), other[0]);
+    // The largest loop is the board. A loop inside a piece of board is a
+    // cutout; a loop outside every piece is another piece (a module board
+    // beside the main one, a panel): pieces are joined to the board by a
+    // zero-width bridge between their closest vertices, so that one
+    // polygon is their union (as the even-odd test and the edge distances
+    // read it).
+    loops.sort_by(|a, b| polygon_area(b).abs().total_cmp(&polygon_area(a).abs()));
+    let mut pieces: Vec<Vec<[f64; 2]>> = Vec::new();
+    let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
+    for candidate in loops {
+        if pieces.iter().any(|piece| point_in_polygon(candidate[0], piece)) {
+            cutouts.push(candidate);
+        } else {
+            pieces.push(candidate);
         }
     }
+    let mut pieces = pieces.into_iter();
+    let mut outline = pieces.next().expect("at least one loop");
+    for piece in pieces {
+        let (i, j) = (0..outline.len())
+            .flat_map(|i| (0..piece.len()).map(move |j| (i, j)))
+            .min_by(|(a, b), (c, d)| {
+                distance_squared(outline[*a], piece[*b]).total_cmp(&distance_squared(outline[*c], piece[*d]))
+            })
+            .unwrap();
+        let mut joined = outline[..=i].to_vec();
+        joined.extend(piece[j..].iter().chain(piece[..=j].iter()));
+        joined.extend_from_slice(&outline[i..]);
+        outline = joined;
+    }
+    if std::env::var_os("PCB_OUTLINE_DEBUG").is_some() {
+        eprintln!("outline: area {:.1} ({} vertices), {} cutouts", polygon_area(&outline).abs(), outline.len(), cutouts.len());
+    }
+    let loops = cutouts;
     Ok(BoardLoops {
         outline,
         cutouts: loops,
@@ -330,6 +353,24 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loop_outside_the_board_is_another_piece_not_a_cutout() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (gr_rect (start 30 0) (end 40 10) (layer "Edge.Cuts"))
+          (gr_rect (start 2 2) (end 4 4) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        // Both pieces are board; the small loop inside the first is a cutout.
+        assert!((polygon_area(&loops.outline).abs() - 300.0).abs() < 0.1);
+        assert_eq!(loops.cutouts.len(), 1);
+        assert!(point_in_polygon([35.0, 5.0], &loops.outline));
+        assert!(point_in_polygon([10.0, 5.0], &loops.outline));
+        assert!(!point_in_polygon([25.0, 5.0], &loops.outline));
+    }
 
     #[test]
     fn a_sliver_shorter_than_the_chain_tolerance_is_dropped() {
