@@ -2259,6 +2259,54 @@ fn route_kicad_board_once(
     )
 }
 
+/// Moves every `(layer "X")` that names a layer the board's layer table
+/// does not define to `Cmts.User`. Some boards carry such items (a
+/// `Rescue` layer from an old KiCad, a user layer removed later); KiCad's
+/// editor asks what to do with them and kicad-cli refuses the board.
+/// Returns how many were moved.
+fn move_undefined_layers(pcb: &mut Expr) -> usize {
+    let defined: std::collections::HashSet<String> = pcb
+        .child("layers")
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .skip(1)
+                .flat_map(|entry| entry.children().iter().skip(1).take(3).filter_map(Expr::atom).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if defined.is_empty() {
+        return 0;
+    }
+    fn walk(node: &mut Expr, defined: &std::collections::HashSet<String>, top: bool) -> usize {
+        let Expr::List(items) = node else {
+            return 0;
+        };
+        // The layer table itself and the stackup name layers by design.
+        if !top && matches!(items.first().and_then(Expr::atom), Some("layers" | "stackup")) {
+            return 0;
+        }
+        let mut moved = 0;
+        if items.len() == 2 && items[0].atom() == Some("layer") {
+            if let Some(name) = items[1].atom()
+                && !defined.contains(name)
+                && !name.contains('*')
+                && !name.contains('&')
+            {
+                items[1] = Expr::Atom("\"Cmts.User\"".into());
+                moved += 1;
+            }
+            return moved;
+        }
+        for item in items.iter_mut() {
+            moved += walk(item, defined, false);
+        }
+        moved
+    }
+    walk(pcb, &defined, true)
+}
+
 /// Writes a routed board: the optional tightening, the copper into the
 /// board file, and the checks (`finish_routed_board`).
 #[allow(clippy::too_many_arguments)]
@@ -2274,6 +2322,10 @@ fn write_attempt(
     seconds: [f64; 2],
 ) -> Result<KiCadBoardRouterResult, String> {
     let [lowering_seconds, mut routing_seconds] = seconds;
+    let moved = move_undefined_layers(&mut pcb);
+    if moved > 0 {
+        eprintln!("{moved} items on layers the board does not define moved to Cmts.User (KiCad would not load the board)");
+    }
     let mut result = result;
     if config.tighten && config.engine.as_deref() != Some("topological") {
         let tightening = std::time::Instant::now();
