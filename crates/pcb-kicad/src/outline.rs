@@ -320,7 +320,14 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut pieces: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
     for candidate in loops {
-        if pieces.iter().any(|piece| point_in_polygon(candidate[0], piece)) {
+        // Inside a piece when most of its vertices are: a cutout touching
+        // the board's edge has vertices on that edge, which the even-odd
+        // test may count either way.
+        let inside = |piece: &Vec<[f64; 2]>| {
+            let count = candidate.iter().filter(|point| point_in_polygon(**point, piece)).count();
+            2 * count >= candidate.len()
+        };
+        if pieces.iter().any(inside) {
             cutouts.push(candidate);
         } else {
             pieces.push(candidate);

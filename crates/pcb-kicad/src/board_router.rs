@@ -648,6 +648,9 @@ pub(super) fn lower(
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
     let mut obstacles = Vec::new();
     let mut solid_pads: Vec<String> = Vec::new();
+    // Openings in the solder mask (graphics on a mask layer), placed once
+    // the pads under them are known.
+    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String)> = Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
     // ground or a rail) route at the project's smallest predefined width.
@@ -918,18 +921,9 @@ pub(super) fn lower(
                 if matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask")) =>
             {
                 let layer = if form_atom(item, "layer", 1) == Some("F.Mask") { 0 } else { layers.len() - 1 };
-                for shape in copper_graphic_shapes(item)? {
-                    obstacles.push(core::Obstacle {
-                        shape,
-                        layers: 1 << layer,
-                        kind: core::ObstacleKind::Keepout,
-                        net: None,
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: format!("solder mask opening ({})", item.head().unwrap_or("graphic")),
-                    });
+                let shapes = copper_graphic_shapes(item)?;
+                if !shapes.is_empty() {
+                    mask_openings.push((shapes, layer, item.head().unwrap_or("graphic").to_string()));
                 }
             }
             Some("zone") if is_rule_area(item) => {
@@ -939,6 +933,70 @@ pub(super) fn lower(
             }
             _ => {}
         }
+    }
+    // A mask opening over copper of one net (a pad exposed on purpose) is
+    // that net's: it may route there, others may not. Over copper of no
+    // net or several, nothing new goes under it. The net is the whole
+    // graphic's: a filled rectangle's bare edges see no pad of their own.
+    let pours = pours(pcb, &layers)?;
+    for (shapes, layer, kind) in mask_openings {
+        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
+        // Only text's glyph strokes open the mask, and its box would close
+        // whole pad rows (OpenESC's B.Mask label over U11). It matters over
+        // a pour, whose fill shows through it: the pour's net may go there,
+        // others would bridge to the fill (eurorack-pmod's logos on GND).
+        if kind == "gr_text" {
+            let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+            let under: Vec<&Pour> = pours
+                .iter()
+                .filter(|pour| pour.layers & (1 << layer) != 0 && core::geometry::point_in_polygon(center, &pour.polygon))
+                .collect();
+            let Some(top) = under.iter().map(|pour| pour.priority).max() else {
+                continue;
+            };
+            let nets_under: std::collections::BTreeSet<&str> =
+                under.iter().filter(|pour| pour.priority == top).map(|pour| pour.net.as_str()).collect();
+            let net = match nets_under.into_iter().collect::<Vec<_>>()[..] {
+                [name] => net_ids_lookup(&nets, name),
+                _ => None,
+            };
+            obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
+                shape,
+                layers: 1 << layer,
+                kind: core::ObstacleKind::Keepout,
+                net,
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: format!("solder mask opening ({kind})"),
+            }));
+            continue;
+        }
+        let nets: std::collections::BTreeSet<core::NetId> = obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle.kind == core::ObstacleKind::Copper
+                    && obstacle.layers & (1 << layer) != 0
+                    && obstacle.shape.aabb().intersects(bounds)
+            })
+            .filter_map(|obstacle| obstacle.net)
+            .collect();
+        let net = (nets.len() == 1).then(|| *nets.iter().next().unwrap());
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            eprintln!("mask opening ({kind}) on layer {layer}: {:?}, net {net:?} of {}", bounds, nets.len());
+        }
+        obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
+            shape,
+            layers: 1 << layer,
+            kind: core::ObstacleKind::Keepout,
+            net,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: format!("solder mask opening ({kind})"),
+        }));
     }
     for cutout in &loops.cutouts {
         // A cutout is board edge to KiCad: the edge clearance applies, not
@@ -957,7 +1015,6 @@ pub(super) fn lower(
             label: "board cutout".into(),
         });
     }
-    let pours = pours(pcb, &layers)?;
     let polygon_area = |points: &[[f64; 2]]| {
         (0..points.len())
             .map(|index| {
@@ -1163,6 +1220,20 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         Some("gr_poly" | "fp_poly") => vec![core::Shape::Polygon {
             points: rule_area_like_points(item)?,
         }],
+        // Text in a TrueType face carries its glyphs as polygons.
+        Some("gr_text")
+            if item
+                .child("render_cache")
+                .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon"))) =>
+        {
+            let cache = item.child("render_cache").unwrap();
+            cache
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("polygon"))
+                .map(|polygon| Ok(core::Shape::Polygon { points: rule_area_like_points(polygon)? }))
+                .collect::<Result<_, String>>()?
+        }
         Some("gr_text") => {
             let at = form_at(item)?;
             let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
@@ -1229,7 +1300,15 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             } else {
                 shift
             };
-            let offset = rotate_vector([shift, 0.0], -at[2]);
+            // Top and bottom put the anchor on that side of the box.
+            let rise = if justify.contains(&"top") {
+                half[1]
+            } else if justify.contains(&"bottom") {
+                -half[1]
+            } else {
+                0.0
+            };
+            let offset = rotate_vector([shift, rise], -at[2]);
             vec![core::Shape::rectangle(
                 [at[0] + offset[0], at[1] + offset[1]],
                 half,
@@ -2477,6 +2556,50 @@ mod pour_request_tests {
         assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
         let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
         assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mask_openings_belong_to_the_net_they_expose() {
+        let lowered = |zone: &str| {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/B")))
+              (gr_rect (start 4.6 4.6) (end 5.4 5.4) (stroke (width 0) (type solid)) (fill yes) (layer "F.Mask"))
+              (gr_rect (start 4.6 4.6) (end 7.4 5.4) (stroke (width 0) (type solid)) (fill yes) (layer "F.Mask"))
+              (gr_text "LABEL" (at 14 5) (layer "F.Mask") (effects (font (size 1 1) (thickness 0.15)))) {zone})"#
+            ))
+            .unwrap();
+            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+            let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+            lower(&pcb, &config, false).unwrap().board
+        };
+        let openings = |board: &core::Board| -> Vec<(Option<core::NetId>, String)> {
+            board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label.starts_with("solder mask opening"))
+                .map(|obstacle| (obstacle.net, obstacle.label.clone()))
+                .collect()
+        };
+        let board = lowered("");
+        let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
+        let net_a = board.nets.iter().position(|net| net.name.ends_with('A')).map(|index| index as core::NetId);
+        // The first rectangle (fill and four bare edges) is pad 1's; the
+        // second spans two nets and keeps everything out; text over bare
+        // board opens nothing that matters.
+        let bare = openings(&board);
+        assert_eq!(bare.len(), 10);
+        assert!(bare[..5].iter().all(|(net, _)| net.is_some() && *net == net_a));
+        assert!(bare[5..].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
+        // Over a pour, the text exposes the fill: it is the pour's net's.
+        let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10))))"#;
+        let poured = openings(&lowered(zone));
+        assert_eq!(poured.len(), 11);
+        assert_eq!(poured[10], (net_b, "solder mask opening (gr_text)".to_string()));
     }
 
     #[test]
