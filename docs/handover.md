@@ -466,7 +466,10 @@ Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
 placer deadline, padstacks, rings and relaxed clearance). Let v6 finish
-untouched. Routing sweep `build/github-route-v12` (x43, frozen).
+untouched. Routing sweep `build/github-route-v12` (x43) stopped at 63 of
+109 boards so the layout sweep has the machine (its deadlines are wall
+clock): 18 clean, 34 open, 5 drc, 2 mismatch, 4 error (`summary.py`,
+errors only). Next routing sweep: the current binary, after layout v6.
 v5's first rows (x57): jetson-nano 336/340, laptop 230/236, MokyaLora
 259/262 placed and routed within ~1550 s each.
 krishveercard is no benchmark for the class rules: the designer's own
