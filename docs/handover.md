@@ -469,7 +469,8 @@ Committed, in order:
 - Done (x64): thermal reliefs keep their gap around the pads in the pour
   model, and stitching vias keep hole-to-hole from the net's vias.
   PolyKybd split72 right: 55 -> 5 unconnected, 0 zone islands, nothing
-  beyond the designer. Diagnostics with KiCad's own fill (pcbnew Python
+  beyond the designer; split72 left 66 -> 5, corne right 57 -> 6 (v12 also
+  had 17 starved thermals there), both nothing beyond the designer. Diagnostics with KiCad's own fill (pcbnew Python
   works; under Python 3.14 index containers instead of iterating):
   benchmarks/github/kicad_components.py <board> <net>.
 - Starved thermals (ohdsp DSP, 5 beyond the designer): KiCad counts spokes
