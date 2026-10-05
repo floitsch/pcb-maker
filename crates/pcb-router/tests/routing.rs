@@ -62,6 +62,7 @@ impl Builder {
                 anchor: *at,
                 layers: *layers,
                 pad: self.board.obstacles.len() - 1,
+                contact: None,
                 label: format!("{name}.{index}"),
             });
         }
@@ -315,6 +316,7 @@ fn a_pad_straddling_the_board_edge_is_reached_from_inside() {
         anchor: [-0.25, 10.0],
         layers: 0b11,
         pad: builder.board.obstacles.len() - 1,
+        contact: None,
         label: "shell".into(),
     });
     let result = route(&builder.board, &config());

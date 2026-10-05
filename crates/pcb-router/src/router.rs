@@ -1186,8 +1186,9 @@ impl Router {
             HashMap::new();
         for terminal in &description.terminals {
             let pad = &self.board.obstacles[terminal.pad];
+            let contact = terminal.contact.as_ref().unwrap_or(&pad.shape);
             let mut nodes = Vec::new();
-            if let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb()) {
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(contact.aabb()) {
                 for layer in 0..self.board.layer_count {
                     if terminal.layers & (1 << layer) == 0 {
                         continue;
@@ -1196,7 +1197,7 @@ impl Router {
                         for x in x0..=x1 {
                             let cell = self.grid.index(x, y);
                             if statics.trace_allowed(layer, cell, net)
-                                && well_inside(&pad.shape, self.grid.center(x, y))
+                                && well_inside(contact, self.grid.center(x, y))
                             {
                                 nodes.push(Node {
                                     layer: layer as u8,

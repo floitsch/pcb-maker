@@ -57,6 +57,11 @@ pub struct Terminal {
     pub layers: LayerMask,
     /// Index into `Board::obstacles` of the pad copper.
     pub pad: usize,
+    /// Where copper connects to the pad, when that is less than its copper:
+    /// KiCad joins a custom pad only through its anchor, not along its
+    /// primitives (Sisu's dome switches: tracks ending on the ring stayed
+    /// unconnected).
+    pub contact: Option<crate::geometry::Shape>,
     pub label: String,
 }
 

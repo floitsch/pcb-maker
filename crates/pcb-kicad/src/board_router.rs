@@ -890,10 +890,16 @@ pub(super) fn lower(
                                 .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
                             terminal_layers = side.unwrap_or(pad_layers & pad_layers.wrapping_neg());
                         }
+                        // A custom pad connects through its anchor only.
+                        let contact = match (pad.children().get(3).and_then(Expr::atom), &lowered.geometry) {
+                            (Some("custom"), ObstacleGeometry::Union { parts }) if parts.len() > 1 => Some(shape(&parts[0])),
+                            _ => None,
+                        };
                         nets[net as usize].terminals.push(core::Terminal {
                             anchor: lowered.center,
                             layers: terminal_layers,
                             pad: pad_obstacle,
+                            contact,
                             label,
                         });
                     }
