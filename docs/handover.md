@@ -526,6 +526,12 @@ Committed, in order:
   default on x69 is its best plain routing yet: 180/192, 32 unconnected,
   nothing beyond the designer but pth_inside_courtyard (placement).
 
+- KiCad joins a custom pad only through its anchor (its connectivity
+  ignores the primitives even where its hit test says inside): terminals
+  carry a contact shape. Sisu (x70): 181/192, KiCad 19 unconnected (x69:
+  32; the keypad rows' 11 are gone), the router's 17 open terminals now
+  close to KiCad's count.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
