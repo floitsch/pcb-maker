@@ -429,6 +429,10 @@ Committed, in order:
   through-hole pad's terminal pointed at its drill since b6e3530 (fixed).
 - `summary.py` shows the designer's own unconnected items (OpenRX's panel
   has 105: a panel, not a fair routing target).
+- Sisu with all of the above (x56, stripped, full ladder): 177/192 routed,
+  0 internal violations, nothing beyond the designer but 3
+  pth_inside_courtyard (placement); v12 had 185/192 with 27 mask bridges,
+  6 clearance and 5 shorting findings. Next for Sisu: completeness.
 
 Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
 1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
