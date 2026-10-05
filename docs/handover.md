@@ -466,7 +466,13 @@ Committed, in order:
   lets courtyards overlap; otherwise the designer's contained parts stay
   (link's U1 got 18 extra overlaps). `build/github-tasks-v3`, 72 tasks
   differ (mostly switches with their diodes).
-- Next completeness target, measured on v12: KiCad finds GND fill islands
+- Done (x64): thermal reliefs keep their gap around the pads in the pour
+  model, and stitching vias keep hole-to-hole from the net's vias.
+  PolyKybd split72 right: 55 -> 5 unconnected, 0 zone islands, nothing
+  beyond the designer. Diagnostics with KiCad's own fill (pcbnew Python
+  works; under Python 3.14 index containers instead of iterating):
+  scratchpad islands.py / components.py.
+- Was the next completeness target, measured on v12: KiCad finds GND fill islands
   that our pour model counts as joined ("Zone"-"Zone" unconnected items):
   PolyKybd split72 left 42, right 39, corne right 31, left 8 (most of their
   unconnected), OpenRX panel 30, A13 6. Our model splits GND into 683-1514
