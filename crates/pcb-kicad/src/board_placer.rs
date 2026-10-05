@@ -1241,10 +1241,23 @@ pub(super) fn lower_placement(
     // indices stay aligned with the board file. (Copper and silkscreen
     // texts move off the parts and the copper after placement instead:
     // see `labels`.)
-    for item in pcb.children() {
-        let Some(layer) = form_atom(item, "layer", 1).and_then(copper_layer_index) else {
-            continue;
+    // KiCad 9 draws a graphic on several layers at once (`layers`):
+    // Sisu's GND rectangles on F.Cu and F.Mask.
+    let outer_copper = |item: &Expr| -> Vec<usize> {
+        let names: Vec<&str> = match form_atom(item, "layer", 1) {
+            Some(name) => vec![name],
+            None => item.child("layers").map(Expr::children).unwrap_or_default().iter().skip(1).filter_map(Expr::atom).collect(),
         };
+        let mut sides: Vec<usize> = names.into_iter().filter_map(copper_layer_index).collect();
+        sides.sort_unstable();
+        sides.dedup();
+        sides
+    };
+    for (item, layer) in pcb
+        .children()
+        .iter()
+        .flat_map(|item| outer_copper(item).into_iter().map(move |layer| (item, layer)))
+    {
         if !matches!(item.head(), Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")) {
             continue;
         }
