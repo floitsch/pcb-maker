@@ -165,6 +165,13 @@ pub struct KiCadBoardRouterConfig {
     /// connections stay open at the class widths).
     #[serde(default)]
     pub use_narrow_signals: Option<bool>,
+    /// The board's minimum clearance when the project rates clearance
+    /// findings below errors (a designer who accepted the net classes'
+    /// clearances as warnings: the A13 module's DDR fan-out keeps 0.149
+    /// against classes of 0.2). The ladder's last step routes at it when
+    /// connections stay open.
+    #[serde(default)]
+    pub relaxed_clearance_mm: Option<f64>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -2054,6 +2061,45 @@ pub fn route_kicad_board(
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
             fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
             best = Some((narrow_opens, result));
+            best_attempt = Some((narrowed, *connect));
+        } else {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
+        }
+    }
+    // Still open, and the project takes clearance findings as warnings:
+    // the best attempt once more at the board's minimum clearance, which is
+    // what the designer held to.
+    if let (Some((opens, _)), Some((attempt, connect)), Some(relaxed)) =
+        (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
+        && opens.0 > 0
+        && spent(ladder_work) < 1.5 * ladder_budget
+        && !past_deadline()
+        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
+    {
+        let mut relaxed_attempt = attempt.clone();
+        relaxed_attempt.relaxed_clearance_mm = None;
+        for rules in relaxed_attempt.connection_rules.values_mut().chain(relaxed_attempt.default_rules.iter_mut()) {
+            rules.clearance_mm = rules.clearance_mm.min(relaxed);
+        }
+        if scratch.exists() {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
+        }
+        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &relaxed_attempt, *connect)?;
+        result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
+        let relaxed_opens = open(&result, &scratch);
+        eprintln!(
+            "attempt at the minimum clearance {relaxed} mm: {} open, {} starved, {} vias, {:.1} s",
+            relaxed_opens.0, relaxed_opens.1, result.vias, result.routing_seconds
+        );
+        let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
+            (relaxed_opens, result.vias, result.length_mm)
+                .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                .is_some_and(|order| order.is_lt())
+        });
+        if better {
+            fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+            fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
+            best = Some((relaxed_opens, result));
         } else {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }

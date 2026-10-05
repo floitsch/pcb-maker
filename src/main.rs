@@ -6439,6 +6439,9 @@ fn board_router_config(
                 if config.narrow_signal_mm.is_none() {
                     config.narrow_signal_mm = project.narrow_signal_mm;
                 }
+                if config.relaxed_clearance_mm.is_none() {
+                    config.relaxed_clearance_mm = project.relaxed_clearance_mm;
+                }
             }
             Ok(config)
         }

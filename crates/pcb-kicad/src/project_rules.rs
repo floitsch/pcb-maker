@@ -198,6 +198,10 @@ pub fn resolve_project_rules(
         .fold(f64::INFINITY, f64::min);
     Ok(KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal.is_finite().then_some(narrow_signal),
+        relaxed_clearance_mm: match project["board"]["design_settings"]["rule_severities"]["clearance"].as_str() {
+            Some("warning" | "ignore") if minimum("min_clearance") > 0.0 => Some(minimum("min_clearance")),
+            _ => None,
+        },
         // Designers neck down to the board minimum where a pad demands it;
         // a project that states none gets a fab's usual 0.127 mm (KiCad's
         // DRC checks widths against the stated minimum only).
@@ -227,5 +231,31 @@ mod tests {
         assert!(wildcard_match("Net-(U?-Pad1)", "Net-(U3-Pad1)"));
         assert!(!wildcard_match("GND", "GNDA"));
         assert!(wildcard_match("*", ""));
+    }
+
+    #[test]
+    fn clearance_as_warning_offers_the_board_minimum() {
+        let directory = std::env::temp_dir().join(format!("pcb-maker-relaxed-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(
+            &pcb,
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
+              (footprint "a" (at 0 0) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let project = directory.join("board.kicad_pro");
+        let write = |severity: &str| {
+            let text = format!(
+                r#"{{"board": {{"design_settings": {{"rules": {{"min_clearance": 0.1}}, "rule_severities": {{"clearance": "{severity}"}}}}}},
+                   "net_settings": {{"classes": [{{"name": "Default", "clearance": 0.2, "track_width": 0.2, "via_diameter": 0.6, "via_drill": 0.3}}]}}}}"#
+            );
+            fs::write(&project, text).unwrap();
+        };
+        write("warning");
+        assert_eq!(resolve_project_rules(&project, &pcb).unwrap().relaxed_clearance_mm, Some(0.1));
+        write("error");
+        assert_eq!(resolve_project_rules(&project, &pcb).unwrap().relaxed_clearance_mm, None);
+        fs::remove_dir_all(&directory).unwrap();
     }
 }
