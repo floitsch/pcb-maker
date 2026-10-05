@@ -127,6 +127,13 @@ def main():
         cutouts = board_cutouts(board["directory"] / f'{board["board_id"]}.kicad_pcb')
         low, high = outline["minimum"], outline["maximum"]
         edges, rotations, fixed, hollow = [], [], [], []
+        held = set()
+        project = board["directory"] / f'{board["board_id"]}.kicad_pro'
+        try:
+            severity = json.loads(project.read_text())["board"]["design_settings"]["rule_severities"].get("courtyards_overlap", "error")
+        except (OSError, ValueError, KeyError, TypeError):
+            severity = "error"
+        overlap_allowed = severity != "error"
         footprints = [f for f in description["footprints"] if f["reference"]]
         for footprint in footprints:
             body = footprint["body"]
@@ -136,12 +143,19 @@ def main():
                       and other["body"][2] <= body[2] and other["body"][3] <= body[3]]
             if inside and any(net for _, net in footprint["pads"]):
                 # It holds other parts: a shield's outline, a module over
-                # parts. It stays, and parts may sit inside it.
-                hollow.append(footprint["reference"])
+                # parts. It stays, and parts may sit inside it, where the
+                # project lets courtyards overlap; where that is an error
+                # (link's U1), the parts the designer put inside stay too
+                # and no other may enter.
+                if overlap_allowed:
+                    hollow.append(footprint["reference"])
+                else:
+                    held.update(other["reference"] for other in inside)
+                    held.add(footprint["reference"])
         for footprint in description["footprints"]:
             if not footprint["reference"] or not any(net for _, net in footprint["pads"]):
                 continue
-            if footprint["reference"] in hollow or footprint["reference"] in carriers:
+            if footprint["reference"] in hollow or footprint["reference"] in carriers or footprint["reference"] in held:
                 fixed.append(footprint["reference"])
                 continue
             body = footprint["body"]
