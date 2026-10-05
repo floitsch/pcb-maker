@@ -519,6 +519,13 @@ Committed, in order:
   dangling tracks; it did not finish the ladder within near.sh's hour on
   a loaded machine (speed).
 
+- stall_drop measured (x69, `{"stall_drop": 0.1, "stall_at_cap": 12}`
+  against the default): PolyKybd split72 right 3037 -> 3003 s, the same
+  board; Sisu 2700 -> 2314 s (-14 %) but 180 -> 177 of 192 routed (KiCad
+  32 unconnected both). Completeness first: it stays opt-in. Sisu's
+  default on x69 is its best plain routing yet: 180/192, 32 unconnected,
+  nothing beyond the designer but pth_inside_courtyard (placement).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
