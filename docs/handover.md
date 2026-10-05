@@ -397,6 +397,40 @@ which still holds the designer's tracks (ESC-mini: 1194 segments, 1130
 vias), so its numbers before 2026-10-04 evening are not comparable to the
 sweeps. It now strips tracks first, as `benchmarks/corpus/run.py` does.
 
+## 2026-10-05
+
+Committed, in order:
+- Mask openings: footprint mask graphics count; an opening exposes the
+  pads under it, or else a pour's fill; it belongs to that one net, keeps
+  all others out, and over several nets keeps everything out while pads
+  inside leave it by their stubs (Sisu's zebra connector J_LCD1). Filled
+  rectangles without stroke are just their fill. Sisu: mask bridges beyond
+  the designer 51 -> 3.
+- `strip-kicad-tracks` moves items on undefined layers (koeg-board's
+  Rescue layer), so the baseline DRC loads.
+- Benchmarks count error-severity findings only (KiCad passes warnings;
+  the designer's reference was always read that way). `summary.py
+  <run-dir>` recounts old runs from their saved reports.
+- Escape stubs pass an exact clearance fit (0.4 pitch QFN with 0.2 pads
+  and 0.2 tracks: RP2040 motor controller tracks probe 111 -> 142 of 186).
+- A wall-clock deadline: router `Config.deadline`, route config
+  `deadline_seconds`, and the layout puts all its routes under
+  `total_seconds`. The layout benchmark had killed every large board at
+  1800 s with no board; jetson-nano now finishes in 1575 s.
+- kicad-cli reports time out (`PCB_KICAD_TIMEOUT`, 900 s) and die with the
+  router (PR_SET_PDEATHSIG): 0xCB's panel refill hangs forever, and
+  orphans held 4.4 GB for up to 21 h.
+- Router: `diagonal_block_via` used the wrong radius between classes
+  (0.145 of 0.15 next to vias of a narrower class).
+- KiCad 9 graphics on several layers with a net (Sisu's GND shapes on
+  F.Cu and F.Mask) are that net's copper; they were ignored (9 shorts).
+
+Running: layout sweep `build/github-layout-v4` (`pcb-maker-x55`, `--jobs
+1`, restarted at Florian's request; v3 was stopped after four 1800 s
+timeouts); routing sweep `build/github-route-v12` (x43, frozen).
+krishveercard is no benchmark for the class rules: the designer's own
+board breaks them hundreds of times (use the guided set).
+
 ## Where things are
 
 | What | Where |
