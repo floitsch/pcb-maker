@@ -56,6 +56,29 @@ def outline_carriers(board_file):
     return carriers
 
 
+def board_cutouts(board_file):
+    """Bounding boxes of the holes the board's own Edge.Cuts draws as
+    circles, rectangles or polygons (a phone's bottom connector sits over
+    three round cutouts: Sisu's J8)."""
+    text = board_file.read_text()
+    boxes = []
+    for match in re.finditer(r'\((gr_circle|gr_rect|gr_poly)\b', text):
+        block = text[match.start():agent_run.block_end(text, match.start())]
+        if '"Edge.Cuts"' not in block:
+            continue
+        points = [(float(x), float(y)) for x, y in re.findall(r'\((?:start|end|center|xy) ([-\d.]+) ([-\d.]+)\)', block)]
+        if not points:
+            continue
+        if match.group(1) == "gr_circle":
+            (cx, cy), (ex, ey) = points[0], points[1]
+            radius = ((ex - cx) ** 2 + (ey - cy) ** 2) ** 0.5
+            boxes.append((cx - radius, cy - radius, cx + radius, cy + radius))
+        else:
+            xs, ys = [x for x, _ in points], [y for _, y in points]
+            boxes.append((min(xs), min(ys), max(xs), max(ys)))
+    return boxes
+
+
 def is_connector(footprint):
     reference = footprint["reference"]
     prefix = reference.rstrip("0123456789")
@@ -101,6 +124,7 @@ def main():
             print(f"skipping {name}: no outline", file=sys.stderr)
             continue
         carriers = outline_carriers(board["directory"] / f'{board["board_id"]}.kicad_pcb')
+        cutouts = board_cutouts(board["directory"] / f'{board["board_id"]}.kicad_pcb')
         low, high = outline["minimum"], outline["maximum"]
         edges, rotations, fixed, hollow = [], [], [], []
         footprints = [f for f in description["footprints"] if f["reference"]]
@@ -121,6 +145,14 @@ def main():
                 fixed.append(footprint["reference"])
                 continue
             body = footprint["body"]
+            # Over a cutout (and not just the outline's bounding box): the
+            # part is fitted to the hole, it stays.
+            if any(box[0] < body[2] and body[0] < box[2] and box[1] < body[3] and body[1] < box[3]
+                   and not (box[0] <= low[0] + 0.01 and box[1] <= low[1] + 0.01
+                            and box[2] >= high[0] - 0.01 and box[3] >= high[1] - 0.01)
+                   for box in cutouts):
+                fixed.append(footprint["reference"])
+                continue
             distances = {"left": body[0] - low[0], "top": body[1] - low[1],
                          "right": high[0] - body[2], "bottom": high[1] - body[3]}
             if min(distances.values()) < -0.01:

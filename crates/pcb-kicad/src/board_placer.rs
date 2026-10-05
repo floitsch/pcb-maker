@@ -46,6 +46,11 @@ pub struct KiCadBoardPlacerConfig {
     /// copper-to-edge clearance, since pads may reach the courtyard).
     pub edge_margin_mm: f64,
     pub seed: u64,
+    /// Wall-clock time by which placement returns its best result (set by
+    /// the layout from its budget; placement of a 404-part panel ran past
+    /// 25 minutes).
+    #[serde(skip)]
+    pub deadline: Option<std::time::Instant>,
     /// Placement constraints: a `constraints.json` path (relative to the
     /// source directory) or the constraints inline.
     pub constraints: Option<KiCadConstraintsSource>,
@@ -92,6 +97,7 @@ impl Default for KiCadBoardPlacerConfig {
             maximum_utilization: 0.6,
             edge_margin_mm: 0.5,
             seed: 1,
+            deadline: None,
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
@@ -1485,6 +1491,7 @@ pub fn place_kicad_board(
     placer_config.global.whitespace_fill = config.whitespace_fill;
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
+    placer_config.anneal.deadline = config.deadline;
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked

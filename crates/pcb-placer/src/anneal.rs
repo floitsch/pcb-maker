@@ -20,6 +20,8 @@ pub struct AnnealConfig {
     /// Initial move radius as a fraction of the board's larger side.
     pub initial_radius: f64,
     pub seed: u64,
+    /// No further stage starts after this wall-clock time.
+    pub deadline: Option<std::time::Instant>,
 }
 
 impl Default for AnnealConfig {
@@ -29,6 +31,7 @@ impl Default for AnnealConfig {
             moves_per_part: 40,
             initial_radius: 0.06,
             seed: 7,
+            deadline: None,
         }
     }
 }
@@ -304,6 +307,9 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     let radius_decay = ((1.5 * grid) / radius).powf(1.0 / config.stages as f64);
 
     for _ in 0..config.stages {
+        if config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            break;
+        }
         for _ in 0..config.moves_per_part * movable.len() {
             let index = movable[random.below(movable.len())];
             let component = &problem.components[index];

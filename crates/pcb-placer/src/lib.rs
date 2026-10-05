@@ -199,6 +199,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     let mut relaxation = None;
     for (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule) in levels {
+        // Past the caller's deadline the best placement so far stands.
+        if best.is_some() && config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            break;
+        }
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
             // Same as the previous level.
             continue;

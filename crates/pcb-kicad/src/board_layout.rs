@@ -414,9 +414,15 @@ pub fn layout_kicad_board(
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
     }
+    // Placement gets 40 % of the budget, as the placement race does.
+    placer_config.deadline =
+        Some(layout_started + std::time::Duration::from_secs_f64(0.4 * config.total_seconds.max(0.0)));
+    eprintln!("layout: sizing the outline");
     let outline_sizing = size_outline(source_directory, board_id, output_directory, &mut placer_config, router_config)?;
     let placed_directory = output_directory.join("placed");
+    eprintln!("layout: placing ({:.0} s)", elapsed());
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
+    eprintln!("layout: placed ({:.0} s)", elapsed());
     // The moves keep parts on `"edge": "any"` at the edges they were given.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut placer_config.constraints {
         for entry in &mut constraints.edge {
