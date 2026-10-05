@@ -544,6 +544,13 @@ Committed, in order:
   first route 439 -> 313 s (18 open, was 22), moves 126-229 s, same final
   quality. Next candidate: windows bounded around the moved part.
 
+- Tasks v5 (`build/github-tasks-v5`): a part holding up to three others
+  keeps them where the designer put them. katia still fails: its back
+  side controllers and connectors (U1, U2, J3, J6) sit half under the
+  through-hole switches; "fix what overlaps a fixed part" froze whole
+  boards under frame parts (reverted). Open: placement that may overlap
+  courtyards where the project allows it, part by part.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
