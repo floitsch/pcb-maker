@@ -168,15 +168,17 @@ def main():
                       and other["body"][2] <= body[2] and other["body"][3] <= body[3]]
             if inside and any(net for _, net in footprint["pads"]):
                 # It holds other parts: a shield's outline, a module over
-                # parts. It stays, and parts may sit inside it, where the
-                # project lets courtyards overlap; where that is an error
-                # (link's U1), the parts the designer put inside stay too
-                # and no other may enter.
+                # parts. It stays, and other parts may enter it only where
+                # the project lets courtyards overlap (not link's U1).
+                # A few parts the designer put inside (a switch's LED and
+                # diode, katia's controller) stay with it either way: moved,
+                # they rarely find another spot inside a part. Many inside
+                # (a frame over the whole board) is the layout task itself.
+                if not overlap_allowed or len(inside) <= 3:
+                    held.update(other["reference"] for other in inside)
+                held.add(footprint["reference"])
                 if overlap_allowed:
                     hollow.append(footprint["reference"])
-                else:
-                    held.update(other["reference"] for other in inside)
-                    held.add(footprint["reference"])
         for footprint in description["footprints"]:
             if not footprint["reference"] or not any(net for _, net in footprint["pads"]):
                 continue
