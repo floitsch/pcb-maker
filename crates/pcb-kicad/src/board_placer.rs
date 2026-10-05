@@ -1248,7 +1248,16 @@ pub(super) fn lower_placement(
             Some(name) => vec![name],
             None => item.child("layers").map(Expr::children).unwrap_or_default().iter().skip(1).filter_map(Expr::atom).collect(),
         };
-        let mut sides: Vec<usize> = names.into_iter().filter_map(copper_layer_index).collect();
+        // A mask opening too: a part's pads under it would bridge (Sisu's
+        // "REV B2" on B.Mask got two parts' pads in layout).
+        let mut sides: Vec<usize> = names
+            .into_iter()
+            .filter_map(|name| match name {
+                "F.Mask" => Some(0),
+                "B.Mask" => Some(1),
+                name => copper_layer_index(name),
+            })
+            .collect();
         sides.sort_unstable();
         sides.dedup();
         sides
@@ -1258,7 +1267,10 @@ pub(super) fn lower_placement(
         .iter()
         .flat_map(|item| outer_copper(item).into_iter().map(move |layer| (item, layer)))
     {
-        if !matches!(item.head(), Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")) {
+        let on_mask = matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask"));
+        if !matches!(item.head(), Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly"))
+            && !(on_mask && item.head() == Some("gr_text"))
+        {
             continue;
         }
         let Some(bounds) = board_router::copper_graphic_shapes(item)?

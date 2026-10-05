@@ -79,6 +79,30 @@ def board_cutouts(board_file):
     return boxes
 
 
+def mask_openings(board_file):
+    """Boxes of the board's own graphics on F.Mask / B.Mask (not text), with
+    their side: hand-drawn pad openings (OpenFC's over its QFN) belong to
+    the part under them."""
+    text = board_file.read_text()
+    boxes = []
+    for match in re.finditer(r'\((gr_line|gr_rect|gr_arc|gr_circle|gr_poly)\b', text):
+        block = text[match.start():agent_run.block_end(text, match.start())]
+        side = re.search(r'\(layer "?([FB])\.Mask"?\)', block)
+        if not side:
+            continue
+        points = [(float(x), float(y)) for x, y in re.findall(r'\((?:start|end|mid|center|xy) ([-\d.]+) ([-\d.]+)\)', block)]
+        if not points:
+            continue
+        if match.group(1) == "gr_circle":
+            (cx, cy), (ex, ey) = points[0], points[1]
+            radius = ((ex - cx) ** 2 + (ey - cy) ** 2) ** 0.5
+            boxes.append((side.group(1), (cx - radius, cy - radius, cx + radius, cy + radius)))
+        else:
+            xs, ys = [x for x, _ in points], [y for _, y in points]
+            boxes.append((side.group(1), (min(xs), min(ys), max(xs), max(ys))))
+    return boxes
+
+
 def is_connector(footprint):
     reference = footprint["reference"]
     prefix = reference.rstrip("0123456789")
@@ -125,6 +149,7 @@ def main():
             continue
         carriers = outline_carriers(board["directory"] / f'{board["board_id"]}.kicad_pcb')
         cutouts = board_cutouts(board["directory"] / f'{board["board_id"]}.kicad_pcb')
+        openings = mask_openings(board["directory"] / f'{board["board_id"]}.kicad_pcb')
         low, high = outline["minimum"], outline["maximum"]
         edges, rotations, fixed, hollow = [], [], [], []
         held = set()
@@ -165,6 +190,13 @@ def main():
                    and not (box[0] <= low[0] + 0.01 and box[1] <= low[1] + 0.01
                             and box[2] >= high[0] - 0.01 and box[3] >= high[1] - 0.01)
                    for box in cutouts):
+                fixed.append(footprint["reference"])
+                continue
+            # Under one of the board's own mask openings on its side (or
+            # through-hole): the opening was drawn for it.
+            if any((footprint["through_hole"] or footprint["side"][:1].upper() == side)
+                   and box[0] < body[2] and body[0] < box[2] and box[1] < body[3] and body[1] < box[3]
+                   for side, box in openings):
                 fixed.append(footprint["reference"])
                 continue
             distances = {"left": body[0] - low[0], "top": body[1] - low[1],
