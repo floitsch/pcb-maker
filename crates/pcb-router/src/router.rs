@@ -2807,8 +2807,20 @@ impl Router {
                 !state.complete || !self.conflicts(*net).is_empty()
             })
             .collect();
+        // PCB_ROUTER_TIMING: where a reroute's time goes (layout moves).
+        let timing = std::env::var_os("PCB_ROUTER_TIMING").is_some();
+        let (started, pending_count, iterations_before) = (std::time::Instant::now(), pending.len(), self.iterations);
         self.negotiate(&order, pending);
-        self.finish_polished(&order, polish)
+        let negotiated = started.elapsed().as_secs_f64();
+        let result = self.finish_polished(&order, polish);
+        if timing {
+            eprintln!(
+                "reroute: {pending_count} pending, {} iterations, negotiation {negotiated:.1} s, finish {:.1} s",
+                self.iterations - iterations_before,
+                started.elapsed().as_secs_f64() - negotiated
+            );
+        }
+        result
     }
 
     /// Routes one net with the router's own scratch (sequential callers).
