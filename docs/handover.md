@@ -425,9 +425,14 @@ Committed, in order:
 - KiCad 9 graphics on several layers with a net (Sisu's GND shapes on
   F.Cu and F.Mask) are that net's copper; they were ignored (9 shorts).
 
-Running: layout sweep `build/github-layout-v4` (`pcb-maker-x55`, `--jobs
-1`, restarted at Florian's request; v3 was stopped after four 1800 s
-timeouts); routing sweep `build/github-route-v12` (x43, frozen).
+- Overlapping pads of one number are one terminal (OpenRX's panel); a
+  through-hole pad's terminal pointed at its drill since b6e3530 (fixed).
+- `summary.py` shows the designer's own unconnected items (OpenRX's panel
+  has 105: a panel, not a fair routing target).
+
+Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
+1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
+the terminal bug); routing sweep `build/github-route-v12` (x43, frozen).
 krishveercard is no benchmark for the class rules: the designer's own
 board breaks them hundreds of times (use the guided set).
 
