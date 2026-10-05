@@ -532,6 +532,13 @@ Committed, in order:
   32; the keypad rows' 11 are gone), the router's 17 open terminals now
   close to KiCad's count.
 
+- Layout: no final polish after the deadline (it threw the moves' best
+  board away: OpenAirScope 108/184 -> 177/184, no errors), and the
+  in-place router stops at a stall sooner (stall_drop 0.1, patience 10;
+  OpenAirScope first route 606 -> 439 s, 12 unconnected; MIDAS-MK2.1
+  passes 154/154 in 529 s). Moves still take 200-290 s each on
+  OpenAirScope: the next layout speed target.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
