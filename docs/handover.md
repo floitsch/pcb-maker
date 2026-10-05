@@ -472,6 +472,14 @@ Committed, in order:
   beyond the designer. Diagnostics with KiCad's own fill (pcbnew Python
   works; under Python 3.14 index containers instead of iterating):
   benchmarks/github/kicad_components.py <board> <net>.
+- Starved thermals (ohdsp DSP, 5 beyond the designer): KiCad counts spokes
+  whatever tracks join the pad (U201 pad 1 has six GNDD tracks and is
+  still flagged at 1 of 2 spokes). Other nets' tracks take the second
+  spoke's path (DVDD past pins 19 and 54); on fine-pitch QFN pins only the
+  outward spoke may fit at all. Options: keep spoke corridors clear (a
+  hard block where the thermal guard is only a cost), or count spokes in
+  the pour model against min_resolved_spokes and report the pads that
+  cannot get enough, so the agent decides on solid connection.
 - Was the next completeness target, measured on v12: KiCad finds GND fill islands
   that our pour model counts as joined ("Zone"-"Zone" unconnected items):
   PolyKybd split72 left 42, right 39, corne right 31, left 8 (most of their
