@@ -450,6 +450,14 @@ Committed, in order:
   routed (v12: 195), 14 unconnected; the last step took 119 -> 33 open.
   Left: SW1's own pads at the edge (placement) and one KiCad teardrop
   reaching into a keepout. The run needs ~3000 s on a loaded machine.
+- Placement has a wall-clock deadline too (40 % of the layout budget);
+  OpenESC's 404-part panel placed for >25 min before. Layout prints its
+  phases on stderr.
+- Agent tasks (`from_pcbench.py --corpus`): parts over the board's own
+  cutouts stay fixed (Sisu's J8). Regenerated into `build/github-tasks-v2`
+  for the next sweep (5 tasks differ). Open: edge constraints on boards
+  of several pieces (zpn_devboard: two boards side by side) are measured
+  against the union's box; per-piece edges are needed.
 
 Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
 1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
