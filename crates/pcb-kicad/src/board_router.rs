@@ -1166,6 +1166,7 @@ pub(super) fn lower(
                     .collect(),
                 connect: connect_pours,
                 thermal_reach: pour.thermal_reach,
+                thermal_gap: pour.thermal_gap,
                 // An inner layer poured over nearly the whole board is a
                 // plane: it carries no signals.
                 exclusive: layers.names[layer].starts_with("In") && polygon_area(&pour.polygon) >= 0.9 * board_area,
@@ -1511,6 +1512,7 @@ pub(super) struct Pour {
     clearance: f64,
     min_thickness: f64,
     thermal_reach: f64,
+    thermal_gap: f64,
     /// `(connect_pads yes ...)`: pads join wherever the fill touches.
     solid: bool,
     polygon: Vec<[f64; 2]>,
@@ -1553,6 +1555,10 @@ pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                 .and_then(|form| form.children().get(1))
                 .and_then(Expr::atom)
                 == Some("yes"),
+            thermal_gap: zone
+                .child("fill")
+                .map(|fill| form_f64(fill, "thermal_gap", 1).unwrap_or(0.5))
+                .unwrap_or(0.5),
             thermal_reach: zone
                 .child("fill")
                 .map(|fill| {

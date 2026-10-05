@@ -4368,7 +4368,7 @@ impl Router {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
         let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
-        let free: Vec<Vec<bool>> = (0..layers)
+        let mut free: Vec<Vec<bool>> = (0..layers)
             .map(|layer| {
                 let mask = &state.plane[layer];
                 if mask.is_empty() {
@@ -4384,6 +4384,52 @@ impl Router {
                     .collect()
             })
             .collect();
+        // A thermal relief keeps its gap around the pads it connects, all
+        // but the spokes: fill does not flow past such a pad, it joins the
+        // pad only through the spokes (below). PolyKybd's GND ran across a
+        // connector's 0.3 mm pins in this model and fell into islands in
+        // KiCad's.
+        {
+            let description = &self.board.nets[net as usize];
+            for layer in 0..layers {
+                if free[layer].is_empty() {
+                    continue;
+                }
+                let Some(gap) = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == layer && !plane.solid)
+                    .map(|plane| plane.thermal_gap)
+                    .reduce(f64::max)
+                    .filter(|gap| *gap > 0.0)
+                else {
+                    continue;
+                };
+                let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+                for terminal in &description.terminals {
+                    if self.board.isolated_pads.binary_search(&terminal.label).is_ok()
+                        || self.board.solid_pads.binary_search(&terminal.label).is_ok()
+                    {
+                        continue;
+                    }
+                    let pad = &self.board.obstacles[terminal.pad];
+                    if pad.layers & (1 << layer) == 0 {
+                        continue;
+                    }
+                    let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb().inflated(reach)) else {
+                        continue;
+                    };
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            if pad.shape.distance_to_point(self.grid.center(x, y)) < reach {
+                                free[layer][self.grid.index(x, y)] = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let pours = crate::pour::PourMap::build(&self.grid, &free);
         let terminal_count = state.terminal_nodes.len();
         let terminal_base = pours.pieces + 1;
@@ -4604,6 +4650,30 @@ impl Router {
                 let island = find(&mut parent, terminal_base + terminal);
                 anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
             }
+            // A via keeps the hole-to-hole distance from the net's vias
+            // already there too: KiCad's rule holds within a net
+            // (PolyKybd's stitches landed 0.1 mm from earlier ones).
+            let spacing = class.via_drill + self.board.hole_to_hole;
+            let mut crowded = vec![false; self.grid.cells()];
+            for branch in &self.nets[net as usize].branches {
+                for pair in branch.nodes.windows(2) {
+                    if pair[0].cell != pair[1].cell || pair[0].layer == pair[1].layer {
+                        continue;
+                    }
+                    let center = self.grid.center_of(pair[0].cell as usize);
+                    let keep = spacing.max(class.via_diameter);
+                    let bounds = crate::geometry::Aabb { minimum: center, maximum: center }.inflated(keep);
+                    if let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) {
+                        for y in y0..=y1 {
+                            for x in x0..=x1 {
+                                if crate::geometry::distance(center, self.grid.center(x, y)) < keep {
+                                    crowded[self.grid.index(x, y)] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             let mut best: HashMap<usize, (f64, usize, usize, usize)> = HashMap::new();
             if layers >= 2 {
                 let roots: Vec<Vec<usize>> = (0..layers)
@@ -4619,7 +4689,8 @@ impl Router {
                         let Some(anchor) = anchors.get(island) else {
                             continue;
                         };
-                        if !self.statics[class_index].via_allowed(cell, net)
+                        if crowded[cell]
+                            || !self.statics[class_index].via_allowed(cell, net)
                             || self.occupancy[via_map][cell] as usize
                                 != own.contains(&(via_map as u32, cell as u32)) as usize
                             || !pours.solid_around(&self.grid, layer, cell, via_reach)
@@ -4642,7 +4713,6 @@ impl Router {
                 }
             }
             // Two new vias keep the hole-to-hole distance between them.
-            let spacing = class.via_drill + self.board.hole_to_hole;
             let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
             let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
             // Ties broken by the cell: a hash map's order must not decide.

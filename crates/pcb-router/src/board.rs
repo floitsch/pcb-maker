@@ -85,6 +85,10 @@ pub struct Plane {
     /// Other nets are discouraged from coming this close to pads that
     /// connect to the pour, so their thermal spokes survive. 0 disables.
     pub thermal_reach: f64,
+    /// The thermal relief's gap around the pads it connects: its fill
+    /// keeps that far from them except for the spokes, so it does not flow
+    /// past a pad.
+    pub thermal_gap: f64,
     /// A plane layer: other nets' tracks may not run inside the pour (vias
     /// pass through), so it stays whole.
     pub exclusive: bool,

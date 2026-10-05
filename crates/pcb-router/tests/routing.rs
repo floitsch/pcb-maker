@@ -191,6 +191,7 @@ fn pour_connects_pads_with_stub_vias_only() {
         excluded: Vec::new(),
         connect: true,
         thermal_reach: 0.0,
+        thermal_gap: 0.0,
         exclusive: false,
         solid: false,
     });
@@ -232,6 +233,7 @@ fn plane_skeleton_is_trimmed_back_to_what_the_pour_cannot_provide() {
         excluded: Vec::new(),
         connect: true,
         thermal_reach: 0.0,
+        thermal_gap: 0.0,
         exclusive: false,
         solid: false,
     });
