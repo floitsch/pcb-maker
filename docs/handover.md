@@ -446,6 +446,10 @@ Committed, in order:
 - Projects that rate clearance as warning/ignore (6 of 109) get a last
   ladder step at the board's min_clearance: the A13 module's designer kept
   0.149 against classes of 0.2 (its project made clearance a warning).
+  It joins the narrow-signal step (one attempt). A13 module x60: 219/223
+  routed (v12: 195), 14 unconnected; the last step took 119 -> 33 open.
+  Left: SW1's own pads at the edge (placement) and one KiCad teardrop
+  reaching into a keepout. The run needs ~3000 s on a loaded machine.
 
 Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
 1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
