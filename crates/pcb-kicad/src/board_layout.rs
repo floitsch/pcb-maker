@@ -34,8 +34,9 @@ pub struct KiCadBoardLayoutConfig {
     pub polish_seconds: f64,
     /// Wall-clock budget for the whole layout, in seconds: the placement
     /// race stops at 40 % of it, the moves at 65 %, and the final ladder
-    /// gets what is left (at least 120 s). An agent waits for this; the
-    /// best board so far is what it gets.
+    /// gets what is left. Every route stops by it (then only the native
+    /// check runs). An agent waits for this; the best board so far is what
+    /// it gets.
     pub total_seconds: f64,
     pub placer: KiCadBoardPlacerConfig,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
@@ -394,6 +395,16 @@ pub fn layout_kicad_board(
         with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)?;
         &with_classes
     };
+    // Every route of the layout ends by its total budget: the router's
+    // own budgets count work and would run on, on a busy machine or a
+    // large board, past what the agent waits for.
+    let with_deadline = KiCadBoardRouterConfig {
+        deadline: router_config
+            .deadline
+            .or(Some(layout_started + std::time::Duration::from_secs_f64(config.total_seconds.max(0.0)))),
+        ..router_config.clone()
+    };
+    let router_config = &with_deadline;
     let mut placer_config = resolve_constraints(&config.placer, source_directory)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {

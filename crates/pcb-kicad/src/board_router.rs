@@ -12,6 +12,16 @@ use pcb_router as core;
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadBoardRouterConfig {
+    /// Wall-clock seconds from the start of the command by which it
+    /// returns the best board it has: no attempt starts after it and a
+    /// running one stops (an agent waits for the answer). Off by default:
+    /// the budgets count work, so a busy machine routes the same way.
+    #[serde(default)]
+    pub deadline_seconds: Option<f64>,
+    /// `deadline_seconds` as a time, set when routing starts (or by a
+    /// caller, such as the layout, with a deadline of its own).
+    #[serde(skip)]
+    pub deadline: Option<std::time::Instant>,
     /// Resolved per-connection geometry, keyed by normalized net name.
     #[serde(default)]
     pub connection_rules: BTreeMap<String, KiCadConnectionRoutingRules>,
@@ -970,9 +980,8 @@ pub(super) fn lower(
     // A mask opening exposes the copper under it: pads, or else the fill
     // of a pour. Over one net (a pad or a pour exposed on purpose)
     // it is that net's: it may route there, others would bridge to it.
-    // Over several, the designer already bridges them (J_LCD1's opening
-    // over its eight pads in Sisu) and the pads keep their escapes. Over
-    // none, nothing new goes under it. The net is the whole graphic's: a
+    // Over several (J_LCD1's opening over its eight pads in Sisu) or none,
+    // nothing new goes under it; pads inside leave it by their stubs. The net is the whole graphic's: a
     // filled rectangle's bare edges see no pad of their own.
     let pours = pours(pcb, &layers)?;
     for (shapes, layer, kind) in mask_openings {
@@ -1008,11 +1017,11 @@ pub(super) fn lower(
         }
         let net = match exposed.len() {
             1 => exposed.first().copied(),
-            0 if kind != "gr_text" => None,
             // Only text's glyph strokes open the mask, and its estimated
             // box would close whole pad rows (OpenESC's B.Mask label over
             // U11): over bare board it opens nothing that matters.
-            _ => continue,
+            0 if kind == "gr_text" => continue,
+            _ => None,
         };
         obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
             shape,
@@ -1230,10 +1239,15 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         Some("gr_rect" | "fp_rect") => {
             let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
             let corners = [a, [b[0], a[1]], b, [a[0], b[1]]];
-            let mut shapes: Vec<_> = (0..4)
-                .map(|index| capsule(corners[index], corners[(index + 1) % 4]))
-                .collect();
-            if !matches!(form_atom(item, "fill", 1), None | Some("none" | "no")) {
+            let filled = !matches!(form_atom(item, "fill", 1), None | Some("none" | "no"));
+            // A filled rectangle's edges matter only with a stroke reaching
+            // beyond the fill.
+            let mut shapes: Vec<_> = if filled && width <= 0.0 {
+                Vec::new()
+            } else {
+                (0..4).map(|index| capsule(corners[index], corners[(index + 1) % 4])).collect()
+            };
+            if filled {
                 shapes.push(core::Shape::Polygon {
                     points: corners.to_vec(),
                 });
@@ -1487,6 +1501,17 @@ pub fn route_kicad_board(
     output_directory: &Path,
     config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadBoardRouterResult, String> {
+    let with_deadline;
+    let config = match (config.deadline, config.deadline_seconds) {
+        (None, Some(seconds)) => {
+            with_deadline = KiCadBoardRouterConfig {
+                deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds.max(0.0))),
+                ..config.clone()
+            };
+            &with_deadline
+        }
+        _ => config,
+    };
     // Requested net classes set their nets' rules.
     let with_classes;
     let config = if config.net_classes.is_empty() {
@@ -1652,6 +1677,7 @@ pub fn route_kicad_board(
     let mut ladder_work = 0.0f64;
     let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
     let spent = |work: f64| work.max(ladder_started.elapsed().as_secs_f64() / core::router::GUARD);
+    let past_deadline = || config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -1668,6 +1694,9 @@ pub fn route_kicad_board(
         let layer_names = LayerTable::from_pcb(&parsed)?.names;
         let mut leader: Option<(usize, usize, core::router::Router, core::Board, KiCadBoardRouterConfig)> = None;
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
+            if leader.is_some() && past_deadline() {
+                break;
+            }
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
@@ -1765,6 +1794,10 @@ pub fn route_kicad_board(
             if pitch.is_none() && probed_mode == Some(mode) {
                 continue;
             }
+            if best.is_some() && past_deadline() {
+                eprintln!("deadline reached: no further attempts");
+                break 'ladder;
+            }
             // The skeleton and the plane stubs only help when the plain
             // pour connection left pads of a pour net open; elsewhere they
             // just take room.
@@ -1833,6 +1866,7 @@ pub fn route_kicad_board(
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
                 && attempt_seconds <= budget / 2.0
+                && !past_deadline()
             {
                 let mut seeded = attempt.clone();
                 seeded.seeds = Some(retry);
@@ -1926,6 +1960,7 @@ pub fn route_kicad_board(
         && opens.0 > 0
         && config.use_narrow_signals.is_none()
         && spent(ladder_work) < 1.5 * ladder_budget
+        && !past_deadline()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
     {
         let mut narrowed = attempt.clone();
@@ -2139,6 +2174,7 @@ fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: us
 pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     let mut router_config = core::Config {
         verbose: true,
+        deadline: config.deadline,
         ..core::Config::default()
     };
     if let Some(via_cost) = config.via_cost_mm {
@@ -2619,17 +2655,18 @@ mod pour_request_tests {
         let board = lowered("");
         let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
         let net_a = board.nets.iter().position(|net| net.name.ends_with('A')).map(|index| index as core::NetId);
-        // The first rectangle (fill and four bare edges) is pad 1's; the
-        // second already bridges two pads and keeps nothing out; text over
-        // bare board opens nothing that matters.
+        // The first rectangle (its fill; no stroke) is pad 1's; the
+        // second spans two pads and keeps everything out; text over bare
+        // board opens nothing that matters.
         let bare = openings(&board);
-        assert_eq!(bare.len(), 5);
-        assert!(bare.iter().all(|(net, _)| net.is_some() && *net == net_a));
+        assert_eq!(bare.len(), 2);
+        assert!(bare[..1].iter().all(|(net, _)| net.is_some() && *net == net_a));
+        assert!(bare[1..].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
         // Over a pour, the text exposes the fill: it is the pour's net's.
         let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10))))"#;
         let poured = openings(&lowered(zone));
-        assert_eq!(poured.len(), 6);
-        assert_eq!(poured[5], (net_b, "solder mask opening (gr_text)".to_string()));
+        assert_eq!(poured.len(), 3);
+        assert_eq!(poured[2], (net_b, "solder mask opening (gr_text)".to_string()));
     }
 
     #[test]

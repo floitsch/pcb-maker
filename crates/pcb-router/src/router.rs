@@ -133,6 +133,10 @@ pub struct Config {
     /// (`None`: the deterministic order).
     pub seed: Option<u64>,
     pub verbose: bool,
+    /// A wall-clock time by which routing returns what it has, however
+    /// much work its budgets still allow: every budget counts as spent
+    /// from then on (an agent waits for the result).
+    pub deadline: Option<std::time::Instant>,
 }
 
 impl Default for Config {
@@ -177,6 +181,7 @@ impl Default for Config {
             heuristic_weight: 1.0,
             seed: None,
             verbose: false,
+            deadline: None,
         }
     }
 }
@@ -3200,7 +3205,14 @@ impl Router {
     /// Whether `budget` (work seconds) is spent since `clock`; the wall
     /// clock stops it too, at `GUARD` times the budget.
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
-        self.work_seconds() - clock.0 > budget || clock.1.elapsed().as_secs_f64() > budget * GUARD
+        self.work_seconds() - clock.0 > budget
+            || clock.1.elapsed().as_secs_f64() > budget * GUARD
+            || self.past_deadline()
+    }
+
+    /// Whether the caller's wall-clock deadline has passed.
+    pub fn past_deadline(&self) -> bool {
+        self.config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
 
     /// Routable nets in conflict or not complete, plus the pads of pour
@@ -3923,7 +3935,11 @@ impl Router {
             // seconds stay as the last guard.
             let worked_out = self.config.negotiation_expansions > 0
                 && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
-            if stalled > patience || worked_out || started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
+            if stalled > patience
+                || worked_out
+                || started.elapsed().as_secs_f64() > self.config.negotiation_seconds
+                || self.past_deadline()
+            {
                 break;
             }
             // Nets without any path are not congestion; when a quarter of
@@ -4897,6 +4913,12 @@ impl Router {
                 || obstacle.layers & (1 << layer) == 0
                 || !obstacle.blocks_tracks
             {
+                return true;
+            }
+            // A pad inside a keepout leaves it by its stub: the only way
+            // out, as the designer's tracks took (Sisu's J_LCD1 mask opening
+            // over its eight pads keeps everything else out).
+            if obstacle.kind == crate::board::ObstacleKind::Keepout && obstacle.shape.contains(start) {
                 return true;
             }
             // Stubs are exact geometry: an exact fit passes, as in KiCad
