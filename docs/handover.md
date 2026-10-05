@@ -540,8 +540,9 @@ Committed, in order:
   OpenAirScope: the next layout speed target. PCB_ROUTER_TIMING shows a
   move's 8-12 nets negotiated ~34 iterations at 5-8 s each (finish 3-22
   s); skipping nets already open before the move changed nothing (they
-  were not pending). Candidates: a faster price growth for trials, or
-  windows bounded around the moved part.
+  were not pending). Faster price growth in the in-place router (2.0):
+  first route 439 -> 313 s (18 open, was 22), moves 126-229 s, same final
+  quality. Next candidate: windows bounded around the moved part.
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
