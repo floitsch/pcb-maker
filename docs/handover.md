@@ -438,7 +438,11 @@ Committed, in order:
   lowered as a disc burying the inner pad. Sisu x58: 36 unconnected in
   KiCad (x56: 48), keypad nets all connected; left open: GND 12, +3.3V 7
   (tracks mode), seven single connections. Its first attempt alone takes
-  ~1900 s on a loaded machine: speed is the next thing there.
+  ~1900 s on a loaded machine: its continued probe sits at 27-32
+  conflicted nets from iteration 6 to 38 (~650 s at the price cap) because
+  a new low by one net resets the stall counter. A stall rule that needs
+  a real drop (10 %, or two nets) would save that, but must first be
+  measured on the corpus: some boards finish only in that tail.
 - Projects that rate clearance as warning/ignore (6 of 109) get a last
   ladder step at the board's min_clearance: the A13 module's designer kept
   0.149 against classes of 0.2 (its project made clearance a warning).
