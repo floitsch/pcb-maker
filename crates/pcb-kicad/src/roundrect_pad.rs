@@ -9,6 +9,38 @@ pub(super) fn geometry(
     size: [f64; 2],
     angle_degrees: f64,
 ) -> Result<ObstacleGeometry, String> {
+    geometry_with(pad, center, size, angle_degrees, true)
+}
+
+/// One layer's entry of a padstack, in board coordinates.
+fn padstack_entry_geometry(entry: &Expr, center: [f64; 2], angle_degrees: f64) -> Result<ObstacleGeometry, String> {
+    let size = form_xy(entry, "size")?;
+    let shape = entry.child("shape").and_then(|shape| shape.children().get(1)).and_then(Expr::atom);
+    match shape {
+        Some("roundrect") if entry.child("chamfer").is_none() => geometry_with(entry, center, size, angle_degrees, false),
+        Some("circle") => Ok(ObstacleGeometry::Circle { center, radius: size[0] / 2.0 }),
+        // Rectangles, and conservatively anything else: the bounding
+        // rectangle.
+        _ => {
+            let half = [size[0] / 2.0, size[1] / 2.0];
+            let points = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]]
+                .map(|point| {
+                    let rotated = rotate_vector(point, angle_degrees);
+                    [center[0] + rotated[0], center[1] + rotated[1]]
+                })
+                .to_vec();
+            Ok(ObstacleGeometry::Polygon { points })
+        }
+    }
+}
+
+fn geometry_with(
+    pad: &Expr,
+    center: [f64; 2],
+    size: [f64; 2],
+    angle_degrees: f64,
+    use_padstack: bool,
+) -> Result<ObstacleGeometry, String> {
     // Chamfered corners (`chamfer_ratio`, `chamfer top_left ...`): each
     // named corner is cut straight across at chamfer_ratio * min(size)
     // from the corner along both edges; the other corners keep the
@@ -29,7 +61,7 @@ pub(super) fn geometry(
     }
     let mut size = size;
     let mut ratio_of = pad;
-    if let Some(padstack) = pad.child("padstack") {
+    if let Some(padstack) = pad.child("padstack").filter(|_| use_padstack) {
         // A padstack (KiCad 9) gives other copper layers their own shapes;
         // the pad's own shape is the front one. On a front-only surface
         // pad the other entries are inert (footprints edited in that mode
@@ -51,7 +83,16 @@ pub(super) fn geometry(
                 size = form_xy(entry, "size")?;
                 ratio_of = entry;
             }
-            _ => return Err("per-layer roundrect padstacks have no exact geometry lowering".into()),
+            // Different copper per layer (a through-hole pad's inner and
+            // back shapes): the obstacle is their union, exact on the
+            // largest layer and cautious on the others.
+            _ => {
+                let mut parts = vec![geometry_with(pad, center, size, angle_degrees, false)?];
+                for entry in padstack.children().iter().filter(|item| item.head() == Some("layer")) {
+                    parts.push(padstack_entry_geometry(entry, center, angle_degrees)?);
+                }
+                return Ok(ObstacleGeometry::Union { parts });
+            }
         }
     }
     if !size.iter().all(|v| v.is_finite() && *v > 0.0)
@@ -302,13 +343,22 @@ mod tests {
         for ratio in ["NaN", "inf", "-0.1", "0.6", "garbage"] {
             assert!(geometry(&pad(ratio), [0.0; 2], [2.0; 2], 0.0).is_err());
         }
-        for extra in ["(chamfer top_left) (chamfer_ratio 0.7)", "(layers \"*.Cu\") (padstack)"] {
-            let p = parse(&format!(
-                "(pad \"1\" smd roundrect (roundrect_rratio 0.25) {extra})"
-            ))
-            .unwrap();
-            assert!(geometry(&p, [0.0; 2], [2.0; 2], 0.0).is_err());
-        }
+        let p = parse("(pad \"1\" smd roundrect (roundrect_rratio 0.25) (chamfer top_left) (chamfer_ratio 0.7))").unwrap();
+        assert!(geometry(&p, [0.0; 2], [2.0; 2], 0.0).is_err());
         assert!(geometry(&pad("0.25"), [0.0; 2], [0.0, 2.0], 0.0).is_err());
+    }
+
+    #[test]
+    fn per_layer_padstacks_are_the_union_of_their_layers() {
+        let p = parse(
+            "(pad \"1\" thru_hole roundrect (roundrect_rratio 0.25) (layers \"*.Cu\")
+               (padstack (mode front_inner_back) (layer \"B.Cu\" (shape circle) (size 3 3))))",
+        )
+        .unwrap();
+        let ObstacleGeometry::Union { parts } = geometry(&p, [0.0; 2], [2.0; 2], 0.0).unwrap() else {
+            panic!("expected a union");
+        };
+        assert_eq!(parts.len(), 2);
+        assert!(matches!(parts[1], ObstacleGeometry::Circle { radius, .. } if (radius - 1.5).abs() < 1e-12));
     }
 }
