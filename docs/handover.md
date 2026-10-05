@@ -459,9 +459,16 @@ Committed, in order:
   of several pieces (zpn_devboard: two boards side by side) are measured
   against the union's box; per-piece edges are needed.
 
-Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
-1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
-the terminal bug); routing sweep `build/github-route-v12` (x43, frozen).
+- Per-layer padstacks lower to the union of their layers' shapes
+  (OpenESC 30x30 panel errored; its designer's panel has 130 unconnected).
+
+Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
+`build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
+four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
+placer deadline, padstacks, rings and relaxed clearance). Let v6 finish
+untouched. Routing sweep `build/github-route-v12` (x43, frozen).
+v5's first rows (x57): jetson-nano 336/340, laptop 230/236, MokyaLora
+259/262 placed and routed within ~1550 s each.
 krishveercard is no benchmark for the class rules: the designer's own
 board breaks them hundreds of times (use the guided set).
 
