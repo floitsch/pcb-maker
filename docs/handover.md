@@ -432,7 +432,16 @@ Committed, in order:
 - Sisu with all of the above (x56, stripped, full ladder): 177/192 routed,
   0 internal violations, nothing beyond the designer but 3
   pth_inside_courtyard (placement); v12 had 185/192 with 27 mask bridges,
-  6 clearance and 5 shorting findings. Next for Sisu: completeness.
+  6 clearance and 5 shorting findings.
+- Unfilled circles are rings (custom pads and graphics): Sisu's dome
+  switches and speaker contacts drew the outer contact as a ring that was
+  lowered as a disc burying the inner pad. Sisu x58: 36 unconnected in
+  KiCad (x56: 48), keypad nets all connected; left open: GND 12, +3.3V 7
+  (tracks mode), seven single connections. Its first attempt alone takes
+  ~1900 s on a loaded machine: speed is the next thing there.
+- Projects that rate clearance as warning/ignore (6 of 109) get a last
+  ladder step at the board's min_clearance: the A13 module's designer kept
+  0.149 against classes of 0.2 (its project made clearance a warning).
 
 Running: layout sweep `build/github-layout-v5` (`pcb-maker-x57`, `--jobs
 1`; requested by Florian; v3 stopped after four 1800 s timeouts, v4 after
