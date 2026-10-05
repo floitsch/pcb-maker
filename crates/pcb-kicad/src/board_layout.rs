@@ -773,7 +773,10 @@ pub fn layout_kicad_board(
         }
     }
 
-    if !polished {
+    // The polish reroutes everything: past the deadline it would stop at
+    // once and throw the moves' best board away (OpenAirScope: 18 open
+    // after the moves, 108 of 184 routed after the polish).
+    if !polished && !router.past_deadline() {
         result = router.reroute(true);
     }
     // Reference labels off pads and other silkscreen.
