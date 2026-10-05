@@ -326,6 +326,12 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
                         0.0,
                     );
                 }
+                // A custom pad's copper is its primitives too (Sisu's dome
+                // switch: a 0.7 mm anchor and a ring of 3.1 mm radius around
+                // the switch centre), in the pad's own frame.
+                for (point, radius) in custom_pad_points(child) {
+                    include([at[0] + cos * point[0] - sin * point[1], at[1] + sin * point[0] + cos * point[1]], radius);
+                }
             }
             _ => {}
         }
@@ -408,6 +414,43 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
 
 /// A pad's size in its own frame, at least its drill (a hole may be
 /// drawn with a token pad).
+/// The points (with a radius around them) that bound a custom pad's
+/// primitives, in the pad's frame; empty for other pads.
+fn custom_pad_points(pad: &Expr) -> Vec<([f64; 2], f64)> {
+    let Some(primitives) = pad.child("primitives") else {
+        return Vec::new();
+    };
+    let mut points = Vec::new();
+    for primitive in primitives.children().iter().skip(1) {
+        let width = primitive
+            .child("stroke")
+            .and_then(|stroke| form_f64(stroke, "width", 1).ok())
+            .or_else(|| form_f64(primitive, "width", 1).ok())
+            .unwrap_or(0.0)
+            .max(0.0);
+        match primitive.head() {
+            Some("gr_circle") => {
+                if let (Ok(center), Ok(end)) = (form_xy(primitive, "center"), form_xy(primitive, "end")) {
+                    points.push((center, distance_squared(center, end).sqrt() + width / 2.0));
+                }
+            }
+            _ => {
+                for head in ["start", "mid", "end"] {
+                    if let Ok(point) = form_xy(primitive, head) {
+                        points.push((point, width / 2.0));
+                    }
+                }
+                for point in primitive.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|point| point.head() == Some("xy")) {
+                    if let (Ok(x), Ok(y)) = (expression_coordinate(point, 1, "primitive x"), expression_coordinate(point, 2, "primitive y")) {
+                        points.push(([x, y], width / 2.0));
+                    }
+                }
+            }
+        }
+    }
+    points
+}
+
 fn pad_extent(pad: &Expr) -> [f64; 2] {
     let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
     let drill: Vec<f64> = pad
