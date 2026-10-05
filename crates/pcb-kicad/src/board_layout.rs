@@ -505,6 +505,9 @@ pub fn layout_kicad_board(
     if router_config.stall_at_cap.is_none() {
         core_config.stall_at_cap = core_config.stall_at_cap.min(10);
     }
+    if router_config.present_growth.is_none() {
+        core_config.present_growth = core_config.present_growth.max(2.0);
+    }
 
     let first_started = std::time::Instant::now();
     let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
