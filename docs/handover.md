@@ -506,6 +506,15 @@ Committed, in order:
   unchanged (5 unconnected, clean); Sisu layout task (x66) 180/192 (x65
   162), starved 6 -> 5, but 4 mask bridges.
 
+- Placer: the board's mask graphics and mask text block placement on
+  their side; tasks v4 (`build/github-tasks-v4`) fix parts under the
+  board's own mask openings (13 tasks differ). Router: only mask openings
+  let a pad leave by its stub through them (a rule area stays strict).
+  Sisu layout task on x68: 172/192, 90 unconnected (x65: 125), only 3
+  starved thermals and 1 pth_inside_courtyard left. OpenFC on tasks v4:
+  81/82 (one +3.3V terminal, congestion; it passed on tasks v3 where U9
+  could move).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
