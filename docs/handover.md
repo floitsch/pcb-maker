@@ -473,6 +473,9 @@ Committed, in order:
   had 17 starved thermals there), both nothing beyond the designer. Diagnostics with KiCad's own fill (pcbnew Python
   works; under Python 3.14 index containers instead of iterating):
   benchmarks/github/kicad_components.py <board> <net>.
+- Starved thermals on x64 (stripped, full ladder): mackerel-30-proto 8 ->
+  0 (217/217, clean), video 4 -> 0 (371/371, clean), BAGEL-MK1 1 (J102's
+  pad has 4 spokes into an island the model thought joined).
 - Starved thermals (ohdsp DSP, 5 beyond the designer): KiCad counts spokes
   whatever tracks join the pad (U201 pad 1 has six GNDD tracks and is
   still flagged at 1 of 2 spokes). Other nets' tracks take the second
