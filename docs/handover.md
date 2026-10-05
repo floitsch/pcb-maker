@@ -515,6 +515,10 @@ Committed, in order:
   81/82 (one +3.3V terminal, congestion; it passed on tasks v3 where U9
   could move).
 
+- ATAT1800 routing on x68: 35 unconnected (v12 57), 1 starved, no
+  dangling tracks; it did not finish the ladder within near.sh's hour on
+  a loaded machine (speed).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
