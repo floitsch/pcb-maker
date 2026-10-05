@@ -138,9 +138,13 @@ def main():
             pass
         reference = {}
         if (reference_directory / "drc.json").exists():
+            report = json.loads((reference_directory / "drc.json").read_text())
             reference = dict(Counter(
-                v["type"] for v in json.loads((reference_directory / "drc.json").read_text()).get("violations", [])
+                v["type"] for v in report.get("violations", [])
                 if not COSMETIC.match(v["type"])))
+            # A designer's board can be incomplete itself (a panel whose
+            # copies share nets).
+            row["reference_unconnected"] = len(report.get("unconnected_items", []))
         row["reference_findings"] = reference
 
         code, seconds = run(arguments.binary, ["route-kicad-board", source, board_id, work / "routed", "auto"],

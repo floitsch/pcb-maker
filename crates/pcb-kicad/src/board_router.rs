@@ -834,6 +834,7 @@ pub(super) fn lower(
                             clearance = rules.clearance_mm;
                         }
                     }
+                    let pad_obstacle = obstacles.len();
                     obstacles.push(core::Obstacle {
                         shape: shape(&lowered.geometry),
                         layers: pad_layers,
@@ -881,7 +882,7 @@ pub(super) fn lower(
                         nets[net as usize].terminals.push(core::Terminal {
                             anchor: lowered.center,
                             layers: terminal_layers,
-                            pad: obstacles.len() - 1,
+                            pad: pad_obstacle,
                             label,
                         });
                     }
@@ -985,6 +986,37 @@ pub(super) fn lower(
             }
             _ => {}
         }
+    }
+    // Pads of one number that overlap are one pad to KiCad (a solder pad
+    // with holes in it, an exposed pad's thermal vias): the largest is the
+    // terminal, the others just its copper. OpenRX's panel hangs half of
+    // each wire pad's holes over the edge, unreachable as terminals.
+    for net in &mut nets {
+        let area = |terminal: &core::Terminal| {
+            let bounds = obstacles[terminal.pad].shape.aabb();
+            (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[1] - bounds.minimum[1])
+        };
+        let mut order: Vec<usize> = (0..net.terminals.len()).collect();
+        order.sort_by(|a, b| area(&net.terminals[*b]).total_cmp(&area(&net.terminals[*a])).then(a.cmp(b)));
+        let mut keep = vec![true; net.terminals.len()];
+        for (position, &large) in order.iter().enumerate() {
+            if !keep[large] {
+                continue;
+            }
+            for &small in &order[position + 1..] {
+                if keep[small]
+                    && net.terminals[small].label == net.terminals[large].label
+                    && obstacles[net.terminals[large].pad].shape.contains(net.terminals[small].anchor)
+                {
+                    keep[small] = false;
+                }
+            }
+        }
+        let mut index = 0;
+        net.terminals.retain(|_| {
+            index += 1;
+            keep[index - 1]
+        });
     }
     // Copper graphics belong to their net (other nets keep clear) or, without
     // one, to none.
@@ -2717,6 +2749,30 @@ mod pour_request_tests {
         let opening: Vec<_> = board.obstacles.iter().filter(|obstacle| obstacle.label.starts_with("solder mask opening")).collect();
         assert_eq!(opening.len(), 1);
         assert_eq!(opening[0].net, ground);
+    }
+
+    #[test]
+    fn overlapping_pads_of_one_number_are_one_terminal() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "a" (at 5 5) (property "Reference" "TP1")
+            (pad "1" thru_hole roundrect (at 0 0) (size 1.9 4.5) (drill 1) (layers "*.Cu") (roundrect_rratio 0.25) (net "/W"))
+            (pad "1" thru_hole circle (at 0.5 1.2) (size 0.6 0.6) (drill 0.4) (layers "*.Cu") (net "/W"))
+            (pad "1" thru_hole circle (at -0.5 -1.2) (size 0.6 0.6) (drill 0.4) (layers "*.Cu") (net "/W")))
+          (footprint "b" (at 15 5) (property "Reference" "TP2")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/W"))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let net = board.nets.iter().find(|net| net.name.ends_with('W')).unwrap();
+        assert_eq!(net.terminals.len(), 2);
+        // The large pad stays, and the terminal points at its copper.
+        assert_eq!(net.terminals[0].anchor, [5.0, 5.0]);
+        assert_eq!(board.obstacles[net.terminals[0].pad].kind, core::ObstacleKind::Copper);
     }
 
     #[test]

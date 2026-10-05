@@ -75,6 +75,13 @@ def main():
         unconnected = native.get("unconnected") if isinstance(native, dict) else None
         open_ = route["connections"] - route["routed"]
         summary = f'{route["routed"]}/{route["connections"]}, {route["vias"]} vias (designer {designer.get("vias")}), {route["routing_seconds"]:.0f} s'
+        reference_unconnected = row.get("reference_unconnected")
+        if reference_unconnected is None and arguments.output.is_dir():
+            report = arguments.output / name / "reference" / "drc.json"
+            if report.exists():
+                reference_unconnected = len(json.loads(report.read_text()).get("unconnected_items", []))
+        if reference_unconnected:
+            summary += f"; the designer's board has {reference_unconnected} unconnected"
         if open_ > 0:
             classes["open"].append((name, f"{open_} open; {summary}", designer))
         elif findings:
