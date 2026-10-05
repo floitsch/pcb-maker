@@ -501,6 +501,11 @@ Committed, in order:
   162/192 with no shorts, clearance or mask findings (v6: 173/192 with 17
   shorts, 17 clearance, 24 bridges), 6 starved thermals left.
 
+- Thermal guard on spoke corridors only (cost 10, was a disc at 4): DSP
+  starved 5 -> 2, BAGEL-MK1 1 -> 0 (138/138), PolyKybd split72 right
+  unchanged (5 unconnected, clean); Sisu layout task (x66) 180/192 (x65
+  162), starved 6 -> 5, but 4 mask bridges.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
