@@ -54,6 +54,12 @@ pub struct Config {
     /// Iterations without fewer conflicted nets that negotiation waits
     /// once the price of sharing is at its cap.
     pub stall_at_cap: usize,
+    /// At the price cap, how much fewer conflicted nets count as progress
+    /// (a share of the last low; at least two nets when above zero). Zero:
+    /// any new low resets the stall count, which lets a board crawl down
+    /// one net every few iterations for hundreds of seconds (Sisu: 27-32
+    /// conflicted from iteration 6 to 38).
+    pub stall_drop: f64,
     /// Stop negotiating when a quarter of the nets have no path at all
     /// after the first iteration (see `Router::hopeless`).
     pub abandon_hopeless: bool,
@@ -150,6 +156,7 @@ impl Default for Config {
             present_growth: 1.5,
             present_cap: 1.0e4,
             stall_at_cap: 25,
+            stall_drop: 0.0,
             abandon_hopeless: true,
             escape_stub_mm: 0.0,
             global_routing: false,
@@ -3925,10 +3932,19 @@ impl Router {
                     self.dump_region(&conflicted);
                 }
             }
-            if conflicted.len() < best_conflicted {
+            let at_cap = present >= self.config.present_cap as f32;
+            let progress = if at_cap && self.config.stall_drop > 0.0 && best_conflicted != usize::MAX {
+                let needed = ((best_conflicted as f64 * self.config.stall_drop).ceil() as usize).max(2);
+                conflicted.len() + needed <= best_conflicted
+            } else {
+                conflicted.len() < best_conflicted
+            };
+            if progress {
                 best_conflicted = conflicted.len();
                 stalled = 0;
             } else {
+                // The low to beat stays where progress was last made: small
+                // steps add up until they make a real drop.
                 stalled += 1;
             }
             // Experiment hook: reroute only a random fraction of the

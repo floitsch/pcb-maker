@@ -61,6 +61,10 @@ pub struct KiCadBoardRouterConfig {
     /// at its cap.
     #[serde(default)]
     pub stall_at_cap: Option<usize>,
+    /// Router `stall_drop`: at the price cap, the share of conflicted nets
+    /// that must go before negotiation counts it as progress.
+    #[serde(default)]
+    pub stall_drop: Option<f64>,
     /// Plan nets on the tile graph first (global routing).
     #[serde(default)]
     pub global_routing: Option<bool>,
@@ -2335,6 +2339,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(growth) = config.present_growth {
         router_config.present_growth = growth;
+    }
+    if let Some(drop) = config.stall_drop {
+        router_config.stall_drop = drop;
     }
     if let Some(stall) = config.stall_at_cap {
         router_config.stall_at_cap = stall;
