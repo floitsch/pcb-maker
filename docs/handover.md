@@ -551,6 +551,16 @@ Committed, in order:
   boards under frame parts (reverted). Open: placement that may overlap
   courtyards where the project allows it, part by part.
 
+- The 13 boards of the Freerouting/tscircuit comparison (route mode,
+  pours kept, x75, machine loaded by the layout sweep): all 13 complete
+  and clean, StickHub included (45/45; September: 43/45, the one board
+  Freerouting did better on). Routing seconds: ecc83 0.3, hierarchy 2,
+  pic 16, interf-u 83 (wall 448: four rungs, a seed retry of 133 s for
+  one open connection, then the skeleton rung completes it, then an
+  extra tracks rung), olimex-c3 28, dut-c3 23, dut-c6 32, dut-s2 44,
+  dut-s3 44, dut-esp32 32, sonde 2, multichannel 48, stickhub 38.
+  interf-u keeps 84 vias where the tracks rung had 30 (3 starved).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
