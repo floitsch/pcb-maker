@@ -462,6 +462,20 @@ Committed, in order:
 - Per-layer padstacks lower to the union of their layers' shapes
   (OpenESC 30x30 panel errored; its designer's panel has 130 unconnected).
 
+- Agent tasks: hollow parts (anything may enter) only where the project
+  lets courtyards overlap; otherwise the designer's contained parts stay
+  (link's U1 got 18 extra overlaps). `build/github-tasks-v3`, 72 tasks
+  differ (mostly switches with their diodes).
+- Next completeness target, measured on v12: KiCad finds GND fill islands
+  that our pour model counts as joined ("Zone"-"Zone" unconnected items):
+  PolyKybd split72 left 42, right 39, corne right 31, left 8 (most of their
+  unconnected), OpenRX panel 30, A13 6. Our model splits GND into 683-1514
+  pieces and reports it stitched and complete. Needs KiCad's fill to
+  compare (gerber export with zone refill), or a feedback pass that joins
+  the islands KiCad reports (the ratsnest endpoints are on each island).
+  Edge constraints on multi-piece boards need per-piece bounds in the
+  placer (constraints.rs uses the union's box).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
