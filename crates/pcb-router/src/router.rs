@@ -172,7 +172,7 @@ impl Default for Config {
             via_reduction_budget: 3.0,
             via_reduction_seconds: 300.0,
             cleanup_seconds: 180.0,
-            thermal_guard_cost: 4.0,
+            thermal_guard_cost: 10.0,
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,
@@ -1128,18 +1128,39 @@ impl Router {
                 {
                     continue;
                 }
+                // The spokes' corridors, straight out from the pad along
+                // its axes (diagonally for a round pad, as KiCad draws
+                // them), across the gap and the spoke's length: other nets
+                // may pass the pad's corners, not its spokes (Sisu's GND
+                // resistors starved at one spoke of two).
                 let shape = &self.board.obstacles[terminal.pad].shape;
-                let Some((x0, y0, x1, y1)) = self
-                    .grid
-                    .node_range(shape.aabb().inflated(plane.thermal_reach))
-                else {
+                let bounds = shape.aabb();
+                let anchor = terminal.anchor;
+                let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+                let round = matches!(shape, crate::geometry::Shape::Circle { .. });
+                let directions: [[f64; 2]; 4] = if round {
+                    let d = std::f64::consts::FRAC_1_SQRT_2;
+                    [[d, d], [d, -d], [-d, d], [-d, -d]]
+                } else {
+                    [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
+                };
+                let bridge = (plane.thermal_reach - plane.thermal_gap).max(0.0);
+                let width = bridge / 2.0 + self.board.classes[self.board.nets[plane.net as usize].class].clearance + 0.1;
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds.inflated(plane.thermal_reach + width)) else {
                     continue;
                 };
                 for y in y0..=y1 {
                     for x in x0..=x1 {
-                        if shape.distance_to_point(self.grid.center(x, y)) < plane.thermal_reach {
-                            guard[plane.layer][self.grid.index(x, y)] =
-                                crate::grid::owner(plane.net);
+                        let center = self.grid.center(x, y);
+                        let offset = [center[0] - anchor[0], center[1] - anchor[1]];
+                        let in_corridor = directions.iter().any(|direction| {
+                            let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                            let along = offset[0] * direction[0] + offset[1] * direction[1];
+                            let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
+                            along > edge - 1.0e-9 && along < edge + plane.thermal_reach && across < width
+                        });
+                        if in_corridor && shape.distance_to_point(center) < plane.thermal_reach {
+                            guard[plane.layer][self.grid.index(x, y)] = crate::grid::owner(plane.net);
                         }
                     }
                 }
