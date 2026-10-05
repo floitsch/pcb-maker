@@ -29,6 +29,16 @@ pub(super) fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     Ok(points)
 }
 
+/// A full circle as a closed chain of points, the first repeated last
+/// (chords within `ARC_TOLERANCE`, as `arc_points`).
+pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
+    let at = |dx: f64, dy: f64| [center[0] + dx, center[1] + dy];
+    let mut points = arc_points(at(radius, 0.0), at(0.0, radius), at(-radius, 0.0));
+    points.pop();
+    points.extend(arc_points(at(-radius, 0.0), at(0.0, -radius), at(radius, 0.0)));
+    points
+}
+
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // Circle through three points.
     let d = 2.0

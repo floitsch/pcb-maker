@@ -12228,10 +12228,22 @@ fn custom_pad_geometry(
                 let circle_center = xy("center")?;
                 let end = xy("end")?;
                 let radius = distance_squared(circle_center, end).sqrt();
-                parts.push(ObstacleGeometry::Circle {
-                    center: circle_center,
-                    radius: radius + width / 2.0,
-                });
+                if filled || width <= 0.0 {
+                    parts.push(ObstacleGeometry::Circle {
+                        center: circle_center,
+                        radius: radius + width / 2.0,
+                    });
+                } else {
+                    // An unfilled circle is its ring (a dome switch's outer
+                    // contact around its inner pad, Sisu's keypad).
+                    for pair in outline::circle_points(circle_center, radius).windows(2) {
+                        parts.push(ObstacleGeometry::Segment {
+                            start: pair[0],
+                            end: pair[1],
+                            radius: width / 2.0 + 2.0 * outline::ARC_TOLERANCE,
+                        });
+                    }
+                }
             }
             Some("gr_arc") => {
                 // Our chords lie inside the arc (by up to ARC_TOLERANCE) and

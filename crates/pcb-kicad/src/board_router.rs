@@ -1314,10 +1314,23 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         Some("gr_circle" | "fp_circle") => {
             let center = form_xy(item, "center")?;
             let radius = distance_squared(center, form_xy(item, "end")?).sqrt();
-            vec![core::Shape::Circle {
-                center,
-                radius: radius + width / 2.0,
-            }]
+            let filled = !matches!(form_atom(item, "fill", 1), None | Some("no" | "none"));
+            if filled || width <= 0.0 {
+                vec![core::Shape::Circle {
+                    center,
+                    radius: radius + width / 2.0,
+                }]
+            } else {
+                // Unfilled: the ring only.
+                outline::circle_points(center, radius)
+                    .windows(2)
+                    .map(|pair| core::Shape::Capsule {
+                        start: pair[0],
+                        end: pair[1],
+                        radius: width / 2.0 + 2.0 * outline::ARC_TOLERANCE,
+                    })
+                    .collect()
+            }
         }
         Some("gr_poly" | "fp_poly") => vec![core::Shape::Polygon {
             points: rule_area_like_points(item)?,
@@ -2773,6 +2786,28 @@ mod pour_request_tests {
         // The large pad stays, and the terminal points at its copper.
         assert_eq!(net.terminals[0].anchor, [5.0, 5.0]);
         assert_eq!(board.obstacles[net.terminals[0].pad].kind, core::ObstacleKind::Copper);
+    }
+
+    #[test]
+    fn an_unfilled_circle_in_a_custom_pad_is_a_ring() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "dome" (at 10 5) (property "Reference" "SW1")
+            (pad "1" smd circle (at 0 0) (size 4 4) (layers "F.Cu") (net "/A"))
+            (pad "2" smd custom (at 2.75 0) (size 0.7 0.7) (layers "F.Cu") (net "/B")
+              (options (clearance outline) (anchor circle))
+              (primitives (gr_circle (center -2.75 0) (end 0 0) (width 0.7) (fill no))))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let ring = board.obstacles.iter().find(|obstacle| obstacle.label == "SW1.2").unwrap();
+        // The inner pad's centre is free of the ring; the ring itself is copper.
+        assert!(ring.shape.distance_to_point([10.0, 5.0]) > 2.0);
+        assert!(ring.shape.distance_to_point([12.75, 5.0]) < 1.0e-6);
     }
 
     #[test]
