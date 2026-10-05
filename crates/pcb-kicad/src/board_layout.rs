@@ -494,7 +494,17 @@ pub fn layout_kicad_board(
         edge_rule: placement.edge_rule_mm,
     }
     .apply(&mut problem.problem);
-    let core_config = core_config(router_config);
+    // The in-place router compares placements: it stops negotiating once
+    // conflicts no longer really fall (a move on OpenAirScope negotiated
+    // 64 iterations at 15 conflicted nets, 200-350 s a move). The final
+    // ladder routes with the full patience.
+    let mut core_config = core_config(router_config);
+    if router_config.stall_drop.is_none() {
+        core_config.stall_drop = 0.1;
+    }
+    if router_config.stall_at_cap.is_none() {
+        core_config.stall_at_cap = core_config.stall_at_cap.min(10);
+    }
 
     let first_started = std::time::Instant::now();
     let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
