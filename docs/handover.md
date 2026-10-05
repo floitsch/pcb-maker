@@ -494,6 +494,13 @@ Committed, in order:
   Edge constraints on multi-piece boards need per-piece bounds in the
   placer (constraints.rs uses the union's box).
 
+- Placement fixes found by layout v6 (x65): custom pads count their
+  primitives in the body (Sisu's dome rings, OpenFC's J52), and board
+  copper graphics on several layers block placement. Layout tasks (tasks
+  v3): OpenFC passes, 82/82 clean in 636 s (v6: 81/82, 2 shorts); Sisu
+  162/192 with no shorts, clearance or mask findings (v6: 173/192 with 17
+  shorts, 17 clearance, 24 bridges), 6 starved thermals left.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
