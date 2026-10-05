@@ -537,7 +537,11 @@ Committed, in order:
   in-place router stops at a stall sooner (stall_drop 0.1, patience 10;
   OpenAirScope first route 606 -> 439 s, 12 unconnected; MIDAS-MK2.1
   passes 154/154 in 529 s). Moves still take 200-290 s each on
-  OpenAirScope: the next layout speed target.
+  OpenAirScope: the next layout speed target. PCB_ROUTER_TIMING shows a
+  move's 8-12 nets negotiated ~34 iterations at 5-8 s each (finish 3-22
+  s); skipping nets already open before the move changed nothing (they
+  were not pending). Candidates: a faster price growth for trials, or
+  windows bounded around the moved part.
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
