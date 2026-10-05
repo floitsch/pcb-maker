@@ -5009,10 +5009,14 @@ impl Router {
             {
                 return true;
             }
-            // A pad inside a keepout leaves it by its stub: the only way
-            // out, as the designer's tracks took (Sisu's J_LCD1 mask opening
-            // over its eight pads keeps everything else out).
-            if obstacle.kind == crate::board::ObstacleKind::Keepout && obstacle.shape.contains(start) {
+            // A pad inside a mask opening leaves it by its stub: the only
+            // way out, as the designer's tracks took (Sisu's J_LCD1 opening
+            // over its eight pads keeps everything else out). A rule area
+            // forbids tracks outright (Sisu's module keepout).
+            if obstacle.kind == crate::board::ObstacleKind::Keepout
+                && obstacle.label.starts_with("solder mask opening")
+                && obstacle.shape.contains(start)
+            {
                 return true;
             }
             // Stubs are exact geometry: an exact fit passes, as in KiCad

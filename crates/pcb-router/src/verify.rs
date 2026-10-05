@@ -198,6 +198,7 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             // (the router's `stub_is_clear`).
                             if !is_via
                                 && obstacle.kind == ObstacleKind::Keepout
+                                && obstacle.label.starts_with("solder mask opening")
                                 && (obstacle.shape.contains(start) || obstacle.shape.contains(end))
                                 && board.nets[net as usize]
                                     .terminals
