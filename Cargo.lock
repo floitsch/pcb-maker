@@ -230,6 +230,7 @@ name = "pcb-kicad"
 version = "0.1.0"
 dependencies = [
  "layout-trace-model",
+ "libc",
  "pcb-core",
  "pcb-engine",
  "pcb-grid-router",

@@ -258,19 +258,12 @@ fn run_report_command(
         .unwrap_or(Path::new("."));
     let temporary = ReportDirectory::new(parent)?;
     let fresh = temporary.0.join("report.json");
-    let result = Command::new(program)
-        .args(arguments)
-        .arg(&fresh)
-        .arg(input)
-        .output()
-        .map_err(|error| format!("failed to run kicad-cli: {error}"))?;
-    if !result.status.success() {
-        return Err(format!(
-            "kicad-cli failed with {}: {}{}",
-            result.status,
-            String::from_utf8_lossy(&result.stdout),
-            String::from_utf8_lossy(&result.stderr)
-        ));
+    let (status, transcript) = run_bounded(
+        Command::new(program).args(arguments).arg(&fresh).arg(input),
+        &temporary.0,
+    )?;
+    if !status.success() {
+        return Err(format!("kicad-cli failed with {status}: {transcript}"));
     }
     let report = super::read_json(&fresh)?;
     validate_report(&report, kind, input)?;
@@ -280,6 +273,53 @@ fn run_report_command(
             output.display()
         )
     })
+}
+
+/// Seconds a kicad-cli report may take (`PCB_KICAD_TIMEOUT`, default 900):
+/// a zone refill on 0xCB's panel never finished, and the hung process
+/// outlived the router by hours.
+fn report_timeout() -> std::time::Duration {
+    let seconds = std::env::var("PCB_KICAD_TIMEOUT")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| *value > 0.0)
+        .unwrap_or(900.0);
+    std::time::Duration::from_secs_f64(seconds)
+}
+
+/// Runs `command` with its output in `scratch`, killed after
+/// `report_timeout()` and, on Linux, when this process dies.
+fn run_bounded(command: &mut Command, scratch: &Path) -> Result<(std::process::ExitStatus, String), String> {
+    let log = scratch.join("kicad-cli.log");
+    let file = fs::File::create(&log).map_err(|error| format!("failed to create {}: {error}", log.display()))?;
+    let error_file = file.try_clone().map_err(|error| error.to_string())?;
+    command.stdout(file).stderr(error_file);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: prctl is async-signal-safe and touches no memory.
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                Ok(())
+            });
+        }
+    }
+    let mut child = command.spawn().map_err(|error| format!("failed to run kicad-cli: {error}"))?;
+    let timeout = report_timeout();
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("kicad-cli timed out after {:.0} s", timeout.as_secs_f64()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    Ok((status, fs::read_to_string(&log).unwrap_or_default()))
 }
 
 #[cfg(test)]
