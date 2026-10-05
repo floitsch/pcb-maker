@@ -2028,6 +2028,7 @@ pub fn route_kicad_board(
             }
         }
     }
+    let mut narrow_step_relaxed = false;
     // Connections still open at the class widths: the best attempt once
     // more with signal nets at the project's smallest predefined width
     // (designers often keep the default class at a power width and draw
@@ -2042,6 +2043,16 @@ pub fn route_kicad_board(
     {
         let mut narrowed = attempt.clone();
         narrowed.use_narrow_signals = Some(true);
+        // A project that takes clearance findings as warnings gets its
+        // minimum clearance in the same attempt (the A13 module's designer
+        // drew 0.1016 tracks 0.149 from balls in classes of 0.2).
+        if let Some(relaxed) = config.relaxed_clearance_mm {
+            narrowed.relaxed_clearance_mm = None;
+            for rules in narrowed.connection_rules.values_mut().chain(narrowed.default_rules.iter_mut()) {
+                rules.clearance_mm = rules.clearance_mm.min(relaxed);
+            }
+            narrow_step_relaxed = true;
+        }
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
@@ -2049,7 +2060,8 @@ pub fn route_kicad_board(
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
         let narrow_opens = open(&result, &scratch);
         eprintln!(
-            "attempt with signals at {narrow} mm: {} open, {} starved, {} vias, {:.1} s",
+            "attempt with signals at {narrow} mm{}: {} open, {} starved, {} vias, {:.1} s",
+            config.relaxed_clearance_mm.map(|relaxed| format!(" and clearance {relaxed} mm")).unwrap_or_default(),
             narrow_opens.0, narrow_opens.1, result.vias, result.routing_seconds
         );
         let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
@@ -2072,6 +2084,7 @@ pub fn route_kicad_board(
     if let (Some((opens, _)), Some((attempt, connect)), Some(relaxed)) =
         (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
         && opens.0 > 0
+        && !narrow_step_relaxed
         && spent(ladder_work) < 1.5 * ladder_budget
         && !past_deadline()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
