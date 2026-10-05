@@ -194,6 +194,18 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             {
                                 continue;
                             }
+                            // A pad inside a keepout leaves it by its stub
+                            // (the router's `stub_is_clear`).
+                            if !is_via
+                                && obstacle.kind == ObstacleKind::Keepout
+                                && (obstacle.shape.contains(start) || obstacle.shape.contains(end))
+                                && board.nets[net as usize]
+                                    .terminals
+                                    .iter()
+                                    .any(|terminal| obstacle.shape.contains(terminal.anchor))
+                            {
+                                continue;
+                            }
                             let distance = obstacle.shape.distance_to_segment(start, end);
                             let required = match obstacle.kind {
                                 ObstacleKind::Copper => board.copper_clearance(&class, obstacle),

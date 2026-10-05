@@ -661,6 +661,9 @@ pub(super) fn lower(
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
     let mut mask_openings: Vec<(Vec<core::Shape>, usize, String)> = Vec::new();
+    // Board copper graphics, with the net they carry, placed once the nets
+    // of the pads are known.
+    let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> = Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
     // ground or a rail) route at the project's smallest predefined width.
@@ -934,39 +937,45 @@ pub(super) fn lower(
             Some("arc") => {
                 return Err("the board router does not yet lower existing arc tracks".into());
             }
-            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
-                if form_atom(item, "layer", 1)
-                    .and_then(|name| layers.index(name))
-                    .is_some() =>
-            {
-                let layer = form_atom(item, "layer", 1)
-                    .and_then(|name| layers.index(name))
-                    .unwrap();
-                for shape in copper_graphic_shapes(item)? {
-                    obstacles.push(core::Obstacle {
-                        shape,
-                        layers: 1 << layer,
-                        kind: core::ObstacleKind::Copper,
-                        net: None,
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: format!("copper {}", item.head().unwrap_or("graphic")),
-                    });
+            // Board graphics: copper on the copper layers they name (KiCad
+            // 9 draws them on several layers at once, with a net: Sisu's
+            // GND rectangles on F.Cu and F.Mask), openings on the mask
+            // layers. Graphics on a mask layer open the mask: copper of two
+            // nets under one opening is a solder bridge (KiCad's
+            // solder_mask_bridge), so routed copper stays out from under
+            // them on that side.
+            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly") => {
+                let copper = layers.mask_of_item(item)?;
+                let names: Vec<&str> = match form_atom(item, "layer", 1) {
+                    Some(name) => vec![name],
+                    None => item
+                        .child("layers")
+                        .map(Expr::children)
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .collect(),
+                };
+                let sides: Vec<usize> = names
+                    .iter()
+                    .filter_map(|name| match *name {
+                        "F.Mask" => Some(0),
+                        "B.Mask" => Some(layers.len() - 1),
+                        _ => None,
+                    })
+                    .collect();
+                if copper == 0 && sides.is_empty() {
+                    continue;
                 }
-            }
-            // Graphics on a solder mask layer are openings in the mask:
-            // copper of two nets under one opening is a solder bridge
-            // (KiCad's solder_mask_bridge). Routed copper stays out from
-            // under them on that side.
-            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
-                if matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask")) =>
-            {
-                let layer = if form_atom(item, "layer", 1) == Some("F.Mask") { 0 } else { layers.len() - 1 };
                 let shapes = copper_graphic_shapes(item)?;
-                if !shapes.is_empty() {
-                    mask_openings.push((shapes, layer, item.head().unwrap_or("graphic").to_string()));
+                let kind = item.head().unwrap_or("graphic").to_string();
+                if copper != 0 {
+                    let net = node_net(item).filter(|raw| routable_net(raw)).map(|raw| normalize_net(raw).to_string());
+                    copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
+                }
+                for side in sides {
+                    mask_openings.push((shapes.clone(), side, kind.clone()));
                 }
             }
             Some("zone") if is_rule_area(item) => {
@@ -977,12 +986,28 @@ pub(super) fn lower(
             _ => {}
         }
     }
+    // Copper graphics belong to their net (other nets keep clear) or, without
+    // one, to none.
+    for (shapes, copper, net, kind) in copper_graphics {
+        let net = net.and_then(|name| net_ids_lookup(&nets, &name));
+        obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
+            shape,
+            layers: copper,
+            kind: core::ObstacleKind::Copper,
+            net,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: format!("copper {kind}"),
+        }));
+    }
     // A mask opening exposes the copper under it: pads, or else the fill
-    // of a pour. Over one net (a pad or a pour exposed on purpose)
-    // it is that net's: it may route there, others would bridge to it.
-    // Over several (J_LCD1's opening over its eight pads in Sisu) or none,
-    // nothing new goes under it; pads inside leave it by their stubs. The net is the whole graphic's: a
-    // filled rectangle's bare edges see no pad of their own.
+    // of a pour. Over one net (a pad or a pour exposed on purpose) it is
+    // that net's: it may route there, others would bridge to it. Over
+    // several (J_LCD1's opening over its eight pads in Sisu) or none,
+    // nothing new goes under it; pads inside leave it by their stubs. The
+    // net is the whole graphic's.
     let pours = pours(pcb, &layers)?;
     for (shapes, layer, kind) in mask_openings {
         let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
@@ -2667,6 +2692,31 @@ mod pour_request_tests {
         let poured = openings(&lowered(zone));
         assert_eq!(poured.len(), 3);
         assert_eq!(poured[2], (net_b, "solder mask opening (gr_text)".to_string()));
+    }
+
+    #[test]
+    fn graphics_on_several_layers_carry_their_net() {
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (gr_rect (start 2 2) (end 4 4) (stroke (width 0) (type default)) (fill yes) (layers "F.Cu" "F.Mask") (net "GND"))
+          (footprint "a" (at 10 5)
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND"))
+            (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let ground = board.nets.iter().position(|net| net.name == "GND").map(|index| index as core::NetId);
+        assert!(ground.is_some());
+        let copper: Vec<_> = board.obstacles.iter().filter(|obstacle| obstacle.label == "copper gr_rect").collect();
+        assert_eq!(copper.len(), 1);
+        assert_eq!((copper[0].net, copper[0].layers), (ground, 1));
+        let opening: Vec<_> = board.obstacles.iter().filter(|obstacle| obstacle.label.starts_with("solder mask opening")).collect();
+        assert_eq!(opening.len(), 1);
+        assert_eq!(opening[0].net, ground);
     }
 
     #[test]

@@ -711,7 +711,10 @@ impl Router {
                             diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
                             diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
                             diagonal_block: diagonal_block(trace_radius, grid.pitch),
-                            diagonal_block_via: diagonal_block(via_radius, grid.pitch),
+                            // This net's via against the querying class's
+                            // diagonal steps: its ring and their trace (Sisu:
+                            // 0.3 power tracks passed 0.4 vias at 0.145).
+                            diagonal_block_via: diagonal_block(own_via_radius, grid.pitch),
                             stub_diagonal_block: diagonal_block(trace_radius + snap, grid.pitch),
                             stub_to_trace: disc(
                                 with_margin(
