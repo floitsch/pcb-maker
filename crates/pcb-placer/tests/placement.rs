@@ -29,6 +29,7 @@ fn chain(parts: usize) -> Problem {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -68,6 +69,7 @@ fn chain(parts: usize) -> Problem {
             holes_inside: false,
             pads: Vec::new(),
             copper_only: false,
+            cutout_outline: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -188,6 +190,7 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -230,6 +233,7 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -276,6 +280,7 @@ fn tight_bodies_are_the_last_resort() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
@@ -322,6 +327,7 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     // A 2 mm hole in the board, and a 10 mm connector with a pad at its
     // left end.
@@ -366,6 +372,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
@@ -410,6 +417,7 @@ fn parts_of_a_kind_are_turned_alike() {
         holes_inside: false,
         pads: Vec::new(),
         copper_only: false,
+        cutout_outline: Vec::new(),
     };
     let problem = Problem {
         outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],

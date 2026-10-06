@@ -244,8 +244,17 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
     if problem.components[part].copper_only {
         return false;
     }
-    let hole = rect(problem, hole, pose_hole);
     let margin = problem.edge_margin;
+    let outline = &problem.components[hole].cutout_outline;
+    if outline.len() >= 3 {
+        // The hole's own outline: its box covers much more board where
+        // the hole runs diagonally.
+        return problem.components[part]
+            .pad_boxes(pose_part)
+            .into_iter()
+            .any(|(center, half)| rect_meets_polygon(center, [half[0] + margin, half[1] + margin], outline));
+    }
+    let hole = rect(problem, hole, pose_hole);
     problem.components[part].pad_boxes(pose_part).into_iter().any(|(center, half)| {
         overlaps(
             Rect {
@@ -256,6 +265,28 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
             hole,
             0.0,
         )
+    })
+}
+
+/// Whether an axis-aligned box meets a polygon (overlap or touch).
+fn rect_meets_polygon(center: [f64; 2], half: [f64; 2], polygon: &[[f64; 2]]) -> bool {
+    let (x0, y0, x1, y1) = (center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]);
+    let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    if corners.iter().any(|corner| crate::problem::point_in_polygon(*corner, polygon)) {
+        return true;
+    }
+    if polygon.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) {
+        return true;
+    }
+    let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    let segments_cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]| {
+        let (d1, d2) = (cross(c, d, a), cross(c, d, b));
+        let (d3, d4) = (cross(a, b, c), cross(a, b, d));
+        (d1 > 0.0) != (d2 > 0.0) && (d3 > 0.0) != (d4 > 0.0)
+    };
+    (0..polygon.len()).any(|index| {
+        let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+        (0..4).any(|edge| segments_cross(a, b, corners[edge], corners[(edge + 1) % 4]))
     })
 }
 

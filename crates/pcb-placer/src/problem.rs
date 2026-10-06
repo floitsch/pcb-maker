@@ -84,6 +84,10 @@ pub struct Component {
     /// margin away, while their bodies may reach over it (a connector's
     /// pegs, a shield tab).
     pub copper_only: bool,
+    /// A cutout's own outline in board coordinates (its body is the
+    /// bounding box): copper keeps the edge margin from the hole, not from
+    /// the box (a long diagonal cutout's box covers much more board).
+    pub cutout_outline: Vec<Point>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
