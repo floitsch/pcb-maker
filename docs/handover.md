@@ -583,7 +583,12 @@ Committed, in order:
   stranded-pad reroute cannot join (18-24 per attempt, 496-542 pieces):
   the BGA fan-out Florian suggested (dogbone vias from pour balls to the
   inner plane, where In1's GND pour lies under the chip) is the next
-  completeness feature for boards like this.
+  completeness feature for boards like this. `fix_plane_stubs` is that
+  fan-out already: tried in the final narrow+relaxed step (experiment),
+  it joins GND's balls 170 of 172, +1V5 43/46, +3V3 31/31, but the fixed
+  stubs take the DDR signals' channels: 158 open instead of 33 (192/223
+  vs 219/223). Fan-out has to leave the signal escapes their way out:
+  stubs placed with the signals, not before them.
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
