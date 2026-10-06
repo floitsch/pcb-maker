@@ -750,9 +750,16 @@ board breaks them hundreds of times (use the guided set).
   second is about two wall seconds and the wall guard (then 1.15) ended
   it 59 s before the benchmark's limit. The guard is 1.1 now.
 
+- The global placement's field solve adds rows to rows (vectorized):
+  katia's global placement 1.7 s (6), same placements.
+- A kept placement that seats every part on a new grid or with tight
+  bodies no longer ends the levels: a fresh anneal runs there and the
+  shorter placement wins (ESC 30x30 over four seeds: mean 619 mm, was
+  669; one seed had kept 902 mm).
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x98` = 37cab4a, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x98, timeout 2700 s). Compare v8 with v7's
+(`pcb-maker-x100` = 37d1833, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x100, timeout 2700 s). Leave it running. Compare v8 with v7's
 first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
