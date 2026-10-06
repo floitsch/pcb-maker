@@ -811,9 +811,20 @@ board breaks them hundreds of times (use the guided set).
   experiments share the machine), link 172/251 with no copper errors
   (the 26 bridges are gone).
 
+- Halos were zero on Sisu, link and katia: `fit_halos` counted both
+  sides' bodies against one side's area and cutouts as taken. Now per
+  side against the area fixed parts leave free (rasterized), the small
+  parts' halos shrinking before the many-pin parts' (ten pins or more),
+  and a level keeps only the many-pin halos before all go. link: bodies
+  use 33 % of the free area; it gets halos 0.625 / 1.0, places with one
+  part evicted, and its layout ends at 130 unconnected in KiCad (263).
+- v8 rows on x106 (`build/github-layout-v8-x106`): jetson 337/340 (8),
+  link 172/251 (263), laptop 234/236 (2; was 10), OpenRX panel 49/127,
+  ESC 30x30 panel 45/184, MokyaLora 261/262 with 0 unconnected in KiCad.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x106` = 7be808d, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x106, timeout 2700 s). Leave it running. Compare v8 with v7's
+(`pcb-maker-x110` = fd5bff9, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x110, timeout 2700 s). Leave it running. Compare v8 with v7's
 first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
