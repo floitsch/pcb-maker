@@ -783,9 +783,20 @@ board breaks them hundreds of times (use the guided set).
   (same routes). `stall_patience` (8 in layout trials). OpenAirScope
   layout at 900 s: 8 trials (6), 10 open (12).
 
+- link's layout failures are supply nets (GND 142 items, the 3V3A nets
+  112, +3V3 22 of 264). Racing pours as tracks against pours as planes in
+  the layout's first route (same search cap) lost on link (881 against
+  396 open): tracks need far more search. Reverted. Route mode on the
+  designer's placement: 19 open. Checking route mode on our placement to
+  tell placement from flow.
+- v8 rows on x100 (`build/github-layout-v8-x100`): jetson 337/340 (3
+  unconnected), link 165/251 (26 bridges, fixed since), laptop 231/236
+  (first route kept; the final ladder's tracks attempt ended at 789 open),
+  OpenRX panel 49/127, ESC 30x30 panel.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x100` = 37d1833, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x100, timeout 2700 s). Leave it running. Compare v8 with v7's
+(`pcb-maker-x106` = 7be808d, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x106, timeout 2700 s). Leave it running. Compare v8 with v7's
 first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
