@@ -549,7 +549,9 @@ Committed, in order:
   side controllers and connectors (U1, U2, J3, J6) sit half under the
   through-hole switches; "fix what overlaps a fixed part" froze whole
   boards under frame parts (reverted). Open: placement that may overlap
-  courtyards where the project allows it, part by part.
+  courtyards where the project allows it, part by part. (Through-hole
+  parts already block the far side only with their pins (`far_side`);
+  katia's conflicts include its 220-piece outline's cutouts.)
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
