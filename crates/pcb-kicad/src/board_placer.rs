@@ -164,6 +164,10 @@ pub struct KiCadBoardPlacerResult {
     pub spacing_mm: f64,
     pub grid_mm: f64,
     pub halo_scale: f64,
+    /// The factor on the halos of parts with few pins (`halo_scale` is the
+    /// many-pin parts').
+    #[serde(default)]
+    pub small_halo_scale: f64,
     pub edge_inset: bool,
     /// Parts held at an edge were placed by their copper alone (their
     /// courtyard may overhang the outline, as a card edge's does its tab).
@@ -1760,6 +1764,7 @@ pub fn place_kicad_board(
         spacing_mm: placement.relaxation.spacing,
         grid_mm: placement.relaxation.grid,
         halo_scale: placement.relaxation.halo_scale,
+        small_halo_scale: placement.relaxation.small_halo_scale,
         edge_inset: placement.relaxation.edge_inset,
         edge_copper: placement.relaxation.edge_copper,
         edge_rule_mm: placement.relaxation.edge_rule,

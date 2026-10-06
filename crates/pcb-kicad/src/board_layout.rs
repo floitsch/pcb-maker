@@ -513,6 +513,7 @@ pub fn layout_kicad_board(
         spacing: placement.spacing_mm,
         grid: placement.grid_mm,
         halo_scale: placement.halo_scale,
+        small_halo_scale: placement.small_halo_scale,
         edge_inset: placement.edge_inset,
         tight: placement.tight_bodies,
         edge_copper: placement.edge_copper,

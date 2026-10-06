@@ -75,8 +75,11 @@ pub struct Relaxation {
     /// Spacing between bodies and the placement grid.
     pub spacing: f64,
     pub grid: f64,
-    /// Factor on every part's halo.
+    /// Factor on the halos of parts with many pins (`MANY_PINS`).
     pub halo_scale: f64,
+    /// Factor on the other parts' halos: they shrink first, as the many-pin
+    /// parts' escapes need the room most.
+    pub small_halo_scale: f64,
     /// Bodies come closer to the edge as far as their copper allows.
     pub edge_inset: bool,
     /// Bodies shrank to their tight boxes (courtyards overlap).
@@ -94,7 +97,7 @@ impl Relaxation {
         problem.spacing = self.spacing;
         problem.grid = self.grid;
         for component in &mut problem.components {
-            component.halo *= self.halo_scale;
+            component.halo *= if component.pins.len() >= MANY_PINS { self.halo_scale } else { self.small_halo_scale };
             if !self.edge_inset {
                 component.edge_inset = 0.0;
             }
@@ -106,6 +109,9 @@ impl Relaxation {
         problem.edge_margin = problem.edge_margin.min(self.edge_rule);
     }
 }
+
+/// Parts with at least this many pins keep their halos one level longer.
+const MANY_PINS: usize = 10;
 
 /// Area of the outline polygon.
 fn outline_area(problem: &Problem) -> f64 {
@@ -150,39 +156,118 @@ fn overfull(problem: &Problem) -> bool {
     used.iter().any(|used| *used > area)
 }
 
-/// Shrinks the routing halos until bodies, halos and spacing together need
-/// no more than `limit` of the free board area. Halos are a wish; a crowded
-/// board cannot afford them in full.
-fn fit_halos(problem: &Problem, limit: f64) -> (Problem, f64) {
-    let demand = |problem: &Problem, scale: f64, fixed: bool| -> f64 {
-        problem
-            .components
-            .iter()
-            .filter(|component| component.fixed == fixed && component.side != Side::Neither)
-            .map(|component| {
-                let margin = if fixed {
-                    0.0
-                } else {
-                    2.0 * scale * component.halo + problem.spacing
-                };
-                if component.hollow.is_empty() {
-                    (component.body_size[0] + margin) * (component.body_size[1] + margin)
-                } else {
-                    component.blocking_area()
+/// The board area per side (front, back) that fixed parts leave free, on
+/// a coarse raster: overlapping fixed bodies (a copper graphic and its
+/// mask twin) count once; cutouts take no room from bodies; a hollow
+/// part blocks with its boxes only.
+fn free_areas(problem: &Problem) -> [f64; 2] {
+    let bounds = problem.bounds();
+    let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
+    let cell = (width.max(height) / 200.0).max(1.0e-6);
+    let (nx, ny) = ((width / cell).ceil().max(1.0) as usize, (height / cell).ceil().max(1.0) as usize);
+    let mut covered = [vec![false; nx * ny], vec![false; nx * ny]];
+    for (component, pose) in problem.components.iter().zip(&problem.poses) {
+        if !component.fixed || component.copper_only || component.side == Side::Neither {
+            continue;
+        }
+        let boxes = if component.hollow.is_empty() {
+            vec![(component.center(*pose), component.half_extent(pose.angle))]
+        } else {
+            component.hollow_boxes(*pose)
+        };
+        let sides: &[usize] = match component.side {
+            Side::Front => &[0],
+            Side::Back => &[1],
+            _ => &[0, 1],
+        };
+        for (center, half) in boxes {
+            let x0 = (((center[0] - half[0] - bounds[0]) / cell).floor().max(0.0) as usize).min(nx - 1);
+            let x1 = (((center[0] + half[0] - bounds[0]) / cell).ceil().max(0.0) as usize).min(nx);
+            let y0 = (((center[1] - half[1] - bounds[1]) / cell).floor().max(0.0) as usize).min(ny - 1);
+            let y1 = (((center[1] + half[1] - bounds[1]) / cell).ceil().max(0.0) as usize).min(ny);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    for side in sides {
+                        covered[*side][y * nx + x] = true;
+                    }
                 }
-            })
-            .sum()
+            }
+        }
+    }
+    let mut free = [0.0; 2];
+    for y in 0..ny {
+        for x in 0..nx {
+            let point = [bounds[0] + (x as f64 + 0.5) * cell, bounds[1] + (y as f64 + 0.5) * cell];
+            if !crate::problem::point_in_polygon(point, &problem.outline) {
+                continue;
+            }
+            for side in 0..2 {
+                if !covered[side][y * nx + x] {
+                    free[side] += cell * cell;
+                }
+            }
+        }
+    }
+    free
+}
+
+/// Shrinks the routing halos until each side's movable bodies, halos and
+/// spacing need no more than `limit` of the area fixed parts leave free
+/// there: the small parts' halos first, then those of parts with many pins
+/// (their escapes need the room most). Halos are a wish; a crowded board
+/// cannot afford them in full. Returns the scales of the small and of the
+/// many-pin parts' halos. (Counting both sides against one side's area,
+/// and cutouts as taken, left Sisu, link and katia without any halo.)
+fn fit_halos(problem: &Problem, limit: f64) -> (Problem, [f64; 2]) {
+    let scale_of = |component: &crate::problem::Component, scales: [f64; 2]| {
+        if component.pins.len() >= MANY_PINS { scales[1] } else { scales[0] }
     };
-    let free = (outline_area(problem) - demand(problem, 0.0, true)).max(1.0e-9);
-    let mut scale = 1.0;
-    while scale > 0.0 && demand(problem, scale, false) / free > limit {
-        scale -= 0.125;
+    let free = free_areas(problem).map(|area| area.max(1.0e-9));
+    let utilization = |scales: [f64; 2]| -> f64 {
+        let mut used = [0.0f64; 2];
+        for component in &problem.components {
+            if component.fixed || component.copper_only || component.side == Side::Neither {
+                continue;
+            }
+            let margin = 2.0 * scale_of(component, scales) * component.halo + problem.spacing;
+            let area = if component.hollow.is_empty() {
+                (component.body_size[0] + margin) * (component.body_size[1] + margin)
+            } else {
+                component.blocking_area()
+            };
+            match component.side {
+                Side::Front => used[0] += area,
+                Side::Back => used[1] += area,
+                _ => {
+                    used[0] += area;
+                    used[1] += area;
+                }
+            }
+        }
+        (used[0] / free[0]).max(used[1] / free[1])
+    };
+    let mut scales = [1.0f64, 1.0];
+    for which in 0..2 {
+        while scales[which] > 0.0 && utilization(scales) > limit {
+            scales[which] -= 0.125;
+        }
+        scales[which] = scales[which].max(0.0);
+    }
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        eprintln!(
+            "placer: halos fit at {scales:?}: free {:.0} / {:.0} mm2; bodies and spacing {:.2}, full halos {:.2}, many-pin halos only {:.2}",
+            free[0],
+            free[1],
+            utilization([0.0, 0.0]),
+            utilization([1.0, 1.0]),
+            utilization([0.0, 1.0]),
+        );
     }
     let mut fitted = problem.clone();
     for component in &mut fitted.components {
-        component.halo *= scale.max(0.0);
+        component.halo *= scale_of(component, scales);
     }
-    (fitted, scale.max(0.0))
+    (fitted, scales)
 }
 
 thread_local! {
@@ -240,39 +325,45 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // margin.
     let inset = problem.components.iter().any(|component| component.edge_inset > 0.0);
     let tight = problem.components.iter().any(|component| component.tight.is_some());
+    // Halos go in steps: halved, then only the many-pin parts' (whose
+    // escapes need the room most), then all. The last number is the factor
+    // on the other parts' halos.
     let mut levels = vec![
-        (1.0, 1.0, problem.grid, false, false),
-        (0.5, 1.0, problem.grid, false, false),
-        (0.0, 1.0, problem.grid, false, false),
-        (0.0, 0.0, problem.grid, false, false),
-        (0.0, 0.0, fine, false, false),
+        (1.0, 1.0, problem.grid, false, false, 1.0),
+        (0.5, 1.0, problem.grid, false, false, 1.0),
+        (0.5, 1.0, problem.grid, false, false, 0.0),
+        (0.0, 1.0, problem.grid, false, false, 0.0),
+        (0.0, 0.0, problem.grid, false, false, 0.0),
+        (0.0, 0.0, fine, false, false, 0.0),
     ];
     if inset {
-        levels.push((0.0, 0.0, fine, true, false));
+        levels.push((0.0, 0.0, fine, true, false, 0.0));
     }
     if tight {
-        levels.push((0.0, 0.0, fine, true, true));
+        levels.push((0.0, 0.0, fine, true, true, 0.0));
     }
     // Then bodies keep only the rules' copper-to-edge clearance from the
     // edge (a narrow board whose parts' copper barely fits). Last, parts
     // held at an edge only need their copper on the board (a card edge in
     // its tab).
     let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
-    let mut levels: Vec<(f64, f64, f64, bool, bool, bool, f64)> = levels
+    let mut levels: Vec<(f64, f64, f64, bool, bool, bool, f64, f64)> = levels
         .into_iter()
-        .map(|(halo, spacing, grid, inset, tight)| (halo, spacing, grid, inset, tight, false, problem.edge_margin))
+        .map(|(halo, spacing, grid, inset, tight, small)| (halo, spacing, grid, inset, tight, false, problem.edge_margin, small))
         .collect();
     if rule_margin < problem.edge_margin {
-        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin));
+        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin, 0.0));
     }
     if !problem.constraints.edges.is_empty() {
-        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin));
+        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin, 0.0));
     }
     let mut relaxation = None;
     // The grid and bodies the last anneal ran with.
     let mut annealed_shape: Option<(f64, bool)> = None;
     let level_count = levels.len();
-    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule)) in levels.into_iter().enumerate() {
+    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor)) in
+        levels.into_iter().enumerate()
+    {
         // Past the caller's deadline the best placement so far stands.
         if best.is_some() && out_of_budget() {
             break;
@@ -289,6 +380,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;
+            if component.pins.len() < MANY_PINS {
+                component.halo *= small_factor;
+            }
             if !inset {
                 component.edge_inset = 0.0;
             }
@@ -303,7 +397,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         if level + 1 < level_count && overfull(&relaxed) {
             if debug {
                 eprintln!(
-                    "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: bodies need more room than a side has"
+                    "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: bodies need more room than a side has"
                 );
             }
             continue;
@@ -330,7 +424,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             }
             if debug {
                 eprintln!(
-                    "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
+                    "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
                     level_started.elapsed().as_secs_f64(),
                     failed.len()
                 );
@@ -339,7 +433,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 relaxation = Some(Relaxation {
                     spacing: relaxed.spacing,
                     grid,
-                    halo_scale: fit_scale * halo_scale,
+                    halo_scale: fit_scale[1] * halo_scale,
+                    small_halo_scale: fit_scale[0] * halo_scale * small_factor,
                     edge_inset: inset,
                     tight,
                     edge_copper,
@@ -380,7 +475,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let mut failed = legal::legalize(&relaxed, &mut poses);
         if debug {
             eprintln!(
-                "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
+                "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
                 level_started.elapsed().as_secs_f64() - anneal_seconds,
                 failed.len(),
                 work() - work_started,
@@ -418,7 +513,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             relaxation = Some(Relaxation {
                 spacing: relaxed.spacing,
                 grid,
-                halo_scale: fit_scale * halo_scale,
+                halo_scale: fit_scale[1] * halo_scale,
+                small_halo_scale: fit_scale[0] * halo_scale * small_factor,
                 edge_inset: inset,
                 tight,
                 edge_copper,
