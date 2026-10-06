@@ -1037,8 +1037,24 @@ pub(super) fn lower(
     }
     // Copper graphics belong to their net (other nets keep clear) or, without
     // one, to none.
-    for (shapes, copper, net, kind) in copper_graphics {
+    for (index, (shapes, copper, net, kind)) in copper_graphics.into_iter().enumerate() {
         let net = net.and_then(|name| net_ids_lookup(&nets, &name));
+        // A filled graphic with a net is copper KiCad wants connected like
+        // a pad (Sisu's antenna feed, a rectangle on /RF/ANT, stayed an
+        // island): it is a terminal of its net too.
+        if let (Some(id), [shape]) = (net, shapes.as_slice()) {
+            let bounds = shape.aabb();
+            let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+            if shape.contains(center) {
+                nets[id as usize].terminals.push(core::Terminal {
+                    anchor: center,
+                    layers: copper,
+                    pad: obstacles.len(),
+                    contact: None,
+                    label: format!("{kind} {}", index + 1),
+                });
+            }
+        }
         obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
             shape,
             layers: copper,
