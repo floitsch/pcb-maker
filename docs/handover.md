@@ -658,8 +658,13 @@ Committed, in order:
   four times its pads' area changed nothing there (reverted): the cause
   is elsewhere (the pour's centre test, or the polygon's shape).
 
-Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
-routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
+Layout v6 stopped at 76/109 (14 pass) on x62: stale after the placement
+fixes (mask graphics, exact cutouts, eviction, custom-pad bodies, in-place
+router stall and price growth, polish guard). Layout v7 started on x89
+with tasks v5 (`build/github-layout-v7`, `--jobs 1`).
+
+Queued: `build/chain-v13.sh` waits for layout v7 to finish, then runs the
+routing sweep `build/github-route-v13` (`pcb-maker-x89`, all 109 boards,
 timeout 2700 s; log `build/github-route-v13.log`). Summarise it with
 `benchmarks/github/summary.py build/github-route-v13` and compare to v12.
 
