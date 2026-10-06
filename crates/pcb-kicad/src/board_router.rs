@@ -1156,6 +1156,14 @@ pub(super) fn lower(
     // nothing new goes under it; pads inside leave it by their stubs. The
     // net is the whole graphic's.
     let pours = pours(pcb, &layers)?;
+    // KiCad's bridge test drops mask slivers under the minimum web width:
+    // copper of another net within half of it of an opening is exposed
+    // (link: a track 0.025 mm from an F.Mask polygon bridged it to GND with
+    // a 0.1 mm minimum; at 0.07 mm it did not).
+    let mask_reach = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
+        .map_or(0.0, |width| width / 2.0 + 0.01);
     for (shapes, layer, kind) in mask_openings {
         let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
         let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
@@ -1196,7 +1204,7 @@ pub(super) fn lower(
             layers: 1 << layer,
             kind: core::ObstacleKind::Keepout,
             net,
-            clearance: 0.0,
+            clearance: mask_reach,
             clearance_override: None,
             blocks_tracks: true,
             blocks_vias: true,
@@ -2967,6 +2975,26 @@ mod pour_request_tests {
         assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
         let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
         assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mask_openings_keep_copper_half_the_minimum_mask_width_away() {
+        let pcb = parse(
+            r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (setup (solder_mask_min_width 0.1))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 12 5)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+                (pad "2" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "/A")))
+              (gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) (layer "F.Mask")))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let opening = board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap();
+        assert!((opening.clearance - 0.06).abs() < 1.0e-9, "{}", opening.clearance);
     }
 
     #[test]

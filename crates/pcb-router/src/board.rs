@@ -38,7 +38,9 @@ pub struct Obstacle {
     pub kind: ObstacleKind,
     /// Copper of this net may touch the obstacle (its own pads).
     pub net: Option<NetId>,
-    /// A clearance floor local to this object.
+    /// A clearance floor local to this object; for a keepout, how far
+    /// copper stays from it (a solder mask opening: half the mask's minimum
+    /// width, as KiCad's bridge test counts copper that near as exposed).
     pub clearance: f64,
     /// A pad or footprint clearance override: it replaces the clearance of
     /// the object's net class (KiCad: a positive override wins, also when

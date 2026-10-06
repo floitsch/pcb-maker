@@ -433,7 +433,7 @@ impl StaticMaps {
                     // Copper keeps the hole clearance from a via's drill too.
                     (half_width + clearance, (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_clearance))
                 }
-                ObstacleKind::Keepout => (half_width, via_radius),
+                ObstacleKind::Keepout => (half_width + obstacle.clearance, via_radius + obstacle.clearance),
                 ObstacleKind::Hole => {
                     let clearance = board.hole_clearance.max(obstacle.clearance);
                     (

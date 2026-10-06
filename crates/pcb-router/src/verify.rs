@@ -210,7 +210,7 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             let distance = obstacle.shape.distance_to_segment(start, end);
                             let required = match obstacle.kind {
                                 ObstacleKind::Copper => board.copper_clearance(&class, obstacle),
-                                ObstacleKind::Keepout => 0.0,
+                                ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
                             report(
