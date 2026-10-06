@@ -559,7 +559,11 @@ Committed, in order:
   with pcbnew: at the designer's spots U1 and J3 overlap no through-hole
   pad, so the pin boxes are not the cause; left: other moved parts taking
   those spots, or the copper-to-cutout margin ("cutout" is in the illegal
-  list; the outline has 220 pieces).
+  list; the outline has 220 pieces). The cutout margin counted twice (fixed);
+  katia still fails, now against its fixed switches: hot-swap switches
+  carry their socket pads and courtyard on the back, and the designer put
+  U1/J3 inside those courtyards (allowed by the project). That is the
+  courtyard-overlap placement feature.
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
