@@ -1386,6 +1386,7 @@ pub(super) fn lower_placement(
         edge_margin: config.edge_margin_mm,
         min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
         far_side_pads_only: false,
+        pieces: loops.pieces.clone(),
         constraints: Default::default(),
     };
     problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.0);

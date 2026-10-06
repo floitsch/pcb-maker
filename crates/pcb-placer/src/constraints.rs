@@ -269,6 +269,25 @@ pub fn overhang_box(problem: &Problem, index: usize, pose: Pose, local: [f64; 4]
 /// The part of an overhanging body that must lie on the board: its body box
 /// cut at the edge line, as [min x, min y, max x, max y]. `None` for parts
 /// without overhang.
+/// The box whose sides are the board edges for a part centred at `at`: the
+/// board's, or on a board of several pieces the piece's that holds `at`
+/// (or lies nearest).
+fn edge_frame(problem: &Problem, at: Point) -> [f64; 4] {
+    if problem.pieces.len() < 2 {
+        return problem.bounds();
+    }
+    let distance = |frame: &[f64; 4]| {
+        let dx = (frame[0] - at[0]).max(at[0] - frame[2]).max(0.0);
+        let dy = (frame[1] - at[1]).max(at[1] - frame[3]).max(0.0);
+        dx.hypot(dy)
+    };
+    *problem
+        .pieces
+        .iter()
+        .min_by(|a, b| distance(a).total_cmp(&distance(b)))
+        .expect("pieces")
+}
+
 pub fn inner_box(problem: &Problem, index: usize, pose: Pose) -> Option<[f64; 4]> {
     let (edge, _) = problem.constraints.overhang(index)?;
     let (center, half) = body(problem, index, pose);
@@ -278,7 +297,7 @@ pub fn inner_box(problem: &Problem, index: usize, pose: Pose) -> Option<[f64; 4]
         center[0] + half[0],
         center[1] + half[1],
     ];
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, center);
     match edge {
         Edge::Left => inner[0] = inner[0].max(bounds[0]),
         Edge::Top => inner[1] = inner[1].max(bounds[1]),
@@ -294,7 +313,7 @@ fn overhang_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         return 0.0;
     };
     let outside = overhang_box(problem, index, pose, local);
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, body(problem, index, pose).0);
     // Distance of the box's inner side from the edge line: positive when
     // the box reaches onto the board.
     let reach = match edge {
@@ -339,7 +358,7 @@ fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Po
 /// The band or box a body must stay in, from the edge and region
 /// constraints on `index`, as limits for its body box: [min x, min y, max x,
 /// max y] of the body's extent.
-fn limits(problem: &Problem, index: usize) -> Option<[f64; 4]> {
+fn limits(problem: &Problem, index: usize, at: Point) -> Option<[f64; 4]> {
     let constraints = &problem.constraints;
     let mut limits = [
         f64::NEG_INFINITY,
@@ -348,7 +367,7 @@ fn limits(problem: &Problem, index: usize) -> Option<[f64; 4]> {
         f64::INFINITY,
     ];
     let mut any = false;
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, at);
     for (part, edge, _) in &constraints.edges {
         if *part != index {
             continue;
@@ -390,7 +409,7 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     let (center, half) = body(problem, index, pose);
     let low = [center[0] - half[0], center[1] - half[1]];
     let high = [center[0] + half[0], center[1] + half[1]];
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, center);
     let mut violation: f64 = overhang_violation(problem, index, pose);
     let offsets = copper_edge_offsets(problem, index, pose.angle);
     for (part, edge, reach) in &constraints.edges {
@@ -429,7 +448,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
         let component = &problem.components[index];
         let position = component.position_for_center(*center, angle);
         let outside = overhang_box(problem, index, Pose { position, angle }, local);
-        let bounds = problem.bounds();
+        let bounds = edge_frame(problem, *center);
         match edge {
             Edge::Left => center[0] += bounds[0] - outside[2],
             Edge::Top => center[1] += bounds[1] - outside[3],
@@ -437,7 +456,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
             Edge::Bottom => center[1] += bounds[3] - outside[1],
         }
     }
-    let Some(limits) = limits(problem, index) else {
+    let Some(limits) = limits(problem, index, *center) else {
         return;
     };
     for axis in 0..2 {
@@ -455,7 +474,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
     }
     // An edge with a reach: keep the near side within reach of the edge
     // (counted from where the copper keeps its clearance).
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, *center);
     let offsets = copper_edge_offsets(problem, index, angle);
     for (part, edge, reach) in &problem.constraints.edges {
         if *part != index {
@@ -704,12 +723,12 @@ pub fn snap_position(problem: &Problem, index: usize, position: Point, angle: f6
     if grid <= 0.0 {
         return position;
     }
-    let phase = grid_phase(problem, index, angle);
+    let phase = grid_phase(problem, index, problem.components[index].center(Pose { position, angle }), angle);
     let snap = |value: f64, phase: f64| ((value - phase) / grid).round() * grid + phase;
     [snap(position[0], phase[0]), snap(position[1], phase[1])]
 }
 
-fn grid_phase(problem: &Problem, index: usize, angle: f64) -> Point {
+fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
     let mut phase = [0.0, 0.0];
     let constraints = &problem.constraints;
     if constraints.edges.is_empty() && constraints.overhangs.is_empty() {
@@ -718,7 +737,7 @@ fn grid_phase(problem: &Problem, index: usize, angle: f64) -> Point {
     let grid = problem.grid;
     let component = &problem.components[index];
     let half = component.half_extent(angle);
-    let bounds = problem.bounds();
+    let bounds = edge_frame(problem, at);
     let offsets = copper_edge_offsets(problem, index, angle);
     for (part, edge, _) in &constraints.edges {
         if *part != index {

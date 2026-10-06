@@ -9,6 +9,9 @@ use super::*;
 pub(super) struct BoardLoops {
     pub outline: Vec<[f64; 2]>,
     pub cutouts: Vec<Vec<[f64; 2]>>,
+    /// Bounding boxes ([min x, min y, max x, max y]) of the board's pieces,
+    /// the largest first: one for an ordinary board.
+    pub pieces: Vec<[f64; 4]>,
 }
 
 /// Longest chord error accepted when flattening arcs.
@@ -357,6 +360,15 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             pieces.push(candidate);
         }
     }
+    let piece_boxes: Vec<[f64; 4]> = pieces
+        .iter()
+        .map(|piece| {
+            piece.iter().fold(
+                [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+                |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
+            )
+        })
+        .collect();
     let mut pieces = pieces.into_iter();
     let mut outline = pieces.next().expect("at least one loop");
     for piece in pieces {
@@ -377,6 +389,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let loops = cutouts;
     Ok(BoardLoops {
         outline,
+        pieces: piece_boxes,
         cutouts: loops,
     })
 }

@@ -87,6 +87,7 @@ fn chain(parts: usize) -> Problem {
         edge_margin: 0.0,
         min_spacing: 0.0,
         far_side_pads_only: false,
+        pieces: Vec::new(),
         constraints: Default::default(),
     }
 }
@@ -292,6 +293,7 @@ fn tight_bodies_are_the_last_resort() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        pieces: Vec::new(),
         constraints: Default::default(),
     };
     let placement = place(&problem, &Config::new());
@@ -384,6 +386,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        pieces: Vec::new(),
         constraints: Default::default(),
     };
     problem.constraints.relations.push(Relation::Apart { part: 0, anchor: 1, min: 15.0 });
@@ -433,9 +436,68 @@ fn parts_of_a_kind_are_turned_alike() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        pieces: Vec::new(),
         constraints: Default::default(),
     };
     let mut poses = problem.poses.clone();
     assert_eq!(align_orientations(&problem, &mut poses, 0.5), 1);
     assert!(poses.iter().all(|pose| pose.angle == 0.0));
+}
+
+#[test]
+fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
+    use pcb_placer::constraints::Edge;
+    // Two 20 x 20 mm boards side by side, joined by a zero-width bridge
+    // (as the KiCad adapter joins pieces). A part held at the right edge
+    // and wired to a part on the left piece goes to that piece's right
+    // edge; measured against both pieces' box it had to go to x = 50.
+    let part = Component {
+        name: "J1".into(),
+        body_center: [0.0, 0.0],
+        body_size: [4.0, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+    };
+    let mut problem = Problem {
+        outline: vec![
+            [0.0, 0.0],
+            [20.0, 0.0],
+            [30.0, 0.0],
+            [50.0, 0.0],
+            [50.0, 20.0],
+            [30.0, 20.0],
+            [30.0, 0.0],
+            [20.0, 0.0],
+            [20.0, 20.0],
+            [0.0, 20.0],
+        ],
+        components: vec![part.clone(), Component { name: "U1".into(), fixed: true, ..part }],
+        net_weights: vec![1.0],
+        poses: vec![Pose { position: [8.0, 10.0], angle: 0.0 }, Pose { position: [5.0, 10.0], angle: 0.0 }],
+        spacing: 0.2,
+        grid: 0.1,
+        edge_margin: 0.0,
+        min_spacing: 0.2,
+        far_side_pads_only: false,
+        pieces: vec![[0.0, 0.0, 20.0, 20.0], [30.0, 0.0, 50.0, 20.0]],
+        constraints: Default::default(),
+    };
+    problem.constraints.edges.push((0, Edge::Right, 0.5));
+    let placement = place(&problem, &Config::new());
+    assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+    let right = placement.poses[0].position[0] + 2.0;
+    assert!((19.4..=20.0).contains(&right), "right side at {right}");
 }

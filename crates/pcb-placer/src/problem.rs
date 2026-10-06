@@ -120,6 +120,9 @@ pub struct Problem {
     /// hot-swap socket's pads) keep clear of this part's pads only, not of
     /// its whole body: set at the tight levels when the caller allows it.
     pub far_side_pads_only: bool,
+    /// Bounding boxes of the board's pieces when it has several (two boards
+    /// side by side): a part held at an edge is held at its piece's edge.
+    pub pieces: Vec<[f64; 4]>,
 }
 
 impl Problem {
