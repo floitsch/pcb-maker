@@ -569,7 +569,12 @@ Committed, in order:
   from the global placement of a stacked task, does not find them on a
   back side our estimate puts at 139 %. Eviction (a failed part takes the spot that
   displaces least movable area; the displaced find new spots) seats U1
-  and U2; J3 and J6 (through-hole connectors) still find no room.
+  and U2; J3 and J6 (through-hole connectors) still find no room. Their
+  designer spots partly overlap switch hot-swap socket pads on the back
+  (J3 over SW13's): allowed by the project's courtyard rule, but sockets
+  are bodies, so letting the placer do the same (far-side pads tested
+  against pads instead of bodies at the tight level) is a design decision
+  to make with Florian, not an obvious fix.
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
