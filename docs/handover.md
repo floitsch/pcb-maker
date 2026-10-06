@@ -719,7 +719,22 @@ board breaks them hundreds of times (use the guided set).
   text was a badly justified box; OpenESC's label is TrueType and lowers
   to its glyphs now). jetson-nano's B.Mask title then had three nets'
   vias and tracks under it (5 bridges). Text over bare board is a keepout
-  for all nets again (checking ESC-mini and jetson-nano with x92).
+  for all nets again (ESC-mini routes the same, 149/152; jetson-nano
+  checked with x92).
+- ESC-mini lost a part since d03a49e (levels after a few failures only
+  tried the kept placement; bisected x83 good, x84 bad). Levels with a
+  finer grid or tight bodies anneal again. Levels whose bodies and spacing
+  need more area than a side has are skipped (OpenESC's boards fit only
+  with tight bodies). ESC 30x30 places completely in 740 s (was 3 parts
+  short after 1301 s).
+- Layout v7 (x89) stopped at 13 rows, stale after these fixes: MokyaLora
+  262/262 (clean once exclusions count), laptop 231/236, jetson 333/340,
+  link 175/251, Sisu 157/192, OpenRX panel 48/127, ESC boards unplaced.
+
+Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
+(`pcb-maker-x95` = 228b0d3, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x95, timeout 2700 s). Compare v8 with v7's
+first rows and v6; v13 with v12.
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
   `"excluded": true` in KiCad's report). The benchmark runners now skip
