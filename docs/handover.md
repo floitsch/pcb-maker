@@ -580,6 +580,9 @@ Committed, in order:
   placer models a cutout by its bounding box, and a long diagonal edge
   piece near J3 (129.7-139.05 x 160.9-177.2) may belong to a cutout loop
   whose box covers J3's designer spot; cutouts as polygons would tell.
+  Confirmed and fixed: cutouts keep copper away by their own outline
+  (Component.cutout_outline). katia places completely in 58 s, layout
+  140/162 routed.
 - MegaDrive layout on x87: hole_to_hole 34 -> 0 (stitch spacing fix),
   266/298, 150 unconnected (v6: 272/298, 167).
 
