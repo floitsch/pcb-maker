@@ -910,7 +910,13 @@ pub fn layout_kicad_board(
     let current = quality(&routed, &result_directory);
     let layout_work = work;
     eprintln!("layout: routed ({:.0} s, work {work:.0} s)", elapsed());
-    let fallback_config = if current.0 > 0 {
+    // Past the wall-clock guard the ladder would only lower the board and
+    // ask KiCad again (link ended 106 s past it, 44 s before the
+    // benchmark's limit).
+    let past_guard = router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    let fallback_config = if past_guard {
+        None
+    } else if current.0 > 0 {
         Some(router_config.clone())
     } else if current.1 > 0 && connect && router_config.pours == KiCadPourMode::Auto {
         let mut tracks = router_config.clone();
