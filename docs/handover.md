@@ -638,6 +638,10 @@ Committed, in order:
   GND stitches complete in every pour rung. Its GND islands in layout
   come from the automatic placement, not the pour model.
 
+- Layout v6 at 68/109, 13 pass. nonSNES SNSP-CPU-01 had 166 mask bridges
+  in v6 (x62: parts placed under the board's F.Mask rectangles); on x86
+  with tasks v5: 5 bridges, 295/363 routed (v6 272), 278 unconnected (416).
+
 Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
 routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
 timeout 2700 s; log `build/github-route-v13.log`). Summarise it with
