@@ -738,10 +738,23 @@ board breaks them hundreds of times (use the guided set).
 - jetson-nano with mask text kept clear (x92): 338/340, KiCad 2
   unconnected, no bridges, nothing beyond the designer.
 
+- The anneal's overlap sum uses the same bucket grid (`buckets.rs`),
+  kept with every move: katia places in 25 s (61), link 51 s (124),
+  OpenESC 30x30 151 s. Exact (checked with `PCB_PLACER_CHECK_OVERLAP`),
+  and over four seeds no worse: link 6144 mm against 6315, ESC 30x30
+  ~630 against 669, ESC mini 444 against 440. Seeds differ by up to 15 %
+  on ESC 30x30: compare placements over several seeds (`seeds.sh` in the
+  session scratchpad sets `placer.seed`).
+- v8's first row on x96: jetson-nano 337/340, 3 unconnected, no errors
+  (v7: 333, 9, 5 bridges), but 1741 s: on the loaded machine a work
+  second is about two wall seconds and the wall guard (then 1.15) ended
+  it 59 s before the benchmark's limit. The guard is 1.1 now.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x96` = 9bcfb9d, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x96, timeout 2700 s). Compare v8 with v7's
-first rows and v6; v13 with v12.
+(`pcb-maker-x98` = 37cab4a, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x98, timeout 2700 s). Compare v8 with v7's
+first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
+the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
   `"excluded": true` in KiCad's report). The benchmark runners now skip
