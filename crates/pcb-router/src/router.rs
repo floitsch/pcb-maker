@@ -1036,6 +1036,14 @@ impl Router {
                     layer: layer as u8,
                     cell: cell as u32,
                 };
+                // One escape per node: two pads of a net side by side (a
+                // QFN's two VIN pins) reaching the same node would share
+                // it, and only the later stub would be kept; a route
+                // through it then joined both pads with one pad's copper
+                // missing (Sisu's U9 pad 11).
+                if escapes.contains_key(&node) {
+                    continue;
+                }
                 escapes.insert(node, (cells, width, polyline));
                 nodes.push(node);
                 accepted += 1;
