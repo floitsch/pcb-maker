@@ -119,6 +119,36 @@ fn outline_area(problem: &Problem) -> f64 {
         / 2.0
 }
 
+/// Whether the parts on a side need more area than the board has, bodies
+/// and spacing alone (halos are a wish; cutouts take no room): no packing
+/// can place them all.
+fn overfull(problem: &Problem) -> bool {
+    let mut used = [0.0f64; 2];
+    for component in &problem.components {
+        if component.copper_only {
+            continue;
+        }
+        let area = if !component.hollow.is_empty() {
+            component.blocking_area()
+        } else if component.fixed {
+            component.body_size[0] * component.body_size[1]
+        } else {
+            (component.body_size[0] + problem.spacing) * (component.body_size[1] + problem.spacing)
+        };
+        match component.side {
+            Side::Front => used[0] += area,
+            Side::Back => used[1] += area,
+            Side::Both => {
+                used[0] += area;
+                used[1] += area;
+            }
+            Side::Neither => {}
+        }
+    }
+    let area = outline_area(problem);
+    used.iter().any(|used| *used > area)
+}
+
 /// Shrinks the routing halos until bodies, halos and spacing together need
 /// no more than `limit` of the free board area. Halos are a wish; a crowded
 /// board cannot afford them in full.
@@ -238,7 +268,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         levels.push((0.0, 0.0, fine, true, tight, true, rule_margin));
     }
     let mut relaxation = None;
-    for (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule) in levels {
+    // The grid and bodies the last anneal ran with.
+    let mut annealed_shape: Option<(f64, bool)> = None;
+    let level_count = levels.len();
+    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule)) in levels.into_iter().enumerate() {
         // Past the caller's deadline the best placement so far stands.
         if best.is_some() && out_of_budget() {
             break;
@@ -261,6 +294,18 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             if tight {
                 component.use_tight_body();
             }
+        }
+        // Bodies that need more room than a side has cannot all be placed
+        // at this level: on to a looser one (OpenESC's boards, packed with
+        // overlapping courtyards, fit only with tight bodies; every level
+        // before them annealed and legalized in vain, 1-4 minutes each).
+        if level + 1 < level_count && overfull(&relaxed) {
+            if debug {
+                eprintln!(
+                    "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: bodies need more room than a side has"
+                );
+            }
+            continue;
         }
         let level_started = std::time::Instant::now();
         // Every level is looser than the one before: what was legal there
@@ -310,12 +355,18 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         // need, not another full anneal at each one (katia: four parts
         // failed at every level, 40-160 s each, and the deadline came
         // before the levels that might seat them).
+        // A level with a finer grid or tighter bodies is a new problem,
+        // though: its anneal seats what the coarser levels could not
+        // (OpenESC's mini: 2-4 parts without room at the regular grid, all
+        // seated by the anneal on the fine grid).
         if let Some((known_failed, _, _)) = best.as_ref()
             && !known_failed.is_empty()
             && known_failed.len() <= (problem.components.len() / 50).max(3)
+            && annealed_shape == Some((grid, tight))
         {
             continue;
         }
+        annealed_shape = Some((grid, tight));
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
         anneal::anneal(&relaxed, &mut poses, &anneal_config);
