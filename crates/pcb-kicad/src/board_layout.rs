@@ -182,8 +182,10 @@ pub struct KiCadOutlineTrial {
 /// the first size routes, shrinks it by a fifth while it still does. Sets
 /// the chosen factor in `placer_config` and returns the sizes tried.
 /// How far past its total budget (counted in work) a layout may run on the
-/// wall clock, on a busy or slow machine, before its phases are cut short.
-const WALL_GUARD: f64 = 1.15;
+/// wall clock, on a busy or slow machine, before its phases are cut short
+/// (verification and writing the result follow: jetson-nano ended at
+/// 1741 s of a 1500 s budget at 1.15, 59 s before the benchmark's limit).
+const WALL_GUARD: f64 = 1.1;
 
 fn size_outline(
     source_directory: &Path,

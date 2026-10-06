@@ -69,11 +69,32 @@ struct State<'a> {
     incident: Vec<Vec<usize>>,
     bounds: [f64; 4],
     rectangular: bool,
-    /// Work beyond the per-move base: box lists built and tested.
+    /// Work beyond the per-move base: parts and cells visited, box lists
+    /// built and tested.
     work: std::cell::Cell<u64>,
+    /// The rectangles by area: the overlap sum visits the parts near one.
+    grid: std::cell::RefCell<crate::buckets::Grid>,
+    near: std::cell::RefCell<Vec<usize>>,
+    /// How far beyond its rectangle a part's overlap reaches (a cutout's
+    /// edge margin around pads).
+    reach: f64,
+    /// Work per part visited (the linked-pair lookup).
+    visit_work: u64,
+    /// `PCB_PLACER_CHECK_OVERLAP`: each bucketed overlap sum is checked
+    /// against the sum over all parts.
+    check_overlap: bool,
 }
 
 impl State<'_> {
+    /// Moves part `index`'s rectangle, in the grid too.
+    fn set_rect(&mut self, index: usize, rect: Rect) {
+        let old = self.rects[index];
+        let grid = self.grid.get_mut();
+        grid.remove(index, old.center, old.half);
+        grid.insert(index, rect.center, rect.half);
+        self.rects[index] = rect;
+    }
+
     /// The body inflated by its halo and half the spacing: two such
     /// rectangles overlap exactly when the parts are too close.
     fn rect(&self, index: usize, pose: Pose) -> Rect {
@@ -87,6 +108,15 @@ impl State<'_> {
     }
 
     fn overlap(&self, index: usize, rect: Rect) -> f64 {
+        let fast = self.overlap_with(index, rect, false);
+        if self.check_overlap {
+            let full = self.overlap_with(index, rect, true);
+            assert!((fast - full).abs() <= 1.0e-9 * full.abs().max(1.0), "part {index}: bucketed {fast}, full {full}");
+        }
+        fast
+    }
+
+    fn overlap_with(&self, index: usize, rect: Rect, everything: bool) -> f64 {
         let side = self.problem.components[index].side;
         let mut total = 0.0;
         // A box list costs its allocation and transforms.
@@ -103,10 +133,18 @@ impl State<'_> {
         let component = &self.problem.components[index];
         let pose = self.poses[index];
         let own_far = if component.far_side.is_empty() { Vec::new() } else { built(component.far_boxes(pose)) };
-        for (other, body) in self.rects.iter().enumerate() {
+        let mut near = self.near.borrow_mut();
+        let cells = self.grid.borrow_mut().query(rect.center, [rect.half[0] + self.reach, rect.half[1] + self.reach], &mut near);
+        if everything {
+            near.clear();
+            near.extend(0..self.rects.len());
+        }
+        self.work.set(self.work.get() + cells as u64 + near.len() as u64 * self.visit_work);
+        for &other in near.iter() {
             if other == index {
                 continue;
             }
+            let body = &self.rects[other];
             let other_component = &self.problem.components[other];
             if side.collides(other_component.side) {
                 if component.copper_only || other_component.copper_only {
@@ -304,21 +342,27 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         bounds,
         rectangular,
         work: std::cell::Cell::new(0),
+        grid: std::cell::RefCell::new(crate::buckets::Grid::new(bounds, 2.5, problem.components.len())),
+        near: std::cell::RefCell::new(Vec::new()),
+        reach: problem.edge_margin + 0.5,
+        visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round() as u64,
+        check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
         .collect();
+    for (index, rect) in state.rects.iter().enumerate() {
+        state.grid.get_mut().insert(index, rect.center, rect.half);
+    }
 
-    // Work per move (before and after): the overlap test visits every part
-    // (looking up whether the two are linked) and, when the outline is not
-    // a rectangle, tests four corners against it; the wirelength visits the
-    // part's pins' nets; the constraint cost scans the relations. Fitted so
-    // that boards as different as OpenAirScope, katia and link do the same
-    // work per second.
-    let lookup = 1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0;
-    let fixed = (problem.components.len() as f64 * lookup) as usize
-        + problem.constraints.relations.len()
-        + if rectangular { 0 } else { 4 * problem.outline.len() };
+    // Work per move (before and after), besides the parts the overlap
+    // test visits (counted there): when the outline is not a rectangle,
+    // four corners against it (cheap per edge next to a part's visit);
+    // the wirelength visits the part's pins' nets; the constraint cost
+    // scans the relations. Fitted so that boards as different as katia,
+    // link and OpenESC's do about the same work per second.
+    let fixed = problem.constraints.relations.len()
+        + if rectangular { 0 } else { problem.outline.len() };
     let move_work: Vec<u64> = (0..problem.components.len())
         .map(|index| {
             let pins: usize = state.incident[index].iter().map(|net| state.members[*net].len()).sum();
@@ -398,8 +442,9 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 let saved = (state.rects[index], state.rects[other]);
                 state.poses[index] = first_new;
                 state.poses[other] = second_new;
-                state.rects[index] = state.rect(index, first_new);
-                state.rects[other] = state.rect(other, second_new);
+                let (first_rect, second_rect) = (state.rect(index, first_new), state.rect(other, second_new));
+                state.set_rect(index, first_rect);
+                state.set_rect(other, second_rect);
                 let after = state.wirelength(&nets)
                     + state.constraint_cost(index)
                     + state.constraint_cost(other)
@@ -410,8 +455,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 if delta > 0.0 && random.next() >= (-delta / temperature).exp() {
                     state.poses[index] = first_pose;
                     state.poses[other] = second_pose;
-                    state.rects[index] = saved.0;
-                    state.rects[other] = saved.1;
+                    state.set_rect(index, saved.0);
+                    state.set_rect(other, saved.1);
                 }
                 continue;
             }
@@ -448,14 +493,15 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 + penalty * state.overlap(index, state.rects[index]);
             let saved = state.rects[index];
             state.poses[index] = new;
-            state.rects[index] = state.rect(index, new);
+            let new_rect = state.rect(index, new);
+            state.set_rect(index, new_rect);
             let after = state.wirelength(&state.incident[index])
                 + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let delta = after - before;
             if delta > 0.0 && random.next() >= (-delta / temperature).exp() {
                 state.poses[index] = old;
-                state.rects[index] = saved;
+                state.set_rect(index, saved);
             }
         }
         crate::add_work(work + state.work.replace(0));

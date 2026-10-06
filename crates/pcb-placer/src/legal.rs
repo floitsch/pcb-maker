@@ -256,77 +256,29 @@ fn is_legal_counting(
 
 /// Placed parts by area: a spot is tested only against parts near it.
 struct Buckets {
-    origin: Point,
-    cell: f64,
-    columns: usize,
-    rows: usize,
-    cells: Vec<Vec<usize>>,
+    grid: crate::buckets::Grid,
     /// How far beyond its rectangle a part meets another (spacing, the
     /// edge margin around cutouts, and some slack).
     reach: f64,
-    seen: Vec<u32>,
-    stamp: u32,
 }
 
 impl Buckets {
     fn new(problem: &Problem) -> Self {
-        let bounds = problem.bounds();
-        let cell = 2.5;
-        let columns = (((bounds[2] - bounds[0]) / cell).ceil() as usize).max(1) + 1;
-        let rows = (((bounds[3] - bounds[1]) / cell).ceil() as usize).max(1) + 1;
         Buckets {
-            origin: [bounds[0], bounds[1]],
-            cell,
-            columns,
-            rows,
-            cells: vec![Vec::new(); columns * rows],
+            grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len()),
             reach: problem.spacing + problem.min_spacing + problem.edge_margin + 1.0,
-            seen: vec![0; problem.components.len()],
-            stamp: 0,
         }
-    }
-
-    fn range(&self, center: Point, half: Point) -> (usize, usize, usize, usize) {
-        let clamp = |value: f64, count: usize| (value.floor().max(0.0) as usize).min(count - 1);
-        (
-            clamp((center[0] - half[0] - self.origin[0]) / self.cell, self.columns),
-            clamp((center[1] - half[1] - self.origin[1]) / self.cell, self.rows),
-            clamp((center[0] + half[0] - self.origin[0]) / self.cell, self.columns),
-            clamp((center[1] + half[1] - self.origin[1]) / self.cell, self.rows),
-        )
     }
 
     fn insert(&mut self, problem: &Problem, index: usize, pose: Pose) {
         let body = rect(problem, index, pose);
-        let (x0, y0, x1, y1) = self.range(body.center, body.half);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                self.cells[y * self.columns + x].push(index);
-            }
-        }
+        self.grid.insert(index, body.center, body.half);
     }
 
     /// The parts that may meet part `index` at `pose`.
     fn near(&mut self, problem: &Problem, index: usize, pose: Pose, out: &mut Vec<usize>) {
-        out.clear();
-        self.stamp = self.stamp.wrapping_add(1);
-        if self.stamp == 0 {
-            self.seen.iter_mut().for_each(|seen| *seen = 0);
-            self.stamp = 1;
-        }
         let body = rect(problem, index, pose);
-        let grown = [body.half[0] + self.reach, body.half[1] + self.reach];
-        let (x0, y0, x1, y1) = self.range(body.center, grown);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                for &other in &self.cells[y * self.columns + x] {
-                    if self.seen[other] != self.stamp {
-                        self.seen[other] = self.stamp;
-                        out.push(other);
-                    }
-                }
-            }
-        }
+        self.grid.query(body.center, [body.half[0] + self.reach, body.half[1] + self.reach], out);
     }
 }
 

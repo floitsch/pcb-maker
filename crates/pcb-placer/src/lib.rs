@@ -6,6 +6,7 @@
 //! and wirelength-driven detailed placement.
 
 pub mod anneal;
+mod buckets;
 pub mod constraints;
 pub mod global;
 pub mod legal;
@@ -193,7 +194,7 @@ thread_local! {
 
 /// Placement work one thread does per second on an idle machine: budgets
 /// in seconds become work limits at this rate.
-pub const WORK_PER_SECOND: f64 = 200.0e6;
+pub const WORK_PER_SECOND: f64 = 150.0e6;
 
 /// The placement work done on this thread so far.
 pub fn work() -> u64 {
