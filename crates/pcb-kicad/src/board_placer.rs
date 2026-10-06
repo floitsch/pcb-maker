@@ -189,6 +189,16 @@ pub struct KiCadBoardPlacerResult {
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
 
+/// Whether a net's name marks it as one designers keep short: a token
+/// (between non-alphanumerics) naming a switcher's switch node, feedback or
+/// bootstrap, an RF or antenna feed, or a crystal pin.
+fn keep_short(name: &str) -> bool {
+    const TOKENS: [&str; 14] =
+        ["SW", "LX", "FB", "VFB", "BST", "BOOT", "RF", "ANT", "XTAL", "XIN", "XOUT", "XI", "XO", "OSC"];
+    name.split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|token| TOKENS.iter().any(|wanted| token.eq_ignore_ascii_case(wanted)))
+}
+
 /// Whether a net (by its raw name) connects parts; see `routable_net`.
 fn placer_net(raw: &str) -> bool {
     board_router::routable_net(raw)
@@ -1345,9 +1355,22 @@ pub(super) fn lower_placement(
         }
     }
     // Large nets (power) would otherwise dominate and collapse the layout.
+    // Nets designers keep short count three times: a switcher's switch
+    // node, feedback and bootstrap, RF and antenna feeds, crystal pins (by
+    // the pin function KiCad puts in the net's name, "Net-(U9-FB)"; Sisu's
+    // feedback divider ended 46 mm from its regulator, its RF feed 52 mm
+    // long).
+    let mut names = vec![""; net_ids.len()];
+    for (name, id) in &net_ids {
+        names[*id] = name.as_str();
+    }
     let net_weights = pin_counts
         .iter()
-        .map(|pins| (3.0 / (*pins as f64 - 1.0).max(1.0)).min(1.0))
+        .zip(&names)
+        .map(|(pins, name)| {
+            let weight = (3.0 / (*pins as f64 - 1.0).max(1.0)).min(1.0);
+            if keep_short(name) { 3.0 * weight } else { weight }
+        })
         .collect();
     let mut problem = core::Problem {
         outline: loops.outline.clone(),
@@ -1779,6 +1802,17 @@ pub fn place_kicad_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nets_named_for_a_switch_node_feedback_rf_or_crystal_are_kept_short() {
+        for name in ["Net-(U9-FB)", "Net-(U1-SW)", "/RF/ANT", "Net-(J2-RF)", "Net-(U3-XOUT)", "/Supply/5V_BOOT"] {
+            assert!(keep_short(name), "{name}");
+        }
+        // A key switch, a supply, a signal that merely contains the letters.
+        for name in ["Net-(SW1-Pad2)", "+3V3", "/SWDIO", "Net-(U4-COL0)", "/FBUS_TX"] {
+            assert!(!keep_short(name), "{name}");
+        }
+    }
 
     #[test]
     fn a_courtyard_drawn_as_several_shapes_keeps_them_apart() {
