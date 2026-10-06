@@ -605,6 +605,11 @@ Committed, in order:
   designer's own board 266 unconnected): no fair target, like OpenRX's
   and OpenESC's panels.
 
+Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
+routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
+timeout 2700 s; log `build/github-route-v13.log`). Summarise it with
+`benchmarks/github/summary.py build/github-route-v13` and compare to v12.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
