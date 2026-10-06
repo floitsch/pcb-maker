@@ -254,6 +254,16 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 }
             }
         }
+        // A few parts still without room: the looser levels are what they
+        // need, not another full anneal at each one (katia: four parts
+        // failed at every level, 40-160 s each, and the deadline came
+        // before the levels that might seat them).
+        if let Some((known_failed, _, _)) = best.as_ref()
+            && !known_failed.is_empty()
+            && known_failed.len() <= (problem.components.len() / 50).max(3)
+        {
+            continue;
+        }
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
         anneal::anneal(&relaxed, &mut poses, &config.anneal);
