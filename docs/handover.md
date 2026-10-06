@@ -605,6 +605,11 @@ Committed, in order:
   designer's own board 266 unconnected): no fair target, like OpenRX's
   and OpenESC's panels.
 
+- Starved thermals: diagnostics list each pad with advice; the opt-in
+  `solid_starved_thermals` connects them solid and verifies again (ohdsp
+  DSP: 6 pads, 0 starved left, nothing beyond the designer). Default off:
+  thermal reliefs are for soldering, the designer's call.
+
 Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
 routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
 timeout 2700 s; log `build/github-route-v13.log`). Summarise it with
