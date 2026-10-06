@@ -567,7 +567,9 @@ Committed, in order:
   designer's spots U1, U2 and J6 overlap no back-side copper (J3 touches
   SW13's socket pad box), so legal spots exist; the legalizer, starting
   from the global placement of a stacked task, does not find them on a
-  back side our estimate puts at 139 %.
+  back side our estimate puts at 139 %. Eviction (a failed part takes the spot that
+  displaces least movable area; the displaced find new spots) seats U1
+  and U2; J3 and J6 (through-hole connectors) still find no room.
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
