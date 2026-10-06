@@ -101,7 +101,11 @@ struct Field {
     origin: Point,
     bin: Point,
     cosine: Vec<f64>,
-    sine: Vec<f64>,
+    /// `cosine` transposed (index = x * n + u).
+    cosine_t: Vec<f64>,
+    /// The sine basis times its frequency, along x and along y.
+    sine_x: Vec<f64>,
+    sine_y: Vec<f64>,
     frequency_x: Vec<f64>,
     frequency_y: Vec<f64>,
     fixed: Vec<f64>,
@@ -121,18 +125,28 @@ impl Field {
             }
         }
         let size = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
+        let frequency_x: Vec<f64> = (0..bins).map(|u| std::f64::consts::PI * u as f64 / size[0]).collect();
+        let frequency_y: Vec<f64> = (0..bins).map(|v| std::f64::consts::PI * v as f64 / size[1]).collect();
+        let mut cosine_t = vec![0.0; bins * bins];
+        let mut sine_x = vec![0.0; bins * bins];
+        let mut sine_y = vec![0.0; bins * bins];
+        for u in 0..bins {
+            for x in 0..bins {
+                cosine_t[x * bins + u] = cosine[u * bins + x];
+                sine_x[u * bins + x] = frequency_x[u] * sine[u * bins + x];
+                sine_y[u * bins + x] = frequency_y[u] * sine[u * bins + x];
+            }
+        }
         Self {
             bins,
             origin: [bounds[0], bounds[1]],
             bin: [size[0] / bins as f64, size[1] / bins as f64],
-            frequency_x: (0..bins)
-                .map(|u| std::f64::consts::PI * u as f64 / size[0])
-                .collect(),
-            frequency_y: (0..bins)
-                .map(|v| std::f64::consts::PI * v as f64 / size[1])
-                .collect(),
+            frequency_x,
+            frequency_y,
             cosine,
-            sine,
+            cosine_t,
+            sine_x,
+            sine_y,
             fixed: vec![0.0; bins * bins],
             field_x: vec![0.0; bins * bins],
             field_y: vec![0.0; bins * bins],
@@ -181,6 +195,8 @@ impl Field {
     /// Solves the Poisson equation for `density` (area per bin) and stores
     /// the electric field.
     fn solve(&mut self, density: &[f64]) {
+        // Every pass adds scaled rows to rows (no sums across a row), so
+        // it runs on contiguous memory and vectorizes.
         let n = self.bins;
         let bin_area = self.bin[0] * self.bin[1];
         let mean = density.iter().sum::<f64>() / (n * n) as f64;
@@ -188,57 +204,51 @@ impl Field {
         let mut coefficients = vec![0.0; n * n];
         // Forward cosine transform, rows then columns. Index = v * n + u.
         for y in 0..n {
-            for u in 0..n {
-                let mut sum = 0.0;
-                for x in 0..n {
-                    sum += (density[y * n + x] - mean) / bin_area * self.cosine[u * n + x];
+            let row = &mut temporary[y * n..(y + 1) * n];
+            for x in 0..n {
+                let value = (density[y * n + x] - mean) / bin_area;
+                for (out, basis) in row.iter_mut().zip(&self.cosine_t[x * n..(x + 1) * n]) {
+                    *out += value * basis;
                 }
-                temporary[y * n + u] = sum;
             }
         }
         for v in 0..n {
-            for u in 0..n {
-                let mut sum = 0.0;
-                for y in 0..n {
-                    sum += temporary[y * n + u] * self.cosine[v * n + y];
+            let row = &mut coefficients[v * n..(v + 1) * n];
+            for y in 0..n {
+                let basis = self.cosine[v * n + y];
+                for (out, value) in row.iter_mut().zip(&temporary[y * n..(y + 1) * n]) {
+                    *out += value * basis;
                 }
-                let scale = |index: usize| if index == 0 { 1.0 } else { 2.0 } / n as f64;
+            }
+            let scale = |index: usize| if index == 0 { 1.0 } else { 2.0 } / n as f64;
+            for (u, out) in row.iter_mut().enumerate() {
                 let frequency = self.frequency_x[u].powi(2) + self.frequency_y[v].powi(2);
-                coefficients[v * n + u] = if u == 0 && v == 0 {
-                    0.0
-                } else {
-                    sum * scale(u) * scale(v) / frequency
-                };
+                *out = if u == 0 && v == 0 { 0.0 } else { *out * scale(u) * scale(v) / frequency };
             }
         }
         // Field = -grad(potential): sine along the differentiated axis.
-        for (along_x, output) in [(true, &mut self.field_x), (false, &mut self.field_y)] {
+        for along_x in [true, false] {
+            temporary.iter_mut().for_each(|value| *value = 0.0);
+            let first = if along_x { &self.sine_x } else { &self.cosine };
             for v in 0..n {
-                for x in 0..n {
-                    let mut sum = 0.0;
-                    for u in 0..n {
-                        let basis = if along_x {
-                            self.frequency_x[u] * self.sine[u * n + x]
-                        } else {
-                            self.cosine[u * n + x]
-                        };
-                        sum += coefficients[v * n + u] * basis;
+                let row = &mut temporary[v * n..(v + 1) * n];
+                for u in 0..n {
+                    let coefficient = coefficients[v * n + u];
+                    for (out, basis) in row.iter_mut().zip(&first[u * n..(u + 1) * n]) {
+                        *out += coefficient * basis;
                     }
-                    temporary[v * n + x] = sum;
                 }
             }
+            let second = if along_x { &self.cosine } else { &self.sine_y };
+            let output = if along_x { &mut self.field_x } else { &mut self.field_y };
+            output.iter_mut().for_each(|value| *value = 0.0);
             for y in 0..n {
-                for x in 0..n {
-                    let mut sum = 0.0;
-                    for v in 0..n {
-                        let basis = if along_x {
-                            self.cosine[v * n + y]
-                        } else {
-                            self.frequency_y[v] * self.sine[v * n + y]
-                        };
-                        sum += temporary[v * n + x] * basis;
+                let row = &mut output[y * n..(y + 1) * n];
+                for v in 0..n {
+                    let basis = second[v * n + y];
+                    for (out, value) in row.iter_mut().zip(&temporary[v * n..(v + 1) * n]) {
+                        *out += value * basis;
                     }
-                    output[y * n + x] = sum;
                 }
             }
         }
