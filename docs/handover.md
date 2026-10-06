@@ -563,7 +563,11 @@ Committed, in order:
   katia still fails, now against its fixed switches: hot-swap switches
   carry their socket pads and courtyard on the back, and the designer put
   U1/J3 inside those courtyards (allowed by the project). That is the
-  courtyard-overlap placement feature.
+  courtyard-overlap placement feature. Checked with pcbnew: at the
+  designer's spots U1, U2 and J6 overlap no back-side copper (J3 touches
+  SW13's socket pad box), so legal spots exist; the legalizer, starting
+  from the global placement of a stacked task, does not find them on a
+  back side our estimate puts at 139 %.
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
