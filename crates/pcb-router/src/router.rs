@@ -3253,6 +3253,11 @@ impl Router {
     /// completes stayed at 20 conflicted nets), then finishes and polishes
     /// as `run` does.
     pub fn resume(&mut self, seconds: f64) -> RoutingResult {
+        self.resume_polished(seconds, true)
+    }
+
+    /// `resume`; without `polish` as in `run_in_place_polished`.
+    pub fn resume_polished(&mut self, seconds: f64, polish: bool) -> RoutingResult {
         let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
         self.config.negotiation_seconds = seconds * GUARD;
         self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
@@ -3268,7 +3273,7 @@ impl Router {
             .collect();
         let present = self.present_reached.max(self.config.present_factor as f32);
         self.negotiate_from(&order, pending, present);
-        let result = self.finish_polished(&order, true);
+        let result = self.finish_polished(&order, polish);
         (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
         result
     }

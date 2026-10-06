@@ -154,8 +154,8 @@ pub struct KiCadBoardLayoutResult {
     /// smallest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub outline_sizing: Vec<KiCadOutlineTrial>,
-    /// Open terminals after the first route of the kept placement and of
-    /// each other seed's placement tried (only when the first left some).
+    /// Nets unfinished after an equal probe of the kept placement and of
+    /// each other seed's placement tried, the best routing on.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub placement_race: Vec<usize>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
@@ -545,19 +545,11 @@ pub fn layout_kicad_board(
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
-    // `cap`: search expansions a negotiation may spend (0: the configured
-    // limit).
-    let route_once = |board: &core::Board, cap: u64| {
+    let route_once = |board: &core::Board| {
         std::thread::scope(|scope| {
             let handles: Vec<_> = (0..seeds)
                 .map(|index| {
                     let mut seeded = core_config.clone();
-                    if cap > 0 {
-                        seeded.negotiation_expansions = match seeded.negotiation_expansions {
-                            0 => cap,
-                            limit => limit.min(cap),
-                        };
-                    }
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = core_config.verbose && index == 0;
                     scope.spawn(move || {
@@ -582,41 +574,46 @@ pub fn layout_kicad_board(
             (best.0, best.1, expansions as f64 / core::router::EXPANSIONS_PER_SECOND)
         })
     };
-    let (mut router, mut result, first_work) = route_once(&board, 0);
-    // Another placement races with at most the search the first took
-    // (link's second placement negotiated 1000 s, leaving no time after).
-    let race_cap = router.expansions().max(1);
-    work += first_work;
-    let mut best = score(&result, &board);
-    // Wirelength is not routability: when the placement kept for the least
-    // wire leaves connections open, route the other seeds' placements once
-    // and go on with the one that leaves fewer open.
-    let mut race = Vec::new();
-    if best.0 > 0 && pin_swaps.is_none() {
-        race.push(best.0);
-        // What the user asked for comes first: only placements that keep
-        // the constraints as well as this one may take over.
-        let missed: f64 = placement.constraints.iter().map(|status| status.violation_mm).sum();
-        // Seeds that placed alike (every part fixed: the laptop board raced
-        // its one placement against itself for 6 minutes) are routed once.
-        let alike = |a: &[placer::Pose], b: &[placer::Pose]| {
-            a.len() == b.len()
-                && a.iter().zip(b).all(|(a, b)| {
-                    (a.position[0] - b.position[0]).abs() < 1.0e-3
-                        && (a.position[1] - b.position[1]).abs() < 1.0e-3
-                        && ((a.angle - b.angle).rem_euclid(360.0) + 1.0e-3) % 360.0 < 2.0e-3
-                })
-        };
-        let mut raced = vec![problem.problem.poses.clone()];
-        for (poses, relaxation, _) in placement
-            .alternatives
-            .iter()
-            .filter(|(_, _, other_missed)| *other_missed <= missed + 1.0e-6)
-        {
-            if raced.iter().any(|seen| alike(seen, poses)) {
-                continue;
+    // What the user asked for comes first: only placements that keep the
+    // constraints as well as the kept one race it. Seeds that placed alike
+    // (every part fixed: the laptop raced one placement against itself for
+    // 6 minutes) count once.
+    let missed: f64 = placement.constraints.iter().map(|status| status.violation_mm).sum();
+    let alike = |a: &[placer::Pose], b: &[placer::Pose]| {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                (a.position[0] - b.position[0]).abs() < 1.0e-3
+                    && (a.position[1] - b.position[1]).abs() < 1.0e-3
+                    && ((a.angle - b.angle).rem_euclid(360.0) + 1.0e-3) % 360.0 < 2.0e-3
+            })
+    };
+    let mut others: Vec<(&Vec<placer::Pose>, &placer::Relaxation)> = Vec::new();
+    {
+        let mut seen = vec![problem.problem.poses.clone()];
+        for (poses, relaxation, other_missed) in &placement.alternatives {
+            if *other_missed <= missed + 1.0e-6 && !seen.iter().any(|known| alike(known, poses)) {
+                seen.push(poses.clone());
+                others.push((poses, relaxation));
             }
-            raced.push(poses.clone());
+        }
+    }
+    let mut race = Vec::new();
+    let (mut router, mut result) = if seeds == 1 && pin_swaps.is_none() && !others.is_empty() {
+        // Wirelength is not routability: each placement is probed with the
+        // same search, as route mode probes its rungs, and only the one
+        // with the fewest nets unfinished routes on (routing the others in
+        // full took as long as the first route and left link no time for
+        // anything after).
+        let probe_seconds = router_config.probe_seconds.unwrap_or(75.0);
+        let mut first = core::router::Router::new(&board, &core_config);
+        let mut best_unfinished = first.probe(probe_seconds);
+        work += first.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+        race.push(best_unfinished);
+        let mut kept = first;
+        for (poses, relaxation) in others {
+            if work > 0.4 * config.total_seconds {
+                break;
+            }
             let mut candidate = pcb.clone();
             {
                 let mut footprints = footprint_items(&mut candidate)?;
@@ -625,26 +622,31 @@ pub fn layout_kicad_board(
                 }
             }
             let candidate_board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
-            let (candidate_router, candidate_result, candidate_work) = route_once(&candidate_board, race_cap);
-            work += candidate_work;
-            let candidate_score = score(&candidate_result, &candidate_board);
-            race.push(candidate_score.0);
-            eprintln!("placement race: another seed's placement leaves {} open (best {})", candidate_score.0, best.0);
-            if candidate_score.0 < best.0 {
+            let mut candidate_router = core::router::Router::new(&candidate_board, &core_config);
+            let unfinished = candidate_router.probe(probe_seconds);
+            work += candidate_router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+            race.push(unfinished);
+            eprintln!("placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})");
+            if unfinished < best_unfinished {
+                best_unfinished = unfinished;
                 pcb = candidate;
                 board = candidate_board;
-                router = candidate_router;
-                result = candidate_result;
-                best = candidate_score;
+                kept = candidate_router;
                 placer_config.tight_bodies = Some(relaxation.tight);
                 problem = lower_placement(&pcb, &placer_config)?;
                 relaxation.apply(&mut problem.problem);
             }
-            if best.0 == 0 || work > 0.4 * config.total_seconds {
-                break;
-            }
         }
-    }
+        let before = kept.expansions();
+        let result = kept.resume_polished((core_config.negotiation_seconds - probe_seconds).max(60.0), false);
+        work += kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+        (kept, result)
+    } else {
+        let (router, result, first_work) = route_once(&board);
+        work += first_work;
+        (router, result)
+    };
+    let mut best = score(&result, &board);
     let first_route_seconds = first_started.elapsed().as_secs_f64();
     let first = (
         best.0,
@@ -856,8 +858,17 @@ pub fn layout_kicad_board(
     // after the moves, 108 of 184 routed after the polish).
     if !polished && !router.past_deadline() {
         let expansions_before = router.expansions();
-        result = router.reroute(true);
+        let polished_result = router.reroute(true);
         work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+        // A polish the deadline cut short can leave more open than it
+        // found (Sisu: 146 open before it, 255 after): then the board stays
+        // as the moves left it.
+        let (before, after) = (score(&result, &board), score(&polished_result, &board));
+        if after.0 <= before.0 {
+            result = polished_result;
+        } else {
+            eprintln!("layout: the polish left {} open (before it {}): kept the unpolished routes", after.0, before.0);
+        }
     }
     // Reference labels off pads and other silkscreen.
     let labels = crate::labels::place_labels(&mut pcb)?;
