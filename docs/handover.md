@@ -555,7 +555,11 @@ Committed, in order:
   the placer now reaching every level quickly (437 s), katia's four parts
   fail even with tight bodies: they collide with the switches' far-side
   pins and its fixed parts; whether those pin boxes are too generous
-  (pad extent plus keep-away) is the next thing to check there.
+  (pad extent plus keep-away) is the next thing to check there. Checked
+  with pcbnew: at the designer's spots U1 and J3 overlap no through-hole
+  pad, so the pin boxes are not the cause; left: other moved parts taking
+  those spots, or the copper-to-cutout margin ("cutout" is in the illegal
+  list; the outline has 220 pieces).
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
