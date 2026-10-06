@@ -562,6 +562,12 @@ Committed, in order:
   interf-u keeps 84 vias where the tracks rung had 30 (3 starved).
   Seed retries deferred to the best rung (x76): same 13 results, wall
   interf-u 448 -> 320 s, olimex-c3 129 -> 75 s, stickhub 145 -> 92 s.
+  Where the rest goes on mid-size boards: via reduction (dut-s3: 38.5 of
+  44.5 s; negotiation 13 s). Rounds after a reverted round are kept 15
+  times of 34 (91 reduction runs in x76, v9 and v12 logs), so stopping
+  at the first revert would cost vias. Like for like with Freerouting
+  (whose optimizer was off in the September comparison) is
+  via_reduction_rounds 0: 3-10x faster than both other routers then.
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
