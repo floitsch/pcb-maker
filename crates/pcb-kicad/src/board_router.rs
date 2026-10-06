@@ -176,6 +176,12 @@ pub struct KiCadBoardRouterConfig {
     /// connections stay open.
     #[serde(default)]
     pub relaxed_clearance_mm: Option<f64>,
+    /// Pads KiCad finds short of thermal spokes (where only one fits, as on
+    /// fine-pitch pins) get a solid zone connection in the result, and the
+    /// board is verified again. Off by default: thermal reliefs are there
+    /// for soldering, so this is the designer's (or the agent's) call.
+    #[serde(default)]
+    pub solid_starved_thermals: Option<bool>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -2274,6 +2280,53 @@ pub fn route_kicad_board(
     }
     if config.pin_swaps.is_some() {
         fs::remove_dir_all(&swapped_directory).map_err(|error| error.to_string())?;
+    }
+    if config.solid_starved_thermals == Some(true) && !config.skip_native_verification {
+        let starved: Vec<(String, String)> = result
+            .diagnostics
+            .starved_thermals
+            .iter()
+            .filter(|starved| starved.spokes.is_some())
+            .filter_map(|starved| {
+                let text = &starved.pad;
+                let number = text.split("ad ").nth(1)?.split(" [").next()?.to_string();
+                let reference = text.split(" of ").nth(1)?.split(" on ").next()?.to_string();
+                Some((reference, number))
+            })
+            .collect();
+        if !starved.is_empty() {
+            let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
+            let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
+            let mut pcb = parse(&text)?;
+            let mut changed = 0;
+            if let Expr::List(items) = &mut pcb {
+                for footprint in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+                    let reference = footprint_reference(footprint).unwrap_or_default().to_string();
+                    let Expr::List(children) = footprint else { continue };
+                    for pad in children.iter_mut().filter(|child| child.head() == Some("pad")) {
+                        let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+                        if !starved.iter().any(|(r, n)| *r == reference && *n == number) {
+                            continue;
+                        }
+                        if let Expr::List(fields) = pad {
+                            fields.retain(|field| field.head() != Some("zone_connect"));
+                            fields.push(Expr::List(vec![Expr::Atom("zone_connect".into()), Expr::Atom("2".into())]));
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+            if changed > 0 {
+                fs::write(&board_path, format!("{}\n", encode(&pcb)))
+                    .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+                result.native = Some(verify_materialized_rung(output_directory, board_id)?);
+                result.diagnostics.starved_thermals = starved_thermal_diagnostics(output_directory);
+                eprintln!(
+                    "{changed} starved pads connected solid: {} starved thermals left",
+                    result.diagnostics.starved_thermals.len()
+                );
+            }
+        }
     }
     let report_path = output_directory.join("board-router.json");
     fs::write(
