@@ -275,6 +275,11 @@ impl Buckets {
         self.grid.insert(index, body.center, body.half);
     }
 
+    fn remove(&mut self, problem: &Problem, index: usize, pose: Pose) {
+        let body = rect(problem, index, pose);
+        self.grid.remove(index, body.center, body.half);
+    }
+
     /// The parts that may meet part `index` at `pose`.
     fn near(&mut self, problem: &Problem, index: usize, pose: Pose, out: &mut Vec<usize>) {
         let body = rect(problem, index, pose);
@@ -788,6 +793,17 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
             .sum()
     };
 
+    let mut buckets = Buckets::new(problem);
+    for index in 0..count {
+        buckets.insert(problem, index, poses[index]);
+    }
+    let mut near = Vec::new();
+    let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
+    // Spots around a part's target are searched this far: legalization on
+    // a crowded board leaves parts far from their nets, and the straight
+    // line back is often taken (Sisu's feedback divider 46 mm from its
+    // regulator).
+    let rings = ((3.0 / step).ceil() as i64).max(1);
     let mut improvements = 0;
     for _ in 0..passes {
         let mut improved = false;
@@ -853,14 +869,45 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                     }
                     poses[index] = pose;
                     let candidate = score(poses);
-                    if candidate < best.0 - 1.0e-9 && is_legal(problem, poses, index, pose, 0..count)
-                    {
-                        best = (candidate, pose);
+                    if candidate < best.0 - 1.0e-9 {
+                        buckets.near(problem, index, pose, &mut near);
+                        if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                            best = (candidate, pose);
+                        }
+                    }
+                }
+                // Then the nearest free spots around the target itself.
+                let ideal = component.position_for_center(target, *angle);
+                let origin = constraints::snap_position(problem, index, ideal, *angle);
+                for ring in 0..=rings {
+                    for dy in -ring..=ring {
+                        for dx in -ring..=ring {
+                            if dx.abs().max(dy.abs()) != ring {
+                                continue;
+                            }
+                            let pose = Pose {
+                                position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                                angle: *angle,
+                            };
+                            if pose == original {
+                                continue;
+                            }
+                            poses[index] = pose;
+                            let candidate = score(poses);
+                            if candidate < best.0 - 1.0e-9 {
+                                buckets.near(problem, index, pose, &mut near);
+                                if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                                    best = (candidate, pose);
+                                }
+                            }
+                        }
                     }
                 }
             }
             poses[index] = best.1;
             if best.1 != original {
+                buckets.remove(problem, index, original);
+                buckets.insert(problem, index, best.1);
                 improved = true;
                 improvements += 1;
             }
@@ -898,6 +945,10 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                     && is_legal(problem, poses, a, poses[a], 0..count)
                     && is_legal(problem, poses, b, poses[b], 0..count)
                 {
+                    buckets.remove(problem, a, poses[b]);
+                    buckets.remove(problem, b, poses[a]);
+                    buckets.insert(problem, a, poses[a]);
+                    buckets.insert(problem, b, poses[b]);
                     improved = true;
                     improvements += 1;
                 } else {
