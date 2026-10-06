@@ -1330,14 +1330,14 @@ pub(super) fn lower_placement(
         if minimum[0] > maximum[0] {
             continue;
         }
-        let margin = config.edge_margin_mm;
+        // The hole itself: the copper keeps the edge margin from it in the
+        // legality test, which looser levels bring down to the rules'
+        // clearance. Grown here too, the margin counted twice and never
+        // relaxed (katia: parts found no room beside its cutouts).
         components.push(core::Component {
             name: "cutout".into(),
             body_center: [0.0, 0.0],
-            body_size: [
-                maximum[0] - minimum[0] + 2.0 * margin,
-                maximum[1] - minimum[1] + 2.0 * margin,
-            ],
+            body_size: [maximum[0] - minimum[0], maximum[1] - minimum[1]],
             round: false,
             halo: 0.0,
             pins: Vec::new(),
