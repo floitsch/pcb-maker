@@ -822,9 +822,19 @@ board breaks them hundreds of times (use the guided set).
   link 172/251 (263), laptop 234/236 (2; was 10), OpenRX panel 49/127,
   ESC 30x30 panel 45/184, MokyaLora 261/262 with 0 unconnected in KiCad.
 
+- v8 rows on x110 (`build/github-layout-v8-x110`): jetson 337/340 (8),
+  link 219/251 with 143 unconnected in KiCad (x106: 172/251, 263),
+  laptop 234/236 (2).
+- The placement race now probes every candidate placement with route
+  mode's probe (75 work s, ranked by unfinished nets) and resumes only
+  the best (Sisu: first route 146 open, 155 with the full race; link
+  alike). The final polish is kept only if it leaves no more open than
+  before: on Sisu a polish the deadline cut short turned 120 open into
+  255.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x110` = fd5bff9, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x110, timeout 2700 s). Leave it running. Compare v8 with v7's
+(`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
 first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
