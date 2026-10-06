@@ -1120,14 +1120,18 @@ pub(super) fn lower(
         // A filled graphic with a net is copper KiCad wants connected like
         // a pad (Sisu's antenna feed, a rectangle on /RF/ANT, stayed an
         // island): it is a terminal of its net too.
-        if let (Some(id), [shape]) = (net, shapes.as_slice()) {
+        // Its fill is the one shape that is not a stroke's capsule.
+        let fills: Vec<usize> =
+            (0..shapes.len()).filter(|index| !matches!(shapes[*index], core::Shape::Capsule { .. })).collect();
+        if let (Some(id), [fill]) = (net, fills.as_slice()) {
+            let shape = &shapes[*fill];
             let bounds = shape.aabb();
             let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
             if shape.contains(center) {
                 nets[id as usize].terminals.push(core::Terminal {
                     anchor: center,
                     layers: copper,
-                    pad: obstacles.len(),
+                    pad: obstacles.len() + fill,
                     contact: None,
                     label: format!("{kind} {}", index + 1),
                 });
@@ -1444,9 +1448,22 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                     .collect()
             }
         }
-        Some("gr_poly" | "fp_poly") => vec![core::Shape::Polygon {
-            points: rule_area_like_points(item)?,
-        }],
+        Some("gr_poly" | "fp_poly") => {
+            let points = rule_area_like_points(item)?;
+            // Old polygons have no fill form and are filled; the stroke
+            // reaches half its width beyond the outline (SNSP's J2 mask
+            // opening: a via 0.006 mm off the bare outline bridged to it).
+            let filled = !matches!(form_atom(item, "fill", 1), Some("no" | "none"));
+            let mut shapes: Vec<_> = if width > 0.0 || !filled {
+                (0..points.len()).map(|index| capsule(points[index], points[(index + 1) % points.len()])).collect()
+            } else {
+                Vec::new()
+            };
+            if filled {
+                shapes.push(core::Shape::Polygon { points });
+            }
+            shapes
+        }
         // Text in a TrueType face carries its glyphs as polygons.
         Some("gr_text")
             if item
@@ -2949,6 +2966,23 @@ mod pour_request_tests {
         assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
         let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
         assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_polygon_counts_its_stroke_and_only_a_fill_it_has() {
+        let shapes = |text: &str| copper_graphic_shapes(&parse(text).unwrap()).unwrap();
+        let reaches = |shapes: &[core::Shape], point: [f64; 2]| shapes.iter().any(|shape| shape.contains(point));
+        let stroked = shapes(
+            r#"(fp_poly (pts (xy 0 0) (xy 4 0) (xy 4 4) (xy 0 4)) (stroke (width 0.1) (type solid)) (fill yes) (layer "F.Mask"))"#,
+        );
+        assert!(reaches(&stroked, [2.0, 2.0]));
+        assert!(reaches(&stroked, [4.04, 2.0]));
+        assert!(!reaches(&stroked, [4.06, 2.0]));
+        let outline = shapes(
+            r#"(gr_poly (pts (xy 0 0) (xy 4 0) (xy 4 4) (xy 0 4)) (stroke (width 0.2) (type solid)) (fill no) (layer "F.Mask"))"#,
+        );
+        assert!(!reaches(&outline, [2.0, 2.0]));
+        assert!(reaches(&outline, [3.95, 2.0]));
     }
 
     #[test]
