@@ -537,11 +537,19 @@ pub fn layout_kicad_board(
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
-    let route_once = |board: &core::Board| {
+    // `cap`: search expansions a negotiation may spend (0: the configured
+    // limit).
+    let route_once = |board: &core::Board, cap: u64| {
         std::thread::scope(|scope| {
             let handles: Vec<_> = (0..seeds)
                 .map(|index| {
                     let mut seeded = core_config.clone();
+                    if cap > 0 {
+                        seeded.negotiation_expansions = match seeded.negotiation_expansions {
+                            0 => cap,
+                            limit => limit.min(cap),
+                        };
+                    }
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = core_config.verbose && index == 0;
                     scope.spawn(move || {
@@ -566,7 +574,10 @@ pub fn layout_kicad_board(
             (best.0, best.1, expansions as f64 / core::router::EXPANSIONS_PER_SECOND)
         })
     };
-    let (mut router, mut result, first_work) = route_once(&board);
+    let (mut router, mut result, first_work) = route_once(&board, 0);
+    // Another placement races with at most the search the first took
+    // (link's second placement negotiated 1000 s, leaving no time after).
+    let race_cap = router.expansions().max(1);
     work += first_work;
     let mut best = score(&result, &board);
     // Wirelength is not routability: when the placement kept for the least
@@ -578,11 +589,26 @@ pub fn layout_kicad_board(
         // What the user asked for comes first: only placements that keep
         // the constraints as well as this one may take over.
         let missed: f64 = placement.constraints.iter().map(|status| status.violation_mm).sum();
+        // Seeds that placed alike (every part fixed: the laptop board raced
+        // its one placement against itself for 6 minutes) are routed once.
+        let alike = |a: &[placer::Pose], b: &[placer::Pose]| {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| {
+                    (a.position[0] - b.position[0]).abs() < 1.0e-3
+                        && (a.position[1] - b.position[1]).abs() < 1.0e-3
+                        && ((a.angle - b.angle).rem_euclid(360.0) + 1.0e-3) % 360.0 < 2.0e-3
+                })
+        };
+        let mut raced = vec![problem.problem.poses.clone()];
         for (poses, relaxation, _) in placement
             .alternatives
             .iter()
             .filter(|(_, _, other_missed)| *other_missed <= missed + 1.0e-6)
         {
+            if raced.iter().any(|seen| alike(seen, poses)) {
+                continue;
+            }
+            raced.push(poses.clone());
             let mut candidate = pcb.clone();
             {
                 let mut footprints = footprint_items(&mut candidate)?;
@@ -591,7 +617,7 @@ pub fn layout_kicad_board(
                 }
             }
             let candidate_board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
-            let (candidate_router, candidate_result, candidate_work) = route_once(&candidate_board);
+            let (candidate_router, candidate_result, candidate_work) = route_once(&candidate_board, race_cap);
             work += candidate_work;
             let candidate_score = score(&candidate_result, &candidate_board);
             race.push(candidate_score.0);
