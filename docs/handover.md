@@ -574,7 +574,14 @@ Committed, in order:
   (J3 over SW13's): allowed by the project's courtyard rule, but sockets
   are bodies, so letting the placer do the same (far-side pads tested
   against pads instead of bodies at the tight level) is a design decision
-  to make with Florian, not an obvious fix.
+  to make with Florian, not an obvious fix. Florian: make it an option.
+  Done (placer.overlap_far_side_pads, off by default). On katia it did not
+  seat J3/J6 (3 unplaced in that run, levels slower). Next suspect: the
+  placer models a cutout by its bounding box, and a long diagonal edge
+  piece near J3 (129.7-139.05 x 160.9-177.2) may belong to a cutout loop
+  whose box covers J3's designer spot; cutouts as polygons would tell.
+- MegaDrive layout on x87: hole_to_hole 34 -> 0 (stitch spacing fix),
+  266/298, 150 unconnected (v6: 272/298, 167).
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
