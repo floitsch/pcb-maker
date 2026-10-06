@@ -787,8 +787,15 @@ board breaks them hundreds of times (use the guided set).
   112, +3V3 22 of 264). Racing pours as tracks against pours as planes in
   the layout's first route (same search cap) lost on link (881 against
   396 open): tracks need far more search. Reverted. Route mode on the
-  designer's placement: 19 open. Checking route mode on our placement to
-  tell placement from flow.
+  designer's placement: 19 open (pours as tracks, one 2389 s attempt).
+  Route mode's probes on our placement look alike (tracks 205 nets
+  unfinished against 160 on the designer's), so the placement is not the
+  main gap: link needs more time than the layout's 1500 s. Ranked by
+  unfinished nets the race picks tracks (120 against 251) but ends worse
+  in budget (KiCad 499 unconnected against ~265 with planes). Reverted
+  too. With pours as tracks link spends most search in open searches
+  (iteration 7: 305M of 835M expansions in 182 of 6335 searches): the
+  next speed target.
 - v8 rows on x100 (`build/github-layout-v8-x100`): jetson 337/340 (3
   unconnected), link 165/251 (26 bridges, fixed since), laptop 231/236
   (first route kept; the final ladder's tracks attempt ended at 789 open),
