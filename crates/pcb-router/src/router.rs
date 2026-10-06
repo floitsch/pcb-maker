@@ -377,14 +377,22 @@ fn experiment_seed() -> Option<u64> {
     std::env::var("PCB_ROUTER_SEED").ok()?.parse().ok()
 }
 
+/// A search heap entry: the estimate's bits (non-negative floats order as
+/// their bits) above the state, compared as one word.
+fn heap_key(estimate: f32, state: usize) -> u64 {
+    ((estimate.to_bits() as u64) << 32) | state as u64
+}
+
 impl Scratch {
     /// The next search generation; when the 16-bit counter wraps, the
     /// marks it guards are cleared.
     fn next_generation(&mut self) -> u16 {
         if self.generation == u16::MAX {
-            self.seen.fill(0);
-            self.closed.fill(0);
-            self.target_mark.fill(0);
+            for node in &mut self.nodes {
+                node.seen = 0;
+                node.closed = 0;
+                node.target_mark = 0;
+            }
             self.own_via_near.fill(0);
             self.generation = 0;
         }
@@ -476,17 +484,23 @@ fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
     ]
 }
 
+/// A* state of one lattice node and layer, kept together: a search step
+/// reads and writes them all, one cache line instead of five.
+#[derive(Clone, Copy, Default)]
+struct SearchNode {
+    cost: f32,
+    /// Search generation marks: 16 bits (a thread's scratch is the biggest
+    /// part of a large board's footprint), cleared when the counter wraps.
+    seen: u16,
+    closed: u16,
+    target_mark: u16,
+    parent: u8,
+}
+
 /// Per-thread search state: A* arrays, generation marks and counters.
 #[derive(Clone, Default)]
 pub struct Scratch {
-    cost: Vec<f32>,
-    /// Search generation marks: 16 bits (half the memory of a word per
-    /// state; a thread's scratch is the biggest part of a large board's
-    /// footprint), cleared when the counter wraps.
-    seen: Vec<u16>,
-    closed: Vec<u16>,
-    parent: Vec<u8>,
-    target_mark: Vec<u16>,
+    nodes: Vec<SearchNode>,
     target_terminal: Vec<u16>,
     /// Tree marks live across the searches of one net: their own counter.
     tree_mark: Vec<u32>,
@@ -518,11 +532,7 @@ pub struct Scratch {
 impl Scratch {
     fn new(states: usize, cells: usize) -> Self {
         Self {
-            cost: vec![0.0; states],
-            seen: vec![0; states],
-            closed: vec![0; states],
-            parent: vec![0; states],
-            target_mark: vec![0; states],
+            nodes: vec![SearchNode::default(); states],
             target_terminal: vec![NO_TERMINAL; states],
             tree_mark: vec![0; states],
             tree_terminal: vec![NO_TERMINAL; states],
@@ -553,7 +563,7 @@ impl Scratch {
     }
 
     fn fits(&self, states: usize, cells: usize) -> bool {
-        self.cost.len() == states && self.own_via_near.len() == cells
+        self.nodes.len() == states && self.own_via_near.len() == cells
     }
 }
 
@@ -844,6 +854,7 @@ impl Router {
         node.layer as usize * self.grid.cells() + node.cell as usize
     }
 
+    #[inline(always)]
     fn map_index(&self, class: usize, layer: usize) -> usize {
         class * (self.board.layer_count + 1) + layer
     }
@@ -853,6 +864,7 @@ impl Router {
     /// 0: the step towards +x +y, 1: towards +x -y; a step towards -x is
     /// the same step from its other end). A diagonal step passes the nodes
     /// on its bisector closer than its ends do; those nodes stamp here.
+    #[inline(always)]
     fn diagonal_map(&self, class: usize, layer: usize, orientation: usize) -> usize {
         let layers = self.board.layer_count;
         self.board.classes.len() * (layers + 1) + (class * layers + layer) * 2 + orientation
@@ -2110,7 +2122,7 @@ impl Router {
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
             let start_terminal = scratch.tree_terminal[first];
-            let (reached, end_terminal) = if scratch.target_mark[last] == scratch.generation {
+            let (reached, end_terminal) = if scratch.nodes[last].target_mark == scratch.generation {
                 let element = scratch.target_terminal[last] as usize;
                 (
                     element,
@@ -2351,7 +2363,7 @@ impl Router {
                 continue;
             }
             let state = self.state(*node);
-            scratch.target_mark[state] = generation;
+            scratch.nodes[state].target_mark = generation;
             scratch.target_terminal[state] = *element;
         }
 
@@ -2443,7 +2455,7 @@ impl Router {
             best.max(0.0) * weight
         };
 
-        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        let mut heap: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
         for node in sources {
             // A hard route may not even start inside another net's zone.
             if hard
@@ -2455,13 +2467,10 @@ impl Router {
             }
             let state = self.state(*node);
             let (x, y) = self.grid.xy(node.cell as usize);
-            scratch.seen[state] = generation;
-            scratch.cost[state] = 0.0;
-            scratch.parent[state] = PARENT_SOURCE;
-            heap.push(Reverse((
-                heuristic(node.layer as usize, x as i32, y as i32).to_bits(),
-                state as u32,
-            )));
+            scratch.nodes[state].seen = generation;
+            scratch.nodes[state].cost = 0.0;
+            scratch.nodes[state].parent = PARENT_SOURCE;
+            heap.push(Reverse(heap_key(heuristic(node.layer as usize, x as i32, y as i32), state)));
         }
 
         let statics = &self.statics[class];
@@ -2470,14 +2479,14 @@ impl Router {
         let via_map = trace_base + layers;
         let necks = !net_state.neck_zones.is_empty();
         let mut found = None;
-        while let Some(Reverse((_, state))) = heap.pop() {
-            let state = state as usize;
-            if scratch.closed[state] == generation {
+        while let Some(Reverse(key)) = heap.pop() {
+            let state = (key & u32::MAX as u64) as usize;
+            if scratch.nodes[state].closed == generation {
                 continue;
             }
-            scratch.closed[state] = generation;
+            scratch.nodes[state].closed = generation;
             scratch.expansions += 1;
-            if scratch.target_mark[state] == generation {
+            if scratch.nodes[state].target_mark == generation {
                 found = Some(state);
                 break;
             }
@@ -2501,14 +2510,23 @@ impl Router {
             let cell = state % cells;
             let x = cell % nx;
             let y = cell / nx;
-            let here = scratch.cost[state];
-            let arrived = scratch.parent[state];
+            let here = scratch.nodes[state].cost;
+            let arrived = scratch.nodes[state].parent;
             let here_statics = if necks { &self.statics[self.class_at(net, net_state, cell as u32)] } else { statics };
             let blocked_edges = if here_statics.edge_owner[layer][cell] == own {
                 0
             } else {
                 here_statics.edge_block[layer][cell]
             };
+            // This layer's maps, looked up once per expansion rather than
+            // once per step.
+            let layer_trace = &statics.trace[layer];
+            let layer_history: &[f32] = if self.cleanup { &[] } else { &self.history[layer] };
+            let layer_guard = &self.guard[layer];
+            let layer_covered = &self.covered[layer];
+            let layer_costs = &direction_cost[layer];
+            let layer_factor = if self.layer_bias.is_empty() { 1.0 } else { self.layer_bias[layer] };
+            let thermal_guard_cost = self.config.thermal_guard_cost as f32;
 
             for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
                 let tx = x as i64 + *dx as i64;
@@ -2530,12 +2548,16 @@ impl Router {
                 }
                 let target_cell = ty as usize * nx + tx as usize;
                 let target_class = if necks { self.class_at(net, net_state, target_cell as u32) } else { class };
-                let allowed = self.statics[target_class].trace[layer][target_cell];
+                let allowed = if necks {
+                    self.statics[target_class].trace[layer][target_cell]
+                } else {
+                    layer_trace[target_cell]
+                };
                 if allowed != crate::grid::FREE && allowed != own {
                     continue;
                 }
                 let target_state = layer * cells + target_cell;
-                if scratch.closed[target_state] == generation {
+                if scratch.nodes[target_state].closed == generation {
                     continue;
                 }
                 let map = target_class * (layers + 1) + layer;
@@ -2556,21 +2578,16 @@ impl Router {
                 if hard && occupied > 0.0 {
                     continue;
                 }
-                let history = if self.cleanup {
-                    0.0
-                } else {
-                    self.history[layer][target_cell]
-                };
-                let mut step =
-                    direction_cost[layer][direction] * (1.0 + history) * (1.0 + present * occupied);
-                if !self.guard[layer].is_empty() {
-                    let guarded = self.guard[layer][target_cell];
+                let history = if layer_history.is_empty() { 0.0 } else { layer_history[target_cell] };
+                let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
+                if !layer_guard.is_empty() {
+                    let guarded = layer_guard[target_cell];
                     if guarded != 0 && guarded != own {
-                        step *= self.config.thermal_guard_cost as f32;
+                        step *= thermal_guard_cost;
                     }
                 }
-                if !self.covered[layer].is_empty() {
-                    let pour = self.covered[layer][target_cell];
+                if !layer_covered.is_empty() {
+                    let pour = layer_covered[target_cell];
                     if pour != 0 && pour != own {
                         if self.exclusive[layer] {
                             continue;
@@ -2578,20 +2595,18 @@ impl Router {
                         step *= self.layer_cut[layer];
                     }
                 }
-                if !self.layer_bias.is_empty() {
-                    step *= self.layer_bias[layer];
-                }
+                step *= layer_factor;
                 if (arrived as usize) < 8 {
                     let turn = (direction as i32 - arrived as i32).rem_euclid(8);
                     step += bend_cost * turn.min(8 - turn) as f32;
                 }
                 let total = here + step;
-                if scratch.seen[target_state] != generation || total < scratch.cost[target_state] {
-                    scratch.seen[target_state] = generation;
-                    scratch.cost[target_state] = total;
-                    scratch.parent[target_state] = direction as u8;
+                if scratch.nodes[target_state].seen != generation || total < scratch.nodes[target_state].cost {
+                    scratch.nodes[target_state].seen = generation;
+                    scratch.nodes[target_state].cost = total;
+                    scratch.nodes[target_state].parent = direction as u8;
                     let estimate = total + heuristic(layer, tx as i32, ty as i32);
-                    heap.push(Reverse((estimate.to_bits(), target_state as u32)));
+                    heap.push(Reverse(heap_key(estimate, target_state)));
                 }
             }
 
@@ -2632,18 +2647,18 @@ impl Router {
                         continue;
                     }
                     let target_state = target_layer * cells + cell;
-                    if scratch.closed[target_state] == generation {
+                    if scratch.nodes[target_state].closed == generation {
                         continue;
                     }
                     let total = here + step;
-                    if scratch.seen[target_state] != generation
-                        || total < scratch.cost[target_state]
+                    if scratch.nodes[target_state].seen != generation
+                        || total < scratch.nodes[target_state].cost
                     {
-                        scratch.seen[target_state] = generation;
-                        scratch.cost[target_state] = total;
-                        scratch.parent[target_state] = 8 + layer as u8;
+                        scratch.nodes[target_state].seen = generation;
+                        scratch.nodes[target_state].cost = total;
+                        scratch.nodes[target_state].parent = 8 + layer as u8;
                         let estimate = total + heuristic(target_layer, x as i32, y as i32);
-                        heap.push(Reverse((estimate.to_bits(), target_state as u32)));
+                        heap.push(Reverse(heap_key(estimate, target_state)));
                     }
                 }
             }
@@ -2665,7 +2680,7 @@ impl Router {
                 layer: layer as u8,
                 cell: cell as u32,
             });
-            let parent = scratch.parent[state];
+            let parent = scratch.nodes[state].parent;
             if parent == PARENT_SOURCE {
                 break;
             }
@@ -2877,6 +2892,7 @@ impl Router {
 
     /// The occupancy of a cell as `net`'s own search sees it: without the
     /// net's own stamps when they are still in place (`mask_own`).
+    #[inline(always)]
     fn occupancy_seen(&self, scratch: &Scratch, class: usize, map: usize, cell: usize) -> u16 {
         let value = self.occupancy[map][cell];
         if !scratch.own_active || value == 0 {
