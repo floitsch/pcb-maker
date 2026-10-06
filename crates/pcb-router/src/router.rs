@@ -60,6 +60,9 @@ pub struct Config {
     /// one net every few iterations for hundreds of seconds (Sisu: 27-32
     /// conflicted from iteration 6 to 38).
     pub stall_drop: f64,
+    /// Iterations without fewer conflicted nets after which negotiation
+    /// stops below the price cap (`stall_at_cap` at it).
+    pub stall_patience: usize,
     /// Stop negotiating when a quarter of the nets have no path at all
     /// after the first iteration (see `Router::hopeless`).
     pub abandon_hopeless: bool,
@@ -157,6 +160,7 @@ impl Default for Config {
             present_cap: 1.0e4,
             stall_at_cap: 25,
             stall_drop: 0.0,
+            stall_patience: 25,
             abandon_hopeless: true,
             escape_stub_mm: 0.0,
             global_routing: false,
@@ -989,7 +993,7 @@ impl Router {
                                     + SAFETY
                                     + match obstacle.kind {
                                         crate::board::ObstacleKind::Copper => self.board.copper_clearance(&class, obstacle),
-                                        crate::board::ObstacleKind::Keepout => 0.0,
+                                        crate::board::ObstacleKind::Keepout => obstacle.clearance,
                                         crate::board::ObstacleKind::Hole => self.board.hole_clearance.max(obstacle.clearance),
                                     };
                                 obstacle.shape.distance_to_segment(terminal.anchor, center) < required
@@ -4006,7 +4010,8 @@ impl Router {
                 (present * self.config.present_growth as f32).min(self.config.present_cap as f32);
             // At the price cap only history still moves anything: give up
             // sooner there.
-            let patience = if present >= self.config.present_cap as f32 { self.config.stall_at_cap } else { 25 };
+            let patience =
+                if present >= self.config.present_cap as f32 { self.config.stall_at_cap } else { self.config.stall_patience };
             // Work, not seconds, when the caller gives it: the same board
             // then routes the same way however busy the machine is; the
             // seconds stay as the last guard.
@@ -5080,7 +5085,7 @@ impl Router {
                     crate::board::ObstacleKind::Copper => {
                         self.board.copper_clearance(&class, obstacle)
                     }
-                    crate::board::ObstacleKind::Keepout => 0.0,
+                    crate::board::ObstacleKind::Keepout => obstacle.clearance,
                     crate::board::ObstacleKind::Hole => {
                         self.board.hole_clearance.max(obstacle.clearance)
                     }

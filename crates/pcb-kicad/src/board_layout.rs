@@ -533,6 +533,11 @@ pub fn layout_kicad_board(
     if router_config.present_growth.is_none() {
         core_config.present_growth = core_config.present_growth.max(2.0);
     }
+    // A trial only ranks placements, and the final ladder routes the kept
+    // one with the full patience: below the price cap, eight iterations
+    // without fewer conflicted nets end it (OpenAirScope's moves
+    // negotiated ~34 iterations, 126-229 s each).
+    core_config.stall_patience = core_config.stall_patience.min(8);
 
     let first_started = std::time::Instant::now();
     let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
