@@ -832,6 +832,10 @@ board breaks them hundreds of times (use the guided set).
   before: on Sisu a polish the deadline cut short turned 120 open into
   255.
 
+- Edge constraints on boards of several pieces are measured against the
+  piece the part lies on (`Problem.pieces`, from `board_loops`), not
+  both pieces' box (zpn_devboard). Not in v8's binary.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
