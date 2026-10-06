@@ -731,9 +731,16 @@ board breaks them hundreds of times (use the guided set).
   262/262 (clean once exclusions count), laptop 231/236, jetson 333/340,
   link 175/251, Sisu 157/192, OpenRX panel 48/127, ESC boards unplaced.
 
+- Legalization looked at every placed part and every outline edge for
+  each of up to 90 000 spots on the fine grid. It now asks a bucket grid
+  for the parts near a spot and tests the outline last: OpenESC 30x30
+  places in 205 s (740 s), ESC mini in 65 s.
+- jetson-nano with mask text kept clear (x92): 338/340, KiCad 2
+  unconnected, no bridges, nothing beyond the designer.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x95` = 228b0d3, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x95, timeout 2700 s). Compare v8 with v7's
+(`pcb-maker-x96` = 9bcfb9d, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x96, timeout 2700 s). Compare v8 with v7's
 first rows and v6; v13 with v12.
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
