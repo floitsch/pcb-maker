@@ -1187,14 +1187,10 @@ pub(super) fn lower(
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
             eprintln!("mask opening ({kind}) on layer {layer}: {:?}, nets {exposed:?}", bounds);
         }
-        let net = match exposed.len() {
-            1 => exposed.first().copied(),
-            // Only text's glyph strokes open the mask, and its estimated
-            // box would close whole pad rows (OpenESC's B.Mask label over
-            // U11): over bare board it opens nothing that matters.
-            0 if kind == "gr_text" => continue,
-            _ => None,
-        };
+        // Over bare board an opening is no net's: copper of two nets under
+        // one text bridges (jetson-nano's B.Mask title over three nets'
+        // vias and tracks).
+        let net = if exposed.len() == 1 { exposed.first().copied() } else { None };
         obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
             shape,
             layers: 1 << layer,
@@ -1553,6 +1549,11 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 0.0
             };
             let offset = rotate_vector([shift, rise], -at[2]);
+            // KiCad's glyphs reach a little past this model across the
+            // line (SNSP's bold "SNSP" on B.Cu 0.17 mm past the box of a
+            // 2.5 mm text, jetson-nano's title 0.03 mm): some room on both
+            // sides.
+            let half = [half[0], half[1] + 0.08 * size[0]];
             vec![core::Shape::rectangle(
                 [at[0] + offset[0], at[1] + offset[1]],
                 half,
@@ -3016,12 +3017,13 @@ mod pour_request_tests {
         let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
         let net_a = board.nets.iter().position(|net| net.name.ends_with('A')).map(|index| index as core::NetId);
         // The first rectangle (its fill; no stroke) is pad 1's; the
-        // second spans two pads and keeps everything out; text over bare
-        // board opens nothing that matters.
+        // second spans two pads and keeps everything out; so does text
+        // over bare board (two nets under it would bridge).
         let bare = openings(&board);
-        assert_eq!(bare.len(), 2);
+        assert_eq!(bare.len(), 3);
         assert!(bare[..1].iter().all(|(net, _)| net.is_some() && *net == net_a));
-        assert!(bare[1..].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
+        assert!(bare[1..2].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
+        assert_eq!(bare[2], (None, "solder mask opening (gr_text)".to_string()));
         // Over a pour, the text exposes the fill: it is the pour's net's.
         let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10))))"#;
         let poured = openings(&lowered(zone));

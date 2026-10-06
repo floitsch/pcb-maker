@@ -709,6 +709,17 @@ board breaks them hundreds of times (use the guided set).
   large F.Mask polygon) were vias 0.005-0.05 mm inside the polygons'
   strokes (0.1 and 0.15 mm wide): polygons lowered as their bare outline.
   They now lower with their stroke, and unfilled ones as outline only.
+- Layout v7's first rows spent their time in the placement race: boards
+  with every part fixed raced one placement against itself (jetson-nano
+  [38, 38], MokyaLora [24, 24, 24], laptop [44, 44]: 3-6 minutes each), and
+  link's second placement negotiated 1000 s, so no move and no ladder
+  followed. Alike placements now route once; others race with at most the
+  first route's search expansions.
+- Mask text over bare board was skipped (an OpenESC workaround from when
+  text was a badly justified box; OpenESC's label is TrueType and lowers
+  to its glyphs now). jetson-nano's B.Mask title then had three nets'
+  vias and tracks under it (5 bridges). Text over bare board is a keepout
+  for all nets again (checking ESC-mini and jetson-nano with x92).
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
   `"excluded": true` in KiCad's report). The benchmark runners now skip
