@@ -51,6 +51,11 @@ pub struct KiCadBoardPlacerConfig {
     /// 25 minutes).
     #[serde(skip)]
     pub deadline: Option<std::time::Instant>,
+    /// Where the project lets courtyards overlap, a part may reach over
+    /// other parts' pads on its side at the last placement levels, keeping
+    /// only copper apart (as katia's designer put connectors partly over
+    /// hot-swap socket pads). Off by default: such pads may carry a body.
+    pub overlap_far_side_pads: bool,
     /// Placement constraints: a `constraints.json` path (relative to the
     /// source directory) or the constraints inline.
     pub constraints: Option<KiCadConstraintsSource>,
@@ -98,6 +103,7 @@ impl Default for KiCadBoardPlacerConfig {
             edge_margin_mm: 0.5,
             seed: 1,
             deadline: None,
+            overlap_far_side_pads: false,
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
@@ -1385,6 +1391,7 @@ pub(super) fn lower_placement(
         grid: config.grid_mm,
         edge_margin: config.edge_margin_mm,
         min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
+        far_side_pads_only: false,
         constraints: Default::default(),
     };
     problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.0);
@@ -1560,6 +1567,7 @@ pub fn place_kicad_board(
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
     placer_config.anneal.deadline = config.deadline;
+    placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked

@@ -112,6 +112,10 @@ pub struct Problem {
     /// bodies closer than the copper clearance put pads too close.
     pub min_spacing: f64,
     pub constraints: crate::constraints::Constraints,
+    /// Another part's pads on the far side (a through-hole part's pins, a
+    /// hot-swap socket's pads) keep clear of this part's pads only, not of
+    /// its whole body: set at the tight levels when the caller allows it.
+    pub far_side_pads_only: bool,
 }
 
 impl Problem {

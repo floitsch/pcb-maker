@@ -291,8 +291,22 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
         if component.far_side.is_empty() {
             return false;
         }
+        let far = component.far_boxes(pose_holes);
+        if problem.far_side_pads_only {
+            // Copper against copper only.
+            let pads = problem.components[body].pad_boxes(pose_body);
+            return far.iter().any(|(center, half)| {
+                pads.iter().any(|(pad_center, pad_half)| {
+                    overlaps(
+                        Rect { center: *center, half: *half, round: false },
+                        Rect { center: *pad_center, half: *pad_half, round: false },
+                        problem.min_spacing,
+                    )
+                })
+            });
+        }
         let target = rect(problem, body, pose_body);
-        component.far_boxes(pose_holes).into_iter().any(|(center, half)| {
+        far.into_iter().any(|(center, half)| {
             overlaps(
                 Rect {
                     center,

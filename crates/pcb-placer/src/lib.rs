@@ -23,6 +23,11 @@ pub struct Config {
     /// Halos shrink until bodies plus margins fit into this share of the
     /// free board area.
     pub maximum_utilization: f64,
+    /// Where courtyards may overlap (the tight levels), let a part's body
+    /// reach over other parts' pads on its side, keeping only copper apart
+    /// (katia's connectors partly over the switches' hot-swap socket pads,
+    /// as its designer placed them). Off by default: a socket is a body.
+    pub overlap_far_side_pads: bool,
 }
 
 impl Config {
@@ -32,6 +37,7 @@ impl Config {
             anneal: anneal::AnnealConfig::default(),
             refine_passes: 8,
             maximum_utilization: 0.6,
+            overlap_far_side_pads: false,
         }
     }
 }
@@ -211,6 +217,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         relaxed.constraints.edge_copper = edge_copper;
+        relaxed.far_side_pads_only = tight && config.overlap_far_side_pads;
         relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
         for component in &mut relaxed.components {
             component.halo *= halo_scale;

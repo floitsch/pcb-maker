@@ -84,6 +84,7 @@ fn chain(parts: usize) -> Problem {
         grid: 0.5,
         edge_margin: 0.0,
         min_spacing: 0.0,
+        far_side_pads_only: false,
         constraints: Default::default(),
     }
 }
@@ -285,6 +286,7 @@ fn tight_bodies_are_the_last_resort() {
         grid: 0.1,
         edge_margin: 0.0,
         min_spacing: 0.2,
+        far_side_pads_only: false,
         constraints: Default::default(),
     };
     let placement = place(&problem, &Config::new());
@@ -374,6 +376,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         grid: 0.5,
         edge_margin: 0.5,
         min_spacing: 0.2,
+        far_side_pads_only: false,
         constraints: Default::default(),
     };
     problem.constraints.relations.push(Relation::Apart { part: 0, anchor: 1, min: 15.0 });
@@ -421,6 +424,7 @@ fn parts_of_a_kind_are_turned_alike() {
         grid: 0.5,
         edge_margin: 0.5,
         min_spacing: 0.2,
+        far_side_pads_only: false,
         constraints: Default::default(),
     };
     let mut poses = problem.poses.clone();
