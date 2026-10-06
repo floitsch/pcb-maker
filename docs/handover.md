@@ -757,6 +757,19 @@ board breaks them hundreds of times (use the guided set).
   shorter placement wins (ESC 30x30 over four seeds: mean 619 mm, was
   669; one seed had kept 902 mm).
 
+- Sisu's layout (157/192 in v7; 186/192 on the designer's placement):
+  the task's `source` board has the movable parts piled at one spot, so
+  `wirelength_source_mm` is no baseline; compare with
+  `build/github-route-v2/<board>/reference`. Our total pad wirelength is
+  below the designer's (4500 against 5038 mm), but local nets the
+  designer keeps short were long (feedback divider 46 mm, RF feed 52 mm).
+  More anneal effort or whitespace fill changed little (within 3 %).
+  Two changes: refine also searches free spots within 3 mm of a part's
+  target (katia 6080 mm against 6714 over four seeds, link -0.6 %, ESC
+  mini -3 %), and nets named for a switch node, feedback, bootstrap, RF,
+  antenna or crystal weigh three times (Sisu's six: 72 mm against 114;
+  designer 33). Neither is in v8's binary.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x100` = 37d1833, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x100, timeout 2700 s). Leave it running. Compare v8 with v7's
