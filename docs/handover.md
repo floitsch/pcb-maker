@@ -551,7 +551,11 @@ Committed, in order:
   boards under frame parts (reverted). Open: placement that may overlap
   courtyards where the project allows it, part by part. (Through-hole
   parts already block the far side only with their pins (`far_side`);
-  katia's conflicts include its 220-piece outline's cutouts.)
+  katia's conflicts include its 220-piece outline's cutouts.) With
+  the placer now reaching every level quickly (437 s), katia's four parts
+  fail even with tight bodies: they collide with the switches' far-side
+  pins and its fixed parts; whether those pin boxes are too generous
+  (pad extent plus keep-away) is the next thing to check there.
 
 - The 13 boards of the Freerouting/tscircuit comparison (route mode,
   pours kept, x75, machine loaded by the layout sweep): all 13 complete
