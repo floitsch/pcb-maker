@@ -560,6 +560,8 @@ Committed, in order:
   extra tracks rung), olimex-c3 28, dut-c3 23, dut-c6 32, dut-s2 44,
   dut-s3 44, dut-esp32 32, sonde 2, multichannel 48, stickhub 38.
   interf-u keeps 84 vias where the tracks rung had 30 (3 starved).
+  Seed retries deferred to the best rung (x76): same 13 results, wall
+  interf-u 448 -> 320 s, olimex-c3 129 -> 75 s, stickhub 145 -> 92 s.
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
