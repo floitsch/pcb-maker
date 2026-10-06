@@ -200,13 +200,9 @@ fn is_legal_counting(
     work: &mut u64,
 ) -> bool {
     let body = rect(problem, index, pose);
-    if !problem.components[index].fixed {
-        *work += problem.outline.len() as u64;
-        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
-            return false;
-        }
-    }
     let side = problem.components[index].side;
+    // The parts first: on a crowded board they turn down most spots, and
+    // the outline test walks every outline edge.
     for other in others {
         if other == index {
             continue;
@@ -249,7 +245,89 @@ fn is_legal_counting(
             return false;
         }
     }
+    if !problem.components[index].fixed {
+        *work += problem.outline.len() as u64;
+        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
+            return false;
+        }
+    }
     true
+}
+
+/// Placed parts by area: a spot is tested only against parts near it.
+struct Buckets {
+    origin: Point,
+    cell: f64,
+    columns: usize,
+    rows: usize,
+    cells: Vec<Vec<usize>>,
+    /// How far beyond its rectangle a part meets another (spacing, the
+    /// edge margin around cutouts, and some slack).
+    reach: f64,
+    seen: Vec<u32>,
+    stamp: u32,
+}
+
+impl Buckets {
+    fn new(problem: &Problem) -> Self {
+        let bounds = problem.bounds();
+        let cell = 2.5;
+        let columns = (((bounds[2] - bounds[0]) / cell).ceil() as usize).max(1) + 1;
+        let rows = (((bounds[3] - bounds[1]) / cell).ceil() as usize).max(1) + 1;
+        Buckets {
+            origin: [bounds[0], bounds[1]],
+            cell,
+            columns,
+            rows,
+            cells: vec![Vec::new(); columns * rows],
+            reach: problem.spacing + problem.min_spacing + problem.edge_margin + 1.0,
+            seen: vec![0; problem.components.len()],
+            stamp: 0,
+        }
+    }
+
+    fn range(&self, center: Point, half: Point) -> (usize, usize, usize, usize) {
+        let clamp = |value: f64, count: usize| (value.floor().max(0.0) as usize).min(count - 1);
+        (
+            clamp((center[0] - half[0] - self.origin[0]) / self.cell, self.columns),
+            clamp((center[1] - half[1] - self.origin[1]) / self.cell, self.rows),
+            clamp((center[0] + half[0] - self.origin[0]) / self.cell, self.columns),
+            clamp((center[1] + half[1] - self.origin[1]) / self.cell, self.rows),
+        )
+    }
+
+    fn insert(&mut self, problem: &Problem, index: usize, pose: Pose) {
+        let body = rect(problem, index, pose);
+        let (x0, y0, x1, y1) = self.range(body.center, body.half);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                self.cells[y * self.columns + x].push(index);
+            }
+        }
+    }
+
+    /// The parts that may meet part `index` at `pose`.
+    fn near(&mut self, problem: &Problem, index: usize, pose: Pose, out: &mut Vec<usize>) {
+        out.clear();
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.seen.iter_mut().for_each(|seen| *seen = 0);
+            self.stamp = 1;
+        }
+        let body = rect(problem, index, pose);
+        let grown = [body.half[0] + self.reach, body.half[1] + self.reach];
+        let (x0, y0, x1, y1) = self.range(body.center, grown);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                for &other in &self.cells[y * self.columns + x] {
+                    if self.seen[other] != self.stamp {
+                        self.seen[other] = self.stamp;
+                        out.push(other);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Whether a part's copper comes closer than the edge margin to a cutout
@@ -421,6 +499,11 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
     if step < 0.3 {
         rings = rings.min((15.0 / step).ceil() as i64);
     }
+    let mut buckets = Buckets::new(problem);
+    for &index in &placed {
+        buckets.insert(problem, index, poses[index]);
+    }
+    let mut near = Vec::new();
     let mut failed = Vec::new();
     for index in order {
         let component = &problem.components[index];
@@ -460,7 +543,8 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
                         if best.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
-                        if is_legal(problem, poses, index, pose, placed.iter().copied()) {
+                        buckets.near(problem, index, pose, &mut near);
+                        if is_legal(problem, poses, index, pose, near.iter().copied()) {
                             best = Some((distance, pose));
                         }
                     }
@@ -472,6 +556,7 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
             None => failed.push(index),
         }
         placed.push(index);
+        buckets.insert(problem, index, poses[index]);
     }
     failed
 }
