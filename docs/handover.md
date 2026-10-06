@@ -571,6 +571,14 @@ Committed, in order:
   (whose optimizer was off in the September comparison) is
   via_reduction_rounds 0: 3-10x faster than both other routers then.
 
+- Netted filled board graphics are terminals (Sisu's /RF/ANT feed): Sisu
+  x77 186/192, KiCad 12 unconnected (x70: 181, 19).
+- Open bug: Sisu's U9 pad 11 (VBATT, B.Cu, flipped QFN) gets an escape
+  stub to (51.2, 71.8) written twice and nothing else; the router counts
+  the net complete, KiCad reports pad 11 apart. Pad geometry matches KiCad
+  (checked); suspect branch bookkeeping when a branch is only an escape
+  stub ending on another branch's stub of the same pad.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
