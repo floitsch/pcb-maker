@@ -1866,6 +1866,8 @@ pub fn route_kicad_board(
             probed_mode = Some(mode);
         }
     }
+    // Whether the best attempt's rung had its seed retry.
+    let mut best_seeded = false;
     'ladder: for pitch in &pitches {
         if probe_complete {
             continue;
@@ -1954,13 +1956,20 @@ pub fn route_kicad_board(
             // Four seeds in parallel cost about twice the attempt; on a
             // board whose attempt takes minutes that time is better spent
             // on the next rung (MIDAS-MK2: two retries, 740 s, both worse).
+            // The seeds wait while other rungs remain: another way of
+            // connecting the pours often finishes the board (olimex-c3,
+            // stickhub and interf-u spent 40-130 s on seeds of rungs a
+            // later one beat); the best rung gets them at the end.
+            let mut seeds_tried = false;
             if opens.0 > 0
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
                 && attempt_seconds <= budget / 2.0
+                && mode + 1 == modes.len()
                 && !past_deadline()
             {
+                seeds_tried = true;
                 let mut seeded = attempt.clone();
                 seeded.seeds = Some(retry);
                 seeded.first_seed = Some(1);
@@ -2021,6 +2030,7 @@ pub fn route_kicad_board(
                 }
                 best = Some((opens, result));
                 best_attempt = Some((attempt.clone(), *connect));
+                best_seeded = seeds_tried || attempt.seeds.unwrap_or(1) > 1;
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
             }
@@ -2042,6 +2052,42 @@ pub fn route_kicad_board(
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 break 'ladder;
             }
+        }
+    }
+    // The best rung's deferred seed retry.
+    let retry = config.retry_seeds.unwrap_or(4);
+    if let (Some((opens, best_result)), Some((attempt, connect))) = (best.as_ref(), best_attempt.as_ref())
+        && opens.0 > 0
+        && !best_seeded
+        && retry > 0
+        && work_of(best_result.expansions) <= budget / 2.0
+        && spent(ladder_work) < 1.5 * ladder_budget
+        && !past_deadline()
+    {
+        let mut seeded = attempt.clone();
+        seeded.seeds = Some(retry);
+        seeded.first_seed = Some(1);
+        if scratch.exists() {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
+        }
+        let connect = *connect;
+        let mut other = route_kicad_board_once(source_directory, board_id, &scratch, &seeded, connect)?;
+        other.pours = best_result.pours.clone();
+        ladder_work += work_of(other.expansions) * retry as f64;
+        let other_opens = open(&other, &scratch);
+        eprintln!(
+            "best rung again with {retry} seeds: {} open, {} starved, {} vias, {:.1} s",
+            other_opens.0, other_opens.1, other.vias, other.routing_seconds
+        );
+        let better = (other_opens, other.vias, other.length_mm)
+            .partial_cmp(&(*opens, best_result.vias, best_result.length_mm))
+            .is_some_and(|order| order.is_lt());
+        if better {
+            fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
+            fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
+            best = Some((other_opens, other));
+        } else {
+            fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
     }
     let mut narrow_step_relaxed = false;
