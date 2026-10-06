@@ -592,7 +592,9 @@ Committed, in order:
   left unfixed, ordinary branches): 127 open, still far behind 33 with
   pours as tracks and no stubs. On A13 the plane approach loses; its open
   GND balls need something else (a ball-by-ball dogbone search with the
-  signals already routed?).
+  signals already routed?). Pours connected in that step (no
+  stubs): 122 open. The default on x82: 221/223, KiCad 9 unconnected
+  (x60: 219/223, 14), final step 18 open (was 33).
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
