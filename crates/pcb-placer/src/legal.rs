@@ -184,17 +184,34 @@ pub fn is_legal(
     pose: Pose,
     others: impl Iterator<Item = usize>,
 ) -> bool {
+    // Work: the outline test walks the outline, then each part is a box test.
+    let mut work = 1;
+    let legal = is_legal_counting(problem, poses, index, pose, others, &mut work);
+    crate::add_work(work);
+    legal
+}
+
+fn is_legal_counting(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    others: impl Iterator<Item = usize>,
+    work: &mut u64,
+) -> bool {
     let body = rect(problem, index, pose);
-    if !problem.components[index].fixed
-        && (!on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose))
-    {
-        return false;
+    if !problem.components[index].fixed {
+        *work += problem.outline.len() as u64;
+        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
+            return false;
+        }
     }
     let side = problem.components[index].side;
     for other in others {
         if other == index {
             continue;
         }
+        *work += 1;
         // Two fixed parts are the designer's responsibility.
         if problem.components[index].fixed && problem.components[other].fixed {
             continue;
@@ -203,6 +220,8 @@ pub fn is_legal(
         if side.collides(other_side) {
             let (mine, theirs) = (&problem.components[index], &problem.components[other]);
             if mine.copper_only || theirs.copper_only {
+                let hole = if mine.copper_only { mine } else { theirs };
+                *work += hole.cutout_outline.len() as u64;
                 if copper_meets_cutout(problem, index, pose, other, poses[other]) {
                     return false;
                 }

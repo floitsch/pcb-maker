@@ -494,6 +494,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
 
     for iteration in 0..config.max_iterations {
         iterations = iteration + 1;
+        // Work: the field solve per side dominates, then bodies and pins.
+        crate::add_work((side_fixed.len() * n * n * n + bodies.len() + fixed_pins.len()) as u64);
         // Density of all charges at the reference solution, side by side.
         let mut density_gradient = vec![[0.0; 2]; bodies.len()];
         let mut overflow_area = 0.0;

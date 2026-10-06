@@ -34,7 +34,7 @@ def drc_summary(directory, baseline=frozenset(), reference=None):
     report = json.loads(path.read_text())
     errors = Counter(
         v["type"] for v in report.get("violations", [])
-        if v.get("severity", "error") == "error" and not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
+        if v.get("severity", "error") == "error" and not v.get("excluded") and not COSMETIC.match(v["type"]) and finding_key(v) not in baseline
     )
     for kind, allowed in (reference or {}).items():
         errors[kind] = max(0, errors.get(kind, 0) - allowed)

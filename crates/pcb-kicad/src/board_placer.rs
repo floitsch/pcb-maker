@@ -51,6 +51,11 @@ pub struct KiCadBoardPlacerConfig {
     /// 25 minutes).
     #[serde(skip)]
     pub deadline: Option<std::time::Instant>,
+    /// Placement work each seed may do, in seconds of an idle machine (see
+    /// `core::WORK_PER_SECOND`): set by the layout from its budget, so that
+    /// a busy or a slower machine places the same way.
+    #[serde(skip)]
+    pub work_seconds: Option<f64>,
     /// Where the project lets courtyards overlap, a part may reach over
     /// other parts' pads on its side at the last placement levels, keeping
     /// only copper apart (as katia's designer put connectors partly over
@@ -103,6 +108,7 @@ impl Default for KiCadBoardPlacerConfig {
             edge_margin_mm: 0.5,
             seed: 1,
             deadline: None,
+            work_seconds: None,
             overlap_far_side_pads: false,
             constraints: None,
             constraint_weight: 50.0,
@@ -177,6 +183,9 @@ pub struct KiCadBoardPlacerResult {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub edges_chosen: BTreeMap<String, String>,
     pub seconds: f64,
+    /// The most placement work a seed did, in seconds of an idle machine.
+    #[serde(default)]
+    pub work_seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
 
@@ -276,20 +285,8 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
                 if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
             {
                 straight += 1;
-                for point in child
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    include(
-                        [
-                            expression_coordinate(point, 1, "courtyard x")?,
-                            expression_coordinate(point, 2, "courtyard y")?,
-                        ],
-                        0.0,
-                    );
+                for point in outline::pts_points(child)? {
+                    include(point, 0.0);
                 }
             }
             Some("pad") => {
@@ -355,14 +352,8 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
             if child.child("center").is_some() {
                 points.push(form_xy(child, "center")?);
             }
-            for point in child
-                .child("pts")
-                .map(Expr::children)
-                .unwrap_or_default()
-                .iter()
-                .filter(|point| point.head() == Some("xy"))
-            {
-                points.push([expression_coordinate(point, 1, "copper x")?, expression_coordinate(point, 2, "copper y")?]);
+            for point in outline::pts_points(child)? {
+                points.push(point);
             }
             for point in points {
                 for axis in 0..2 {
@@ -446,10 +437,8 @@ fn custom_pad_points(pad: &Expr) -> Vec<([f64; 2], f64)> {
                         points.push((point, width / 2.0));
                     }
                 }
-                for point in primitive.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|point| point.head() == Some("xy")) {
-                    if let (Ok(x), Ok(y)) = (expression_coordinate(point, 1, "primitive x"), expression_coordinate(point, 2, "primitive y")) {
-                        points.push(([x, y], width / 2.0));
-                    }
+                for point in outline::pts_points(primitive).unwrap_or_default() {
+                    points.push((point, width / 2.0));
                 }
             }
         }
@@ -725,18 +714,8 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
                 grow(&mut bounds, center, distance_squared(center, form_xy(child, "end")?).sqrt());
             }
             Some("fp_poly") => {
-                for point in child
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    grow(
-                        &mut bounds,
-                        [expression_coordinate(point, 1, "courtyard x")?, expression_coordinate(point, 2, "courtyard y")?],
-                        0.0,
-                    );
+                for point in outline::pts_points(child)? {
+                    grow(&mut bounds, point, 0.0);
                 }
             }
             _ => continue,
@@ -807,18 +786,8 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
                 }
             }
             Some("fp_poly") if on_courtyard => {
-                for point in child
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    grow(
-                        &mut courtyard,
-                        [expression_coordinate(point, 1, "courtyard x")?, expression_coordinate(point, 2, "courtyard y")?],
-                        [0.0, 0.0],
-                    );
+                for point in outline::pts_points(child)? {
+                    grow(&mut courtyard, point, [0.0, 0.0]);
                 }
             }
             Some("pad") => {
@@ -1081,14 +1050,8 @@ pub(super) fn lower_placement(
                     let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
                     points.extend([[center[0] - radius, center[1] - radius], [center[0] + radius, center[1] + radius]]);
                 }
-                for point in child
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    points.push([expression_coordinate(point, 1, "copper x")?, expression_coordinate(point, 2, "copper y")?]);
+                for point in outline::pts_points(child)? {
+                    points.push(point);
                 }
                 for point in points {
                     pads = [
@@ -1571,6 +1534,7 @@ pub fn place_kicad_board(
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
     placer_config.anneal.deadline = config.deadline;
+    placer_config.work_limit = config.work_seconds.map(|seconds| (seconds.max(0.0) * core::WORK_PER_SECOND) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
@@ -1594,6 +1558,8 @@ pub fn place_kicad_board(
         (placement.unplaced.len() + placement.illegal.len(), missed, placement.wirelength_final)
     };
     placements.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+    let work_seconds =
+        placements.iter().map(|placement| placement.work).max().unwrap_or(0) as f64 / core::WORK_PER_SECOND;
     let placement = placements.remove(0);
     // The other legal placements, for layout to race when the best one by
     // wirelength does not route: wirelength is not routability.
@@ -1798,6 +1764,7 @@ pub fn place_kicad_board(
         outline_mm: outline_size,
         edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
+        work_seconds,
         footprints,
     };
     let report_path = output_directory.join("board-placer.json");

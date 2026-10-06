@@ -39,6 +39,32 @@ pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
     points
 }
 
+/// A polygon's corners from its `pts`: `xy` points and `arc` entries (a
+/// polygon with rounded sides, KiCad 7 on), flattened as `arc_points` does.
+pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
+    let mut points: Vec<[f64; 2]> = Vec::new();
+    for point in item.child("pts").map(Expr::children).unwrap_or_default().iter() {
+        match point.head() {
+            Some("xy") => points.push([
+                expression_coordinate(point, 1, "polygon x")?,
+                expression_coordinate(point, 2, "polygon y")?,
+            ]),
+            Some("arc") => {
+                for at in arc_points(form_xy(point, "start")?, form_xy(point, "mid")?, form_xy(point, "end")?) {
+                    if points.last() != Some(&at) {
+                        points.push(at);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if points.len() > 1 && points.first() == points.last() {
+        points.pop();
+    }
+    Ok(points)
+}
+
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // Circle through three points.
     let d = 2.0
@@ -186,19 +212,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 loops.push(points);
             }
             Some("gr_poly" | "fp_poly") => {
-                let mut points = Vec::new();
-                for point in item
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    points.push(place([
-                        expression_coordinate(point, 1, "outline x")?,
-                        expression_coordinate(point, 2, "outline y")?,
-                    ]));
-                }
+                let points: Vec<[f64; 2]> = pts_points(item)?.into_iter().map(place).collect();
                 if points.len() >= 3 {
                     loops.push(points);
                 }
@@ -387,6 +401,21 @@ mod tests {
         assert!(point_in_polygon([35.0, 5.0], &loops.outline));
         assert!(point_in_polygon([10.0, 5.0], &loops.outline));
         assert!(!point_in_polygon([25.0, 5.0], &loops.outline));
+    }
+
+    #[test]
+    fn a_polygon_follows_its_arcs() {
+        // A 10 x 10 square whose right side bulges out to a half circle (a
+        // polygon of only arcs and points, as KiCad 7 on writes them).
+        let polygon = parse(
+            r#"(gr_poly (pts (xy 0 0) (arc (start 10 0) (mid 15 5) (end 10 10)) (xy 0 10)) (layer "F.Mask"))"#,
+        )
+        .unwrap();
+        let points = pts_points(&polygon).unwrap();
+        assert!(points.len() > 10);
+        let half_circle = std::f64::consts::PI * 25.0 / 2.0;
+        assert!((polygon_area(&points).abs() - (100.0 + half_circle)).abs() < 0.1);
+        assert!(point_in_polygon([14.0, 5.0], &points));
     }
 
     #[test]

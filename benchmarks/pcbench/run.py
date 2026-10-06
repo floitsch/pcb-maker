@@ -57,7 +57,7 @@ def drc_counts(report_path):
     report = json.loads(report_path.read_text())
     errors = {}
     for violation in report.get("violations", []):
-        if violation.get("severity") == "error":
+        if violation.get("severity") == "error" and not violation.get("excluded"):
             errors[violation["type"]] = errors.get(violation["type"], 0) + 1
     return {"errors": errors, "unconnected": len(report.get("unconnected_items", []))}
 

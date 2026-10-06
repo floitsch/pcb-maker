@@ -685,6 +685,32 @@ v5's first rows (x57): jetson-nano 336/340, laptop 230/236, MokyaLora
 krishveercard is no benchmark for the class rules: the designer's own
 board breaks them hundreds of times (use the guided set).
 
+## 2026-10-06
+
+- Budgets count work, not the wall clock (Florian: "less dependent on
+  the actual hw"). The layout keeps a work clock in seconds of an idle
+  machine: placement work (a thread-local count in pcb-placer: legality
+  checks weighted by outline edges and parts visited, anneal moves by
+  parts, pins and outline, global iterations by the field solve) at
+  `pcb_placer::WORK_PER_SECOND` per seed thread, plus search expansions at
+  `EXPANSIONS_PER_SECOND`. The placement share (40 %), the race cut-off,
+  the move phase (65 %) and the final ladder's share come from it. The
+  wall clock stays as a guard at `WALL_GUARD` (1.15) times the budget so
+  a much busier machine still ends before the harness timeout.
+  `KiCadBoardLayoutResult.work_seconds` reports it; `PCB_PLACER_DEBUG`
+  prints work per level and the anneal's problem statistics.
+- Polygons with `arc` entries in `pts` (KiCad 7 on) lost their arcs
+  everywhere we read polygons: link's board-level F.Mask polygons (only
+  arcs) vanished, parts went under them and layout v7 had 103 mask
+  bridges there. `outline::pts_points` flattens arcs; every polygon
+  reader uses it (SNSP has no arc polygons: its J2 bridges are another
+  cause).
+- MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
+  overlaps the designer excluded in the project (`drc_exclusions`,
+  `"excluded": true` in KiCad's report). The benchmark runners now skip
+  excluded violations, as the designer's baseline (run with
+  `--severity-error`) always did.
+
 ## Where things are
 
 | What | Where |

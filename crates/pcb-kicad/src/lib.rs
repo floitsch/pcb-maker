@@ -2162,26 +2162,10 @@ fn track_arc_length(item: &Expr) -> Result<f64, String> {
 }
 
 fn polygon_area(polygon: &Expr) -> Result<f64, String> {
-    let points = polygon
-        .child("pts")
-        .ok_or_else(|| "filled polygon has no pts".to_string())?
-        .children()
-        .iter()
-        .skip(1)
-        .filter(|point| point.head() == Some("xy"))
-        .map(|point| {
-            let coordinate = |index: usize| {
-                point
-                    .children()
-                    .get(index)
-                    .and_then(Expr::atom)
-                    .ok_or_else(|| "xy point is missing a coordinate".to_string())?
-                    .parse::<f64>()
-                    .map_err(|error| format!("invalid xy coordinate: {error}"))
-            };
-            Ok::<[f64; 2], String>([coordinate(1)?, coordinate(2)?])
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    if polygon.child("pts").is_none() {
+        return Err("filled polygon has no pts".into());
+    }
+    let points = outline::pts_points(polygon)?;
     if points.len() < 3 {
         return Err("filled polygon has fewer than three points".into());
     }
@@ -12156,10 +12140,24 @@ fn custom_pad_geometry(
                     .ok_or_else(|| "custom-pad polygon has no pts form".to_string())?;
                 let mut points = Vec::new();
                 for point in points_form.children().iter().skip(1) {
-                    if point.head() != Some("xy") {
-                        return Err("custom-pad polygon contains a non-xy point".into());
+                    match point.head() {
+                        Some("xy") => points.push(local_point(point, "custom-pad point")?),
+                        // A rounded side, flattened.
+                        Some("arc") => {
+                            let corner = |head: &str| {
+                                point
+                                    .child(head)
+                                    .ok_or_else(|| format!("custom-pad arc has no {head}"))
+                                    .and_then(|form| local_point(form, head))
+                            };
+                            for at in outline::arc_points(corner("start")?, corner("mid")?, corner("end")?) {
+                                if points.last() != Some(&at) {
+                                    points.push(at);
+                                }
+                            }
+                        }
+                        _ => return Err("custom-pad polygon contains a point that is neither xy nor arc".into()),
                     }
-                    points.push(local_point(point, "custom-pad point")?);
                 }
                 if points.len() < 3 {
                     return Err("custom-pad polygon has fewer than three points".into());
@@ -15417,6 +15415,36 @@ mod tests {
         assert!(!geometry.contains([9.0, 20.7], 0.0));
         assert_eq!(geometry.aabb().minimum, [9.35, 19.25]);
         assert_eq!(geometry.aabb().maximum, [10.5, 20.75]);
+    }
+
+    #[test]
+    fn custom_polygon_follows_its_arcs() {
+        // A square with a half circle bulging out to the right.
+        let pad = parse(
+            r#"(pad "1" smd custom
+                (at 0 0)
+                (size 0.3 0.3)
+                (primitives
+                    (gr_poly
+                        (pts (xy -1 -1) (arc (start 1 -1) (mid 2 0) (end 1 1)) (xy -1 1))
+                        (width 0)
+                        (fill yes))))"#,
+        )
+        .unwrap();
+        let geometry = custom_pad_geometry(
+            &pad,
+            [10.0, 20.0],
+            0.0,
+            ObstacleGeometry::Rectangle {
+                center: [10.0, 20.0],
+                half_size: [0.15, 0.15],
+                angle_degrees: 0.0,
+            },
+        )
+        .unwrap();
+        assert!(geometry.contains([11.9, 20.0], 0.0));
+        assert!(!geometry.contains([11.9, 20.9], 0.0));
+        assert!((geometry.aabb().maximum[0] - 12.0).abs() < 0.01);
     }
 
     #[test]

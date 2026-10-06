@@ -1576,19 +1576,7 @@ fn rule_area_obstacle(zone: &Expr, layers: &LayerTable, fallback_label: &str) ->
 }
 
 fn rule_area_like_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
-    let mut points = Vec::new();
-    for point in item
-        .child("pts")
-        .map(Expr::children)
-        .unwrap_or_default()
-        .iter()
-        .filter(|point| point.head() == Some("xy"))
-    {
-        points.push([
-            expression_coordinate(point, 1, "polygon x")?,
-            expression_coordinate(point, 2, "polygon y")?,
-        ]);
-    }
+    let points = outline::pts_points(item)?;
     if points.len() < 3 {
         return Err("copper polygon has fewer than three points".into());
     }

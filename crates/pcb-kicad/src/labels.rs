@@ -196,8 +196,8 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
                 let middle = place(center);
                 points.extend([[middle[0] - radius, middle[1] - radius], [middle[0] + radius, middle[1] + radius]]);
             }
-            for point in child.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|p| p.head() == Some("xy")) {
-                points.push(place([expression_coordinate(point, 1, "silk x")?, expression_coordinate(point, 2, "silk y")?]));
+            for point in outline::pts_points(child)? {
+                points.push(place(point));
             }
             if matches!(child.head(), Some("fp_line")) && points.len() == 2 {
                 // A line is thin: its own box, not a box around it at an angle.
@@ -282,9 +282,7 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         if item.child("center").is_some() {
             points.push(form_xy(item, "center")?);
         }
-        for point in item.child("pts").map(Expr::children).unwrap_or_default().iter().filter(|p| p.head() == Some("xy")) {
-            points.push([expression_coordinate(point, 1, "silk x")?, expression_coordinate(point, 2, "silk y")?]);
-        }
+        points.extend(outline::pts_points(item)?);
         if item.head() == Some("gr_circle") && points.len() == 2 {
             let radius = distance_squared(points[0], points[1]).sqrt();
             points.push([points[0][0] - radius, points[0][1] - radius]);

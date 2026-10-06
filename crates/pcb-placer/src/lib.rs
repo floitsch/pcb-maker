@@ -28,6 +28,9 @@ pub struct Config {
     /// (katia's connectors partly over the switches' hot-swap socket pads,
     /// as its designer placed them). Off by default: a socket is a body.
     pub overlap_far_side_pads: bool,
+    /// Placement work (see `work`) after which no further level or anneal
+    /// stage starts; the best placement so far stands.
+    pub work_limit: Option<u64>,
 }
 
 impl Config {
@@ -38,6 +41,7 @@ impl Config {
             refine_passes: 8,
             maximum_utilization: 0.6,
             overlap_far_side_pads: false,
+            work_limit: None,
         }
     }
 }
@@ -61,6 +65,8 @@ pub struct Placement {
     /// The relaxation the placement needed: work on it (moves after
     /// routing) must keep to the same rules.
     pub relaxation: Relaxation,
+    /// The placement work done (see `work`).
+    pub work: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -148,6 +154,26 @@ fn fit_halos(problem: &Problem, limit: f64) -> (Problem, f64) {
     (fitted, scale.max(0.0))
 }
 
+thread_local! {
+    /// Placement work done on this thread: legality checks and anneal
+    /// moves. Budgets count it rather than seconds, so that a busy or a
+    /// slower machine places the same way.
+    static WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Placement work one thread does per second on an idle machine: budgets
+/// in seconds become work limits at this rate.
+pub const WORK_PER_SECOND: f64 = 200.0e6;
+
+/// The placement work done on this thread so far.
+pub fn work() -> u64 {
+    WORK.with(|work| work.get())
+}
+
+pub(crate) fn add_work(amount: u64) {
+    WORK.with(|work| work.set(work.get() + amount));
+}
+
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();
@@ -155,6 +181,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let wirelength_initial = problem.wirelength(&problem.poses);
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = std::time::Instant::now();
+    let work_started = work();
+    let stop_at_work = config.work_limit.map(|limit| work_started + limit);
+    let mut anneal_config = config.anneal.clone();
+    anneal_config.stop_at_work = stop_at_work.or(anneal_config.stop_at_work);
+    let out_of_budget = || {
+        config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            || anneal_config.stop_at_work.is_some_and(|stop| work() >= stop)
+    };
     let global = global::global_place(problem, &config.global);
     if debug {
         eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
@@ -206,7 +240,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let mut relaxation = None;
     for (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule) in levels {
         // Past the caller's deadline the best placement so far stands.
-        if best.is_some() && config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        if best.is_some() && out_of_budget() {
             break;
         }
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
@@ -284,15 +318,17 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
-        anneal::anneal(&relaxed, &mut poses, &config.anneal);
+        anneal::anneal(&relaxed, &mut poses, &anneal_config);
         let annealed = poses.clone();
         let anneal_seconds = level_started.elapsed().as_secs_f64();
         let mut failed = legal::legalize(&relaxed, &mut poses);
         if debug {
             eprintln!(
-                "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed",
+                "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
                 level_started.elapsed().as_secs_f64() - anneal_seconds,
-                failed.len()
+                failed.len(),
+                work() - work_started,
+                (work() - work_started) as f64 / started.elapsed().as_secs_f64().max(1.0e-3)
             );
         }
         // The parts that found no room go first in a second pass.
@@ -381,5 +417,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         illegal,
         constraints,
         relaxation: relaxation.expect("at least one relaxation level ran"),
+        work: work() - work_started,
     }
 }

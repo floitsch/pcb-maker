@@ -101,7 +101,7 @@ def native(result_directory, allowed=None):
     drc = json.loads(report.read_text())
     errors = {}
     for violation in drc.get("violations", []):
-        if violation.get("severity") == "error" and not COSMETIC.match(violation["type"]):
+        if violation.get("severity") == "error" and not violation.get("excluded") and not COSMETIC.match(violation["type"]):
             errors[violation["type"]] = errors.get(violation["type"], 0) + 1
     for kind, count in (allowed or {}).items():
         if kind in errors:
@@ -130,7 +130,7 @@ def designer_findings(directory, board_id, work):
         return {}
     counts = {}
     for violation in json.loads(report.read_text()).get("violations", []):
-        if violation.get("severity") == "error" and not COSMETIC.match(violation["type"]):
+        if violation.get("severity") == "error" and not violation.get("excluded") and not COSMETIC.match(violation["type"]):
             counts[violation["type"]] = counts.get(violation["type"], 0) + 1
     shutil.rmtree(reference, ignore_errors=True)
     return counts

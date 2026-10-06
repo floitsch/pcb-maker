@@ -22,6 +22,9 @@ pub struct AnnealConfig {
     pub seed: u64,
     /// No further stage starts after this wall-clock time.
     pub deadline: Option<std::time::Instant>,
+    /// No further stage starts once this thread's `crate::work()` reaches
+    /// this count.
+    pub stop_at_work: Option<u64>,
 }
 
 impl Default for AnnealConfig {
@@ -32,6 +35,7 @@ impl Default for AnnealConfig {
             initial_radius: 0.06,
             seed: 7,
             deadline: None,
+            stop_at_work: None,
         }
     }
 }
@@ -65,6 +69,8 @@ struct State<'a> {
     incident: Vec<Vec<usize>>,
     bounds: [f64; 4],
     rectangular: bool,
+    /// Work beyond the per-move base: box lists built and tested.
+    work: std::cell::Cell<u64>,
 }
 
 impl State<'_> {
@@ -83,14 +89,20 @@ impl State<'_> {
     fn overlap(&self, index: usize, rect: Rect) -> f64 {
         let side = self.problem.components[index].side;
         let mut total = 0.0;
+        // A box list costs its allocation and transforms.
+        let built = |boxes: Vec<(Point, Point)>| {
+            self.work.set(self.work.get() + 8 + 2 * boxes.len() as u64);
+            boxes
+        };
         let area = |a: (Point, Point), b: (Point, Point)| {
+            self.work.set(self.work.get() + 1);
             let width = a.1[0] + b.1[0] - (a.0[0] - b.0[0]).abs();
             let height = a.1[1] + b.1[1] - (a.0[1] - b.0[1]).abs();
             if width > 0.0 && height > 0.0 { width * height } else { 0.0 }
         };
         let component = &self.problem.components[index];
         let pose = self.poses[index];
-        let own_far = if component.far_side.is_empty() { Vec::new() } else { component.far_boxes(pose) };
+        let own_far = if component.far_side.is_empty() { Vec::new() } else { built(component.far_boxes(pose)) };
         for (other, body) in self.rects.iter().enumerate() {
             if other == index {
                 continue;
@@ -106,7 +118,7 @@ impl State<'_> {
                         ((body.center, body.half), component, pose)
                     };
                     if !part.copper_only {
-                        for (center, half) in part.pad_boxes(part_pose) {
+                        for (center, half) in built(part.pad_boxes(part_pose)) {
                             total += area((center, [half[0] + margin, half[1] + margin]), hole);
                         }
                     }
@@ -133,7 +145,7 @@ impl State<'_> {
                             return vec![(whole.center, whole.half)];
                         }
                         let margin = self.problem.spacing / 2.0;
-                        part.blocking_boxes(against, pose)
+                        built(part.blocking_boxes(against, pose))
                             .into_iter()
                             .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
                             .collect()
@@ -151,7 +163,7 @@ impl State<'_> {
                     total += area(*far, (body.center, body.half));
                 }
                 if !other_component.far_side.is_empty() {
-                    for far in other_component.far_boxes(self.poses[other]) {
+                    for far in built(other_component.far_boxes(self.poses[other])) {
                         total += area(far, (rect.center, rect.half));
                     }
                 }
@@ -291,11 +303,42 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         incident,
         bounds,
         rectangular,
+        work: std::cell::Cell::new(0),
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
         .collect();
 
+    // Work per move (before and after): the overlap test visits every part
+    // (looking up whether the two are linked) and, when the outline is not
+    // a rectangle, tests four corners against it; the wirelength visits the
+    // part's pins' nets; the constraint cost scans the relations. Fitted so
+    // that boards as different as OpenAirScope, katia and link do the same
+    // work per second.
+    let lookup = 1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0;
+    let fixed = (problem.components.len() as f64 * lookup) as usize
+        + problem.constraints.relations.len()
+        + if rectangular { 0 } else { 4 * problem.outline.len() };
+    let move_work: Vec<u64> = (0..problem.components.len())
+        .map(|index| {
+            let pins: usize = state.incident[index].iter().map(|net| state.members[*net].len()).sum();
+            (2 * (fixed + pins)) as u64
+        })
+        .collect();
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        let average = move_work.iter().sum::<u64>() as f64 / move_work.len().max(1) as f64;
+        eprintln!(
+            "anneal: {} parts ({} movable), outline {} ({}), relations {}, linked {}, far-side parts {}, hollow parts {}, move work {average:.0}",
+            problem.components.len(),
+            movable.len(),
+            problem.outline.len(),
+            if rectangular { "rectangular" } else { "shaped" },
+            problem.constraints.relations.len(),
+            problem.constraints.linked.len(),
+            problem.components.iter().filter(|component| !component.far_side.is_empty()).count(),
+            problem.components.iter().filter(|component| !component.hollow.is_empty()).count(),
+        );
+    }
     let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
     let grid = if problem.grid > 0.0 { problem.grid } else { 0.05 };
@@ -307,11 +350,15 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     let radius_decay = ((1.5 * grid) / radius).powf(1.0 / config.stages as f64);
 
     for _ in 0..config.stages {
-        if config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+        if config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            || config.stop_at_work.is_some_and(|stop| crate::work() >= stop)
+        {
             break;
         }
+        let mut work = 0;
         for _ in 0..config.moves_per_part * movable.len() {
             let index = movable[random.below(movable.len())];
+            work += move_work[index];
             let component = &problem.components[index];
             let kind = random.next();
             if kind < 0.12 && movable.len() > 1 {
@@ -320,6 +367,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 if other == index {
                     continue;
                 }
+                work += move_work[other];
                 let second = &problem.components[other];
                 let (first_pose, second_pose) = (state.poses[index], state.poses[other]);
                 let first_new = Pose {
@@ -410,6 +458,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 state.rects[index] = saved;
             }
         }
+        crate::add_work(work + state.work.replace(0));
         penalty *= penalty_growth;
         radius *= radius_decay;
         temperature *= 0.975;
