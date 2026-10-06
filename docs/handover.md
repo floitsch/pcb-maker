@@ -801,6 +801,16 @@ board breaks them hundreds of times (use the guided set).
   (first route kept; the final ladder's tracks attempt ended at 789 open),
   OpenRX panel 49/127, ESC 30x30 panel.
 
+- Router: a net whose connections fail on the whole board twice in a
+  negotiation keeps to its corridors for the rest of it (only static
+  things stop an ordinary search). link with pours as tracks: iteration 2
+  at 102 s (190), open searches stop growing. A full route of link's
+  designer placement on x108 runs to compare with x104 (19 open, 2389 s
+  attempt).
+- v8 on x106, first rows: jetson 337/340 (8 unconnected; 3 on x100, my
+  experiments share the machine), link 172/251 with no copper errors
+  (the 26 bridges are gone).
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x106` = 7be808d, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x106, timeout 2700 s). Leave it running. Compare v8 with v7's
