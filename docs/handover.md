@@ -578,6 +578,13 @@ Committed, in order:
   11 looked joined to the router and was not. Sisu x78: 186/192, KiCad 11
   unconnected, nothing beyond the designer but pth_inside_courtyard.
 
+- A13 module: router and KiCad agree (GND 14, +1V5 3, two DDR nets open).
+  GND's open pads are DDR3 balls whose fill pieces are islands the
+  stranded-pad reroute cannot join (18-24 per attempt, 496-542 pieces):
+  the BGA fan-out Florian suggested (dogbone vias from pour balls to the
+  inner plane, where In1's GND pour lies under the chip) is the next
+  completeness feature for boards like this.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
