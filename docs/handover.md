@@ -705,6 +705,10 @@ board breaks them hundreds of times (use the guided set).
   bridges there. `outline::pts_points` flattens arcs; every polygon
   reader uses it (SNSP has no arc polygons: its J2 bridges are another
   cause).
+- SNSP's remaining mask bridges (J2's notched polygon and the board's
+  large F.Mask polygon) were vias 0.005-0.05 mm inside the polygons'
+  strokes (0.1 and 0.15 mm wide): polygons lowered as their bare outline.
+  They now lower with their stroke, and unfilled ones as outline only.
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
   `"excluded": true` in KiCad's report). The benchmark runners now skip
