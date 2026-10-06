@@ -229,7 +229,18 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         {
             let mut kept = known_poses.clone();
             let keep: Vec<usize> = (0..relaxed.components.len()).filter(|index| !known_failed.contains(index)).collect();
-            let failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
+            let mut failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
+            if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
+                let mut evicted = kept.clone();
+                let again = legal::evict_for(&relaxed, &mut evicted, &failed);
+                if again.len() < failed.len() {
+                    if debug {
+                        eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
+                    }
+                    kept = evicted;
+                    failed = again;
+                }
+            }
             if debug {
                 eprintln!(
                     "placer: level halo {halo_scale} spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
@@ -283,6 +294,19 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             let again = legal::legalize_first(&relaxed, &mut retry, &failed);
             if again.len() < failed.len() {
                 poses = retry;
+                failed = again;
+            }
+        }
+        // A few still without room: take a spot from movable parts and find
+        // those new ones.
+        if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
+            let mut evicted = poses.clone();
+            let again = legal::evict_for(&relaxed, &mut evicted, &failed);
+            if again.len() < failed.len() {
+                if debug {
+                    eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
+                }
+                poses = evicted;
                 failed = again;
             }
         }

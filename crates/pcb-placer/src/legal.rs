@@ -412,6 +412,111 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
     failed
 }
 
+/// Places each part of `failed` where it displaces the least area of
+/// movable parts (never a fixed one), then finds the displaced parts new
+/// spots; keeps that only if all of them find one. A part whose spot is
+/// taken by others finds no room by searching around them (katia's back
+/// side: the designer's spots for its controllers existed, held by parts
+/// placed first). Returns the parts still without room.
+pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec<usize> {
+    let count = problem.components.len();
+    let bounds = problem.bounds();
+    let step = if problem.grid > 0.0 { problem.grid.max(0.5) } else { 0.5 };
+    let mut still = Vec::new();
+    let mut placed: Vec<usize> = (0..count).filter(|index| !failed.contains(index)).collect();
+    for &index in failed {
+        let component = &problem.components[index];
+        let fixed: Vec<usize> = placed.iter().copied().filter(|other| problem.components[*other].fixed).collect();
+        let movable: Vec<usize> = placed.iter().copied().filter(|other| !problem.components[*other].fixed).collect();
+        // The spot whose displaced movable parts are smallest in area.
+        let mut best: Option<(f64, Pose, Vec<usize>)> = None;
+        let mut y = bounds[1];
+        while y <= bounds[3] {
+            let mut x = bounds[0];
+            while x <= bounds[2] {
+                for angle in &component.angle_options {
+                    let pose = Pose {
+                        position: constraints::snap_position(problem, index, [x, y], *angle),
+                        angle: *angle,
+                    };
+                    if !is_legal(problem, poses, index, pose, fixed.iter().copied()) {
+                        continue;
+                    }
+                    let mut area = 0.0;
+                    let mut displaced = Vec::new();
+                    for &other in &movable {
+                        if !is_legal(problem, poses, index, pose, std::iter::once(other)) {
+                            let size = problem.components[other].body_size;
+                            area += size[0] * size[1];
+                            displaced.push(other);
+                            if best.as_ref().is_some_and(|(best, _, _)| area >= *best) {
+                                break;
+                            }
+                        }
+                    }
+                    if best.as_ref().is_none_or(|(best, _, _)| area < *best) {
+                        best = Some((area, pose, displaced));
+                    }
+                }
+                x += step;
+            }
+            y += step;
+        }
+        let Some((_, pose, displaced)) = best else {
+            still.push(index);
+            continue;
+        };
+        let saved: Vec<Pose> = poses.to_vec();
+        poses[index] = pose;
+        let mut settled: Vec<usize> = placed.iter().copied().filter(|other| !displaced.contains(other)).collect();
+        settled.push(index);
+        let mut all = true;
+        for &moved in &displaced {
+            let component = &problem.components[moved];
+            let mut spot: Option<(f64, Pose)> = None;
+            let wanted = poses[moved].position;
+            let mut y = bounds[1];
+            while y <= bounds[3] {
+                let mut x = bounds[0];
+                while x <= bounds[2] {
+                    for angle in &component.angle_options {
+                        let candidate = Pose {
+                            position: constraints::snap_position(problem, moved, [x, y], *angle),
+                            angle: *angle,
+                        };
+                        let distance = (candidate.position[0] - wanted[0]).powi(2) + (candidate.position[1] - wanted[1]).powi(2);
+                        if spot.is_some_and(|(best, _)| best <= distance) {
+                            continue;
+                        }
+                        if is_legal(problem, poses, moved, candidate, settled.iter().copied()) {
+                            spot = Some((distance, candidate));
+                        }
+                    }
+                    x += step;
+                }
+                y += step;
+            }
+            match spot {
+                Some((_, candidate)) => {
+                    poses[moved] = candidate;
+                    settled.push(moved);
+                }
+                None => {
+                    all = false;
+                    break;
+                }
+            }
+        }
+        if all {
+            placed.push(index);
+        } else {
+            poses.copy_from_slice(&saved);
+            still.push(index);
+        }
+    }
+    still
+}
+
 /// For every part that misses a near or relative constraint, searches legal
 /// positions around what the relation wants and takes the one with the
 /// least relation penalty plus wirelength, if that beats where it is.
