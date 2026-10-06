@@ -656,7 +656,11 @@ Committed, in order:
   net's via goes in and bridges to the fill), and one copper text placed
   too near the edge by the layout's copper-text placement. Counting the pour as exposed when an opening is over
   four times its pads' area changed nothing there (reverted): the cause
-  is elsewhere (the pour's centre test, or the polygon's shape).
+  is elsewhere (the pour's centre test, or the polygon's shape). pcbnew: J2's large F.Mask polygon has a notch
+  around J2's pads, and the J2-Audio via KiCad flags lies outside it (its
+  hit test says so): the bridge is likely the via's own mask opening
+  (untented vias) touching the polygon's opening. Vias then need the mask
+  expansion as clearance from mask openings.
 
 Layout v6 stopped at 76/109 (14 pass) on x62: stale after the placement
 fixes (mask graphics, exact cutouts, eviction, custom-pad bodies, in-place
