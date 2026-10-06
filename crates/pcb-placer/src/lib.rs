@@ -347,7 +347,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 });
                 let done = failed.is_empty();
                 best = Some((failed, kept, relaxed.clone()));
-                if done {
+                // On a finer grid or with tighter bodies, a fresh anneal
+                // may still beat the kept placement, whose last parts sit
+                // wherever room was left (OpenESC 30x30: 1504 mm legal
+                // against 881 for another seed's anneal).
+                if done && (annealed_shape == Some((grid, tight)) || out_of_budget()) {
                     break;
                 }
             }
@@ -405,9 +409,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 failed = again;
             }
         }
-        let better = best
-            .as_ref()
-            .is_none_or(|(unplaced, _, _)| failed.len() < unplaced.len());
+        let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
+            failed.len() < unplaced.len()
+                || (failed.len() == unplaced.len() && problem.wirelength(&poses) < problem.wirelength(kept))
+        });
         let done = failed.is_empty();
         if better {
             relaxation = Some(Relaxation {
