@@ -312,6 +312,12 @@ struct NetState {
     /// up whole now and then: the branches it kept may be what boxes the
     /// other net in.
     stuck: usize,
+    /// Connections of this net that found no path on the whole board in
+    /// this negotiation. Only what never changes during it (pads, rule
+    /// areas, the board's shape) stops an ordinary search, so after two the
+    /// net's searches keep to their corridors: link spent a third of its
+    /// search on such hopeless board-wide searches each iteration.
+    hopeless_searches: u8,
     /// Per layer: the rule class describing the pour there.
     plane_class: Vec<usize>,
     /// When set, only these pour nodes (the main piece) are valid targets.
@@ -1945,7 +1951,14 @@ impl Router {
                     }
                 }
             }
+            // Board-wide fallbacks, unless they keep failing where a
+            // corridor was searched first.
+            let corridor_tried = global.is_some() || (self.config.corridors && !self.cleanup);
+            let fallback = hard || !corridor_tried || net_state.hopeless_searches < 2;
             let path = planned.or_else(|| {
+                if !fallback {
+                    return None;
+                }
                 self.search(
                     scratch,
                     net,
@@ -1960,7 +1973,7 @@ impl Router {
                 )
             });
             let path = path.or_else(|| {
-                (windowed != full)
+                (fallback && windowed != full)
                     .then(|| {
                         self.search(
                             scratch,
@@ -1978,6 +1991,9 @@ impl Router {
                     .flatten()
             });
             let Some(path) = path else {
+                if fallback && !hard {
+                    net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
+                }
                 break;
             };
             let first = self.state(path[0]);
@@ -3769,6 +3785,9 @@ impl Router {
         let mut present = present;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
+        for state in &mut self.nets {
+            state.hopeless_searches = 0;
+        }
         for iteration in 0..self.config.max_iterations {
             self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
