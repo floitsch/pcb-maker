@@ -644,7 +644,9 @@ Committed, in order:
   The 5 left: large mask openings over a pad and pour fill (J2's polygon;
   the opening counts the pour only without pads under it, so the pad
   net's via goes in and bridges to the fill), and one copper text placed
-  too near the edge by the layout's copper-text placement.
+  too near the edge by the layout's copper-text placement. Counting the pour as exposed when an opening is over
+  four times its pads' area changed nothing there (reverted): the cause
+  is elsewhere (the pour's centre test, or the polygon's shape).
 
 Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
 routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
