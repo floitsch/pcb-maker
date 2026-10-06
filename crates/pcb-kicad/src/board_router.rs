@@ -409,6 +409,77 @@ pub struct KiCadRoutingDiagnostics {
     /// Where nets fought longest (16 x 16-node tiles), most contested
     /// first: the places to give more room.
     pub hot_spots: Vec<KiCadHotSpot>,
+    /// Pads KiCad finds short of thermal spokes (its starved_thermal),
+    /// with what to do about each.
+    pub starved_thermals: Vec<KiCadStarvedThermal>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadStarvedThermal {
+    /// KiCad's name for the pad (`Pad 4 [GND] of U201`).
+    pub pad: String,
+    pub layer: String,
+    pub at: [f64; 2],
+    /// Spokes reaching the fill and spokes the zone needs, where KiCad
+    /// says.
+    pub spokes: Option<usize>,
+    pub needed: Option<usize>,
+    pub advice: String,
+}
+
+/// The starved thermals of a native DRC report, each with advice.
+fn starved_thermal_diagnostics(directory: &Path) -> Vec<KiCadStarvedThermal> {
+    let Ok(text) = fs::read_to_string(directory.join("drc.json")) else {
+        return Vec::new();
+    };
+    let Ok(report) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let number_after = |text: &str, key: &str| -> Option<usize> {
+        let rest = &text[text.find(key)? + key.len()..];
+        rest.trim_start().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+    };
+    let mut found = Vec::new();
+    for violation in report["violations"].as_array().into_iter().flatten() {
+        if violation["type"].as_str() != Some("starved_thermal") {
+            continue;
+        }
+        let description = violation["description"].as_str().unwrap_or("");
+        let Some(pad) = violation["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|item| item["description"].as_str().is_some_and(|text| text.contains("ad ")))
+        else {
+            continue;
+        };
+        let layer = description
+            .split("layer ")
+            .nth(1)
+            .and_then(|rest| rest.split([';', ')']).next())
+            .unwrap_or("")
+            .to_string();
+        let spokes = number_after(description, "actual");
+        let needed = number_after(description, "spoke count");
+        let advice = if description.contains("isolated island") {
+            "its spokes reach a piece of fill not joined to the rest of the pour: join that piece (a via or a track) or connect the pad by track".to_string()
+        } else {
+            format!(
+                "only {} of {} spokes reach the fill: keep other copper off the pad's sides, or give the pad a solid zone connection (its zone_connect 2)",
+                spokes.map_or("some".to_string(), |count| count.to_string()),
+                needed.map_or("the needed".to_string(), |count| count.to_string())
+            )
+        };
+        found.push(KiCadStarvedThermal {
+            pad: pad["description"].as_str().unwrap_or("").to_string(),
+            layer,
+            at: [pad["pos"]["x"].as_f64().unwrap_or(0.0), pad["pos"]["y"].as_f64().unwrap_or(0.0)],
+            spokes,
+            needed,
+            advice,
+        });
+    }
+    found
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -456,6 +527,7 @@ fn diagnostics(board: &core::Board, result: &core::RoutingResult, layer_names: &
                 history: spot.history,
             })
             .collect(),
+        starved_thermals: Vec::new(),
     }
 }
 
@@ -2599,7 +2671,10 @@ pub(super) fn finish_routed_board(
         congestion: result.congestion.clone(),
         grid_origin: result.grid.origin,
         pin_swaps: None,
-        diagnostics: diagnostics(board, result, layer_names),
+        diagnostics: KiCadRoutingDiagnostics {
+            starved_thermals: starved_thermal_diagnostics(output_directory),
+            ..diagnostics(board, result, layer_names)
+        },
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(
@@ -2948,6 +3023,29 @@ mod pour_request_tests {
         // The inner pad's centre is free of the ring; the ring itself is copper.
         assert!(ring.shape.distance_to_point([10.0, 5.0]) > 2.0);
         assert!(ring.shape.distance_to_point([12.75, 5.0]) < 1.0e-6);
+    }
+
+    #[test]
+    fn starved_thermals_come_with_advice() {
+        let directory = std::env::temp_dir().join(format!("pcb-maker-starved-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("drc.json"),
+            r#"{"violations": [
+              {"type": "starved_thermal", "description": "Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)",
+               "items": [{"description": "Zone [GND] on F.Cu", "pos": {"x": 1, "y": 2}}, {"description": "Pad 4 [GND] of U201 on F.Cu", "pos": {"x": 3.5, "y": 4}}]},
+              {"type": "starved_thermal", "description": "Thermal relief connection to zone incomplete (layer F.Cu; 4 spokes connected to isolated island)",
+               "items": [{"description": "PTH pad 4 [MCU_GND] of J102", "pos": {"x": 5, "y": 6}}]},
+              {"type": "clearance", "description": "x", "items": []}]}"#,
+        )
+        .unwrap();
+        let found = starved_thermal_diagnostics(&directory);
+        fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!((found[0].layer.as_str(), found[0].spokes, found[0].needed, found[0].at), ("F.Cu", Some(1), Some(2), [3.5, 4.0]));
+        assert!(found[0].advice.contains("only 1 of 2 spokes"));
+        assert!(found[1].advice.contains("not joined"));
+        assert!(found[1].pad.contains("J102"));
     }
 
     #[test]
