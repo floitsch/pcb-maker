@@ -596,6 +596,9 @@ Committed, in order:
   stubs): 122 open. The default on x82: 221/223, KiCad 9 unconnected
   (x60: 219/223, 14), final step 18 open (was 33).
 
+- jetson-nano routing on x82: 338/340, KiCad 2 unconnected, nothing
+  beyond the designer (its hole_clearance findings are J2's own pins).
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
