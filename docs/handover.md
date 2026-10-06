@@ -804,9 +804,9 @@ board breaks them hundreds of times (use the guided set).
 - Router: a net whose connections fail on the whole board twice in a
   negotiation keeps to its corridors for the rest of it (only static
   things stop an ordinary search). link with pours as tracks: iteration 2
-  at 102 s (190), open searches stop growing. A full route of link's
-  designer placement on x108 runs to compare with x104 (19 open, 2389 s
-  attempt).
+  at 102 s (190), open searches stop growing. Full route of link's
+  designer placement: tracks probe 139 nets unfinished (160), the attempt
+  19 open in 2192 s (x104: 19 in 2389 s).
 - v8 on x106, first rows: jetson 337/340 (8 unconnected; 3 on x100, my
   experiments share the machine), link 172/251 with no copper errors
   (the 26 bridges are gone).
