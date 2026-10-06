@@ -599,6 +599,12 @@ Committed, in order:
 - jetson-nano routing on x82: 338/340, KiCad 2 unconnected, nothing
   beyond the designer (its hole_clearance findings are J2's own pins).
 
+- Layout v6 at 65/109: 13 pass (new: PixelWave 343/343, SmartSpin2k
+  panel 585/585 in 187 s, MotionCube). PolyKybd "molecule" boards are
+  panels of one keyboard key (716 footprints, duplicate references, the
+  designer's own board 266 unconnected): no fair target, like OpenRX's
+  and OpenESC's panels.
+
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
 four 1800 s timeouts, v4 after the terminal bug, v5 after 9 tasks for the
