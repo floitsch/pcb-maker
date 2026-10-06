@@ -588,7 +588,11 @@ Committed, in order:
   it joins GND's balls 170 of 172, +1V5 43/46, +3V3 31/31, but the fixed
   stubs take the DDR signals' channels: 158 open instead of 33 (192/223
   vs 219/223). Fan-out has to leave the signal escapes their way out:
-  stubs placed with the signals, not before them.
+  stubs placed with the signals, not before them. Tried that too (stubs
+  left unfixed, ordinary branches): 127 open, still far behind 33 with
+  pours as tracks and no stubs. On A13 the plane approach loses; its open
+  GND balls need something else (a ball-by-ball dogbone search with the
+  signals already routed?).
 
 Running: layout sweep `build/github-layout-v6` (`pcb-maker-x62`, tasks
 `build/github-tasks-v2`, `--jobs 1`; requested by Florian; v3 stopped after
