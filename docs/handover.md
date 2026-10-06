@@ -770,6 +770,19 @@ board breaks them hundreds of times (use the guided set).
   antenna or crystal weigh three times (Sisu's six: 72 mm against 114;
   designer 33). Neither is in v8's binary.
 
+- link in v8: 165/251 and 26 mask bridges, all with one F.Mask polygon
+  and listed against GND items. KiCad names the items whose net differs
+  from the first it found in the opening: that was a J9 track 0.025 mm
+  from the polygon. KiCad drops mask slivers under the minimum web width
+  (link: 0.1 mm), so copper within half of it counts as exposed (deleting
+  the track: 0 bridges; moved to 0.07 mm: 0). Mask openings now keep
+  copper `solder_mask_min_width / 2 + 0.01` away (a keepout's clearance
+  was ignored before).
+- Router search: one record per A* state, heap keys as one word, the
+  layer's maps hoisted: 15 % faster on ESC mini's first 20 iterations
+  (same routes). `stall_patience` (8 in layout trials). OpenAirScope
+  layout at 900 s: 8 trials (6), 10 open (12).
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x100` = 37d1833, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x100, timeout 2700 s). Leave it running. Compare v8 with v7's
