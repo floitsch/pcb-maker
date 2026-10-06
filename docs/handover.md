@@ -610,6 +610,11 @@ Committed, in order:
   DSP: 6 pads, 0 starved left, nothing beyond the designer). Default off:
   thermal reliefs are for soldering, the designer's call.
 
+- OpenAirScope routing on x83 (designer placement): 178/184, KiCad 6
+  unconnected (signals around the SD lines), nothing beyond the designer;
+  GND stitches complete in every pour rung. Its GND islands in layout
+  come from the automatic placement, not the pour model.
+
 Queued: `build/chain-v13.sh` waits for layout v6 to finish, then runs the
 routing sweep `build/github-route-v13` (`pcb-maker-x82`, all 109 boards,
 timeout 2700 s; log `build/github-route-v13.log`). Summarise it with
