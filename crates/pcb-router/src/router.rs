@@ -633,6 +633,10 @@ pub struct Router {
     /// Per layer and node: the pour net (as `owner`) whose pad needs the
     /// surrounding copper for its thermal spokes; other nets pay to pass.
     guard: Vec<Vec<u32>>,
+    /// Per node: bit 0 when any layer's `covered`, bit 1 when any layer's
+    /// `guard` holds a net there (most nodes: neither, and a via step
+    /// skips the per-layer maps).
+    via_marks: Vec<u8>,
     /// Per layer and node: the pour (as `owner`) covering the node, if any.
     covered: Vec<Vec<u32>>,
     /// Per layer and tile: share of the tile under some pour.
@@ -822,6 +826,7 @@ impl Router {
             global: None,
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
             guard: vec![Vec::new(); layers],
+            via_marks: Vec::new(),
             covered: vec![Vec::new(); layers],
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
@@ -853,6 +858,7 @@ impl Router {
             .collect();
         router.guard = router.thermal_guards();
         router.mark_covered();
+        router.mark_via_cells();
         router
     }
 
@@ -1102,6 +1108,21 @@ impl Router {
                 })
             })
         })
+    }
+
+    /// Sets `via_marks` from `covered` and `guard`.
+    fn mark_via_cells(&mut self) {
+        let mut marks = vec![0u8; self.grid.cells()];
+        for (bit, maps) in [(1u8, &self.covered), (2u8, &self.guard)] {
+            for map in maps.iter().filter(|map| !map.is_empty()) {
+                for (mark, value) in marks.iter_mut().zip(map) {
+                    if *value != 0 {
+                        *mark |= bit;
+                    }
+                }
+            }
+        }
+        self.via_marks = marks;
     }
 
     /// Marks the nodes and tiles under pours, per layer.
@@ -2643,25 +2664,34 @@ impl Router {
                     self.history[layers][cell]
                 };
                 let mut cut = 1.0f32;
-                for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
-                    if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
-                        cut *= factor;
+                let marks = self.via_marks.get(cell).copied().unwrap_or(3);
+                if marks & 1 != 0 {
+                    for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
+                        if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
+                            cut *= factor;
+                        }
                     }
                 }
                 // A via is copper on every layer: inside another net's
                 // thermal ring on any of them it starves the spokes there.
-                if self.guard.iter().any(|guard| !guard.is_empty() && guard[cell] != 0 && guard[cell] != own) {
+                if marks & 2 != 0
+                    && self.guard.iter().any(|guard| !guard.is_empty() && guard[cell] != 0 && guard[cell] != own)
+                {
                     cut *= self.config.thermal_guard_cost as f32;
                 }
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 let cell_class = if necks { self.class_at(net, net_state, cell as u32) } else { class };
+                let cell_statics = &self.statics[cell_class];
+                let free_layers = cell_statics.free_layers[cell];
                 for target_layer in 0..layers {
                     if target_layer == layer {
                         continue;
                     }
-                    let allowed = self.statics[cell_class].trace[target_layer][cell];
-                    if allowed != crate::grid::FREE && allowed != own {
-                        continue;
+                    if free_layers & (1 << target_layer) == 0 {
+                        let allowed = cell_statics.trace[target_layer][cell];
+                        if allowed != crate::grid::FREE && allowed != own {
+                            continue;
+                        }
                     }
                     if hard && self.occupancy_seen(scratch, class, cell_class * (layers + 1) + target_layer, cell) > 0 {
                         continue;
@@ -2810,6 +2840,7 @@ impl Router {
         self.covered = vec![Vec::new(); layers];
         self.tile_covered = vec![vec![0.0; tiles]; layers];
         self.mark_covered();
+        self.mark_via_cells();
 
         let mut rerouted = 0;
         for (net, old) in previous.into_iter().enumerate() {

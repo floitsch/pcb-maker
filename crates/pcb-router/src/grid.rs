@@ -344,6 +344,9 @@ pub struct StaticMaps {
     /// surface pad, deep enough for the whole via (a thermal via in a
     /// ground pad, as designers place them).
     pub via_owner: Vec<u32>,
+    /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
+    /// step reads one word instead of one per layer.
+    pub free_layers: Vec<u64>,
 }
 
 fn claim(cell: &mut u32, net: Option<NetId>) {
@@ -508,12 +511,21 @@ impl StaticMaps {
                 }
             }
         }
+        let mut free_layers = vec![0u64; cells];
+        for (layer, map) in trace.iter().enumerate().take(64) {
+            for (cell, value) in map.iter().enumerate() {
+                if *value == FREE {
+                    free_layers[cell] |= 1 << layer;
+                }
+            }
+        }
         Self {
             trace,
             edge_block,
             edge_owner,
             via_blocked,
             via_owner,
+            free_layers,
         }
     }
 
