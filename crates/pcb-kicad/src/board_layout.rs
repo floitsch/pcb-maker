@@ -675,7 +675,17 @@ pub fn layout_kicad_board(
     let movable: Vec<usize> = (0..problem.problem.components.len())
         .filter(|index| !problem.problem.components[*index].fixed && !problem.problem.components[*index].pins.is_empty())
         .collect();
-    for _ in 0..config.moves {
+    // Moves fine-tune a placement that nearly routes; with many
+    // connections open the final ladder (pours as tracks or planes, finer
+    // pitches) is the better use of the time, and it never ran when the
+    // moves took it (Sisu: 108 unconnected in the layout, 20 when route
+    // mode routed the same placement).
+    let terminals: usize = board.nets.iter().map(|net| net.terminals.len()).sum();
+    let many_open = best.0 > ((terminals as f64 * 0.05) as usize).max(10);
+    if many_open {
+        eprintln!("layout: {} open after the first route: no moves, the final ladder gets the time", best.0);
+    }
+    for _ in 0..if many_open { 0 } else { config.moves } {
         if best.0 == 0 && since_improvement >= config.patience {
             break;
         }
@@ -856,7 +866,7 @@ pub fn layout_kicad_board(
     // The polish reroutes everything: past the deadline it would stop at
     // once and throw the moves' best board away (OpenAirScope: 18 open
     // after the moves, 108 of 184 routed after the polish).
-    if !polished && !router.past_deadline() {
+    if !polished && !many_open && !router.past_deadline() {
         let expansions_before = router.expansions();
         let polished_result = router.reroute(true);
         work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
