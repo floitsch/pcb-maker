@@ -30,7 +30,11 @@ pub struct KiCadBoardPlacerConfig {
     /// References that may move even though a default rule would fix them.
     pub free: Vec<String>,
     /// Share of the whitespace taken by filler charge: 1 packs the parts as
-    /// tightly as halos allow, 0 spreads them over the whole board.
+    /// tightly as halos allow, 0 spreads them over the whole board. 0 by
+    /// default: the spare room then lies between the parts, where routing
+    /// needs it (routed in route mode, Sisu's placement left 11 open in
+    /// KiCad at 0 and 20 at 0.6; OpenESC mini 62-70 against 80-86 over two
+    /// seeds; wirelength within 3 %).
     pub whitespace_fill: f64,
     /// Every footprint keeps a halo of `pins / pins_per_halo_track` tracks
     /// (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its
@@ -99,7 +103,7 @@ impl Default for KiCadBoardPlacerConfig {
             fixed_patterns: Vec::new(),
             edge_keep_mm: default_edge_keep_mm(),
             free: Vec::new(),
-            whitespace_fill: 0.6,
+            whitespace_fill: 0.0,
             track_pitch_mm: 0.65,
             pins_per_halo_track: 8.0,
             maximum_halo_mm: 4.0,

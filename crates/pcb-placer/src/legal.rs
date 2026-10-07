@@ -645,9 +645,16 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
             continue;
         }
         let component = &problem.components[index];
+        // What the user asked for comes first: the relation's violation,
+        // then the other relations and the wire (a chain's end held near
+        // its start stayed 0.24 mm short when wire and penalty were summed).
         let score = |poses: &[Pose]| {
-            constraints::relation_penalty(problem, poses, Some(index)) + problem.wirelength(poses)
+            (
+                constraints::relation_violation(problem, poses, relation),
+                constraints::relation_penalty(problem, poses, Some(index)) + problem.wirelength(poses),
+            )
         };
+        let better = |a: (f64, f64), b: (f64, f64)| a.0 < b.0 - 1.0e-9 || (a.0 <= b.0 + 1.0e-9 && a.1 < b.1 - 1.0e-9);
         let original = poses[index];
         let mut best = (score(poses), original);
         let target = constraints::relation_target(problem, poses, relation);
@@ -672,7 +679,7 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
                         poses[index] = pose;
                         let candidate = score(poses);
                         poses[index] = original;
-                        if candidate < best.0 - 1.0e-9 {
+                        if better(candidate, best.0) {
                             best = (candidate, pose);
                         }
                     }

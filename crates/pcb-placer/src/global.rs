@@ -41,7 +41,7 @@ impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
             bins: 64,
-            whitespace_fill: 0.6,
+            whitespace_fill: 0.0,
             stop_overflow: 0.04,
             max_iterations: 1500,
             lambda_growth: 1.03,
