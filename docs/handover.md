@@ -943,7 +943,22 @@ on `pcb-maker-x134` with tasks v5, then routing sweep
 (`build/github-layout-v8-x112.log`), v15 with v12. **Run nothing heavy
 beside it.** First rows (quiet machine, x134 against x112): jetson
 338/340 with KiCad 2 unconnected (337, 8), link 228/251 with 61 (224,
-105), laptop 234/236 with 2 (same, 1745 s). The Freerouting sweep (`build/github-freerouting`, nice 15,
+105), laptop 234/236 with 2 (same, 1745 s). The two panels (OpenRX,
+ESC 30x30; their designers' own boards are incomplete, no fair targets)
+are worse: 39/127 (53) and 32/184 (43), and done in 1044 and 1221 s.
+On OpenRX x112 spent 690 s in moves and gained 14 connections; x134
+skipped the moves (472 open after the first route) and the ladder's
+rungs (tracks probe 121 nets unfinished, its attempt 949 open) did not
+beat the first route. So the many-open rule loses where the ladder has
+nothing better, as it won on Sisu where it had. A probe is no
+predictor for the tracks rung (link, OpenRX: best probe, worst
+attempt). Watch the real boards of the sweep before changing the rule;
+a cleaner design would let the layout pick the pour mode once and hand
+the ladder that rung only. Also seen there: on a small board the work
+clock runs ahead of the wall clock (771 work s in 558 s), so the run
+ends at 1044 s with 750 s of the harness's time unused; on big boards
+it is the other way round. The work budget is what it is (Florian:
+budgets in work), but the harness's limit is wall time. The Freerouting sweep (`build/github-freerouting`, nice 15,
 one thread) runs alongside; it takes one core.
 
 ### Search speed: the packed per-node record (x133)
