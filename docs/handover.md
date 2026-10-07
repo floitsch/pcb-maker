@@ -1162,7 +1162,14 @@ first): jetson, link, laptop, OpenRX panel, ESC 30x30 panel and MokyaLora
 all timed out at 1500 s with no session (Freerouting writes it only at
 the end; its log had laptop at 80 unrouted, OpenRX at 301, MokyaLora at
 245 when cut; we route MokyaLora 261/262 within the same time). Smoke
-test: framework_mobo_lefthalf 44 unrouted after 4 passes (288 s).
+test: framework_mobo_lefthalf 44 unrouted after 4 passes (288 s). After
+17 boards (evening): 15 timeouts at 1500 s (PolyKybd right 902 unrouted
+when cut, Sisu 190, eurorack 3, vaio 49); finished: OpenFC in 942 s
+with 6 unrouted (KiCad 8 unconnected, 143 errors), framework in 305 s
+with 44 unrouted. For the matched comparison our cold-board numbers
+(`freerouting.py --ours --skip-freerouting`) are still to run, after
+the sweeps; with pours kept we route eurorack 131/133, OpenFC 81/82,
+framework 71/71 and PolyKybd 416-419/420 inside the same wall time.
 
 ## Where things are
 
