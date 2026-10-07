@@ -1003,6 +1003,22 @@ thermals 3 against 7; tracks rung the same (247). **Default on since
 x131** (completeness first; it costs iterations). The layout sweep is
 the real test.
 
+### The layout's final phase, measured on PolyKybd right
+
+x112's row: first route 361 s to 33 open, then a polish that opened 108
+(kept the unpolished routes, 300 s lost), then the ladder's probes and a
+continued rung that ended at 538 open; the first route stood (416/420,
+KiCad 21). x126 (`reroute` at the reached price; the first route resumed
+at the full patience with 40 % of what is left before the ladder): the
+resume took 35 open to 32, 419/420 routed, KiCad 16 unconnected. But the
+run needed 2665 s of wall for 848 s of work: the board's search ran at
+0.65M expansions a second, a third of the 2M the work clock assumes (ESC
+mini runs at 3M). Big boards are memory-bound on their 1.5M-cell, 4-layer
+lattices, and the wall guard cuts them long before their work budget:
+**the scale lever is the search's memory traffic, or a coarser lattice on
+boards whose rules allow it** (PolyKybd routes 0.25 mm tracks at 0.2 mm
+clearance on a 0.1 mm lattice).
+
 ### Exclusive planes as the designers' stackups
 
 `exclusive_layers` (KiCad router config): with exclusive planes, how many
