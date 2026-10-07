@@ -868,6 +868,15 @@ board breaks them hundreds of times (use the guided set).
   controller, 0.4 mm WQFN): 18 nets still conflicted at the end, no dead
   pad. Designer: 0.18 mm tracks there.
 
+- ESC mini (v8 x112): 109/152, 97 unconnected (designer placement
+  routes 149/152, 3). It placed at the tight level (spacing 0.09, no
+  halos); the open ones are supply nets (GND 54, +3V3 16, +BATT 8, +10V
+  8) and motor phases: no room for vias and wide tracks. The main gap on
+  crowded boards (ESC, Sisu, link) is now placement for routability:
+  candidates are via sites reserved next to supply pins, demand-driven
+  spreading (RUDY-style inflation in global placement), and placing
+  repeated channels alike (ESC's four channels, keyboards).
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
