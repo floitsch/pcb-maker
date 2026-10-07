@@ -880,6 +880,10 @@ pub fn layout_kicad_board(
         let left = (config.total_seconds - work).max(0.0);
         let share = (0.2 * left).min(240.0);
         if share >= 60.0 {
+            // A resume that ends worse (MokyaLora: 21 open to 89) must
+            // not leave its state behind for the polish: the router is
+            // restored with the result.
+            let saved_router = router.clone();
             let expansions_before = router.expansions();
             {
                 let defaults = core::router::Config::default();
@@ -900,6 +904,8 @@ pub fn layout_kicad_board(
             if after <= before {
                 result = resumed;
                 best = after;
+            } else {
+                router = saved_router;
             }
         }
     }
@@ -907,6 +913,7 @@ pub fn layout_kicad_board(
     // once and throw the moves' best board away (OpenAirScope: 18 open
     // after the moves, 108 of 184 routed after the polish).
     if !polished && !many_open && !router.past_deadline() {
+        let saved_router = router.clone();
         let expansions_before = router.expansions();
         let polished_result = router.polish();
         work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
@@ -918,6 +925,7 @@ pub fn layout_kicad_board(
             result = polished_result;
         } else {
             eprintln!("layout: the polish left {} open (before it {}): kept the unpolished routes", after.0, before.0);
+            router = saved_router;
         }
     }
     // Reference labels off pads and other silkscreen.

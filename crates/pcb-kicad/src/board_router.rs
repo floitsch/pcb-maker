@@ -1907,6 +1907,16 @@ pub fn route_kicad_board(
     let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
     let spent = |work: f64| work.max(ladder_started.elapsed().as_secs_f64() / core::router::GUARD);
     let past_deadline = || config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    // What the last attempt took of the wall clock, verification included:
+    // no attempt starts with less than that left before the deadline (an
+    // attempt checks the deadline only in its negotiation; MokyaLora's last
+    // rung started at 1560 s and ran to 1890 s, past the harness's limit).
+    let last_attempt_wall = std::cell::Cell::new(60.0f64);
+    let no_time_for_another = || {
+        config.deadline.is_some_and(|deadline| {
+            deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() < last_attempt_wall.get().max(60.0)
+        })
+    };
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -1999,6 +2009,7 @@ pub fn route_kicad_board(
                 ladder_started.elapsed().as_secs_f64()
             );
             slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
+            last_attempt_wall.set(started.elapsed().as_secs_f64());
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
             best_attempt = Some((attempt.clone(), connect));
@@ -2028,10 +2039,11 @@ pub fn route_kicad_board(
             if pitch.is_none() && probed_mode == Some(mode) {
                 continue;
             }
-            if best.is_some() && past_deadline() {
+            if best.is_some() && (past_deadline() || no_time_for_another()) {
                 eprintln!("deadline reached: no further attempts");
                 break 'ladder;
             }
+            let rung_started = std::time::Instant::now();
             // The skeleton and the plane stubs only help when the plain
             // pour connection left pads of a pour net open; elsewhere they
             // just take room.
@@ -2154,6 +2166,7 @@ pub fn route_kicad_board(
                 result.vias,
                 result.routing_seconds
             );
+            last_attempt_wall.set(rung_started.elapsed().as_secs_f64());
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
@@ -2212,7 +2225,7 @@ pub fn route_kicad_board(
         let cost = work_of(best_result.expansions).max(1.0);
         let affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
-        if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() {
+        if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() || no_time_for_another() {
             break;
         }
         let mut seeded = attempt.clone();
@@ -2253,6 +2266,7 @@ pub fn route_kicad_board(
         && config.use_narrow_signals.is_none()
         && spent(ladder_work) < 1.5 * ladder_budget
         && !past_deadline()
+        && !no_time_for_another()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
     {
         let mut narrowed = attempt.clone();
@@ -2301,6 +2315,7 @@ pub fn route_kicad_board(
         && !narrow_step_relaxed
         && spent(ladder_work) < 1.5 * ladder_budget
         && !past_deadline()
+        && !no_time_for_another()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
     {
         let mut relaxed_attempt = attempt.clone();

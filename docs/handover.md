@@ -937,13 +937,24 @@ jetson's polish still opened 22 to 28: `reroute(true)` renegotiated the
 open nets at the trials' short patience; the layout now calls
 `Router::polish` (clean-up, via reduction, stitching only).
 
-**Running: `build/chain-v10.sh`**: layout sweep `build/github-layout-v10`
-on `pcb-maker-x134` with tasks v5, then routing sweep
-`build/github-route-v15` on x134. Compare v10 with x112's 29 rows
-(`build/github-layout-v8-x112.log`), v15 with v12. **Run nothing heavy
-beside it.** First rows (quiet machine, x134 against x112): jetson
+`build/chain-v10.sh` (x134) ran 9 rows on a quiet machine
+(`build/github-layout-v10-x134-partial.log`), x134 against x112: jetson
 338/340 with KiCad 2 unconnected (337, 8), link 228/251 with 61 (224,
-105), laptop 234/236 with 2 (same, 1745 s). The two panels (OpenRX,
+105), laptop 234/236 with 2 (same), **Sisu 178/192 with 39 (160, 108),
+ESC mini 122/152 with 51 (109, 97)**; and **MokyaLora killed at 1800 s**
+(261/262 on x112): its resume went 21 open to 89 and left that state in
+the router for the polish (86), and the ladder's last rung started at
+1560 s and ran to 1890 s (an attempt checks the deadline only in its
+negotiation; the repair, clean-up and KiCad's check ran on). Fixed in
+x136: a worse resume or polish restores the router it had; no rung,
+seed retry or narrow step starts with less wall time left than the last
+attempt took (`no_time_for_another`).
+
+**Running: `build/chain-v11.sh`**: layout sweep `build/github-layout-v11`
+on `pcb-maker-x136` with tasks v5, then routing sweep
+`build/github-route-v16` on x136. Compare v11 with x112's 29 rows
+(`build/github-layout-v8-x112.log`), v16 with v12. **Run nothing heavy
+beside it.** The two panels (OpenRX,
 ESC 30x30; their designers' own boards are incomplete, no fair targets)
 are worse: 39/127 (53) and 32/184 (43), and done in 1044 and 1221 s.
 On OpenRX x112 spent 690 s in moves and gained 14 connections; x134
