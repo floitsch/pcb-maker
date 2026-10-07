@@ -992,9 +992,12 @@ on ESC mini with `{"pours": "connect"}`: 22 open and KiCad 8 unconnected
 against 27 and 12 without, but the attempt negotiated 80 iterations
 against 53 (1258 s against 311 s on the loaded machine): the pads come
 and go with the signals, and every new low by their count reset the
-stall. x128 measures progress without them. **Opt-in (default off)
-until it wins across boards**; next: a connect-mode board of the layout
-sweep (PolyKybd right, Hub) on vs off, and the time.
+stall. x128 measures progress without them. Hub (4 layers, route mode,
+x128) on against off: connect rung 123 open against 135, the whole
+ladder 108 against 112, KiCad 17 unconnected against 18, starved
+thermals 3 against 7; tracks rung the same (247). **Default on since
+x131** (completeness first; it costs iterations). The layout sweep is
+the real test.
 
 ### Exclusive planes as the designers' stackups
 

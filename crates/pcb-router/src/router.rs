@@ -71,9 +71,11 @@ pub struct Config {
     /// to it like off-pour pads (a via into the plane, mostly), so that the
     /// supply nets negotiate with the signals instead of being repaired
     /// after them, when the room is gone (ESC mini: 41 of GND's pads
-    /// stranded after the stitching). Off until measured across boards:
-    /// ESC mini's connect rungs ended worse with it (the stubs of the early
-    /// iterations stayed and took the signals' room; now they go again).
+    /// stranded after the stitching). Pads whose piece rejoins lose their
+    /// stub again (a sticky first version left the early iterations' stubs
+    /// in the signals' way). Connect rungs with it: ESC mini 22 open
+    /// against 27, Hub 123 against 135; tracks mode unchanged; it costs
+    /// iterations.
     pub pour_islands: bool,
     /// Fine-pitch pads (narrower than the track plus its clearance, on one
     /// layer, in a row of their kind) get a straight stub outward fixed
@@ -171,7 +173,7 @@ impl Default for Config {
             stall_drop: 0.0,
             stall_patience: 25,
             abandon_hopeless: true,
-            pour_islands: false,
+            pour_islands: true,
             escape_stub_mm: 0.0,
             global_routing: false,
             neck_reach: 1.5,
