@@ -40,7 +40,14 @@ def parse_sexpr(source):
             stack.pop()
         else:
             assert stack
-            stack[-1].append(json.loads(word) if word.startswith('"') else word)
+            if word.startswith('"'):
+                # KiCad quotes names as they are (a backslash in a net
+                # name is no escape).
+                try:
+                    word = json.loads(word)
+                except json.JSONDecodeError:
+                    word = word[1:-1]
+            stack[-1].append(word)
     assert not source[last:].strip() and not stack and len(root) == 1
     return root[0]
 

@@ -112,6 +112,7 @@ def freeroute(cold, board_id, work, config, timeout):
     row["log_unrouted"] = int(found[-1]) if found else None
     if not session.exists():
         row["status"] = "timeout" if row["router_exit"] == "timeout" else "no session"
+        dsn.unlink(missing_ok=True)
         return row
     result = work / "result"
     shutil.copytree(cold, result)
