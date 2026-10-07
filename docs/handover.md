@@ -941,7 +941,9 @@ open nets at the trials' short patience; the layout now calls
 on `pcb-maker-x134` with tasks v5, then routing sweep
 `build/github-route-v15` on x134. Compare v10 with x112's 29 rows
 (`build/github-layout-v8-x112.log`), v15 with v12. **Run nothing heavy
-beside it.** The Freerouting sweep (`build/github-freerouting`, nice 15,
+beside it.** First rows (quiet machine, x134 against x112): jetson
+338/340 with KiCad 2 unconnected (337, 8), link 228/251 with 61 (224,
+105), laptop 234/236 with 2 (same, 1745 s). The Freerouting sweep (`build/github-freerouting`, nice 15,
 one thread) runs alongside; it takes one core.
 
 ### Search speed: the packed per-node record (x133)
