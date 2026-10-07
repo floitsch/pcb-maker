@@ -191,6 +191,15 @@ const OVERHANG_SLACK: f64 = 0.5;
 /// top, right, bottom) at `angle`, so that its pads keep the copper-to-edge
 /// clearance: the clearance less how far the pads sit inside the body.
 pub fn copper_edge_offsets(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
+    copper_edge_offsets_signed(problem, index, angle).map(|offset| offset.max(0.0))
+}
+
+/// `copper_edge_offsets` without the floor at zero: negative where the
+/// pads sit deeper inside the body than the clearance, so the body may
+/// reach that far beyond the edge with its pads still clear of it (the
+/// side a part overhangs: the fence's ESP32 module put its pad row on the
+/// edge, 15 edge-clearance findings).
+pub fn copper_edge_offsets_signed(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
     let clearance = problem.constraints.copper_edge;
     let component = &problem.components[index];
     if clearance <= 0.0 || component.pads.is_empty() {
@@ -209,10 +218,10 @@ pub fn copper_edge_offsets(problem: &Problem, index: usize, angle: f64) -> [f64;
         ];
     }
     [
-        (clearance - (copper[0] - body[0])).max(0.0),
-        (clearance - (copper[1] - body[1])).max(0.0),
-        (clearance - (body[2] - copper[2])).max(0.0),
-        (clearance - (body[3] - copper[3])).max(0.0),
+        clearance - (copper[0] - body[0]),
+        clearance - (copper[1] - body[1]),
+        clearance - (body[2] - copper[2]),
+        clearance - (body[3] - copper[3]),
     ]
 }
 
@@ -236,7 +245,10 @@ pub fn side_margins(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
         margins[side_index(*edge)] = offsets[side_index(*edge)];
     }
     if let Some((edge, _)) = constraints.overhang(index) {
-        margins[side_index(edge)] = 0.0;
+        // The body reaches beyond this edge, as far as its pads allow: they
+        // keep the copper clearance from it (negative: that far outside).
+        let signed = copper_edge_offsets_signed(problem, index, angle);
+        margins[side_index(edge)] = if problem.components[index].pads.is_empty() { 0.0 } else { signed[side_index(edge)] };
     }
     margins
 }
@@ -322,7 +334,31 @@ fn overhang_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         Edge::Right => bounds[2] - outside[0],
         Edge::Bottom => bounds[3] - outside[1],
     };
-    reach.max(0.0) + (-reach - OVERHANG_SLACK).max(0.0)
+    reach.max(0.0) + (-reach - OVERHANG_SLACK).max(0.0) + pad_edge_deficit(problem, index, pose, edge)
+}
+
+/// How far (mm) the part's pads fall short of the copper clearance from
+/// the edge it overhangs: a body may reach beyond the edge, its copper may
+/// not come closer than the rule (the fence's ESP32 module had its pad row
+/// on the edge: 15 edge-clearance findings).
+fn pad_edge_deficit(problem: &Problem, index: usize, pose: Pose, edge: Edge) -> f64 {
+    let clearance = problem.constraints.copper_edge;
+    if clearance <= 0.0 {
+        return 0.0;
+    }
+    let component = &problem.components[index];
+    let bounds = edge_frame(problem, body(problem, index, pose).0);
+    let mut distance = f64::INFINITY;
+    for (center, half) in component.pad_boxes(pose) {
+        let near = match edge {
+            Edge::Left => center[0] - half[0] - bounds[0],
+            Edge::Top => center[1] - half[1] - bounds[1],
+            Edge::Right => bounds[2] - (center[0] + half[0]),
+            Edge::Bottom => bounds[3] - (center[1] + half[1]),
+        };
+        distance = distance.min(near);
+    }
+    if distance.is_finite() { (clearance - distance).max(0.0) } else { 0.0 }
 }
 
 /// Body box of a component at a pose: centre and half extents.
@@ -454,6 +490,16 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
             Edge::Top => center[1] += bounds[1] - outside[3],
             Edge::Right => center[0] += bounds[2] - outside[0],
             Edge::Bottom => center[1] += bounds[3] - outside[1],
+        }
+        // Pads too close to that edge: further out, as far as the slack
+        // allows (the box may stay that far short of the edge).
+        let position = component.position_for_center(*center, angle);
+        let deficit = pad_edge_deficit(problem, index, Pose { position, angle }, edge).min(OVERHANG_SLACK);
+        match edge {
+            Edge::Left => center[0] -= deficit,
+            Edge::Top => center[1] -= deficit,
+            Edge::Right => center[0] += deficit,
+            Edge::Bottom => center[1] += deficit,
         }
     }
     let Some(limits) = limits(problem, index, *center) else {

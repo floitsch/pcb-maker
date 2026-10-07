@@ -680,8 +680,12 @@ pub fn layout_kicad_board(
     // pitches) is the better use of the time, and it never ran when the
     // moves took it (Sisu: 108 unconnected in the layout, 20 when route
     // mode routed the same placement).
+    // Where the ladder has no other way of connecting the pours to try
+    // (no pours, or two layers), the moves are the only lever left (the
+    // breadboard fence on two layers: 41 open, no move was ever tried).
     let terminals: usize = board.nets.iter().map(|net| net.terminals.len()).sum();
-    let many_open = best.0 > ((terminals as f64 * 0.05) as usize).max(10);
+    let ladder_has_rungs = connect && layers.names.len() >= 4;
+    let many_open = ladder_has_rungs && best.0 > ((terminals as f64 * 0.05) as usize).max(10);
     if many_open {
         eprintln!("layout: {} open after the first route: no moves, the final ladder gets the time", best.0);
     }

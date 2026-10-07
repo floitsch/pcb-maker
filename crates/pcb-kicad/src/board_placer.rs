@@ -1538,6 +1538,27 @@ pub(super) fn lower_placement(
             || config.fixed_patterns.iter().any(|pattern| glob_matches(pattern, reference))
             || (default_fixed && !config.free.contains(reference));
     }
+    // Fixed parts on top of each other place and route without a word,
+    // and the board comes back with opens: say so (fence issue E).
+    let mut stacked_warnings = Vec::new();
+    {
+        let fixed: Vec<usize> = (0..footprint_count).filter(|index| problem.components[*index].fixed && !problem.components[*index].pins.is_empty()).collect();
+        for (a, first) in fixed.iter().enumerate() {
+            for second in &fixed[a + 1..] {
+                let (ca, cb) = (&problem.components[*first], &problem.components[*second]);
+                if !ca.side.collides(cb.side) {
+                    continue;
+                }
+                let (pa, pb) = (problem.poses[*first], problem.poses[*second]);
+                let (center_a, half_a) = (ca.center(pa), ca.half_extent(pa.angle));
+                let (center_b, half_b) = (cb.center(pb), cb.half_extent(pb.angle));
+                let overlap = (0..2).all(|axis| (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05);
+                if overlap {
+                    stacked_warnings.push(format!("fixed parts {} and {} overlap", references[*first], references[*second]));
+                }
+            }
+        }
+    }
     let constraint_warnings = match &config.constraints {
         None => Vec::new(),
         Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
@@ -1567,6 +1588,8 @@ pub(super) fn lower_placement(
     }
     apply_channels(&mut problem, &references, &pad_boxes, channels)?;
     problem.constraints.link_pairs();
+    let mut constraint_warnings = constraint_warnings;
+    constraint_warnings.extend(stacked_warnings);
     Ok(LoweredPlacement {
         problem,
         references,

@@ -1048,6 +1048,22 @@ mode) probed worse (stubs rung 200 nets unfinished against 190) and its
 continued rung ended at 403 open after 3900 s; the tight channels
 between the switch pins need the 0.1 mm rows.
 
+### From the fence re-run (another session, `benchmarks/fence/README.md`)
+
+A parallel session re-ran the breadboard fence benchmarks on 5061a55 and
+wrote up what still fails there (issues A-G). Fixed from it: **D**, an
+overhanging part's pads on the board edge: `side_margins` gave the
+overhung side no margin at all and `clamp_center` put the keepout box
+flush with the edge, so the ESP32 module's GND pad row lay on the edge
+(15 `copper_edge_clearance`). Now `pad_edge_deficit` (constraints.rs)
+counts as a hard violation, and `clamp_center` moves the part outward by
+it within the overhang slack: the module sits 0.5 mm lower, 0 findings
+(`scratchpad/fence-d3`). Noted, not done: **B**, the layout skips its
+moves when more than 5 % are open, which on a two-layer board without
+pour rungs leaves the ladder nothing to try either (keep the moves when
+the ladder has no alternative rung); **E** a warning for stacked fixed
+parts; **F** `swap_candidates` on `PA15`-style pin names.
+
 ### Exclusive planes as the designers' stackups
 
 `exclusive_layers` (KiCad router config): with exclusive planes, how many
