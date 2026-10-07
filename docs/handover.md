@@ -924,13 +924,37 @@ board breaks them hundreds of times (use the guided set).
 `build/github-route-v13`) was **stopped on 2026-10-07 at 3 rows**: the
 day's experiments loaded the machine to 20+ and link and laptop timed out
 at 1800 s with no board (`build/github-layout-v8-x119-loaded.log`). A
-sweep is only meaningful on a quiet machine. Queued instead:
-`build/chain-v9.sh` (waits until no experiment routes or lays out, then
-layout sweep `build/github-layout-v9` on `pcb-maker-x131` = 7d996cc with
-tasks v5, then routing sweep `build/github-route-v14` on x131). Compare
-v9 with x112's 29 rows (`build/github-layout-v8-x112.log`), v14 with v12.
-The Freerouting sweep (`build/github-freerouting`, nice 15, one thread)
-runs alongside; it takes one core. (`build/github-layout-v8-x96` holds
+sweep is only meaningful on a quiet machine. `build/chain-v9.sh` (x131)
+was stopped at 5 rows, again under experiment load (jetson 335/340 with 6
+unconnected in 1787 s, link 215/251, laptop **killed at 1800 s**, OpenRX
+39/127; `build/github-layout-v9.log`). Laptop showed two flaws of x131's
+layout flow, fixed in x134: the first route's resume took 493 s and
+gained nothing while the ladder (which had completed laptop to 2
+unconnected on x112) ran out of time (the share is now 20 % of what is
+left, at most 240 s), and a ladder started with little wall clock left
+runs past the harness (none starts with under 240 s to the deadline).
+jetson's polish still opened 22 to 28: `reroute(true)` renegotiated the
+open nets at the trials' short patience; the layout now calls
+`Router::polish` (clean-up, via reduction, stitching only).
+
+**Running: `build/chain-v10.sh`**: layout sweep `build/github-layout-v10`
+on `pcb-maker-x134` with tasks v5, then routing sweep
+`build/github-route-v15` on x134. Compare v10 with x112's 29 rows
+(`build/github-layout-v8-x112.log`), v15 with v12. **Run nothing heavy
+beside it.** The Freerouting sweep (`build/github-freerouting`, nice 15,
+one thread) runs alongside; it takes one core.
+
+### Search speed: the packed per-node record (x133)
+
+`Router::hot[class * layers + layer][cell] = {trace, guard, covered,
+history}`: the four maps a search step read per neighbour, in one 16-byte
+record (built in `new` and `update`, the history copies kept in step in
+the conflict loop). PolyKybd right, five negotiation iterations, same
+120M expansions and routes: search 92 s against 120 s (-23 %); ESC mini
+unchanged within noise (small lattices fit the caches anyway). Next on
+this path: the occupancy map of the net's class into the record too
+(another line per neighbour), and the search node array windowed to the
+corridor. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
@@ -1000,8 +1024,10 @@ stall. x128 measures progress without them. Hub (4 layers, route mode,
 x128) on against off: connect rung 123 open against 135, the whole
 ladder 108 against 112, KiCad 17 unconnected against 18, starved
 thermals 3 against 7; tracks rung the same (247). **Default on since
-x131** (completeness first; it costs iterations). The layout sweep is
-the real test.
+x131** (completeness first; it costs iterations). PolyKybd right in
+route mode on x131 (machine loaded, 5050 s): stubs rung, 25 open, KiCad
+11 unconnected (x64 had 5 on a quiet machine; the layout sweep's x112
+row 21). The layout sweep is the real test.
 
 ### The layout's final phase, measured on PolyKybd right
 
@@ -1015,9 +1041,11 @@ run needed 2665 s of wall for 848 s of work: the board's search ran at
 0.65M expansions a second, a third of the 2M the work clock assumes (ESC
 mini runs at 3M). Big boards are memory-bound on their 1.5M-cell, 4-layer
 lattices, and the wall guard cuts them long before their work budget:
-**the scale lever is the search's memory traffic, or a coarser lattice on
-boards whose rules allow it** (PolyKybd routes 0.25 mm tracks at 0.2 mm
-clearance on a 0.1 mm lattice).
+**the scale lever is the search's memory traffic.** A coarser lattice is
+not: PolyKybd right at 0.2 mm (`{"grid_pitches_mm": [0.2]}`, route
+mode) probed worse (stubs rung 200 nets unfinished against 190) and its
+continued rung ended at 403 open after 3900 s; the tight channels
+between the switch pins need the 0.1 mm rows.
 
 ### Exclusive planes as the designers' stackups
 

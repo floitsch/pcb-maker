@@ -865,13 +865,16 @@ pub fn layout_kicad_board(
 
     // Connections the first route and the moves left open: before the
     // final ladder starts over, the router goes on from where it is, at
-    // the full patience, with a share of what is left (PolyKybd right: the
-    // first route left 33 open after 361 s; the ladder's rungs, started
-    // from scratch with the rest, ended at 538 open and the first route
-    // stood). With many open the pour mode is in question: the ladder's.
+    // the full patience, with a small share of what is left (PolyKybd
+    // right: the first route left 33 open after 361 s; the ladder's rungs,
+    // started from scratch with the rest, ended at 538 open and the first
+    // route stood; the resume took 35 to 32, jetson 26 to 22). A small
+    // share: on the laptop motherboard 493 s of it gained nothing, and the
+    // ladder, which had completed that board to 2 unconnected, ran out of
+    // time. With many open the pour mode is in question: the ladder's.
     if best.0 > 0 && !many_open && !router.past_deadline() {
         let left = (config.total_seconds - work).max(0.0);
-        let share = (0.4 * left).min(600.0);
+        let share = (0.2 * left).min(240.0);
         if share >= 60.0 {
             let expansions_before = router.expansions();
             {
@@ -901,7 +904,7 @@ pub fn layout_kicad_board(
     // after the moves, 108 of 184 routed after the polish).
     if !polished && !many_open && !router.past_deadline() {
         let expansions_before = router.expansions();
-        let polished_result = router.reroute(true);
+        let polished_result = router.polish();
         work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
         // A polish the deadline cut short can leave more open than it
         // found (Sisu: 146 open before it, 255 after): then the board stays
@@ -968,7 +971,12 @@ pub fn layout_kicad_board(
     // Past the wall-clock guard the ladder would only lower the board and
     // ask KiCad again (link ended 106 s past it, 44 s before the
     // benchmark's limit).
-    let past_guard = router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    // A ladder needs a few minutes of wall clock for a probe, the board
+    // and KiCad's check; started with less it runs past the harness's
+    // limit (the laptop motherboard: killed at 1800 s without a board).
+    let past_guard = router_config
+        .deadline
+        .is_some_and(|deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() < 240.0);
     let fallback_config = if past_guard {
         None
     } else if current.0 > 0 {

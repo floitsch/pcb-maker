@@ -508,6 +508,16 @@ fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
     ]
 }
 
+/// What a search step reads of a node on one layer for one rule class
+/// (see `Router::hot`).
+#[derive(Clone, Copy, Default)]
+struct Hot {
+    trace: u32,
+    guard: u32,
+    covered: u32,
+    history: f32,
+}
+
 /// A* state of one lattice node and layer, kept together: a search step
 /// reads and writes them all, one cache line instead of five.
 #[derive(Clone, Copy, Default)]
@@ -653,6 +663,13 @@ pub struct Router {
     via_marks: Vec<u8>,
     /// Per layer and node: the pour (as `owner`) covering the node, if any.
     covered: Vec<Vec<u32>>,
+    /// Per rule class and layer (index `class * layers + layer`), per
+    /// node: what a search step reads of the static map, the thermal
+    /// guard, the pour cover and the history, in one record. A big board's
+    /// search is bound by memory (PolyKybd's 9.4M-state lattice ran at
+    /// 0.65M expansions a second against 3M on a small one); one cache
+    /// line per neighbour instead of four. Kept in step with `history`.
+    hot: Vec<Vec<Hot>>,
     /// Per layer and tile: share of the tile under some pour.
     tile_covered: Vec<Vec<f32>>,
     /// Per layer: cost factor for cutting a pour there. Relative to the
@@ -842,6 +859,7 @@ impl Router {
             guard: vec![Vec::new(); layers],
             via_marks: Vec::new(),
             covered: vec![Vec::new(); layers],
+            hot: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             neck_of,
@@ -873,7 +891,32 @@ impl Router {
         router.guard = router.thermal_guards();
         router.mark_covered();
         router.mark_via_cells();
+        router.build_hot();
         router
+    }
+
+    /// Packs the static map, the guard, the pour cover and the history
+    /// per class and layer (see `hot`); after any of them changed.
+    fn build_hot(&mut self) {
+        let layers = self.board.layer_count;
+        let cells = self.grid.cells();
+        self.hot = (0..self.statics.len() * layers)
+            .map(|index| {
+                let (class, layer) = (index / layers, index % layers);
+                let trace = &self.statics[class].trace[layer];
+                let guard = &self.guard[layer];
+                let covered = &self.covered[layer];
+                let history = &self.history[layer];
+                (0..cells)
+                    .map(|cell| Hot {
+                        trace: trace[cell],
+                        guard: if guard.is_empty() { 0 } else { guard[cell] },
+                        covered: if covered.is_empty() { 0 } else { covered[cell] },
+                        history: history[cell],
+                    })
+                    .collect()
+            })
+            .collect();
     }
 
     pub fn grid(&self) -> &Grid {
@@ -2693,12 +2736,10 @@ impl Router {
             } else {
                 here_statics.edge_block[layer][cell]
             };
-            // This layer's maps, looked up once per expansion rather than
-            // once per step.
-            let layer_trace = &statics.trace[layer];
-            let layer_history: &[f32] = if self.cleanup { &[] } else { &self.history[layer] };
-            let layer_guard = &self.guard[layer];
-            let layer_covered = &self.covered[layer];
+            // This layer's packed maps, looked up once per expansion
+            // rather than once per step.
+            let layer_hot = &self.hot[class * layers + layer];
+            let cleanup = self.cleanup;
             let layer_costs = &direction_cost[layer];
             let layer_factor = if self.layer_bias.is_empty() { 1.0 } else { self.layer_bias[layer] };
             let thermal_guard_cost = self.config.thermal_guard_cost as f32;
@@ -2729,12 +2770,8 @@ impl Router {
                     continue;
                 }
                 let target_class = if necks { self.class_at(net, net_state, target_cell as u32) } else { class };
-                let allowed = if necks {
-                    self.statics[target_class].trace[layer][target_cell]
-                } else {
-                    layer_trace[target_cell]
-                };
-                if allowed != crate::grid::FREE && allowed != own {
+                let hot = if necks { self.hot[target_class * layers + layer][target_cell] } else { layer_hot[target_cell] };
+                if hot.trace != crate::grid::FREE && hot.trace != own {
                     continue;
                 }
                 let map = target_class * (layers + 1) + layer;
@@ -2755,22 +2792,16 @@ impl Router {
                 if hard && occupied > 0.0 {
                     continue;
                 }
-                let history = if layer_history.is_empty() { 0.0 } else { layer_history[target_cell] };
+                let history = if cleanup { 0.0 } else { hot.history };
                 let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
-                if !layer_guard.is_empty() {
-                    let guarded = layer_guard[target_cell];
-                    if guarded != 0 && guarded != own {
-                        step *= thermal_guard_cost;
-                    }
+                if hot.guard != 0 && hot.guard != own {
+                    step *= thermal_guard_cost;
                 }
-                if !layer_covered.is_empty() {
-                    let pour = layer_covered[target_cell];
-                    if pour != 0 && pour != own {
-                        if self.exclusive[layer] {
-                            continue;
-                        }
-                        step *= self.layer_cut[layer];
+                if hot.covered != 0 && hot.covered != own {
+                    if self.exclusive[layer] {
+                        continue;
                     }
+                    step *= self.layer_cut[layer];
                 }
                 step *= layer_factor;
                 if (arrived as usize) < 8 {
@@ -2977,6 +3008,7 @@ impl Router {
         self.tile_covered = vec![vec![0.0; tiles]; layers];
         self.mark_covered();
         self.mark_via_cells();
+        self.build_hot();
 
         let mut rerouted = 0;
         for (net, old) in previous.into_iter().enumerate() {
@@ -3426,6 +3458,15 @@ impl Router {
     /// as `run` does.
     pub fn resume(&mut self, seconds: f64) -> RoutingResult {
         self.resume_polished(seconds, true)
+    }
+
+    /// The clean-up, the via reduction and the pour stitching on the
+    /// routes as they are, without negotiating again (a renegotiation of
+    /// the open nets at a short patience left jetson-nano with 28 open
+    /// where it had 22).
+    pub fn polish(&mut self) -> RoutingResult {
+        let order = self.routing_order();
+        self.finish_polished(&order, true)
     }
 
     /// `resume`; without `polish` as in `run_in_place_polished`.
@@ -4086,8 +4127,14 @@ impl Router {
                     continue;
                 }
                 let mut tiles_hit: HashSet<(usize, usize)> = HashSet::new();
+                let layers = self.board.layer_count;
                 for (layer, cell) in conflicts {
                     self.history[layer][cell as usize] += self.config.history_increment as f32;
+                    if layer < layers {
+                        for class in 0..self.statics.len() {
+                            self.hot[class * layers + layer][cell as usize].history += self.config.history_increment as f32;
+                        }
+                    }
                     let cell = cell as usize;
                     tiles_hit.insert((
                         layer,
