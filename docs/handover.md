@@ -855,6 +855,19 @@ board breaks them hundreds of times (use the guided set).
   Decide: count terminals the fill joins in tracks mode, or let the pass
   rule trust KiCad's connectivity. Left as is.
 
+- Starved thermals (KiCad error): the thermal guard's cost (x10) is
+  nothing against the price of sharing at its cap, so congested routes
+  took spoke corridors (Sisu v8: Y1, R70 at one spoke of two). A repair
+  after the via reduction (`free_thermal_spokes`) reroutes the nets in
+  the corridors of pads with fewer than two free, the guard made all but
+  impassable, keeping complete reroutes that cross fewer corridor nodes.
+  Sisu layout (x115): no starved thermal, nothing beyond the designer's
+  findings, 106 unconnected (108). Our corridor model flags more pads
+  than KiCad (5-47 nets moved per run): conservative, costs some time.
+- jetson v8's open nets are a congested cluster around IC7 (USB-C
+  controller, 0.4 mm WQFN): 18 nets still conflicted at the end, no dead
+  pad. Designer: 0.18 mm tracks there.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
