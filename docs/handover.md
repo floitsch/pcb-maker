@@ -846,6 +846,15 @@ board breaks them hundreds of times (use the guided set).
 - v8 on x112 so far: jetson 337/340 (8; the polish guard fired), link
   224/251 with 105 unconnected (x110: 143).
 
+- MokyaLora (v8 x112): KiCad 0 unconnected, no errors, yet no pass:
+  `run.py` also requires our own count complete (261/262). The open one
+  is Mtr2.SH1 (GND) under its footprint's mask opening, which KiCad
+  joins through the GND fill. Fixed for pours as planes (mask openings no
+  longer cut our fill model, 2ffe4bc); with pours as tracks (what route
+  mode picks there, 1 open) our count ignores the fill KiCad still has.
+  Decide: count terminals the fill joins in tracks mode, or let the pass
+  rule trust KiCad's connectivity. Left as is.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
