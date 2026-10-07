@@ -919,10 +919,14 @@ board breaks them hundreds of times (use the guided set).
   fail only on starved thermals (BAGEL-MK1 138/138 with one; Hub 4,
   ATAT1800 7), which x119's thermal repair targets.
 
-Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x119` = f97d56a, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x119, timeout 2700 s). Leave it running. Compare v8 with v7's
-first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
+`build/chain-v8.sh` (layout sweep `build/github-layout-v8` on
+`pcb-maker-x119` = f97d56a, tasks v5, `--jobs 1`, then routing sweep
+`build/github-route-v13`) was **stopped on 2026-10-07 at 3 rows**: the
+day's experiments loaded the machine to 20+ and link and laptop timed out
+at 1800 s with no board (`build/github-layout-v8-x119-loaded.log`). A
+sweep is only meaningful on a quiet machine: **restart the chain when the
+experiments are done** (with the binary that carries the day's winners),
+and compare v8 with x112's 29 rows, v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
@@ -981,9 +985,27 @@ connect 38 against 27; the stubs of the first, chaotic iterations stayed
 and took the signals' room); tracks mode unchanged at 6 open either way.
 Probes were better with it (exclusive 114 nets unfinished against 123,
 connect 69 against 79, stubs 64 against 92; Sisu's stubs rung 134, tracks
-43 against 86 before). Non-sticky version (x123): being measured on ESC
-with `{"pours": "connect"}` (`scratchpad/ab-esc-con-*.log`) and Sisu
-(`ab-sisu-pi.log`). **Opt-in (default off) until it wins across boards.**
+43 against 86 before). Sisu with the sticky version: tracks mode chosen,
+30 open, KiCad 11 unconnected, as before (x78: 11). Non-sticky version
+(x123, pads back on the plane when their piece rejoins, stubs dropped)
+on ESC mini with `{"pours": "connect"}`: 22 open and KiCad 8 unconnected
+against 27 and 12 without, but the attempt negotiated 80 iterations
+against 53 (1258 s against 311 s on the loaded machine): the pads come
+and go with the signals, and every new low by their count reset the
+stall. x128 measures progress without them. **Opt-in (default off)
+until it wins across boards**; next: a connect-mode board of the layout
+sweep (PolyKybd right, Hub) on vs off, and the time.
+
+### Exclusive planes as the designers' stackups
+
+`exclusive_layers` (KiCad router config): with exclusive planes, how many
+of a pour net's inner plane layers stay signal-free, those nearest the
+outer layers first. The ladder sets 2 on six or more layers, 1 on four
+(ESC mini's designer: In1 and In4 untouched, signals on In2/In3). ESC mini
+route mode, `{"pours": "connect", "exclusive_planes": true}`: 26 open,
+KiCad 11 unconnected, against 81-113 open for the old all-inner-layers
+rung (and 27/12 for the plain connect rung). Default in the ladder.
+Unit test `exclusive_planes_keep_the_layers_nearest_the_outside_solid`.
 
 ### Placement: the three directions, all built, all opt-in
 
@@ -1009,9 +1031,21 @@ with `{"pours": "connect"}` (`scratchpad/ab-esc-con-*.log`) and Sisu
   rigid one leaves parts without room (ESC mini without the pulling net:
   no room). Unit tests in `board_placer::channel_tests`.
 
-Routing the variants in route mode (`scratchpad/pr2.sh`, results in
-`scratchpad/pr-esc-route-*.log`): pending at the hand-over. **Decide the
-defaults from these and from a layout sweep with the winner.**
+Routing the variants in route mode (`scratchpad/pr2.sh`, machine loaded
+to 20): plain 128/152 with KiCad 69 unconnected; demand 1.0 119/152, 78;
+via room 114/152, 67. Earlier plain runs over two seeds: 62 and 70. So on
+ESC mini none of them moves the needle beyond the seed spread (the
+designer's placement routes to 3): ESC's gap is not in these knobs.
+**Measure them on Sisu and link before choosing a default; none is on.**
+
+Channels on ESC mini: the four rigid 36-part macros (9.4 x 12.8 mm each,
+two-sided, tight boxes at the tight level) are never seated, even when
+each instance keeps its own free arrangement
+(`PCB_PLACER_CHANNEL_SELF=1`, so the free placement is a solution): the
+anneal and the greedy legalizer do not seat big rigid blocks on a
+crowded board. Next there: seat the macros first (largest first, before
+the anneal), or place the channels as blocks on a coarse grid and the
+rest around them.
 
 ### Freerouting on the harvested boards
 

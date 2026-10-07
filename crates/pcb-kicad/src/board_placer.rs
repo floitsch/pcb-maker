@@ -1233,6 +1233,7 @@ pub(super) fn lower_placement(
             pads: own_pads.clone(),
             copper_only: false,
             cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -1331,6 +1332,7 @@ pub(super) fn lower_placement(
             pads: Vec::new(),
             copper_only: false,
             cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1414,6 +1416,7 @@ pub(super) fn lower_placement(
             pads: Vec::new(),
             copper_only: false,
             cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1462,6 +1465,7 @@ pub(super) fn lower_placement(
             pads: Vec::new(),
             copper_only: true,
             cutout_outline: cutout.clone(),
+            tight_hollow: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1679,6 +1683,23 @@ pub(super) fn channel_templates(lowered: &LoweredPlacement, groups: &[Vec<Vec<us
             })
             .collect();
         for members in instances {
+            // PCB_PLACER_CHANNEL_SELF: every instance keeps its own
+            // arrangement (a check of the rigid parts: the free placement
+            // seats them, so the rigid one must).
+            if std::env::var_os("PCB_PLACER_CHANNEL_SELF").is_some() {
+                let leader = poses[members[0]];
+                templates.push(
+                    members
+                        .iter()
+                        .map(|member| {
+                            let pose = poses[*member];
+                            let delta = [pose.position[0] - leader.position[0], pose.position[1] - leader.position[1]];
+                            (*member, core::problem::rotate(delta, leader.angle), (pose.angle - leader.angle).rem_euclid(360.0))
+                        })
+                        .collect(),
+                );
+                continue;
+            }
             templates.push(members.iter().zip(&arrangement).map(|(member, (offset, angle))| (*member, *offset, *angle)).collect());
         }
     }
@@ -1704,13 +1725,20 @@ fn apply_channels(
             return Err(format!("channel of {} overlaps a row or a fixed part", references[leader]));
         }
         let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut tight = body;
         let mut carried = problem.components[leader].clone();
         carried.pins.clear();
         carried.far_side.clear();
         carried.pads.clear();
         carried.hollow.clear();
+        carried.tight_hollow.clear();
+        let leader_side = carried.side;
         for (member, offset, angle) in instance {
             let component = &problem.components[*member];
+            // A member on the other side blocks there, as a through-hole
+            // part's pins do; what it has on the leader's side joins the
+            // leader's boxes.
+            let same_side = component.side == leader_side || component.side == core::Side::Both;
             // A member-local point lies at offset + rotate(point, -angle)
             // in the leader's frame (see `Problem::sync_followers`).
             let place = |b: &[f64; 4]| -> [f64; 4] {
@@ -1724,12 +1752,22 @@ fn apply_channels(
                 component.body_center[1] + component.body_size[1] / 2.0,
             ]);
             body = [body[0].min(own_body[0]), body[1].min(own_body[1]), body[2].max(own_body[2]), body[3].max(own_body[3])];
-            carried.hollow.push(own_body);
+            // At the tight level the members are tight too (ESC mini's
+            // boards fit only so).
+            let own_tight = component.tight.map_or(own_body, |t| place(&t));
+            tight = [tight[0].min(own_tight[0]), tight[1].min(own_tight[1]), tight[2].max(own_tight[2]), tight[3].max(own_tight[3])];
+            if same_side {
+                carried.hollow.push(own_body);
+                carried.tight_hollow.push(own_tight);
+                carried.far_side.extend(component.far_side.iter().map(place));
+            } else {
+                carried.far_side.push(own_body);
+                carried.hollow.extend(component.far_side.iter().map(place));
+            }
             carried.pins.extend(component.pins.iter().map(|pin| {
                 let at = core::problem::rotate(pin.offset, -angle);
                 core::Pin { offset: [at[0] + offset[0], at[1] + offset[1]], net: pin.net }
             }));
-            carried.far_side.extend(component.far_side.iter().map(place));
             carried.pads.extend(pad_boxes[*member].iter().map(place));
             carried.halo = carried.halo.max(component.halo);
             carried.edge_inset = carried.edge_inset.min(component.edge_inset);
@@ -1745,9 +1783,24 @@ fn apply_channels(
         carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
         carried.body_size = [body[2] - body[0], body[3] - body[1]];
         carried.round = false;
-        carried.tight = None;
+        carried.tight = (carried.tight_hollow.len() == carried.hollow.len() && !carried.tight_hollow.is_empty()).then_some(tight);
         carried.courtyards.clear();
         carried.holes_inside = true;
+        if carried.hollow.is_empty() {
+            // Everything on the other side: the leader's own side is free.
+            carried.hollow.push([carried.body_center[0], carried.body_center[1], carried.body_center[0], carried.body_center[1]]);
+        }
+        if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+            eprintln!(
+                "channel of {}: {} parts, {:.1} x {:.1} mm, {} boxes on its side, {} on the other",
+                references[leader],
+                instance.len(),
+                carried.body_size[0],
+                carried.body_size[1],
+                carried.hollow.len(),
+                carried.far_side.len()
+            );
+        }
         problem.components[leader] = carried;
         for (member, _, _) in &instance[1..] {
             let component = &mut problem.components[*member];
@@ -1953,7 +2006,13 @@ pub fn place_kicad_board(
                 lowered = replicated;
                 placements = again;
             } else {
-                eprintln!("channels: the replicated placement left parts without room; the free one stands");
+                let stuck: Vec<&str> = again[0]
+                    .unplaced
+                    .iter()
+                    .chain(&again[0].illegal)
+                    .map(|index| replicated.references[*index].as_str())
+                    .collect();
+                eprintln!("channels: the replicated placement left {stuck:?} without room; the free one stands");
             }
         }
     }
@@ -2247,6 +2306,7 @@ mod channel_tests {
             pads: vec![[-1.0, -0.5, 1.0, 0.5]],
             copper_only: false,
             cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
         };
         // Nets: 0 GND, 1-2 instance 1's, 3-4 instance 2's.
         let components = vec![

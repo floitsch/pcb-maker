@@ -863,6 +863,39 @@ pub fn layout_kicad_board(
         }
     }
 
+    // Connections the first route and the moves left open: before the
+    // final ladder starts over, the router goes on from where it is, at
+    // the full patience, with a share of what is left (PolyKybd right: the
+    // first route left 33 open after 361 s; the ladder's rungs, started
+    // from scratch with the rest, ended at 538 open and the first route
+    // stood). With many open the pour mode is in question: the ladder's.
+    if best.0 > 0 && !many_open && !router.past_deadline() {
+        let left = (config.total_seconds - work).max(0.0);
+        let share = (0.4 * left).min(600.0);
+        if share >= 60.0 {
+            let expansions_before = router.expansions();
+            {
+                let defaults = core::router::Config::default();
+                let full = router.config_mut();
+                full.stall_patience = defaults.stall_patience;
+                full.stall_at_cap = router_config.stall_at_cap.unwrap_or(defaults.stall_at_cap);
+                full.stall_drop = router_config.stall_drop.unwrap_or(defaults.stall_drop);
+            }
+            let resumed = router.resume_polished(share, false);
+            work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+            let (before, after) = (score(&result, &board), score(&resumed, &board));
+            eprintln!(
+                "layout: the first route resumed with {share:.0} s: {} open (before {}), {:.0} s",
+                after.0,
+                before.0,
+                elapsed()
+            );
+            if after <= before {
+                result = resumed;
+                best = after;
+            }
+        }
+    }
     // The polish reroutes everything: past the deadline it would stop at
     // once and throw the moves' best board away (OpenAirScope: 18 open
     // after the moves, 108 of 184 routed after the polish).

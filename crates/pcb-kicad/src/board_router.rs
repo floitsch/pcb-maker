@@ -80,6 +80,15 @@ pub struct KiCadBoardRouterConfig {
     /// Keep other nets' tracks off inner-layer planes entirely.
     #[serde(default)]
     pub exclusive_planes: Option<bool>,
+    /// With exclusive planes: how many of a pour net's inner plane layers
+    /// stay exclusive, the ones nearest the outer layers first (the
+    /// stackups designers use: one solid ground layer under the top on
+    /// four layers, In1 and In4 on six; ESC mini's GND covers In1-In4 and
+    /// keeping all four left the signals two layers). The ladder sets it
+    /// from the layer count when not given; `None` outside the ladder
+    /// keeps every covered inner layer.
+    #[serde(default)]
+    pub exclusive_layers: Option<usize>,
     /// Route pour-net pads the signals cut off from their pour during the
     /// negotiation (default on; see `pcb_router::Config::pour_islands`).
     #[serde(default)]
@@ -1290,6 +1299,21 @@ pub(super) fn lower(
             });
         }
     }
+    if let Some(limit) = config.exclusive_layers {
+        let mut by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
+        for (index, plane) in planes.iter().enumerate() {
+            if plane.exclusive {
+                by_net.entry(plane.net).or_default().push(index);
+            }
+        }
+        let last = layers.len().saturating_sub(1);
+        for (_, mut indices) in by_net {
+            indices.sort_by_key(|index| (planes[*index].layer.min(last - planes[*index].layer), planes[*index].layer));
+            for index in indices.into_iter().skip(limit) {
+                planes[index].exclusive = false;
+            }
+        }
+    }
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
@@ -1906,6 +1930,9 @@ pub fn route_kicad_board(
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
             attempt.fixed_plane_stubs = Some(*plane_stubs);
+            if *exclusive && attempt.exclusive_layers.is_none() {
+                attempt.exclusive_layers = Some(if layer_table.names.len() >= 6 { 2 } else { 1 });
+            }
             let board = lower(&parsed, &attempt, *connect)?.board;
             let connections: usize = board.nets.iter().map(|net| net.terminals.len().saturating_sub(1)).sum();
             if mode == 0 && (board.layer_count < 4 || connections < 120) {
@@ -2023,6 +2050,9 @@ pub fn route_kicad_board(
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
             attempt.fixed_plane_stubs = Some(*plane_stubs);
+            if *exclusive && attempt.exclusive_layers.is_none() {
+                attempt.exclusive_layers = Some(if layer_table.names.len() >= 6 { 2 } else { 1 });
+            }
             // The rungs left at this pitch share what is left of the
             // ladder's budget evenly; an attempt spends up to about three
             // times its negotiation in repair and polish, so negotiation
@@ -2992,6 +3022,33 @@ mod pour_request_tests {
         assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
         let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
         assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
+    }
+
+    #[test]
+    fn exclusive_planes_keep_the_layers_nearest_the_outside_solid() {
+        // A six-layer board whose ground pour covers every inner layer
+        // (ESC mini): with a limit of two, In1 and In4 stay exclusive.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (8 "In3.Cu" signal) (10 "In4.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 0.5 0.5) (layers "F.Cu") (net "/SIG")))
+              (footprint "b" (at 15 5) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 0.5 0.5) (layers "F.Cu") (net "/SIG")))
+              (zone (net "GND") (layers "In1.Cu" "In2.Cu" "In3.Cu" "In4.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10) (xy 0 10)))))"#,
+        )
+        .unwrap();
+        let exclusive = |config: &KiCadBoardRouterConfig| -> Vec<usize> {
+            let board = lower(&pcb, config, true).unwrap().board;
+            let mut layers: Vec<usize> = board.planes.iter().filter(|plane| plane.exclusive).map(|plane| plane.layer).collect();
+            layers.sort_unstable();
+            layers
+        };
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let all = KiCadBoardRouterConfig { default_rules: Some(rules.clone()), ..KiCadBoardRouterConfig::default() };
+        assert_eq!(exclusive(&all), vec![1, 2, 3, 4]);
+        let two = KiCadBoardRouterConfig { exclusive_layers: Some(2), ..all.clone() };
+        assert_eq!(exclusive(&two), vec![1, 4]);
+        let one = KiCadBoardRouterConfig { exclusive_layers: Some(1), ..all.clone() };
+        assert_eq!(exclusive(&one), vec![1]);
     }
 
     #[test]

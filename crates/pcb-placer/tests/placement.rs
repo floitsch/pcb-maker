@@ -30,6 +30,7 @@ fn chain(parts: usize) -> Problem {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -70,6 +71,7 @@ fn chain(parts: usize) -> Problem {
             pads: Vec::new(),
             copper_only: false,
             cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -192,6 +194,7 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -235,6 +238,7 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -282,6 +286,7 @@ fn tight_bodies_are_the_last_resort() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
@@ -330,6 +335,7 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     // A 2 mm hole in the board, and a 10 mm connector with a pad at its
     // left end.
@@ -375,6 +381,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
@@ -421,6 +428,7 @@ fn parts_of_a_kind_are_turned_alike() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     let problem = Problem {
         outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
@@ -470,6 +478,7 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         pads: Vec::new(),
         copper_only: false,
         cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![

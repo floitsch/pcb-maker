@@ -3016,7 +3016,12 @@ impl Router {
         // PCB_ROUTER_TIMING: where a reroute's time goes (layout moves).
         let timing = std::env::var_os("PCB_ROUTER_TIMING").is_some();
         let (started, pending_count, iterations_before) = (std::time::Instant::now(), pending.len(), self.iterations);
-        self.negotiate(&order, pending);
+        // At the price of sharing the negotiation reached, as `resume`: a
+        // price started low again undid what was settled (the layout's
+        // polish turned eurorack's 21 open into 42, PolyKybd's 33 into
+        // 108, without any deadline).
+        let present = self.present_reached.max(self.config.present_factor as f32);
+        self.negotiate_from(&order, pending, present);
         let negotiated = started.elapsed().as_secs_f64();
         let result = self.finish_polished(&order, polish);
         if timing {
@@ -3439,6 +3444,12 @@ impl Router {
         let result = self.finish_polished(&order, polish);
         (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
         result
+    }
+
+    /// The router's configuration, to change between runs (the layout
+    /// trials at a short patience, the final resume at the full one).
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
     }
 
     /// Search expansions so far (all phases, all threads).
@@ -4104,6 +4115,10 @@ impl Router {
             }
             // Pads of a pour net that the signals cut off from the main
             // piece this iteration are routed to it from the next one on.
+            // Progress is measured without them: the pads come and go with
+            // the signals, and a new low by their count kept ESC mini's
+            // connect rung negotiating 80 iterations instead of 53.
+            let really_conflicted = conflicted.len();
             if self.config.pour_islands && iteration >= 2 {
                 let refresh_started = std::time::Instant::now();
                 let mut stranded = 0;
@@ -4182,12 +4197,12 @@ impl Router {
             let at_cap = present >= self.config.present_cap as f32;
             let progress = if at_cap && self.config.stall_drop > 0.0 && best_conflicted != usize::MAX {
                 let needed = ((best_conflicted as f64 * self.config.stall_drop).ceil() as usize).max(2);
-                conflicted.len() + needed <= best_conflicted
+                really_conflicted + needed <= best_conflicted
             } else {
-                conflicted.len() < best_conflicted
+                really_conflicted < best_conflicted
             };
             if progress {
-                best_conflicted = conflicted.len();
+                best_conflicted = really_conflicted;
                 stalled = 0;
             } else {
                 // The low to beat stays where progress was last made: small

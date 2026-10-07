@@ -88,6 +88,9 @@ pub struct Component {
     /// bounding box): copper keeps the edge margin from the hole, not from
     /// the box (a long diagonal cutout's box covers much more board).
     pub cutout_outline: Vec<Point>,
+    /// `hollow` at the tight level: a channel's members by their tight
+    /// bodies (own frame), used when the tight body is.
+    pub tight_hollow: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -217,6 +220,9 @@ impl Component {
             self.body_size = [tight[2] - tight[0], tight[3] - tight[1]];
             // A disc stays a disc (a radial capacitor's outline).
             self.round = self.round && (self.body_size[0] - self.body_size[1]).abs() < 1.0e-6;
+            if !self.tight_hollow.is_empty() {
+                self.hollow = self.tight_hollow.clone();
+            }
         }
     }
 
