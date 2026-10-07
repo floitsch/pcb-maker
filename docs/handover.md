@@ -1061,8 +1061,11 @@ it within the overhang slack: the module sits 0.5 mm lower, 0 findings
 (`scratchpad/fence-d3`). Noted, not done: **B**, the layout skips its
 moves when more than 5 % are open, which on a two-layer board without
 pour rungs leaves the ladder nothing to try either (keep the moves when
-the ladder has no alternative rung); **E** a warning for stacked fixed
-parts; **F** `swap_candidates` on `PA15`-style pin names.
+the ladder has no alternative rung); **E** done the same
+day: fixed parts whose bodies overlap are warned about; **F** is no
+rule gap (`PA15` matches the port rule): the fence's generated
+footprints carry no `pinfunction` at all, so `describe` has nothing to
+match; `pin-swaps.json` is the way there.
 
 ### Exclusive planes as the designers' stackups
 
