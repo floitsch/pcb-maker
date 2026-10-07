@@ -924,9 +924,13 @@ board breaks them hundreds of times (use the guided set).
 `build/github-route-v13`) was **stopped on 2026-10-07 at 3 rows**: the
 day's experiments loaded the machine to 20+ and link and laptop timed out
 at 1800 s with no board (`build/github-layout-v8-x119-loaded.log`). A
-sweep is only meaningful on a quiet machine: **restart the chain when the
-experiments are done** (with the binary that carries the day's winners),
-and compare v8 with x112's 29 rows, v13 with v12. (`build/github-layout-v8-x96` holds
+sweep is only meaningful on a quiet machine. Queued instead:
+`build/chain-v9.sh` (waits until no experiment routes or lays out, then
+layout sweep `build/github-layout-v9` on `pcb-maker-x131` = 7d996cc with
+tasks v5, then routing sweep `build/github-route-v14` on x131). Compare
+v9 with x112's 29 rows (`build/github-layout-v8-x112.log`), v14 with v12.
+The Freerouting sweep (`build/github-freerouting`, nice 15, one thread)
+runs alongside; it takes one core. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
