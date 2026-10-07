@@ -911,9 +911,17 @@ board breaks them hundreds of times (use the guided set).
   more than the budget (lost there). A choice that works for both needs
   a better cost forecast than a 75 s probe.
 
+- Layout: with more than 5 % of the terminals open after the first route,
+  no moves and no polish; the final ladder gets the time. Sisu's layout
+  (with fill 0): 63 unconnected in KiCad (106).
+- v8 on x112 stopped at 29 rows (`build/github-layout-v8-x112`): 4 pass
+  (framework_mobo_lefthalf, zpn_devboard, MIDAS-MK2.1, MIDAS-MK2). Some
+  fail only on starved thermals (BAGEL-MK1 138/138 with one; Hub 4,
+  ATAT1800 7), which x119's thermal repair targets.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
-(`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
-`build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
+(`pcb-maker-x119` = f97d56a, tasks v5, `--jobs 1`), then routing sweep
+`build/github-route-v13` (x119, timeout 2700 s). Leave it running. Compare v8 with v7's
 first rows and v6; v13 with v12. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
