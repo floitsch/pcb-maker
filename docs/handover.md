@@ -877,6 +877,14 @@ board breaks them hundreds of times (use the guided set).
   spreading (RUDY-style inflation in global placement), and placing
   repeated channels alike (ESC's four channels, keyboards).
 
+- v8 rows 10-12 on x112: eurorack-pmod 131/133 (2), OpenFC 81/82 (2),
+  framework_mobo_lefthalf 71/71 pass. Both near misses finished with
+  half the budget unused: the best rung's seed retry needed the attempt
+  under half the refine budget. Now up to three rounds sized by the
+  ladder budget left: eurorack 1 unconnected (2); OpenFC unchanged (2).
+  eurorack's polish made it worse without any deadline (21 -> 42 open;
+  the guard kept the unpolished routes): `reroute(true)` renegotiates.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
