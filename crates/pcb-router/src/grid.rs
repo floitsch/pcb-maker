@@ -347,6 +347,9 @@ pub struct StaticMaps {
     /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
     /// step reads one word instead of one per layer.
     pub free_layers: Vec<u64>,
+    /// `trace` without the solder mask openings, where it differs: what a
+    /// pour's fill may cover.
+    pub fill_trace: Option<Vec<Vec<u32>>>,
 }
 
 fn claim(cell: &mut u32, net: Option<NetId>) {
@@ -429,7 +432,25 @@ impl StaticMaps {
         let mut edge_block = vec![vec![0u8; cells]; board.layer_count];
         let mut edge_owner = vec![vec![FREE; cells]; board.layer_count];
 
-        for obstacle in &board.obstacles {
+        // Solder mask openings keep tracks out but not a pour's fill: they
+        // come last, and the trace map before them is the pours' (MokyaLora:
+        // a motor's shield pad under a mask opening looked cut off from its
+        // ground pour, which KiCad fills there).
+        let mask_opening = |obstacle: &&crate::board::Obstacle| {
+            obstacle.kind == ObstacleKind::Keepout && obstacle.label.starts_with("solder mask opening")
+        };
+        let ordered: Vec<&crate::board::Obstacle> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| !mask_opening(obstacle))
+            .chain(board.obstacles.iter().filter(|obstacle| mask_opening(obstacle)))
+            .collect();
+        let first_opening = ordered.iter().position(mask_opening);
+        let mut fill_trace: Option<Vec<Vec<u32>>> = None;
+        for (position, obstacle) in ordered.into_iter().enumerate() {
+            if Some(position) == first_opening {
+                fill_trace = Some(trace.clone());
+            }
             let (trace_reach, via_reach) = match obstacle.kind {
                 ObstacleKind::Copper => {
                     let clearance = board.copper_clearance(&rules, obstacle);
@@ -526,6 +547,7 @@ impl StaticMaps {
             via_blocked,
             via_owner,
             free_layers,
+            fill_trace,
         }
     }
 
@@ -537,6 +559,13 @@ impl StaticMaps {
     /// Whether `net` may have a trace centreline on this node.
     pub fn trace_allowed(&self, layer: usize, index: usize, net: NetId) -> bool {
         let value = self.trace[layer][index];
+        value == FREE || value == owner(net)
+    }
+
+    /// Whether a pour of `net` fills this node (mask openings do not stop
+    /// a fill).
+    pub fn fill_allowed(&self, layer: usize, index: usize, net: NetId) -> bool {
+        let value = self.fill_trace.as_ref().map_or(self.trace[layer][index], |fill| fill[layer][index]);
         value == FREE || value == owner(net)
     }
 

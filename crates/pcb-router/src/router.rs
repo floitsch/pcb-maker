@@ -1319,7 +1319,7 @@ impl Router {
                 for x in x0..=x1 {
                     let cell = self.grid.index(x, y);
                     let center = self.grid.center(x, y);
-                    if statics.trace_allowed(pour.layer, cell, net)
+                    if statics.fill_allowed(pour.layer, cell, net)
                         && crate::geometry::point_in_polygon(center, &pour.polygon)
                         && !pour
                             .excluded
