@@ -2722,6 +2722,12 @@ impl Router {
                     continue;
                 }
                 let target_cell = ty as usize * nx + tx as usize;
+                let target_state = layer * cells + target_cell;
+                // The search node is read for the cost update anyway: a
+                // closed neighbour costs no other map's cache line.
+                if scratch.nodes[target_state].closed == generation {
+                    continue;
+                }
                 let target_class = if necks { self.class_at(net, net_state, target_cell as u32) } else { class };
                 let allowed = if necks {
                     self.statics[target_class].trace[layer][target_cell]
@@ -2729,10 +2735,6 @@ impl Router {
                     layer_trace[target_cell]
                 };
                 if allowed != crate::grid::FREE && allowed != own {
-                    continue;
-                }
-                let target_state = layer * cells + target_cell;
-                if scratch.nodes[target_state].closed == generation {
                     continue;
                 }
                 let map = target_class * (layers + 1) + layer;

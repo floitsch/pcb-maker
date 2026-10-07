@@ -1082,9 +1082,12 @@ with pcbnew (index access to SWIG containers under Python 3.14) and runs
 KiCad's DRC. Running: `build/github-freerouting` (log
 `build/github-freerouting.log`, hardest first, `nice 15`); the matched
 comparison is the cold board (no pours) for both routers; `--ours` routes
-the cold board with pcb-maker too (not run yet: CPU). First rows: jetson
-timed out at 1500 s (no session: Freerouting writes it only at the end).
-Smoke test: framework_mobo_lefthalf 44 unrouted after 4 passes (288 s).
+the cold board with pcb-maker too (not run yet: CPU). First rows (hardest
+first): jetson, link, laptop, OpenRX panel, ESC 30x30 panel and MokyaLora
+all timed out at 1500 s with no session (Freerouting writes it only at
+the end; its log had laptop at 80 unrouted, OpenRX at 301, MokyaLora at
+245 when cut; we route MokyaLora 261/262 within the same time). Smoke
+test: framework_mobo_lefthalf 44 unrouted after 4 passes (288 s).
 
 ## Where things are
 
