@@ -35,6 +35,13 @@ pub struct GlobalConfig {
     pub rotation_net_limit: usize,
     pub frame_interval: usize,
     pub seed: u64,
+    /// Routing demand as charge: every net's wire area (its half perimeter
+    /// times `track_pitch`, over `routing_layers`) spreads over its
+    /// bounding box and counts like body area there, so parts leave room
+    /// where the wires will run. 0 turns it off; 1 counts the wires once.
+    pub routing_demand: f64,
+    pub routing_layers: f64,
+    pub track_pitch: f64,
 }
 
 impl Default for GlobalConfig {
@@ -49,6 +56,9 @@ impl Default for GlobalConfig {
             rotation_net_limit: 24,
             frame_interval: 5,
             seed: 1,
+            routing_demand: 0.0,
+            routing_layers: 2.0,
+            track_pitch: 0.65,
         }
     }
 }
@@ -506,11 +516,55 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         iterations = iteration + 1;
         // Work: the field solve per side dominates, then bodies and pins.
         crate::add_work((side_fixed.len() * n * n * n + bodies.len() + fixed_pins.len()) as u64);
+        // The wires' room: each net's estimated wire area over its box.
+        let demand: Vec<f64> = if config.routing_demand > 0.0 {
+            let mut boxes = vec![[f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]; nets];
+            let mut extend = |net: usize, at: Point| {
+                let bounds = &mut boxes[net];
+                bounds[0] = bounds[0].min(at[0]);
+                bounds[1] = bounds[1].min(at[1]);
+                bounds[2] = bounds[2].max(at[0]);
+                bounds[3] = bounds[3].max(at[1]);
+            };
+            for (at, net) in &fixed_pins {
+                extend(*net, *at);
+            }
+            for (body, pins) in offsets.iter().enumerate() {
+                for (offset, net) in pins {
+                    extend(*net, [reference[body][0] + offset[0], reference[body][1] + offset[1]]);
+                }
+            }
+            let mut demand = vec![0.0; n * n];
+            let layers = config.routing_layers.max(1.0);
+            for bounds in boxes.iter().filter(|bounds| bounds[0].is_finite()) {
+                // A net's box is at least a bin: its wire needs room
+                // somewhere even between pins that touch.
+                let half = [
+                    ((bounds[2] - bounds[0]) / 2.0).max(field.bin[0] / 2.0),
+                    ((bounds[3] - bounds[1]) / 2.0).max(field.bin[1] / 2.0),
+                ];
+                let center = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0];
+                let wire = 2.0 * (half[0] + half[1]) * config.track_pitch / layers * config.routing_demand;
+                let share = wire / (4.0 * half[0] * half[1]);
+                field.overlap(center, half, |bin, area| demand[bin] += area * share);
+            }
+            for value in &mut demand {
+                *value = value.min(bin_area);
+            }
+            demand
+        } else {
+            Vec::new()
+        };
         // Density of all charges at the reference solution, side by side.
         let mut density_gradient = vec![[0.0; 2]; bodies.len()];
         let mut overflow_area = 0.0;
         for (side, fixed) in side_fixed.iter().enumerate() {
             density.copy_from_slice(fixed);
+            if !demand.is_empty() {
+                for (value, wires) in density.iter_mut().zip(&demand) {
+                    *value += wires;
+                }
+            }
             let mut real = vec![0.0; n * n];
             for (body, center) in bodies.iter().zip(&reference).filter(|(body, _)| body.field == side) {
                 let (half, scale) = field.smoothed(body.charge_half());

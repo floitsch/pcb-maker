@@ -508,7 +508,7 @@ pub fn layout_kicad_board(
     // board placed with relaxed spacing, a move checked against the full
     // spacing is never legal.
     placer_config.tight_bodies = Some(placement.tight_bodies);
-    let mut problem = lower_placement(&pcb, &placer_config)?;
+    let mut problem = lower_placement(&pcb, &placer_config, &[])?;
     placer::Relaxation {
         spacing: placement.spacing_mm,
         grid: placement.grid_mm,
@@ -633,7 +633,7 @@ pub fn layout_kicad_board(
                 board = candidate_board;
                 kept = candidate_router;
                 placer_config.tight_bodies = Some(relaxation.tight);
-                problem = lower_placement(&pcb, &placer_config)?;
+                problem = lower_placement(&pcb, &placer_config, &[])?;
                 relaxation.apply(&mut problem.problem);
             }
         }

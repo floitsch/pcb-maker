@@ -80,6 +80,10 @@ pub struct KiCadBoardRouterConfig {
     /// Keep other nets' tracks off inner-layer planes entirely.
     #[serde(default)]
     pub exclusive_planes: Option<bool>,
+    /// Route pour-net pads the signals cut off from their pour during the
+    /// negotiation (default on; see `pcb_router::Config::pour_islands`).
+    #[serde(default)]
+    pub pour_islands: Option<bool>,
     /// Reach of the neck width around narrow pads (default 1.5 mm; 0 off).
     #[serde(default)]
     pub neck_reach_mm: Option<f64>,
@@ -1624,8 +1628,8 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 }
 
 pub(super) struct Pour {
-    net: String,
-    layers: core::LayerMask,
+    pub(crate) net: String,
+    pub(crate) layers: core::LayerMask,
     priority: i64,
     clearance: f64,
     min_thickness: f64,
@@ -2590,6 +2594,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(exclusive) = config.exclusive_planes {
         router_config.exclusive_planes = exclusive;
+    }
+    if let Some(islands) = config.pour_islands {
+        router_config.pour_islands = islands;
     }
     if let Some(reach) = config.neck_reach_mm {
         router_config.neck_reach = reach;

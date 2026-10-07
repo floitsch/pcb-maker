@@ -534,7 +534,7 @@ fn edge(name: &str) -> Result<Edge, String> {
 }
 
 /// Natural order of references: D2 before D10.
-fn natural(reference: &str) -> (String, u64, String) {
+pub(super) fn natural(reference: &str) -> (String, u64, String) {
     let digits = reference.find(|c: char| c.is_ascii_digit()).unwrap_or(reference.len());
     let end = reference[digits..]
         .find(|c: char| !c.is_ascii_digit())

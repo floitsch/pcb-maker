@@ -930,6 +930,105 @@ the x96 jetson row.)
   excluded violations, as the designer's baseline (run with
   `--severity-error`) always did.
 
+## 2026-10-07
+
+Florian's decisions: crowded-board placement: implement all three
+directions (via sites next to supply pins, congestion-driven spreading,
+replicated channels) and make the best the default; MokyaLora's pass rule
+trusts KiCad's connectivity; ground-pour connectivity: improve our own
+fill model. Freerouting may be run once in a while (once over the new
+boards). And: "You are a more intelligent agent than the one that was
+running over the last few days. Use that!": investigate the harder issues,
+revisit experiments and ideas.
+
+### Where the sweeps stand (x112, 29 rows)
+
+Every board over ~180 nets hits the 1500 s budget (1650-1710 s), whether
+nearly complete (PolyKybd 416-419/420, laptop 234/236, MokyaLora 261/262)
+or not. The open nets are overwhelmingly the supply (pour) nets: GND,
++3V3, +BATT, +5V, +1V5 on 4-8 layer boards routed with pours as planes
+(ESC mini GND 23/+BATT 13, link GND 74, Sisu GND 49, A13 GND 35/+1V5 29,
+PolyKybd GND 30, Hub GND 76, OpenRX GND 155/+3V3 94). Signals are a
+minority (jetson's IC7 cluster, OpenAirScope's SD lines).
+
+The designers of these boards keep whole layers free of signals (ESC
+mini: In1 and In4 untouched, signals on B.Cu 819 segments, In2/In3
+124/155, F.Cu 96; Sisu In2 untouched; link In1/In3 untouched; A13 In1
+untouched) and put a via next to every supply pad. Our "exclusive planes"
+rung keeps *every* inner layer a pour covers free of signals (ESC's GND
+covers In1-In4: too few layers left), the plain rung lets signals shred
+all of them.
+
+### Found: pour pads are only repaired after the negotiation
+
+`prepare_net` marks a pad `on_plane` when it touches its pour's mask, and
+negotiation then treats it as connected for good. Whether its pour piece
+still joins the rest only shows in `finish` (`stitch_pours`): stitching
+vias, then a hard reroute of the stranded pads against everything already
+routed (ESC mini: GND 222 pieces, 69 stranded, 41 left after the repair).
+
+Built: `Config::pour_islands` (`pour_islands` in the KiCad config). From
+the third iteration on, `refresh_pour` labels every pour net's pieces
+(`analyze_pours`, 0.1-0.4 s), takes pads whose piece does not join the
+main one off the plane (they route to it with `plane_target` set to the
+main piece, as the repair does) and puts pads back whose piece rejoins
+without their stub (`analyze_pours_skipping` ignores the stubs), dropping
+the stub. The net is rerouted in the next iteration.
+
+Measured on ESC mini (route mode, designer placement): the sticky first
+version made the connect rungs worse (exclusive 113 open against 81,
+connect 38 against 27; the stubs of the first, chaotic iterations stayed
+and took the signals' room); tracks mode unchanged at 6 open either way.
+Probes were better with it (exclusive 114 nets unfinished against 123,
+connect 69 against 79, stubs 64 against 92; Sisu's stubs rung 134, tracks
+43 against 86 before). Non-sticky version (x123): being measured on ESC
+with `{"pours": "connect"}` (`scratchpad/ab-esc-con-*.log`) and Sisu
+(`ab-sisu-pi.log`). **Opt-in (default off) until it wins across boards.**
+
+### Placement: the three directions, all built, all opt-in
+
+- `supply_via_room` (placer config; `supply_via_room_mm` from the rules:
+  via size plus clearance): the body grows outward past every surface pad
+  of a pour net, on the side the pad lies nearest to, so a via fits beside
+  it. ESC mini placement: wirelength 477 against 446.
+- `routing_demand` (0 off; 1 counts the wires once): in the global
+  placement every net's wire area (half perimeter times the track pitch,
+  over the signal layers the stack leaves: 2 for 2-4 layers, layers-2
+  from 6) spreads over its bounding box as charge, so parts leave room
+  where the wires run. ESC mini: wirelength 433 at 1.0, 446 at 3.0 (446
+  without).
+- `replicate_channels`: sheet instances of one schematic file with the
+  same parts (`sheetname`/`sheetfile` on the footprints; ESC mini: four
+  instances of 36 parts), paired in reference order and checked for alike
+  wiring (`channel_groups`), are placed alike: a first placement with a
+  pulling net per instance shows which instance packs best
+  (`channel_templates`), then every instance becomes one rigid part
+  (`apply_channels`: the first part carries the others' bodies as
+  separate blocking boxes, pins and pads; the others follow it, like a
+  row) and the board is placed again; the free placement stands when the
+  rigid one leaves parts without room (ESC mini without the pulling net:
+  no room). Unit tests in `board_placer::channel_tests`.
+
+Routing the variants in route mode (`scratchpad/pr2.sh`, results in
+`scratchpad/pr-esc-route-*.log`): pending at the hand-over. **Decide the
+defaults from these and from a layout sweep with the winner.**
+
+### Freerouting on the harvested boards
+
+`benchmarks/github/freerouting.py` (new): the old
+`experiments/whole-board` pipeline asserts a clean baseline DRC, which no
+harvested board has. The new driver exports the DSN with pcbnew, raises
+the class rules to the board minimum with the old translator (best
+effort), runs the jar headless (`-de/-do`, never without: the jar opens
+its GUI otherwise) with a 1500 s wall-clock limit, imports the session
+with pcbnew (index access to SWIG containers under Python 3.14) and runs
+KiCad's DRC. Running: `build/github-freerouting` (log
+`build/github-freerouting.log`, hardest first, `nice 15`); the matched
+comparison is the cold board (no pours) for both routers; `--ours` routes
+the cold board with pcb-maker too (not run yet: CPU). First rows: jetson
+timed out at 1500 s (no session: Freerouting writes it only at the end).
+Smoke test: framework_mobo_lefthalf 44 unrouted after 4 passes (288 s).
+
 ## Where things are
 
 | What | Where |

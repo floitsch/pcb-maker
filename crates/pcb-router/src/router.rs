@@ -66,6 +66,15 @@ pub struct Config {
     /// Stop negotiating when a quarter of the nets have no path at all
     /// after the first iteration (see `Router::hopeless`).
     pub abandon_hopeless: bool,
+    /// During negotiation, check every iteration which pads of a pour net
+    /// the signals have cut off from the pour's main piece, and route those
+    /// to it like off-pour pads (a via into the plane, mostly), so that the
+    /// supply nets negotiate with the signals instead of being repaired
+    /// after them, when the room is gone (ESC mini: 41 of GND's pads
+    /// stranded after the stitching). Off until measured across boards:
+    /// ESC mini's connect rungs ended worse with it (the stubs of the early
+    /// iterations stayed and took the signals' room; now they go again).
+    pub pour_islands: bool,
     /// Fine-pitch pads (narrower than the track plus its clearance, on one
     /// layer, in a row of their kind) get a straight stub outward fixed
     /// before negotiation, up to this long in mm (0, the default, turns it
@@ -162,6 +171,7 @@ impl Default for Config {
             stall_drop: 0.0,
             stall_patience: 25,
             abandon_hopeless: true,
+            pour_islands: false,
             escape_stub_mm: 0.0,
             global_routing: false,
             neck_reach: 1.5,
@@ -300,7 +310,9 @@ struct NetState {
     blocked: bool,
     /// Per layer: the nodes covered by this net's pours (empty without).
     plane: Vec<Vec<bool>>,
-    /// Terminals that touch a pour and therefore need no tracks.
+    /// Terminals that touch a pour and therefore need no tracks. A terminal
+    /// the signals cut off from the main piece leaves this (see
+    /// `refresh_pour`) and keeps needing a branch from then on.
     on_plane: Vec<bool>,
     /// Terminal nodes outside their (too narrow) pad, with the lattice
     /// nodes sampled along the straight stub from the pad centre.
@@ -4090,6 +4102,25 @@ impl Router {
                     self.scratch.failed_searches
                 );
             }
+            // Pads of a pour net that the signals cut off from the main
+            // piece this iteration are routed to it from the next one on.
+            if self.config.pour_islands && iteration >= 2 {
+                let refresh_started = std::time::Instant::now();
+                let mut stranded = 0;
+                for net in order {
+                    let newly = self.refresh_pour(*net);
+                    stranded += newly;
+                    if newly > 0 && !conflicted.contains(net) {
+                        conflicted.push(*net);
+                    }
+                }
+                if self.config.verbose && stranded > 0 {
+                    eprintln!(
+                        "  {stranded} pour pads cut off from their main piece, routed from now on ({:.2}s)",
+                        refresh_started.elapsed().as_secs_f64()
+                    );
+                }
+            }
             self.last_conflicted = conflicted.clone();
             if conflicted.is_empty() {
                 break;
@@ -4253,6 +4284,94 @@ impl Router {
             }
         }
         (open, vias, length)
+    }
+
+    /// Which pads of pour net `net` its pour no longer joins to the main
+    /// piece (the signals cut the pour between them): those leave
+    /// `on_plane`, so the net routes them to the main piece (only its
+    /// nodes are targets from then on). A pad whose piece the pour joins
+    /// again (the signals moved) is back on the plane and loses its stub:
+    /// the vias of the early, crowded iterations must not stay (ESC mini's
+    /// exclusive-plane rung: 113 open with them against 81). Returns how
+    /// many pads were cut off newly; the net then needs rerouting.
+    fn refresh_pour(&mut self, net: NetId) -> usize {
+        let state = &self.nets[net as usize];
+        if state.plane.is_empty() || !state.routable {
+            return 0;
+        }
+        let (pours, mut parent, main) = self.analyze_pours(net);
+        let terminal_base = pours.pieces + 1;
+        let terminal_count = state.terminal_nodes.len();
+        let touches = |state: &NetState, terminal: usize| {
+            state.terminal_nodes[terminal].iter().any(|node| {
+                state.plane.get(node.layer as usize).is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
+            })
+        };
+        let newly: Vec<usize> = (0..terminal_count)
+            .filter(|terminal| state.on_plane[*terminal] && find(&mut parent, terminal_base + terminal) != main)
+            .collect();
+        // Pads cut off before whose own piece joins the main one again
+        // without any stub (a pad's branch to the plane): through the pour
+        // and the net's other branches only.
+        let is_stub = |index: usize| {
+            let branch = &state.branches[index];
+            (branch.end_terminal == PLANE_TERMINAL && branch.start_terminal < FREE_END)
+                || (branch.start_terminal == PLANE_TERMINAL && branch.end_terminal < FREE_END)
+        };
+        let rejoined: Vec<usize> = if (0..terminal_count).any(|terminal| !state.on_plane[terminal] && touches(state, terminal)) {
+            let (_, mut without, main_without) = self.analyze_pours_skipping(net, &is_stub);
+            (0..terminal_count)
+                .filter(|terminal| !state.on_plane[*terminal] && touches(state, *terminal))
+                .filter(|terminal| find(&mut without, terminal_base + terminal) == main_without)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // While any pad has to reach the main piece by a branch, only the
+        // main piece is a target (the nearest pour node may be an island);
+        // the piece moves with the signals, so it is found again each time.
+        let any_off = !newly.is_empty()
+            || state.on_plane.iter().enumerate().any(|(terminal, on)| !on && !rejoined.contains(&terminal));
+        let target: Vec<Vec<bool>> = if any_off {
+            (0..self.board.layer_count)
+                .map(|layer| {
+                    pours.label[layer]
+                        .iter()
+                        .map(|piece| *piece != 0 && find(&mut parent, *piece as usize) == main)
+                        .collect()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let state = &mut self.nets[net as usize];
+        state.plane_target = target;
+        if !rejoined.is_empty() {
+            for terminal in &rejoined {
+                state.on_plane[*terminal] = true;
+            }
+            // The stubs those pads needed go; what remains is restamped.
+            let fixed = state.fixed;
+            let mut index = 0;
+            state.branches.retain(|branch| {
+                let keep = index < fixed
+                    || !((branch.end_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.start_terminal as usize)))
+                        || (branch.start_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.end_terminal as usize))));
+                index += 1;
+                keep
+            });
+            self.stamp(net);
+        }
+        let state = &mut self.nets[net as usize];
+        if newly.is_empty() {
+            return 0;
+        }
+        for terminal in &newly {
+            state.on_plane[*terminal] = false;
+            state.connected[*terminal] = false;
+        }
+        state.complete = false;
+        newly.len()
     }
 
     /// Renegotiates the nets that have vias with a higher via cost, from the
@@ -4620,6 +4739,12 @@ impl Router {
     /// branches` elements (piece labels start at 1; element 0 is unused),
     /// and the root of the main piece (the one holding most terminals).
     fn analyze_pours(&self, net: NetId) -> (crate::pour::PourMap, Vec<usize>, usize) {
+        self.analyze_pours_skipping(net, &|_| false)
+    }
+
+    /// `analyze_pours` leaving out the branches `skip` names (by index):
+    /// what the pour and the other branches join without them.
+    fn analyze_pours_skipping(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
         let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
@@ -4769,6 +4894,9 @@ impl Router {
         let keep = vec![true; state.branches.len()];
         let hosts = junction_hosts(&state.branches, &keep);
         for (index, branch) in state.branches.iter().enumerate() {
+            if skip(index) {
+                continue;
+            }
             for node in &branch.nodes {
                 let piece = pours.label[node.layer as usize]
                     .get(node.cell as usize)
@@ -4783,7 +4911,9 @@ impl Router {
                 (branch.end_terminal, *branch.nodes.last().unwrap()),
             ] {
                 if terminal == NO_TERMINAL {
-                    if let Some(host) = hosts.get(&node) {
+                    if let Some(host) = hosts.get(&node)
+                        && !skip(*host)
+                    {
                         union(&mut parent, branch_base + index, branch_base + host);
                     }
                 } else if terminal != PLANE_TERMINAL && terminal != FREE_END {
