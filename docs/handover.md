@@ -885,6 +885,16 @@ board breaks them hundreds of times (use the guided set).
   eurorack's polish made it worse without any deadline (21 -> 42 open;
   the guard kept the unpolished routes): `reroute(true)` renegotiates.
 
+- v8 rows 13-18 on x112: PolyKybd split72 right 416/420 (21), left
+  417/420 (6), corne right 419/420 (16), corne left 245/247 (3), vaio_re
+  256/267 (31), A13 module 173/223 (125). PolyKybd's KiCad unconnected
+  are GND fill islands (corne right: 9 zone-to-zone, the rest GND pads):
+  our model splits its four-layer GND pour into ~1900 pieces and 30
+  terminals stay stranded after 107 stitching vias (the polish made it
+  135, guarded). Signals on the inner layers chop the planes; a rung
+  keeping inner GND layers solid, or stitching islands without
+  terminals, is the lead.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
