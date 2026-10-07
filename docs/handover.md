@@ -895,6 +895,22 @@ board breaks them hundreds of times (use the guided set).
   keeping inner GND layers solid, or stitching islands without
   terminals, is the lead.
 
+- Placement vs flow, measured by routing our placements in route mode
+  (`place-route.sh` in the session scratchpad): OpenESC mini 114/152
+  (86 unconnected) against the designer's 149/152 (3): placement. Sisu:
+  route mode on our placement 184/192 (20), the layout flow 160/192
+  (108): mostly the flow. Whitespace fill 0 (spare room spread between
+  the parts) is now the default: Sisu 186/192 (11, as the designer's
+  placement), ESC mini 62/70 against 86/80 over two seeds, wirelength
+  within 3 % (7131ebe). The relation repair ranks by the relation's
+  violation first (a test failed at fill 0).
+- Sisu's flow gap: route mode picks pours as tracks (probe 86 nets
+  unfinished against 199-420 as planes; tracks attempt 61 open, 45 after
+  the narrow-signal step), the layout always routes pours as planes. A
+  layout-side pour race picked tracks on link too, where tracks needs
+  more than the budget (lost there). A choice that works for both needs
+  a better cost forecast than a 75 s probe.
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
