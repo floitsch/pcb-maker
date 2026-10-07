@@ -1170,15 +1170,15 @@ impl Router {
         }
     }
 
-    /// Nodes around pads that connect to a pour of their net on that layer.
-    fn thermal_guards(&self) -> Vec<Vec<u32>> {
-        let mut guard = vec![Vec::new(); self.board.layer_count];
+    /// Per pad connecting to a pour of its net: the layer, the net and the
+    /// nodes of each of its four spokes' corridors, straight out from the
+    /// pad along its axes (diagonally for a round pad, as KiCad draws them),
+    /// across the gap and the spoke's length.
+    fn spoke_corridors(&self) -> Vec<(usize, NetId, [Vec<usize>; 4])> {
+        let mut corridors = Vec::new();
         for plane in &self.board.planes {
             if plane.thermal_reach <= 0.0 {
                 continue;
-            }
-            if guard[plane.layer].is_empty() {
-                guard[plane.layer] = vec![0; self.grid.cells()];
             }
             for terminal in &self.board.nets[plane.net as usize].terminals {
                 if terminal.layers & (1 << plane.layer) == 0
@@ -1186,11 +1186,6 @@ impl Router {
                 {
                     continue;
                 }
-                // The spokes' corridors, straight out from the pad along
-                // its axes (diagonally for a round pad, as KiCad draws
-                // them), across the gap and the spoke's length: other nets
-                // may pass the pad's corners, not its spokes (Sisu's GND
-                // resistors starved at one spoke of two).
                 let shape = &self.board.obstacles[terminal.pad].shape;
                 let bounds = shape.aabb();
                 let anchor = terminal.anchor;
@@ -1207,24 +1202,149 @@ impl Router {
                 let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds.inflated(plane.thermal_reach + width)) else {
                     continue;
                 };
+                let mut cells: [Vec<usize>; 4] = Default::default();
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = self.grid.center(x, y);
+                        if shape.distance_to_point(center) >= plane.thermal_reach {
+                            continue;
+                        }
                         let offset = [center[0] - anchor[0], center[1] - anchor[1]];
-                        let in_corridor = directions.iter().any(|direction| {
+                        for (direction, list) in directions.iter().zip(cells.iter_mut()) {
                             let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
                             let along = offset[0] * direction[0] + offset[1] * direction[1];
                             let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
-                            along > edge - 1.0e-9 && along < edge + plane.thermal_reach && across < width
-                        });
-                        if in_corridor && shape.distance_to_point(center) < plane.thermal_reach {
-                            guard[plane.layer][self.grid.index(x, y)] = crate::grid::owner(plane.net);
+                            if along > edge - 1.0e-9 && along < edge + plane.thermal_reach && across < width {
+                                list.push(self.grid.index(x, y));
+                            }
+                        }
+                    }
+                }
+                corridors.push((plane.layer, plane.net, cells));
+            }
+        }
+        corridors
+    }
+
+    /// Nodes around pads that connect to a pour of their net on that layer:
+    /// their spokes' corridors (other nets may pass the pad's corners, not
+    /// its spokes: Sisu's GND resistors starved at one spoke of two).
+    fn thermal_guards(&self) -> Vec<Vec<u32>> {
+        let mut guard = vec![Vec::new(); self.board.layer_count];
+        for (layer, net, cells) in self.spoke_corridors() {
+            if guard[layer].is_empty() {
+                guard[layer] = vec![0; self.grid.cells()];
+            }
+            for cell in cells.iter().flatten() {
+                guard[layer][*cell] = crate::grid::owner(net);
+            }
+        }
+        // Planes without thermal reach still get their (empty) layer map.
+        for plane in &self.board.planes {
+            if plane.thermal_reach > 0.0 && guard[plane.layer].is_empty() {
+                guard[plane.layer] = vec![0; self.grid.cells()];
+            }
+        }
+        guard
+    }
+
+    /// Pads left with fewer than two of their four spoke corridors free of
+    /// other nets' copper are starved thermals to KiCad (Sisu: Y1 and R70
+    /// at one spoke of two). The nets in their corridors are routed again,
+    /// the guard made all but impassable; a new route is kept when it is
+    /// complete and crosses fewer corridor nodes. Returns the nets moved.
+    fn free_thermal_spokes(&mut self) -> usize {
+        let corridors = self.spoke_corridors();
+        if corridors.is_empty() {
+            return 0;
+        }
+        let layers = self.board.layer_count;
+        // Which nets' copper lies on each node (a via on every layer).
+        let occupants = |router: &Self| -> HashMap<(usize, usize), Vec<NetId>> {
+            let mut map: HashMap<(usize, usize), Vec<NetId>> = HashMap::new();
+            for (net, state) in router.nets.iter().enumerate() {
+                for branch in &state.branches {
+                    for (index, node) in branch.nodes.iter().enumerate() {
+                        let via = branch.nodes.get(index + 1).is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
+                        let on: Vec<usize> = if via { (0..layers).collect() } else { vec![node.layer as usize] };
+                        for layer in on {
+                            let entry = map.entry((layer, node.cell as usize)).or_default();
+                            if !entry.contains(&(net as NetId)) {
+                                entry.push(net as NetId);
+                            }
                         }
                     }
                 }
             }
+            map
+        };
+        let starved = |router: &Self| -> (Vec<NetId>, Vec<(usize, usize)>) {
+            let map = occupants(router);
+            let mut offenders = Vec::new();
+            let mut nodes = Vec::new();
+            for (layer, net, lists) in &corridors {
+                let blocked: Vec<&Vec<usize>> = lists
+                    .iter()
+                    .filter(|list| list.iter().any(|cell| map.get(&(*layer, *cell)).is_some_and(|nets| nets.iter().any(|other| other != net))))
+                    .collect();
+                if lists.iter().filter(|list| !list.is_empty()).count() - blocked.len() >= 2 {
+                    continue;
+                }
+                for list in blocked {
+                    for cell in list {
+                        nodes.push((*layer, *cell));
+                        for other in map.get(&(*layer, *cell)).into_iter().flatten() {
+                            if other != net && !offenders.contains(other) {
+                                offenders.push(*other);
+                            }
+                        }
+                    }
+                }
+            }
+            (offenders, nodes)
+        };
+        let (offenders, nodes) = starved(self);
+        if offenders.is_empty() {
+            return 0;
         }
-        guard
+        let corridor_nodes: std::collections::HashSet<(usize, usize)> = nodes.into_iter().collect();
+        let crossings = |router: &Self, net: NetId| -> usize {
+            router.nets[net as usize]
+                .branches
+                .iter()
+                .flat_map(|branch| &branch.nodes)
+                .filter(|node| corridor_nodes.contains(&(node.layer as usize, node.cell as usize)))
+                .count()
+        };
+        let guard_cost = self.config.thermal_guard_cost;
+        self.config.thermal_guard_cost = 1.0e4;
+        self.cleanup = true;
+        let mut moved = 0;
+        for net in offenders {
+            let state = &self.nets[net as usize];
+            if !state.routable || !state.complete || !state.plane.is_empty() {
+                continue;
+            }
+            let before = crossings(self, net);
+            let saved = state.branches.clone();
+            self.rip_up(net);
+            self.route_net_seq(net, 0.0, true, 1.0);
+            if self.nets[net as usize].complete && crossings(self, net) < before {
+                moved += 1;
+            } else {
+                let state = &mut self.nets[net as usize];
+                state.branches = saved;
+                state.connected.fill(true);
+                state.complete = true;
+            }
+            self.stamp(net);
+        }
+        self.cleanup = false;
+        self.config.thermal_guard_cost = guard_cost;
+        if self.config.verbose {
+            eprintln!("thermal spokes: {moved} nets moved out of starved pads' spoke corridors");
+        }
+        moved
     }
 
     /// The legal lattice nodes inside each terminal's pad copper.
@@ -4235,6 +4355,7 @@ impl Router {
         let improved = if self.hopeless { 0 } else { self.clean_up(order) };
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.reduce_vias(order);
+        self.free_thermal_spokes();
         if self.config.verbose {
             eprintln!(
                 "clean up {cleaned:.2}s, via reduction {:.2}s",
