@@ -1050,6 +1050,16 @@ mode) probed worse (stubs rung 200 nets unfinished against 190) and its
 continued rung ended at 403 open after 3900 s; the tight channels
 between the switch pins need the 0.1 mm rows.
 
+### The snapshot release exists again
+
+Every push to `main` rebuilds the `snapshot` pre-release
+(`.github/workflows/snapshot.yml`); the run cancels the one before. It
+had not published since the Intel Mac job (`macos-13`, retired runners)
+queued for hours: dropped. The release now carries
+`pcb-maker-linux-x86_64.tar.gz` and `pcb-maker-macos-aarch64.tar.gz`
+(27bd30b, published 2026-10-07 17:45Z); pushes closer than ~25 minutes
+apart leave it unpublished until the last one finishes.
+
 ### From the fence re-run (another session, `benchmarks/fence/README.md`)
 
 A parallel session re-ran the breadboard fence benchmarks on 5061a55 and
