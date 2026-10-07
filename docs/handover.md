@@ -951,10 +951,11 @@ history}`: the four maps a search step read per neighbour, in one 16-byte
 record (built in `new` and `update`, the history copies kept in step in
 the conflict loop). PolyKybd right, five negotiation iterations, same
 120M expansions and routes: search 92 s against 120 s (-23 %); ESC mini
-unchanged within noise (small lattices fit the caches anyway). Next on
-this path: the occupancy map of the net's class into the record too
-(another line per neighbour), and the search node array windowed to the
-corridor. (`build/github-layout-v8-x96` holds
+unchanged within noise (small lattices fit the caches anyway). Tried next and
+reverted: the class's trace-map occupancy mirrored into the record too
+(x135): same 78 s of search as x134 on the same five PolyKybd iterations
+(the u16 map's lines were not what missed; the record grew to 20 bytes).
+Left on this path: the search node array windowed to the corridor. (`build/github-layout-v8-x96` holds
 the x96 jetson row.)
 - MokyaLora in layout v7 routed 262/262 and failed only on two courtyard
   overlaps the designer excluded in the project (`drc_exclusions`,
