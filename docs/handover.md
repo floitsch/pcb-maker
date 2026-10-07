@@ -836,6 +836,16 @@ board breaks them hundreds of times (use the guided set).
   piece the part lies on (`Problem.pieces`, from `board_loops`), not
   both pieces' box (zpn_devboard). Not in v8's binary.
 
+- Cache-simulated profile of link's search (callgrind --cache-sim): the
+  via step read pour, guard and trace maps per layer (26 % of L1 misses);
+  per-node summaries now spare that (3 % faster), the rest is
+  instructions and the heap. Heuristic weight 1.3 on link: tracks probe
+  83 nets unfinished (139), attempt 32 open in 1588 s (19 in 2192 s at
+  1.0): faster but less complete, not taken. ESC mini: weight changes
+  expansions little (corridors bound the search).
+- v8 on x112 so far: jetson 337/340 (8; the polish guard fired), link
+  224/251 with 105 unconnected (x110: 143).
+
 Running: `build/chain-v8.sh`: layout sweep `build/github-layout-v8`
 (`pcb-maker-x112` = d60bdd8, tasks v5, `--jobs 1`), then routing sweep
 `build/github-route-v13` (x112, timeout 2700 s). Leave it running. Compare v8 with v7's
