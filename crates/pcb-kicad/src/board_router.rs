@@ -2162,19 +2162,29 @@ pub fn route_kicad_board(
             }
         }
     }
-    // The best rung's deferred seed retry.
-    let retry = config.retry_seeds.unwrap_or(4);
-    if let (Some((opens, best_result)), Some((attempt, connect))) = (best.as_ref(), best_attempt.as_ref())
-        && opens.0 > 0
-        && !best_seeded
-        && retry > 0
-        && work_of(best_result.expansions) <= budget / 2.0
-        && spent(ladder_work) < 1.5 * ladder_budget
-        && !past_deadline()
-    {
+    // The best rung's deferred seed retries: rounds of fresh seeds while
+    // connections stay open and the ladder budget pays for them, keeping
+    // one attempt's worth for the narrow-signal step after (an attempt
+    // over half the refine budget used to get none: eurorack-pmod ended
+    // 4 open with 700 s of its budget left; three seeds took it to 2).
+    let mut next_seed = 1u64;
+    for _round in 0..3 {
+        let Some((opens, best_result)) = best.as_ref() else {
+            break;
+        };
+        let Some((attempt, connect)) = best_attempt.as_ref() else {
+            break;
+        };
+        let cost = work_of(best_result.expansions).max(1.0);
+        let affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
+        let retry = config.retry_seeds.unwrap_or(4).min(affordable);
+        if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() {
+            break;
+        }
         let mut seeded = attempt.clone();
         seeded.seeds = Some(retry);
-        seeded.first_seed = Some(1);
+        seeded.first_seed = Some(next_seed);
+        next_seed += retry as u64;
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
