@@ -1377,7 +1377,17 @@ impl Router {
         self.config.thermal_guard_cost = 1.0e4;
         self.cleanup = true;
         let mut moved = 0;
+        // Budgeted like the clean-up: a hard reroute per offending net on a
+        // big lattice adds up (PolyKybd right: 435 s and 369 s in one
+        // layout, and the harness killed the board).
+        let clock = self.clock();
+        let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
+        let mut skipped = 0;
         for net in offenders {
+            if self.spent(&clock, budget) {
+                skipped += 1;
+                continue;
+            }
             let state = &self.nets[net as usize];
             if !state.routable || !state.complete || !state.plane.is_empty() {
                 continue;
@@ -1399,7 +1409,7 @@ impl Router {
         self.cleanup = false;
         self.config.thermal_guard_cost = guard_cost;
         if self.config.verbose {
-            eprintln!("thermal spokes: {moved} nets moved out of starved pads' spoke corridors");
+            eprintln!("thermal spokes: {moved} nets moved out of starved pads' spoke corridors ({skipped} left by the budget)");
         }
         moved
     }

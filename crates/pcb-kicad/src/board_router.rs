@@ -1911,12 +1911,13 @@ pub fn route_kicad_board(
     // no attempt starts with less than that left before the deadline (an
     // attempt checks the deadline only in its negotiation; MokyaLora's last
     // rung started at 1560 s and ran to 1890 s, past the harness's limit).
-    let last_attempt_wall = std::cell::Cell::new(60.0f64);
-    let no_time_for_another = || {
-        config.deadline.is_some_and(|deadline| {
-            deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() < last_attempt_wall.get().max(60.0)
-        })
+    let last_attempt_wall = std::cell::Cell::new(120.0f64);
+    let wall_left = || {
+        config
+            .deadline
+            .map_or(f64::INFINITY, |deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64())
     };
+    let no_time_for_another = || wall_left() < last_attempt_wall.get().max(120.0);
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -1933,7 +1934,16 @@ pub fn route_kicad_board(
         let layer_names = LayerTable::from_pcb(&parsed)?.names;
         let mut leader: Option<(usize, usize, core::router::Router, core::Board, KiCadBoardRouterConfig)> = None;
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
-            if leader.is_some() && past_deadline() {
+            // A probe takes its seconds (more on a busy machine), the
+            // continuation and the board's check more: no probe starts
+            // without that much wall clock left (PolyKybd right's ladder
+            // started at 1500 s and the harness killed the board at
+            // 1800 s).
+            if leader.is_some() && (past_deadline() || wall_left() < probe_seconds * 2.0 + 120.0) {
+                break;
+            }
+            if leader.is_none() && wall_left() < probe_seconds * 3.0 + 180.0 {
+                eprintln!("deadline too near for the ladder: no attempts");
                 break;
             }
             let mut attempt = config.clone();

@@ -989,6 +989,31 @@ systemd-oomd or earlyoom, so that an overrun ends one process instead of
 the machine. Rule: the sweep alone peaks at ~23 GB at three jobs; add
 nothing that cannot fit in what is left.
 
+## 2026-10-09: the v11 sweep on x136, and x137
+
+v11 (x136, three jobs, no freeze after the memory guard and 32 GB of
+swap), x136 against x112: jetson 338/340 with KiCad 2 unconnected (337,
+8), link 230/251 with 70 (224, 105), laptop 234/236 with 2 (same, 1434 s
+against 1666), MokyaLora 261/262 with 0 in 1196 s (same; x134's kill is
+gone), Sisu 185/192 with 26 (160, 108), ESC mini 122/152 with 51 (109,
+97), ESC 30x30 120/152 with 84 (87, 146), eurorack 132/133 with 1 (131,
+2), OpenFC 80/82 with 2 (81, 2), framework 71/71 pass; the two panels
+worse (39/127 and 32/184 against 53 and 43: the many-open rule). **Both
+PolyKybd split72 boards killed at 1800 s** (x112: 416 and 417 of 420):
+their first route ran `free_thermal_spokes` for 435 s and 369 s (a hard
+reroute per offending net; a keyboard's GND pour has thermal reliefs on
+every switch pin), the resume spent 200 s for nothing, and the ladder's
+probe loop then started at ~1500 s with no check of the wall time left.
+x137: the thermal-spoke repair is budgeted like the clean-up (at most
+`cleanup_seconds`, 180 s, or the negotiation's work), the ladder's probe
+loop starts only with `3 × probe + 180 s` of wall clock left and each
+further probe with `2 × probe + 120 s`, and the first rung sizes itself
+by 120 s. The four PolyKybd tasks rerun on x137 in
+`build/github-layout-v11-x137` (`--only`, cores 20-27, one job) while
+the sweep goes on with x136; splice those rows when comparing.
+The pass rule now trusts KiCad's connectivity (decision 2): MokyaLora
+passes; x112's 29 rows have 5 passes under it, not 4.
+
 ## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
 
 The search runs ESC mini's 20 bench iterations at 3.9M expansions a
