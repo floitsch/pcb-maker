@@ -16,6 +16,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -136,6 +137,35 @@ def designer_findings(directory, board_id, work):
     return counts
 
 
+
+def wait_for_memory(minimum_gb, what):
+    """Waits until `minimum_gb` of memory is available: with little swap,
+    Linux thrashes instead of killing when memory runs out, and the machine
+    looks frozen (2026-10-08: 64 GB used, 0.3 GB available, six hard
+    freezes). A board that starts late is better than a machine that
+    stops."""
+    if minimum_gb <= 0:
+        return
+    waited = 0
+    while True:
+        available = 0
+        try:
+            with open("/proc/meminfo") as meminfo:
+                for line in meminfo:
+                    if line.startswith("MemAvailable:"):
+                        available = int(line.split()[1]) / (1024 * 1024)
+        except OSError:
+            return
+        if available >= minimum_gb:
+            if waited:
+                print(f"{what}: {available:.0f} GB available after waiting {waited} s", file=sys.stderr)
+            return
+        if waited == 0:
+            print(f"{what}: waiting for {minimum_gb} GB of memory ({available:.1f} GB available)", file=sys.stderr)
+        time.sleep(15)
+        waited += 15
+
+
 def run_task(task, arguments):
     name = task["name"]
     directory = Path(task["directory"])
@@ -170,6 +200,7 @@ def run_task(task, arguments):
     if router:
         (work / "router.json").write_text(json.dumps(router))
         router_argument = str(work / "router.json")
+    wait_for_memory(arguments.min_free_gb, task["name"])
     started = time.monotonic()
     try:
         process = subprocess.run([str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
@@ -215,6 +246,8 @@ def main():
     parser.add_argument("--tasks", type=Path, default=HERE / "tasks.json",
                         help="task list; constraint files are relative to it")
     parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--min-free-gb", type=float, default=12.0,
+                        help="start a board only with this much memory available (0: always)")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
     tasks = []

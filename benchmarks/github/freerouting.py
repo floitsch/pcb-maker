@@ -44,6 +44,35 @@ def python(code, log, timeout=600):
     return code_, time.monotonic() - started
 
 
+
+def wait_for_memory(minimum_gb, what):
+    """Waits until `minimum_gb` of memory is available: with little swap,
+    Linux thrashes instead of killing when memory runs out, and the machine
+    looks frozen (2026-10-08: 64 GB used, 0.3 GB available, six hard
+    freezes). A board that starts late is better than a machine that
+    stops."""
+    if minimum_gb <= 0:
+        return
+    waited = 0
+    while True:
+        available = 0
+        try:
+            with open("/proc/meminfo") as meminfo:
+                for line in meminfo:
+                    if line.startswith("MemAvailable:"):
+                        available = int(line.split()[1]) / (1024 * 1024)
+        except OSError:
+            return
+        if available >= minimum_gb:
+            if waited:
+                print(f"{what}: {available:.0f} GB available after waiting {waited} s", file=sys.stderr)
+            return
+        if waited == 0:
+            print(f"{what}: waiting for {minimum_gb} GB of memory ({available:.1f} GB available)", file=sys.stderr)
+        time.sleep(15)
+        waited += 15
+
+
 def reference_findings(name, board_id, directory, work):
     """The designer's own DRC errors by type (a sweep's saved report when
     there is one, else computed here)."""
@@ -153,6 +182,8 @@ def main():
     parser.add_argument("--ours", action="store_true", help="also route the cold board with pcb-maker")
     parser.add_argument("--skip-freerouting", action="store_true")
     parser.add_argument("--timeout", type=int, default=1500, help="Freerouting's wall-clock limit (and pcb-maker's)")
+    parser.add_argument("--min-free-gb", type=float, default=12.0,
+                        help="start a board only with this much memory available (0: always)")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
     config = json.loads(arguments.freerouting.read_text())
@@ -167,6 +198,7 @@ def main():
         if not (directory / f"{board_id}.kicad_pcb").exists():
             print(f"skipping {board['name']}: {directory} not found", file=sys.stderr)
             continue
+        wait_for_memory(arguments.min_free_gb, board["name"])
         work = arguments.output / board["name"]
         if work.exists():
             shutil.rmtree(work)

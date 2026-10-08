@@ -950,6 +950,45 @@ x136: a worse resume or polish restores the router it had; no rung,
 seed retry or narrow step starts with less wall time left than the last
 attempt took (`no_time_for_another`).
 
+## 2026-10-08: the freezes were memory exhaustion
+
+The new machine froze hard six times, minutes after each launch of the
+full benchmark set (layout sweep with three jobs, Freerouting, pcb-maker
+on the cold boards, six pinned placement routes). Nothing in the journal.
+A journaled load ramp (`build/freeze-hunt/`: `ramp.sh`, `step.sh`,
+`telemetry.sh` fsyncing a line every 5 s, `journal.log`) ran the pieces
+one by one and found it:
+
+| step | memory used (max) | available (min) | CPU (max) | outcome |
+| --- | ---: | ---: | ---: | --- |
+| one route, one core | 4 GB | 59 GB | 73 °C | ok |
+| eight routes, one core each | 20 GB | 43 GB | 85 °C | ok |
+| PolyKybd route, all threads | 10 GB | 53 GB | 83 °C | ok |
+| one layout (jetson) | 10 GB | 53 GB | 78 °C | ok |
+| three layouts at once | 23 GB | 40 GB | 85 °C | ok |
+| stress-ng --cpu 32 matrixprod | 3 GB | 60 GB | 72 °C | ok |
+| stress-ng --vm 16 --vm-bytes 48G | 51 GB | 12 GB | 77 °C | ok |
+| sweep (3 jobs) + Freerouting, 20 min | 31 GB | 32 GB | 90 °C | ok |
+| the exact launch shape | **62 GB** | **0.3 GB** | 89 °C | **froze** |
+
+Two pcb-maker processes on 8-layer boards at ~10 GB each, Java at 3.5
+GB, kicad-cli at 2 GB each, on a 64 GB machine with 1 GB of swap: Linux
+thrashes on page-cache reclaim instead of killing, and the desktop looks
+frozen. Temperatures were no worse than in passing steps; no suspend or
+idle action is configured on AC before the 30-minute display-off, and the
+"only when idle" impression was the load reaching its memory peak 5-7
+minutes after launch. Also seen: `Tccd1` 36 °C above `Tccd2` under a
+CCD1-only load and fans flat at ~1530 RPM from 49 to 90 °C
+(`build/freeze-hunt/ccd-test.sh` compares the dies under the same
+one-core load, `ccd-test.log`).
+
+Done: the runners wait for `--min-free-gb` (12) of available memory
+before starting a board (`benchmarks/agent-tasks/run.py`,
+`benchmarks/github/freerouting.py`). Recommended: a 32 GB swapfile and
+systemd-oomd or earlyoom, so that an overrun ends one process instead of
+the machine. Rule: the sweep alone peaks at ~23 GB at three jobs; add
+nothing that cannot fit in what is left.
+
 ## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
 
 The search runs ESC mini's 20 bench iterations at 3.9M expansions a
