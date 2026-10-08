@@ -912,9 +912,21 @@ pub fn layout_kicad_board(
     // The polish reroutes everything: past the deadline it would stop at
     // once and throw the moves' best board away (OpenAirScope: 18 open
     // after the moves, 108 of 184 routed after the polish).
-    if !polished && !many_open && !router.past_deadline() {
+    // The polish (clean-up, via reduction, thermal repair) is bounded by
+    // the wall clock left before the deadline, and skipped under four
+    // minutes of it: PolyKybd right's polish spent 769 s on one via
+    // reduction round and was thrown away.
+    let polish_left = router_config
+        .deadline
+        .map_or(f64::INFINITY, |deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64());
+    if !polished && !many_open && !router.past_deadline() && polish_left >= 240.0 {
         let saved_router = router.clone();
         let expansions_before = router.expansions();
+        {
+            let polish = router.config_mut();
+            polish.via_reduction_seconds = polish.via_reduction_seconds.min((polish_left - 120.0) / 2.0);
+            polish.cleanup_seconds = polish.cleanup_seconds.min((polish_left - 120.0) / 4.0);
+        }
         let polished_result = router.polish();
         work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
         // A polish the deadline cut short can leave more open than it

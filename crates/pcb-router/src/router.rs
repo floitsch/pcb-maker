@@ -4550,7 +4550,12 @@ impl Router {
         let improved = if self.hopeless { 0 } else { self.clean_up(order) };
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.reduce_vias(order);
-        self.free_thermal_spokes();
+        // A repair for the final board, like the via reduction: a trial
+        // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
+        // in the first route, mostly hard searches flooding the lattice).
+        if self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0 {
+            self.free_thermal_spokes();
+        }
         if self.config.verbose {
             eprintln!(
                 "clean up {cleaned:.2}s, via reduction {:.2}s",
