@@ -950,19 +950,24 @@ x136: a worse resume or polish restores the router it had; no rung,
 seed retry or narrow step starts with less wall time left than the last
 attempt took (`no_time_for_another`).
 
-**Stopped for a shutdown (2026-10-07, 22:00) before its first row:
-`build/chain-v11.sh`**: layout sweep `build/github-layout-v11` on
-`pcb-maker-x136` (= f27d263) with tasks v5, then routing sweep
-`build/github-route-v16` on x136. **Restart it** (`nice -n 5
-build/chain-v11.sh`; rebuild x136 with `cargo build --release` and copy
-it to `build/bin/pcb-maker-x136` if `build/bin` is gone) on a quiet
-machine and run nothing heavy beside it. Compare v11 with x112's 29 rows
-(`build/github-layout-v8-x112.log`) and x134's 9
-(`build/github-layout-v10-x134-partial.log`), v16 with v12. The
-Freerouting sweep was stopped too, at 28 rows
-(`build/github-freerouting.log`); restart it on the boards not yet in
-the log (`benchmarks/github/freerouting.py build/github-freerouting-2
---binary build/bin/pcb-maker-x136 --only <names>`, nice 15). The two panels (OpenRX,
+## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
+
+The search runs ESC mini's 20 bench iterations at 3.9M expansions a
+second on one core (same routes). **Running** (restarted after the
+shutdown, x136 rebuilt from ad61411):
+- `build/chain-v11.sh`: layout sweep `build/github-layout-v11` on x136
+  with tasks v5, **three jobs**, then routing sweep
+  `build/github-route-v16`. Compare v11 with x112's 29 rows
+  (`build/github-layout-v8-x112.log`) and x134's 9
+  (`build/github-layout-v10-x134-partial.log`), v16 with v12.
+- Freerouting on the 81 boards it had not done: `build/github-freerouting-2`
+  (log of the same name); the first 28 rows are in `build/github-freerouting.log`.
+- pcb-maker on the cold boards (the matched comparison):
+  `build/github-ours-cold` (`freerouting.py --ours --skip-freerouting`,
+  cores 28-31).
+- Placement variants (plain, `supply_via_room`, `routing_demand` 1.0)
+  on Sisu and link in route mode, cores 16-27: `scratchpad/pr-route-*.log`.
+Experiments are pinned with `taskset` so the sweep keeps its cores. The two panels (OpenRX,
 ESC 30x30; their designers' own boards are incomplete, no fair targets)
 are worse: 39/127 (53) and 32/184 (43), and done in 1044 and 1221 s.
 On OpenRX x112 spent 690 s in moves and gained 14 connections; x134
