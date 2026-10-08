@@ -232,8 +232,11 @@ def run_task(task, arguments):
         constraints=len(result["constraints"]), missed=missed, unexpected_misses=unexpected,
         native=copper,
     )
-    row["pass"] = bool(routed["routed_connections"] == routed["routable_connections"] and not unexpected
-                       and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    # A board passes on KiCad's connectivity, not on the router's own count
+    # (Florian, 2026-10-07): KiCad joins a pad through a pour's fill that
+    # the router, routing pours as tracks, does not credit (MokyaLora's
+    # one open pad, 261/262 with KiCad at 0 unconnected).
+    row["pass"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
     return row
 
 
