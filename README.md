@@ -26,11 +26,11 @@ Not finished, but already useful.
   30 minutes each. Most of the rest are complete but for a few connections
   or a few starved thermal reliefs; a handful are panels or boards whose
   rules no track can satisfy ([results](docs/benchmarks.md#layout-sweep-v11-on-the-harvested-boards-2026-10-09)).
-- **Against Freerouting** on the same boards with only the copper removed
-  (the designer's placement kept, 1500 s each): on the 40 boards compared
-  so far Freerouting finishes 15 and times out on 21; where it finishes,
-  pcb-maker leaves fewer connections open on 11 boards and Freerouting on
-  2, with 9 boards clean against 0
+- **Against Freerouting** on the same 109 boards with only the copper
+  removed (the designer's placement kept, 1500 s each): Freerouting finishes
+  70 and times out on 34; where it finishes, pcb-maker leaves fewer
+  connections open on 49 boards and Freerouting on 6, with 50 boards clean
+  against 8
   ([table](docs/benchmarks.md#freerouting-against-our-cold-route-on-the-harvested-boards-2026-10-09)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
   way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
@@ -200,7 +200,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
 | Layout from stacked parts and constraints, 1800 s | 109 | 38 clean; 1231 connections open in all on the 29 boards of the earlier baseline (1598 before) | - |
-| Routing the designer's placement cold, 1500 s | 40 compared | 9 clean, 39 connections open in all | 0 clean, 15 finished, 21 timed out, 265 open where finished |
+| Routing the designer's placement cold, 1500 s | 109 | 50 clean, 206 connections open in all | 8 clean, 70 finished, 34 timed out, 913 open where finished |
 
 ```sh
 python3 benchmarks/github/harvest.py fetch                      # the harvested boards

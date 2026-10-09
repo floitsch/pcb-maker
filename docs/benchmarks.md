@@ -349,54 +349,126 @@ no track of their class can satisfy).
 Both route the designer's placement with every track and via removed, 1500 s
 each, one board at a time; Freerouting 2.x headless through its CLI
 (`benchmarks/github/freerouting.py`), the result imported as a session file
-and refilled; counts are KiCad's, errors beyond the designer's board. 40 of
-the boards have both results so far (`freerouting_compare.py`):
+and refilled; counts are KiCad's, errors beyond the designer's board. All 109
+boards (`freerouting_compare.py`; our rows are x136 for the first 40 boards
+and x155 for the rest, so the two binaries' pour models are mixed on our
+side; Freerouting's "failed" rows are a DSN export or session import that
+did not work):
 
-board                                                         |                    Freerouting |                          pcb-maker
-------------------------------------------------------------- | ------------------------------ | ----------------------------------
-0xCB-dev__0xCB-1337__pcb-panel                                |            29 open +201e 603 s |           340/340 0 open +0e 371 s
-CRImier__MyKiCad__framework_mobo_lefthalf                     |              42 open +0e 305 s |              71/71 0 open +0e 64 s
-CRImier__MyKiCad__vaio_re                                     |                 timeout 1500 s |         261/267 26 open +0e 1166 s
-CRImier__MyKiCad__zpn_devboard                                |                 no session 3 s |           167/167 0 open +1e 289 s
-Huaqiu-Electronics__ecad-viewer__video                        |              1 open +0e 1065 s |          371/371 0 open +0e 1728 s
-ISSUIUC__ISS-PCB__BAGEL-MK1                                   |                 timeout 1500 s |           138/138 0 open +0e 122 s
-ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado                         |                 timeout 1500 s |           142/144 2 open +0e 608 s
-ISSUIUC__ISS-PCB__MIDAS-MK2                                   |               7 open +0e 199 s |           156/156 0 open +0e 179 s
-ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA               |               5 open +0e 146 s |           154/154 0 open +0e 106 s
-MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub                 |                 no session 3 s |         148/159 22 open +0e 1000 s
-OpenDrone-hw__OpenESC-20x20__4in1-mini                        |                 timeout 1500 s |           151/152 1 open +0e 482 s
-OpenDrone-hw__OpenESC-30x30__4in1                             |                 timeout 1501 s |           152/152 0 open +0e 442 s
-OpenDrone-hw__OpenESC-30x30__4in1-panel                       |                 timeout 1500 s |          49/184 499 open +0e 323 s
-OpenDrone-hw__OpenFC-Lite__OpenFC                             |             8 open +143e 942 s |             80/82 2 open +0e 421 s
-OpenDrone-hw__OpenRX__OpenRX-panel-rev2                       |                 timeout 1500 s |          43/127 266 open +4e 544 s
-Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1        |              0 open +18e 194 s |             55/56 4 open +0e 216 s
-Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard |               17 open +0e 95 s |           108/108 0 open +0e 484 s
-Twisted-Fields__rp2040-motor-controller__RP2040_base          |                 timeout 1500 s |          151/186 91 open +0e 709 s
-antmicro__jetson-nano-baseboard__jetson-nano-baseboard        |                 timeout 1501 s |          338/340 2 open +0e 1298 s
-apfaudio__eurorack-pmod__eurorack-pmod-pcb                    |                 timeout 1500 s |           132/133 1 open +0e 585 s
-bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV                       |            import failed 187 s |             66/69 9 open +0e 599 s
-briskspirit__Sisu_SSE-9__Sisu_SSE-9                           |                 timeout 1501 s |         184/192 11 open +2e 1420 s
-byrantech__laptop__motherboard                                |                 timeout 1500 s |           234/236 2 open +0e 997 s
-byrantech__laptop__power                                      |              0 open +100e 24 s |            115/115 0 open +0e 91 s
-earth75__atat-1800__ATAT1800                                  |                 timeout 1500 s |         255/278 31 open +0e 1800 s
-emertcakir__OpenAirScope__OpenAirScope                        |               3 open +1e 282 s |           179/184 5 open +0e 727 s
-hackclub__OnBoard__koeg-board-pcb                             |              export failed 0 s |        169/175 11 open +15e 1220 s
-hackclub__OnBoard__krishveercard                              |               93 open +0e 86 s |            23/43 21 open +0e 699 s
-ikajdan__katia__katia                                         |                 timeout 1500 s |         136/162 84 open +0e 1800 s
-maniekx86__M8SBC-486__homebrew_486                            |               0 open +3e 363 s |           190/190 0 open +0e 724 s
-ohdsp__DSP-ADAU1452__DSP-ADAU1452                             |             58 open +0e 1210 s |           189/190 7 open +0e 678 s
-oro-os__link__link                                            |                 timeout 1501 s |         248/251 10 open +0e 1734 s
-rosco-m68k__rosco_m68k__rosco_m68k__kicad                     |               1 open +6e 184 s |           148/148 0 open +2e 347 s
-tengigabytes__MokyaLora__MokyaLora                            |                 timeout 1500 s |           261/262 1 open +0e 767 s
-thpoll83__PolyKybd__poly_corne_split42_left                   |                 timeout 1500 s |          247/247 0 open +0e 1463 s
-thpoll83__PolyKybd__poly_corne_split42_right                  |                 timeout 1500 s |           420/420 0 open +0e 989 s
-thpoll83__PolyKybd__poly_kybd_split72_left                    |                 timeout 1500 s |          420/420 0 open +0e 1735 s
-thpoll83__PolyKybd__poly_kybd_split72_right                   |                 timeout 1500 s |           420/420 0 open +0e 967 s
-vd-rd__sbc_allwinner_a13__module                              |                 timeout 1500 s |          218/223 22 open +3e 981 s
-wntrblm__Castor_and_Pollux__mainboard                         |                1 open +0e 28 s |           126/126 0 open +0e 104 s
+board                                                                |                    Freerouting |                          pcb-maker
+-------------------------------------------------------------------- | ------------------------------ | ----------------------------------
+0xCB-dev__0xCB-1337__1337-v4.0                                       |                7 open +0e 30 s |              47/47 0 open +0e 63 s
+0xCB-dev__0xCB-1337__panel                                           |              28 open +0e 185 s |           188/188 0 open +0e 677 s
+0xCB-dev__0xCB-1337__pcb                                             |               3 open +86e 33 s |             85/85 0 open +0e 169 s
+0xCB-dev__0xCB-1337__pcb-panel                                       |            29 open +201e 603 s |           340/340 0 open +0e 371 s
+0xCB-dev__0xCB-Static__0xcb-static                                   |                0 open +0e 10 s |              74/74 0 open +0e 34 s
+ASH-ART__Qfwfq__qfwfq                                                |               1 open +0e 100 s |              64/64 0 open +0e 63 s
+CDFER__Business-Cards__Batch_1                                       |                 timeout 1500 s |         127/204 499 open +0e 488 s
+CDFER__Business-Cards__USB_Cable_Tester__PCB                         |              1 open +172e 24 s |              54/54 0 open +0e 57 s
+CDFER__Business-Cards__USB_Keypad                                    |               8 open +39e 35 s |              39/39 0 open +0e 43 s
+CDFER__Business-Cards__WLED_Matrix                                   |             12 open +36e 116 s |            101/104 4 open +0e 98 s
+CRImier__MyKiCad__framework_mobo_lefthalf                            |              42 open +0e 305 s |              71/71 0 open +0e 64 s
+CRImier__MyKiCad__protoesp                                           |              65 open +3e 529 s |           93/104 24 open +0e 232 s
+CRImier__MyKiCad__vaio_re                                            |                 timeout 1500 s |         261/267 26 open +0e 1166 s
+CRImier__MyKiCad__zpn_devboard                                       |                 no session 3 s |           167/167 0 open +1e 289 s
+GlasgowEmbedded__glasgow__glasgow__revC3                             |                 timeout 1500 s |         172/226 86 open +0e 1166 s
+Goga64__ULK__ULK                                                     |               0 open +51e 15 s |             70/70 0 open +0e 122 s
+Goga64__ULK__ULK_sl_PG1316s                                          |               0 open +10e 30 s |             70/70 0 open +0e 127 s
+Huaqiu-Electronics__ecad-viewer__video                               |              1 open +0e 1065 s |          371/371 0 open +0e 1728 s
+ISSUIUC__ISS-PCB__BAGEL-MK1                                          |                 timeout 1500 s |           138/138 0 open +0e 122 s
+ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado                                |                 timeout 1500 s |           142/144 2 open +0e 608 s
+ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA                      |             23 open +23e 602 s |           151/156 8 open +0e 482 s
+ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA                          |              18 open +0e 923 s |           154/159 8 open +0e 539 s
+ISSUIUC__ISS-PCB__MIDAS-MK2                                          |               7 open +0e 199 s |           156/156 0 open +0e 179 s
+ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA                      |               5 open +0e 146 s |           154/154 0 open +0e 106 s
+Jana-Marie__ligra__ligra_back                                        |                0 open +0e 12 s |              33/33 0 open +0e 69 s
+Ladniy__jiran-ble-lite__jiran-ble-lite                               |                5 open +5e 81 s |          104/105 20 open +0e 297 s
+MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub                        |                 no session 3 s |         148/159 22 open +0e 1000 s
+Neotron-Compute__Neotron-Pico__neotron-pico                          |              14 open +2e 144 s |          176/190 24 open +0e 966 s
+Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex                         |                0 open +1e 10 s |             21/21 0 open +0e 118 s
+Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex |                0 open +0e 35 s |             19/19 0 open +0e 218 s
+OpenDrone-hw__OpenESC-20x20__4in1-mini                               |                 timeout 1500 s |           151/152 1 open +0e 482 s
+OpenDrone-hw__OpenESC-30x30__4in1                                    |                 timeout 1501 s |           152/152 0 open +0e 442 s
+OpenDrone-hw__OpenESC-30x30__4in1-panel                              |                 timeout 1500 s |          49/184 499 open +0e 323 s
+OpenDrone-hw__OpenFC-Lite__OpenFC                                    |             8 open +143e 942 s |             80/82 2 open +0e 421 s
+OpenDrone-hw__OpenRX__OpenRX-panel-rev2                              |                 timeout 1500 s |          43/127 266 open +4e 544 s
+Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1               |              0 open +18e 194 s |             55/56 4 open +0e 216 s
+Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard        |               17 open +0e 95 s |           108/108 0 open +0e 484 s
+Twisted-Fields__rp2040-motor-controller__RP2040_base                 |                 timeout 1500 s |          151/186 91 open +0e 709 s
+antmicro__jetson-nano-baseboard__jetson-nano-baseboard               |                 timeout 1501 s |          338/340 2 open +0e 1298 s
+anyshake__explorer__Explorer                                         |              15 open +1e 898 s |           150/150 0 open +0e 214 s
+apfaudio__eurorack-pmod__eurorack-pmod-pcb                           |                 timeout 1500 s |           132/133 1 open +0e 585 s
+baldengineer__bit-preserve__coco2                                    |               0 open +0e 151 s |           173/173 0 open +0e 350 s
+bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV                              |            import failed 187 s |             66/69 9 open +0e 599 s
+bitshiftcrazy__d20_pcb__d20_pcb                                      |              0 open +151e 10 s |             18/19 3 open +0e 435 s
+bitshiftcrazy__spell_tome__spell_tome_bottom                         |                 0 open +2e 6 s |              18/18 0 open +0e 18 s
+briskspirit__Sisu_SSE-9__Sisu_SSE-9                                  |                 timeout 1501 s |         184/192 11 open +2e 1420 s
+byrantech__laptop__keyboard                                          |             24 open +11e 644 s |           131/136 4 open +0e 478 s
+byrantech__laptop__motherboard                                       |                 timeout 1500 s |           234/236 2 open +0e 997 s
+byrantech__laptop__power                                             |              0 open +100e 24 s |            115/115 0 open +0e 91 s
+crmaykish__mackerel-68k__mackerel-08-v1                              |               3 open +0e 101 s |             96/96 0 open +0e 230 s
+crmaykish__mackerel-68k__mackerel-10-v1                              |               1 open +5e 263 s |           155/155 0 open +0e 544 s
+crmaykish__mackerel-68k__mackerel-30-proto                           |             0 open +589e 257 s |          217/217 0 open +13e 501 s
+doudar__SmartSpin2k__SmartSpin2k_Panelized                           |                 timeout 1500 s |           585/585 0 open +0e 113 s
+duckyb__eternal-keypad__eternal-keypad                               |                0 open +0e 22 s |              69/69 0 open +0e 74 s
+duckyb__urchin__main                                                 |                6 open +0e 80 s |              68/68 0 open +0e 13 s
+earth75__atat-1800__ATAT1800                                         |                 timeout 1500 s |         255/278 31 open +0e 1800 s
+ebastler__osprey__osprey_rev_a                                       |             21 open +6e 1069 s |           101/103 2 open +0e 343 s
+emertcakir__OpenAirScope__OpenAirScope                               |               3 open +1e 282 s |           179/184 5 open +0e 727 s
+greatscottgadgets__hackrf__hackrf-one                                |             5 open +220e 750 s |           319/319 0 open +0e 441 s
+hackclub__OnBoard__E-Fidget-Lite                                     |                 0 open +0e 7 s |              20/20 0 open +0e 15 s
+hackclub__OnBoard__MotionCubeViewAllForces                           |               10 open +5e 21 s |              20/20 0 open +0e 77 s
+hackclub__OnBoard__PixelWave                                         |                 timeout 1500 s |           343/343 0 open +0e 484 s
+hackclub__OnBoard__keyboar_                                          |                 timeout 1500 s |           102/102 0 open +0e 128 s
+hackclub__OnBoard__koeg-board-pcb                                    |              export failed 0 s |        169/175 11 open +15e 1220 s
+hackclub__OnBoard__krishveercard                                     |               93 open +0e 86 s |            23/43 21 open +0e 699 s
+hackclub__OnBoard__woagboard                                         |                1 open +0e 92 s |            90/91 47 open +0e 206 s
+headblockhead__slab-pcb__interchange-pcb-right                       |             47 open +30e 413 s |             83/83 8 open +0e 313 s
+headblockhead__slab-pcb__slab-pcb-left                               |              54 open +0e 452 s |             76/76 0 open +0e 156 s
+iandchasse__silkscreen-pcb__silkscreen_pcb                           |               9 open +26e 93 s |            113/113 0 open +0e 70 s
+ikajdan__katia__katia                                                |                 timeout 1500 s |         136/162 84 open +0e 1800 s
+little-red-rover__little-red-rover__little_red_rover                 |              8 open +19e 129 s |             64/64 0 open +0e 258 s
+maniekx86__M8SBC-486__homebrew_486                                   |               0 open +3e 363 s |           190/190 0 open +0e 724 s
+obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized              |              63 open +0e 206 s |           167/172 9 open +0e 675 s
+obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized             |                2 open +0e 20 s |           162/162 0 open +0e 102 s
+ohdsp__DSP-ADAU1452__DSP-ADAU1452                                    |             58 open +0e 1210 s |           189/190 7 open +0e 678 s
+oro-os__link__link                                                   |                 timeout 1501 s |         248/251 10 open +0e 1734 s
+rosco-m68k__rosco_m68k__rosco_m68k__kicad                            |               1 open +6e 184 s |           148/148 0 open +2e 347 s
+siderakb__ergo-snm-keyboard__ErgoSNM_keyboard                        |              17 open +1e 215 s |              58/58 0 open +0e 39 s
+sporkus__capybully_keyboard__capybully                               |                 timeout 1500 s |            32/32 50 open +0e 622 s
+sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys             |               6 open +0e 145 s |              76/76 0 open +0e 91 s
+sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre            |               8 open +0e 276 s |              75/75 0 open +0e 78 s
+stonedDiscord__MegaDrive__MegaDrive                                  |                 timeout 1500 s |          274/298 95 open +0e 387 s
+stonedDiscord__nonSNES__SNSP-CPU-01                                  |                 timeout 1500 s |          361/363 55 open +0e 519 s
+stonedDiscord__nonSNES__SNSP-CPU-1CHIP                               |              2 open +16e 147 s |           212/212 0 open +0e 178 s
+tengigabytes__MokyaLora__MokyaLora                                   |                 timeout 1500 s |           261/262 1 open +0e 767 s
+thpoll83__PolyKybd__poly_corne_split42_left                          |                 timeout 1500 s |          247/247 0 open +0e 1463 s
+thpoll83__PolyKybd__poly_corne_split42_right                         |                 timeout 1500 s |           420/420 0 open +0e 989 s
+thpoll83__PolyKybd__poly_kb_molecule_4x4                             |                 timeout 1500 s |            9/28 499 open +0e 870 s
+thpoll83__PolyKybd__poly_kb_molecule_4x5                             |                 timeout 1500 s |            6/28 499 open +0e 871 s
+thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted                     |                 timeout 1500 s |            6/28 499 open +0e 304 s
+thpoll83__PolyKybd__poly_kb_molecule_5x4_wave                        |                 timeout 1500 s |            6/28 499 open +0e 529 s
+thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left                   |                 timeout 1500 s |            5/28 499 open +0e 658 s
+thpoll83__PolyKybd__poly_kybd_split72_left                           |                 timeout 1500 s |          420/420 0 open +0e 1735 s
+thpoll83__PolyKybd__poly_kybd_split72_right                          |                 timeout 1500 s |           420/420 0 open +0e 967 s
+tomunderwood99__CharlieBoard__Blue_Line                              |                0 open +0e 10 s |              26/26 0 open +0e 21 s
+transistorfet__computie__k30-SBC                                     |               0 open +0e 269 s |           173/173 0 open +0e 528 s
+tubbytwins__bumwings-kbd__bumwings_v001                              |              16 open +0e 388 s |              72/72 0 open +0e 75 s
+tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd             |              14 open +0e 116 s |              70/70 0 open +0e 55 s
+tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd                   |              14 open +0e 270 s |              75/75 0 open +0e 66 s
+tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd                   |            import failed 266 s |              85/85 0 open +0e 52 s
+tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd             |              17 open +0e 111 s |              81/81 0 open +0e 57 s
+tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd                   |              17 open +0e 397 s |              89/89 0 open +0e 86 s
+tubbytwins__bumwings-kbd__bumwings_v001_core                         |             20 open +0e 1094 s |             98/98 0 open +0e 102 s
+tubbytwins__bumwings-kbd__bumwings_v001_xiao                         |              21 open +0e 762 s |             81/81 0 open +0e 138 s
+tubbytwins__bumwings-kbd__bumwings_v001_xiao_s                       |              19 open +0e 401 s |              78/78 0 open +0e 92 s
+tzarc__keyboards__ghoul                                              |             10 open +59e 358 s |           142/148 6 open +0e 333 s
+vd-rd__sbc_allwinner_a13__module                                     |                 timeout 1500 s |          218/223 22 open +3e 981 s
+wntrblm__Castor_and_Pollux__mainboard                                |                1 open +0e 28 s |           126/126 0 open +0e 104 s
+zli117__CyberKeeb2040__MainBoard                                     |              13 open +0e 676 s |           118/118 0 open +0e 246 s
 
-40 boards; Freerouting finished 15, timed out 21, failed 4
-where Freerouting finished: pcb-maker fewer unconnected on 11, Freerouting fewer on 2; unconnected in all: Freerouting 265, pcb-maker 39; clean boards: Freerouting 0, pcb-maker 9
+109 boards; Freerouting finished 70, timed out 34, failed 5
+where Freerouting finished: pcb-maker fewer unconnected on 49, Freerouting fewer on 6; unconnected in all: Freerouting 913, pcb-maker 206; clean boards: Freerouting 8, pcb-maker 50
 
 This supersedes the 2026-09-22 head-to-head below, which used the earlier
 adapter.

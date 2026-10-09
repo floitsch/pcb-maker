@@ -39,14 +39,13 @@ The full table is in `docs/benchmarks.md`.
 
 **Freerouting against our cold route** (`benchmarks/github/freerouting.py`,
 headless, 1500 s each, both on the designer's placement with all copper
-removed; `freerouting_compare.py`): on the 40 boards both have, Freerouting
-finishes 15, times out on 21 and fails on 4 (no session, export or import
-failure); where it finishes we have fewer unconnected on 11 boards, it on 2
-(k30-SBC, where it is clean and we have starved thermals; homebrew 486,
-where it leaves 3 edge-clearance errors); unconnected in all 265 against
-39; clean boards 0 against 9. The remaining 69 boards of the Freerouting
-sweep and 24 of ours are not run (stopped for a reboot; both drivers resume
-board by board, skip done boards with `--only`).
+removed; `freerouting_compare.py`): all 109 boards. Freerouting finishes 70,
+times out on 34 and fails on 5; where it finishes we have fewer unconnected
+on 49 boards, it on 6; unconnected in all 913 against 206; clean boards 8
+against 50. Our rows mix x136 (40 boards) and x155 (69); rerun the 40 on a
+current binary when the comparison is quoted as final. Logs:
+`build/github-freerouting{,-2,-3}.log`, `build/github-ours-cold{,-2,-3}.log`
+(`-all.log` is their concatenation).
 
 **Route sweep v16** (`benchmarks/corpus/run.py --skip-layout`, x136, 2700 s)
 has 2 rows (jetson 338/340 with 2 unconnected, link 246/251 with 8) and was
