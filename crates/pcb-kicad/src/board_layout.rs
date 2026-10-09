@@ -610,15 +610,9 @@ pub fn layout_kicad_board(
         // full took as long as the first route and left link no time for
         // anything after).
         let probe_seconds = router_config.probe_seconds.unwrap_or(75.0);
-        let mut first = core::router::Router::new(&board, &core_config);
-        let mut best_unfinished = first.probe(probe_seconds);
-        work += first.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
-        race.push(best_unfinished);
-        let mut kept = first;
+        // The other seeds' placements, lowered, in seed order.
+        let mut candidates = Vec::new();
         for (poses, relaxation) in others {
-            if work > 0.4 * config.total_seconds {
-                break;
-            }
             let mut candidate = pcb.clone();
             {
                 let mut footprints = footprint_items(&mut candidate)?;
@@ -627,21 +621,82 @@ pub fn layout_kicad_board(
                 }
             }
             let candidate_board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
-            let mut candidate_router = core::router::Router::new(&candidate_board, &core_config);
-            let unfinished = candidate_router.probe(probe_seconds);
+            candidates.push((candidate, candidate_board, relaxation));
+        }
+        // The placements are probed side by side, each a router of its own,
+        // as many at once as fit half the memory available (the first
+        // router tells its size). The outcome is the one of probing them
+        // one after the other: the first placement, then the others in
+        // seed order while the work stays under 40 % of the budget, the
+        // fewest unfinished nets kept, a tie to the earlier one. A probe's
+        // budget is work, so what runs beside it does not change it.
+        let before_mb = crate::board_router::resident_mb();
+        let first = core::router::Router::new(&board, &core_config);
+        let router_mb = (crate::board_router::resident_mb() - before_mb).max(1.0);
+        let side_by_side = crate::board_router::memory_mb()
+            .map_or(1, |(_, available)| (available * 0.5 / (router_mb * 1.5)) as usize)
+            .clamp(1, candidates.len() + 1);
+        if side_by_side > 1 {
+            eprintln!("placement race: {} placements, {side_by_side} side by side", candidates.len() + 1);
+        }
+        let mut probed: Vec<(usize, core::router::Router)> = Vec::new();
+        let mut first = Some(first);
+        let mut next = 0;
+        while next <= candidates.len() {
+            let wave: Vec<usize> = (next..(next + side_by_side).min(candidates.len() + 1)).collect();
+            let routers: Vec<(usize, usize, core::router::Router)> = std::thread::scope(|scope| {
+                let handles: Vec<_> = wave
+                    .iter()
+                    .map(|&index| {
+                        let built = if index == 0 { first.take() } else { None };
+                        let board = if index == 0 { &board } else { &candidates[index - 1].1 };
+                        let mut quiet = core_config.clone();
+                        // One probe's lines in the log; the others' would
+                        // interleave with them.
+                        quiet.verbose = quiet.verbose && index == wave[0];
+                        scope.spawn(move || {
+                            let mut router = built.unwrap_or_else(|| core::router::Router::new(board, &quiet));
+                            let unfinished = router.probe(probe_seconds);
+                            (index, unfinished, router)
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|handle| handle.join().expect("probe thread")).collect()
+            });
+            for (index, unfinished, router) in routers {
+                probed.push((index, router));
+                race.push(unfinished);
+            }
+            next += wave.len();
+        }
+        let mut probed = probed.into_iter();
+        let (_, mut kept) = probed.next().expect("the first placement's probe");
+        let mut best_unfinished = race[0];
+        work += kept.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+        let mut raced = 1;
+        let mut candidates = candidates.into_iter();
+        for (index, mut candidate_router) in probed {
+            let (candidate, candidate_board, relaxation) = candidates.next().expect("a candidate per probe");
+            if work > 0.4 * config.total_seconds {
+                break;
+            }
+            let unfinished = race[index];
+            raced += 1;
             work += candidate_router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
-            race.push(unfinished);
             eprintln!("placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})");
             if unfinished < best_unfinished {
                 best_unfinished = unfinished;
                 pcb = candidate;
                 board = candidate_board;
+                candidate_router.config_mut().verbose = core_config.verbose;
                 kept = candidate_router;
                 placer_config.tight_bodies = Some(relaxation.tight);
                 problem = lower_placement(&pcb, &placer_config, &[])?;
                 relaxation.apply(&mut problem.problem);
             }
         }
+        // The placements past the work limit count for nothing.
+        race.truncate(raced);
         let before = kept.expansions();
         let result = kept.resume_polished((core_config.negotiation_seconds - probe_seconds).max(60.0), false);
         work += kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;

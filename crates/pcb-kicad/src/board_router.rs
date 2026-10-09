@@ -1842,11 +1842,24 @@ fn nanometres(point: [f64; 2]) -> [f64; 2] {
     point.map(|value| (value * 1.0e6).round() / 1.0e6)
 }
 
-/// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the
-/// complete project to `output`.
+/// The process's resident size now, in megabytes (Linux; elsewhere 0).
+pub(crate) fn resident_mb() -> f64 {
+    fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find(|line| line.starts_with("VmRSS:"))?
+                .split_whitespace()
+                .nth(1)?
+                .parse::<f64>()
+                .ok()
+        })
+        .map_or(0.0, |kb| kb / 1024.0)
+}
+
 /// The process's peak resident size and the machine's available memory,
 /// in megabytes (Linux; elsewhere unknown).
-fn memory_mb() -> Option<(f64, f64)> {
+pub(crate) fn memory_mb() -> Option<(f64, f64)> {
     let field = |text: &str, name: &str| -> Option<f64> {
         text.lines()
             .find(|line| line.starts_with(name))?
@@ -1861,6 +1874,8 @@ fn memory_mb() -> Option<(f64, f64)> {
     Some((peak, available))
 }
 
+/// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the
+/// complete project to `output`.
 pub fn route_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -2083,19 +2098,9 @@ pub fn route_kicad_board(
         let probe_seconds = config.probe_seconds.unwrap_or(75.0);
         let layer_names = LayerTable::from_pcb(&parsed)?.names;
         let mut leader: Option<(usize, usize, core::router::Router, core::Board, KiCadBoardRouterConfig)> = None;
+        // The rungs' boards, in rung order.
+        let mut rungs: Vec<(usize, core::Board, KiCadBoardRouterConfig)> = Vec::new();
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
-            // A probe takes its seconds (more on a busy machine), the
-            // continuation and the board's check more: no probe starts
-            // without that much wall clock left (PolyKybd right's ladder
-            // started at 1500 s and the harness killed the board at
-            // 1800 s).
-            if leader.is_some() && (past_deadline() || wall_left() < probe_seconds * 2.0 + 120.0) {
-                break;
-            }
-            if leader.is_none() && wall_left() < probe_seconds * 3.0 + 180.0 {
-                eprintln!("deadline too near for the ladder: no attempts");
-                break;
-            }
             let mut attempt = config.clone();
             attempt.plane_skeleton = Some(*skeleton);
             attempt.exclusive_planes = Some(*exclusive);
@@ -2108,20 +2113,94 @@ pub fn route_kicad_board(
             if mode == 0 && (board.layer_count < 4 || connections < 120) {
                 break;
             }
-            let started = std::time::Instant::now();
-            let mut router = core::router::Router::new(&board, &core_config(&attempt));
-            let unfinished = router.probe(probe_seconds);
-            ladder_work += work_of(router.expansions());
-            eprintln!(
-                "probe pours={}{}: {unfinished} nets unfinished after {:.0} s",
-                if *connect { "connect" } else { "tracks" },
-                if *exclusive { " (exclusive planes)" } else if *plane_stubs { " (plane stubs)" } else { "" },
-                started.elapsed().as_secs_f64()
-            );
-            if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
-                leader = Some((unfinished, mode, router, board, attempt));
+            rungs.push((mode, board, attempt));
+        }
+        if !rungs.is_empty() && wall_left() < probe_seconds * 3.0 + 180.0 {
+            eprintln!("deadline too near for the ladder: no attempts");
+            rungs.clear();
+        }
+        // The probes run side by side, each a router of its own: as many
+        // at once as fit half the memory available (the first router
+        // tells its size). The outcome is the one of probing one rung
+        // after the other: the fewest unfinished nets lead, a tie goes to
+        // the earlier rung, a rung that finishes everything ends the
+        // probing, and only the probes up to it count as work. A probe's
+        // budget is work, so its outcome does not depend on what runs
+        // beside it.
+        let mut first: Option<(core::router::Router, f64)> = None;
+        let mut router_mb_estimate: Option<f64> = None;
+        let mut next = 0;
+        while next < rungs.len() {
+            // A probe takes its seconds (more on a busy machine), the
+            // continuation and the board's check more: no probe starts
+            // without that much wall clock left (PolyKybd right's ladder
+            // started at 1500 s and the harness killed the board at
+            // 1800 s).
+            if leader.is_some() && (past_deadline() || wall_left() < probe_seconds * 2.0 + 120.0) {
+                break;
             }
-            // A rung that already finishes everything needs no rival.
+            if router_mb_estimate.is_none() {
+                let before = resident_mb();
+                let started = std::time::Instant::now();
+                let router = core::router::Router::new(&rungs[next].1, &core_config(&rungs[next].2));
+                let megabytes = (resident_mb() - before).max(1.0);
+                first = Some((router, started.elapsed().as_secs_f64()));
+                router_mb_estimate = Some(megabytes);
+            }
+            // The search scratches and the via reduction's copy come on
+            // top of the maps a new router holds.
+            let side_by_side = memory_mb()
+                .zip(router_mb_estimate)
+                .map_or(1, |((_, available), megabytes)| (available * 0.5 / (megabytes * 1.5)) as usize)
+                .clamp(1, rungs.len() - next)
+                // A cap for experiments (1: one after the other).
+                .min(std::env::var("PCB_PROBES_SIDE_BY_SIDE").ok().and_then(|value| value.parse().ok()).unwrap_or(usize::MAX));
+            let wave = &rungs[next..next + side_by_side];
+            let first_router = first.take();
+            let probed: Vec<(usize, usize, core::router::Router, f64)> = std::thread::scope(|scope| {
+                let mut first_router = first_router;
+                let handles: Vec<_> = wave
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (mode, board, attempt))| {
+                        let built = first_router.take();
+                        scope.spawn(move || {
+                            let started = std::time::Instant::now();
+                            let (mut router, built_seconds) = built.unwrap_or_else(|| {
+                                let mut quiet = core_config(attempt);
+                                // One probe's lines in the log; the others'
+                                // would interleave with them.
+                                quiet.verbose = quiet.verbose && index == 0;
+                                (core::router::Router::new(board, &quiet), 0.0)
+                            });
+                            let unfinished = router.probe(probe_seconds);
+                            (*mode, unfinished, router, built_seconds + started.elapsed().as_secs_f64())
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|handle| handle.join().expect("probe thread")).collect()
+            });
+            for ((mode, unfinished, mut router, seconds), (_, board, attempt)) in probed.into_iter().zip(wave) {
+                let (connect, _, exclusive, plane_stubs) = modes[mode];
+                ladder_work += work_of(router.expansions());
+                eprintln!(
+                    "probe pours={}{}: {unfinished} nets unfinished after {:.0} s{}",
+                    if connect { "connect" } else { "tracks" },
+                    if exclusive { " (exclusive planes)" } else if plane_stubs { " (plane stubs)" } else { "" },
+                    seconds,
+                    if side_by_side > 1 { format!(" ({side_by_side} side by side)") } else { String::new() }
+                );
+                if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
+                    router.config_mut().verbose = core_config(attempt).verbose;
+                    leader = Some((unfinished, mode, router, board.clone(), attempt.clone()));
+                }
+                // A rung that already finishes everything needs no rival
+                // (the probes beside it after it count for nothing).
+                if leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
+                    break;
+                }
+            }
+            next += side_by_side;
             if leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
                 break;
             }

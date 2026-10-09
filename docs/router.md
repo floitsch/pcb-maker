@@ -117,7 +117,12 @@ pours, plane stubs, pour nets as tracks) is lowered and negotiates for
 rung with the fewest unfinished nets (conflicted or incomplete) is resumed
 with `Router::resume` for a third of what is left, then finished and
 polished. A probe that finishes everything stops the probing, and only the
-leading router stays in memory. Finer pitches follow as before when
+leading router stays in memory. The probes run side by side (as many as
+fit half the memory available, judged by the first router's size), with
+the outcome of probing one after the other: a probe's budget is work, the
+fewest unfinished nets lead, a tie goes to the earlier rung, and only the
+probes up to a rung that finishes everything count. The layout's placement
+race probes its placements the same way. Finer pitches follow as before when
 connections stay open.
 
 ### Hole clearance
