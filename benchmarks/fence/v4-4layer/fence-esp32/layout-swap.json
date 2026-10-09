@@ -1,0 +1,1 @@
+{"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "J4", "RN9", "U2", "C3", "C4", "TP1", "TP2", "TP3", "TP4", "U3", "C5", "C6", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"]}, "pin_swaps": "pin-swaps.json"}

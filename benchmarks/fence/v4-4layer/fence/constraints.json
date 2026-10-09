@@ -1,0 +1,130 @@
+{
+ "version": 1,
+ "fixed": [
+  "J*",
+  "RN1",
+  "RN2",
+  "RN3",
+  "RN4",
+  "RN5",
+  "RN6",
+  "RN7",
+  "RN8"
+ ],
+ "edge": [
+  {
+   "part": "J4",
+   "edge": "left",
+   "flush": true,
+   "opening_outwards": true
+  }
+ ],
+ "near": [
+  {
+   "part": "C1",
+   "pin_of": "U1:48",
+   "max_mm": 2.5
+  },
+  {
+   "part": "C2",
+   "pin_of": "U1:48",
+   "max_mm": 4
+  },
+  {
+   "part": "C8",
+   "pin_of": "U4:38",
+   "max_mm": 2.5
+  },
+  {
+   "part": "C9",
+   "pin_of": "U4:16",
+   "max_mm": 2.5
+  },
+  {
+   "part": "C10",
+   "pin_of": "U5:38",
+   "max_mm": 2.5
+  },
+  {
+   "part": "C11",
+   "pin_of": "U5:16",
+   "max_mm": 2.5
+  },
+  {
+   "part": "C3",
+   "pin_of": "U2:3",
+   "max_mm": 3
+  },
+  {
+   "part": "C4",
+   "pin_of": "U2:2",
+   "max_mm": 3
+  },
+  {
+   "part": "U2",
+   "part_of": "J4",
+   "max_mm": 8
+  },
+  {
+   "part": "RN9",
+   "part_of": "J4",
+   "max_mm": 4
+  },
+  {
+   "part": "C12",
+   "part_of": "D3",
+   "max_mm": 2
+  },
+  {
+   "part": "C14",
+   "part_of": "D3",
+   "max_mm": 3
+  },
+  {
+   "part": "R22",
+   "part_of": "U1",
+   "max_mm": 6
+  }
+ ],
+ "region": [
+  {
+   "parts": [
+    "U4"
+   ],
+   "x": [
+    14,
+    38
+   ],
+   "y": [
+    8,
+    27
+   ]
+  },
+  {
+   "parts": [
+    "U1"
+   ],
+   "x": [
+    36,
+    52
+   ],
+   "y": [
+    8,
+    27
+   ]
+  },
+  {
+   "parts": [
+    "U5"
+   ],
+   "x": [
+    52,
+    76
+   ],
+   "y": [
+    8,
+    27
+   ]
+  }
+ ]
+}
