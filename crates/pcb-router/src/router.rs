@@ -133,6 +133,12 @@ pub struct Config {
     /// Cost factor for another net's step on the ring around a pad that
     /// joins its pour by thermal spokes (copper there starves the spokes).
     pub thermal_guard_cost: f64,
+    /// A pad with two spoke corridors or fewer that the fixed copper
+    /// leaves open (a fine-pitch row: the neighbours' pads take the two
+    /// along the row) keeps those closed to other nets' copper altogether,
+    /// not just at a cost. Off: on k30-SBC it left the 8 one-spoke pads as
+    /// they were and on Castor it cost six nets their route.
+    pub hard_thermal_guards: bool,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
@@ -196,6 +202,7 @@ impl Default for Config {
             via_reduction_seconds: 300.0,
             cleanup_seconds: 180.0,
             thermal_guard_cost: 10.0,
+            hard_thermal_guards: false,
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,
@@ -256,6 +263,9 @@ pub struct DeadPad {
     pub anchor: crate::geometry::Point,
     pub near: Vec<String>,
 }
+
+/// Set on a `guard` entry whose corridor no other net may enter.
+const HARD_GUARD: u32 = 1 << 31;
 
 #[derive(Clone, Debug)]
 pub struct HotSpot {
@@ -387,7 +397,12 @@ fn junction_hosts(branches: &[Branch], keep: &[bool]) -> HashMap<Node, usize> {
             continue;
         }
         let first = (branch.start_terminal == NO_TERMINAL) as usize;
-        let last = branch.nodes.len() - (branch.end_terminal == NO_TERMINAL) as usize;
+        let last = branch.nodes.len().saturating_sub((branch.end_terminal == NO_TERMINAL) as usize);
+        // A one-node branch between two junctions hosts nothing (the Hub
+        // board: "slice index starts at 1 but ends at 0").
+        if first >= last {
+            continue;
+        }
         for node in &branch.nodes[first..last] {
             hosts.entry(*node).or_insert(index);
         }
@@ -1231,7 +1246,9 @@ impl Router {
     /// nodes of each of its four spokes' corridors, straight out from the
     /// pad along its axes (diagonally for a round pad, as KiCad draws them),
     /// across the gap and the spoke's length.
-    fn spoke_corridors(&self) -> Vec<(usize, NetId, [Vec<usize>; 4])> {
+    /// Each corridor lists the spoke's own strip (the bridge's width) first;
+    /// the fourth element says how many cells that is.
+    fn spoke_corridors(&self) -> Vec<(usize, NetId, [Vec<usize>; 4], [usize; 4])> {
         let mut corridors = Vec::new();
         for plane in &self.board.planes {
             if plane.thermal_reach <= 0.0 {
@@ -1259,7 +1276,8 @@ impl Router {
                 let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds.inflated(plane.thermal_reach + width)) else {
                     continue;
                 };
-                let mut cells: [Vec<usize>; 4] = Default::default();
+                let mut cores: [Vec<usize>; 4] = Default::default();
+                let mut margins: [Vec<usize>; 4] = Default::default();
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = self.grid.center(x, y);
@@ -1267,17 +1285,27 @@ impl Router {
                             continue;
                         }
                         let offset = [center[0] - anchor[0], center[1] - anchor[1]];
-                        for (direction, list) in directions.iter().zip(cells.iter_mut()) {
+                        for (index, direction) in directions.iter().enumerate() {
                             let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
                             let along = offset[0] * direction[0] + offset[1] * direction[1];
                             let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
                             if along > edge - 1.0e-9 && along < edge + plane.thermal_reach && across < width {
-                                list.push(self.grid.index(x, y));
+                                if across <= bridge / 2.0 + self.grid.pitch / 2.0 {
+                                    cores[index].push(self.grid.index(x, y));
+                                } else {
+                                    margins[index].push(self.grid.index(x, y));
+                                }
                             }
                         }
                     }
                 }
-                corridors.push((plane.layer, plane.net, cells));
+                let core_counts = [cores[0].len(), cores[1].len(), cores[2].len(), cores[3].len()];
+                let mut cells: [Vec<usize>; 4] = Default::default();
+                for index in 0..4 {
+                    cells[index] = std::mem::take(&mut cores[index]);
+                    cells[index].append(&mut margins[index]);
+                }
+                corridors.push((plane.layer, plane.net, cells, core_counts));
             }
         }
         corridors
@@ -1288,12 +1316,31 @@ impl Router {
     /// its spokes: Sisu's GND resistors starved at one spoke of two).
     fn thermal_guards(&self) -> Vec<Vec<u32>> {
         let mut guard = vec![Vec::new(); self.board.layer_count];
-        for (layer, net, cells) in self.spoke_corridors() {
+        for (layer, net, cells, cores) in self.spoke_corridors() {
             if guard[layer].is_empty() {
                 guard[layer] = vec![0; self.grid.cells()];
             }
-            for cell in cells.iter().flatten() {
-                guard[layer][*cell] = crate::grid::owner(net);
+            // Corridors the fixed copper (other parts' pads) already
+            // closes do not count; with two or fewer open the pad has
+            // none to spare, and those are closed to other nets. Open
+            // means the spoke's own strip has room for fill (the margin
+            // beside it lies in the neighbours' clearance on a fine-pitch
+            // row, and is no measure).
+            let statics = &self.statics[self.board.nets[net as usize].class];
+            let open = |corridor: &Vec<usize>, core: usize| {
+                core > 0 && corridor[..core].iter().filter(|cell| statics.fill_allowed(layer, **cell, net)).count() * 2 >= core
+            };
+            let spare = cells.iter().zip(cores).filter(|(corridor, core)| open(corridor, *core)).count() > 2;
+            let hard = self.config.hard_thermal_guards && !spare;
+            for (corridor, core) in cells.iter().zip(cores) {
+                let mark = if hard && open(corridor, core) {
+                    crate::grid::owner(net) | HARD_GUARD
+                } else {
+                    crate::grid::owner(net)
+                };
+                for cell in corridor {
+                    guard[layer][*cell] = mark;
+                }
             }
         }
         // Planes without thermal reach still get their (empty) layer map.
@@ -1339,7 +1386,7 @@ impl Router {
             let map = occupants(router);
             let mut offenders = Vec::new();
             let mut nodes = Vec::new();
-            for (layer, net, lists) in &corridors {
+            for (layer, net, lists, _) in &corridors {
                 let blocked: Vec<&Vec<usize>> = lists
                     .iter()
                     .filter(|list| list.iter().any(|cell| map.get(&(*layer, *cell)).is_some_and(|nets| nets.iter().any(|other| other != net))))
@@ -2807,7 +2854,10 @@ impl Router {
                 }
                 let history = if cleanup { 0.0 } else { hot.history };
                 let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
-                if hot.guard != 0 && hot.guard != own {
+                if hot.guard != 0 && hot.guard & !HARD_GUARD != own {
+                    if hot.guard & HARD_GUARD != 0 {
+                        continue;
+                    }
                     step *= thermal_guard_cost;
                 }
                 if hot.covered != 0 && hot.covered != own {
@@ -2854,10 +2904,14 @@ impl Router {
                 }
                 // A via is copper on every layer: inside another net's
                 // thermal ring on any of them it starves the spokes there.
-                if marks & 2 != 0
-                    && self.guard.iter().any(|guard| !guard.is_empty() && guard[cell] != 0 && guard[cell] != own)
-                {
-                    cut *= self.config.thermal_guard_cost as f32;
+                if marks & 2 != 0 {
+                    let foreign = |guard: &Vec<u32>| !guard.is_empty() && guard[cell] != 0 && guard[cell] & !HARD_GUARD != own;
+                    if self.guard.iter().any(|guard| foreign(guard) && guard[cell] & HARD_GUARD != 0) {
+                        continue;
+                    }
+                    if self.guard.iter().any(foreign) {
+                        cut *= self.config.thermal_guard_cost as f32;
+                    }
                 }
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 let cell_class = if necks { self.class_at(net, net_state, cell as u32) } else { class };
@@ -4854,6 +4908,20 @@ impl Router {
     /// `analyze_pours` leaving out the branches `skip` names (by index):
     /// what the pour and the other branches join without them.
     fn analyze_pours_skipping(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
+        let (pours, parent, main, _) = self.analyze_pours_full(net, skip);
+        (pours, parent, main)
+    }
+
+    /// `analyze_pours_skipping` with the spoke islands too: the pieces
+    /// without copper of the net in them that a pad's thermal spoke
+    /// reaches, each with one such pad. KiCad removes the piece and does
+    /// not count the spoke (Castor: RV8 with one spoke into the fill and
+    /// one into a 15 mm² piece, "1 spokes connected to isolated island").
+    fn analyze_pours_full(
+        &self,
+        net: NetId,
+        skip: &dyn Fn(usize) -> bool,
+    ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
         let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
@@ -4919,6 +4987,28 @@ impl Router {
                 }
             }
         }
+        // The net's own tracks are copper of the net, and the fill joins
+        // them anywhere, inside a pad's thermal ring too (a plane stub ends
+        // in the ring: Castor's U7.3 read as stranded with "1 branch, 0
+        // pieces" and was rerouted and stitched for nothing).
+        for (index, branch) in state.branches.iter().enumerate() {
+            if skip(index) {
+                continue;
+            }
+            for node in &branch.nodes {
+                let layer = node.layer as usize;
+                if free[layer].is_empty() {
+                    continue;
+                }
+                let cell = node.cell as usize;
+                let map = self.map_index(state.plane_class[layer], layer);
+                if state.plane[layer][cell]
+                    && self.occupancy[map][cell] as usize == own.contains(&(map as u32, cell as u32)) as usize
+                {
+                    free[layer][cell] = true;
+                }
+            }
+        }
         let pours = crate::pour::PourMap::build(&self.grid, &free);
         let terminal_count = state.terminal_nodes.len();
         let terminal_base = pours.pieces + 1;
@@ -4943,6 +5033,15 @@ impl Router {
         // Per pad, KiCad's own zone connection overrides the pour's.
         let isolated = |terminal: usize| self.board.isolated_pads.binary_search(&description.terminals[terminal].label).is_ok();
         let solid_pad = |terminal: usize| self.board.solid_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        // Pieces with copper of the net in them: a track or via, or a pad
+        // the fill touches. KiCad keeps a fill piece only with such an item
+        // in it; a piece joined to the net by thermal spokes alone is an
+        // island, removed with its spokes (k30-SBC: 8 pads with "spokes
+        // connected to isolated island", each in a 1-35 mm² piece of its own
+        // and connected by a track; a via put in the piece cures it). Such
+        // a piece gets no connectivity from the pads it spokes to; the pads
+        // get none from it.
+        let mut touched: Vec<usize> = Vec::new();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             if isolated(terminal) {
                 continue;
@@ -4950,9 +5049,48 @@ impl Router {
             for node in nodes.iter().filter(|node| solid[node.layer as usize] || solid_pad(terminal)) {
                 if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach) {
                     union(&mut parent, terminal_base + terminal, piece as usize);
+                    touched.push(piece as usize);
                 }
             }
         }
+        let keep = vec![true; state.branches.len()];
+        let hosts = junction_hosts(&state.branches, &keep);
+        for (index, branch) in state.branches.iter().enumerate() {
+            if skip(index) {
+                continue;
+            }
+            for node in &branch.nodes {
+                let piece = pours.label[node.layer as usize]
+                    .get(node.cell as usize)
+                    .copied()
+                    .unwrap_or(0);
+                if piece != 0 {
+                    union(&mut parent, branch_base + index, piece as usize);
+                    touched.push(piece as usize);
+                }
+            }
+            for (terminal, node) in [
+                (branch.start_terminal, branch.nodes[0]),
+                (branch.end_terminal, *branch.nodes.last().unwrap()),
+            ] {
+                if terminal == NO_TERMINAL {
+                    if let Some(host) = hosts.get(&node)
+                        && !skip(*host)
+                    {
+                        union(&mut parent, branch_base + index, branch_base + host);
+                    }
+                } else if terminal != PLANE_TERMINAL && terminal != FREE_END {
+                    union(
+                        &mut parent,
+                        branch_base + index,
+                        terminal_base + terminal as usize,
+                    );
+                }
+            }
+        }
+        let with_items: HashSet<usize> = touched.iter().map(|piece| find(&mut parent, *piece)).collect();
+        let has_item = |parent: &mut Vec<usize>, piece: usize| with_items.contains(&find(parent, piece));
+        let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             if isolated(terminal) || solid_pad(terminal) {
                 continue;
@@ -4981,6 +5119,10 @@ impl Router {
                 } else {
                     [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
                 };
+                // KiCad wants two spokes into kept fill on the layer; a
+                // spoke into an island matters only to a pad short of them.
+                let mut good = 0;
+                let mut islands: Vec<usize> = Vec::new();
                 for direction in directions {
                     // From the pad's edge along the spoke, the fill must
                     // begin within the gap and a little more.
@@ -4993,44 +5135,22 @@ impl Router {
                         };
                         let piece = pours.label[layer][cell];
                         if piece != 0 {
-                            union(&mut parent, terminal_base + terminal, piece as usize);
+                            if has_item(&mut parent, piece as usize) {
+                                union(&mut parent, terminal_base + terminal, piece as usize);
+                                good += 1;
+                            } else {
+                                islands.push(piece as usize);
+                            }
                             break;
                         }
                     }
                 }
-            }
-        }
-        let keep = vec![true; state.branches.len()];
-        let hosts = junction_hosts(&state.branches, &keep);
-        for (index, branch) in state.branches.iter().enumerate() {
-            if skip(index) {
-                continue;
-            }
-            for node in &branch.nodes {
-                let piece = pours.label[node.layer as usize]
-                    .get(node.cell as usize)
-                    .copied()
-                    .unwrap_or(0);
-                if piece != 0 {
-                    union(&mut parent, branch_base + index, piece as usize);
-                }
-            }
-            for (terminal, node) in [
-                (branch.start_terminal, branch.nodes[0]),
-                (branch.end_terminal, *branch.nodes.last().unwrap()),
-            ] {
-                if terminal == NO_TERMINAL {
-                    if let Some(host) = hosts.get(&node)
-                        && !skip(*host)
-                    {
-                        union(&mut parent, branch_base + index, branch_base + host);
+                if good < 2 {
+                    for piece in islands {
+                        if !spoke_islands.iter().any(|(island, _)| *island == piece) {
+                            spoke_islands.push((piece, terminal));
+                        }
                     }
-                } else if terminal != PLANE_TERMINAL && terminal != FREE_END {
-                    union(
-                        &mut parent,
-                        branch_base + index,
-                        terminal_base + terminal as usize,
-                    );
                 }
             }
         }
@@ -5044,7 +5164,7 @@ impl Router {
             .into_iter()
             .max_by_key(|(root, count)| (*count, usize::MAX - *root))
             .map_or(0, |(root, _)| root);
-        (pours, parent, main)
+        (pours, parent, main, spoke_islands)
     }
 
     /// Connects pour islands that hold terminals to the main piece with
@@ -5064,16 +5184,17 @@ impl Router {
         let mut previous_islands = usize::MAX;
         let mut stalled = 0;
         for _ in 0..1500 {
-            let (pours, mut parent, main) = self.analyze_pours(net);
+            let (pours, mut parent, main, spoke_islands) = self.analyze_pours_full(net, &|_| false);
             let terminal_base = pours.pieces + 1;
             let islands: Vec<usize> = (0..terminal_count)
                 .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
                 .collect();
-            if islands.is_empty() {
+            if islands.is_empty() && spoke_islands.is_empty() {
                 break;
             }
             // Vias that do not reduce the stranded count are not progress.
-            if islands.len() >= previous_islands {
+            let island_count = islands.len() + spoke_islands.len();
+            if island_count >= previous_islands {
                 stalled += 1;
                 if stalled > 3 && rerouted {
                     break;
@@ -5081,7 +5202,7 @@ impl Router {
             } else {
                 stalled = 0;
             }
-            previous_islands = islands.len();
+            previous_islands = island_count;
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                 for terminal in islands.iter().take(6) {
                     let root = find(&mut parent, terminal_base + terminal);
@@ -5104,6 +5225,30 @@ impl Router {
                                 .sum()
                         })
                         .collect();
+                    for (index, branch) in self.nets[net as usize].branches.iter().enumerate() {
+                        if find(&mut parent, terminal_base + terminal_count + index) != root {
+                            continue;
+                        }
+                        let ends = |terminal: u16| match terminal {
+                            NO_TERMINAL => "junction".to_string(),
+                            PLANE_TERMINAL => "plane".to_string(),
+                            FREE_END => "free".to_string(),
+                            other => format!("pad {other}"),
+                        };
+                        let first = branch.nodes[0];
+                        let last = *branch.nodes.last().unwrap();
+                        eprintln!(
+                            "    branch {index}: {} -> {}, {} nodes, first {:?} label {}, last {:?} label {}, on_plane {:?}",
+                            ends(branch.start_terminal),
+                            ends(branch.end_terminal),
+                            branch.nodes.len(),
+                            self.grid.center_of(first.cell as usize),
+                            pours.label[first.layer as usize].get(first.cell as usize).copied().unwrap_or(0),
+                            self.grid.center_of(last.cell as usize),
+                            pours.label[last.layer as usize].get(last.cell as usize).copied().unwrap_or(0),
+                            self.nets[net as usize].on_plane.get(*terminal).copied()
+                        );
+                    }
                     eprintln!(
                         "  stranded {} at {:?} layers {:#b}: {branches} branches, {} pieces (sizes {sizes:?}), terminal nodes {}",
                         self.board.nets[net as usize].terminals[*terminal].label,
@@ -5123,11 +5268,12 @@ impl Router {
                     })
                     .count();
                 eprintln!(
-                    "pour {}: {} pieces, {} stranded terminals ({} touch a piece)",
+                    "pour {}: {} pieces, {} stranded terminals ({} touch a piece), {} spoke islands",
                     self.board.nets[net as usize].name,
                     pours.pieces,
                     islands.len(),
-                    attached
+                    attached,
+                    spoke_islands.len()
                 );
             }
             let own: HashSet<(u32, u32)> =
@@ -5142,6 +5288,12 @@ impl Router {
             let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
             for terminal in &islands {
                 let island = find(&mut parent, terminal_base + terminal);
+                anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
+            }
+            // A spoke island gets a via too: with copper of the net in it
+            // KiCad keeps it, and the spoke counts.
+            for (piece, terminal) in &spoke_islands {
+                let island = find(&mut parent, *piece);
                 anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
             }
             // A via keeps the hole-to-hole distance from the net's vias
@@ -5220,6 +5372,21 @@ impl Router {
                 }
                 chosen.push((layer, other, cell));
             }
+            if self.config.verbose && !spoke_islands.is_empty() {
+                let into_spoke_islands = chosen
+                    .iter()
+                    .filter(|(layer, _, cell)| {
+                        let root = find(&mut parent, pours.label[*layer][*cell] as usize);
+                        spoke_islands.iter().any(|(piece, _)| find(&mut parent, *piece) == root)
+                    })
+                    .count();
+                eprintln!(
+                    "pour {}: {} vias into the {} spoke islands",
+                    self.board.nets[net as usize].name,
+                    into_spoke_islands,
+                    spoke_islands.len()
+                );
+            }
             if !chosen.is_empty() {
                 for (layer, other, cell) in &chosen {
                     self.nets[net as usize].branches.push(Branch {
@@ -5241,7 +5408,8 @@ impl Router {
                 stitches += chosen.len();
                 continue;
             }
-            if rerouted {
+            // Spoke islands without room for a via stay as they are.
+            if rerouted || islands.is_empty() {
                 break;
             }
             // No via fits: route the stranded terminals to the main piece.

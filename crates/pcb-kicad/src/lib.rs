@@ -13390,8 +13390,18 @@ fn canonicalize_copper_net_names(pcb: &mut Expr, names: &BTreeMap<String, Expr>)
         if !matches!(item.head(), Some("segment" | "arc" | "via" | "zone")) {
             continue;
         }
+        // The writer names a connection "/X"; the pads' map is keyed by the
+        // normalised name, which keeps the slash when a bare "X" exists too
+        // (`note_net_names`): then "/GND" must still find "GND", or KiCad
+        // makes a net "/GND" of our copper (Hub on x153: 636 items, 36
+        // clearance errors between "/GND" and "GND" vias).
         let Some(name) = node_net(item)
-            .and_then(|name| names.get(normalize_net(name)))
+            .and_then(|name| {
+                names
+                    .get(normalize_net(name))
+                    .or_else(|| name.strip_prefix('/').and_then(|bare| names.get(bare)))
+                    .or_else(|| names.get(name))
+            })
             .cloned()
         else {
             continue;
