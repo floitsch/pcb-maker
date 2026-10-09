@@ -1790,6 +1790,23 @@ fn nanometres(point: [f64; 2]) -> [f64; 2] {
 
 /// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the
 /// complete project to `output`.
+/// The process's peak resident size and the machine's available memory,
+/// in megabytes (Linux; elsewhere unknown).
+fn memory_mb() -> Option<(f64, f64)> {
+    let field = |text: &str, name: &str| -> Option<f64> {
+        text.lines()
+            .find(|line| line.starts_with(name))?
+            .split_whitespace()
+            .nth(1)?
+            .parse::<f64>()
+            .ok()
+            .map(|kb| kb / 1024.0)
+    };
+    let peak = field(&fs::read_to_string("/proc/self/status").ok()?, "VmHWM:")?;
+    let available = field(&fs::read_to_string("/proc/meminfo").ok()?, "MemAvailable:")?;
+    Some((peak, available))
+}
+
 pub fn route_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -1963,6 +1980,19 @@ pub fn route_kicad_board(
     // Routing seconds and pitch of the slowest attempt so far, to project
     // the cost of a finer lattice.
     let mut slowest: Option<(f64, f64)> = None;
+    // The process's peak memory after the first attempt and that attempt's
+    // pitch: about one router of this board (an upper bound: the layout's
+    // first route is in the peak too). A finer lattice grows with the
+    // square of the pitch ratio, and seeds run side by side (jiran-ble-lite:
+    // 3299 x 1048 nodes at 0.1 mm, 7 GB a router at 0.05 mm, four seeds of
+    // it took 31 GB and the machine's last free byte).
+    let mut router_mb: Option<(f64, f64)> = None;
+    // One router may take most of the memory available; routers side by
+    // side (the seeds) half of it, since other work on the machine grows
+    // too.
+    let fits = |megabytes: f64, share: f64| -> bool {
+        memory_mb().is_none_or(|(_, available)| megabytes < available * share)
+    };
     let mut extra_rung_tried = false;
     let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
     let ladder_started = std::time::Instant::now();
@@ -2108,6 +2138,17 @@ pub fn route_kicad_board(
                 break;
             }
         }
+        if let (Some(pitch), Some((megabytes, previous))) = (pitch, router_mb) {
+            let projected = megabytes * (previous / pitch[0]).powi(2);
+            if !fits(projected, 0.8) {
+                eprintln!(
+                    "skipping pitch {:?}: a router of about {:.1} GB does not fit the memory available",
+                    pitch,
+                    projected / 1024.0
+                );
+                break;
+            }
+        }
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
             // A probed rung continued with what it had is not run again;
             // the other rungs still get their turn when it left
@@ -2175,6 +2216,17 @@ pub fn route_kicad_board(
             }
             .into();
             let mut opens = open(&result, &directory);
+            if router_mb.is_none() {
+                router_mb = memory_mb().map(|(peak, _)| (peak, result.grid_pitch_mm));
+            }
+            // Seeds run side by side: each is a router of this pitch.
+            let seeds_that_fit = |wanted: usize| -> usize {
+                let Some((megabytes, previous)) = router_mb else {
+                    return wanted;
+                };
+                let each = megabytes * (previous / result.grid_pitch_mm).powi(2);
+                (1..=wanted).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(0)
+            };
             // What one attempt at this pitch costs, for projecting finer
             // pitches; a seed retry does not change it.
             // In work, as the ladder's budget.
@@ -2182,7 +2234,7 @@ pub fn route_kicad_board(
             ladder_work += attempt_seconds;
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
-            let retry = config.retry_seeds.unwrap_or(4);
+            let retry = seeds_that_fit(config.retry_seeds.unwrap_or(4));
             // Four seeds in parallel cost about twice the attempt; on a
             // board whose attempt takes minutes that time is better spent
             // on the next rung (MIDAS-MK2: two retries, 740 s, both worse).
@@ -2300,7 +2352,11 @@ pub fn route_kicad_board(
         };
         let cost = work_of(best_result.expansions).max(1.0);
         let affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
-        let retry = config.retry_seeds.unwrap_or(4).min(affordable);
+        let mut retry = config.retry_seeds.unwrap_or(4).min(affordable);
+        if let Some((megabytes, previous)) = router_mb {
+            let each = megabytes * (previous / best_result.grid_pitch_mm).powi(2);
+            retry = (1..=retry).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(0);
+        }
         if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() || no_time_for_another() {
             break;
         }
