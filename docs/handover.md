@@ -1044,7 +1044,14 @@ cable tester's "Hole, 3mm" footprint, a ring of small pads with 0.1 mm
 margins: 2 bridges, now 0; left there: one `connection_width`, a GND
 fill neck of 0.078 mm between two of our tracks against the board's
 0.1 mm rule - the pour model does not know KiCad's minimum connection
-width). Quanta75 169/172 with 11 and 29 errors is to look at.
+width). Quanta75 169/172 with 11 and 29 errors: beyond its
+designer's own (14 mask bridges, 5 shorts of copper texts with
+decorative arcs), 18 more mask bridges from the F.Mask text `0bsilab`
+over tracks and J8's pads, 8 starved thermals, and one short of the
+F.Cu copper text `0bsilab` with our I2C1-SCL track: the copper-text
+placement left it on the track, and the mask text did not keep the
+tracks out. To look at: how that text is lowered (no `render_cache`
+there: a stroke font).
 Beyond x112's boards so far: homebrew 486 190/190 pass, video 371/371
 pass, laptop power 115/115 pass; rosco 148/148 and Castor_and_Pollux
 126/126 complete but with 6 and 17 starved thermals (opt-in
