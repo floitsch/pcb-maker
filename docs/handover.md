@@ -1036,8 +1036,15 @@ sweep is done (it alone takes 17 GB). x140: a root-sheet label keeps its
 name apart from a same-named global net (`note_net_names`;
 Business-Cards Batch_1 was rejected as ambiguous, now it lowers; it is a
 panel). Further rows: homebrew 486, video, laptop power, mackerel-10,
-0xCB-1337, USB_Keypad pass; complete but starved thermals: rosco 6,
-Castor 17, mackerel-30 15, k30-SBC 10, mackerel-08 5.
+0xCB-1337, USB_Keypad, MotionCube, SmartSpin2k panel pass; complete but
+starved thermals: rosco 6, Castor 17, mackerel-30 15, k30-SBC 10,
+mackerel-08 5, PixelWave 1. x141: a pad's mask aperture keeps other
+nets' copper out where its mask margin reaches past the clearance (the
+cable tester's "Hole, 3mm" footprint, a ring of small pads with 0.1 mm
+margins: 2 bridges, now 0; left there: one `connection_width`, a GND
+fill neck of 0.078 mm between two of our tracks against the board's
+0.1 mm rule - the pour model does not know KiCad's minimum connection
+width). Quanta75 169/172 with 11 and 29 errors is to look at.
 Beyond x112's boards so far: homebrew 486 190/190 pass, video 371/371
 pass, laptop power 115/115 pass; rosco 148/148 and Castor_and_Pollux
 126/126 complete but with 6 and 17 starved thermals (opt-in
