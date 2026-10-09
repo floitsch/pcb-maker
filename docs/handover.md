@@ -156,6 +156,27 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   and stitching vias. k30's +5V: "38 stranded terminals" while KiCad finds
   every +5V pad connected.
 
+## Committed on 2026-10-09 evening (b67da0a), measured by the pour agent
+
+- Spoke clearance (a spoke counts only when its strip clears other
+  nets' copper), pour-aware clean-up and via reduction (a change that
+  strands a pour pad is rejected), stale plane stubs rerouted,
+  deterministic stitching, the pour-refresh panic fixed at its root, circle
+  rule areas lowered. k30 forced to connect: 41 open (before) to 0 open
+  with 14 starved thermals, beating the tracks rung's 16. Castor's connect
+  rung in route mode: 126/126 with 18 starved; Hub 144/159 with 20.
+- Measured and left off: stitching vias during negotiation (Sisu 63 to 68
+  open: the stitches crowd the signals), main-piece hysteresis (the main
+  piece does not flip, it collapses when a stuck pour net is ripped up
+  whole), not ripping pour nets up whole (worse), hard thermal guards.
+- Cost: the pour-aware check takes up to 15 % of a run (Hub 159 s of
+  276 s); an incremental check is in progress.
+- Real-layout rows on x204 (fixed run.py): k30 173/173 with 3 starved
+  (365 vias to 287), Qfwfq 64/64 clean, Telemetry 107/108, Castor 125/126
+  with one unconnected, one short and one bridge (the short is under
+  investigation), Hub 132/159 with 40 (placed for the first time), Sisu
+  183/192 with 12 (unchanged: it was always placed).
+
 ## Open problems, ranked
 
 1. **Fill fidelity.** Measure our free mask against KiCad's fill polygons
