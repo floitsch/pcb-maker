@@ -370,11 +370,16 @@ fn without_copper_texts(pcb: &Expr) -> Expr {
     let Expr::List(items) = pcb else {
         return pcb.clone();
     };
+    // Exposed-copper artwork (a copper text with its mask twin) is not
+    // moved afterwards, so it stays an obstacle here (Quanta75: routes
+    // under its 7 mm logo, 11 bridges and a short).
+    let twins = crate::labels::mask_twins(pcb);
     Expr::List(
         items
             .iter()
             .filter(|item| {
-                !(item.head() == Some("gr_text") && form_atom(item, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
+                !(item.head() == Some("gr_text")
+                    && form_atom(item, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu") && !crate::labels::has_mask_twin(&twins, item, layer)))
             })
             .cloned()
             .collect(),

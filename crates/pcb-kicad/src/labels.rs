@@ -557,6 +557,38 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
 /// and the parts' courtyards. They stay where they are if that is free.
 /// `routes` are the routed tracks (not yet in `pcb`), `layer_names` the
 /// copper layers in the router's order.
+/// The board's texts on the mask layers: (layer, words, position), the
+/// twins exposed-copper artwork comes with.
+pub(crate) fn mask_twins(pcb: &Expr) -> Vec<(String, String, [f64; 2])> {
+    pcb.children()
+        .iter()
+        .filter(|item| item.head() == Some("gr_text"))
+        .filter_map(|item| {
+            let layer = form_atom(item, "layer", 1)?;
+            let text = item.children().get(1).and_then(Expr::atom)?;
+            let at = form_at(item).ok()?;
+            matches!(layer, "F.Mask" | "B.Mask").then(|| (layer.to_string(), text.to_string(), [at[0], at[1]]))
+        })
+        .collect()
+}
+
+/// Whether a copper text on `layer_name` has a twin on its side's mask
+/// layer (the same words within 0.1 mm): exposed-copper artwork, which
+/// stays where its designer put it.
+pub(crate) fn has_mask_twin(twins: &[(String, String, [f64; 2])], item: &Expr, layer_name: &str) -> bool {
+    let mask = match layer_name {
+        "F.Cu" => "F.Mask",
+        "B.Cu" => "B.Mask",
+        _ => return false,
+    };
+    let (Some(text), Ok(at)) = (item.children().get(1).and_then(Expr::atom), form_at(item)) else {
+        return false;
+    };
+    twins.iter().any(|(twin_layer, twin_text, twin_at)| {
+        twin_layer == mask && twin_text == text && (twin_at[0] - at[0]).abs() < 0.1 && (twin_at[1] - at[1]).abs() < 0.1
+    })
+}
+
 pub(crate) fn place_copper_texts(
     pcb: &mut Expr,
     routes: &[pcb_router::NetRoute],
@@ -644,30 +676,8 @@ pub(crate) fn place_copper_texts(
     // within 0.1 mm) is exposed-copper artwork: it stays where its designer
     // put it (routing kept clear of both halves); moving the copper half
     // alone left Quanta75's mask openings over our tracks (22 bridges).
-    let mask_twins: Vec<(String, String, [f64; 2])> = pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("gr_text"))
-        .filter_map(|item| {
-            let layer = form_atom(item, "layer", 1)?;
-            let text = item.children().get(1).and_then(Expr::atom)?;
-            let at = form_at(item).ok()?;
-            matches!(layer, "F.Mask" | "B.Mask").then(|| (layer.to_string(), text.to_string(), [at[0], at[1]]))
-        })
-        .collect();
-    let has_mask_twin = |item: &Expr, layer_name: &str| -> bool {
-        let mask = match layer_name {
-            "F.Cu" => "F.Mask",
-            "B.Cu" => "B.Mask",
-            _ => return false,
-        };
-        let (Some(text), Ok(at)) = (item.children().get(1).and_then(Expr::atom), form_at(item)) else {
-            return false;
-        };
-        mask_twins.iter().any(|(twin_layer, twin_text, twin_at)| {
-            twin_layer == mask && twin_text == text && (twin_at[0] - at[0]).abs() < 0.1 && (twin_at[1] - at[1]).abs() < 0.1
-        })
-    };
+    let mask_twins = mask_twins(pcb);
+    let has_mask_twin = |item: &Expr, layer_name: &str| has_mask_twin(&mask_twins, item, layer_name);
     let mut taken: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
     let mut text_moves: Vec<(usize, [f64; 2], bool)> = Vec::new();
     for (item_index, item) in pcb.children().iter().enumerate() {
