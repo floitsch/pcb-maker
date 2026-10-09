@@ -977,6 +977,7 @@ pub(super) fn lower_placement(
     config: &KiCadBoardPlacerConfig,
     channels: &[ChannelInstance],
 ) -> Result<LoweredPlacement, String> {
+    crate::note_net_names(pcb);
     let mut identities = Vec::new();
     let loops = outline::board_loops(pcb)?;
     let mut net_ids = BTreeMap::<String, usize>::new();

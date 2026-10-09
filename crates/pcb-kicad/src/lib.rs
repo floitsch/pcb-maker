@@ -13350,6 +13350,7 @@ fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
 /// Pads identify the exact spelling to use for emitted/retained copper. Reject
 /// aliases with two distinct pad nets rather than silently shorting them.
 fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, Expr>, String> {
+    note_net_names(pcb);
     let mut names: BTreeMap<String, Expr> = BTreeMap::new();
     for footprint in pcb
         .children()
@@ -13494,8 +13495,34 @@ fn apply_route_vertex_overrides(
     Ok(())
 }
 
+thread_local! {
+    /// The board's net names without a leading slash (its global labels
+    /// and power nets), noted by `note_net_names`: a connection id drops
+    /// one hierarchical slash, which must not fold `/VBUS` (a root-sheet
+    /// label) into `VBUS` when the board has both (a business-card panel
+    /// had both, and lowering rejected it as ambiguous).
+    static BARE_NETS: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+/// Records `pcb`'s bare net names for `normalize_net` (on this thread,
+/// for the lowering that follows).
+pub(crate) fn note_net_names(pcb: &Expr) {
+    let bare: std::collections::HashSet<String> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("net"))
+        .filter_map(|item| item.children().get(2).and_then(Expr::atom))
+        .filter(|name| !name.starts_with('/') && !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    BARE_NETS.with(|names| *names.borrow_mut() = bare);
+}
+
 fn normalize_net(net: &str) -> &str {
-    net.strip_prefix('/').unwrap_or(net)
+    match net.strip_prefix('/') {
+        Some(bare) if !BARE_NETS.with(|names| names.borrow().contains(bare)) => bare,
+        _ => net,
+    }
 }
 
 fn node_net(node: &Expr) -> Option<&str> {
@@ -15092,9 +15119,11 @@ mod tests {
     }
 
     #[test]
-    fn copper_application_rejects_colliding_normalized_pad_names() {
+    fn colliding_normalized_pad_names_stay_two_nets_when_the_board_declares_both() {
+        // Without the bare net declared, `/SIGNAL` and `SIGNAL` would be
+        // one connection and the pads collide.
         let pcb = parse(
-            r#"(kicad_pcb (footprint "test"
+            r#"(kicad_pcb (net 1 "/SIGNAL") (footprint "test"
             (pad "1" smd (net "SIGNAL")) (pad "2" smd (net "/SIGNAL"))))"#,
         )
         .unwrap();
@@ -15103,6 +15132,18 @@ mod tests {
                 .unwrap_err()
                 .contains("ambiguous native net identity")
         );
+        // With both declared (a global and a root-sheet label), two nets.
+        let pcb = parse(
+            r#"(kicad_pcb (net 1 "SIGNAL") (net 2 "/SIGNAL") (footprint "test"
+            (pad "1" smd (net "SIGNAL")) (pad "2" smd (net "/SIGNAL"))))"#,
+        )
+        .unwrap();
+        let names = unambiguous_pad_net_names(&pcb).unwrap();
+        assert_eq!(names.len(), 2);
+        assert_eq!(normalize_net("/SIGNAL"), "/SIGNAL");
+        assert_eq!(normalize_net("//SIGNAL"), "/SIGNAL");
+        note_net_names(&parse("(kicad_pcb)").unwrap());
+        assert_eq!(normalize_net("/SIGNAL"), "SIGNAL");
     }
 
     #[test]

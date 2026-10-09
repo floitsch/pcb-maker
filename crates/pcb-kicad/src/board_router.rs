@@ -753,6 +753,7 @@ pub(super) fn lower(
     connect_pours: bool,
 ) -> Result<Lowered, String> {
     note_jumper_nets(pcb);
+    crate::note_net_names(pcb);
     let loops = outline::board_loops(pcb)?;
     let layers = LayerTable::from_pcb(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
