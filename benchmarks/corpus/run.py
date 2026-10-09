@@ -53,6 +53,7 @@ def drc_summary(directory, baseline=frozenset(), reference=None):
 # process or the largest child it waited for, such as kicad-cli, whose DRC
 # alone takes 2.2 GB), and the process's own (VmHWM, sampled).
 last_peak_mb = None
+last_cpu_seconds = None
 last_own_mb = None
 
 
@@ -68,7 +69,7 @@ def own_peak_mb(pid):
 
 
 def run(binary, arguments, log, timeout):
-    global last_peak_mb, last_own_mb
+    global last_peak_mb, last_own_mb, last_cpu_seconds
     started = time.monotonic()
     process = subprocess.Popen([str(binary), *map(str, arguments)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     chunks = []
@@ -92,6 +93,9 @@ def run(binary, arguments, log, timeout):
     output = (chunks[0] if chunks else b"").decode(errors="replace")
     last_peak_mb = round(usage.ru_maxrss / 1024)
     last_own_mb = round(own)
+    # CPU seconds are the speed measure; the wall clock stretches with the
+    # machine's load (other sweeps, Florian's other projects).
+    last_cpu_seconds = round(usage.ru_utime + usage.ru_stime, 1)
     log.write_text("\n".join(l for l in output.splitlines() if "PROPERTY_ENUM" not in l))
     return code, time.monotonic() - started
 
@@ -194,7 +198,7 @@ def main():
                 "pours": result.get("pours", "none"),
                 "routing_seconds": round(result["routing_seconds"], 2),
                 "wall_seconds": round(seconds, 1),
-                "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
+                "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
                 "internal_violations": len(result["internal_violations"]),
                 "native": drc_summary(work / "routed", baseline, reference),
             }
@@ -217,7 +221,7 @@ def main():
                     "unconnected_terminals": result["unconnected_terminals"],
                     "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
                     "routing_seconds": round(result["routing_seconds"], 2),
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
                     "internal_violations": len(result["internal_violations"]),
                     "native": drc_summary(work / "cold-routed", baseline, reference),
                 }
@@ -239,7 +243,7 @@ def main():
                     "vias": statistics.get("vias"),
                     "length_mm": round(physical["physical_centerline_length_mm"], 1) if physical.get("physical_centerline_length_mm") else None,
                     "router_seconds": round(result["router_seconds"], 1) if result.get("router_seconds") else None,
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
                     "native_findings": drc_summary(work / "freerouting/routing/result", baseline, reference),
                 }
             else:
@@ -288,7 +292,7 @@ def main():
                     "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
                     "pours": routed.get("pours", "none"),
                     "seconds": round(seconds, 1),
-                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb, "cpu_seconds": last_cpu_seconds,
                     "internal_violations": len(routed["internal_violations"]),
                     "native": drc_summary(work / "layout/result", baseline, reference),
                 }

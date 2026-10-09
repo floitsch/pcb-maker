@@ -167,7 +167,7 @@ def own_peak_mb(pid):
 def run_measured(command, timeout=None, env=None, on_start=None):
     """Runs `command` with its output captured. Returns (exit code, or
     "timeout" after killing it; output; peak resident set in MB; the
-    command's own peak in MB). The first peak is wait4's ru_maxrss: the
+    command's own peak in MB; CPU seconds of the process tree). The first peak is wait4's ru_maxrss: the
     largest of the process and the children it waited for (kicad-cli's DRC
     alone takes 2.2 GB, on any board), for this process alone, so that jobs
     side by side do not see each other's peaks. The second is the
@@ -198,7 +198,7 @@ def run_measured(command, timeout=None, env=None, on_start=None):
     # A killed board's kicad-cli may hold the pipe a little longer.
     reader.join(60)
     output = (chunks[0] if chunks else b"").decode(errors="replace")
-    return code, output, round(usage.ru_maxrss / 1024), round(own)
+    return code, output, round(usage.ru_maxrss / 1024), round(own), round(usage.ru_utime + usage.ru_stime, 1)
 
 
 def meminfo_gb(field="MemAvailable:"):
@@ -326,11 +326,16 @@ def run_admitted(task, arguments, token):
     started = time.monotonic()
     command = [str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
                str(work / "layout"), router_argument, str(work / "layout.json")]
-    code, output, peak_mb, own_mb = run_measured(command, arguments.timeout, env,
-                                                 lambda pid: arguments.gate.started(token, pid))
+    load_before = os.getloadavg()[0]
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, arguments.timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
     (work / "layout.log").write_text(output)
-    row = {"name": name, "seconds": round(time.monotonic() - started, 1), "peak_rss_mb": peak_mb,
-           "layout_rss_mb": own_mb}
+    # CPU seconds are the speed measure: other work on the machine (sweeps,
+    # Florian's other projects) stretches the wall clock, not the CPU time.
+    # The load averages say how loaded the machine was for this row.
+    row = {"name": name, "seconds": round(time.monotonic() - started, 1), "cpu_seconds": cpu_seconds,
+           "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
+           "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb}
     if code == "timeout":
         row.update(error=f"timed out after {arguments.timeout} s", **{"pass": False})
         return row
