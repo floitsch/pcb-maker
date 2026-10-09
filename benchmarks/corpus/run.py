@@ -7,10 +7,12 @@ what the stripped source already had."""
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -47,16 +49,49 @@ def drc_summary(directory, baseline=frozenset(), reference=None):
     }
 
 
-def run(binary, arguments, log, timeout):
-    started = time.monotonic()
+# The peak resident set of the last `run`, in MB (wait4's ru_maxrss: the
+# process or the largest child it waited for, such as kicad-cli, whose DRC
+# alone takes 2.2 GB), and the process's own (VmHWM, sampled).
+last_peak_mb = None
+last_own_mb = None
+
+
+def own_peak_mb(pid):
     try:
-        process = subprocess.run(
-            [str(binary), *map(str, arguments)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,
-        )
-        output, code = process.stdout, process.returncode
-    except subprocess.TimeoutExpired as error:
-        output, code = (error.stdout or b"").decode(errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or ""), "timeout"
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+def run(binary, arguments, log, timeout):
+    global last_peak_mb, last_own_mb
+    started = time.monotonic()
+    process = subprocess.Popen([str(binary), *map(str, arguments)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    chunks = []
+    reader = threading.Thread(target=lambda: chunks.append(process.stdout.read()), daemon=True)
+    reader.start()
+    own = 0.0
+    while True:
+        own = max(own, own_peak_mb(process.pid))
+        pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+        if pid:
+            code = os.waitstatus_to_exitcode(status)
+            break
+        if time.monotonic() - started > timeout:
+            process.kill()
+            _, status, usage = os.wait4(process.pid, 0)
+            code = "timeout"
+            break
+        time.sleep(0.5)
+    process.returncode = code if isinstance(code, int) else -9
+    reader.join(60)
+    output = (chunks[0] if chunks else b"").decode(errors="replace")
+    last_peak_mb = round(usage.ru_maxrss / 1024)
+    last_own_mb = round(own)
     log.write_text("\n".join(l for l in output.splitlines() if "PROPERTY_ENUM" not in l))
     return code, time.monotonic() - started
 
@@ -159,11 +194,12 @@ def main():
                 "pours": result.get("pours", "none"),
                 "routing_seconds": round(result["routing_seconds"], 2),
                 "wall_seconds": round(seconds, 1),
+                "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
                 "internal_violations": len(result["internal_violations"]),
                 "native": drc_summary(work / "routed", baseline, reference),
             }
         else:
-            row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code}
+            row["route"] = {"error": (work / "route.log").read_text()[-400:], "exit": code, "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb}
 
         if arguments.freerouting:
             # Matched comparison: both routers on the cold board (no pours),
@@ -181,6 +217,7 @@ def main():
                     "unconnected_terminals": result["unconnected_terminals"],
                     "vias": result["vias"], "length_mm": round(result["length_mm"], 1),
                     "routing_seconds": round(result["routing_seconds"], 2),
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
                     "internal_violations": len(result["internal_violations"]),
                     "native": drc_summary(work / "cold-routed", baseline, reference),
                 }
@@ -202,6 +239,7 @@ def main():
                     "vias": statistics.get("vias"),
                     "length_mm": round(physical["physical_centerline_length_mm"], 1) if physical.get("physical_centerline_length_mm") else None,
                     "router_seconds": round(result["router_seconds"], 1) if result.get("router_seconds") else None,
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
                     "native_findings": drc_summary(work / "freerouting/routing/result", baseline, reference),
                 }
             else:
@@ -250,11 +288,12 @@ def main():
                     "vias": routed["vias"], "length_mm": round(routed["length_mm"], 1),
                     "pours": routed.get("pours", "none"),
                     "seconds": round(seconds, 1),
+                    "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb,
                     "internal_violations": len(routed["internal_violations"]),
                     "native": drc_summary(work / "layout/result", baseline, reference),
                 }
             else:
-                row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code}
+                row["layout"] = {"error": (work / "layout.log").read_text()[-400:], "exit": code, "peak_rss_mb": last_peak_mb, "own_rss_mb": last_own_mb}
 
         if arguments.shrink:
             # Strength: the same design on a smaller board, placed and routed

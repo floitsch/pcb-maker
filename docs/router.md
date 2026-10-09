@@ -140,6 +140,27 @@ layers, 3952 x 1227 nodes): 8.65 GB -> 5.52 GB peak, identical result.
 Next candidates: the static maps per class (41 bytes per node and class)
 and fewer scratches on boards where parallel batches are small.
 
+2026-10-09: verbose runs print the maps' sizes after the lattice line
+(`memory: ...`). Per node and layer, for C rule classes of which S are
+searched (net classes and their neck classes; the rest are pour brushes,
+read only by the pour model): static maps 7C bytes (the trace map 4, the
+edge directions 1, their owner 2), per node 1 (vias blocked) and for a
+searched class 6 more (via owner, free layers), and the mask openings'
+differences only where they are; occupancy 6C (a 16-bit count for the trace and two diagonal maps) plus
+2C per node for the via maps; the search records `hot` 12S (were 16C);
+history, guard and cover 12 plus 4 per node; a search scratch 12 per state
+(were 20: the tree and target marks are hash maps of the few nodes they
+hold), one for the router and one per worker thread that routes a batch.
+Copies of a router (the via reduction's snapshot, the layout's trials)
+share the static maps and leave the scratch, the stamp marks and `hot`
+behind; the via reduction's whole copy had doubled every board's peak.
+Route mode, one attempt, 4 cores, x155 -> x161: Castor 1391 -> 687 MB,
+SNSP-CPU-01 2209 -> 1536, katia 6292 -> 4315, identical routes; layout
+mode (x155 -> x160, 2 threads): CyberKeeb2040 6916 -> 3395 MB, Qfwfq 3330
+-> 1414, identical boards. Threads hardly speed the search (k30-SBC: 34.2, 32.4, 31.3 s on 1,
+2, 4 threads) and each holds a scratch: run boards side by side with few
+threads each (`RAYON_NUM_THREADS`, the runners' `--threads`).
+
 ## Two-level search
 
 Every connection is first planned on a coarse graph of 16 x 16-node tiles

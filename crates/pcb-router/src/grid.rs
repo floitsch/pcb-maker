@@ -19,6 +19,16 @@ pub fn owner(net: NetId) -> u32 {
     net + 1
 }
 
+/// `FREE`, `BLOCKED` and `owner` in 16 bits, for the per-node maps that
+/// only name a net in rare places (the edge and via owners): half the
+/// bytes of a lattice-sized map. Boards have far fewer nets.
+pub const BLOCKED16: u16 = u16::MAX;
+
+pub fn owner16(net: NetId) -> u16 {
+    debug_assert!(net + 1 < BLOCKED16 as u32);
+    (net + 1) as u16
+}
+
 /// Unit steps for the eight planar directions, counter-clockwise from +x.
 pub const DIRECTIONS: [(i32, i32); 8] = [
     (1, 0),
@@ -329,6 +339,9 @@ impl Grid {
 
 /// Where a trace centreline or a via of one rule class may be, considering
 /// only immovable objects.
+///
+/// A class no search runs with (a pour's brush, read only by the pour
+/// model) has no `via_owner` and `free_layers`, which only a search reads.
 #[derive(Clone, Debug)]
 pub struct StaticMaps {
     /// Per layer and node: `FREE`, `BLOCKED`, or the only net allowed there.
@@ -336,20 +349,57 @@ pub struct StaticMaps {
     /// Per layer and node: directions whose unit step passes too close to an
     /// obstacle although both end nodes are legal.
     pub edge_block: Vec<Vec<u8>>,
-    /// The only net exempt from `edge_block` (its own pad), or `BLOCKED`.
-    pub edge_owner: Vec<Vec<u32>>,
+    /// The only net exempt from `edge_block` (its own pad, `owner16`), or
+    /// `BLOCKED16`.
+    pub edge_owner: Vec<Vec<u16>>,
     /// Per node: a via of this class is forbidden.
     pub via_blocked: Vec<bool>,
     /// Where `via_blocked` holds only for other nets: inside a net's own
     /// surface pad, deep enough for the whole via (a thermal via in a
-    /// ground pad, as designers place them).
-    pub via_owner: Vec<u32>,
+    /// ground pad, as designers place them). `owner16`, or 0.
+    pub via_owner: Vec<u16>,
     /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
     /// step reads one word instead of one per layer.
-    pub free_layers: Vec<u64>,
+    pub free_layers: Vec<u32>,
     /// `trace` without the solder mask openings, where it differs: what a
     /// pour's fill may cover.
-    pub fill_trace: Option<Vec<Vec<u32>>>,
+    fill_trace: Option<FillTrace>,
+}
+
+/// The cells where `trace` differs from what a pour's fill may cover (the
+/// solder mask openings, a small part of the board): a bit per layer and
+/// node marks them, and their values before the openings are kept apart.
+#[derive(Clone, Debug)]
+struct FillTrace {
+    differs: Vec<Vec<u64>>,
+    values: std::collections::HashMap<(u32, u32), u32>,
+}
+
+impl FillTrace {
+    fn new(layers: usize, cells: usize) -> Self {
+        Self {
+            differs: vec![vec![0; cells.div_ceil(64)]; layers],
+            values: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Records the value of a cell before an opening first changes it.
+    fn remember(&mut self, layer: usize, index: usize, value: u32) {
+        let word = &mut self.differs[layer][index / 64];
+        if *word & (1 << (index % 64)) == 0 {
+            *word |= 1 << (index % 64);
+            self.values.insert((layer as u32, index as u32), value);
+        }
+    }
+
+    fn get(&self, layer: usize, index: usize) -> Option<u32> {
+        (self.differs[layer][index / 64] & (1 << (index % 64)) != 0)
+            .then(|| self.values[&(layer as u32, index as u32)])
+    }
+
+    fn bytes(&self) -> usize {
+        self.differs.iter().map(|layer| layer.capacity() * 8).sum::<usize>() + self.values.capacity() * 16
+    }
 }
 
 fn claim(cell: &mut u32, net: Option<NetId>) {
@@ -361,8 +411,23 @@ fn claim(cell: &mut u32, net: Option<NetId>) {
     }
 }
 
+fn claim16(cell: &mut u16, net: Option<NetId>) {
+    let value = net.map_or(BLOCKED16, owner16);
+    if *cell == 0 {
+        *cell = value;
+    } else if *cell != value {
+        *cell = BLOCKED16;
+    }
+}
+
 impl StaticMaps {
-    pub fn build(board: &Board, grid: &Grid, class: ClassId) -> Self {
+    /// `searched`: whether a search runs with this class (see the type).
+    pub fn build(board: &Board, grid: &Grid, class: ClassId, searched: bool) -> Self {
+        assert!(
+            board.nets.len() < BLOCKED16 as usize - 1,
+            "{} nets: the static maps name nets in 16 bits",
+            board.nets.len()
+        );
         let rules = board.classes[class];
         let cells = grid.cells();
         let half_width = rules.trace_width / 2.0;
@@ -394,7 +459,7 @@ impl StaticMaps {
             .map(|inside| if *inside { FREE } else { BLOCKED })
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
-        let mut via_owner: Vec<u32> = vec![FREE; cells];
+        let mut via_owner: Vec<u16> = if searched { vec![0; cells] } else { Vec::new() };
         let trace_edge = half_width + board.edge_clearance + SAFETY;
         let via_edge = via_radius + board.edge_clearance + SAFETY;
         // A unit step between two legal nodes can cut an outline corner by
@@ -430,7 +495,7 @@ impl StaticMaps {
         let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED).collect();
         let mut trace = vec![base_trace; board.layer_count];
         let mut edge_block = vec![vec![0u8; cells]; board.layer_count];
-        let mut edge_owner = vec![vec![FREE; cells]; board.layer_count];
+        let mut edge_owner = vec![vec![0u16; cells]; board.layer_count];
 
         // Solder mask openings keep tracks out but not a pour's fill: they
         // come last, and the trace map before them is the pours' (MokyaLora:
@@ -446,10 +511,10 @@ impl StaticMaps {
             .chain(board.obstacles.iter().filter(|obstacle| mask_opening(obstacle)))
             .collect();
         let first_opening = ordered.iter().position(mask_opening);
-        let mut fill_trace: Option<Vec<Vec<u32>>> = None;
+        let mut fill_trace: Option<FillTrace> = None;
         for (position, obstacle) in ordered.into_iter().enumerate() {
             if Some(position) == first_opening {
-                fill_trace = Some(trace.clone());
+                fill_trace = Some(FillTrace::new(board.layer_count, cells));
             }
             let (trace_reach, via_reach) = match obstacle.kind {
                 ObstacleKind::Copper => {
@@ -484,13 +549,16 @@ impl StaticMaps {
                         let center = grid.center(x, y);
                         if obstacle.shape.distance_to_point(center) < via_reach {
                             let index = grid.index(x, y);
-                            if let Some(net) = own_vias
-                                && !via_blocked[index]
-                                && obstacle.shape.contains_disc(center, via_radius + SAFETY)
-                            {
-                                via_owner[index] = owner(net);
-                            } else {
-                                via_owner[index] = FREE;
+                            if searched {
+                                via_owner[index] = match own_vias {
+                                    Some(net)
+                                        if !via_blocked[index]
+                                            && obstacle.shape.contains_disc(center, via_radius + SAFETY) =>
+                                    {
+                                        owner16(net)
+                                    }
+                                    _ => 0,
+                                };
                             }
                             via_blocked[index] = true;
                         }
@@ -515,6 +583,9 @@ impl StaticMaps {
                         let distance = obstacle.shape.distance_to_point(center);
                         if distance < trace_reach {
                             if !edge_zone[index] {
+                                if let Some(fill) = &mut fill_trace {
+                                    fill.remember(layer, index, trace[layer][index]);
+                                }
                                 claim(&mut trace[layer][index], obstacle.net);
                             }
                         } else if distance < trace_reach + margin {
@@ -532,11 +603,26 @@ impl StaticMaps {
                 }
             }
         }
-        let mut free_layers = vec![0u64; cells];
-        for (layer, map) in trace.iter().enumerate().take(64) {
-            for (cell, value) in map.iter().enumerate() {
-                if *value == FREE {
-                    free_layers[cell] |= 1 << layer;
+        // Unchanged cells need no record (an opening that claimed nothing).
+        if let Some(fill) = &mut fill_trace {
+            let values = std::mem::take(&mut fill.values);
+            for ((layer, index), value) in values {
+                if trace[layer as usize][index as usize] == value {
+                    fill.differs[layer as usize][index as usize / 64] &= !(1 << (index % 64));
+                } else {
+                    fill.values.insert((layer, index), value);
+                }
+            }
+            fill.values.shrink_to_fit();
+        }
+        assert!(board.layer_count <= 32, "{} copper layers", board.layer_count);
+        let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
+        if searched {
+            for (layer, map) in trace.iter().enumerate() {
+                for (cell, value) in map.iter().enumerate() {
+                    if *value == FREE {
+                        free_layers[cell] |= 1 << layer;
+                    }
                 }
             }
         }
@@ -553,7 +639,7 @@ impl StaticMaps {
 
     /// Whether `net` may put a via on this node.
     pub fn via_allowed(&self, index: usize, net: NetId) -> bool {
-        !self.via_blocked[index] || self.via_owner[index] == owner(net)
+        !self.via_blocked[index] || self.via_owner[index] == owner16(net)
     }
 
     /// Whether `net` may have a trace centreline on this node.
@@ -565,14 +651,32 @@ impl StaticMaps {
     /// Whether a pour of `net` fills this node (mask openings do not stop
     /// a fill).
     pub fn fill_allowed(&self, layer: usize, index: usize, net: NetId) -> bool {
-        let value = self.fill_trace.as_ref().map_or(self.trace[layer][index], |fill| fill[layer][index]);
+        let value = self
+            .fill_trace
+            .as_ref()
+            .and_then(|fill| fill.get(layer, index))
+            .unwrap_or(self.trace[layer][index]);
         value == FREE || value == owner(net)
     }
 
     /// Whether `net` may take the unit step leaving `index` in `direction`.
     pub fn edge_allowed(&self, layer: usize, index: usize, direction: usize, net: NetId) -> bool {
         self.edge_block[layer][index] & (1 << direction) == 0
-            || self.edge_owner[layer][index] == owner(net)
+            || self.edge_owner[layer][index] == owner16(net)
+    }
+
+    /// Bytes held by the per-node maps.
+    pub fn bytes(&self) -> usize {
+        fn of<T>(maps: &[Vec<T>]) -> usize {
+            maps.iter().map(|map| map.capacity() * std::mem::size_of::<T>()).sum()
+        }
+        of(&self.trace)
+            + of(&self.edge_block)
+            + of(&self.edge_owner)
+            + self.via_blocked.capacity()
+            + self.via_owner.capacity() * 2
+            + self.free_layers.capacity() * 4
+            + self.fill_trace.as_ref().map_or(0, FillTrace::bytes)
     }
 }
 
@@ -583,7 +687,7 @@ fn mark_tight_edges(
     reach: f64,
     index: usize,
     edge_block: &mut [u8],
-    edge_owner: &mut [u32],
+    edge_owner: &mut [u16],
 ) {
     let center = grid.center_of(index);
     for direction in 0..8 {
@@ -592,9 +696,9 @@ fn mark_tight_edges(
         };
         if shape.distance_to_segment(center, grid.center_of(neighbor)) < reach {
             edge_block[index] |= 1 << direction;
-            claim(&mut edge_owner[index], net);
+            claim16(&mut edge_owner[index], net);
             edge_block[neighbor] |= 1 << ((direction + 4) % 8);
-            claim(&mut edge_owner[neighbor], net);
+            claim16(&mut edge_owner[neighbor], net);
         }
     }
 }

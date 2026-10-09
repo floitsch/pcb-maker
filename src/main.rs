@@ -2727,6 +2727,14 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "dump-pour-map" => {
+            let usage = "usage: pcb-maker dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
+            pcb_kicad::dump_kicad_pour_map(Path::new(&source), &board_id, Path::new(&output), &config)
+        }
         "route-kicad-board-freerouting" => {
             let usage = "usage: pcb-maker route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

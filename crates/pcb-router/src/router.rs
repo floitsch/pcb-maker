@@ -524,14 +524,20 @@ fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
 }
 
 /// What a search step reads of a node on one layer for one rule class
-/// (see `Router::hot`).
+/// (see `Router::hot`). Twelve bytes: the guard and the cover name a net
+/// in 16 bits (`Router::new` checks the board has few enough nets).
 #[derive(Clone, Copy, Default)]
 struct Hot {
     trace: u32,
-    guard: u32,
-    covered: u32,
     history: f32,
+    /// `guard` as `owner` in 15 bits, `HOT_HARD` for a hard guard.
+    guard: u16,
+    /// `covered` (an `owner`).
+    covered: u16,
 }
+
+/// `HARD_GUARD` in `Hot::guard`.
+const HOT_HARD: u16 = 1 << 15;
 
 /// A* state of one lattice node and layer, kept together: a search step
 /// reads and writes them all, one cache line instead of five.
@@ -546,14 +552,42 @@ struct SearchNode {
     parent: u8,
 }
 
+/// Hashes a lattice state index by one multiplication, folded so that the
+/// low bits (the table's bucket) depend on all of them.
+#[derive(Clone, Copy, Default)]
+struct StateHasher(u64);
+
+impl std::hash::Hasher for StateHasher {
+    fn finish(&self) -> u64 {
+        self.0 ^ (self.0 >> 32)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 = (self.0.rotate_left(8) ^ *byte as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.0 = (value as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+/// Lattice states (`Router::state`) of a few nodes, with a terminal each.
+type StateMap = HashMap<u32, u16, std::hash::BuildHasherDefault<StateHasher>>;
+
 /// Per-thread search state: A* arrays, generation marks and counters.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Scratch {
     nodes: Vec<SearchNode>,
-    target_terminal: Vec<u16>,
-    /// Tree marks live across the searches of one net: their own counter.
-    tree_mark: Vec<u32>,
-    tree_terminal: Vec<u16>,
+    /// The current search's targets, with the element (terminal or
+    /// component) each belongs to. A map, not an array per state: a
+    /// thread's scratch is the biggest part of a large board's footprint,
+    /// and targets and trees are a few thousand nodes of millions.
+    targets: StateMap,
+    /// The routed net's tree, which lives across the searches of one net:
+    /// its nodes, with the terminal of each (`NO_TERMINAL` for a track).
+    tree: StateMap,
     own_via_near: Vec<u16>,
     /// Bits per (class or neck class, map kind, cell): set for the routed
     /// net's own stamps while its search is to ignore them (see `mask_own`;
@@ -567,7 +601,6 @@ pub struct Scratch {
     /// Whether `own_mark` holds the routed net's stamps.
     own_active: bool,
     generation: u16,
-    tree_generation: u32,
     corridor: Option<Vec<bool>>,
     expansions: u64,
     searches: u64,
@@ -582,16 +615,14 @@ impl Scratch {
     fn new(states: usize, cells: usize) -> Self {
         Self {
             nodes: vec![SearchNode::default(); states],
-            target_terminal: vec![NO_TERMINAL; states],
-            tree_mark: vec![0; states],
-            tree_terminal: vec![NO_TERMINAL; states],
+            targets: StateMap::default(),
+            tree: StateMap::default(),
             own_via_near: vec![0; cells],
             own_mark: Vec::new(),
             own_claimed: Vec::new(),
             own_set: Vec::new(),
             own_active: false,
             generation: 0,
-            tree_generation: 0,
             corridor: None,
             expansions: 0,
             searches: 0,
@@ -611,9 +642,61 @@ impl Scratch {
         ]
     }
 
+    /// Bytes held by the per-node arrays.
+    fn bytes(&self) -> usize {
+        self.nodes.capacity() * std::mem::size_of::<SearchNode>()
+            + (self.targets.capacity() + self.tree.capacity()) * 7
+            + self.own_via_near.capacity() * 2
+            + self.own_mark.capacity() * 8
+            + self.corridor.as_ref().map_or(0, |corridor| corridor.capacity())
+    }
+
     fn fits(&self, states: usize, cells: usize) -> bool {
         self.nodes.len() == states && self.own_via_near.len() == cells
     }
+
+    /// Allocates the arrays for a lattice of `states` (a copy has none).
+    fn ensure(&mut self, states: usize, cells: usize) {
+        if !self.fits(states, cells) {
+            *self = Self {
+                nodes: vec![SearchNode::default(); states],
+                own_via_near: vec![0; cells],
+                ..self.clone()
+            };
+        }
+    }
+}
+
+impl Clone for Scratch {
+    /// A copy keeps the counters only: the arrays are the transient state
+    /// of one search or one net and are allocated again on first use
+    /// (`ensure`). Every copy of a router (a snapshot to go back to, the
+    /// layout's trial moves) carried a search scratch of the board's size.
+    fn clone(&self) -> Self {
+        Self {
+            expansions: self.expansions,
+            searches: self.searches,
+            open_searches: self.open_searches,
+            open_expansions: self.open_expansions,
+            failed_searches: self.failed_searches,
+            ..Self::default()
+        }
+    }
+}
+
+/// Per rule class: whether some search runs with it (a net's class or the
+/// neck class of one). The other classes are pour brushes, read only by
+/// the pour model (their static trace, fill and edge maps, their trace and
+/// diagonal occupancy).
+fn searched_classes(board: &Board, neck_of: &[Option<usize>]) -> Vec<bool> {
+    let mut searched = vec![false; board.classes.len()];
+    for net in &board.nets {
+        searched[net.class] = true;
+        if let Some(neck) = neck_of[net.class] {
+            searched[neck] = true;
+        }
+    }
+    searched
 }
 
 thread_local! {
@@ -639,7 +722,9 @@ pub struct Router {
     board: Board,
     config: Config,
     grid: Grid,
-    statics: Vec<StaticMaps>,
+    /// Shared by the copies of a router (they change only with the board,
+    /// in `update`, which replaces them).
+    statics: Arc<Vec<StaticMaps>>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
     /// is the via map. A value counts the nets forbidding that class there.
     /// After the class maps follow the diagonal maps (see `diagonal_map`):
@@ -696,6 +781,10 @@ pub struct Router {
     /// Per rule class: the class with the neck width instead of the track
     /// width (an added class), if the track is wider.
     neck_of: Vec<Option<usize>>,
+    /// Per rule class: whether a search runs with it (see
+    /// `searched_classes`). The others (pour brushes) have no `hot`
+    /// records and no via owners or free-layer words in their static maps.
+    searched: Vec<bool>,
     /// Per layer: step cost multiplier while a plane skeleton is routed
     /// (empty otherwise).
     layer_bias: Vec<f32>,
@@ -754,8 +843,14 @@ impl Router {
         }
         let cells = grid.cells();
         let layers = board.layer_count;
+        assert!(
+            board.nets.len() + 1 < HOT_HARD as usize,
+            "{} nets: the search records name nets in 15 bits",
+            board.nets.len()
+        );
+        let searched = searched_classes(board, &neck_of);
         let statics: Vec<_> = (0..board.classes.len())
-            .map(|class| StaticMaps::build(board, &grid, class))
+            .map(|class| StaticMaps::build(board, &grid, class, searched[class]))
             .collect();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
         let step = grid.pitch * std::f64::consts::SQRT_2;
@@ -857,7 +952,7 @@ impl Router {
         let mut router = Self {
             board: board.clone(),
             config: config.clone(),
-            statics,
+            statics: Arc::new(statics),
             occupancy: vec![vec![0; cells]; maps],
             stamp_mark: vec![vec![0; cells.div_ceil(64)]; maps],
             history: vec![vec![0.0; cells]; layers + 1],
@@ -878,6 +973,7 @@ impl Router {
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             neck_of,
+            searched,
             exclusive: (0..layers).map(|layer| config.exclusive_planes && board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
@@ -907,7 +1003,59 @@ impl Router {
         router.mark_covered();
         router.mark_via_cells();
         router.build_hot();
+        if config.verbose {
+            eprintln!("{}", router.memory_report());
+        }
         router
+    }
+
+    /// What the router's lattice maps hold, in megabytes per part, and in
+    /// bytes per node (`cells`, one layer) for the whole: where a board's
+    /// memory goes. The per-thread search scratches of the parallel
+    /// batches come on top, one per worker thread that routed a batch.
+    pub fn memory_report(&self) -> String {
+        fn bytes<T>(maps: &[Vec<T>]) -> usize {
+            maps.iter().map(|map| map.capacity() * std::mem::size_of::<T>()).sum()
+        }
+        let cells = self.grid.cells().max(1);
+        let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
+        let occupancy = bytes(&self.occupancy);
+        let stamp_mark = bytes(&self.stamp_mark);
+        let hot = bytes(&self.hot);
+        let pour = bytes(&self.history) + bytes(&self.guard) + bytes(&self.covered) + self.via_marks.capacity();
+        let planes: usize = self.nets.iter().map(|state| bytes(&state.plane) + bytes(&state.plane_target)).sum();
+        let scratch = self.scratch.bytes();
+        let tiles = bytes(&self.tile_claimed) + bytes(&self.tile_routable) + bytes(&self.tile_history) + bytes(&self.tile_covered);
+        let total = statics + occupancy + stamp_mark + hot + pour + planes + scratch + tiles;
+        let mb = |value: usize| value as f64 / (1024.0 * 1024.0);
+        format!(
+            "memory: {:.0} MB in maps ({:.0} bytes a node; {} x {} nodes, {} layers, {} classes, {} searched, {} track geometries): statics {:.0}, occupancy {:.0}, stamp marks {:.0}, hot {:.0}, history/guard/cover {:.0}, pour masks {:.0}, scratch {:.0} (+{:.0} per worker thread), tiles {:.0}",
+            mb(total),
+            total as f64 / cells as f64,
+            self.grid.nx,
+            self.grid.ny,
+            self.board.layer_count,
+            self.board.classes.len(),
+            self.searched.iter().filter(|searched| **searched).count(),
+            {
+                let mut geometries: Vec<(u64, u64)> = (0..self.board.classes.len())
+                    .filter(|class| self.searched[*class])
+                    .map(|class| (self.board.classes[class].trace_width.to_bits(), self.board.classes[class].clearance.to_bits()))
+                    .collect();
+                geometries.sort();
+                geometries.dedup();
+                geometries.len()
+            },
+            mb(statics),
+            mb(occupancy),
+            mb(stamp_mark),
+            mb(hot),
+            mb(pour),
+            mb(planes),
+            mb(scratch),
+            mb(self.scratch.bytes()),
+            mb(tiles),
+        )
     }
 
     /// Packs the static map, the guard, the pour cover and the history
@@ -918,6 +1066,9 @@ impl Router {
         self.hot = (0..self.statics.len() * layers)
             .map(|index| {
                 let (class, layer) = (index / layers, index % layers);
+                if !self.searched[class] {
+                    return Vec::new();
+                }
                 let trace = &self.statics[class].trace[layer];
                 let guard = &self.guard[layer];
                 let covered = &self.covered[layer];
@@ -925,8 +1076,13 @@ impl Router {
                 (0..cells)
                     .map(|cell| Hot {
                         trace: trace[cell],
-                        guard: if guard.is_empty() { 0 } else { guard[cell] },
-                        covered: if covered.is_empty() { 0 } else { covered[cell] },
+                        guard: match guard.get(cell) {
+                            Some(&value) if value != 0 => {
+                                (value & !HARD_GUARD) as u16 | if value & HARD_GUARD != 0 { HOT_HARD } else { 0 }
+                            }
+                            _ => 0,
+                        },
+                        covered: covered.get(cell).map_or(0, |&value| value as u16),
                         history: history[cell],
                     })
                     .collect()
@@ -2004,6 +2160,7 @@ impl Router {
         hard: bool,
         window_growth: f64,
     ) {
+        scratch.ensure(self.grid.cells() * self.board.layer_count, self.grid.cells());
         let terminal_count = self.board.nets[net as usize].terminals.len();
         let retained = net_state.branches.clone();
         let keep = vec![true; retained.len()];
@@ -2029,6 +2186,19 @@ impl Router {
             ];
             for (terminal, node) in ends {
                 let other = if terminal == PLANE_TERMINAL {
+                    // While pads must reach the main piece, a stub joins the
+                    // plane only where it still ends in that piece: the
+                    // signals may have cut its end off since (k30's +5V: 22
+                    // pads stranded on stubs into islands or no fill at all,
+                    // which every reroute kept as connected).
+                    if !net_state.plane_target.is_empty()
+                        && !net_state
+                            .plane_target
+                            .get(node.layer as usize)
+                            .is_some_and(|mask| mask.get(node.cell as usize).copied().unwrap_or(false))
+                    {
+                        continue;
+                    }
                     plane_element
                 } else if terminal == FREE_END {
                     continue;
@@ -2048,8 +2218,7 @@ impl Router {
             .map(|element| find(&mut parent, element))
             .collect();
 
-        scratch.tree_generation += 1;
-        let tree_generation = scratch.tree_generation;
+        scratch.tree.clear();
         let mut tree: Vec<Node> = Vec::new();
         let mut in_tree = vec![false; parent.len()];
         let cells = self.grid.cells();
@@ -2069,18 +2238,14 @@ impl Router {
                 }
                 if element < terminal_count {
                     for node in net_state.terminal_nodes[element].clone() {
-                        let state = state_of(node);
-                        scratch.tree_mark[state] = tree_generation;
-                        scratch.tree_terminal[state] = element as u16;
+                        scratch.tree.insert(state_of(node) as u32, element as u16);
                         tree.push(node);
                     }
                     net_state.connected[element] = true;
                 } else {
                     for node in &retained[element - terminal_count].nodes {
-                        let state = state_of(*node);
-                        if scratch.tree_mark[state] != tree_generation {
-                            scratch.tree_mark[state] = tree_generation;
-                            scratch.tree_terminal[state] = NO_TERMINAL;
+                        if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(state_of(*node) as u32) {
+                            entry.insert(NO_TERMINAL);
                             tree.push(*node);
                         }
                     }
@@ -2256,13 +2421,11 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = scratch.tree_terminal[first];
-            let reached = scratch.target_terminal[last] as usize;
+            let start_terminal = scratch.tree.get(&(first as u32)).copied().unwrap_or(NO_TERMINAL);
+            let reached = scratch.targets[&(last as u32)] as usize;
             for node in &path[1..] {
-                let state = self.state(*node);
-                if scratch.tree_mark[state] != tree_generation {
-                    scratch.tree_mark[state] = tree_generation;
-                    scratch.tree_terminal[state] = NO_TERMINAL;
+                if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(self.state(*node) as u32) {
+                    entry.insert(NO_TERMINAL);
                     tree.push(*node);
                 }
             }
@@ -2337,8 +2500,7 @@ impl Router {
             else {
                 break;
             };
-            scratch.tree_generation += 1;
-            let tree_generation = scratch.tree_generation;
+            scratch.tree.clear();
             let mut sources: Vec<Node> = Vec::new();
             let mut targets: Vec<(Node, u16)> = Vec::new();
             for element in (0..parent.len()).filter(|element| *element != plane_element) {
@@ -2355,14 +2517,8 @@ impl Router {
                 };
                 for node in nodes {
                     if inside {
-                        let state = self.state(node);
-                        if scratch.tree_mark[state] != tree_generation {
-                            scratch.tree_mark[state] = tree_generation;
-                            scratch.tree_terminal[state] = if element < terminal_count {
-                                element as u16
-                            } else {
-                                NO_TERMINAL
-                            };
+                        if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(self.state(node) as u32) {
+                            entry.insert(if element < terminal_count { element as u16 } else { NO_TERMINAL });
                             sources.push(node);
                         }
                     } else {
@@ -2399,9 +2555,9 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = scratch.tree_terminal[first];
+            let start_terminal = scratch.tree.get(&(first as u32)).copied().unwrap_or(NO_TERMINAL);
             let (reached, end_terminal) = if scratch.nodes[last].target_mark == scratch.generation {
-                let element = scratch.target_terminal[last] as usize;
+                let element = scratch.targets[&(last as u32)] as usize;
                 (
                     element,
                     if element < terminal_count {
@@ -2636,13 +2792,14 @@ impl Router {
             }
             scratch.own_via_near = near;
         }
+        scratch.targets.clear();
         for (node, element) in targets {
             if hard && !self.escape_is_free(scratch, net_state, net, *node) {
                 continue;
             }
             let state = self.state(*node);
             scratch.nodes[state].target_mark = generation;
-            scratch.target_terminal[state] = *element;
+            scratch.targets.insert(state as u32, *element);
         }
 
         // Without a short list of target points, guide the search with an
@@ -2753,6 +2910,7 @@ impl Router {
 
         let statics = &self.statics[class];
         let own = crate::grid::owner(net);
+        let own16 = crate::grid::owner16(net);
         let trace_base = class * (layers + 1);
         let via_map = trace_base + layers;
         let necks = !net_state.neck_zones.is_empty();
@@ -2791,10 +2949,11 @@ impl Router {
             let here = scratch.nodes[state].cost;
             let arrived = scratch.nodes[state].parent;
             let here_statics = if necks { &self.statics[self.class_at(net, net_state, cell as u32)] } else { statics };
-            let blocked_edges = if here_statics.edge_owner[layer][cell] == own {
+            let edge_block = here_statics.edge_block[layer][cell];
+            let blocked_edges = if edge_block != 0 && here_statics.edge_owner[layer][cell] == own16 {
                 0
             } else {
-                here_statics.edge_block[layer][cell]
+                edge_block
             };
             // This layer's packed maps, looked up once per expansion
             // rather than once per step.
@@ -2854,13 +3013,13 @@ impl Router {
                 }
                 let history = if cleanup { 0.0 } else { hot.history };
                 let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
-                if hot.guard != 0 && hot.guard & !HARD_GUARD != own {
-                    if hot.guard & HARD_GUARD != 0 {
+                if hot.guard != 0 && (hot.guard & !HOT_HARD) as u32 != own {
+                    if hot.guard & HOT_HARD != 0 {
                         continue;
                     }
                     step *= thermal_guard_cost;
                 }
-                if hot.covered != 0 && hot.covered != own {
+                if hot.covered != 0 && hot.covered as u32 != own {
                     if self.exclusive[layer] {
                         continue;
                     }
@@ -3050,9 +3209,12 @@ impl Router {
             map.fill(0);
         }
         self.board = board.clone();
-        self.statics = (0..self.board.classes.len())
-            .map(|class| StaticMaps::build(&self.board, &self.grid, class))
-            .collect();
+        self.searched = searched_classes(&self.board, &self.neck_of);
+        self.statics = Arc::new(
+            (0..self.board.classes.len())
+                .map(|class| StaticMaps::build(&self.board, &self.grid, class, self.searched[class]))
+                .collect(),
+        );
         let layers = self.board.layer_count;
         let tiles = self.tiles_x * self.tiles_y;
         self.tile_routable = vec![vec![0u32; tiles]; self.board.classes.len() * layers];
@@ -4199,7 +4361,9 @@ impl Router {
                     self.history[layer][cell as usize] += self.config.history_increment as f32;
                     if layer < layers {
                         for class in 0..self.statics.len() {
-                            self.hot[class * layers + layer][cell as usize].history += self.config.history_increment as f32;
+                            if let Some(hot) = self.hot[class * layers + layer].get_mut(cell as usize) {
+                                hot.history += self.config.history_increment as f32;
+                            }
                         }
                     }
                     let cell = cell as usize;
@@ -4582,7 +4746,7 @@ impl Router {
             if pending.is_empty() {
                 break;
             }
-            let snapshot = self.clone();
+            let snapshot = self.lean_snapshot();
             let via_cost = self.config.via_cost;
             let weight = self.config.heuristic_weight;
             self.config.via_cost =
@@ -4619,11 +4783,40 @@ impl Router {
             }
             if !keep {
                 // Restore, but still try the next (more expensive) round.
-                let scratch = std::mem::take(&mut self.scratch);
-                *self = snapshot;
-                self.scratch = scratch;
+                self.restore_lean(snapshot);
             }
         }
+    }
+
+    /// A copy of the router to go back to, without what a negotiation
+    /// leaves as it is (the static maps, the search scratch, the stamp
+    /// marks, which are clear between stamps) or what is rebuilt from the
+    /// rest (`hot`): a whole copy doubled the peak memory of every board
+    /// (Castor: 1.39 GB for 0.51 GB of maps).
+    fn lean_snapshot(&mut self) -> Router {
+        let statics = std::mem::take(&mut self.statics);
+        let scratch = std::mem::take(&mut self.scratch);
+        let hot = std::mem::take(&mut self.hot);
+        let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let snapshot = self.clone();
+        self.statics = statics;
+        self.scratch = scratch;
+        self.hot = hot;
+        self.stamp_mark = stamp_mark;
+        snapshot
+    }
+
+    /// Goes back to a `lean_snapshot` taken since the static maps last
+    /// changed.
+    fn restore_lean(&mut self, snapshot: Router) {
+        let statics = std::mem::take(&mut self.statics);
+        let scratch = std::mem::take(&mut self.scratch);
+        let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        *self = snapshot;
+        self.statics = statics;
+        self.scratch = scratch;
+        self.stamp_mark = stamp_mark;
+        self.build_hot();
     }
 
     fn finish(&mut self, order: &[NetId]) -> RoutingResult {
@@ -4668,6 +4861,17 @@ impl Router {
             );
         }
 
+        if let Some(directory) = std::env::var_os("PCB_ROUTER_POUR_DUMP") {
+            static DUMPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let number = DUMPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let directory = std::path::Path::new(&directory).join(format!("finish-{number:03}"));
+            if let Err(error) = self.dump_pours(&directory) {
+                eprintln!("pour dump {}: {error}", directory.display());
+            } else {
+                let vias: usize = (0..self.nets.len()).map(|net| self.nets[net].branches.iter().map(|branch| branch.nodes.windows(2).filter(|pair| pair[0].cell == pair[1].cell && pair[0].layer != pair[1].layer).count()).sum::<usize>()).sum();
+                eprintln!("pour dump {}: {vias} via steps", directory.display());
+            }
+        }
         let status = self.statuses();
         let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) = (0..self.board.nets.len()
             as NetId)
@@ -4941,52 +5145,8 @@ impl Router {
                     .collect()
             })
             .collect();
-        // A thermal relief keeps its gap around the pads it connects, all
-        // but the spokes: fill does not flow past such a pad, it joins the
-        // pad only through the spokes (below). PolyKybd's GND ran across a
-        // connector's 0.3 mm pins in this model and fell into islands in
-        // KiCad's.
-        {
-            let description = &self.board.nets[net as usize];
-            for layer in 0..layers {
-                if free[layer].is_empty() {
-                    continue;
-                }
-                let Some(gap) = self
-                    .board
-                    .planes
-                    .iter()
-                    .filter(|plane| plane.net == net && plane.layer == layer && !plane.solid)
-                    .map(|plane| plane.thermal_gap)
-                    .reduce(f64::max)
-                    .filter(|gap| *gap > 0.0)
-                else {
-                    continue;
-                };
-                let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
-                for terminal in &description.terminals {
-                    if self.board.isolated_pads.binary_search(&terminal.label).is_ok()
-                        || self.board.solid_pads.binary_search(&terminal.label).is_ok()
-                    {
-                        continue;
-                    }
-                    let pad = &self.board.obstacles[terminal.pad];
-                    if pad.layers & (1 << layer) == 0 {
-                        continue;
-                    }
-                    let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb().inflated(reach)) else {
-                        continue;
-                    };
-                    for y in y0..=y1 {
-                        for x in x0..=x1 {
-                            if pad.shape.distance_to_point(self.grid.center(x, y)) < reach {
-                                free[layer][self.grid.index(x, y)] = false;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let rings = self.thermal_ring_pads(net);
+        self.cut_thermal_rings(&rings, &mut free);
         // The net's own tracks are copper of the net, and the fill joins
         // them anywhere, inside a pad's thermal ring too (a plane stub ends
         // in the ring: Castor's U7.3 read as stranded with "1 branch, 0
@@ -5009,7 +5169,36 @@ impl Router {
                 }
             }
         }
-        let pours = crate::pour::PourMap::build(&self.grid, &free);
+        // Two free nodes diagonal to each other whose common neighbours are
+        // both taken join when the brush can go straight from one to the
+        // other: no other net's copper, fixed or routed, and no thermal ring
+        // comes closer to the step than to the nodes. A neck of KiCad's
+        // fill running diagonally to the lattice holds no two nodes side by
+        // side; labelled 4-connected, k30-SBC's +5V plane on In1 fell into
+        // 674 pieces where KiCad's fill has 178 outlines (with the diagonal
+        // steps 183; GND on F.Cu 420, 298 and 306).
+        let diagonal = |layer: usize, start: usize, orientation: usize| {
+            let class = state.plane_class[layer];
+            let direction = if orientation == 0 { 1 } else { 7 };
+            if !self.statics[class].edge_allowed(layer, start, direction, net) {
+                return false;
+            }
+            let map = self.diagonal_map(class, layer, orientation);
+            if self.occupancy[map][start] as usize != own.contains(&(map as u32, start as u32)) as usize {
+                return false;
+            }
+            let Some(end) = self.grid.neighbor(start, direction) else {
+                return false;
+            };
+            let (a, b) = (self.grid.center_of(start), self.grid.center_of(end));
+            let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+            !rings[layer].iter().any(|(pad, reach)| {
+                let shape = &self.board.obstacles[*pad].shape;
+                shape.aabb().inflated(*reach + self.grid.pitch).intersects(crate::geometry::Aabb { minimum: middle, maximum: middle })
+                    && shape.distance_to_segment(a, b) < *reach
+            })
+        };
+        let pours = crate::pour::PourMap::build(&self.grid, &free, &diagonal);
         let terminal_count = state.terminal_nodes.len();
         let terminal_base = pours.pieces + 1;
         let branch_base = terminal_base + terminal_count;
@@ -5165,6 +5354,167 @@ impl Router {
             .max_by_key(|(root, count)| (*count, usize::MAX - *root))
             .map_or(0, |(root, _)| root);
         (pours, parent, main, spoke_islands)
+    }
+
+    /// Per layer, the pads of `net` whose thermal relief keeps the pour's
+    /// fill away, each with the distance the brush centre keeps from it
+    /// (the gap and half the brush). A thermal relief keeps its gap around
+    /// the pads it connects, all but the spokes: fill does not flow past
+    /// such a pad, it joins the pad only through the spokes
+    /// (`analyze_pours_full`). PolyKybd's GND ran across a connector's
+    /// 0.3 mm pins in this model and fell into islands in KiCad's.
+    fn thermal_ring_pads(&self, net: NetId) -> Vec<Vec<(usize, f64)>> {
+        let layers = self.board.layer_count;
+        let state = &self.nets[net as usize];
+        let description = &self.board.nets[net as usize];
+        let mut result = vec![Vec::new(); layers];
+        for layer in 0..layers {
+            if state.plane[layer].is_empty() {
+                continue;
+            }
+            let Some(gap) = self
+                .board
+                .planes
+                .iter()
+                .filter(|plane| plane.net == net && plane.layer == layer && !plane.solid)
+                .map(|plane| plane.thermal_gap)
+                .reduce(f64::max)
+                .filter(|gap| *gap > 0.0)
+            else {
+                continue;
+            };
+            let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+            for terminal in &description.terminals {
+                if self.board.isolated_pads.binary_search(&terminal.label).is_ok()
+                    || self.board.solid_pads.binary_search(&terminal.label).is_ok()
+                {
+                    continue;
+                }
+                if self.board.obstacles[terminal.pad].layers & (1 << layer) == 0 {
+                    continue;
+                }
+                result[layer].push((terminal.pad, reach));
+            }
+        }
+        result
+    }
+
+    /// Clears the nodes of `free` (per layer, empty for none) that the
+    /// brush may not take inside a thermal ring (`thermal_ring_pads`).
+    fn cut_thermal_rings(&self, rings: &[Vec<(usize, f64)>], free: &mut [Vec<bool>]) {
+        for (layer, pads) in rings.iter().enumerate() {
+            if free[layer].is_empty() {
+                continue;
+            }
+            for (pad, reach) in pads {
+                let pad = &self.board.obstacles[*pad];
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb().inflated(*reach)) else {
+                    continue;
+                };
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        if pad.shape.distance_to_point(self.grid.center(x, y)) < *reach {
+                            free[layer][self.grid.index(x, y)] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Writes the pour map of every pour net into `directory`, one file
+    /// per net and layer (`<net>-L<layer>.pour`): a JSON header line (net,
+    /// layer, nx, ny, origin, pitch, pieces), then one flag byte per node
+    /// (row-major, x fastest) and one little-endian u32 piece label per
+    /// node. Flags: 1 inside the pour's polygon (less higher-priority
+    /// pours), 2 the static map lets the fill in, 4 no other net's routed
+    /// copper stamps the node, 8 inside a thermal ring, 16 free (what the
+    /// pieces are labelled from), 32 a node of the net's own branches.
+    /// For overlaying KiCad's fill (experiments/pour-fidelity).
+    pub fn dump_pours(&self, directory: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        std::fs::create_dir_all(directory)?;
+        let layers = self.board.layer_count;
+        let cells = self.grid.cells();
+        for net in 0..self.nets.len() as NetId {
+            let state = &self.nets[net as usize];
+            if state.plane.is_empty() {
+                continue;
+            }
+            let (pours, _, _, _) = self.analyze_pours_full(net, &|_| false);
+            let mut rings: Vec<Vec<bool>> = (0..layers)
+                .map(|layer| if state.plane[layer].is_empty() { Vec::new() } else { vec![true; cells] })
+                .collect();
+            self.cut_thermal_rings(&self.thermal_ring_pads(net), &mut rings);
+            let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
+            let name = &self.board.nets[net as usize].name;
+            let file_name: String = name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '_' { c } else { '_' })
+                .collect();
+            for layer in 0..layers {
+                if state.plane[layer].is_empty() {
+                    continue;
+                }
+                let mut flags = vec![0u8; cells];
+                for plane in self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer && plane.connect) {
+                    let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                        crate::geometry::Shape::Polygon { points: plane.polygon.clone() }.aabb(),
+                    ) else {
+                        continue;
+                    };
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            let center = self.grid.center(x, y);
+                            if crate::geometry::point_in_polygon(center, &plane.polygon)
+                                && !plane.excluded.iter().any(|other| crate::geometry::point_in_polygon(center, other))
+                            {
+                                flags[self.grid.index(x, y)] |= 1;
+                            }
+                        }
+                    }
+                }
+                let statics = &self.statics[state.plane_class[layer]];
+                let map = self.map_index(state.plane_class[layer], layer);
+                for cell in 0..cells {
+                    if statics.fill_allowed(layer, cell, net) {
+                        flags[cell] |= 2;
+                    }
+                    if self.occupancy[map][cell] as usize == own.contains(&(map as u32, cell as u32)) as usize {
+                        flags[cell] |= 4;
+                    }
+                    if !rings[layer][cell] {
+                        flags[cell] |= 8;
+                    }
+                    if pours.solid[layer][cell] {
+                        flags[cell] |= 16;
+                    }
+                }
+                for branch in &state.branches {
+                    for node in branch.nodes.iter().filter(|node| node.layer as usize == layer) {
+                        flags[node.cell as usize] |= 32;
+                    }
+                }
+                let path = directory.join(format!("{file_name}-L{layer}.pour"));
+                let mut file = std::io::BufWriter::new(std::fs::File::create(&path)?);
+                writeln!(
+                    file,
+                    "{{\"net\": \"{}\", \"layer\": {layer}, \"nx\": {}, \"ny\": {}, \"origin\": [{}, {}], \"pitch\": {}, \"pieces\": {}}}",
+                    name.replace('\\', "\\\\").replace('"', "\\\""),
+                    self.grid.nx,
+                    self.grid.ny,
+                    self.grid.origin[0],
+                    self.grid.origin[1],
+                    self.grid.pitch,
+                    pours.pieces,
+                )?;
+                file.write_all(&flags)?;
+                for label in &pours.label[layer] {
+                    file.write_all(&label.to_le_bytes())?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Connects pour islands that hold terminals to the main piece with
@@ -5853,4 +6203,133 @@ impl Router {
 
 pub fn route(board: &Board, config: &Config) -> RoutingResult {
     Router::new(board, config).run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::board::{Net, Obstacle, ObstacleKind, Plane, RuleClass, Terminal};
+    use crate::geometry::Shape;
+
+    fn copper(shape: Shape, net: NetId, label: &str) -> Obstacle {
+        Obstacle {
+            shape,
+            layers: 1,
+            kind: ObstacleKind::Copper,
+            net: Some(net),
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: label.into(),
+        }
+    }
+
+    /// A pour on one layer, cut by two parallel walls of another net
+    /// running diagonally to the lattice: between them only the nodes on
+    /// one diagonal keep the brush's clearance (0.45 mm from both walls
+    /// where 0.425 is needed; the next diagonals are 0.071 mm closer).
+    /// `notch` adds a small disc of the other net beside one diagonal step
+    /// that passes it closer than the clearance while both of the step's
+    /// nodes keep it.
+    fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
+        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let mut obstacles = vec![
+            copper(Shape::Circle { center: [0.5, 7.5], radius: 0.3 }, 0, "P.1"),
+            copper(Shape::Circle { center: [7.5, 0.5], radius: 0.3 }, 1, "Q.1"),
+        ];
+        // Walls with radius 0.1 along y = x +- 0.6364 (0.45 mm from the
+        // diagonal y = x on both sides, perpendicular).
+        let offset = 0.45 * std::f64::consts::SQRT_2;
+        for sign in [-1.0, 1.0] {
+            obstacles.push(copper(
+                Shape::Capsule { start: [-1.0, -1.0 + sign * offset], end: [9.0, 9.0 + sign * offset], radius: 0.1 },
+                1,
+                "wall",
+            ));
+        }
+        // The step from (3.0, 3.0) to (3.1, 3.1) has its middle at (3.05,
+        // 3.05); a disc of radius 0.075 at 0.397 mm from it across the
+        // diagonal comes within 0.397 - 0.075 = 0.322 < 0.325 of the step
+        // and 0.328 of either node.
+        let middle = [3.05, 3.05];
+        let across = [-std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2];
+        if notch {
+            obstacles.push(copper(
+                Shape::Circle { center: [middle[0] + across[0] * 0.397, middle[1] + across[1] * 0.397], radius: 0.075 },
+                1,
+                "notch",
+            ));
+        }
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() };
+        let board = Board {
+            layer_count: 1,
+            outline: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 8.0], [0.0, 8.0]],
+            edge_clearance: 0.1,
+            hole_clearance: 0.25,
+            hole_to_hole: 0.25,
+            classes: vec![class],
+            neck_width: 0.25,
+            obstacles,
+            nets: vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [0.5, 7.5], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(1, [7.5, 0.5], "Q.1")] },
+            ],
+            planes: vec![Plane {
+                net: 0,
+                class: 0,
+                layer: 0,
+                polygon: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 8.0], [0.0, 8.0]],
+                excluded: Vec::new(),
+                connect: true,
+                thermal_reach: 0.0,
+                thermal_gap: 0.0,
+                exclusive: false,
+                solid: false,
+            }],
+            solid_pads: Vec::new(),
+            isolated_pads: Vec::new(),
+        };
+        let config = Config { pitches: vec![0.1], ..Config::default() };
+        (Router::new(&board, &config), middle)
+    }
+
+    #[test]
+    fn a_diagonal_neck_of_the_fill_holds_together() {
+        let (router, _) = diagonal_channel(false);
+        let grid = router.grid().clone();
+        let (pours, _, _) = router.analyze_pours(0);
+        let piece = |x: f64, y: f64| pours.label[0][grid.nearest_node([x, y]).unwrap()];
+        // The lattice lies on the diagonal: its nodes are free, their side
+        // neighbours are not.
+        let on = grid.nearest_node([2.0, 2.0]).unwrap();
+        assert!((grid.center_of(on)[0] - grid.center_of(on)[1]).abs() < 1.0e-9);
+        assert!(pours.solid[0][on]);
+        assert!(!pours.solid[0][grid.nearest_node([2.1, 2.0]).unwrap()]);
+        assert!(!pours.solid[0][grid.nearest_node([2.0, 2.1]).unwrap()]);
+        // The channel is one piece from end to end, and the fill on either
+        // side of the walls is another each.
+        assert_ne!(piece(2.0, 2.0), 0);
+        assert_eq!(piece(2.0, 2.0), piece(6.0, 6.0));
+        assert_ne!(piece(1.0, 6.0), piece(6.0, 1.0));
+        assert_ne!(piece(1.0, 6.0), piece(2.0, 2.0));
+        assert_eq!(pours.pieces, 3);
+    }
+
+    #[test]
+    fn a_diagonal_step_passing_other_copper_too_closely_does_not_join() {
+        let (router, middle) = diagonal_channel(true);
+        let grid = router.grid().clone();
+        let (pours, _, _) = router.analyze_pours(0);
+        let piece = |x: f64, y: f64| pours.label[0][grid.nearest_node([x, y]).unwrap()];
+        // Both nodes of the step stay free; the step between them does not
+        // keep the clearance, so the channel falls into two pieces there.
+        let (before, after) = ([middle[0] - 0.05, middle[1] - 0.05], [middle[0] + 0.05, middle[1] + 0.05]);
+        assert!(pours.solid[0][grid.nearest_node(before).unwrap()]);
+        assert!(pours.solid[0][grid.nearest_node(after).unwrap()]);
+        assert_ne!(piece(before[0], before[1]), piece(after[0], after[1]));
+        assert_eq!(piece(2.0, 2.0), piece(before[0], before[1]));
+        assert_eq!(piece(6.0, 6.0), piece(after[0], after[1]));
+        assert_eq!(pours.pieces, 4);
+    }
 }

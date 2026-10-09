@@ -3,25 +3,35 @@
 """Runs the agent-style layout tasks of tasks.json.
 
     benchmarks/agent-tasks/run.py <output> [--only NAME...] [--binary PATH]
+    benchmarks/agent-tasks/run.py <output> --tier quick --jobs 12 --binary PATH
+
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
 import), and lays it out with `layout-kicad-board` from the task's
 constraints. A task passes when every constraint holds (except the ones the
 task lists as geometrically impossible), every connection is routed, and
-native KiCad reports no unconnected item and no copper error."""
+native KiCad reports no unconnected item and no copper error.
+
+Each row records the board's peak memory: `peak_rss_mb` for the process
+tree (kicad-cli's DRC included, 2.2 GB on any board) and `layout_rss_mb` for
+the layout process alone."""
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+# Benchmark tiers: subsets of a task list with their reasons (README.md).
+TIERS = {"quick": HERE / "quick.json"}
 COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|missing_courtyard|isolated_copper|nonmirrored_text)")
 
 
@@ -138,35 +148,139 @@ def designer_findings(directory, board_id, work):
 
 
 
-def wait_for_memory(minimum_gb, what):
-    """Waits until `minimum_gb` of memory is available: with little swap,
-    Linux thrashes instead of killing when memory runs out, and the machine
-    looks frozen (2026-10-08: 64 GB used, 0.3 GB available, six hard
-    freezes). A board that starts late is better than a machine that
-    stops."""
-    if minimum_gb <= 0:
-        return
-    waited = 0
+def own_peak_mb(pid):
+    """The process's own peak resident set so far (VmHWM), in MB."""
+    try:
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+def run_measured(command, timeout=None, env=None, on_start=None):
+    """Runs `command` with its output captured. Returns (exit code, or
+    "timeout" after killing it; output; peak resident set in MB; the
+    command's own peak in MB). The first peak is wait4's ru_maxrss: the
+    largest of the process and the children it waited for (kicad-cli's DRC
+    alone takes 2.2 GB, on any board), for this process alone, so that jobs
+    side by side do not see each other's peaks. The second is the
+    process's own VmHWM, sampled twice a second: the router's memory.
+    `on_start` gets the pid."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    if on_start:
+        on_start(process.pid)
+    chunks = []
+    reader = threading.Thread(target=lambda: chunks.append(process.stdout.read()), daemon=True)
+    reader.start()
+    deadline = None if timeout is None else time.monotonic() + timeout
+    own = 0.0
     while True:
-        available = 0
-        try:
-            with open("/proc/meminfo") as meminfo:
-                for line in meminfo:
-                    if line.startswith("MemAvailable:"):
-                        available = int(line.split()[1]) / (1024 * 1024)
-        except OSError:
-            return
-        if available >= minimum_gb:
-            if waited:
-                print(f"{what}: {available:.0f} GB available after waiting {waited} s", file=sys.stderr)
-            return
-        if waited == 0:
-            print(f"{what}: waiting for {minimum_gb} GB of memory ({available:.1f} GB available)", file=sys.stderr)
-        time.sleep(15)
-        waited += 15
+        own = max(own, own_peak_mb(process.pid))
+        pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+        if pid:
+            code = os.waitstatus_to_exitcode(status)
+            break
+        if deadline is not None and time.monotonic() > deadline:
+            process.kill()
+            _, status, usage = os.wait4(process.pid, 0)
+            code = "timeout"
+            break
+        time.sleep(0.5)
+    # Reaped here: Popen must not wait for it again.
+    process.returncode = code if isinstance(code, int) else -9
+    # A killed board's kicad-cli may hold the pipe a little longer.
+    reader.join(60)
+    output = (chunks[0] if chunks else b"").decode(errors="replace")
+    return code, output, round(usage.ru_maxrss / 1024), round(own)
+
+
+def meminfo_gb(field="MemAvailable:"):
+    try:
+        with open("/proc/meminfo") as meminfo:
+            for line in meminfo:
+                if line.startswith(field):
+                    return int(line.split()[1]) / (1024 * 1024)
+    except OSError:
+        pass
+    return None
+
+
+def resident_mb(pid):
+    try:
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+class MemoryGate:
+    """Admits a board when the memory available, less what the boards
+    already running are still expected to grow by, leaves `minimum_gb`
+    after this board's own expected peak. Many jobs started at once all see
+    the memory free that none of them has taken yet (jobs grow for minutes:
+    the router's maps, then the ladder's seeds side by side); the
+    reservation keeps them from overcommitting together."""
+
+    def __init__(self, minimum_gb):
+        self.minimum_gb = minimum_gb
+        self.lock = threading.Lock()
+        # token -> [expected peak in MB, pid or None]
+        self.running = {}
+        self.next_token = 0
+
+    def admit(self, what, expected_mb):
+        if self.minimum_gb <= 0:
+            return None
+        waited = 0
+        while True:
+            with self.lock:
+                available = meminfo_gb()
+                if available is None:
+                    return None
+                growth = sum(max(0.0, expected - (resident_mb(pid) if pid else 0.0))
+                             for expected, pid in self.running.values()) / 1024
+                if available - growth - expected_mb / 1024 >= self.minimum_gb or not self.running:
+                    token = self.next_token
+                    self.next_token += 1
+                    self.running[token] = [expected_mb, None]
+                    if waited:
+                        print(f"{what}: started after waiting {waited} s ({available:.0f} GB available, "
+                              f"{growth:.0f} GB reserved)", file=sys.stderr)
+                    return token
+            if waited == 0:
+                print(f"{what}: waiting for memory ({available:.1f} GB available, {growth:.1f} GB reserved, "
+                      f"{expected_mb / 1024:.1f} GB expected, {self.minimum_gb} GB to keep)", file=sys.stderr)
+            time.sleep(15)
+            waited += 15
+
+    def started(self, token, pid):
+        if token is not None:
+            with self.lock:
+                self.running[token][1] = pid
+
+    def done(self, token):
+        if token is not None:
+            with self.lock:
+                self.running.pop(token, None)
 
 
 def run_task(task, arguments):
+    # Admitted before the designer's DRC: kicad-cli takes 2.2 GB on any
+    # board, and twelve jobs start with it at once.
+    token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb))
+    try:
+        return run_admitted(task, arguments, token)
+    finally:
+        arguments.gate.done(token)
+
+
+def run_admitted(task, arguments, token):
     name = task["name"]
     directory = Path(task["directory"])
     if not directory.is_absolute():
@@ -200,22 +314,25 @@ def run_task(task, arguments):
     if router:
         (work / "router.json").write_text(json.dumps(router))
         router_argument = str(work / "router.json")
-    wait_for_memory(arguments.min_free_gb, task["name"])
+    env = None
+    if arguments.threads:
+        # Search threads of the router (rayon): each holds a search scratch
+        # of the board's size, so jobs side by side want few each.
+        env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads))
     started = time.monotonic()
-    try:
-        process = subprocess.run([str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
-                                  str(work / "layout"), router_argument, str(work / "layout.json")],
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=arguments.timeout)
-    except subprocess.TimeoutExpired as expired:
-        output = expired.stdout.decode(errors="replace") if isinstance(expired.stdout, bytes) else (expired.stdout or "")
-        (work / "layout.log").write_text(output)
-        return {"name": name, "seconds": round(time.monotonic() - started, 1),
-                "error": f"timed out after {arguments.timeout} s", "pass": False}
-    (work / "layout.log").write_text(process.stdout)
-    row = {"name": name, "seconds": round(time.monotonic() - started, 1)}
+    command = [str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
+               str(work / "layout"), router_argument, str(work / "layout.json")]
+    code, output, peak_mb, own_mb = run_measured(command, arguments.timeout, env,
+                                                 lambda pid: arguments.gate.started(token, pid))
+    (work / "layout.log").write_text(output)
+    row = {"name": name, "seconds": round(time.monotonic() - started, 1), "peak_rss_mb": peak_mb,
+           "layout_rss_mb": own_mb}
+    if code == "timeout":
+        row.update(error=f"timed out after {arguments.timeout} s", **{"pass": False})
+        return row
     report = work / "layout/board-layout.json"
     if not report.exists():
-        row["error"] = process.stdout.strip().splitlines()[-1][:300] if process.stdout.strip() else "no output"
+        row["error"] = output.strip().splitlines()[-1][:300] if output.strip() else "no output"
         row["pass"] = False
         return row
     result = json.loads(report.read_text())
@@ -246,24 +363,61 @@ def main():
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--binary", type=Path, default=ROOT / "target/release/pcb-maker")
     parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--tasks", type=Path, default=HERE / "tasks.json",
-                        help="task list; constraint files are relative to it")
+    parser.add_argument("--tasks", type=Path, default=None,
+                        help="task list; constraint files are relative to it (default: tasks.json here, "
+                             "or the tier's own list)")
+    parser.add_argument("--tier", choices=sorted(TIERS),
+                        help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--threads", type=int, default=None,
+                        help="search threads per board (RAYON_NUM_THREADS; default with several jobs: "
+                             "the cores shared among them, at most 4; with one job: all)")
     parser.add_argument("--min-free-gb", type=float, default=12.0,
-                        help="start a board only with this much memory available (0: always)")
+                        help="start a board only when this much memory stays available after the "
+                             "expected peaks of it and the boards running (0: always)")
+    parser.add_argument("--expected-gb", type=float, default=3.0,
+                        help="expected peak of a board the tier does not estimate")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
+    tier = None
+    if arguments.tier:
+        tier = json.loads(TIERS[arguments.tier].read_text())
+        if arguments.tasks is None:
+            arguments.tasks = ROOT / tier["tasks"]
+    if arguments.tasks is None:
+        arguments.tasks = HERE / "tasks.json"
+    if arguments.threads is None and arguments.jobs > 1:
+        # Beyond a few threads a board routes hardly faster (k30-SBC: 34.2,
+        # 32.4 and 31.3 s of search on 1, 2 and 4) but every thread holds a
+        # search scratch of the board's size.
+        arguments.threads = max(1, min(4, (os.cpu_count() or 1) // arguments.jobs))
+    arguments.expected_mb = arguments.expected_gb * 1024
+    arguments.gate = MemoryGate(arguments.min_free_gb)
     tasks = []
     for task in json.loads(arguments.tasks.read_text())["tasks"]:
         if arguments.only and task["name"] not in arguments.only:
             continue
+        if tier is not None:
+            entry = tier["boards"].get(task["name"])
+            if entry is None:
+                continue
+            task = {**task, "peak_rss_mb": entry.get("peak_rss_mb"), "expected_seconds": entry.get("seconds")}
+            if task["peak_rss_mb"] is None:
+                del task["peak_rss_mb"]
         directory = Path(task["directory"]) if Path(task["directory"]).is_absolute() else ROOT / task["directory"]
         if not directory.exists():
             print(f"skipping {task['name']}: {directory} not found")
             continue
         tasks.append(task)
-    rows = []
-    from concurrent.futures import ThreadPoolExecutor
+    if tier is not None:
+        missing = sorted(set(tier["boards"]) - {task["name"] for task in tasks})
+        if missing and not arguments.only:
+            print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
+        # The longest first, so that the last job is not a slow one.
+        tasks.sort(key=lambda task: -(task.get("expected_seconds") or 0))
+    rows = {}
+    started = time.monotonic()
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(arguments.jobs) as pool:
         def guarded(task):
             # A runner failure on one task fails that task, not the run.
@@ -272,12 +426,16 @@ def main():
             except Exception as error:
                 return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}"}
 
-        for row in pool.map(guarded, tasks):
-            rows.append(row)
+        for future in as_completed([pool.submit(guarded, task) for task in tasks]):
+            row = future.result()
+            rows[row["name"]] = row
             print(json.dumps(row), flush=True)
-    (arguments.output / "results.json").write_text(json.dumps(rows, indent=1))
-    passed = sum(1 for row in rows if row["pass"])
-    print(f"{passed}/{len(rows)} tasks pass")
+    ordered = [rows[task["name"]] for task in tasks if task["name"] in rows]
+    (arguments.output / "results.json").write_text(json.dumps(ordered, indent=1))
+    passed = sum(1 for row in ordered if row["pass"])
+    peak = max((row.get("peak_rss_mb") or 0 for row in ordered), default=0)
+    print(f"{passed}/{len(ordered)} tasks pass ({time.monotonic() - started:.0f} s wall, "
+          f"largest peak {peak / 1024:.1f} GB)")
 
 
 if __name__ == "__main__":

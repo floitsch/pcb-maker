@@ -760,6 +760,8 @@ pub(super) fn lower(
     let mut nets: Vec<core::Net> = Vec::new();
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
     let mut obstacles = Vec::new();
+    // Rule areas that keep zone fills out: (layers, polygon).
+    let mut pour_keepouts: Vec<(u32, Vec<[f64; 2]>)> = Vec::new();
     let mut solid_pads: Vec<String> = Vec::new();
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
@@ -851,6 +853,9 @@ pub(super) fn lower(
                 {
                     if let Some(obstacle) = rule_area_obstacle(zone, &layers, &format!("{reference} keepout"))? {
                         obstacles.push(obstacle);
+                    }
+                    if let Some(keepout) = pour_keepout(zone, &layers)? {
+                        pour_keepouts.push(keepout);
                     }
                 }
                 // Copper drawn inside the footprint (a logo, a net tie's
@@ -1133,6 +1138,9 @@ pub(super) fn lower(
                 if let Some(obstacle) = rule_area_obstacle(item, &layers, "unnamed rule area")? {
                     obstacles.push(obstacle);
                 }
+                if let Some(keepout) = pour_keepout(item, &layers)? {
+                    pour_keepouts.push(keepout);
+                }
             }
             _ => {}
         }
@@ -1330,6 +1338,12 @@ pub(super) fn lower(
                             && other.priority > pour.priority
                     })
                     .map(|other| other.polygon.clone())
+                    .chain(
+                        pour_keepouts
+                            .iter()
+                            .filter(|(mask, _)| mask & (1 << layer) != 0)
+                            .map(|(_, polygon)| polygon.clone()),
+                    )
                     .collect(),
                 connect: connect_pours,
                 thermal_reach: pour.thermal_reach,
@@ -1388,6 +1402,29 @@ pub(super) fn lower(
             },
         },
     })
+}
+
+/// Lowers the board as it is, its tracks and vias kept as fixed copper,
+/// with the pours connected, and writes the router's pour map before any
+/// routing (`Router::dump_pours`) into `output_directory`, with
+/// `layers.json` naming the layers. For comparing the pour model with
+/// KiCad's fill on the same copper (experiments/pour-fidelity).
+pub fn dump_kicad_pour_map(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+) -> Result<(), String> {
+    let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let source = fs::read_to_string(&source_board)
+        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    let pcb = parse(&source)?;
+    let Lowered { board } = lower(&pcb, config, true)?;
+    let layer_names = LayerTable::from_pcb(&pcb)?.names;
+    let router = core::router::Router::new(&board, &core_config(config));
+    router.dump_pours(output_directory).map_err(|error| error.to_string())?;
+    let names: Vec<String> = layer_names.iter().map(|name| format!("\"{name}\"")).collect();
+    fs::write(output_directory.join("layers.json"), format!("[{}]\n", names.join(", "))).map_err(|error| error.to_string())
 }
 
 fn net_ids_lookup(nets: &[core::Net], name: &str) -> Option<core::NetId> {
@@ -1664,6 +1701,23 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         }]);
     }
     Ok(shapes)
+}
+
+/// A rule area that keeps zone fills out (`(copperpour not_allowed)`): its
+/// layers and polygon. KiCad's fill does not enter it, so neither does a
+/// pour's on those layers (Sisu: a 30 x 18 mm area on In3 and three on
+/// In4 and B.Cu, which the pour model counted as fill).
+fn pour_keepout(zone: &Expr, layers: &LayerTable) -> Result<Option<(u32, Vec<[f64; 2]>)>, String> {
+    let keeps_fill_out = zone
+        .child("keepout")
+        .and_then(|keepout| keepout.child("copperpour"))
+        .and_then(|form| form.children().get(1))
+        .and_then(Expr::atom)
+        == Some("not_allowed");
+    if !keeps_fill_out {
+        return Ok(None);
+    }
+    Ok(Some((layers.mask_of_item(zone)?, rule_area_polygon_points(zone)?)))
 }
 
 /// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
@@ -3196,6 +3250,37 @@ mod pour_request_tests {
         assert_eq!(exclusive(&two), vec![1, 4]);
         let one = KiCadBoardRouterConfig { exclusive_layers: Some(1), ..all.clone() };
         assert_eq!(exclusive(&one), vec![1]);
+    }
+
+    #[test]
+    fn rule_areas_that_keep_fills_out_are_left_out_of_the_pours_on_their_layers() {
+        // Sisu: rule areas that allow tracks and vias but no zone fill; the
+        // pour model filled them where KiCad leaves them empty.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.5) (layers "*.Cu") (net "GND")))
+              (footprint "b" (at 15 5) (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.5) (layers "*.Cu") (net "GND")))
+              (zone (net "GND") (layers "In1.Cu" "In2.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10) (xy 0 10))))
+              (zone (layers "In2.Cu") (name "no fill")
+                (keepout (tracks allowed) (vias allowed) (pads allowed) (copperpour not_allowed) (footprints allowed))
+                (polygon (pts (xy 8 2) (xy 12 2) (xy 12 8) (xy 8 8))))
+              (zone (layers "In1.Cu") (name "no tracks")
+                (keepout (tracks not_allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints allowed))
+                (polygon (pts (xy 8 2) (xy 12 2) (xy 12 8) (xy 8 8)))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let excluded = |layer: usize| board.planes.iter().find(|plane| plane.layer == layer).unwrap().excluded.clone();
+        assert!(excluded(1).is_empty());
+        assert_eq!(excluded(2).len(), 1);
+        assert!(core::geometry::point_in_polygon([10.0, 5.0], &excluded(2)[0]));
+        // Neither keeps a track out of In2; the other one keeps them out
+        // of In1 as before.
+        assert!(!board.obstacles.iter().any(|obstacle| obstacle.label == "no fill"));
+        assert!(board.obstacles.iter().any(|obstacle| obstacle.label == "no tracks" && obstacle.blocks_tracks));
     }
 
     #[test]

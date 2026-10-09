@@ -1,0 +1,662 @@
+{
+ "description": "Quick-evaluation tier: harvested boards that lay out in about 300 s or less and in a few GB, run many at once (run.py --tier quick --jobs 12). Reasons in README.md. Per board: layers, lattice nodes and pitch of the v11 sweep, its seconds there (3 jobs side by side, a busy machine), its v11 result, the failure kinds it covers, and the peaks of the tier's run on x160 (2026-10-09, 12 jobs, 2 threads each): peak_rss_mb for the process tree (KiCad's DRC alone takes 2.2 GB), which the runner's memory gate expects, and layout_rss_mb for the layout process alone.",
+ "tasks": "build/github-tasks-v5/tasks.json",
+ "boards": {
+  "duckyb__urchin__main": {
+   "layers": 2,
+   "nodes": 1236168,
+   "pitch_mm": 0.127,
+   "seconds": 12.8,
+   "v11": {
+    "routed": "68/68",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2170,
+   "layout_rss_mb": 509
+  },
+  "hackclub__OnBoard__E-Fidget-Lite": {
+   "layers": 2,
+   "nodes": 121452,
+   "pitch_mm": 0.125,
+   "seconds": 13.9,
+   "v11": {
+    "routed": "20/20",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2169,
+   "layout_rss_mb": 227
+  },
+  "0xCB-dev__0xCB-Static__0xcb-static": {
+   "layers": 2,
+   "nodes": 1503839,
+   "pitch_mm": 0.127,
+   "seconds": 24.8,
+   "v11": {
+    "routed": "74/74",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2202,
+   "layout_rss_mb": 798
+  },
+  "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "layers": 2,
+   "nodes": 435528,
+   "pitch_mm": 0.127,
+   "seconds": 29.4,
+   "v11": {
+    "routed": "18/18",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2141,
+   "layout_rss_mb": 315
+  },
+  "tomunderwood99__CharlieBoard__Blue_Line": {
+   "layers": 2,
+   "nodes": 5170428,
+   "pitch_mm": 0.1,
+   "seconds": 35.4,
+   "v11": {
+    "routed": "26/26",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2149,
+   "layout_rss_mb": 2058
+  },
+  "Jana-Marie__ligra__ligra_back": {
+   "layers": 2,
+   "nodes": 1142761,
+   "pitch_mm": 0.1,
+   "seconds": 41.1,
+   "v11": {
+    "routed": "33/33",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2184,
+   "layout_rss_mb": 692
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
+   "layers": 2,
+   "nodes": 3025624,
+   "pitch_mm": 0.127,
+   "seconds": 45.4,
+   "v11": {
+    "routed": "81/81",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2150,
+   "layout_rss_mb": 2081
+  },
+  "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard": {
+   "layers": 2,
+   "nodes": 1503968,
+   "pitch_mm": 0.127,
+   "seconds": 76.3,
+   "v11": {
+    "routed": "58/58",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 2
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2172,
+   "layout_rss_mb": 1247
+  },
+  "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
+   "layers": 2,
+   "nodes": 3890747,
+   "pitch_mm": 0.1,
+   "seconds": 80.7,
+   "v11": {
+    "routed": "585/585",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2180,
+   "layout_rss_mb": 1718
+  },
+  "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "layers": 2,
+   "nodes": 248004,
+   "pitch_mm": 0.125,
+   "seconds": 89.9,
+   "v11": {
+    "routed": "47/47",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2209,
+   "layout_rss_mb": 382
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex": {
+   "layers": 2,
+   "nodes": 1436304,
+   "pitch_mm": 0.1,
+   "seconds": 97.6,
+   "v11": {
+    "routed": "21/21",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2161,
+   "layout_rss_mb": 552
+  },
+  "CDFER__Business-Cards__USB_Keypad": {
+   "layers": 2,
+   "nodes": 162410,
+   "pitch_mm": 0.125,
+   "seconds": 116.6,
+   "v11": {
+    "routed": "39/39",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2214,
+   "layout_rss_mb": 153
+  },
+  "zli117__CyberKeeb2040__MainBoard": {
+   "layers": 2,
+   "nodes": 4029360,
+   "pitch_mm": 0.1,
+   "seconds": 144.0,
+   "v11": {
+    "routed": "118/118",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 3392,
+   "layout_rss_mb": 3395
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
+   "layers": 2,
+   "nodes": 1240101,
+   "pitch_mm": 0.125,
+   "seconds": 190.1,
+   "v11": {
+    "routed": "76/76",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2213,
+   "layout_rss_mb": 1380
+  },
+  "ASH-ART__Qfwfq__qfwfq": {
+   "layers": 2,
+   "nodes": 2093360,
+   "pitch_mm": 0.1,
+   "seconds": 205.4,
+   "v11": {
+    "routed": "64/64",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2284,
+   "layout_rss_mb": 1414
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s": {
+   "layers": 2,
+   "nodes": 4937134,
+   "pitch_mm": 0.1,
+   "seconds": 219.7,
+   "v11": {
+    "routed": "78/78",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 2
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 3719,
+   "layout_rss_mb": 3719
+  },
+  "hackclub__OnBoard__MotionCubeViewAllForces": {
+   "layers": 2,
+   "nodes": 574182,
+   "pitch_mm": 0.05,
+   "seconds": 223.5,
+   "v11": {
+    "routed": "20/20",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass",
+    "finer_pitch"
+   ],
+   "peak_rss_mb": 2166,
+   "layout_rss_mb": 566
+  },
+  "duckyb__eternal-keypad__eternal-keypad": {
+   "layers": 2,
+   "nodes": 1006928,
+   "pitch_mm": 0.127,
+   "seconds": 237.3,
+   "v11": {
+    "routed": "69/69",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 1,
+     "shorting_items": 1
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal",
+    "copper_error"
+   ],
+   "peak_rss_mb": 2187,
+   "layout_rss_mb": 744
+  },
+  "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "layers": 2,
+   "nodes": 357644,
+   "pitch_mm": 0.1,
+   "seconds": 241.9,
+   "v11": {
+    "routed": "54/54",
+    "unconnected": 0,
+    "errors": {
+     "connection_width": 1
+    },
+    "pass": false
+   },
+   "kind": [
+    "copper_error"
+   ],
+   "peak_rss_mb": 2173,
+   "layout_rss_mb": 309
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_core": {
+   "layers": 2,
+   "nodes": 4937134,
+   "pitch_mm": 0.1,
+   "seconds": 261.5,
+   "v11": {
+    "routed": "98/98",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 4
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 3668,
+   "layout_rss_mb": 3668
+  },
+  "hackclub__OnBoard__keyboar_": {
+   "layers": 2,
+   "nodes": 3320972,
+   "pitch_mm": 0.1,
+   "seconds": 267.6,
+   "v11": {
+    "routed": "102/102",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2246,
+   "layout_rss_mb": 1949
+  },
+  "iandchasse__silkscreen-pcb__silkscreen_pcb": {
+   "layers": 2,
+   "nodes": 429944,
+   "pitch_mm": 0.125,
+   "seconds": 301.5,
+   "v11": {
+    "routed": "113/113",
+    "unconnected": 1,
+    "errors": {
+     "copper_edge_clearance": 1
+    },
+    "pass": false
+   },
+   "kind": [
+    "unconnected",
+    "copper_error"
+   ],
+   "peak_rss_mb": 2292,
+   "layout_rss_mb": 1844
+  },
+  "ebastler__osprey__osprey_rev_a": {
+   "layers": 2,
+   "nodes": 1631800,
+   "pitch_mm": 0.125,
+   "seconds": 304.1,
+   "v11": {
+    "routed": "101/103",
+    "unconnected": 1,
+    "errors": {},
+    "pass": false
+   },
+   "kind": [
+    "unconnected"
+   ],
+   "peak_rss_mb": 2287,
+   "layout_rss_mb": 1656
+  },
+  "hackclub__OnBoard__PixelWave": {
+   "layers": 2,
+   "nodes": 1584166,
+   "pitch_mm": 0.125,
+   "seconds": 327.8,
+   "v11": {
+    "routed": "343/343",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 1
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2282,
+   "layout_rss_mb": 1118
+  },
+  "Goga64__ULK__ULK_sl_PG1316s": {
+   "layers": 2,
+   "nodes": 2916906,
+   "pitch_mm": 0.1,
+   "seconds": 338.1,
+   "v11": {
+    "routed": "70/70",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 3
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2220,
+   "layout_rss_mb": 1656
+  },
+  "CDFER__Business-Cards__WLED_Matrix": {
+   "layers": 2,
+   "nodes": 532818,
+   "pitch_mm": 0.075,
+   "seconds": 379.9,
+   "v11": {
+    "routed": "101/104",
+    "unconnected": 1,
+    "errors": {},
+    "pass": false
+   },
+   "kind": [
+    "unconnected",
+    "finer_pitch"
+   ],
+   "peak_rss_mb": 2306,
+   "layout_rss_mb": 1288
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2": {
+   "layers": 4,
+   "nodes": 452452,
+   "pitch_mm": 0.1,
+   "seconds": 141.5,
+   "v11": {
+    "routed": "156/156",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2231,
+   "layout_rss_mb": 405
+  },
+  "0xCB-dev__0xCB-1337__pcb": {
+   "layers": 4,
+   "nodes": 248004,
+   "pitch_mm": 0.125,
+   "seconds": 206.7,
+   "v11": {
+    "routed": "85/85",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2157,
+   "layout_rss_mb": 233
+  },
+  "byrantech__laptop__power": {
+   "layers": 4,
+   "nodes": 187610,
+   "pitch_mm": 0.125,
+   "seconds": 210.4,
+   "v11": {
+    "routed": "115/115",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2192,
+   "layout_rss_mb": 301
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "layers": 4,
+   "nodes": 91204,
+   "pitch_mm": 0.1,
+   "seconds": 228.5,
+   "v11": {
+    "routed": "55/56",
+    "unconnected": 4,
+    "errors": {},
+    "pass": false
+   },
+   "kind": [
+    "unconnected"
+   ],
+   "peak_rss_mb": 2168,
+   "layout_rss_mb": 725
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1": {
+   "layers": 4,
+   "nodes": 492102,
+   "pitch_mm": 0.1,
+   "seconds": 247.9,
+   "v11": {
+    "routed": "138/138",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 1
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2160,
+   "layout_rss_mb": 586
+  },
+  "wntrblm__Castor_and_Pollux__mainboard": {
+   "layers": 4,
+   "nodes": 491888,
+   "pitch_mm": 0.125,
+   "seconds": 259.6,
+   "v11": {
+    "routed": "126/126",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 15
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2149,
+   "layout_rss_mb": 896
+  },
+  "crmaykish__mackerel-68k__mackerel-08-v1": {
+   "layers": 4,
+   "nodes": 2163001,
+   "pitch_mm": 0.1,
+   "seconds": 285.9,
+   "v11": {
+    "routed": "96/96",
+    "unconnected": 0,
+    "errors": {
+     "starved_thermal": 5
+    },
+    "pass": false
+   },
+   "kind": [
+    "starved_thermal"
+   ],
+   "peak_rss_mb": 2286,
+   "layout_rss_mb": 2290
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA": {
+   "layers": 4,
+   "nodes": 452452,
+   "pitch_mm": 0.1,
+   "seconds": 329.0,
+   "v11": {
+    "routed": "154/154",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2220,
+   "layout_rss_mb": 404
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA": {
+   "layers": 4,
+   "nodes": 386564,
+   "pitch_mm": 0.125,
+   "seconds": 556.1,
+   "v11": {
+    "routed": "154/159",
+    "unconnected": 8,
+    "errors": {},
+    "pass": false
+   },
+   "kind": [
+    "unconnected"
+   ],
+   "peak_rss_mb": 2247,
+   "layout_rss_mb": 703
+  },
+  "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "layers": 6,
+   "nodes": 90852,
+   "pitch_mm": 0.125,
+   "seconds": 214.7,
+   "v11": {
+    "routed": "71/71",
+    "unconnected": 0,
+    "errors": {},
+    "pass": true
+   },
+   "kind": [
+    "pass"
+   ],
+   "peak_rss_mb": 2125,
+   "layout_rss_mb": 331
+  },
+  "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "layers": 6,
+   "nodes": 145542,
+   "pitch_mm": 0.1,
+   "seconds": 670.8,
+   "v11": {
+    "routed": "80/82",
+    "unconnected": 2,
+    "errors": {},
+    "pass": false
+   },
+   "kind": [
+    "unconnected"
+   ],
+   "peak_rss_mb": 2188,
+   "layout_rss_mb": 668
+  }
+ }
+}

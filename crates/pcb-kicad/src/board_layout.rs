@@ -996,6 +996,9 @@ pub fn layout_kicad_board(
     };
     let current = quality(&routed, &result_directory);
     let layout_work = work;
+    // The ladder below builds routers of its own (probes side by side,
+    // seeds side by side): this one would only hold its memory meanwhile.
+    drop(router);
     eprintln!("layout: routed ({:.0} s, work {work:.0} s)", elapsed());
     // Past the wall-clock guard the ladder would only lower the board and
     // ask KiCad again (link ended 106 s past it, 44 s before the

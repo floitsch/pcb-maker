@@ -7,6 +7,17 @@ The ranked list of what is wrong today is in
 [handover.md](handover.md#open-problems-ranked); this file keeps the
 longer-lived items with their reasoning.
 
+## Stretch goal: Allegro-class features (Florian, 2026-10-09)
+
+Compete with Cadence Allegro on the features we find interesting. The
+candidates, to be ranked by what agents' boards need first: differential
+pairs (coupled routing, gap and skew), length and skew matching across a
+bus, per-net-class via and layer rules, constraint regions, return-path
+awareness over plane splits. Start with a survey of what Allegro's
+constraint manager expresses and which of it the harvested boards use
+(KiCad's net classes, differential-pair names, tuning patterns), then the
+schema in `constraints.json` / the router config before any algorithm.
+
 ## Benchmarks
 
 - **Finish the Freerouting and cold-route sweeps on the harvested boards**

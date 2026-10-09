@@ -22,7 +22,12 @@ pub struct PourMap {
 }
 
 impl PourMap {
-    pub fn build(grid: &Grid, free: &[Vec<bool>]) -> Self {
+    /// Labels the pieces of `free`. Side by side nodes join; diagonal
+    /// neighbours join when `diagonal(layer, start, orientation)` lets the
+    /// brush take the step from `start` (orientation 0: towards +x +y, 1:
+    /// towards +x -y), asked only where both common neighbours are not
+    /// free (otherwise they join through one of those).
+    pub fn build(grid: &Grid, free: &[Vec<bool>], diagonal: &dyn Fn(usize, usize, usize) -> bool) -> Self {
         let (nx, ny) = (grid.nx, grid.ny);
         // `free` already says that the pour's brush fits, so every free node
         // is solid copper; the rim is left out to keep neighbour access safe.
@@ -52,6 +57,24 @@ impl PourMap {
                 while let Some(cell) = stack.pop() {
                     for next in [cell - 1, cell + 1, cell - nx, cell + nx] {
                         if solid[layer][next] && label[layer][next] == 0 {
+                            label[layer][next] = pieces as u32;
+                            stack.push(next);
+                        }
+                    }
+                    // Diagonal neighbours, through the step's start and
+                    // orientation as the occupancy's diagonal maps name it.
+                    for (dx, dy) in [(1i64, 1i64), (1, -1), (-1, 1), (-1, -1)] {
+                        let next = (cell as i64 + dy * nx as i64 + dx) as usize;
+                        if !solid[layer][next] || label[layer][next] != 0 {
+                            continue;
+                        }
+                        let corner_x = (cell as i64 + dx) as usize;
+                        let corner_y = (cell as i64 + dy * nx as i64) as usize;
+                        if solid[layer][corner_x] || solid[layer][corner_y] {
+                            continue;
+                        }
+                        let (start, orientation) = if dx > 0 { (cell, (dy < 0) as usize) } else { (next, (dy > 0) as usize) };
+                        if diagonal(layer, start, orientation) {
                             label[layer][next] = pieces as u32;
                             stack.push(next);
                         }
