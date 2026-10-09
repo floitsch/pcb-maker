@@ -1987,8 +1987,11 @@ impl Router {
                     continue;
                 } else if terminal != NO_TERMINAL {
                     terminal as usize
+                } else if let Some(host) = hosts.get(&node) {
+                    terminal_count + host
                 } else {
-                    terminal_count + hosts[&node]
+                    // A junction whose host is gone: the end is free.
+                    continue;
                 };
                 let (a, b) = (find(&mut parent, element), find(&mut parent, other));
                 parent[a] = b;
@@ -4426,16 +4429,41 @@ impl Router {
             for terminal in &rejoined {
                 state.on_plane[*terminal] = true;
             }
-            // The stubs those pads needed go; what remains is restamped.
+            // The stubs those pads needed go, and with them any branch
+            // left dangling at a junction on one of them (katia and the
+            // Telemetry board panicked on such a junction without its
+            // host); what remains is restamped.
             let fixed = state.fixed;
-            let mut index = 0;
-            state.branches.retain(|branch| {
-                let keep = index < fixed
-                    || !((branch.end_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.start_terminal as usize)))
-                        || (branch.start_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.end_terminal as usize))));
-                index += 1;
-                keep
-            });
+            let mut keep: Vec<bool> = state
+                .branches
+                .iter()
+                .enumerate()
+                .map(|(index, branch)| {
+                    index < fixed
+                        || !((branch.end_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.start_terminal as usize)))
+                            || (branch.start_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.end_terminal as usize))))
+                })
+                .collect();
+            loop {
+                let hosts = junction_hosts(&state.branches, &keep);
+                let mut changed = false;
+                for (index, branch) in state.branches.iter().enumerate() {
+                    if !keep[index] || index < fixed {
+                        continue;
+                    }
+                    let dangling = (branch.start_terminal == NO_TERMINAL && !hosts.contains_key(&branch.nodes[0]))
+                        || (branch.end_terminal == NO_TERMINAL && !hosts.contains_key(branch.nodes.last().unwrap()));
+                    if dangling {
+                        keep[index] = false;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let mut keep = keep.into_iter();
+            state.branches.retain(|_| keep.next().unwrap());
             self.stamp(net);
         }
         let state = &mut self.nets[net as usize];
