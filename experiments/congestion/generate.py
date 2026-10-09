@@ -107,7 +107,7 @@ def run_group(job, source, variants, arguments, peaks, lock):
                         produced.replace(out / produced.name)
     with lock:
         peaks[name] = max(peaks.get(name, 0), own_mb)
-    return {"name": name, "source": source, "code": code, "seconds": round(time.monotonic() - started, 1),
+    return {"name": name, "source": source, "binary": arguments.binary.name, "code": code, "seconds": round(time.monotonic() - started, 1),
             "own_mb": own_mb, "variants": len(run)}
 
 

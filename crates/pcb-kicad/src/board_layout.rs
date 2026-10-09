@@ -1061,8 +1061,12 @@ pub fn layout_kicad_board(
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {
+            let own = expansions_before as f64 / core::router::EXPANSIONS_PER_SECOND;
             let polish = router.config_mut();
             polish.via_reduction_seconds = polish.via_reduction_seconds.min((polish_left - 120.0) / 2.0);
+            // What is left of the layout's budget, its router's own work
+            // counted against it.
+            polish.run_work = Some((config.total_seconds, (config.total_seconds - work).max(0.0) + own));
             polish.cleanup_seconds = polish.cleanup_seconds.min((polish_left - 120.0) / 4.0);
         }
         let polished_result = router.polish();

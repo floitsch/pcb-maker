@@ -112,6 +112,14 @@ pub struct KiCadBoardRouterConfig {
     pub bend_cost_mm: Option<f64>,
     #[serde(default)]
     pub via_reduction_rounds: Option<usize>,
+    /// Router `strict_via_budget` (default on): the via reduction keeps
+    /// its budget within a round.
+    #[serde(default)]
+    pub strict_via_budget: Option<bool>,
+    /// The run's work budget and what is left of it as the attempt starts
+    /// (router `run_work`; set by the ladder, not read from a file).
+    #[serde(skip)]
+    pub run_work: Option<(f64, f64)>,
     #[serde(default)]
     pub jacobi_batch: Option<usize>,
     /// Route every attempt this many ways at once (the deterministic order
@@ -2247,6 +2255,8 @@ pub fn route_kicad_board(
             let started = std::time::Instant::now();
             let remaining = (ladder_budget - spent(ladder_work)).max(60.0);
             let probed = router.expansions();
+            // The router's own probe is in its work already.
+            router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work) + work_of(probed)));
             let routed = router.resume((remaining / 3.0).clamp(60.0, 900.0));
             ladder_work += work_of(router.expansions() - probed);
             drop(router);
@@ -2320,13 +2330,47 @@ pub fn route_kicad_board(
                 break;
             }
         }
-        for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
-            // A probed rung continued with what it had is not run again;
-            // the other rungs still get their turn when it left
-            // connections open.
-            if pitch.is_none() && probed_mode == Some(mode) {
-                continue;
+        // Every rung of this pitch gets the same budget, decided before
+        // any of them runs (an equal share of what is left of the ladder's
+        // budget; an attempt spends up to about three times its
+        // negotiation in repair and polish, so negotiation gets a third of
+        // the share: zpn_devboard's two rungs took 1300 s and the two that
+        // complete such boards never ran). A rung's outcome then depends
+        // on nothing that runs before or beside it, and the rungs after
+        // the first run side by side, as many as fit the memory; they are
+        // judged in rung order as one after another, a rung the order
+        // would not have reached counting for nothing.
+        let pitch_negotiation = config.negotiation_seconds.is_none().then(|| {
+            let remaining = (ladder_budget - spent(ladder_work)).max(0.0);
+            (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
+        });
+        let pitch_left = (ladder_budget - spent(ladder_work)).max(0.0);
+        let rung_attempt = |mode: usize| -> KiCadBoardRouterConfig {
+            let (_, skeleton, exclusive, plane_stubs) = modes[mode];
+            let mut attempt = config.clone();
+            attempt.plane_skeleton = Some(skeleton);
+            attempt.exclusive_planes = Some(exclusive);
+            attempt.fixed_plane_stubs = Some(plane_stubs);
+            if exclusive && attempt.exclusive_layers.is_none() {
+                attempt.exclusive_layers = Some(if layer_table.names.len() >= 6 { 2 } else { 1 });
             }
+            if let Some(seconds) = pitch_negotiation {
+                attempt.negotiation_seconds = Some(seconds);
+            }
+            attempt.run_work = Some((ladder_budget, pitch_left));
+            if let Some(pitch) = pitch {
+                attempt.grid_pitches_mm = Some(pitch.clone());
+            }
+            attempt
+        };
+        let rung_directory = |mode: usize| output_directory.with_extension(format!("rung{mode}"));
+        // A probed rung continued with what it had is not run again; the
+        // other rungs still get their turn when it left connections open.
+        let candidates: Vec<usize> =
+            (0..modes.len()).filter(|mode| !(pitch.is_none() && probed_mode == Some(*mode))).collect();
+        let mut ran: Vec<Option<Result<KiCadBoardRouterResult, String>>> = (0..modes.len()).map(|_| None).collect();
+        for (position, &mode) in candidates.iter().enumerate() {
+            let (connect, skeleton, exclusive, plane_stubs) = &modes[mode];
             if best.is_some() && (past_deadline() || no_time_for_another()) {
                 eprintln!("deadline reached: no further attempts");
                 break 'ladder;
@@ -2344,38 +2388,52 @@ pub fn route_kicad_board(
                         })
                 })
             {
+                if rung_directory(mode).exists() {
+                    fs::remove_dir_all(rung_directory(mode)).map_err(|error| error.to_string())?;
+                }
                 continue;
             }
-            let mut attempt = config.clone();
-            attempt.plane_skeleton = Some(*skeleton);
-            attempt.exclusive_planes = Some(*exclusive);
-            attempt.fixed_plane_stubs = Some(*plane_stubs);
-            if *exclusive && attempt.exclusive_layers.is_none() {
-                attempt.exclusive_layers = Some(if layer_table.names.len() >= 6 { 2 } else { 1 });
+            let attempt = rung_attempt(mode);
+            if ran[mode].is_none() {
+                // The first rung of a pitch without a board yet runs alone
+                // (it often completes the board); after it, the rest run
+                // side by side, each a router of this pitch and a KiCad
+                // check.
+                let side_by_side = if best.is_none() {
+                    1
+                } else {
+                    let each = router_mb.map_or(0.0, |(megabytes, previous)| {
+                        megabytes * (previous / pitch.as_ref().map_or(previous, |pitch| pitch[0])).powi(2)
+                    }) + 2200.0;
+                    (1..=candidates.len() - position).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(1)
+                };
+                let wave: Vec<usize> = candidates[position..position + side_by_side].to_vec();
+                if wave.len() > 1 {
+                    eprintln!("ladder: {} rungs side by side", wave.len());
+                }
+                let routed: Vec<(usize, Result<KiCadBoardRouterResult, String>)> = std::thread::scope(|scope| {
+                    let handles: Vec<_> = wave
+                        .iter()
+                        .map(|&other| {
+                            let attempt = rung_attempt(other);
+                            let directory = rung_directory(other);
+                            let connect = modes[other].0;
+                            scope.spawn(move || {
+                                if directory.exists() {
+                                    fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+                                }
+                                route_kicad_board_once(source_directory, board_id, &directory, &attempt, connect)
+                            })
+                        })
+                        .collect();
+                    wave.iter().copied().zip(handles.into_iter().map(|handle| handle.join().expect("rung thread"))).collect()
+                });
+                for (other, result) in routed {
+                    ran[other] = Some(result);
+                }
             }
-            // The rungs left at this pitch share what is left of the
-            // ladder's budget evenly; an attempt spends up to about three
-            // times its negotiation in repair and polish, so negotiation
-            // gets a third of the share (zpn_devboard: two rungs took 1300
-            // s and the two that complete such boards never ran).
-            if config.negotiation_seconds.is_none() {
-                let remaining = (ladder_budget - spent(ladder_work)).max(0.0);
-                let rungs_left = (modes.len() - mode) as f64;
-                attempt.negotiation_seconds = Some((remaining / rungs_left / 3.0).clamp(60.0, 900.0));
-            }
-            if let Some(pitch) = pitch {
-                attempt.grid_pitches_mm = Some(pitch.clone());
-            }
-            let directory = if best.is_none() {
-                output_directory.to_path_buf()
-            } else {
-                scratch.clone()
-            };
-            if directory.exists() {
-                fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
-            }
-            let mut result =
-                route_kicad_board_once(source_directory, board_id, &directory, &attempt, *connect)?;
+            let directory = rung_directory(mode);
+            let mut result = ran[mode].take().expect("the rung ran")?;
             result.pours = if !has_pours {
                 "none"
             } else if *connect && *skeleton {
@@ -2478,10 +2536,10 @@ pub fn route_kicad_board(
                     .is_some_and(|order| order.is_lt())
             });
             if better {
-                if directory != output_directory {
+                if output_directory.exists() {
                     fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
-                    fs::rename(&directory, output_directory).map_err(|error| error.to_string())?;
                 }
+                fs::rename(&directory, output_directory).map_err(|error| error.to_string())?;
                 best = Some((opens, result));
                 best_attempt = Some((attempt.clone(), *connect));
                 best_seeded = seeds_tried || attempt.seeds.unwrap_or(1) > 1;
@@ -2506,6 +2564,13 @@ pub fn route_kicad_board(
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 break 'ladder;
             }
+        }
+    }
+    // Rungs that ran beside one the order stopped at.
+    for mode in 0..modes.len() {
+        let directory = output_directory.with_extension(format!("rung{mode}"));
+        if directory.exists() {
+            fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
         }
     }
     // The best rung's deferred seed retries: rounds of fresh seeds while
@@ -2888,6 +2953,10 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(via_cost) = config.via_cost_mm {
         router_config.via_cost = via_cost;
     }
+    if let Some(strict) = config.strict_via_budget {
+        router_config.strict_via_budget = strict;
+    }
+    router_config.run_work = config.run_work;
     if let Some(against) = config.against_direction_cost {
         router_config.against_direction = against;
     }
@@ -3051,7 +3120,9 @@ pub(super) fn finish_routed_board(
     config: &KiCadBoardRouterConfig,
     timings: [f64; 2],
 ) -> Result<KiCadBoardRouterResult, String> {
+    let verify_started = std::time::Instant::now();
     let violations = core::verify(board, &result.routes);
+    let verify_seconds = verify_started.elapsed().as_secs_f64();
     if output_directory.exists() {
         return Err(format!(
             "output directory {} already exists",
@@ -3069,6 +3140,10 @@ pub(super) fn finish_routed_board(
         Some(verify_materialized_rung(output_directory, board_id)?)
     };
     let native_verification_seconds = native_started.elapsed().as_secs_f64();
+    eprintln!(
+        "board check: internal verification {verify_seconds:.1}s, KiCad {native_verification_seconds:.1}s (lowering {:.1}s, routing {:.1}s)",
+        timings[0], timings[1]
+    );
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
     let report = KiCadBoardRouterResult {
         board_id: board_id.into(),

@@ -147,6 +147,45 @@ pub struct Config {
     /// its budget: a 210 x 170 mm board routed clean in 130 s and then
     /// spent the runner's remaining 770 s polishing).
     pub via_reduction_seconds: f64,
+    /// The via reduction keeps its budget within a round too: a round
+    /// whose cost (projected from the previous round) exceeds what is left
+    /// does not start, and a round's negotiation and clean-up get only
+    /// what is left. Without it a round started with budget left ran to
+    /// its end (k30-SBC: a 60 s budget, one round of 182 s of work and a
+    /// clean-up after it; CyberKeeb2040: 186-206 s for 87-117 s).
+    pub strict_via_budget: bool,
+    /// The whole run's work budget (the ladder's or the layout's, in work
+    /// seconds) and what was left of it when this router started (its own
+    /// work since counted against it). With more than half of the run's
+    /// budget unspent when the via reduction starts, it may use up to a
+    /// third of what is left, and at most 300 s (k30-SBC's round of 182 s
+    /// of work, the one that took it from 414 to 354 vias, fits by right
+    /// then); with less, its own budget applies strictly.
+    pub run_work: Option<(f64, f64)>,
+    /// A via-reduction round is kept only if it starves no more thermal
+    /// pads (`starved_pads`) than before. Off: the router's count is not
+    /// KiCad's (mackerel-08: 0 against 5); on the quick tier it took
+    /// starved thermals from 13 to 10 but cost k30-SBC its 55-via round
+    /// and 5 more starved pads in KiCad's count.
+    pub via_reduction_keeps_spokes: bool,
+    /// Negotiation batches are routed speculatively on all threads and kept
+    /// where nothing they read changed (`route_batches`): the same result
+    /// as routing them in turn. Off: measured, it keeps too few routes to
+    /// pay (Castor 16 %, k30-SBC 8 %: the negotiation reroutes the nets of
+    /// one congested area after one another, each reading what the one
+    /// before changed).
+    pub speculate: bool,
+    /// The clean-up's trials of single nets run speculatively side by side
+    /// (`clean_up_window`): the same result as in turn.
+    pub speculate_cleanup: bool,
+    /// Experimental: negotiation batches routed speculatively side by side
+    /// (`route_batches`) keep their route unless the route itself (its new
+    /// branches, a block around each node) meets copper an earlier batch of
+    /// the window added or removed; what it read elsewhere may have
+    /// changed (the next iteration prices any conflict left). Not the
+    /// result of routing in turn, but reproducible: the window is a fixed
+    /// 16 nets whatever the threads.
+    pub speculate_paths: bool,
     /// Seconds the clean-up may take at most: no batch starts later than
     /// this, nor later than the negotiation took (at least 60 s). A
     /// 130 x 90 mm six-layer board spent 470 s in clean-up.
@@ -226,6 +265,12 @@ impl Default for Config {
             via_reduction_present: 0.5,
             via_reduction_budget: 3.0,
             via_reduction_seconds: 300.0,
+            strict_via_budget: true,
+            run_work: None,
+            via_reduction_keeps_spokes: false,
+            speculate: false,
+            speculate_cleanup: false,
+            speculate_paths: false,
             cleanup_seconds: 180.0,
             thermal_guard_cost: 10.0,
             hard_thermal_guards: false,
@@ -416,6 +461,38 @@ fn well_inside(shape: &crate::geometry::Shape, point: crate::geometry::Point) ->
 
 /// Maps every node that can host a junction to the kept branch owning it.
 /// A branch's own junction end belongs to its host, not to itself.
+/// A net's own stamps on a few occupancy maps, as bitsets: what the pour
+/// analysis asks of every node ("is the one stamp here this net's?"),
+/// without hashing the net's whole stamp list each time (a ground net
+/// stamps millions of cells).
+struct OwnStamps {
+    slot: HashMap<usize, usize>,
+    bits: Vec<Vec<u64>>,
+}
+
+impl OwnStamps {
+    fn new(stamped: &[(u32, u32)], maps: &[usize], cells: usize) -> Self {
+        let mut slot = HashMap::new();
+        for map in maps {
+            let next = slot.len();
+            slot.entry(*map).or_insert(next);
+        }
+        let mut bits = vec![vec![0u64; cells.div_ceil(64)]; slot.len()];
+        for (map, cell) in stamped {
+            if let Some(index) = slot.get(&(*map as usize)) {
+                bits[*index][*cell as usize / 64] |= 1 << (*cell % 64);
+            }
+        }
+        Self { slot, bits }
+    }
+
+    /// Whether the net stamped `cell` of `map` (one of the maps given).
+    fn contains(&self, map: usize, cell: usize) -> bool {
+        let index = self.slot[&map];
+        self.bits[index][cell / 64] & (1 << (cell % 64)) != 0
+    }
+}
+
 fn junction_hosts(branches: &[Branch], keep: &[bool]) -> HashMap<Node, usize> {
     let mut hosts = HashMap::new();
     for (index, branch) in branches.iter().enumerate() {
@@ -578,6 +655,81 @@ struct SearchNode {
     parent: u8,
 }
 
+/// Blocks of `READ_BLOCK` x `READ_BLOCK` cells: the grain at which the
+/// speculative negotiation (`route_batches`) tracks what a net's routing
+/// read of the board and what a net's new copper changed.
+const READ_BLOCK_SHIFT: usize = 3;
+
+/// What a net's routing read of the shared board: the blocks of the
+/// cells (all layers; the neighbours a search step reads lie at most a
+/// block further) and the coarse tiles whose fill the corridor planner
+/// read. Recorded only while `active`.
+#[derive(Default)]
+struct ReadSet {
+    active: bool,
+    blocks_x: usize,
+    block_mark: Vec<u64>,
+    blocks: Vec<u32>,
+    tile_mark: Vec<u64>,
+    tiles: Vec<u32>,
+}
+
+impl ReadSet {
+    fn start(&mut self, nx: usize, ny: usize, tiles: usize) {
+        self.blocks_x = nx.div_ceil(1 << READ_BLOCK_SHIFT);
+        let words = (self.blocks_x * ny.div_ceil(1 << READ_BLOCK_SHIFT)).div_ceil(64);
+        if self.block_mark.len() != words {
+            self.block_mark = vec![0; words];
+            self.blocks.clear();
+        }
+        if self.tile_mark.len() != tiles.div_ceil(64) {
+            self.tile_mark = vec![0; tiles.div_ceil(64)];
+            self.tiles.clear();
+        }
+        for block in self.blocks.drain(..) {
+            self.block_mark[block as usize / 64] = 0;
+        }
+        for tile in self.tiles.drain(..) {
+            self.tile_mark[tile as usize / 64] = 0;
+        }
+        self.active = true;
+    }
+
+    #[inline(always)]
+    fn note(&mut self, x: usize, y: usize) {
+        if !self.active {
+            return;
+        }
+        let block = (y >> READ_BLOCK_SHIFT) * self.blocks_x + (x >> READ_BLOCK_SHIFT);
+        let bit = 1u64 << (block % 64);
+        if self.block_mark[block / 64] & bit == 0 {
+            self.block_mark[block / 64] |= bit;
+            self.blocks.push(block as u32);
+        }
+    }
+
+    fn note_cell(&mut self, cell: u32, nx: usize) {
+        self.note(cell as usize % nx, cell as usize / nx);
+    }
+
+    fn note_tile(&mut self, tile: usize) {
+        if !self.active {
+            return;
+        }
+        let bit = 1u64 << (tile % 64);
+        if self.tile_mark[tile / 64] & bit == 0 {
+            self.tile_mark[tile / 64] |= bit;
+            self.tiles.push(tile as u32);
+        }
+    }
+
+    /// Stops recording; the blocks and tiles read.
+    fn finish(&mut self) -> (Vec<u32>, Vec<u32>) {
+        self.active = false;
+        (self.blocks.clone(), self.tiles.clone())
+    }
+}
+
 /// Hashes a lattice state index by one multiplication, folded so that the
 /// low bits (the table's bucket) depend on all of them.
 #[derive(Clone, Copy, Default)]
@@ -615,6 +767,9 @@ pub struct Scratch {
     /// its nodes, with the terminal of each (`NO_TERMINAL` for a track).
     tree: StateMap,
     own_via_near: Vec<u16>,
+    /// What the routing of a net read of the shared board, while the
+    /// negotiation speculates (`route_batches`).
+    read: ReadSet,
     /// Bits per (class or neck class, map kind, cell): set for the routed
     /// net's own stamps while its search is to ignore them (see `mask_own`;
     /// a bit per entry, cleared again from `own_set`, so a thread's mask
@@ -644,6 +799,7 @@ impl Scratch {
             targets: StateMap::default(),
             tree: StateMap::default(),
             own_via_near: vec![0; cells],
+            read: ReadSet::default(),
             own_mark: Vec::new(),
             own_claimed: Vec::new(),
             own_set: Vec::new(),
@@ -743,6 +899,83 @@ fn with_thread_scratch<T>(states: usize, cells: usize, body: impl FnOnce(&mut Sc
     })
 }
 
+/// Wall seconds per phase of a run and how the negotiation's batches went,
+/// for the verbose `profile:` line (where a board's time goes, and how
+/// much of it uses one thread).
+#[derive(Clone, Default)]
+struct Profile {
+    prepare: f64,
+    negotiation: f64,
+    conflicts: f64,
+    refresh_pour: f64,
+    replan: f64,
+    resolve: f64,
+    cleanup: f64,
+    via_reduction: f64,
+    thermal_spokes: f64,
+    stitching: f64,
+    emit: f64,
+    /// Batches of one net (routed on this thread) and their seconds.
+    single_batches: u64,
+    single_seconds: f64,
+    /// Batches of several nets (routed on the thread pool): how many, the
+    /// nets in them, their wall seconds and the sum of the nets' own
+    /// seconds (the work a single thread would have taken).
+    parallel_batches: u64,
+    parallel_nets: u64,
+    parallel_seconds: f64,
+    parallel_net_seconds: f64,
+    /// Speculative routing (`route_batches`): seconds of the parallel
+    /// part, nets whose route was kept, nets routed again, and (checking)
+    /// kept routes that differed from the route in turn.
+    speculative_seconds: f64,
+    speculation_kept: u64,
+    speculation_redone: u64,
+    speculation_wrong: u64,
+    speculation_block_conflicts: u64,
+    speculation_tile_conflicts: u64,
+    /// The pour analysis (`analyze_pours`, in nanoseconds: it runs on
+    /// `&self`), wherever it is called from.
+    analysis_nanos: Arc<std::sync::atomic::AtomicU64>,
+    analysis_calls: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Profile {
+    fn line(&self, search: f64, stamp: f64) -> String {
+        let analysis = self.analysis_nanos.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1.0e9;
+        format!(
+            "profile: prepare {:.1}s, negotiation {:.1}s (search {:.1}s, stamp {:.1}s, conflicts and history {:.1}s, pour refresh {:.1}s, replan {:.1}s), resolve {:.1}s, clean-up {:.1}s, via reduction {:.1}s, thermal spokes {:.1}s, stitching {:.1}s, emit {:.1}s; pour analysis {:.1}s in {} calls; batches: {} single ({:.1}s), {} parallel with {} nets ({:.1}s wall, {:.1}s of net time); speculation {:.1}s: {} kept, {} redone, {} wrong ({} batches read changed cells, {} changed tiles)",
+            self.prepare,
+            self.negotiation,
+            search,
+            stamp,
+            self.conflicts,
+            self.refresh_pour,
+            self.replan,
+            self.resolve,
+            self.cleanup,
+            self.via_reduction,
+            self.thermal_spokes,
+            self.stitching,
+            self.emit,
+            analysis,
+            self.analysis_calls.load(std::sync::atomic::Ordering::Relaxed),
+            self.single_batches,
+            self.single_seconds,
+            self.parallel_batches,
+            self.parallel_nets,
+            self.parallel_seconds,
+            self.parallel_net_seconds,
+            self.speculative_seconds,
+            self.speculation_kept,
+            self.speculation_redone,
+            self.speculation_wrong,
+            self.speculation_block_conflicts,
+            self.speculation_tile_conflicts,
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct Router {
     board: Board,
@@ -816,6 +1049,9 @@ pub struct Router {
     layer_bias: Vec<f32>,
 
     scratch: Scratch,
+    profile: Profile,
+    /// While the via reduction runs (its negotiations are its own phase).
+    in_via_reduction: bool,
     search_seconds: f64,
     /// Wall time of the last full negotiation.
     negotiation_seconds: f64,
@@ -858,6 +1094,7 @@ impl Router {
     }
 
     pub fn new(board: &Board, config: &Config) -> Self {
+        let built = std::time::Instant::now();
         let (board, neck_of) = Self::with_neck_classes(board, config);
         let board = &board;
         let grid = Grid::choose(board, &config.pitches);
@@ -1003,6 +1240,8 @@ impl Router {
             exclusive: (0..layers).map(|layer| config.exclusive_planes && board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
+            profile: Profile::default(),
+            in_via_reduction: false,
             frame_hook: None,
             search_seconds: 0.0,
             negotiation_seconds: 0.0,
@@ -1030,7 +1269,7 @@ impl Router {
         router.mark_via_cells();
         router.build_hot();
         if config.verbose {
-            eprintln!("{}", router.memory_report());
+            eprintln!("{} (built in {:.1}s)", router.memory_report(), built.elapsed().as_secs_f64());
         }
         router
     }
@@ -1532,6 +1771,47 @@ impl Router {
             }
         }
         guard
+    }
+
+    /// Pads joined to a pour of their net by thermal spokes that have
+    /// fewer than two of their spoke corridors free of other nets' copper
+    /// (as `free_thermal_spokes` counts them): what KiCad reports as
+    /// starved thermals.
+    fn starved_pads(&self) -> usize {
+        let corridors = self.spoke_corridors();
+        if corridors.is_empty() {
+            return 0;
+        }
+        let layers = self.board.layer_count;
+        let mut occupants: HashMap<(usize, usize), Vec<NetId>> = HashMap::new();
+        for (net, state) in self.nets.iter().enumerate() {
+            for branch in &state.branches {
+                for (index, node) in branch.nodes.iter().enumerate() {
+                    let via = branch.nodes.get(index + 1).is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
+                    let on: Vec<usize> = if via { (0..layers).collect() } else { vec![node.layer as usize] };
+                    for layer in on {
+                        let entry = occupants.entry((layer, node.cell as usize)).or_default();
+                        if !entry.contains(&(net as NetId)) {
+                            entry.push(net as NetId);
+                        }
+                    }
+                }
+            }
+        }
+        corridors
+            .iter()
+            .filter(|(layer, net, lists, _)| {
+                let blocked = lists
+                    .iter()
+                    .filter(|list| {
+                        list.iter().any(|cell| {
+                            occupants.get(&(*layer, *cell)).is_some_and(|nets| nets.iter().any(|other| other != net))
+                        })
+                    })
+                    .count();
+                lists.iter().filter(|list| !list.is_empty()).count() - blocked < 2
+            })
+            .count()
     }
 
     /// Pads left with fewer than two of their four spoke corridors free of
@@ -2376,16 +2656,19 @@ impl Router {
             } else if self.config.corridors && !self.cleanup {
                 let margin = (1 + reroutes / 3).min(10);
                 for margin in [margin, margin + 3] {
-                    let Some(corridor) =
-                        self.plan_corridor(
-                            net,
-                            net_state,
-                            &tree,
-                            &targets,
-                            hard,
-                            margin,
-                            scratch.own_active.then_some(scratch.own_claimed.as_slice()),
-                        )
+                    let mut read = std::mem::take(&mut scratch.read);
+                    let corridor = self.plan_corridor(
+                        net,
+                        net_state,
+                        &tree,
+                        &targets,
+                        hard,
+                        margin,
+                        scratch.own_active.then_some(scratch.own_claimed.as_slice()),
+                        &mut read,
+                    );
+                    scratch.read = read;
+                    let Some(corridor) = corridor
                     else {
                         break;
                     };
@@ -2646,6 +2929,7 @@ impl Router {
         hard: bool,
         margin: usize,
         own_claimed: Option<&[u32]>,
+        read: &mut ReadSet,
     ) -> Option<Vec<bool>> {
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
@@ -2741,6 +3025,15 @@ impl Router {
                 }
             }
         }
+        // What the planner read: the tiles it reached and their
+        // neighbours (each relaxation reads the neighbour's fill).
+        if read.active {
+            for state in 0..cost.len() {
+                if cost[state].is_finite() {
+                    read.note_tile(state % tiles);
+                }
+            }
+        }
         let mut state = reached?;
         let mut corridor = vec![false; tiles];
         loop {
@@ -2825,6 +3118,15 @@ impl Router {
                 }
             }
             scratch.own_via_near = near;
+        }
+        // What the sources and targets read (their escape stubs too).
+        for node in sources.iter().chain(targets.iter().map(|(node, _)| node)) {
+            scratch.read.note_cell(node.cell, nx);
+            if let Some((cells, _, _)) = net_state.escapes.get(node) {
+                for cell in cells {
+                    scratch.read.note_cell(*cell, nx);
+                }
+            }
         }
         scratch.targets.clear();
         for (node, element) in targets {
@@ -2980,6 +3282,7 @@ impl Router {
             let cell = state % cells;
             let x = cell % nx;
             let y = cell / nx;
+            scratch.read.note(x, y);
             let here = scratch.nodes[state].cost;
             let arrived = scratch.nodes[state].parent;
             let here_statics = if necks { &self.statics[self.class_at(net, net_state, cell as u32)] } else { statics };
@@ -3684,12 +3987,14 @@ impl Router {
     /// does not change; a later `reroute(true)` polishes).
     pub fn run_in_place_polished(&mut self, polish: bool) -> RoutingResult {
         let order = self.routing_order();
+        let started = std::time::Instant::now();
         self.fix_escapes(&order);
         self.route_skeletons(&order);
         self.fix_plane_stubs(&order);
         if self.config.global_routing {
             self.plan_globally(&order);
         }
+        self.profile.prepare += started.elapsed().as_secs_f64();
         self.negotiate(&order, order.clone());
         self.finish_polished(&order, polish)
     }
@@ -3700,12 +4005,14 @@ impl Router {
     /// incomplete (the measure a caller ranks probes by).
     pub fn probe(&mut self, seconds: f64) -> usize {
         let order = self.routing_order();
+        let started = std::time::Instant::now();
         self.fix_escapes(&order);
         self.route_skeletons(&order);
         self.fix_plane_stubs(&order);
         if self.config.global_routing {
             self.plan_globally(&order);
         }
+        self.profile.prepare += started.elapsed().as_secs_f64();
         let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
         self.config.negotiation_seconds = seconds * GUARD;
         self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
@@ -4265,8 +4572,321 @@ impl Router {
     }
 
     /// `negotiate`, with sharing priced at `present` from the start.
+    /// Routes the batches of one negotiation iteration in turn, with the
+    /// result of routing them one after the other, but on all threads:
+    /// the nets of the next few batches are routed speculatively side by
+    /// side against the board as it is; then, batch by batch in order, a
+    /// net's speculative route is kept when no cell an earlier batch of the
+    /// window changed (where a net's stamps came or went) lies where the
+    /// net's routing read the board (its searches' expanded nodes and their
+    /// neighbours, its sources and targets with their escape stubs, its own
+    /// copper for the conflict check, the corridor planner's tiles), and a
+    /// batch with any net that read changed cells is routed again as
+    /// usual. A route is a function of what it read, so the result is the
+    /// one of routing in turn; only the work of kept and rerouted nets
+    /// counts. `PCB_ROUTER_SPECULATION_CHECK` routes every batch in turn
+    /// and counts kept routes that differ (none may).
+    fn route_batches(&mut self, batches: &[(Vec<NetId>, bool)], present: f32, growth: f64) {
+        let threads = rayon::current_num_threads();
+        let paths = self.config.speculate_paths || std::env::var_os("PCB_ROUTER_SPECULATE_PATHS").is_some();
+        let speculate = self.config.parallel
+            && (self.config.speculate || paths)
+            && (threads > 1 || paths)
+            && std::env::var_os("PCB_ROUTER_NO_SPECULATION").is_none();
+        let check = std::env::var_os("PCB_ROUTER_SPECULATION_CHECK").is_some() && !paths;
+        let window = if paths { 16 } else { 2 * threads };
+        let nx = self.grid.nx;
+        let ny = self.grid.ny;
+        let tiles = self.tiles_x * self.tiles_y;
+        let blocks_x = nx.div_ceil(1 << READ_BLOCK_SHIFT);
+        let blocks_y = ny.div_ceil(1 << READ_BLOCK_SHIFT);
+        let mut dirty_blocks = vec![false; if speculate { blocks_x * blocks_y } else { 0 }];
+        let mut dirty_tiles = vec![false; if speculate { tiles } else { 0 }];
+        let mut dirty_cells = vec![false; if speculate && paths { self.grid.cells() } else { 0 }];
+        let mut position = 0;
+        while position < batches.len() {
+            if !speculate || batches[position].1 {
+                self.route_batch(&batches[position].0, batches[position].1, present, growth);
+                position += 1;
+                continue;
+            }
+            // The window: the next batches, up to twice as many nets as
+            // there are threads (a later net is more likely to read what an
+            // earlier one changed).
+            let mut end = position;
+            let mut count = 0;
+            while end < batches.len() && !batches[end].1 && count < window {
+                count += batches[end].0.len();
+                end += 1;
+            }
+            if count <= 1 {
+                self.route_batch(&batches[position].0, false, present, growth);
+                position += 1;
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let nets: Vec<NetId> = batches[position..end].iter().flat_map(|(members, _)| members.iter().copied()).collect();
+            let states = self.grid.cells() * self.board.layer_count;
+            let cells = self.grid.cells();
+            let this: &Self = self;
+            let speculative: Vec<(NetState, [u64; 5], Vec<u32>, Vec<u32>, Vec<u32>)> = nets
+                .par_iter()
+                .map(|net| {
+                    with_thread_scratch(states, cells, |scratch| {
+                        scratch.read.start(nx, ny, tiles);
+                        let before = scratch.counters();
+                        let mut net_state = this.nets[*net as usize].clone();
+                        // The conflict check reads the board at the net's
+                        // own copper (`rip_up_conflicted`).
+                        for branch in &net_state.branches {
+                            for node in &branch.nodes {
+                                scratch.read.note_cell(node.cell, nx);
+                            }
+                        }
+                        for (escape_cells, _, _) in net_state.escapes.values() {
+                            for cell in escape_cells {
+                                scratch.read.note_cell(*cell, nx);
+                            }
+                        }
+                        let keep = this.unconflicted_branches(*net);
+                        let mut keep = keep.into_iter();
+                        net_state.branches.retain(|_| keep.next().unwrap());
+                        let kept = net_state.branches.len();
+                        net_state.connected.fill(false);
+                        net_state.complete = false;
+                        // The old stamps stay on the board; masked, the
+                        // search sees what it would see with the conflicted
+                        // ones ripped up and the kept ones masked.
+                        if !net_state.stamped.is_empty() {
+                            this.mask_own(scratch, *net, &net_state);
+                        }
+                        this.route_net(scratch, *net, &mut net_state, present, false, growth);
+                        // The cells the new branches run through.
+                        let mut path_blocks: Vec<u32> = net_state.branches[kept.min(net_state.branches.len())..]
+                            .iter()
+                            .flat_map(|branch| &branch.nodes)
+                            .map(|node| node.cell)
+                            .collect();
+                        path_blocks.sort_unstable();
+                        path_blocks.dedup();
+                        scratch.unmask_own();
+                        let after = scratch.counters();
+                        let mut delta = [0u64; 5];
+                        for (index, value) in delta.iter_mut().enumerate() {
+                            *value = after[index] - before[index];
+                        }
+                        let (blocks, read_tiles) = scratch.read.finish();
+                        (net_state, delta, blocks, read_tiles, path_blocks)
+                    })
+                })
+                .collect();
+            self.profile.speculative_seconds += started.elapsed().as_secs_f64();
+            let mut speculative = speculative.into_iter();
+            let mut marked_blocks: Vec<usize> = Vec::new();
+            let mut marked_tiles: Vec<usize> = Vec::new();
+            let mut marked_cells: Vec<usize> = Vec::new();
+            for (members, _) in &batches[position..end] {
+                let routes: Vec<(NetState, [u64; 5], Vec<u32>, Vec<u32>, Vec<u32>)> =
+                    speculative.by_ref().take(members.len()).collect();
+                let block_valid = if paths {
+                    routes.iter().all(|(_, _, _, _, path)| !path.iter().any(|cell| dirty_cells[*cell as usize]))
+                } else {
+                    routes.iter().all(|(_, _, blocks, _, _)| !blocks.iter().any(|block| dirty_blocks[*block as usize]))
+                };
+                let tile_valid = paths
+                    || routes.iter().all(|(_, _, _, read_tiles, _)| !read_tiles.iter().any(|tile| dirty_tiles[*tile as usize]));
+                if !block_valid {
+                    self.profile.speculation_block_conflicts += 1;
+                }
+                if !tile_valid {
+                    self.profile.speculation_tile_conflicts += 1;
+                }
+                // A pour net's search reads its brush class's maps, where its
+                // own old stamps stay unmasked: it routes in turn.
+                let valid = block_valid
+                    && (tile_valid || std::env::var_os("PCB_ROUTER_SPECULATION_NO_TILES").is_some())
+                    && members.iter().all(|net| self.nets[*net as usize].plane.is_empty());
+                let old: Vec<Vec<(u32, u32)>> = members.iter().map(|net| self.nets[*net as usize].stamped.clone()).collect();
+                if valid && !check {
+                    let commit_started = std::time::Instant::now();
+                    for (net, (mut state, counters, _, _, _)) in members.iter().zip(routes) {
+                        // As `route_batch` leaves it: the old stamps go,
+                        // the new route is stamped.
+                        state.stamped = std::mem::take(&mut self.nets[*net as usize].stamped);
+                        state.reroutes += 1;
+                        self.nets[*net as usize] = state;
+                        self.scratch.searches += counters[0];
+                        self.scratch.expansions += counters[1];
+                        self.scratch.open_searches += counters[2];
+                        self.scratch.open_expansions += counters[3];
+                        self.scratch.failed_searches += counters[4];
+                        self.stamp(*net);
+                    }
+                    self.stamp_seconds += commit_started.elapsed().as_secs_f64();
+                    self.profile.speculation_kept += members.len() as u64;
+                } else {
+                    self.route_batch(members, false, present, growth);
+                    if valid {
+                        // Checking: a kept route must be the one routed in turn.
+                        for (net, (state, _, _, _, _)) in members.iter().zip(&routes) {
+                            let same = state.branches.len() == self.nets[*net as usize].branches.len()
+                                && state.branches.iter().zip(&self.nets[*net as usize].branches).all(|(a, b)| a.nodes == b.nodes);
+                            if same {
+                                self.profile.speculation_kept += 1;
+                            } else {
+                                self.profile.speculation_wrong += 1;
+                                eprintln!("speculation check: {} routed differently", self.board.nets[*net as usize].name);
+                            }
+                        }
+                    } else {
+                        self.profile.speculation_redone += members.len() as u64;
+                    }
+                }
+                // What changed: the stamps that came or went (a stamp the
+                // net had before and after leaves its cell's count as it
+                // was). Its block and the blocks around it (a search step
+                // reads its neighbours), and its tile and the tiles around
+                // it (the planner reads the neighbours of the tiles it
+                // reached), are dirty for the rest of the window.
+                for (net, old) in members.iter().zip(old) {
+                    let mut before: HashSet<(u32, u32)> = old.into_iter().collect();
+                    let mut changed: Vec<u32> = Vec::new();
+                    for entry in &self.nets[*net as usize].stamped {
+                        if !before.remove(entry) {
+                            changed.push(entry.1);
+                            if paths && !dirty_cells[entry.1 as usize] {
+                                // Copper this batch added: a later route
+                                // through its zone conflicts.
+                                dirty_cells[entry.1 as usize] = true;
+                                marked_cells.push(entry.1 as usize);
+                            }
+                        }
+                    }
+                    changed.extend(before.into_iter().map(|(_, cell)| cell));
+                    for cell in changed {
+                        let (x, y) = (cell as usize % nx, cell as usize / nx);
+                        let (bx, by) = (x >> READ_BLOCK_SHIFT, y >> READ_BLOCK_SHIFT);
+                        for dy in by.saturating_sub(1)..=(by + 1).min(blocks_y - 1) {
+                            for dx in bx.saturating_sub(1)..=(bx + 1).min(blocks_x - 1) {
+                                let block = dy * blocks_x + dx;
+                                if !dirty_blocks[block] {
+                                    dirty_blocks[block] = true;
+                                    marked_blocks.push(block);
+                                }
+                            }
+                        }
+                        let (tx, ty) = (x / TILE, y / TILE);
+                        for dy in ty.saturating_sub(1)..=(ty + 1).min(self.tiles_y - 1) {
+                            for dx in tx.saturating_sub(1)..=(tx + 1).min(self.tiles_x - 1) {
+                                let tile = dy * self.tiles_x + dx;
+                                if !dirty_tiles[tile] {
+                                    dirty_tiles[tile] = true;
+                                    marked_tiles.push(tile);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for block in marked_blocks {
+                dirty_blocks[block] = false;
+            }
+            for tile in marked_tiles {
+                dirty_tiles[tile] = false;
+            }
+            for cell in marked_cells {
+                dirty_cells[cell] = false;
+            }
+            self.search_seconds += started.elapsed().as_secs_f64();
+            position = end;
+        }
+    }
+
+    /// Routes one batch of the negotiation (see `batches`): rips up the
+    /// conflicted branches of its nets, routes them (on the thread pool
+    /// when there are several: their windows do not overlap), and stamps
+    /// them.
+    fn route_batch(&mut self, batch: &[NetId], jacobi: bool, present: f32, growth: f64) {
+        let search_started = std::time::Instant::now();
+        if jacobi && self.config.parallel {
+            self.route_jacobi(batch, present, growth);
+            self.search_seconds += search_started.elapsed().as_secs_f64();
+            return;
+        }
+        for net in batch {
+            self.rip_up_conflicted(*net);
+        }
+        if batch.len() == 1 || !self.config.parallel {
+            let single_started = std::time::Instant::now();
+            for net in batch {
+                self.route_net_seq(*net, present, false, growth);
+            }
+            self.profile.single_batches += 1;
+            self.profile.single_seconds += single_started.elapsed().as_secs_f64();
+        } else {
+            // The nets of a batch do not overlap: routing them against
+            // the same occupancy is the same as routing them in turn.
+            let parallel_started = std::time::Instant::now();
+            let states = self.grid.cells() * self.board.layer_count;
+            let cells = self.grid.cells();
+            let this: &Self = self;
+            let routed: Vec<(NetId, NetState, [u64; 5], f64)> = batch
+                .par_iter()
+                .map(|net| {
+                    with_thread_scratch(states, cells, |scratch| {
+                        let net_started = std::time::Instant::now();
+                        let before = scratch.counters();
+                        let mut net_state = this.nets[*net as usize].clone();
+                        if !net_state.stamped.is_empty() {
+                            this.mask_own(scratch, *net, &net_state);
+                        }
+                        this.route_net(
+                            scratch,
+                            *net,
+                            &mut net_state,
+                            present,
+                            false,
+                            growth,
+                        );
+                        scratch.unmask_own();
+                        let after = scratch.counters();
+                        let mut delta = [0u64; 5];
+                        for (index, value) in delta.iter_mut().enumerate() {
+                            *value = after[index] - before[index];
+                        }
+                        (*net, net_state, delta, net_started.elapsed().as_secs_f64())
+                    })
+                })
+                .collect();
+            self.profile.parallel_batches += 1;
+            self.profile.parallel_nets += batch.len() as u64;
+            self.profile.parallel_seconds += parallel_started.elapsed().as_secs_f64();
+            for (net, net_state, counters, seconds) in routed {
+                self.profile.parallel_net_seconds += seconds;
+                self.nets[net as usize] = net_state;
+                self.scratch.searches += counters[0];
+                self.scratch.expansions += counters[1];
+                self.scratch.open_searches += counters[2];
+                self.scratch.open_expansions += counters[3];
+                self.scratch.failed_searches += counters[4];
+            }
+        }
+        for net in batch {
+            self.nets[*net as usize].reroutes += 1;
+        }
+        self.search_seconds += search_started.elapsed().as_secs_f64();
+        let stamp_started = std::time::Instant::now();
+        for net in batch {
+            self.stamp(*net);
+        }
+        self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
+    }
+
     fn negotiate_from(&mut self, order: &[NetId], mut pending: Vec<NetId>, present: f32) {
         let started = std::time::Instant::now();
+        let profile_started = started;
+        // The via reduction negotiates too: its time is its own phase.
+        let nested = self.in_via_reduction;
         let expansions_before = self.scratch.expansions;
         let work_before = self.work_seconds();
         let mut present = present;
@@ -4293,72 +4913,8 @@ impl Router {
                     sizes
                 );
             }
-            for (batch, jacobi) in batches {
-                let search_started = std::time::Instant::now();
-                if jacobi && self.config.parallel {
-                    self.route_jacobi(&batch, present, growth);
-                    self.search_seconds += search_started.elapsed().as_secs_f64();
-                    continue;
-                }
-                for net in &batch {
-                    self.rip_up_conflicted(*net);
-                }
-                if batch.len() == 1 || !self.config.parallel {
-                    for net in &batch {
-                        self.route_net_seq(*net, present, false, growth);
-                    }
-                } else {
-                    // The nets of a batch do not overlap: routing them against
-                    // the same occupancy is the same as routing them in turn.
-                    let states = self.grid.cells() * self.board.layer_count;
-                    let cells = self.grid.cells();
-                    let this: &Self = self;
-                    let routed: Vec<(NetId, NetState, [u64; 5])> = batch
-                        .par_iter()
-                        .map(|net| {
-                            with_thread_scratch(states, cells, |scratch| {
-                                let before = scratch.counters();
-                                let mut net_state = this.nets[*net as usize].clone();
-                                if !net_state.stamped.is_empty() {
-                                    this.mask_own(scratch, *net, &net_state);
-                                }
-                                this.route_net(
-                                    scratch,
-                                    *net,
-                                    &mut net_state,
-                                    present,
-                                    false,
-                                    growth,
-                                );
-                                scratch.unmask_own();
-                                let after = scratch.counters();
-                                let mut delta = [0u64; 5];
-                                for (index, value) in delta.iter_mut().enumerate() {
-                                    *value = after[index] - before[index];
-                                }
-                                (*net, net_state, delta)
-                            })
-                        })
-                        .collect();
-                    for (net, net_state, counters) in routed {
-                        self.nets[net as usize] = net_state;
-                        self.scratch.searches += counters[0];
-                        self.scratch.expansions += counters[1];
-                        self.scratch.open_searches += counters[2];
-                        self.scratch.open_expansions += counters[3];
-                        self.scratch.failed_searches += counters[4];
-                    }
-                }
-                for net in &batch {
-                    self.nets[*net as usize].reroutes += 1;
-                }
-                self.search_seconds += search_started.elapsed().as_secs_f64();
-                let stamp_started = std::time::Instant::now();
-                for net in &batch {
-                    self.stamp(*net);
-                }
-                self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
-            }
+            self.route_batches(&batches, present, growth);
+            let conflicts_started = std::time::Instant::now();
             let mut conflicted = Vec::new();
             for net in order {
                 let conflicts = self.conflicts(*net);
@@ -4411,6 +4967,7 @@ impl Router {
                 }
                 conflicted.push(*net);
             }
+            self.profile.conflicts += conflicts_started.elapsed().as_secs_f64();
             if let Some(hook) = self.frame_hook.clone() {
                 hook(self.iterations, &self.snapshot());
             }
@@ -4445,6 +5002,7 @@ impl Router {
                         conflicted.push(*net);
                     }
                 }
+                self.profile.refresh_pour += refresh_started.elapsed().as_secs_f64();
                 if self.config.verbose && stranded > 0 {
                     eprintln!(
                         "  {stranded} pour pads cut off from their main piece, routed from now on ({:.2}s)",
@@ -4460,7 +5018,9 @@ impl Router {
             // those tiles lose room on the graph and the nets are planned
             // again around them.
             if self.global.is_some() && iteration % 2 == 1 {
+                let replan_started = std::time::Instant::now();
                 self.replan(&conflicted);
+                self.profile.replan += replan_started.elapsed().as_secs_f64();
             }
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && iteration % 10 == 9 {
                 // The most contested tiles: where history piled up.
@@ -4584,6 +5144,9 @@ impl Router {
         // via reduction follow from it.
         self.negotiation_seconds = self.work_seconds() - work_before;
         self.present_reached = present;
+        if !nested {
+            self.profile.negotiation += profile_started.elapsed().as_secs_f64();
+        }
     }
 
     /// Resolves what negotiation left, cleans up, stitches pours and
@@ -4810,10 +5373,27 @@ impl Router {
             }
             return;
         }
-        let budget = (self.config.via_reduction_budget * self.negotiation_seconds)
+        let mut budget = (self.config.via_reduction_budget * self.negotiation_seconds)
             .max(60.0)
             .min(self.config.via_reduction_seconds);
+        if let Some((total, left_at_start)) = self.config.run_work {
+            let left = left_at_start - self.work_seconds();
+            if left > total / 2.0 {
+                // At most 300 s: doubling the quick tier's via-reduction
+                // time for 100 vias was too much; k30-SBC's 182 s round fits.
+                let mut allowance = (left / 3.0).min(300.0);
+                if let Some(deadline) = self.config.deadline {
+                    allowance = allowance.min(deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() / 3.0);
+                }
+                if allowance > budget && self.config.verbose {
+                    eprintln!("via reduction: {left:.0}s of the run's {total:.0}s left, a budget of {allowance:.0}s");
+                }
+                budget = budget.max(allowance);
+            }
+        }
         let started = self.clock();
+        let strict = self.config.strict_via_budget;
+        let mut last_round: Option<f64> = None;
         for round in 0..self.config.via_reduction_rounds {
             if self.spent(&started, budget) {
                 if self.config.verbose {
@@ -4823,8 +5403,19 @@ impl Router {
                 }
                 break;
             }
+            let left = budget - (self.work_seconds() - started.0);
+            if strict && let Some(cost) = last_round.filter(|cost| *cost > left) {
+                if self.config.verbose {
+                    eprintln!(
+                        "via reduction: round {round} would take about {cost:.0}s of the {left:.0}s left of {budget:.0}s: stopping"
+                    );
+                }
+                break;
+            }
+            let round_started = self.work_seconds();
             let before = self.quality();
             let stranded_before = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
+            let starved_before = if self.config.via_reduction_keeps_spokes { self.starved_pads() } else { 0 };
             let pending: Vec<NetId> = order
                 .iter()
                 .copied()
@@ -4841,6 +5432,14 @@ impl Router {
                 break;
             }
             let snapshot = self.lean_snapshot();
+            // After the snapshot: a revert restores the configuration too.
+            let limits = (self.config.negotiation_seconds, self.config.negotiation_expansions, self.config.cleanup_seconds);
+            if strict {
+                // The round's negotiation stops where the budget ends (a
+                // cut round that leaves something open is reverted below).
+                self.config.negotiation_expansions = ((left * EXPANSIONS_PER_SECOND) as u64).max(1);
+                self.config.negotiation_seconds = self.config.negotiation_seconds.min(left * GUARD);
+            }
             let via_cost = self.config.via_cost;
             let weight = self.config.heuristic_weight;
             self.config.via_cost =
@@ -4854,6 +5453,11 @@ impl Router {
             self.negotiate_from(order, pending.clone(), self.config.via_reduction_present as f32);
             self.resolve_remaining(order);
             self.config.heuristic_weight = weight;
+            if strict {
+                // The clean-up gets what the negotiation left.
+                let left = (budget - (self.work_seconds() - started.0)).max(0.0);
+                self.config.cleanup_seconds = self.config.cleanup_seconds.min(left);
+            }
             // Only the nets this round touched can have got worse.
             let touched: Vec<NetId> = order
                 .iter()
@@ -4864,15 +5468,19 @@ impl Router {
                 })
                 .collect();
             self.clean_up(&touched);
+            (self.config.negotiation_seconds, self.config.negotiation_expansions, self.config.cleanup_seconds) = limits;
+            last_round = Some(self.work_seconds() - round_started);
             self.config.via_cost = via_cost;
             let after = self.quality();
             let stranded_after = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
+            let starved_after = if self.config.via_reduction_keeps_spokes { self.starved_pads() } else { 0 };
             let keep = after.0 <= before.0
                 && after.1 < before.1
-                && stranded_after.iter().zip(&stranded_before).all(|(after, before)| after <= before);
+                && stranded_after.iter().zip(&stranded_before).all(|(after, before)| after <= before)
+                && starved_after <= starved_before;
             if self.config.verbose {
                 eprintln!(
-                    "via reduction round {round}: {:?} -> {:?}, {}",
+                    "via reduction round {round}: {:?} -> {:?}, {starved_before} -> {starved_after} starved pads, {}",
                     before,
                     after,
                     if keep { "kept" } else { "reverted" }
@@ -4909,7 +5517,12 @@ impl Router {
         let statics = std::mem::take(&mut self.statics);
         let scratch = std::mem::take(&mut self.scratch);
         let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        // The time spent stays spent.
+        let profile = std::mem::take(&mut self.profile);
+        let (search_seconds, stamp_seconds) = (self.search_seconds, self.stamp_seconds);
         *self = snapshot;
+        self.profile = profile;
+        (self.search_seconds, self.stamp_seconds) = (search_seconds, stamp_seconds);
         self.statics = statics;
         self.scratch = scratch;
         self.stamp_mark = stamp_mark;
@@ -4917,17 +5530,26 @@ impl Router {
     }
 
     fn finish(&mut self, order: &[NetId]) -> RoutingResult {
+        let resolve_started = std::time::Instant::now();
         self.resolve_remaining(order);
+        self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();
         let improved = if self.hopeless { 0 } else { self.clean_up(order) };
         let cleaned = cleanup_started.elapsed().as_secs_f64();
+        self.profile.cleanup += cleaned;
+        let reduction_started = std::time::Instant::now();
+        self.in_via_reduction = true;
         self.reduce_vias(order);
+        self.in_via_reduction = false;
+        self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
         // A repair for the final board, like the via reduction: a trial
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
         // in the first route, mostly hard searches flooding the lattice).
+        let spokes_started = std::time::Instant::now();
         if self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0 {
             self.free_thermal_spokes();
         }
+        self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
         if self.config.verbose {
             eprintln!(
                 "clean up {cleaned:.2}s, via reduction {:.2}s",
@@ -4942,8 +5564,10 @@ impl Router {
         for net in plane_nets {
             // The skeleton is trimmed first so that stitching only adds the
             // vias the pour pieces really need.
+            let stitching_started = std::time::Instant::now();
             let trimmed = self.trim_skeleton(net);
             let stitches = self.stitch_pours(net, order);
+            self.profile.stitching += stitching_started.elapsed().as_secs_f64();
             if self.config.verbose {
                 eprintln!(
                     "pour {}: {stitches} stitching vias, {trimmed} skeleton nodes trimmed, complete {}",
@@ -4969,6 +5593,7 @@ impl Router {
                 eprintln!("pour dump {}: {vias} via steps", directory.display());
             }
         }
+        let emit_started = std::time::Instant::now();
         let status = self.statuses();
         let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) = (0..self.board.nets.len()
             as NetId)
@@ -5015,6 +5640,10 @@ impl Router {
             }
         }
         let diagnostics = self.diagnostics();
+        self.profile.emit += emit_started.elapsed().as_secs_f64();
+        if self.config.verbose {
+            eprintln!("{}", self.profile.line(self.search_seconds, self.stamp_seconds));
+        }
         RoutingResult {
             diagnostics,
             congestion,
@@ -5209,6 +5838,14 @@ impl Router {
     /// `analyze_pours` leaving out the branches `skip` names (by index):
     /// what the pour and the other branches join without them.
     fn analyze_pours_skipping(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
+        let started = std::time::Instant::now();
+        let result = self.analyze_pours_skipping_untimed(net, skip);
+        self.profile.analysis_nanos.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.profile.analysis_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        result
+    }
+
+    fn analyze_pours_skipping_untimed(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
         let (pours, parent, main, _) = self.analyze_pours_full(net, skip);
         (pours, parent, main)
     }
@@ -5225,7 +5862,16 @@ impl Router {
     ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
-        let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
+        let own = {
+            let maps: Vec<usize> = (0..layers)
+                .filter(|layer| !state.plane[*layer].is_empty())
+                .flat_map(|layer| {
+                    let class = state.plane_class[layer];
+                    [self.map_index(class, layer), self.diagonal_map(class, layer, 0), self.diagonal_map(class, layer, 1)]
+                })
+                .collect();
+            OwnStamps::new(&state.stamped, &maps, self.grid.cells())
+        };
         let mut free: Vec<Vec<bool>> = (0..layers)
             .map(|layer| {
                 let mask = &state.plane[layer];
@@ -5237,7 +5883,7 @@ impl Router {
                     .map(|cell| {
                         mask[cell]
                             && self.occupancy[map][cell] as usize
-                                == own.contains(&(map as u32, cell as u32)) as usize
+                                == own.contains(map, cell) as usize
                     })
                     .collect()
             })
@@ -5260,7 +5906,7 @@ impl Router {
                 let cell = node.cell as usize;
                 let map = self.map_index(state.plane_class[layer], layer);
                 if state.plane[layer][cell]
-                    && self.occupancy[map][cell] as usize == own.contains(&(map as u32, cell as u32)) as usize
+                    && self.occupancy[map][cell] as usize == own.contains(map, cell) as usize
                 {
                     free[layer][cell] = true;
                 }
@@ -5281,7 +5927,7 @@ impl Router {
                 return false;
             }
             let map = self.diagonal_map(class, layer, orientation);
-            if self.occupancy[map][start] as usize != own.contains(&(map as u32, start as u32)) as usize {
+            if self.occupancy[map][start] as usize != own.contains(map, start) as usize {
                 return false;
             }
             let Some(end) = self.grid.neighbor(start, direction) else {
@@ -5427,7 +6073,7 @@ impl Router {
                 let plane_map = self.map_index(state.plane_class[layer], layer);
                 let clear = |cell: usize| {
                     state.plane[layer][cell]
-                        && self.occupancy[plane_map][cell] as usize == own.contains(&(plane_map as u32, cell as u32)) as usize
+                        && self.occupancy[plane_map][cell] as usize == own.contains(plane_map, cell) as usize
                 };
                 for direction in directions {
                     // From the pad's edge along the spoke, the fill must
@@ -5598,7 +6244,11 @@ impl Router {
                 .map(|layer| if state.plane[layer].is_empty() { Vec::new() } else { vec![true; cells] })
                 .collect();
             self.cut_thermal_rings(&self.thermal_ring_pads(net), &mut rings);
-            let own: HashSet<(u32, u32)> = state.stamped.iter().copied().collect();
+            let own = OwnStamps::new(
+                &state.stamped,
+                &(0..layers).filter(|layer| !state.plane[*layer].is_empty()).map(|layer| self.map_index(state.plane_class[layer], layer)).collect::<Vec<_>>(),
+                cells,
+            );
             let name = &self.board.nets[net as usize].name;
             let file_name: String = name
                 .chars()
@@ -5632,7 +6282,7 @@ impl Router {
                     if statics.fill_allowed(layer, cell, net) {
                         flags[cell] |= 2;
                     }
-                    if self.occupancy[map][cell] as usize == own.contains(&(map as u32, cell as u32)) as usize {
+                    if self.occupancy[map][cell] as usize == own.contains(map, cell) as usize {
                         flags[cell] |= 4;
                     }
                     if !rings[layer][cell] {
@@ -5689,8 +6339,8 @@ impl Router {
         let class = self.board.classes[class_index];
         let layers = self.board.layer_count;
         let via_reach = 0;
-        let own: HashSet<(u32, u32)> = self.nets[net as usize].stamped.iter().copied().collect();
         let via_map = self.map_index(class_index, layers);
+        let own = OwnStamps::new(&self.nets[net as usize].stamped, &[via_map], self.grid.cells());
         // A via keeps the hole-to-hole distance from the net's vias
         // already there too: KiCad's rule holds within a net
         // (PolyKybd's stitches landed 0.1 mm from earlier ones).
@@ -5733,7 +6383,7 @@ impl Router {
                     if crowded[cell]
                         || !self.statics[class_index].via_allowed(cell, net)
                         || self.occupancy[via_map][cell] as usize
-                            != own.contains(&(via_map as u32, cell as u32)) as usize
+                            != own.contains(via_map, cell) as usize
                         || !pours.solid_around(&self.grid, layer, cell, via_reach)
                     {
                         continue;
@@ -5981,9 +6631,14 @@ impl Router {
 
     /// Length plus via cost of a net's branches, in millimetres.
     fn geometric_cost(&self, net: NetId) -> f64 {
+        self.geometric_cost_of(net, &self.nets[net as usize].branches)
+    }
+
+    /// `geometric_cost` of `net` with these branches.
+    fn geometric_cost_of(&self, net: NetId, branches: &[Branch]) -> f64 {
         let nx = self.grid.nx as i64;
         let mut cost = 0.0;
-        for branch in &self.nets[net as usize].branches {
+        for branch in branches {
             for pair in branch.nodes.windows(2) {
                 if pair[0].cell == pair[1].cell {
                     cost += if self.nets[net as usize].plane.is_empty() {
@@ -5999,6 +6654,224 @@ impl Router {
             }
         }
         cost
+    }
+
+    /// The cells where `net`'s stamps came or went since `old` (a stamp the
+    /// net had before and after leaves its cell's count as it was).
+    fn changed_cells(&self, net: NetId, old: Vec<(u32, u32)>) -> Vec<u32> {
+        let mut before: HashSet<(u32, u32)> = old.into_iter().collect();
+        let mut changed: Vec<u32> = Vec::new();
+        for entry in &self.nets[net as usize].stamped {
+            if !before.remove(entry) {
+                changed.push(entry.1);
+            }
+        }
+        changed.extend(before.into_iter().map(|(_, cell)| cell));
+        changed
+    }
+
+    /// Marks the read blocks around `cells` (and the block next to each:
+    /// a search step reads its neighbours) dirty, listing what it marked.
+    fn mark_dirty_blocks(&self, cells: &[u32], dirty: &mut [bool], marked: &mut Vec<usize>) {
+        let nx = self.grid.nx;
+        let blocks_x = nx.div_ceil(1 << READ_BLOCK_SHIFT);
+        let blocks_y = self.grid.ny.div_ceil(1 << READ_BLOCK_SHIFT);
+        for cell in cells {
+            let (x, y) = (*cell as usize % nx, *cell as usize / nx);
+            let (bx, by) = (x >> READ_BLOCK_SHIFT, y >> READ_BLOCK_SHIFT);
+            for dy in by.saturating_sub(1)..=(by + 1).min(blocks_y - 1) {
+                for dx in bx.saturating_sub(1)..=(bx + 1).min(blocks_x - 1) {
+                    let block = dy * blocks_x + dx;
+                    if !dirty[block] {
+                        dirty[block] = true;
+                        marked.push(block);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The clean-up of a run of single-net batches, with the result of
+    /// cleaning them up one after the other, on all threads: every net is
+    /// rerouted speculatively side by side against the board as it is;
+    /// then, in order, a net's trial stands when no net before it in the
+    /// run changed the board where the trial read it (only an improvement
+    /// changes the board), and is redone in turn otherwise. Returns the
+    /// improvements, or `None` when the budget ran out (checked before
+    /// every net, as in turn).
+    fn clean_up_window(
+        &mut self,
+        nets: &[NetId],
+        started: &(f64, std::time::Instant),
+        budget: f64,
+        check: bool,
+    ) -> Option<usize> {
+        let (nx, ny) = (self.grid.nx, self.grid.ny);
+        let tiles = self.tiles_x * self.tiles_y;
+        let states = self.grid.cells() * self.board.layer_count;
+        let cells = self.grid.cells();
+        let speculation_started = std::time::Instant::now();
+        let this: &Self = self;
+        // A pour net's search reads its brush class's maps, where its own
+        // old stamps would stay unmasked: it is cleaned up in turn.
+        let trials: Vec<Option<(NetState, [u64; 5], Vec<u32>)>> = nets
+            .par_iter()
+            .map(|net| {
+                if !this.nets[*net as usize].plane.is_empty() {
+                    return None;
+                }
+                Some(with_thread_scratch(states, cells, |scratch| {
+                    scratch.read.start(nx, ny, tiles);
+                    let mut net_state = this.nets[*net as usize].clone();
+                    // As `rip_up` leaves it; the old stamps stay on the
+                    // board, masked.
+                    net_state.branches.truncate(net_state.fixed);
+                    net_state.connected.fill(false);
+                    net_state.complete = false;
+                    if !net_state.stamped.is_empty() {
+                        this.mask_own(scratch, *net, &net_state);
+                    }
+                    let before = scratch.counters();
+                    this.route_net(scratch, *net, &mut net_state, 0.0, true, 1.0);
+                    let after = scratch.counters();
+                    scratch.unmask_own();
+                    let mut delta = [0u64; 5];
+                    for (index, value) in delta.iter_mut().enumerate() {
+                        *value = after[index] - before[index];
+                    }
+                    let (blocks, _) = scratch.read.finish();
+                    (net_state, delta, blocks)
+                }))
+            })
+            .collect();
+        self.profile.speculative_seconds += speculation_started.elapsed().as_secs_f64();
+        let blocks = nx.div_ceil(1 << READ_BLOCK_SHIFT) * ny.div_ceil(1 << READ_BLOCK_SHIFT);
+        let mut dirty = vec![false; blocks];
+        let mut marked = Vec::new();
+        let mut improvements = 0;
+        for (net, trial) in nets.iter().copied().zip(trials) {
+            if self.spent(started, budget) {
+                return None;
+            }
+            let old = self.nets[net as usize].stamped.clone();
+            let Some((mut state, counters, read)) = trial else {
+                if !self.clean_up_batch(&[net]).is_empty() {
+                    improvements += 1;
+                    let changed = self.changed_cells(net, old);
+                    self.mark_dirty_blocks(&changed, &mut dirty, &mut marked);
+                }
+                continue;
+            };
+            let valid = !read.iter().any(|block| dirty[*block as usize]);
+            let improved = if valid && !check {
+                self.profile.speculation_kept += 1;
+                self.scratch.searches += counters[0];
+                self.scratch.expansions += counters[1];
+                self.scratch.open_searches += counters[2];
+                self.scratch.open_expansions += counters[3];
+                self.scratch.failed_searches += counters[4];
+                let before = self.geometric_cost(net);
+                let better = state.complete && self.geometric_cost_of(net, &state.branches) < before - 1.0e-6;
+                if !better {
+                    state.branches = self.nets[net as usize].branches.clone();
+                    state.connected.fill(true);
+                    state.complete = true;
+                }
+                state.stamped = std::mem::take(&mut self.nets[net as usize].stamped);
+                self.nets[net as usize] = state;
+                self.stamp(net);
+                better
+            } else {
+                let speculative_better =
+                    state.complete && self.geometric_cost_of(net, &state.branches) < self.geometric_cost(net) - 1.0e-6;
+                let better = !self.clean_up_batch(&[net]).is_empty();
+                if valid {
+                    // Checking: a trial that stands must be the one in turn.
+                    let same = speculative_better == better
+                        && (!better
+                            || state.branches.len() == self.nets[net as usize].branches.len()
+                                && state.branches.iter().zip(&self.nets[net as usize].branches).all(|(a, b)| a.nodes == b.nodes));
+                    if same {
+                        self.profile.speculation_kept += 1;
+                    } else {
+                        self.profile.speculation_wrong += 1;
+                        eprintln!("speculation check: clean-up of {} differs", self.board.nets[net as usize].name);
+                    }
+                } else {
+                    self.profile.speculation_redone += 1;
+                }
+                better
+            };
+            if improved {
+                improvements += 1;
+                let changed = self.changed_cells(net, old);
+                self.mark_dirty_blocks(&changed, &mut dirty, &mut marked);
+            }
+        }
+        Some(improvements)
+    }
+
+    /// One batch of the clean-up (see `clean_up`): its nets rerouted alone
+    /// against all other copper, each new route kept when it is complete,
+    /// inside its window and strictly cheaper. Returns the nets improved.
+    fn clean_up_batch(&mut self, batch: &[NetId]) -> Vec<NetId> {
+        let mut improved = Vec::new();
+        let before: Vec<f64> = batch.iter().map(|net| self.geometric_cost(*net)).collect();
+        let saved: Vec<Vec<Branch>> = batch.iter().map(|net| self.nets[*net as usize].branches.clone()).collect();
+        for net in batch {
+            self.rip_up(*net);
+        }
+        let mut inside = vec![true; batch.len()];
+        if batch.len() == 1 {
+            self.route_net_seq(batch[0], 0.0, true, 1.0);
+        } else {
+            let states = self.grid.cells() * self.board.layer_count;
+            let cells = self.grid.cells();
+            let this: &Self = self;
+            let routed: Vec<(NetState, bool, u64)> = batch
+                .par_iter()
+                .map(|net| {
+                    with_thread_scratch(states, cells, |scratch| {
+                        let mut net_state = this.nets[*net as usize].clone();
+                        if !net_state.stamped.is_empty() {
+                            this.mask_own(scratch, *net, &net_state);
+                        }
+                        let before = scratch.expansions;
+                        this.route_net(scratch, *net, &mut net_state, 0.0, true, 1.0);
+                        let expansions = scratch.expansions - before;
+                        scratch.unmask_own();
+                        // Batch windows are kept two tiles apart:
+                        // routes inside their own window stay clear
+                        // of each other.
+                        let window = this.window(*net, 1.0);
+                        let within = net_state.branches.iter().flat_map(|branch| &branch.nodes).all(|node| {
+                            let (x, y) = this.grid.xy(node.cell as usize);
+                            x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
+                        });
+                        (net_state, within, expansions)
+                    })
+                })
+                .collect();
+            for (index, (net_state, within, expansions)) in routed.into_iter().enumerate() {
+                self.nets[batch[index] as usize] = net_state;
+                inside[index] = within;
+                // The work of the threads counts on the shared clock.
+                self.scratch.expansions += expansions;
+            }
+        }
+        for (index, net) in batch.iter().enumerate() {
+            let state = &self.nets[*net as usize];
+            if inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6 {
+                improved.push(*net);
+            } else {
+                let state = &mut self.nets[*net as usize];
+                state.branches = saved[index].clone();
+                state.connected.fill(true);
+                state.complete = true;
+            }
+            self.stamp(*net);
+        }
+        improved
     }
 
     /// Reroutes each complete net alone against all other copper and keeps
@@ -6021,7 +6894,42 @@ impl Router {
             } else {
                 complete.iter().map(|net| vec![*net]).collect()
             };
-            for batch in batches {
+            let threads = rayon::current_num_threads();
+            // The speculative clean-up has no pour check: off with it.
+            let speculate = self.config.parallel
+                && self.config.speculate_cleanup
+                && pour_stranded.is_none()
+                && threads > 1
+                && std::env::var_os("PCB_ROUTER_NO_SPECULATION").is_none();
+            let check = std::env::var_os("PCB_ROUTER_SPECULATION_CHECK").is_some();
+            let mut index = 0;
+            while index < batches.len() {
+                // Single-net batches side by side, speculatively (see
+                // `clean_up_window`).
+                let mut end = index;
+                let window = std::env::var("PCB_ROUTER_CLEANUP_WINDOW").ok().and_then(|value| value.parse().ok()).unwrap_or(2 * threads);
+                while speculate && end < batches.len() && batches[end].len() == 1 && end - index < window {
+                    end += 1;
+                }
+                if end - index > 1 {
+                    let nets: Vec<NetId> = batches[index..end].iter().map(|batch| batch[0]).collect();
+                    match self.clean_up_window(&nets, &started, budget, check) {
+                        Some(found) => {
+                            improvements += found;
+                            improved |= found > 0;
+                        }
+                        None => {
+                            if self.config.verbose {
+                                eprintln!("clean-up budget of {budget:.0} s used");
+                            }
+                            break 'passes;
+                        }
+                    }
+                    index = end;
+                    continue;
+                }
+                let batch = batches[index].clone();
+                index += 1;
                 if self.spent(&started, budget) {
                     if self.config.verbose {
                         eprintln!("clean-up budget of {budget:.0} s used");

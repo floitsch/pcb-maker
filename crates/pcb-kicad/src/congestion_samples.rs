@@ -389,6 +389,8 @@ pub fn export_congestion_samples(
             let mut header = serde_json::json!({
                 "board_id": board_id,
                 "source": source_directory,
+                // Labels depend on the router: which binary probed.
+                "binary": std::env::current_exe().ok().and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned())),
                 "variant": variant,
                 "layers": board.layer_count,
                 "layer_names": layers.names,
