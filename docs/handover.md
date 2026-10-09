@@ -1014,6 +1014,21 @@ the sweep goes on with x136; splice those rows when comparing.
 The pass rule now trusts KiCad's connectivity (decision 2): MokyaLora
 passes; x112's 29 rows have 5 passes under it, not 4.
 
+**v11 over x112's 29 boards** (x136; the PolyKybd boards from their
+reruns): KiCad unconnected better on 13, the same on 12, worse on 2
+(the two panels), 1576 unconnected in all against 1209; passes 4 to 5.
+Rows beyond the first fourteen: vaio_re 262/267 with 5 (256, 31), A13
+216/223 with 26 (173, 125), BAGEL 1.1 141/144 with 5 (same), BAGEL-MK1
+138/138 clean but one starved thermal (same), krishveercard 23/43 with
+21 (28, 20), ATAT1800 254/278 with 40 and 5 errors (249, 44, 7),
+OpenAirScope 179/184 with 5 (176, 8), zpn, MIDAS-MK2.1 and MIDAS-MK2
+pass (470, 329, 142 s), reCamera 55/56 with 4 (same), Hub 146/159 with
+17 and 3 starved (144, 20), RP2040 controller 151/186 with 82 (86),
+corne left 245/247 with 3 (same). x138 (thermal repair only when
+polishing; the polish bounded by the wall clock left): PolyKybd right,
+left and corne right rerun in `build/github-layout-v11-x138`; right on
+x137 was 419/420 with 11 (416, 21), left on x137 still 1800 s.
+
 ## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
 
 The search runs ESC mini's 20 bench iterations at 3.9M expansions a
