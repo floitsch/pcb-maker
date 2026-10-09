@@ -47,6 +47,16 @@ pub struct KiCadBoardLayoutConfig {
     /// permuted. Used when `pin_swaps` is not given.
     pub swappable: Vec<KiCadSwappable>,
     pub pin_swap: KiCadPinSwapConfig,
+    /// A congestion model (ONNX, see `docs/congestion-model.md`): the
+    /// placer then makes `congestion_candidates` placements (seeds), the
+    /// model ranks them, and the placement race probes only the
+    /// `congestion_probes` it predicts route best. Off when absent.
+    pub congestion_model: Option<PathBuf>,
+    pub congestion_candidates: usize,
+    pub congestion_probes: usize,
+    /// What ranks: `open` (the predicted unfinished nets) or `overflow`
+    /// (the predicted overflow summed over the board).
+    pub congestion_score: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -115,6 +125,10 @@ impl Default for KiCadBoardLayoutConfig {
             pin_swaps: None,
             swappable: Vec::new(),
             pin_swap: KiCadPinSwapConfig::default(),
+            congestion_model: None,
+            congestion_candidates: 16,
+            congestion_probes: 3,
+            congestion_score: "open".into(),
         }
     }
 }
@@ -158,10 +172,21 @@ pub struct KiCadBoardLayoutResult {
     /// each other seed's placement tried, the best routing on.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub placement_race: Vec<usize>,
+    /// With a congestion model: its score of every placement it ranked
+    /// (the kept one first, then the other seeds by wirelength) and the
+    /// ones the race probed, best first.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub congestion: Option<KiCadCongestionRanking>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub routed: KiCadBoardRouterResult,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadCongestionRanking {
+    pub scores: Vec<f64>,
+    pub probed: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -351,7 +376,7 @@ fn body_congestion(result: &core::RoutingResult, center: [f64; 2], half: [f64; 2
     if nodes > 0 { total / nodes as f64 } else { 0.0 }
 }
 
-fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
+pub(crate) fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
@@ -366,7 +391,7 @@ fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> {
 /// The board without its copper texts: while laying out, they are
 /// decoration that moves off the copper afterwards (`labels`), not
 /// obstacles at their old spots.
-fn without_copper_texts(pcb: &Expr) -> Expr {
+pub(crate) fn without_copper_texts(pcb: &Expr) -> Expr {
     let Expr::List(items) = pcb else {
         return pcb.clone();
     };
@@ -450,6 +475,15 @@ pub fn layout_kicad_board(
     // What sizing the outline left of the placement budget (a little at
     // least: without any, placement would not anneal at all).
     placer_config.work_seconds = Some((placement_budget - work).max(0.1 * placement_budget));
+    // A congestion model ranks more of the placer's seeds than the race
+    // could probe.
+    let congestion_model = match &config.congestion_model {
+        Some(path) => Some(pcb_congestion::CongestionModel::load(path)?),
+        None => None,
+    };
+    if congestion_model.is_some() {
+        placer_config.placement_seeds = placer_config.placement_seeds.max(config.congestion_candidates);
+    }
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
     work += placement.work_seconds;
     eprintln!("layout: placed ({:.0} s, work {work:.0} s)", elapsed());
@@ -514,7 +548,7 @@ pub fn layout_kicad_board(
     // spacing is never legal.
     placer_config.tight_bodies = Some(placement.tight_bodies);
     let mut problem = lower_placement(&pcb, &placer_config, &[])?;
-    placer::Relaxation {
+    let first_relaxation = placer::Relaxation {
         spacing: placement.spacing_mm,
         grid: placement.grid_mm,
         halo_scale: placement.halo_scale,
@@ -523,8 +557,8 @@ pub fn layout_kicad_board(
         tight: placement.tight_bodies,
         edge_copper: placement.edge_copper,
         edge_rule: placement.edge_rule_mm,
-    }
-    .apply(&mut problem.problem);
+    };
+    first_relaxation.apply(&mut problem.problem);
     // The in-place router compares placements: it stops negotiating once
     // conflicts no longer really fall (a move on OpenAirScope negotiated
     // 64 iterations at 15 conflicted nets, 200-350 s a move). The final
@@ -592,6 +626,8 @@ pub fn layout_kicad_board(
                     && ((a.angle - b.angle).rem_euclid(360.0) + 1.0e-3) % 360.0 < 2.0e-3
             })
     };
+    // The placements a congestion model scores (the kept one first).
+    let mut pool: Vec<(Vec<placer::Pose>, placer::Relaxation)> = Vec::new();
     let mut others: Vec<(&Vec<placer::Pose>, &placer::Relaxation)> = Vec::new();
     {
         let mut seen = vec![problem.problem.poses.clone()];
@@ -601,6 +637,48 @@ pub fn layout_kicad_board(
                 others.push((poses, relaxation));
             }
         }
+    }
+    // With a congestion model, the seeds' placements are ranked by the
+    // routability it predicts, and only the best few are probed (a probe
+    // is a real route of up to `probe_seconds`; a prediction takes
+    // milliseconds). The race below then judges those as before.
+    let mut congestion = None;
+    if let Some(model) = &congestion_model
+        && seeds == 1
+        && pin_swaps.is_none()
+        && others.len() + 1 > config.congestion_probes.max(1)
+    {
+        pool.push((problem.problem.poses.clone(), first_relaxation));
+        pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), **relaxation)));
+        let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, model, router_config, &core_config, connect, &config.congestion_score)?;
+        let keep: Vec<usize> = ranked.order.iter().copied().take(config.congestion_probes.max(1)).collect();
+        eprintln!(
+            "congestion model: {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
+            pool.len(),
+            ranked.seconds,
+            ranked.lower_seconds,
+            ranked.feature_seconds,
+            ranked.inference_seconds,
+            keep,
+            keep.iter().map(|index| (ranked.scores[*index] * 100.0).round() / 100.0).collect::<Vec<_>>()
+        );
+        if keep[0] != 0 {
+            let (poses, relaxation) = &pool[keep[0]];
+            let mut candidate = pcb.clone();
+            {
+                let mut footprints = footprint_items(&mut candidate)?;
+                for (footprint, pose) in footprints.iter_mut().zip(poses) {
+                    write_footprint_pose(footprint, *pose)?;
+                }
+            }
+            board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
+            pcb = candidate;
+            placer_config.tight_bodies = Some(relaxation.tight);
+            problem = lower_placement(&pcb, &placer_config, &[])?;
+            relaxation.apply(&mut problem.problem);
+        }
+        others = keep[1..].iter().map(|index| (&pool[*index].0, &pool[*index].1)).collect();
+        congestion = Some(KiCadCongestionRanking { scores: ranked.scores, probed: keep });
     }
     let mut race = Vec::new();
     let (mut router, mut result) = if seeds == 1 && pin_swaps.is_none() && !others.is_empty() {
@@ -1119,6 +1197,7 @@ pub fn layout_kicad_board(
         moves,
         outline_sizing,
         placement_race: race,
+        congestion,
         labels,
         quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),
         pin_swaps,

@@ -20,6 +20,7 @@ members = [
     "crates/pcb-placement",
     "crates/pcb-placer",
     "crates/pcb-router",
+    "crates/pcb-congestion",
     "crates/pcb-topo",
     "crates/pcb-routing",
     "crates/pcb-validate",

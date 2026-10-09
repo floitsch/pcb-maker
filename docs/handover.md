@@ -46,6 +46,18 @@ v13 is the first sweep that places all of them, and its numbers will be
 lower. Route-mode conclusions (pour model, connect rungs, Freerouting
 comparison) are unaffected.
 
+**The first real-layout baseline, quick tier** (`build/quick-v13-base.log`,
+x165 with the fixed run.py, 37 boards, 12 jobs, 3617 s): **18 of 37 pass**
+(25 when the designer's placement was kept). New failure classes now
+visible: four boards fail before routing because the placer finds no legal
+spot for a part (framework_mobo_lefthalf M1; laptop power C8/R49/C22;
+ErgoSNM KEY31/KEY33; urchin SW31/SW23); the SmartSpin2k panel at 270/585;
+WLED_Matrix 26 and PixelWave 30 unconnected with shorts, bridges and 50
+keepout violations; MIDAS-MK1 15, BAGEL 7. Starved thermals only:
+mackerel-08 8, Castor 9, 1337-v4.0 3, bumwings R64 1. The tier's stored
+times and peaks (quick.json) are from designer-placement runs and must be
+redone (one board peaked at 5.7 GB against 3.7 assumed).
+
 **Layout sweep v12** (x165 = 1c7a557, 14 jobs, 10375 s in all): **41 of
 109 pass**; against v11 better 12 / same 77 / worse 12, unconnected 4722 to
 4771 (SNSP +90 and Quanta75 +25 are the known costs of the mask-body and

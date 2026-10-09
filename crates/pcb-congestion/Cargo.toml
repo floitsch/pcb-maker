@@ -1,0 +1,11 @@
+[package]
+name = "pcb-congestion"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Congestion features of a placed board on the router's tiles, and a learned congestion predictor (ONNX, tract)"
+publish = false
+
+[dependencies]
+pcb-router = { path = "../pcb-router" }
+tract-onnx = "0.23"

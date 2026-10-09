@@ -73,6 +73,10 @@ pub use silkscreen::repair_kicad_silkscreen;
 pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunities};
 mod adaptive_routing;
 mod board_layout;
+mod congestion_samples;
+mod congestion_rank;
+pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
+pub use congestion_samples::{KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation, export_congestion_samples};
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial, KiCadSwappable, layout_kicad_board,
 };

@@ -18,6 +18,8 @@ use std::sync::Arc;
 
 use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
+/// Read-only tile views of the negotiation, for the congestion model.
+pub mod congestion;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -77,6 +79,25 @@ pub struct Config {
     /// against 27, Hub 123 against 135; tracks mode unchanged; it costs
     /// iterations.
     pub pour_islands: bool,
+    /// A pad's thermal spoke counts only where its strip keeps the
+    /// clearance from other nets' copper all the way to the fill, as
+    /// KiCad's does (`analyze_pours_full`).
+    pub spoke_clearance: bool,
+    /// The clean-up keeps a change only if no pour net has more pads off
+    /// its main piece after it.
+    pub pour_aware_polish: bool,
+    /// The same for a via reduction round.
+    pub pour_aware_via_reduction: bool,
+    /// Whether a pour net stuck in conflict is ripped up whole now and
+    /// then like the other nets (`rip_up_whole`).
+    pub pour_whole_rip_up: bool,
+    /// During negotiation, a pad cut off from its pour's main piece first
+    /// gets a stitching via from its piece to the main piece on another
+    /// layer, where one fits, before it is routed as a track. Off: Sisu's
+    /// connect rung got worse with it (68 open against 63, 74 against 56
+    /// with narrow signals) though fewer pads were cut off (1313 against
+    /// 1758).
+    pub stitch_in_negotiation: bool,
     /// Fine-pitch pads (narrower than the track plus its clearance, on one
     /// layer, in a row of their kind) get a straight stub outward fixed
     /// before negotiation, up to this long in mm (0, the default, turns it
@@ -180,6 +201,11 @@ impl Default for Config {
             stall_patience: 25,
             abandon_hopeless: true,
             pour_islands: true,
+            spoke_clearance: true,
+            pour_aware_polish: true,
+            pour_aware_via_reduction: true,
+            pour_whole_rip_up: true,
+            stitch_in_negotiation: false,
             escape_stub_mm: 0.0,
             global_routing: false,
             neck_reach: 1.5,
@@ -1846,6 +1872,14 @@ impl Router {
     fn rip_up_whole(&self, net: NetId) -> bool {
         const STUCK_WHOLE: usize = 8;
         let stuck = self.nets[net as usize].stuck;
+        // A pour net ripped up whole loses the vias that join its layers'
+        // fill: the next refresh finds its pads scattered over a dozen
+        // pieces, cuts them off from the main piece and routes them as
+        // tracks (Sisu's GND every eighth iteration: 217 pads in the main
+        // piece, then 35, then 261 again, about 100 pads cut off each time).
+        if !self.nets[net as usize].plane.is_empty() && !self.config.pour_whole_rip_up {
+            return false;
+        }
         stuck > 0 && stuck % STUCK_WHOLE == 0
     }
 
@@ -4583,6 +4617,22 @@ impl Router {
         (open, vias, length)
     }
 
+    /// Per pour net (in net order): how many of its pads the pour and the
+    /// net's copper leave off the main piece. The polish keeps a change
+    /// only if none of these grows (`pour_aware_polish`).
+    fn pour_stranded(&self) -> Vec<usize> {
+        (0..self.nets.len() as NetId)
+            .filter(|net| self.nets[*net as usize].routable && !self.nets[*net as usize].plane.is_empty())
+            .map(|net| {
+                let (pours, mut parent, main) = self.analyze_pours(net);
+                let terminal_base = pours.pieces + 1;
+                (0..self.nets[net as usize].terminal_nodes.len())
+                    .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+                    .count()
+            })
+            .collect()
+    }
+
     /// Which pads of pour net `net` its pour no longer joins to the main
     /// piece (the signals cut the pour between them): those leave
     /// `on_plane`, so the net routes them to the main piece (only its
@@ -4596,7 +4646,46 @@ impl Router {
         if state.plane.is_empty() || !state.routable {
             return 0;
         }
-        let (pours, mut parent, main) = self.analyze_pours(net);
+        let (mut pours, mut parent, mut main) = self.analyze_pours(net);
+        // Pads the signals cut off join the main piece again through a via
+        // where their piece lies over the main piece on another layer: a
+        // stitch now is cheaper than routing each pad as a track to it,
+        // which displaces the signals (Sisu: GND left negotiation with
+        // about 200 of 264 pads off the main piece).
+        if self.config.stitch_in_negotiation && self.board.layer_count >= 2 {
+            let terminal_base = pours.pieces + 1;
+            let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
+            for terminal in 0..state.terminal_nodes.len() {
+                if !state.on_plane[terminal] {
+                    continue;
+                }
+                let root = find(&mut parent, terminal_base + terminal);
+                if root != main {
+                    anchors.entry(root).or_insert(self.board.nets[net as usize].terminals[terminal].anchor);
+                }
+            }
+            if !anchors.is_empty() {
+                let vias = self.stitching_vias(net, &pours, &mut parent, main, &anchors, true);
+                if !vias.is_empty() {
+                    for (layer, other, cell) in &vias {
+                        self.nets[net as usize].branches.push(Branch {
+                            nodes: vec![
+                                Node { layer: *layer as u8, cell: *cell as u32 },
+                                Node { layer: *other as u8, cell: *cell as u32 },
+                            ],
+                            start_terminal: PLANE_TERMINAL,
+                            end_terminal: PLANE_TERMINAL,
+                        });
+                    }
+                    self.stamp(net);
+                    if self.config.verbose {
+                        eprintln!("  pour {}: {} stitching vias for cut-off pads", self.board.nets[net as usize].name, vias.len());
+                    }
+                    (pours, parent, main) = self.analyze_pours(net);
+                }
+            }
+        }
+        let state = &self.nets[net as usize];
         let terminal_base = pours.pieces + 1;
         let terminal_count = state.terminal_nodes.len();
         let touches = |state: &NetState, terminal: usize| {
@@ -4616,10 +4705,14 @@ impl Router {
                 || (branch.start_terminal == PLANE_TERMINAL && branch.end_terminal < FREE_END)
         };
         let rejoined: Vec<usize> = if (0..terminal_count).any(|terminal| !state.on_plane[terminal] && touches(state, terminal)) {
-            let (_, mut without, main_without) = self.analyze_pours_skipping(net, &is_stub);
+            // Without the stubs the pour has pieces of its own (the stubs'
+            // nodes are fill no more), so the terminals follow its pieces,
+            // not the full analysis's (ASH-ART Qfwfq: index 143 of 143).
+            let (pours_without, mut without, main_without) = self.analyze_pours_skipping(net, &is_stub);
+            let base_without = pours_without.pieces + 1;
             (0..terminal_count)
                 .filter(|terminal| !state.on_plane[*terminal] && touches(state, *terminal))
-                .filter(|terminal| find(&mut without, terminal_base + terminal) == main_without)
+                .filter(|terminal| find(&mut without, base_without + terminal) == main_without)
                 .collect()
         } else {
             Vec::new()
@@ -4731,6 +4824,7 @@ impl Router {
                 break;
             }
             let before = self.quality();
+            let stranded_before = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
             let pending: Vec<NetId> = order
                 .iter()
                 .copied()
@@ -4772,7 +4866,10 @@ impl Router {
             self.clean_up(&touched);
             self.config.via_cost = via_cost;
             let after = self.quality();
-            let keep = after.0 <= before.0 && after.1 < before.1;
+            let stranded_after = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
+            let keep = after.0 <= before.0
+                && after.1 < before.1
+                && stranded_after.iter().zip(&stranded_before).all(|(after, before)| after <= before);
             if self.config.verbose {
                 eprintln!(
                     "via reduction round {round}: {:?} -> {:?}, {}",
@@ -5288,7 +5385,10 @@ impl Router {
             let anchor = description.terminals[terminal].anchor;
             let bounds = pad.shape.aabb();
             let round = matches!(pad.shape, crate::geometry::Shape::Circle { .. });
-            let layers_of_nodes: HashSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
+            // In layer order: a hash set's order made the union order, and
+            // so the roots, the main piece's tie-break and the stitching
+            // vias' anchors, differ from run to run.
+            let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
             for layer in layers_of_nodes {
                 if pours.label[layer].is_empty() || solid[layer] {
                     continue;
@@ -5312,6 +5412,23 @@ impl Router {
                 // spoke into an island matters only to a pad short of them.
                 let mut good = 0;
                 let mut islands: Vec<usize> = Vec::new();
+                // The spoke's strip, as far as the brush's map tells: its
+                // middle and the lines half a spoke less half a brush to
+                // either side (a brush centre there keeps the clearance
+                // the spoke's edge needs).
+                let bridge = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == layer)
+                    .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                    .fold(0.0f64, f64::max);
+                let side = ((bridge - self.board.classes[state.plane_class[layer]].trace_width) / 2.0).max(0.0);
+                let plane_map = self.map_index(state.plane_class[layer], layer);
+                let clear = |cell: usize| {
+                    state.plane[layer][cell]
+                        && self.occupancy[plane_map][cell] as usize == own.contains(&(plane_map as u32, cell as u32)) as usize
+                };
                 for direction in directions {
                     // From the pad's edge along the spoke, the fill must
                     // begin within the gap and a little more.
@@ -5323,6 +5440,28 @@ impl Router {
                             continue;
                         };
                         let piece = pours.label[layer][cell];
+                        // KiCad keeps a spoke only where it keeps the
+                        // clearance all the way from the pad to the fill:
+                        // on a fine-pitch row the neighbours' clearance
+                        // cuts it (k30's U2.7: fill 0.7 mm right of the pad
+                        // counted as a spoke past pad 6's corner, 0.2 mm
+                        // from the spoke; KiCad left the pad unconnected).
+                        if piece != 0 && self.config.spoke_clearance {
+                            let steps = ((extra / (self.grid.pitch / 2.0)).ceil() as usize).max(1);
+                            let blocked = (1..=steps).any(|step| {
+                                let along = edge + extra * step as f64 / steps as f64;
+                                [-side, 0.0, side].iter().any(|offset| {
+                                    let at = [
+                                        anchor[0] + direction[0] * along - direction[1] * offset,
+                                        anchor[1] + direction[1] * along + direction[0] * offset,
+                                    ];
+                                    self.grid.nearest_node(at).is_none_or(|cell| !clear(cell))
+                                })
+                            });
+                            if blocked {
+                                break;
+                            }
+                        }
                         if piece != 0 {
                             if has_item(&mut parent, piece as usize) {
                                 union(&mut parent, terminal_base + terminal, piece as usize);
@@ -5349,11 +5488,24 @@ impl Router {
                 .entry(find(&mut parent, terminal_base + terminal))
                 .or_default() += 1;
         }
-        let main = votes
-            .into_iter()
-            .max_by_key(|(root, count)| (*count, usize::MAX - *root))
-            .map_or(0, |(root, _)| root);
-        (pours, parent, main, spoke_islands)
+        let most = votes.values().copied().max().unwrap_or(0);
+        let mut leaders: Vec<usize> = votes.iter().filter(|(_, count)| **count == most).map(|(root, _)| *root).collect();
+        leaders.sort_unstable();
+        // Equal votes: the component with the most fill.
+        let largest = if leaders.len() > 1 {
+            let mut area: HashMap<usize, usize> = HashMap::new();
+            let mut root_of: HashMap<u32, usize> = HashMap::new();
+            for labels in &pours.label {
+                for label in labels.iter().filter(|label| **label != 0) {
+                    let root = *root_of.entry(*label).or_insert_with(|| find(&mut parent, *label as usize));
+                    *area.entry(root).or_default() += 1;
+                }
+            }
+            leaders.iter().copied().max_by_key(|root| (area.get(root).copied().unwrap_or(0), usize::MAX - *root)).unwrap_or(0)
+        } else {
+            leaders.first().copied().unwrap_or(0)
+        };
+        (pours, parent, largest, spoke_islands)
     }
 
     /// Per layer, the pads of `net` whose thermal relief keeps the pour's
@@ -5517,17 +5669,114 @@ impl Router {
         Ok(())
     }
 
+    /// Stitching vias for pour net `net`: per island in `anchors` (a root
+    /// of `parent`, with the point it should be near), the free via spot
+    /// closest to that point that joins the island to another piece on
+    /// another layer (with `main_only`, to the main piece only; else the
+    /// main piece is worth a 5 mm detour), keeping the hole-to-hole
+    /// distance from the net's vias and from each other. Returns (layer,
+    /// other layer, cell) per via.
+    fn stitching_vias(
+        &self,
+        net: NetId,
+        pours: &crate::pour::PourMap,
+        parent: &mut Vec<usize>,
+        main: usize,
+        anchors: &HashMap<usize, crate::geometry::Point>,
+        main_only: bool,
+    ) -> Vec<(usize, usize, usize)> {
+        let class_index = self.board.nets[net as usize].class;
+        let class = self.board.classes[class_index];
+        let layers = self.board.layer_count;
+        let via_reach = 0;
+        let own: HashSet<(u32, u32)> = self.nets[net as usize].stamped.iter().copied().collect();
+        let via_map = self.map_index(class_index, layers);
+        // A via keeps the hole-to-hole distance from the net's vias
+        // already there too: KiCad's rule holds within a net
+        // (PolyKybd's stitches landed 0.1 mm from earlier ones).
+        let spacing = class.via_drill + self.board.hole_to_hole;
+        let mut crowded = vec![false; self.grid.cells()];
+        for branch in &self.nets[net as usize].branches {
+            for pair in branch.nodes.windows(2) {
+                if pair[0].cell != pair[1].cell || pair[0].layer == pair[1].layer {
+                    continue;
+                }
+                let center = self.grid.center_of(pair[0].cell as usize);
+                let keep = spacing.max(class.via_diameter);
+                let bounds = crate::geometry::Aabb { minimum: center, maximum: center }.inflated(keep);
+                if let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) {
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            if crate::geometry::distance(center, self.grid.center(x, y)) < keep {
+                                crowded[self.grid.index(x, y)] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut best: HashMap<usize, (f64, usize, usize, usize)> = HashMap::new();
+        if layers >= 2 {
+            let roots: Vec<Vec<usize>> = (0..layers)
+                .map(|layer| {
+                    pours.label[layer]
+                        .iter()
+                        .map(|piece| if *piece == 0 { 0 } else { find(parent, *piece as usize) })
+                        .collect()
+                })
+                .collect();
+            for layer in 0..layers {
+                for (cell, island) in roots[layer].iter().enumerate() {
+                    let Some(anchor) = anchors.get(island) else {
+                        continue;
+                    };
+                    if crowded[cell]
+                        || !self.statics[class_index].via_allowed(cell, net)
+                        || self.occupancy[via_map][cell] as usize
+                            != own.contains(&(via_map as u32, cell as u32)) as usize
+                        || !pours.solid_around(&self.grid, layer, cell, via_reach)
+                    {
+                        continue;
+                    }
+                    for other in (0..layers).filter(|other| *other != layer) {
+                        let target = roots[other].get(cell).copied().unwrap_or(0);
+                        if target == 0 || target == *island || (main_only && target != main) || !pours.solid_around(&self.grid, other, cell, via_reach) {
+                            continue;
+                        }
+                        let bonus = if target == main { 0.0 } else { 5.0 };
+                        let distance = bonus + crate::geometry::distance(*anchor, self.grid.center_of(cell));
+                        let entry = best.entry(*island).or_insert((f64::INFINITY, 0, 0, 0));
+                        if distance < entry.0 {
+                            *entry = (distance, layer, other, cell);
+                        }
+                    }
+                }
+            }
+        }
+        // Two new vias keep the hole-to-hole distance between them.
+        let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
+        let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
+        // Ties broken by the cell: a hash map's order must not decide.
+        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)));
+        for (_, layer, other, cell) in candidates {
+            let at = self.grid.center_of(cell);
+            if chosen.iter().any(|(_, _, placed)| {
+                *placed == cell || crate::geometry::distance(at, self.grid.center_of(*placed)) < spacing.max(class.via_diameter)
+            }) {
+                continue;
+            }
+            chosen.push((layer, other, cell));
+        }
+        chosen
+    }
+
     /// Connects pour islands that hold terminals to the main piece with
     /// vias; terminals that cannot be reached that way are routed to the
     /// main piece like off-pour pads. Returns the number of stitching vias.
     fn stitch_pours(&mut self, net: NetId, order: &[NetId]) -> usize {
         let class = self.board.classes[self.board.nets[net as usize].class];
-        let class_index = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let terminal_count = self.nets[net as usize].terminal_nodes.len();
-        // A labelled node has pour copper; the via's own clearance against
-        // foreign copper is checked through the via maps, so no extra ring.
-        let via_reach = 0;
         let _ = class;
         let mut stitches = 0;
         let mut rerouted = false;
@@ -5626,9 +5875,6 @@ impl Router {
                     spoke_islands.len()
                 );
             }
-            let own: HashSet<(u32, u32)> =
-                self.nets[net as usize].stamped.iter().copied().collect();
-            let via_map = self.map_index(class_index, layers);
             // Per stranded island, the via closest to its terminal that joins
             // it to another piece (the main piece is worth a detour), all
             // found in one pass over the board and added together: one via
@@ -5646,82 +5892,7 @@ impl Router {
                 let island = find(&mut parent, *piece);
                 anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
             }
-            // A via keeps the hole-to-hole distance from the net's vias
-            // already there too: KiCad's rule holds within a net
-            // (PolyKybd's stitches landed 0.1 mm from earlier ones).
-            let spacing = class.via_drill + self.board.hole_to_hole;
-            let mut crowded = vec![false; self.grid.cells()];
-            for branch in &self.nets[net as usize].branches {
-                for pair in branch.nodes.windows(2) {
-                    if pair[0].cell != pair[1].cell || pair[0].layer == pair[1].layer {
-                        continue;
-                    }
-                    let center = self.grid.center_of(pair[0].cell as usize);
-                    let keep = spacing.max(class.via_diameter);
-                    let bounds = crate::geometry::Aabb { minimum: center, maximum: center }.inflated(keep);
-                    if let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) {
-                        for y in y0..=y1 {
-                            for x in x0..=x1 {
-                                if crate::geometry::distance(center, self.grid.center(x, y)) < keep {
-                                    crowded[self.grid.index(x, y)] = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            let mut best: HashMap<usize, (f64, usize, usize, usize)> = HashMap::new();
-            if layers >= 2 {
-                let roots: Vec<Vec<usize>> = (0..layers)
-                    .map(|layer| {
-                        pours.label[layer]
-                            .iter()
-                            .map(|piece| if *piece == 0 { 0 } else { find(&mut parent, *piece as usize) })
-                            .collect()
-                    })
-                    .collect();
-                for layer in 0..layers {
-                    for (cell, island) in roots[layer].iter().enumerate() {
-                        let Some(anchor) = anchors.get(island) else {
-                            continue;
-                        };
-                        if crowded[cell]
-                            || !self.statics[class_index].via_allowed(cell, net)
-                            || self.occupancy[via_map][cell] as usize
-                                != own.contains(&(via_map as u32, cell as u32)) as usize
-                            || !pours.solid_around(&self.grid, layer, cell, via_reach)
-                        {
-                            continue;
-                        }
-                        for other in (0..layers).filter(|other| *other != layer) {
-                            let target = roots[other].get(cell).copied().unwrap_or(0);
-                            if target == 0 || target == *island || !pours.solid_around(&self.grid, other, cell, via_reach) {
-                                continue;
-                            }
-                            let bonus = if target == main { 0.0 } else { 5.0 };
-                            let distance = bonus + crate::geometry::distance(*anchor, self.grid.center_of(cell));
-                            let entry = best.entry(*island).or_insert((f64::INFINITY, 0, 0, 0));
-                            if distance < entry.0 {
-                                *entry = (distance, layer, other, cell);
-                            }
-                        }
-                    }
-                }
-            }
-            // Two new vias keep the hole-to-hole distance between them.
-            let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
-            let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
-            // Ties broken by the cell: a hash map's order must not decide.
-            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)));
-            for (_, layer, other, cell) in candidates {
-                let at = self.grid.center_of(cell);
-                if chosen.iter().any(|(_, _, placed)| {
-                    *placed == cell || crate::geometry::distance(at, self.grid.center_of(*placed)) < spacing.max(class.via_diameter)
-                }) {
-                    continue;
-                }
-                chosen.push((layer, other, cell));
-            }
+            let chosen = self.stitching_vias(net, &pours, &mut parent, main, &anchors, false);
             if self.config.verbose && !spoke_islands.is_empty() {
                 let into_spoke_islands = chosen
                     .iter()
@@ -5835,6 +6006,9 @@ impl Router {
     fn clean_up(&mut self, order: &[NetId]) -> usize {
         self.cleanup = true;
         let mut improvements = 0;
+        let mut pour_stranded = self.config.pour_aware_polish.then(|| self.pour_stranded()).filter(|counts| !counts.is_empty());
+        let mut pour_check_seconds = 0.0;
+        let mut pour_rejected = 0;
         let started = self.clock();
         let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
         'passes: for _ in 0..self.config.cleanup_passes {
@@ -5897,18 +6071,50 @@ impl Router {
                         self.scratch.expansions += expansions;
                     }
                 }
+                let mut accepted: Vec<bool> = Vec::with_capacity(batch.len());
                 for (index, net) in batch.iter().enumerate() {
                     let state = &self.nets[*net as usize];
-                    if inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6 {
-                        improved = true;
-                        improvements += 1;
-                    } else {
+                    let better = inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6;
+                    if !better {
                         let state = &mut self.nets[*net as usize];
                         state.branches = saved[index].clone();
                         state.connected.fill(true);
                         state.complete = true;
                     }
+                    accepted.push(better);
                     self.stamp(*net);
+                }
+                // A shorter route that cuts a pour's pad off its main piece
+                // is no improvement (k30's +5V: 54 pads stranded at the
+                // stitching after the polish, 3 without it).
+                if let Some(stranded) = pour_stranded.as_mut()
+                    && accepted.iter().any(|kept| *kept)
+                {
+                    let checked = std::time::Instant::now();
+                    let now = self.pour_stranded();
+                    pour_check_seconds += checked.elapsed().as_secs_f64();
+                    if now.iter().zip(stranded.iter()).any(|(now, before)| now > before) {
+                        for (index, net) in batch.iter().enumerate() {
+                            if accepted[index] {
+                                self.unstamp(*net);
+                                let state = &mut self.nets[*net as usize];
+                                state.branches = saved[index].clone();
+                                state.connected.fill(true);
+                                state.complete = true;
+                                self.stamp(*net);
+                                accepted[index] = false;
+                            }
+                        }
+                        pour_rejected += 1;
+                    } else {
+                        *stranded = now;
+                    }
+                }
+                for kept in accepted {
+                    if kept {
+                        improved = true;
+                        improvements += 1;
+                    }
                 }
             }
             if !improved {
@@ -5916,6 +6122,9 @@ impl Router {
             }
         }
         self.cleanup = false;
+        if self.config.verbose && pour_stranded.is_some() {
+            eprintln!("clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks");
+        }
         improvements
     }
 
@@ -6332,4 +6541,190 @@ mod tests {
         assert_eq!(piece(6.0, 6.0), piece(after[0], after[1]));
         assert_eq!(pours.pieces, 4);
     }
+
+    fn rect(center: [f64; 2], half: [f64; 2]) -> Shape {
+        Shape::Polygon {
+            points: vec![
+                [center[0] - half[0], center[1] - half[1]],
+                [center[0] + half[0], center[1] - half[1]],
+                [center[0] + half[0], center[1] + half[1]],
+                [center[0] - half[0], center[1] + half[1]],
+            ],
+        }
+    }
+
+    fn plane(net: NetId, layer: usize, thermal: Option<(f64, f64)>) -> Plane {
+        Plane {
+            net,
+            class: 0,
+            layer,
+            polygon: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+            excluded: Vec::new(),
+            connect: true,
+            thermal_reach: thermal.map_or(0.0, |(gap, bridge)| gap + bridge),
+            thermal_gap: thermal.map_or(0.0, |(gap, _)| gap),
+            exclusive: false,
+            solid: false,
+        }
+    }
+
+    fn board(layer_count: usize, obstacles: Vec<Obstacle>, nets: Vec<Net>, planes: Vec<Plane>, solid_pads: Vec<String>) -> Board {
+        Board {
+            layer_count,
+            outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+            edge_clearance: 0.1,
+            hole_clearance: 0.25,
+            hole_to_hole: 0.25,
+            classes: vec![RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 }],
+            neck_width: 0.25,
+            obstacles,
+            nets,
+            planes,
+            solid_pads,
+            isolated_pads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_plane_stub_cut_off_from_the_main_piece_is_routed_again() {
+        // Two front pads of P reach P's plane on the back through a stub
+        // and a via each. While pads must reach the main piece, the stub
+        // whose via no longer lands in it (the signals cut it off) does not
+        // join its pad to the plane: the pad is routed again, to the main
+        // piece; the other pad keeps its stub.
+        let mut obstacles = vec![
+            copper(Shape::Circle { center: [2.0, 5.0], radius: 0.3 }, 0, "P.1"),
+            copper(Shape::Circle { center: [8.0, 5.0], radius: 0.3 }, 0, "P.2"),
+        ];
+        for obstacle in &mut obstacles {
+            obstacle.layers = 0b01;
+        }
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b01, pad, contact: None, label: label.into() };
+        let board = board(
+            2,
+            obstacles,
+            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [2.0, 5.0], "P.1"), terminal(1, [8.0, 5.0], "P.2")] }],
+            vec![plane(0, 1, None)],
+            Vec::new(),
+        );
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let grid = router.grid().clone();
+        let node = |layer: u8, at: [f64; 2]| Node { layer, cell: grid.nearest_node(at).unwrap() as u32 };
+        let stub = |pad: u16, from: [f64; 2], to: [f64; 2]| {
+            let steps = ((to[0] - from[0]) / 0.1).round() as usize;
+            let mut nodes: Vec<Node> = (0..=steps).map(|step| node(0, [from[0] + 0.1 * step as f64, from[1]])).collect();
+            nodes.push(node(1, to));
+            Branch { nodes, start_terminal: pad, end_terminal: PLANE_TERMINAL }
+        };
+        let cut_off = [3.0, 5.0];
+        {
+            let state = &mut router.nets[0];
+            assert!(!state.plane[1].is_empty());
+            assert_eq!(state.on_plane, vec![false, false]);
+            state.branches = vec![stub(0, [2.0, 5.0], cut_off), stub(1, [8.0, 5.0], [9.0, 5.0])];
+            // The main piece: the plane but around the first stub's via.
+            let target: Vec<bool> = (0..grid.cells())
+                .map(|cell| crate::geometry::distance(grid.center_of(cell), cut_off) > 0.5)
+                .collect();
+            state.plane_target = vec![Vec::new(), target];
+        }
+        router.stamp(0);
+        router.route_net_seq(0, 0.0, true, 1.0);
+        let state = &router.nets[0];
+        assert!(state.complete);
+        assert_eq!(state.branches.len(), 3, "{:?}", state.branches.iter().map(|branch| (branch.start_terminal, branch.end_terminal)).collect::<Vec<_>>());
+        // The new branch leaves pad 1's copper and ends on the main piece.
+        let added = &state.branches[2];
+        let end = *added.nodes.last().unwrap();
+        assert_eq!(added.end_terminal, PLANE_TERMINAL);
+        assert!(state.plane_target[end.layer as usize][end.cell as usize]);
+        assert!(added.nodes.iter().any(|node| state.branches[0].nodes.contains(node)) || added.start_terminal == 0);
+    }
+
+    #[test]
+    fn a_spoke_passing_another_nets_copper_too_closely_does_not_count() {
+        // P.1 sits in a 0.6 mm row between two pads of Q. Its spokes land in
+        // fill that P.2 (a solid pad) holds, but each passes a Q pad closer
+        // than the clearance on its way there: KiCad keeps none of them.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.75, 0.2]), 0, "P.1"),
+            copper(Shape::Circle { center: [8.5, 8.5], radius: 0.4 }, 0, "P.2"),
+            copper(rect([5.0, 4.4], [0.75, 0.2]), 1, "Q.1"),
+            copper(rect([5.0, 5.6], [0.75, 0.2]), 1, "Q.2"),
+        ];
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() };
+        let board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [8.5, 8.5], "P.2")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [5.0, 4.4], "Q.1"), terminal(3, [5.0, 5.6], "Q.2")] },
+            ],
+            vec![plane(0, 0, Some((0.5, 0.5)))],
+            vec!["P.2".into()],
+        );
+        let joined = |spoke_clearance: bool| {
+            let router = Router::new(&board, &Config { pitches: vec![0.1], spoke_clearance, ..Config::default() });
+            let (pours, mut parent, _, _) = router.analyze_pours_full(0, &|_| false);
+            let base = pours.pieces + 1;
+            find(&mut parent, base) == find(&mut parent, base + 1)
+        };
+        // Without the check the probes beyond the row count as spokes.
+        assert!(joined(false));
+        assert!(!joined(true));
+    }
+
+
+    #[test]
+    fn a_pad_whose_stub_is_its_only_copper_in_the_ring_rejoins_the_plane() {
+        // P.1 (the last terminal), a through-hole pad cut off before, has a stub inside its own
+        // thermal ring down to the second layer: with the stub the pour has
+        // two more pieces (the stub's nodes on either layer) than without
+        // it. The pad's spokes reach fill that P.3 (solid) holds, so it
+        // rejoins the plane and loses the stub; the terminals of the
+        // analysis without the stub are looked up by its own pieces
+        // (ASH-ART Qfwfq panicked: index 143 of 143).
+        let mut obstacles = vec![
+            copper(Shape::Circle { center: [3.0, 5.0], radius: 0.3 }, 0, "P.1"),
+            copper(Shape::Circle { center: [7.0, 5.0], radius: 0.3 }, 0, "P.2"),
+            copper(Shape::Circle { center: [5.0, 8.0], radius: 0.3 }, 0, "P.3"),
+        ];
+        for obstacle in &mut obstacles {
+            obstacle.layers = 0b11;
+        }
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b11, pad, contact: None, label: label.into() };
+        let board = board(
+            2,
+            obstacles,
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![terminal(2, [5.0, 8.0], "P.3"), terminal(1, [7.0, 5.0], "P.2"), terminal(0, [3.0, 5.0], "P.1")],
+            }],
+            vec![plane(0, 0, Some((0.5, 0.5))), plane(0, 1, Some((0.5, 0.5)))],
+            vec!["P.3".into()],
+        );
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let grid = router.grid().clone();
+        let node = |layer: u8, x: f64| Node { layer, cell: grid.nearest_node([x, 5.0]).unwrap() as u32 };
+        {
+            let state = &mut router.nets[0];
+            assert!(state.on_plane[2]);
+            state.on_plane[2] = false;
+            state.branches = vec![Branch {
+                nodes: vec![node(0, 3.0), node(0, 3.1), node(0, 3.2), node(1, 3.2)],
+                start_terminal: 2,
+                end_terminal: PLANE_TERMINAL,
+            }];
+        }
+        router.stamp(0);
+        let with_stub = router.analyze_pours(0).0.pieces;
+        let without_stub = router.analyze_pours_skipping(0, &|_| true).0.pieces;
+        assert_eq!(with_stub, without_stub + 2);
+        router.refresh_pour(0);
+        let state = &router.nets[0];
+        assert!(state.on_plane[2]);
+        assert!(state.branches.is_empty());
+    }
+
 }

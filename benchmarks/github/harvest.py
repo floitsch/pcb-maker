@@ -12,7 +12,10 @@ project file at the repository's current head into
 benchmarks/real/external/github/<owner>__<repo>__<stem>/ (gitignored),
 keeps the ones that are finished designs of some size (see `judge`), and
 records them in manifest.json (committed: origin, commit, licence and the
-designer's numbers). `boards` writes boards.json in the corpus runner's
+designer's numbers). With `fetch --training`, boards go to benchmarks/real/external/training/
+instead, judged by relaxed criteria (`judge_training`: any finished board
+of some size), recorded in training-manifest.json: training data for the
+congestion model (docs/congestion-model.md), not benchmarks. `boards` writes boards.json in the corpus runner's
 format from the manifest; run it with
 `benchmarks/corpus/run.py <out> --corpus benchmarks/github/boards.json`,
 and make layout tasks with
@@ -36,6 +39,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 STORE = ROOT / "benchmarks/real/external/github"
 MANIFEST = HERE / "manifest.json"
+TRAINING_STORE = ROOT / "benchmarks/real/external/training"
+TRAINING_MANIFEST = HERE / "training-manifest.json"
 
 # Every query is restricted to KiCad 7+ board files by their generator
 # version line; the second term picks a kind of board. Code search indexes
@@ -161,16 +166,43 @@ def judge(text):
     return numbers, None
 
 
+def judge_training(text):
+    """`judge` relaxed for training data: any finished board (an outline,
+    tracks) with a few parts on 2 to 8 copper layers."""
+    numbers, reason = judge(text)
+    if numbers is None:
+        return numbers, reason
+    if not '"Edge.Cuts"' in text:
+        return numbers, "no outline"
+    if numbers["copper_layers"] < 2 or numbers["copper_layers"] > 8:
+        return numbers, f'{numbers["copper_layers"]} copper layers'
+    if numbers["footprints"] < 8:
+        return numbers, f'only {numbers["footprints"]} footprints'
+    if numbers["footprints"] > 900:
+        return numbers, f'{numbers["footprints"]} footprints'
+    if numbers["segments"] < 15:
+        return numbers, "not routed"
+    return numbers, None
+
+
 def fetch(arguments):
     candidates = json.loads(arguments.candidates.read_text())
+    store = TRAINING_STORE if arguments.training else STORE
+    manifest_path = TRAINING_MANIFEST if arguments.training else MANIFEST
+    judged = judge_training if arguments.training else judge
     # Hard boards first: large files, BGAs, inner layers, fine pitch.
     priority = ["topic:", '"Package_BGA"', '"In2.Cu"', '"Package_LGA"', '"Package_DFN_QFN"', '"Package_QFP"']
     candidates.sort(key=lambda c: (next((i for i, p in enumerate(priority) if c["found_by"].startswith(p)), 99),
                                    -c.get("size", 0)))
-    manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {"boards": [], "rejected": {}}
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"boards": [], "rejected": {}}
     known = {b["key"] for b in manifest["boards"]} | set(manifest["rejected"])
     hashes = {b["sha256"] for b in manifest["boards"]}
-    STORE.mkdir(parents=True, exist_ok=True)
+    if arguments.training and MANIFEST.exists():
+        # The benchmark boards are never training data.
+        benchmark = json.loads(MANIFEST.read_text())
+        known |= {b["key"] for b in benchmark["boards"]}
+        hashes |= {b["sha256"] for b in benchmark["boards"]}
+    store.mkdir(parents=True, exist_ok=True)
     taken = 0
     for candidate in candidates:
         if arguments.limit and taken >= arguments.limit:
@@ -220,11 +252,11 @@ def fetch(arguments):
             manifest["rejected"][key] = f"download failed: {error}"
             continue
         text = board_bytes.decode("utf-8", errors="replace")
-        numbers, reason = judge(text)
+        numbers, reason = judged(text)
         if reason:
             manifest["rejected"][key] = reason
             print(f"  {key}: {reason}", file=sys.stderr)
-            MANIFEST.write_text(json.dumps(manifest, indent=1))
+            manifest_path.write_text(json.dumps(manifest, indent=1))
             continue
         digest = hashlib.sha256(board_bytes).hexdigest()
         if digest in hashes:
@@ -239,7 +271,7 @@ def fetch(arguments):
             name += "__" + re.sub(r"[^A-Za-z0-9_.-]", "_", Path(path).parent.name or "root")
             if any(board["name"] == name for board in manifest["boards"]):
                 name += "__" + hashlib.sha256(path.encode()).hexdigest()[:6]
-        target = STORE / name
+        target = store / name
         target.mkdir(parents=True, exist_ok=True)
         (target / f"{stem}.kicad_pcb").write_bytes(board_bytes)
         (target / f"{stem}.kicad_pro").write_bytes(project_bytes)
@@ -254,8 +286,8 @@ def fetch(arguments):
         taken += 1
         print(f"{name}: {numbers['copper_layers']} layers, {numbers['footprints']} footprints, "
               f"{numbers['fine_pads']} fine pads, {numbers['segments']} segments, {license_}", file=sys.stderr)
-        MANIFEST.write_text(json.dumps(manifest, indent=1))
-    MANIFEST.write_text(json.dumps(manifest, indent=1))
+        manifest_path.write_text(json.dumps(manifest, indent=1))
+    manifest_path.write_text(json.dumps(manifest, indent=1))
     print(f"{len(manifest['boards'])} boards in the manifest, {len(manifest['rejected'])} rejected", file=sys.stderr)
 
 
@@ -284,6 +316,8 @@ def main():
     f = commands.add_parser("fetch")
     f.add_argument("--candidates", type=Path, default=HERE / "candidates.json")
     f.add_argument("--limit", type=int, default=0)
+    f.add_argument("--training", action="store_true",
+                   help="relaxed criteria, into benchmarks/real/external/training (congestion model training data)")
     commands.add_parser("boards")
     arguments = parser.parse_args()
     {"search": search, "fetch": fetch, "boards": boards}[arguments.command](arguments)

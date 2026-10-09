@@ -1717,7 +1717,45 @@ fn pour_keepout(zone: &Expr, layers: &LayerTable) -> Result<Option<(u32, Vec<[f6
     if !keeps_fill_out {
         return Ok(None);
     }
-    Ok(Some((layers.mask_of_item(zone)?, rule_area_polygon_points(zone)?)))
+    // Only copper layers matter, and an outline that is not a polygon is
+    // skipped unless it is a drawn circle (TelemetryOnboard: circles on
+    // F.SilkS, outlines of one arc each, refused the whole board).
+    let mask = layers.mask_of_item(zone)?;
+    if mask == 0 {
+        return Ok(None);
+    }
+    if let Ok(points) = rule_area_polygon_points(zone) {
+        return Ok(Some((mask, points)));
+    }
+    Ok(rule_area_circle(zone).map(|points| (mask, points)))
+}
+
+/// A rule area outlined by one full-circle arc (start and end equal, the
+/// middle across), as a 32-gon around it; `None` for any other outline.
+fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
+    let pts = zone.child("polygon")?.child("pts")?;
+    let arcs: Vec<&Expr> = pts.children().iter().filter(|item| item.head() == Some("arc")).collect();
+    let [arc] = arcs.as_slice() else {
+        return None;
+    };
+    let point = |name: &str| -> Option<[f64; 2]> {
+        let form = arc.child(name)?;
+        Some([form.children().get(1)?.atom()?.parse().ok()?, form.children().get(2)?.atom()?.parse().ok()?])
+    };
+    let (start, middle, end) = (point("start")?, point("mid")?, point("end")?);
+    if (start[0] - end[0]).abs() > 1.0e-6 || (start[1] - end[1]).abs() > 1.0e-6 {
+        return None;
+    }
+    let center = [(start[0] + middle[0]) / 2.0, (start[1] + middle[1]) / 2.0];
+    let radius = ((start[0] - middle[0]).powi(2) + (start[1] - middle[1]).powi(2)).sqrt() / 2.0;
+    (radius > 0.0).then(|| {
+        (0..32)
+            .map(|index| {
+                let angle = index as f64 * std::f64::consts::TAU / 32.0;
+                [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]
+            })
+            .collect()
+    })
 }
 
 /// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
@@ -3360,6 +3398,37 @@ mod pour_request_tests {
         // of In1 as before.
         assert!(!board.obstacles.iter().any(|obstacle| obstacle.label == "no fill"));
         assert!(board.obstacles.iter().any(|obstacle| obstacle.label == "no tracks" && obstacle.blocks_tracks));
+    }
+
+    #[test]
+    fn fill_keepouts_off_copper_or_drawn_as_circles_do_not_refuse_the_board() {
+        // TelemetryOnboard: rule areas that keep fills out, drawn as circles
+        // (an outline of one arc) on F.SilkS and on F.Cu.
+        let circle = |layer: &str, x: f64| {
+            format!(
+                r#"(zone (layer "{layer}") (keepout (tracks allowed) (vias allowed) (pads allowed) (copperpour not_allowed) (footprints allowed))
+                (polygon (pts (arc (start {x} 5) (mid {} 5) (end {x} 5)))))"#,
+                x + 2.0
+            )
+        };
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (37 "F.SilkS" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 2 2) (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.5) (layers "*.Cu") (net "GND")))
+              (footprint "b" (at 18 8) (pad "1" thru_hole circle (at 0 0) (size 1 1) (drill 0.5) (layers "*.Cu") (net "GND")))
+              (zone (net "GND") (layer "F.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10) (xy 0 10))))
+              {} {})"#,
+            circle("F.SilkS", 3.0),
+            circle("F.Cu", 9.0)
+        ))
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let excluded = &board.planes.iter().find(|plane| plane.layer == 0).unwrap().excluded;
+        assert_eq!(excluded.len(), 1);
+        assert!(core::geometry::point_in_polygon([10.0, 5.0], &excluded[0]));
+        assert!(!core::geometry::point_in_polygon([4.0, 5.0], &excluded[0]));
     }
 
     #[test]

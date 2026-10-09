@@ -2467,6 +2467,41 @@ fn run() -> Result<(), String> {
             );
             Ok(())
         }
+        "score-congestion" => {
+            let usage = "usage: pcb-maker score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let model = arguments.next().ok_or_else(|| usage.to_string())?;
+            let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
+            let score = pcb_kicad::score_kicad_congestion(Path::new(&source), &board_id, Path::new(&model), &router)?;
+            println!("{}", serde_json::to_string(&score).map_err(|error| error.to_string())?);
+            Ok(())
+        }
+        "score-congestion-sample" => {
+            let usage = "usage: pcb-maker score-congestion-sample <sample.json> <model.onnx>";
+            let sample = arguments.next().ok_or_else(|| usage.to_string())?;
+            let model = arguments.next().ok_or_else(|| usage.to_string())?;
+            let (open, overflow, planes) = pcb_kicad::score_congestion_sample(Path::new(&sample), Path::new(&model))?;
+            println!("{}", serde_json::json!({"open": open, "overflow": overflow, "planes": planes}));
+            Ok(())
+        }
+        "export-congestion-sample" => {
+            let usage = "usage: pcb-maker export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let job: pcb_kicad::KiCadCongestionJob = match arguments.next() {
+                Some(path) => serde_json::from_str(
+                    &std::fs::read_to_string(&path).map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("failed to parse {path}: {error}"))?,
+                None => Default::default(),
+            };
+            let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
+            let reports = pcb_kicad::export_congestion_samples(Path::new(&source), &board_id, Path::new(&output), &job, &router)?;
+            println!("{}", serde_json::to_string(&reports).map_err(|error| error.to_string())?);
+            Ok(())
+        }
         "layout-kicad-board" => {
             let usage = "usage: pcb-maker layout-kicad-board <source-directory> <board-id> <output-directory> [router-config.json|auto] [layout-config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
