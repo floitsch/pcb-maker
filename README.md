@@ -21,11 +21,13 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **41 of 109** to a clean KiCad verdict
-  (0 unconnected, no copper error beyond the designer's own board) within
-  30 minutes each. Most of the rest are complete but for a few connections
-  or a few starved thermal reliefs; a handful are panels or boards whose
-  rules no track can satisfy ([results](docs/benchmarks.md#layout-sweep-v11-on-the-harvested-boards-2026-10-09)).
+  pcb-maker brought **41 of 109** to a clean KiCad verdict (0 unconnected,
+  no copper error beyond the designer's own board) within 30 minutes each
+  in the last sweep. A caveat found on 2026-10-09: the task preparation
+  had kept the designer's placement on 80 of those boards (a net-syntax
+  bug), so that number is mostly a routing result; the first sweep that
+  really places every board is being run and will replace it here
+  ([results](docs/benchmarks.md#layout-sweep-v12-2026-10-09-later-the-pour-model-and-the-parallel-ladder)).
 - **Against Freerouting** on the same 109 boards with only the copper
   removed (the designer's placement kept, 1500 s each): Freerouting finishes
   70 and times out on 34; where it finishes, pcb-maker leaves fewer
@@ -199,7 +201,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1800 s | 109 | 41 clean (v12); 1231 connections open in all on the 29 boards of the earlier baseline (1598 before) | - |
+| Layout from stacked parts and constraints, 1800 s | 109 | 41 clean (v12; 80 boards kept the designer's placement by a task bug, v13 pending) | - |
 | Routing the designer's placement cold, 1500 s | 109 | 50 clean, 206 connections open in all | 8 clean, 70 finished, 34 timed out, 913 open where finished |
 
 ```sh

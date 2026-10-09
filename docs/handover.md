@@ -37,6 +37,15 @@ to 1231 unconnected, passes 5 to 5. Reproduce the table with
 
 The full table is in `docs/benchmarks.md`.
 
+**A caveat on every layout sweep up to v12 (found 2026-10-09 by the
+congestion-model agent):** `run.py`'s unplace only read KiCad 10 net
+syntax, so on the 89 pre-KiCad-10 tasks every footprint counted as netless
+and stayed where the designer put it; only 22 of the 109 tasks were really
+placed (the v12 logs' "placed in" times show which). Fixed in run.py;
+v13 is the first sweep that places all of them, and its numbers will be
+lower. Route-mode conclusions (pour model, connect rungs, Freerouting
+comparison) are unaffected.
+
 **Layout sweep v12** (x165 = 1c7a557, 14 jobs, 10375 s in all): **41 of
 109 pass**; against v11 better 12 / same 77 / worse 12, unconnected 4722 to
 4771 (SNSP +90 and Quanta75 +25 are the known costs of the mask-body and
