@@ -40,7 +40,10 @@ The full table is in `docs/benchmarks.md`.
 **Layout sweep v12** (x165 = 1c7a557, 14 jobs, 10375 s in all): **41 of
 109 pass**; against v11 better 12 / same 77 / worse 12, unconnected 4722 to
 4771 (SNSP +90 and Quanta75 +25 are the known costs of the mask-body and
-plate rules; A13 +42 is a race-winner difference, rerun pending). Seven
+plate rules; A13 +42: x141, x146 and x155 all give 162/223 with 103 under the
+sweep's load and the same race as v11, x165 picks another seed (279
+against 288 unfinished after the probe) and ends worse again; the board
+is sensitive to the race's pick and to load, not to one code step). Seven
 error rows: Telemetry's degenerate fill-keepout rule area (new lowering
 bug), the `refresh_pour` -> `find` stale-index panic on SUMEC, coco2,
 bumwings xiao_sd and Qfwfq, PolyKybd right at the 1800 s limit under

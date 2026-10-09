@@ -72,11 +72,15 @@ def unplace(board, point, remove_outline, keep=()):
         pieces.append(text[last:start])
         if match.group(1) == "footprint":
             reference = re.search(r'\((?:property "Reference"|fp_text reference) "([^"]*)"', block)
-            movable = re.search(r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block) and not re.search(
+            # A pad's net is `(net "X")` in KiCad 10 files and `(net 5 "X")`
+            # before; only the first form was read, so every footprint of an
+            # older file counted as netless and stayed fixed (89 of the 109
+            # harvested tasks never placed anything until 2026-10-09).
+            connected = r'\(pad [^\n]*[\s\S]*?\(net (?:\d+ )?"(?!unconnected-)[^"]+"\)'
+            movable = re.search(connected, block) and not re.search(
                 r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
                 reference and reference.group(1) in keep)
-            if reference and reference.group(1) and not re.search(
-                    r'\(pad [^\n]*[\s\S]*?\(net "(?!unconnected-)[^"]+"\)', block):
+            if reference and reference.group(1) and not re.search(connected, block):
                 netless.append(reference.group(1))
             if movable:
                 # The footprint's own (at ...) is its first direct child.
