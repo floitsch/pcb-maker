@@ -1473,7 +1473,7 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         end,
         radius: width / 2.0,
     };
-    Ok(match item.head() {
+    let shapes = match item.head() {
         Some("gr_line" | "fp_line") => vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)],
         Some("gr_arc" | "fp_arc") => outline::arc_points(
             form_xy(item, "start")?,
@@ -1639,7 +1639,31 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             )]
         }
         _ => Vec::new(),
-    })
+    };
+    // A knockout text is a copper plate with the glyphs cut out: its
+    // bounding box, grown by the stroke, is the copper (Quanta75's 7 mm
+    // "0bsilab" on F.Cu: tracks and pads landed inside the plate, shorts
+    // and mask bridges).
+    let knockout = matches!(item.head(), Some("gr_text" | "fp_text"))
+        && item.child("layer").is_some_and(|layer| layer.children().iter().skip(2).any(|child| child.atom() == Some("knockout")));
+    if knockout && !shapes.is_empty() {
+        let thickness = item
+            .child("effects")
+            .and_then(|effects| effects.child("font"))
+            .and_then(|font| form_f64(font, "thickness", 1).ok())
+            .unwrap_or(0.15);
+        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
+        let (low, high) = (bounds.minimum, bounds.maximum);
+        return Ok(vec![core::Shape::Polygon {
+            points: vec![
+                [low[0] - thickness, low[1] - thickness],
+                [high[0] + thickness, low[1] - thickness],
+                [high[0] + thickness, high[1] + thickness],
+                [low[0] - thickness, high[1] + thickness],
+            ],
+        }]);
+    }
+    Ok(shapes)
 }
 
 /// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
@@ -3136,6 +3160,27 @@ mod pour_request_tests {
         let board = lower(&pcb, &config, false).unwrap().board;
         let opening = board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap();
         assert!((opening.clearance - 0.06).abs() < 1.0e-9, "{}", opening.clearance);
+    }
+
+    #[test]
+    fn a_knockout_text_is_its_plate() {
+        let text = parse(
+            r#"(gr_text "0b" (at 0 0 0) (layer "F.Cu" knockout) (effects (font (size 7 7) (thickness 0.6)))
+              (render_cache "0b" 0 (polygon (pts (xy 1 1) (xy 3 1) (xy 3 4) (xy 1 4))) (polygon (pts (xy 5 1) (xy 8 1) (xy 8 4) (xy 5 4)))))"#,
+        )
+        .unwrap();
+        let shapes = copper_graphic_shapes(&text).unwrap();
+        assert_eq!(shapes.len(), 1);
+        let bounds = shapes[0].aabb();
+        assert!((bounds.minimum[0] - 0.4).abs() < 1e-9 && (bounds.maximum[0] - 8.6).abs() < 1e-9);
+        assert!((bounds.minimum[1] - 0.4).abs() < 1e-9 && (bounds.maximum[1] - 4.6).abs() < 1e-9);
+        // Without the knockout, the glyphs alone.
+        let plain = parse(
+            r#"(gr_text "0b" (at 0 0 0) (layer "F.Cu") (effects (font (size 7 7) (thickness 0.6)))
+              (render_cache "0b" 0 (polygon (pts (xy 1 1) (xy 3 1) (xy 3 4) (xy 1 4))) (polygon (pts (xy 5 1) (xy 8 1) (xy 8 4) (xy 5 4)))))"#,
+        )
+        .unwrap();
+        assert_eq!(copper_graphic_shapes(&plain).unwrap().len(), 2);
     }
 
     #[test]
