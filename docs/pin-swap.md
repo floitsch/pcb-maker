@@ -136,7 +136,7 @@ finish more nets than the hand-made assignment. Two reasons:
   between the MCU and the networks (0 crossings among the `MCU_ROW`
   nets).
 - On these boards the router's result is set by the negotiation stall at
-  U1's escape ring ([failure-analysis.md, F4](failure-analysis.md#f4-negotiation-stalls-in-saturated-escape-regions)).
+  U1's escape ring (negotiation stalls in saturated escape regions).
   Which nets end up stuck there changes with any change of the input, and
   a straight-line estimate cannot see it.
 
@@ -148,7 +148,7 @@ on F4, or on judging assignments by the router (next steps).
 - **A better judge than the ratsnest.** The estimate decides by straight
   lines. The router's tile graph (corridor planning with capacities) could
   score an assignment by congestion instead, which is what actually fails
-  on these boards ([failure-analysis.md](failure-analysis.md#f4-negotiation-stalls-in-saturated-escape-regions)).
+  on these boards (the saturated escape regions again).
 - **Swapping in the loop.** Swapping in the coupled layout loop:
   re-assign after router-driven moves, or let the router propose exchanges
   of pins whose nets conflict.

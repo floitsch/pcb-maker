@@ -33,7 +33,7 @@ Interf-U, cold, 81 iterations).
 Times are routing only; the single native KiCad gate adds about 6 s per
 board. Every `pcb-router` result above passes native ERC/DRC/parity with zero
 findings and zero internal violations. The Freerouting hierarchy and PIC
-figures are the retained ones from `docs/current-status.md`; ECC83 and
+figures are the ones retained by the trust audit of 2026-09-21; ECC83 and
 Interf-U were re-run during the audit.
 
 ![Interf-U routed by pcb-router](reviews/2026-09-21-trust-audit/interf-pcb-router.png)

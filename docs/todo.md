@@ -3,30 +3,26 @@
 Open items that are not yet scheduled. Remove an entry when it is done or
 turns out to be moot; record the outcome in the relevant doc.
 
-The ranked work list from the failure analysis of 2026-09-25 is in
-[failure-analysis.md](failure-analysis.md#work-list); it covers most of the
-router and placer items.
+The ranked list of what is wrong today is in
+[handover.md](handover.md#open-problems-ranked); this file keeps the
+longer-lived items with their reasoning.
 
 ## Benchmarks
 
-- **Check the Freerouting setup on Multichannel.** The head-to-head in
-  [benchmarks.md](benchmarks.md#head-to-head-with-freerouting-and-tscircuit-2026-09-22)
-  reports 180 open for Freerouting on Multichannel, attributed to "via class
-  below board minimum". That is more unconnected items than the board has
-  nets (79) and looks like a broken setup rather than a routing failure.
-  Verify the DSN export (via padstacks, class rules, board minimums) and the
-  session import before the number is quoted anywhere, including the README.
-  Artifacts: `build/corpus-fr7/multichannel/freerouting*`.
-- **Breadboard fence issues.** [benchmarks/fence/README.md](../benchmarks/fence/README.md#issue-log)
-  lists what went wrong on those boards, each with a benchmark: keepout zones
-  inside footprints are ignored by the router (1), signals get routed on a
-  `power` plane layer (9), no placement constraints (2, 11; proposed
-  `constraints.json`), pin swapping (3; implemented, see
-  [pin-swap.md](pin-swap.md), but on the fence it does not yet beat the
-  hand-made assignment), no warning for overlapping fixed parts (5), and
-  `free` vs `fixed_patterns` / overhanging footprints (10). The fence boards
-  work around 1, 2, 3 and 9 in their inputs; the README says how to take each
-  workaround out to test a fix.
+- **Finish the Freerouting and cold-route sweeps on the harvested boards**
+  (`benchmarks/github/freerouting.py`; 40 of 109 boards compared so far,
+  see [benchmarks.md](benchmarks.md#freerouting-against-our-cold-route-on-the-harvested-boards-2026-10-09)),
+  then put the comparison in the README in place of the 2026-09-22 table.
+- **Breadboard fence: what is still open** (re-run 2026-10-07,
+  [benchmarks/fence/README.md](../benchmarks/fence/README.md#what-is-not-working-for-us-2026-10-07)):
+  the 31 mm board does not route on 2 layers (96-97/101, 99-100/108; 8 mm
+  taller both boards complete, with the GND pour in pieces: F4, F5); the
+  coupled loop skips its moves exactly when the first route leaves many
+  opens; silkscreen (8: `repair-kicad-silkscreen` changes nothing there);
+  an edge-flush part placed 0.1 mm inside the project's copper-to-edge rule
+  (12); no warning for stacked fixed parts (5); no release (6). Fixed since
+  September on these boards: footprint keepouts (1), signals on the plane
+  (9), constraints instead of hand placement (2, 10, 11), pin swapping (3).
 
 ## Router
 
@@ -107,15 +103,6 @@ router and placer items.
   probes by trend as well as count, and continue the second best when
   the leader stalls with time left.
 
-- **Budgets in work, not seconds.** Negotiation, clean-up, repair and the
-  ladder are budgeted in wall-clock seconds, so a board routed while the
-  machine is busy gets less work done and can come out much worse
-  (OpenESC 4in1, 2026-10-03: 150/152 during a sweep, 121/152 when a test
-  ran next to the sweep). Results are not reproducible across loads or
-  machines. Budget by work instead (search expansions, iterations, nets
-  rerouted), calibrated so that an idle machine takes about the time the
-  seconds give now; keep a wall-clock limit only as a last guard.
-
 - **Neck down where the class width does not fit.** Designers often
   leave the default class wide and draw most tracks narrower (ohdsp's DSP
   board: class 0.5 mm, 840 of 1992 segments at 0.135 mm). Routed at the
@@ -137,22 +124,22 @@ router and placer items.
   stay open (DSP board 158 -> 189 of 190). Open: a per-step width choice
   in the search, and boards whose project lists no narrower width.
 
-- **Pour reach as KiCad's spokes, not a radius.** The router counts a pad
-  as joined to its pour when a pour node lies within 0.8 mm of a pad node
-  (`analyze_pours`, `piece_near`). KiCad joins it only through thermal
-  spokes: straight out from the pad (along its axes, or at the
-  thermal_bridge_angle), as wide as the bridge width, across the thermal
-  gap into fill. In a fine-pitch row the fill reaches the pads diagonally
-  or not at all, so the router believes pads joined that KiCad leaves
-  unconnected (ohdsp's DSP board: 15 GNDD pads of U201). Tried and
-  reverted (2026-10-04): feeding KiCad's unconnected pads back as
-  "route these by tracks"; they then joined the same phantom fill (14
-  left). The fix is in the model: test the spoke rectangles against the
-  pour map, and count a pad on its pour only with at least one spoke (two
-  for no starved_thermal). Done (2026-10-04) for thermal pours, solid
-  pours keep the touch test: DSP board 15 -> 6 unconnected. Open: per-pad
-  zone_connect overrides, the spoke angle from thermal_bridge_angle, two
-  spokes for no starved thermal.
+- **The pour model against KiCad's fill.** Our pour map is 10-40x more
+  fragmented than KiCad's fill (k30-SBC: GND 1100-1500 pieces against 63 +
+  33 + 29 outlines; see [handover.md](handover.md)). Measure the free mask
+  against `GetFilledPolysList` where they differ; then test the brush at
+  sub-cell offsets for necks near the minimum width, or take KiCad's fill as
+  the pour map. Open from the spoke model too: per-pad zone_connect
+  overrides, the spoke angle from thermal_bridge_angle.
+- **One-spoke pads on fine-pitch rows** (k30's U10 pad 8): the neighbours'
+  exit tracks take the two open corridors. A hard block of the corridors
+  failed (left the pads, cost other boards routes); the exit direction of a
+  row's pads probably has to be decided before negotiation, as a fan-out
+  step.
+- **The ladder keeps the first complete rung whatever its starved
+  thermals** (Castor: "0 open, 18 starved" kept while another run's rung
+  had 5). Rank by (open, starved) before vias; let a complete-but-starved
+  rung be rivalled.
 
 ## Layout
 
@@ -163,14 +150,6 @@ router and placer items.
   in all. Moves now stop when six trials in a row close no open connection
   (894 s). Each trial still costs 30-60 s there (150-230 s on Interf-U):
   the incremental reroute is the cost to attack.
-
-- **Interf-U layout: 110/110 again (2026-09-29, commit 5fdbd3e).** The
-  placement kept for the least wire (seed 1) ended 109/110. The placement
-  race now switches to seed 2's (5 open after the first route instead of
-  6), and two moves close the rest: 110/110, 32 vias, 4669 mm. KiCad
-  reports 3 starved thermals (the designer's board has 2). First-route
-  opens are a weak predictor (seed 3: 22 open, yet it also completes), so
-  racing further (after moves) may pay on other boards.
 
 ## Placer
 
@@ -199,6 +178,11 @@ router and placer items.
 - **Crowded single sides.** FogDrive, HaveSome and tiny_tapeout leave a
   part unplaced with a side 78-93 % full. The hint tells the agent to move
   parts to the other side; the placer does not choose sides by itself.
+- **Crowded boards (OpenESC, SNSP-CPU-01).** `supply_via_room`,
+  `routing_demand` and `replicate_channels` are built as options; none wins
+  on ESC mini within the seed noise, and the channel macros never get
+  seated (the legalizer cannot seat big rigid blocks). SNSP lost 24 routed
+  connections when J2's 22 x 32 mm mask opening became part of its body.
 - **Legalization loses 30-90 % of the global placement's wirelength.**
   Examples: PIC 678 → 1306 mm, hierarchy 493 → 907-1169 mm, Interf-U
   3206 → 4077 mm; measured 2026-09-26/28, graph-first experiment on branch
@@ -223,15 +207,3 @@ router and placer items.
     ([algorithm survey](reviews/2026-09-26-algorithm-survey.md), section 5).
     Meanwhile three placement seeds (the best one kept) absorb part of the
     spread.
-- **LNS endgame: tried, no gain (2026-09-28).** This was the survey's
-  large-neighbourhood search: rip up an open net with every net in its
-  window, reinsert with the open net first in a shuffled order, and keep
-  the round if fewer terminals stay open.
-  - Result on four PCBench "open" boards: rounds were kept, but no board
-    got closer to complete.
-  - Why: each ends with two or three nets that compete for the same gap,
-    and only one fits on the lattice, whatever the order.
-  - The designer fitted both, so the limit is geometric (lattice
-    resolution or topology), not negotiation.
-  - Reverted; the survey's exact window solving or a finer local lattice
-    would be the next step for these.

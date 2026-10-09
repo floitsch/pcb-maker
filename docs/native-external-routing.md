@@ -68,7 +68,7 @@ is terminated at the remaining deadline, retaining its last atomic selection.
 `output/final-selection.json` identifies the final selected project and render.
 The external report remains separate even when bridges complete the board.
 Bridge-selected boards use their updated `preview.svg`; the original external
-render shows the external stage only. See [bridge behavior and limits](native-island-bridges.md).
+render shows the external stage only.
 
 To route a newly generated native placement, pass `--freerouting-config
 external.json` to `experiments/whole-board/area_probe.py` together with `--route`.

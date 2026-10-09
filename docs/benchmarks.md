@@ -211,6 +211,196 @@ footprints, 10-12 layers) as long-term targets. More open boards (Olimex and
 others) can be added to `corpus.json`; boards whose source fails KiCad's checks
 for other reasons than the baseline subtraction covers should be skipped.
 
+## Layout sweep v11 on the harvested boards (2026-10-09)
+
+109 boards, each reduced to what an agent starts from (parts stacked, the
+designer's placement gone, a `constraints.json` derived from it: fixed
+connectors, edges), laid out with `pcb-maker-x136` under 1800 s per board,
+three at a time; boards killed or panicked rerun on x137-x146. A pass is
+KiCad's verdict: 0 unconnected, no copper error beyond the designer's own
+board, constraints met. **38 of 109 pass.** The table compares with the
+x112 baseline (29 boards both have; before / after as routed, KiCad
+unconnected, `+Ne` copper errors, seconds):
+
+    benchmarks/agent-tasks/compare.py build/github-layout-v8-x112.log build/github-layout-v11.log --splice <reruns> --markdown
+
+board                                                                |                   before |                    after |      s
+-------------------------------------------------------------------- | ------------------------ | ------------------------ | ------
+vd-rd__sbc_allwinner_a13__module                                     |              173/223 125 |           216/223 26 +1e |   1538
+briskspirit__Sisu_SSE-9__Sisu_SSE-9                                  |          160/192 108 +2e |               185/192 26 |   1638
+OpenDrone-hw__OpenESC-30x30__4in1                                    |               87/152 146 |               120/152 84 |    969
+OpenDrone-hw__OpenESC-20x20__4in1-mini                               |               109/152 97 |               122/152 51 |    802
+oro-os__link__link                                                   |              224/251 105 |               230/251 70 |   1662
+CRImier__MyKiCad__vaio_re                                            |               256/267 31 |                262/267 5 |   1407
+thpoll83__PolyKybd__poly_corne_split42_right                         |               419/420 16 |            419/420 9 +2e |   1662
+antmicro__jetson-nano-baseboard__jetson-nano-baseboard               |                337/340 8 |                338/340 2 |   1525
+Twisted-Fields__rp2040-motor-controller__RP2040_base                 |               151/186 86 |               151/186 82 |    925
+earth75__atat-1800__ATAT1800                                         |           249/278 44 +7e |           254/278 40 +5e |   1695
+MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub                        |           144/159 20 +4e |           146/159 17 +3e |   1372
+emertcakir__OpenAirScope__OpenAirScope                               |                176/184 8 |                179/184 5 |   1185
+thpoll83__PolyKybd__poly_kybd_split72_right                          |               416/420 21 |               419/420 18 |   1665
+apfaudio__eurorack-pmod__eurorack-pmod-pcb                           |                131/133 2 |                132/133 1 |    889
+CRImier__MyKiCad__framework_mobo_lefthalf                            |             71/71 0 pass |             71/71 0 pass |    215
+CRImier__MyKiCad__zpn_devboard                                       |           167/167 0 pass |           167/167 0 pass |    470
+ISSUIUC__ISS-PCB__BAGEL-MK1                                          |            138/138 0 +1e |            138/138 0 +1e |    248
+ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado                                |                141/144 5 |                141/144 5 |    789
+ISSUIUC__ISS-PCB__MIDAS-MK2                                          |           156/156 0 pass |           156/156 0 pass |    142
+ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA                      |           154/154 0 pass |           154/154 0 pass |    329
+OpenDrone-hw__OpenESC-30x30__4in1-panel                              |               43/184 499 |               32/184 499 |    701
+OpenDrone-hw__OpenFC-Lite__OpenFC                                    |                  81/82 2 |                  80/82 2 |    671
+Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1               |                  55/56 4 |                  55/56 4 |    228
+byrantech__laptop__motherboard                                       |                234/236 2 |                234/236 2 |   1434
+tengigabytes__MokyaLora__MokyaLora                                   |           261/262 0 pass |           261/262 0 pass |   1196
+thpoll83__PolyKybd__poly_corne_split42_left                          |                245/247 3 |                245/247 3 |   1546
+thpoll83__PolyKybd__poly_kybd_split72_left                           |                417/420 6 |                417/420 6 |   1662
+hackclub__OnBoard__krishveercard                                     |                 28/43 20 |                 23/43 21 |    830
+OpenDrone-hw__OpenRX__OpenRX-panel-rev2                              |               53/127 240 |               39/127 253 |    719
+0xCB-dev__0xCB-1337__1337-v4.0                                       |                        - |             47/47 0 pass |     90
+0xCB-dev__0xCB-1337__panel                                           |                        - |           188/188 0 pass |    533
+0xCB-dev__0xCB-1337__pcb                                             |                        - |             85/85 0 pass |    207
+0xCB-dev__0xCB-1337__pcb-panel                                       |                        - | ERROR (error: kicad-cli timed out aft) |    993
+0xCB-dev__0xCB-Static__0xcb-static                                   |                        - |             74/74 0 pass |     25
+ASH-ART__Qfwfq__qfwfq                                                |                        - |             64/64 0 pass |    205
+CDFER__Business-Cards__Batch_1                                       |                        - |              124/204 468 |   1077
+CDFER__Business-Cards__USB_Cable_Tester__PCB                         |                        - |              54/54 0 +1e |    242
+CDFER__Business-Cards__USB_Keypad                                    |                        - |             39/39 0 pass |    117
+CDFER__Business-Cards__WLED_Matrix                                   |                        - |                101/104 1 |    380
+CRImier__MyKiCad__protoesp                                           |                        - |            93/104 21 +1e |    936
+GlasgowEmbedded__glasgow__glasgow__revC3                             |                        - |               177/226 90 |   1144
+Goga64__ULK__ULK                                                     |                        - |              70/70 0 +1e |    514
+Goga64__ULK__ULK_sl_PG1316s                                          |                        - |              70/70 0 +3e |    338
+Huaqiu-Electronics__ecad-viewer__video                               |                        - |           371/371 0 pass |   1012
+ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA                      |                        - |                151/156 8 |    584
+ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA                          |                        - |                154/159 8 |    556
+Jana-Marie__ligra__ligra_back                                        |                        - |             33/33 0 pass |     41
+Ladniy__jiran-ble-lite__jiran-ble-lite                               |                        - |               104/105 20 |    480
+Neotron-Compute__Neotron-Pico__neotron-pico                          |                        - |           176/190 24 +2e |   1186
+Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex                         |                        - |             21/21 0 pass |     98
+Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex |                        - |             19/19 0 pass |    109
+Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard        |                        - |           108/108 0 pass |    660
+anyshake__explorer__Explorer                                         |                        - |               140/150 20 |   1140
+baldengineer__bit-preserve__coco2                                    |                        - |           173/173 0 +12e |    442
+bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV                              |                        - |                 57/69 14 |    550
+bitshiftcrazy__d20_pcb__d20_pcb                                      |                        - |             1/19 63 +27e |   1398
+bitshiftcrazy__spell_tome__spell_tome_bottom                         |                        - |             18/18 0 pass |     29
+byrantech__laptop__keyboard                                          |                        - |                132/136 3 |    784
+byrantech__laptop__power                                             |                        - |           115/115 0 pass |    210
+crmaykish__mackerel-68k__mackerel-08-v1                              |                        - |              96/96 0 +5e |    281
+crmaykish__mackerel-68k__mackerel-10-v1                              |                        - |           155/155 0 pass |    911
+crmaykish__mackerel-68k__mackerel-30-proto                           |                        - |           217/217 0 +15e |    613
+doudar__SmartSpin2k__SmartSpin2k_Panelized                           |                        - |           585/585 0 pass |     81
+duckyb__eternal-keypad__eternal-keypad                               |                        - |              69/69 0 +2e |    237
+duckyb__urchin__main                                                 |                        - |             68/68 0 pass |     13
+ebastler__osprey__osprey_rev_a                                       |                        - |                101/103 1 |    304
+greatscottgadgets__hackrf__hackrf-one                                |                        - |            318/319 1 +1e |    780
+hackclub__OnBoard__E-Fidget-Lite                                     |                        - |             20/20 0 pass |     14
+hackclub__OnBoard__MotionCubeViewAllForces                           |                        - |             20/20 0 pass |    224
+hackclub__OnBoard__PixelWave                                         |                        - |            343/343 0 +1e |    328
+hackclub__OnBoard__keyboar_                                          |                        - |           102/102 0 pass |    268
+hackclub__OnBoard__koeg-board-pcb                                    |                        - |           170/175 6 +15e |   1377
+hackclub__OnBoard__woagboard                                         |                        - |                  90/91 2 |    850
+headblockhead__slab-pcb__interchange-pcb-right                       |                        - |              83/83 8 +1e |   1016
+headblockhead__slab-pcb__slab-pcb-left                               |                        - |             76/76 0 pass |    488
+iandchasse__silkscreen-pcb__silkscreen_pcb                           |                        - |            113/113 1 +1e |    302
+ikajdan__katia__katia                                                |                        - | ERROR (note: run with `RUST_BACKTRACE) |   1762
+little-red-rover__little-red-rover__little_red_rover                 |                        - |             64/64 0 pass |    771
+maniekx86__M8SBC-486__homebrew_486                                   |                        - |           190/190 0 pass |   1233
+obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized              |                        - |          169/172 11 +29e |   1536
+obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized             |                        - |            162/162 0 +4e |    434
+ohdsp__DSP-ADAU1452__DSP-ADAU1452                                    |                        - |            189/190 5 +1e |    841
+rosco-m68k__rosco_m68k__rosco_m68k__kicad                            |                        - |            148/148 0 +6e |   1120
+siderakb__ergo-snm-keyboard__ErgoSNM_keyboard                        |                        - |              58/58 0 +2e |     76
+sporkus__capybully_keyboard__capybully                               |                        - |                  32/32 1 |   1383
+sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys             |                        - |             76/76 0 pass |    190
+sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre            |                        - |             75/75 0 pass |    298
+stonedDiscord__MegaDrive__MegaDrive                                  |                        - |              274/298 107 |   1581
+stonedDiscord__nonSNES__SNSP-CPU-01                                  |                        - |         333/363 116 +58e |   1666
+stonedDiscord__nonSNES__SNSP-CPU-1CHIP                               |                        - |           206/212 23 +5e |   1461
+thpoll83__PolyKybd__poly_kb_molecule_4x4                             |                        - |            8/28 499 +11e |   1261
+thpoll83__PolyKybd__poly_kb_molecule_4x5                             |                        - |            5/28 499 +11e |   1279
+thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted                     |                        - |            4/28 499 +10e |   1035
+thpoll83__PolyKybd__poly_kb_molecule_5x4_wave                        |                        - |            5/28 499 +18e |   1293
+thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left                   |                        - |            5/28 499 +19e |   1309
+tomunderwood99__CharlieBoard__Blue_Line                              |                        - |             26/26 0 pass |     35
+transistorfet__computie__k30-SBC                                     |                        - |           173/173 0 +10e |    594
+tubbytwins__bumwings-kbd__bumwings_v001                              |                        - |             72/72 0 pass |     78
+tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd             |                        - |             70/70 0 pass |     51
+tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd                   |                        - |             75/75 0 pass |    178
+tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd                   |                        - |             85/85 0 pass |    220
+tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd             |                        - |             81/81 0 pass |     45
+tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd                   |                        - |             89/89 0 pass |     73
+tubbytwins__bumwings-kbd__bumwings_v001_core                         |                        - |              98/98 0 +4e |    262
+tubbytwins__bumwings-kbd__bumwings_v001_xiao                         |                        - |             81/81 0 pass |    393
+tubbytwins__bumwings-kbd__bumwings_v001_xiao_s                       |                        - |              78/78 0 +2e |    220
+tzarc__keyboards__ghoul                                              |                        - |                142/148 6 |    821
+wntrblm__Castor_and_Pollux__mainboard                                |                        - |           126/126 0 +17e |    282
+zli117__CyberKeeb2040__MainBoard                                     |                        - |           118/118 0 pass |    144
+
+29 boards in both: better 14, same 13, worse 2; unconnected 1598 -> 1231; passes 5 -> 5
+80 boards only after: 33 pass
+
+Not targets among the boards only the after-run has: the five PolyKybd
+molecule panels (duplicated references, the designer's board has 266
+unconnected), the OpenESC and OpenRX panels, krishveercard and SUMEC (rules
+no track of their class can satisfy).
+
+## Freerouting against our cold route on the harvested boards (2026-10-09)
+
+Both route the designer's placement with every track and via removed, 1500 s
+each, one board at a time; Freerouting 2.x headless through its CLI
+(`benchmarks/github/freerouting.py`), the result imported as a session file
+and refilled; counts are KiCad's, errors beyond the designer's board. 40 of
+the boards have both results so far (`freerouting_compare.py`):
+
+board                                                         |                    Freerouting |                          pcb-maker
+------------------------------------------------------------- | ------------------------------ | ----------------------------------
+0xCB-dev__0xCB-1337__pcb-panel                                |            29 open +201e 603 s |           340/340 0 open +0e 371 s
+CRImier__MyKiCad__framework_mobo_lefthalf                     |              42 open +0e 305 s |              71/71 0 open +0e 64 s
+CRImier__MyKiCad__vaio_re                                     |                 timeout 1500 s |         261/267 26 open +0e 1166 s
+CRImier__MyKiCad__zpn_devboard                                |                 no session 3 s |           167/167 0 open +1e 289 s
+Huaqiu-Electronics__ecad-viewer__video                        |              1 open +0e 1065 s |          371/371 0 open +0e 1728 s
+ISSUIUC__ISS-PCB__BAGEL-MK1                                   |                 timeout 1500 s |           138/138 0 open +0e 122 s
+ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado                         |                 timeout 1500 s |           142/144 2 open +0e 608 s
+ISSUIUC__ISS-PCB__MIDAS-MK2                                   |               7 open +0e 199 s |           156/156 0 open +0e 179 s
+ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA               |               5 open +0e 146 s |           154/154 0 open +0e 106 s
+MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub                 |                 no session 3 s |         148/159 22 open +0e 1000 s
+OpenDrone-hw__OpenESC-20x20__4in1-mini                        |                 timeout 1500 s |           151/152 1 open +0e 482 s
+OpenDrone-hw__OpenESC-30x30__4in1                             |                 timeout 1501 s |           152/152 0 open +0e 442 s
+OpenDrone-hw__OpenESC-30x30__4in1-panel                       |                 timeout 1500 s |          49/184 499 open +0e 323 s
+OpenDrone-hw__OpenFC-Lite__OpenFC                             |             8 open +143e 942 s |             80/82 2 open +0e 421 s
+OpenDrone-hw__OpenRX__OpenRX-panel-rev2                       |                 timeout 1500 s |          43/127 266 open +4e 544 s
+Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1        |              0 open +18e 194 s |             55/56 4 open +0e 216 s
+Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard |               17 open +0e 95 s |           108/108 0 open +0e 484 s
+Twisted-Fields__rp2040-motor-controller__RP2040_base          |                 timeout 1500 s |          151/186 91 open +0e 709 s
+antmicro__jetson-nano-baseboard__jetson-nano-baseboard        |                 timeout 1501 s |          338/340 2 open +0e 1298 s
+apfaudio__eurorack-pmod__eurorack-pmod-pcb                    |                 timeout 1500 s |           132/133 1 open +0e 585 s
+bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV                       |            import failed 187 s |             66/69 9 open +0e 599 s
+briskspirit__Sisu_SSE-9__Sisu_SSE-9                           |                 timeout 1501 s |         184/192 11 open +2e 1420 s
+byrantech__laptop__motherboard                                |                 timeout 1500 s |           234/236 2 open +0e 997 s
+byrantech__laptop__power                                      |              0 open +100e 24 s |            115/115 0 open +0e 91 s
+earth75__atat-1800__ATAT1800                                  |                 timeout 1500 s |         255/278 31 open +0e 1800 s
+emertcakir__OpenAirScope__OpenAirScope                        |               3 open +1e 282 s |           179/184 5 open +0e 727 s
+hackclub__OnBoard__koeg-board-pcb                             |              export failed 0 s |        169/175 11 open +15e 1220 s
+hackclub__OnBoard__krishveercard                              |               93 open +0e 86 s |            23/43 21 open +0e 699 s
+ikajdan__katia__katia                                         |                 timeout 1500 s |         136/162 84 open +0e 1800 s
+maniekx86__M8SBC-486__homebrew_486                            |               0 open +3e 363 s |           190/190 0 open +0e 724 s
+ohdsp__DSP-ADAU1452__DSP-ADAU1452                             |             58 open +0e 1210 s |           189/190 7 open +0e 678 s
+oro-os__link__link                                            |                 timeout 1501 s |         248/251 10 open +0e 1734 s
+rosco-m68k__rosco_m68k__rosco_m68k__kicad                     |               1 open +6e 184 s |           148/148 0 open +2e 347 s
+tengigabytes__MokyaLora__MokyaLora                            |                 timeout 1500 s |           261/262 1 open +0e 767 s
+thpoll83__PolyKybd__poly_corne_split42_left                   |                 timeout 1500 s |          247/247 0 open +0e 1463 s
+thpoll83__PolyKybd__poly_corne_split42_right                  |                 timeout 1500 s |           420/420 0 open +0e 989 s
+thpoll83__PolyKybd__poly_kybd_split72_left                    |                 timeout 1500 s |          420/420 0 open +0e 1735 s
+thpoll83__PolyKybd__poly_kybd_split72_right                   |                 timeout 1500 s |           420/420 0 open +0e 967 s
+vd-rd__sbc_allwinner_a13__module                              |                 timeout 1500 s |          218/223 22 open +3e 981 s
+wntrblm__Castor_and_Pollux__mainboard                         |                1 open +0e 28 s |           126/126 0 open +0e 104 s
+
+40 boards; Freerouting finished 15, timed out 21, failed 4
+where Freerouting finished: pcb-maker fewer unconnected on 11, Freerouting fewer on 2; unconnected in all: Freerouting 265, pcb-maker 39; clean boards: Freerouting 0, pcb-maker 9
+
+This supersedes the 2026-09-22 head-to-head below, which used the earlier
+adapter.
+
 ## Boards harvested from GitHub (added 2026-09-30)
 
 Florian's direction: more benchmarks, from open-source boards on GitHub,
@@ -404,6 +594,8 @@ network and one of two LQFP-44 crosspoint switches. Five of them are
 `corpus.json` entries (`fence-*`): the current 4-layer boards (complete so
 far), the same boards on 2 layers (not routable so far) and a footprint
 keepout test. Its README also carries an issue log of what pcb-maker got
-wrong on these boards (footprint keepouts ignored, signals on a plane layer,
-no placement constraints, no pin swapping) with a benchmark and a pass
-criterion for each.
+wrong on these boards with a benchmark and a pass criterion for each, and a
+re-run of everything on 2026-10-07: footprint keepouts, exclusive planes,
+constraints and pin swapping all work there now; the 31 mm boards still do
+not route on 2 layers (8 mm taller they do, with the GND pour in pieces),
+silkscreen stays unplaced.

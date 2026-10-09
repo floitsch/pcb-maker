@@ -17,47 +17,36 @@ one goal: the best open-source PCB placer and router.
 
 Not finished, but already useful.
 
-- **Open-source boards.** On the 617 open-source boards of
-  [PCBench / PCBWorld D3](benchmarks/pcbench/README.md), prepared the way
-  PCBWorld prepares them, pcb-maker routes 601 (97 %) clean. PCBench's
-  Freerouting run succeeded on 526 (85 %).
-  - On the hardest tier (D3-C, 248 boards): 95 % against 75 %.
-  - Vias are about half and copper 93 % of the designers' boards.
-- **Agent tasks.** Boards reduced to what an agent starts from (parts
-  stacked, no outline) are laid out from a `constraints.json`
-  ([agent tasks](benchmarks/agent-tasks/README.md)).
-  - On the 114 D3 test boards pcb-maker places and routes 110 (96 %)
-    clean. The other 4 have no legal placement.
-  - The median task takes 9 s. The layouts use 0.80 × the designers'
-    copper and 0.52 × their vias.
-
-On the [18-board corpus](docs/benchmarks.md) built from the KiCad demos,
-Olimex and generated ESP32 boards:
-
-- **Routing** (designer's placement kept, tracks and vias stripped): 12 of
-  the 13 two-layer boards complete and DRC-clean. Of the four-layer boards,
-  OpenAir is clean, ColdFire and the video board are a few nets short, and
-  Tiny Tapeout (whose source already fails DRC) is well short. Head to head
-  with Freerouting on the same cold boards: pcb-maker completes 12 of 13,
-  Freerouting 8 of 13, with less copper on every board and fewer vias on
-  four of the seven boards both finish.
-- **Placement + routing** (every movable footprint re-placed from scratch):
-  11 of the 13 two-layer boards clean, one more with a single thermal-relief
-  finding; the automatically placed Interf-U routes with fewer vias than the
-  human layout.
+- **Boards harvested from GitHub** (109 finished KiCad designs, 2 to 8
+  layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
+  Reduced to what an agent starts from - parts stacked, the designer's
+  placement gone, a `constraints.json` of fixed connectors and edges -
+  pcb-maker places and routes **38 of 109** to a clean KiCad verdict
+  (0 unconnected, no copper error beyond the designer's own board) within
+  30 minutes each. Most of the rest are complete but for a few connections
+  or a few starved thermal reliefs; a handful are panels or boards whose
+  rules no track can satisfy ([results](docs/benchmarks.md#layout-sweep-v11-on-the-harvested-boards-2026-10-09)).
+- **Against Freerouting** on the same boards with only the copper removed
+  (the designer's placement kept, 1500 s each): on the 40 boards compared
+  so far Freerouting finishes 15 and times out on 21; where it finishes,
+  pcb-maker leaves fewer connections open on 11 boards and Freerouting on
+  2, with 9 boards clean against 0
+  ([table](docs/benchmarks.md#freerouting-against-our-cold-route-on-the-harvested-boards-2026-10-09)).
+- **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
+  way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
+  PCBench's Freerouting run 526 (85 %); vias about half and copper 93 % of
+  the designers' boards. On the 114 D3 agent tasks 110 are laid out clean,
+  median 9 s.
 - **Not there yet.**
-  - Placement: very dense two-sided boards with rotated parts can leave the
-    placer without a legal solution.
-  - Speed: large four-layer boards take 10–20 minutes.
-  - Pours: big copper pours on both layers of a two-layer board are still
-    the weak spot.
+  - Pours: our fill model is more fragmented than KiCad's, which shows as
+    starved thermal reliefs on dense boards and as pads routed by tracks
+    that KiCad would have joined through the fill.
+  - Placement: crowded boards (ESC-class four-in-one controllers, a dense
+    SNES motherboard) stay 30-80 connections short; the legaliser gives
+    back a large part of the global placement's quality.
   - Features: no differential pairs or length matching; the placer does
-    not choose sides by itself (constraints put parts on the back). Pin
-    swapping exists but is opt-in. The
-  hardest board in the corpus, a 186-footprint two-layer design with a
-  0.75 mm BGA and a 3.3 V pour on both layers, is DRC-clean but stops at
-  153 of 180 nets with the designer's placement and 161 with automatic
-  placement.
+    not choose sides by itself (constraints put parts on the back); pin
+    swapping is opt-in.
 
 Take a look at the [benchmarks](docs/benchmarks.md) before trusting any
 number here; they are re-run and rewritten as the code changes.
@@ -204,21 +193,19 @@ not what it hopes.
 
 ## Benchmarks
 
-Route mode on cold two-layer boards, one thread, same rules and same DRC for
-every router (full table and method in [docs/benchmarks.md](docs/benchmarks.md)):
+Everything is measured by KiCad's own DRC and connectivity on the result,
+with the designer's own findings subtracted. The harvested GitHub boards are
+the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
-| Board | pcb-maker | Freerouting 2.2.4 |
-| --- | --- | --- |
-| Interf-U (110 nets) | complete, 30 vias, 4654 mm, 109 s | complete, 44 vias, 5051 mm, 44 s |
-| PIC programmer (34) | complete, 1 via, 1911 mm, 4 s | 1 open, 0 vias, 2101 mm, 7 s |
-| Complex hierarchy (50) | complete, 0 vias, 1330 mm, 1 s | 1 open, 0 vias, 1377 mm, 8 s |
-| ESP32-C6 DUT (42) | complete, 26 vias, 1274 mm, 22 s | complete, 29 vias, 1355 mm, 14 s |
-| Multichannel (79) | complete, 20 vias, 2578 mm, 75 s | 180 open, 16 s (likely an adapter setup problem, [being checked](docs/todo.md)) |
-| StickHub (45) | 4 open, 53 vias, 13 s | 2 open, 44 vias, 66 s |
+| Sweep | Boards | pcb-maker | Freerouting |
+| --- | --- | --- | --- |
+| Layout from stacked parts and constraints, 1800 s | 109 | 38 clean; 1231 connections open in all on the 29 boards of the earlier baseline (1598 before) | - |
+| Routing the designer's placement cold, 1500 s | 40 compared | 9 clean, 39 connections open in all | 0 clean, 15 finished, 21 timed out, 265 open where finished |
 
 ```sh
-benchmarks/corpus/fetch.sh                      # downloads the KiCad demos
-python3 benchmarks/corpus/run.py build/corpus   # route and layout for every board
+python3 benchmarks/github/harvest.py fetch                      # the harvested boards
+python3 benchmarks/agent-tasks/run.py build/layout --tasks build/github-tasks-v5/tasks.json
+python3 benchmarks/github/freerouting.py build/freerouting --ours   # both routers, headless
 ```
 
 ## Repository
@@ -229,10 +216,11 @@ python3 benchmarks/corpus/run.py build/corpus   # route and layout for every boa
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
 | `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
 | `src/main.rs` | the `pcb-maker` command line |
-| `benchmarks/corpus` | the board corpus runner and the Freerouting / tscircuit comparisons |
+| `benchmarks/corpus` | the KiCad-demo corpus runner (route and layout) |
+| `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
 | `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
-| `docs/` | design notes, results and the trust audit that reset the project |
+| `docs/` | design notes, results, the hand-over with the open problems |
 
 The other crates (`pcb-engine`, `pcb-grid-router`, `layout-trace-*`, …) are
 earlier approaches kept for their tests and experiments; the
