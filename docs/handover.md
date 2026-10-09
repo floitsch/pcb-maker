@@ -1030,8 +1030,14 @@ polishing; the polish bounded by the wall clock left) closes it: in
 (x112 416, 21), left 417/420 with 6 in 1662 s (same as x112), corne
 right 419/420 with 9 and 2 errors in 1662 s (419, 16). x139 also fixes a
 panic of the pour refresh (a dropped stub left a branch dangling at its
-junction: katia after 1762 s, the Telemetry board after 21 s); both are
-to rerun on x139 when the sweep is done (katia alone takes 17 GB).
+junction: katia after 1762 s, the Telemetry board after 21 s); the Telemetry
+board on x139: 108/108 clean, a pass; katia is to rerun on x139 when the
+sweep is done (it alone takes 17 GB). x140: a root-sheet label keeps its
+name apart from a same-named global net (`note_net_names`;
+Business-Cards Batch_1 was rejected as ambiguous, now it lowers; it is a
+panel). Further rows: homebrew 486, video, laptop power, mackerel-10,
+0xCB-1337, USB_Keypad pass; complete but starved thermals: rosco 6,
+Castor 17, mackerel-30 15, k30-SBC 10, mackerel-08 5.
 Beyond x112's boards so far: homebrew 486 190/190 pass, video 371/371
 pass, laptop power 115/115 pass; rosco 148/148 and Castor_and_Pollux
 126/126 complete but with 6 and 17 starved thermals (opt-in
