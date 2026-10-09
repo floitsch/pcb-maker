@@ -2770,6 +2770,18 @@ fn run() -> Result<(), String> {
             let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             pcb_kicad::dump_kicad_pour_map(Path::new(&source), &board_id, Path::new(&output), &config)
         }
+        "bench-search" => {
+            let usage = "usage: pcb-maker bench-search <source-directory> <board-id> <iterations> [config.json|auto]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let iterations: usize = arguments
+                .next()
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| usage.to_string())?;
+            let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
+            println!("{}", pcb_kicad::bench_kicad_search(Path::new(&source), &board_id, iterations, &config)?);
+            Ok(())
+        }
         "route-kicad-board-freerouting" => {
             let usage = "usage: pcb-maker route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

@@ -54,8 +54,11 @@ pub struct KiCadBoardLayoutConfig {
     pub congestion_model: Option<PathBuf>,
     pub congestion_candidates: usize,
     pub congestion_probes: usize,
-    /// What ranks: `open` (the predicted unfinished nets) or `overflow`
-    /// (the predicted overflow summed over the board).
+    /// What ranks: `open` (the predicted unfinished nets), `overflow`
+    /// (the predicted overflow summed over the board), `open+rudy` (the
+    /// sum of the placement's ranks by `open` and by RUDY), or `rudy`
+    /// (RUDY demand above capacity, no model: the cheap baseline; it
+    /// turns the ranking on by itself).
     pub congestion_score: String,
 }
 
@@ -481,7 +484,7 @@ pub fn layout_kicad_board(
         Some(path) => Some(pcb_congestion::CongestionModel::load(path)?),
         None => None,
     };
-    if congestion_model.is_some() {
+    if congestion_model.is_some() || config.congestion_score == "rudy" {
         placer_config.placement_seeds = placer_config.placement_seeds.max(config.congestion_candidates);
     }
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
@@ -643,14 +646,14 @@ pub fn layout_kicad_board(
     // is a real route of up to `probe_seconds`; a prediction takes
     // milliseconds). The race below then judges those as before.
     let mut congestion = None;
-    if let Some(model) = &congestion_model
+    if (congestion_model.is_some() || config.congestion_score == "rudy")
         && seeds == 1
         && pin_swaps.is_none()
         && others.len() + 1 > config.congestion_probes.max(1)
     {
         pool.push((problem.problem.poses.clone(), first_relaxation));
         pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), **relaxation)));
-        let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, model, router_config, &core_config, connect, &config.congestion_score)?;
+        let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, congestion_model.as_ref(), router_config, &core_config, connect, &config.congestion_score)?;
         let keep: Vec<usize> = ranked.order.iter().copied().take(config.congestion_probes.max(1)).collect();
         eprintln!(
             "congestion model: {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
@@ -1057,7 +1060,15 @@ pub fn layout_kicad_board(
     let polish_left = router_config
         .deadline
         .map_or(f64::INFINITY, |deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64());
-    if !polished && !many_open && !router.past_deadline() && polish_left >= 240.0 {
+    // A board a move trial already polished polishes again when more than
+    // half the layout's budget is left: the trial's via reduction had only
+    // its own strict budget (CyberKeeb2040: a round reverted at 60 s, the
+    // next not started), the final one gets the run-sized one.
+    let polish_again = polished && work < 0.5 * config.total_seconds;
+    if polish_again {
+        eprintln!("layout: polished by a move trial, {:.0} s of {:.0} s of work left: polishing again", config.total_seconds - work, config.total_seconds);
+    }
+    if (!polished || polish_again) && !many_open && !router.past_deadline() && polish_left >= 240.0 {
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {

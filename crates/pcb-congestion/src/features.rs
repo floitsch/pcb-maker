@@ -471,6 +471,30 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
     FeatureMaps { tiles_x: frame.tiles_x, tiles_y: frame.tiles_y, data }
 }
 
+/// The cheap baseline ranker: routing demand (`rudy_mst`) above `alpha`
+/// times the tile's free capacity (the free share of every layer present:
+/// not obstacle, not pad copper), summed over the board's tiles. Lower is
+/// better. `alpha` 0.25 ranked held-out placements best (fitted 0.2-0.3).
+pub fn rudy_overflow(maps: &FeatureMaps, alpha: f32) -> f32 {
+    let names = channel_names();
+    let plane = |name: &str| maps.plane(names.iter().position(|known| known == name).unwrap());
+    let demand = plane("rudy_mst");
+    let inside = plane("inside");
+    let mut total = 0.0;
+    for tile in 0..maps.tiles_x * maps.tiles_y {
+        if inside[tile] <= 0.0 {
+            continue;
+        }
+        let mut capacity = 0.0;
+        for slot in ["F", "B", "In1", "InN"] {
+            let free = 1.0 - plane(&format!("obstacle.{slot}"))[tile] - plane(&format!("pad_copper.{slot}"))[tile];
+            capacity += plane(&format!("layer_present.{slot}"))[tile] * free.clamp(0.0, 1.0);
+        }
+        total += (demand[tile] - alpha * capacity).max(0.0);
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +585,17 @@ mod tests {
         assert_eq!(get("nets_here"), vec![1.0, 0.0, 0.0, 1.0]);
         assert!((get("track_pitch")[0] - 0.25).abs() < 1.0e-6);
         assert!((get("layer_count")[0] - 0.5).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn rudy_overflow_counts_demand_above_capacity() {
+        let board = small_board();
+        let maps = rasterize(&board, &frame(32, 32));
+        // Two layers of free tiles (less the pads): no overflow at alpha
+        // 0.25 for one short net, all of the demand at alpha 0.
+        assert_eq!(rudy_overflow(&maps, 0.25), 0.0);
+        let demand: f32 = maps.channel("rudy_mst").unwrap().iter().sum();
+        assert!((rudy_overflow(&maps, 0.0) - demand).abs() < 1.0e-5);
     }
 
     #[test]

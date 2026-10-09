@@ -192,7 +192,7 @@ def evaluate(net, samples, label, device, tile_budget):
 
 
 def export_onnx(net, channels, path):
-    exported = Exported(net).cpu().eval()
+    exported = (net if isinstance(net, torch.nn.Module) and not isinstance(net, CongestionNet) else Exported(net)).cpu().eval()
     example = torch.zeros(1, len(channels), 32, 48)
     torch.onnx.export(
         exported, (example,), str(path), input_names=["features"], output_names=["overflow", "open"],
@@ -214,6 +214,7 @@ def main():
     parser.add_argument("--open-weight", type=float, default=1.0)
     parser.add_argument("--tile-budget", type=int, default=120000)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--exclude-tier", default=None, help="leave this tier's boards (quick) out of training")
     parser.add_argument("--by-board", action="store_true", help="batches of one board's placements")
     parser.add_argument("--rank-weight", type=float, default=0.0,
                         help="weight of a within-batch pairwise ranking loss on the open head (with --by-board)")
@@ -224,6 +225,12 @@ def main():
     print(f"caching {samples_root} -> {cache}: {build_cache(samples_root, cache)} samples", flush=True)
     split = json.loads((arguments.root / "split.json").read_text())
     train, test = load_samples(arguments.root, cache, split)
+    if arguments.exclude_tier:
+        # Boards of a benchmark tier stay out of training entirely, so the
+        # tier measures the model on boards it never saw.
+        tier = json.loads((Path(__file__).resolve().parents[2] / "benchmarks/agent-tasks" / f"{arguments.exclude_tier}.json").read_text())
+        excluded = set(tier["boards"])
+        train = [record for record in train if record["board"] not in excluded]
     if arguments.kinds:
         keep = lambda record: any(record["board"].startswith(prefix) for prefix in arguments.kinds)
         train = [record for record in train if keep(record)]

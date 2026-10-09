@@ -24,29 +24,39 @@ pub(crate) struct Ranking {
 
 /// One placement's score: `open` (predicted unfinished nets) or
 /// `overflow` (predicted overflow summed over the board).
+/// `rudy`: RUDY demand above capacity (no model); `open+rudy`: the sum of
+/// the two scores' ranks among the placements, done by `rank_placements`.
 pub(crate) fn score_board(
     board: &core::Board,
-    model: &pcb_congestion::CongestionModel,
+    model: Option<&pcb_congestion::CongestionModel>,
     core_config: &core::Config,
     score: &str,
-) -> Result<(f64, f64, f64), String> {
+) -> Result<(f64, f64, f64, f64), String> {
     let started = std::time::Instant::now();
     let frame = core::router::congestion::tile_frame(board, core_config);
     let maps = pcb_congestion::rasterize(board, &frame);
+    let rudy = pcb_congestion::rudy_overflow(&maps, 0.25) as f64;
     let features = started.elapsed().as_secs_f64();
     let inferred = std::time::Instant::now();
-    let prediction = model.predict(&maps)?;
-    let value = match score {
-        "overflow" => prediction.overflow_sum() as f64,
-        _ => prediction.open as f64,
+    let value = match (score, model) {
+        ("rudy", _) => rudy,
+        (_, None) => return Err(format!("congestion score {score:?} needs a congestion_model")),
+        ("overflow", Some(model)) => model.predict(&maps)?.overflow_sum() as f64,
+        (_, Some(model)) => model.predict(&maps)?.open as f64,
     };
-    Ok((value, features, inferred.elapsed().as_secs_f64()))
+    Ok((value, rudy, features, inferred.elapsed().as_secs_f64()))
+}
+
+/// Per value, its rank among `values` (0 for the lowest; ties share the
+/// lower rank).
+fn ranks(values: &[f64]) -> Vec<f64> {
+    values.iter().map(|value| values.iter().filter(|other| **other < *value).count() as f64).collect()
 }
 
 pub(crate) fn rank_placements(
     pcb: &Expr,
     placements: &[(Vec<placer::Pose>, placer::Relaxation)],
-    model: &pcb_congestion::CongestionModel,
+    model: Option<&pcb_congestion::CongestionModel>,
     router_config: &KiCadBoardRouterConfig,
     core_config: &core::Config,
     connect: bool,
@@ -55,6 +65,7 @@ pub(crate) fn rank_placements(
     let started = std::time::Instant::now();
     let (mut lower_seconds, mut feature_seconds, mut inference_seconds) = (0.0, 0.0, 0.0);
     let mut scores = Vec::with_capacity(placements.len());
+    let mut rudies = Vec::with_capacity(placements.len());
     for (poses, _) in placements {
         let lowered_at = std::time::Instant::now();
         let mut candidate = pcb.clone();
@@ -66,10 +77,15 @@ pub(crate) fn rank_placements(
         }
         let board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
         lower_seconds += lowered_at.elapsed().as_secs_f64();
-        let (value, features, inference) = score_board(&board, model, core_config, score)?;
+        let (value, rudy, features, inference) = score_board(&board, model, core_config, score)?;
         feature_seconds += features;
         inference_seconds += inference;
         scores.push(value);
+        rudies.push(rudy);
+    }
+    if score == "open+rudy" {
+        let (model_ranks, rudy_ranks) = (ranks(&scores), ranks(&rudies));
+        scores = model_ranks.iter().zip(&rudy_ranks).map(|(a, b)| a + b).collect();
     }
     let mut order: Vec<usize> = (0..scores.len()).collect();
     order.sort_by(|a, b| scores[*a].total_cmp(&scores[*b]).then(a.cmp(b)));

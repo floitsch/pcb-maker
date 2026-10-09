@@ -117,7 +117,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--cache", type=Path, default=None)
-    parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument("--model", type=Path, nargs="*", default=None, help="model directories (several: an ensemble)")
     parser.add_argument("--side", default="test")
     parser.add_argument("--variants", default=None, help="only variants whose name starts with this")
     parser.add_argument("--boards", default=None, help="only boards whose name starts with this")
@@ -158,15 +158,19 @@ def main():
     label = "conflict"
     if arguments.model:
         import torch
-        from model import CongestionNet
+        from model import CongestionNet, Ensemble
         from train import collate, target_map
-        checkpoint = torch.load(arguments.model / "model.pt", map_location="cpu")
-        net = CongestionNet(checkpoint["channels"], np.array(checkpoint["mean"]), np.array(checkpoint["std"]),
-                            PLANES, checkpoint["width"])
-        net.load_state_dict(checkpoint["state"])
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        net = net.to(device).eval()
-        label = checkpoint["label"]
+        nets = []
+        for directory in arguments.model:
+            checkpoint = torch.load(directory / "model.pt", map_location="cpu")
+            member = CongestionNet(checkpoint["channels"], np.array(checkpoint["mean"]), np.array(checkpoint["std"]),
+                                   PLANES, checkpoint["width"])
+            member.load_state_dict(checkpoint["state"])
+            nets.append(member)
+            label = checkpoint["label"]
+        net = Ensemble(nets).to(device).eval()
+        inside_index = nets[0].normalize.inside_index
     groups = defaultdict(list)
     tile_errors, tp, fp, fn = [], 0, 0, 0
     for index, record in enumerate(records):
@@ -177,9 +181,8 @@ def main():
             import torch
             with torch.no_grad():
                 x, y, present, _ = collate([record], [0], label, device)
-                overflow, _, open_log = net(x)
-                predicted = torch.clamp(torch.expm1(overflow), min=0.0)
-                board = (x[:, net.normalize.inside_index:net.normalize.inside_index + 1] > 0).float()
+                predicted, open_log = net(x)
+                board = (x[:, inside_index:inside_index + 1] > 0).float()
                 mask = (board * present).expand_as(y) > 0
                 row["model_open"] = float(open_log.exp().item() - 1.0)
                 row["model_overflow"] = float((predicted * mask).sum().item())
@@ -191,9 +194,19 @@ def main():
                 fp += int((~hot & called).sum())
                 fn += int((hot & ~called).sum())
         groups[record["board"]].append(row)
+    if net is not None:
+        # Model and RUDY by the sum of their ranks within the board (what
+        # the layout's `open+rudy` does).
+        for rows in groups.values():
+            for key in ("model_open", "rudy_over"):
+                values = [r[key] for r in rows]
+                for r in rows:
+                    r[key + "_rank"] = sum(v < r[key] for v in values)
+            for r in rows:
+                r["open+rudy"] = r["model_open_rank"] + r["rudy_over_rank"]
     rankers = ["wirelength", "rudy_sum", "rudy_over", "rudy_bbox_over", "rudy_max", "rudy_top"]
     if net is not None:
-        rankers = ["model_open", "model_overflow"] + rankers
+        rankers = ["model_open", "model_overflow", "open+rudy"] + rankers
     all_rows = [row for rows in groups.values() for row in rows]
     report = {"samples": len(all_rows), "boards": len(groups), "rudy_alpha": alpha, "label": label, "rankers": {}}
     for ranker in rankers:

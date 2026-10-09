@@ -86,3 +86,20 @@ class Exported(nn.Module):
     def forward(self, features):
         overflow, _, open_log = self.net(features)
         return torch.clamp(torch.exp(overflow) - 1.0, min=0.0), open_log
+
+
+class Ensemble(nn.Module):
+    """Several trained networks as one ONNX graph: the overflow maps and
+    the open counts (in ln(1 + n)) averaged."""
+
+    def __init__(self, nets):
+        super().__init__()
+        self.nets = nn.ModuleList(nets)
+
+    def forward(self, features):
+        overflows, opens = [], []
+        for net in self.nets:
+            overflow, _, open_log = net(features)
+            overflows.append(torch.clamp(torch.exp(overflow) - 1.0, min=0.0))
+            opens.append(open_log)
+        return torch.stack(overflows).mean(0), torch.stack(opens).mean(0)

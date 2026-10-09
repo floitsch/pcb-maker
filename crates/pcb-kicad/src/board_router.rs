@@ -1435,6 +1435,42 @@ pub fn dump_kicad_pour_map(
     fs::write(output_directory.join("layers.json"), format!("[{}]\n", names.join(", "))).map_err(|error| error.to_string())
 }
 
+/// The search benchmark: the board lowered with its pours connected, a
+/// router built, and `iterations` negotiation iterations run with an
+/// unbounded work budget (the run stops at the iteration count). Returns
+/// the work done and a fingerprint of the routes, which must not change
+/// when only the speed of the search does.
+pub fn bench_kicad_search(
+    source_directory: &Path,
+    board_id: &str,
+    iterations: usize,
+    config: &KiCadBoardRouterConfig,
+) -> Result<String, String> {
+    let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let source = fs::read_to_string(&source_board)
+        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    let pcb = parse(&source)?;
+    let Lowered { board } = lower(&pcb, config, true)?;
+    let mut router_config = core_config(config);
+    router_config.max_iterations = iterations;
+    let mut router = core::router::Router::new(&board, &router_config);
+    let started = std::time::Instant::now();
+    let unfinished = router.probe(1.0e7);
+    let seconds = started.elapsed().as_secs_f64();
+    let snapshot = router.snapshot();
+    let vias: usize = snapshot.routes.iter().map(|route| route.vias.len()).sum();
+    let length: f64 = snapshot
+        .routes
+        .iter()
+        .flat_map(|route| route.segments.iter())
+        .map(|segment| distance_squared(segment.start, segment.end).sqrt())
+        .sum();
+    Ok(format!(
+        "bench: {} expansions, {unfinished} unfinished, {vias} vias, {length:.4} mm, {seconds:.1} s",
+        router.expansions()
+    ))
+}
+
 fn net_ids_lookup(nets: &[core::Net], name: &str) -> Option<core::NetId> {
     nets.iter()
         .position(|net| net.name == name)

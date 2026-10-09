@@ -521,6 +521,82 @@ fn experiment_seed() -> Option<u64> {
 
 /// A search heap entry: the estimate's bits (non-negative floats order as
 /// their bits) above the state, compared as one word.
+/// A min-heap of search keys (`heap_key`), four children a node: half the
+/// levels of a binary heap, and a node's children share a cache line. It
+/// lives in the search scratch, so that its buffer is not grown again for
+/// every search (with the four-way layout 9-13 % less CPU per routed board,
+/// k30-SBC and Sisu, identical routes). Keys order totally (a key holds
+/// its state), so the pops are those of any other min-heap.
+#[derive(Default)]
+struct KeyHeap {
+    keys: Vec<u64>,
+}
+
+impl KeyHeap {
+    fn clear(&mut self) {
+        self.keys.clear();
+    }
+
+    #[inline(always)]
+    fn push(&mut self, key: u64) {
+        let mut index = self.keys.len();
+        self.keys.push(key);
+        while index > 0 {
+            let parent = (index - 1) / 4;
+            let above = self.keys[parent];
+            if above <= key {
+                break;
+            }
+            self.keys[index] = above;
+            index = parent;
+        }
+        self.keys[index] = key;
+    }
+
+    #[inline(always)]
+    fn pop(&mut self) -> Option<u64> {
+        let last = self.keys.pop()?;
+        let len = self.keys.len();
+        if len == 0 {
+            return Some(last);
+        }
+        let top = self.keys[0];
+        let mut index = 0;
+        loop {
+            let first = 4 * index + 1;
+            if first >= len {
+                break;
+            }
+            let end = (first + 4).min(len);
+            let mut child = first;
+            let mut least = self.keys[first];
+            for other in first + 1..end {
+                let key = self.keys[other];
+                if key < least {
+                    least = key;
+                    child = other;
+                }
+            }
+            if least >= last {
+                break;
+            }
+            self.keys[index] = least;
+            index = child;
+        }
+        self.keys[index] = last;
+        Some(top)
+    }
+}
+
+/// Whether the wall clock guards the work budgets (always, unless
+/// `PCB_ROUTER_NO_WALL_GUARD` is set: for measuring the router's speed
+/// under valgrind, where the clock runs fifty times slower than the work,
+/// so that a run's routes do not depend on how fast it ran).
+fn wall_guard() -> bool {
+    static GUARDED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GUARDED.get_or_init(|| std::env::var_os("PCB_ROUTER_NO_WALL_GUARD").is_none())
+}
+
 fn heap_key(estimate: f32, state: usize) -> u64 {
     ((estimate.to_bits() as u64) << 32) | state as u64
 }
@@ -767,6 +843,8 @@ pub struct Scratch {
     /// its nodes, with the terminal of each (`NO_TERMINAL` for a track).
     tree: StateMap,
     own_via_near: Vec<u16>,
+    /// The search's open list, kept for its capacity.
+    heap: KeyHeap,
     /// What the routing of a net read of the shared board, while the
     /// negotiation speculates (`route_batches`).
     read: ReadSet,
@@ -799,6 +877,7 @@ impl Scratch {
             targets: StateMap::default(),
             tree: StateMap::default(),
             own_via_near: vec![0; cells],
+            heap: KeyHeap::default(),
             read: ReadSet::default(),
             own_mark: Vec::new(),
             own_claimed: Vec::new(),
@@ -3226,7 +3305,9 @@ impl Router {
             best.max(0.0) * weight
         };
 
-        let mut heap: BinaryHeap<Reverse<u64>> = BinaryHeap::new();
+        // The scratch's heap, its capacity kept from search to search.
+        let mut heap = std::mem::take(&mut scratch.heap);
+        heap.clear();
         for node in sources {
             // A hard route may not even start inside another net's zone.
             if hard
@@ -3241,7 +3322,7 @@ impl Router {
             scratch.nodes[state].seen = generation;
             scratch.nodes[state].cost = 0.0;
             scratch.nodes[state].parent = PARENT_SOURCE;
-            heap.push(Reverse(heap_key(heuristic(node.layer as usize, x as i32, y as i32), state)));
+            heap.push(heap_key(heuristic(node.layer as usize, x as i32, y as i32), state));
         }
 
         let statics = &self.statics[class];
@@ -3251,7 +3332,7 @@ impl Router {
         let via_map = trace_base + layers;
         let necks = !net_state.neck_zones.is_empty();
         let mut found = None;
-        while let Some(Reverse(key)) = heap.pop() {
+        while let Some(key) = heap.pop() {
             let state = (key & u32::MAX as u64) as usize;
             if scratch.nodes[state].closed == generation {
                 continue;
@@ -3373,7 +3454,7 @@ impl Router {
                     scratch.nodes[target_state].cost = total;
                     scratch.nodes[target_state].parent = direction as u8;
                     let estimate = total + heuristic(layer, tx as i32, ty as i32);
-                    heap.push(Reverse(heap_key(estimate, target_state)));
+                    heap.push(heap_key(estimate, target_state));
                 }
             }
 
@@ -3438,12 +3519,13 @@ impl Router {
                         scratch.nodes[target_state].cost = total;
                         scratch.nodes[target_state].parent = 8 + layer as u8;
                         let estimate = total + heuristic(target_layer, x as i32, y as i32);
-                        heap.push(Reverse(heap_key(estimate, target_state)));
+                        heap.push(heap_key(estimate, target_state));
                     }
                 }
             }
         }
 
+        scratch.heap = heap;
         if scratch.corridor.is_none() {
             scratch.open_searches += 1;
             scratch.open_expansions += scratch.expansions - expansions_before;
@@ -4088,7 +4170,7 @@ impl Router {
     /// clock stops it too, at `GUARD` times the budget.
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
         self.work_seconds() - clock.0 > budget
-            || clock.1.elapsed().as_secs_f64() > budget * GUARD
+            || (wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD)
             || self.past_deadline()
     }
 
@@ -5116,7 +5198,7 @@ impl Router {
                 && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
             if stalled > patience
                 || worked_out
-                || started.elapsed().as_secs_f64() > self.config.negotiation_seconds
+                || (wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds)
                 || self.past_deadline()
             {
                 break;
@@ -5184,16 +5266,36 @@ impl Router {
     /// net's copper leave off the main piece. The polish keeps a change
     /// only if none of these grows (`pour_aware_polish`).
     fn pour_stranded(&self) -> Vec<usize> {
+        self.pour_net_ids().into_iter().map(|net| self.pour_stranded_of(net)).collect()
+    }
+
+    /// The pour nets `pour_stranded` counts, in its order.
+    fn pour_net_ids(&self) -> Vec<NetId> {
         (0..self.nets.len() as NetId)
             .filter(|net| self.nets[*net as usize].routable && !self.nets[*net as usize].plane.is_empty())
-            .map(|net| {
-                let (pours, mut parent, main) = self.analyze_pours(net);
-                let terminal_base = pours.pieces + 1;
-                (0..self.nets[net as usize].terminal_nodes.len())
-                    .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
-                    .count()
-            })
             .collect()
+    }
+
+    fn pour_stranded_of(&self, net: NetId) -> usize {
+        let (pours, mut parent, main) = self.analyze_pours(net);
+        let terminal_base = pours.pieces + 1;
+        (0..self.nets[net as usize].terminal_nodes.len())
+            .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+            .count()
+    }
+
+    /// Node bounds (x0, y0, x1, y1) of a pour net's planes on all layers.
+    fn plane_bounds(&self, net: NetId) -> Option<(usize, usize, usize, usize)> {
+        let mut bounds: Option<(usize, usize, usize, usize)> = None;
+        for mask in &self.nets[net as usize].plane {
+            for (cell, inside) in mask.iter().enumerate() {
+                if *inside {
+                    let (x, y) = self.grid.xy(cell);
+                    bounds = Some(bounds.map_or((x, y, x, y), |(x0, y0, x1, y1)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y))));
+                }
+            }
+        }
+        bounds
     }
 
     /// Which pads of pour net `net` its pour no longer joins to the main
@@ -6882,6 +6984,26 @@ impl Router {
         let mut pour_stranded = self.config.pour_aware_polish.then(|| self.pour_stranded()).filter(|counts| !counts.is_empty());
         let mut pour_check_seconds = 0.0;
         let mut pour_rejected = 0;
+        let mut pour_analyses = 0usize;
+        let (pour_nets, pour_bounds) = if pour_stranded.is_some() {
+            let nets = self.pour_net_ids();
+            let bounds: Vec<_> = nets.iter().map(|net| self.plane_bounds(*net)).collect();
+            (nets, bounds)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        // How far a stamp reaches from its node, generously: the widest
+        // via and track of any class with the largest clearances, twice.
+        let pour_reach = {
+            let widest = self
+                .board
+                .classes
+                .iter()
+                .map(|class| class.via_diameter + class.trace_width + class.clearance)
+                .fold(0.0f64, f64::max)
+                + self.board.hole_clearance.max(self.board.hole_to_hole);
+            (2.0 * widest / self.grid.pitch).ceil() as usize + 3
+        };
         let started = self.clock();
         let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
         'passes: for _ in 0..self.config.cleanup_passes {
@@ -6999,7 +7121,39 @@ impl Router {
                     && accepted.iter().any(|kept| *kept)
                 {
                     let checked = std::time::Instant::now();
-                    let now = self.pour_stranded();
+                    // Only pour nets whose planes come within a stamp's
+                    // reach of the copper that changed can count otherwise
+                    // than before; the others keep their count.
+                    let mut changed: Option<(usize, usize, usize, usize)> = None;
+                    for (index, net) in batch.iter().enumerate() {
+                        if !accepted[index] {
+                            continue;
+                        }
+                        for node in saved[index].iter().chain(&self.nets[*net as usize].branches).flat_map(|branch| &branch.nodes) {
+                            let (x, y) = self.grid.xy(node.cell as usize);
+                            changed = Some(changed.map_or((x, y, x, y), |(x0, y0, x1, y1)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y))));
+                        }
+                    }
+                    let now: Vec<usize> = pour_nets
+                        .iter()
+                        .zip(&pour_bounds)
+                        .zip(stranded.iter())
+                        .map(|((net, bounds), before)| {
+                            let near = batch.iter().enumerate().any(|(index, other)| accepted[index] && other == net)
+                                || match (changed, bounds) {
+                                    (Some((x0, y0, x1, y1)), &Some((px0, py0, px1, py1))) => {
+                                        x0 <= px1 + pour_reach && px0 <= x1 + pour_reach && y0 <= py1 + pour_reach && py0 <= y1 + pour_reach
+                                    }
+                                    _ => false,
+                                };
+                            if near {
+                                pour_analyses += 1;
+                                self.pour_stranded_of(*net)
+                            } else {
+                                *before
+                            }
+                        })
+                        .collect();
                     pour_check_seconds += checked.elapsed().as_secs_f64();
                     if now.iter().zip(stranded.iter()).any(|(now, before)| now > before) {
                         for (index, net) in batch.iter().enumerate() {
@@ -7031,7 +7185,7 @@ impl Router {
         }
         self.cleanup = false;
         if self.config.verbose && pour_stranded.is_some() {
-            eprintln!("clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks");
+            eprintln!("clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks ({pour_analyses} analyses)");
         }
         improvements
     }
@@ -7325,6 +7479,27 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_heap_pops_in_order() {
+        let mut heap = KeyHeap::default();
+        let mut reference = std::collections::BinaryHeap::new();
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for round in 0..20_000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            if round % 3 == 2 {
+                assert_eq!(heap.pop(), reference.pop().map(|std::cmp::Reverse(key)| key));
+            } else {
+                let key = state >> 40;
+                heap.push(key);
+                reference.push(std::cmp::Reverse(key));
+            }
+        }
+        while let Some(std::cmp::Reverse(key)) = reference.pop() {
+            assert_eq!(heap.pop(), Some(key));
+        }
+        assert_eq!(heap.pop(), None);
+    }
     use crate::board::{Net, Obstacle, ObstacleKind, Plane, RuleClass, Terminal};
     use crate::geometry::Shape;
 

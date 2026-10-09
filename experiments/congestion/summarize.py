@@ -19,7 +19,7 @@ def main():
         race = report.get("race", {})
         hits = race.get("hit_rates", {})
         total = race.get("total", {})
-        names = ["model_open", "model_overflow"] + ([] if printed_baselines else
+        names = ["model_open", "model_overflow", "open+rudy"] + ([] if printed_baselines else
                                                    ["wirelength", "rudy_sum", "rudy_over", "rudy_bbox_over", "rudy_max", "rudy_top"])
         if not printed_baselines and total:
             print(f"race on {hits.get('boards')} held-out boards ({report['samples']} samples): default (seeds 1-3) {total['default']:.0f}, "
@@ -29,7 +29,7 @@ def main():
             if ranker not in rankers:
                 continue
             m = rankers[ranker]
-            label = f"{name}:{ranker}" if ranker.startswith("model") else ranker
+            label = f"{name}:{ranker}" if ranker.startswith("model") or ranker == "open+rudy" else ranker
             line = (f"{label:>34}: within-board Spearman {m['spearman_within']:+.3f}, pairs {m['pair_accuracy']:.3f}, "
                     f"pooled {m['spearman_pooled']:+.3f}")
             if total:

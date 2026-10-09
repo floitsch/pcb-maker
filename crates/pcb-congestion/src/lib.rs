@@ -12,5 +12,5 @@
 pub mod features;
 pub mod model;
 
-pub use features::{FeatureMaps, channel_count, channel_names, rasterize};
+pub use features::{FeatureMaps, channel_count, channel_names, rasterize, rudy_overflow};
 pub use model::{CongestionModel, Prediction};
