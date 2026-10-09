@@ -1037,8 +1037,12 @@ pass, laptop power 115/115 pass; rosco 148/148 and Castor_and_Pollux
 126/126 complete but with 6 and 17 starved thermals (opt-in
 `solid_starved_thermals` would pass them: Florian's call, asked);
 koeg 170/175 with 15 courtyard overlaps; DSP 189/190 with 5; HackRF
-318/319 with 1; Glasgow 177/226 with 90; SUMEC 57/69 with 14 in 550 s
-(stopped early: look); 0xCB panel: kicad-cli's refill timed out.
+318/319 with 1; Glasgow 177/226 with 90; SUMEC 57/69 with 14 in 550 s:
+not the flow but the board, 48 dead pads (no node a track of their class
+can enter; route mode on the designer's placement gives the same 57/69,
+the designer's own board has clearance findings) - the rules class, like
+krishveercard; 0xCB panel: kicad-cli's refill timed out; Neotron Pico
+176/190 with 24 and 2 errors; MIDAS-MK1 154/159 with 8.
 
 ## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
 
