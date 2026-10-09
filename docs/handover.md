@@ -1025,9 +1025,20 @@ OpenAirScope 179/184 with 5 (176, 8), zpn, MIDAS-MK2.1 and MIDAS-MK2
 pass (470, 329, 142 s), reCamera 55/56 with 4 (same), Hub 146/159 with
 17 and 3 starved (144, 20), RP2040 controller 151/186 with 82 (86),
 corne left 245/247 with 3 (same). x138 (thermal repair only when
-polishing; the polish bounded by the wall clock left): PolyKybd right,
-left and corne right rerun in `build/github-layout-v11-x138`; right on
-x137 was 419/420 with 11 (416, 21), left on x137 still 1800 s.
+polishing; the polish bounded by the wall clock left) closes it: in
+`build/github-layout-v11-x138` PolyKybd right 419/420 with 18 in 1665 s
+(x112 416, 21), left 417/420 with 6 in 1662 s (same as x112), corne
+right 419/420 with 9 and 2 errors in 1662 s (419, 16). x139 also fixes a
+panic of the pour refresh (a dropped stub left a branch dangling at its
+junction: katia after 1762 s, the Telemetry board after 21 s); both are
+to rerun on x139 when the sweep is done (katia alone takes 17 GB).
+Beyond x112's boards so far: homebrew 486 190/190 pass, video 371/371
+pass, laptop power 115/115 pass; rosco 148/148 and Castor_and_Pollux
+126/126 complete but with 6 and 17 starved thermals (opt-in
+`solid_starved_thermals` would pass them: Florian's call, asked);
+koeg 170/175 with 15 courtyard overlaps; DSP 189/190 with 5; HackRF
+318/319 with 1; Glasgow 177/226 with 90; SUMEC 57/69 with 14 in 550 s
+(stopped early: look); 0xCB panel: kicad-cli's refill timed out.
 
 ## 2026-10-08: new machine (Ryzen 9 5950X, 32 threads, 62 GB)
 
