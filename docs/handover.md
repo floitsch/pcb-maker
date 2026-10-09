@@ -46,6 +46,16 @@ v13 is the first sweep that places all of them, and its numbers will be
 lower. Route-mode conclusions (pour model, connect rungs, Freerouting
 comparison) are unaffected.
 
+**Layout sweep v13 (the first with every board placed) is not done:** it
+was started on x500 with 12 jobs while four agents, their A/B pairs and the
+congestion data generation ran (load 45-77 on 32 threads); after 2.5 h it
+had 24 of 109 rows, 1 pass, with the wall guard trimming the ladder, so it
+was stopped as unsound. Run it at a load under about 20 (no data
+generation, at most one agent's pinned pair beside it) on the current
+binary; the 24 rows in `build/github-layout-v13.log` are indicative only.
+Note also that logical CPU n and n+16 share a physical core here, so
+"pinned" runs on 0-15 share cores with anything on 16-31.
+
 **The first real-layout baseline, quick tier** (`build/quick-v13-base.log`,
 x165 with the fixed run.py, 37 boards, 12 jobs, 3617 s): **18 of 37 pass**
 (25 when the designer's placement was kept). New failure classes now
