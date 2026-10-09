@@ -822,6 +822,21 @@ pub(super) fn lower(
         Ok(id)
     };
 
+    // A pad's solder mask aperture (the pad grown by its mask margin) bares
+    // the copper around it: another net's copper within the mask web of it
+    // bridges. Only margins that reach past the copper clearance matter.
+    let board_mask_margin = pcb.child("setup").and_then(|setup| form_f64(setup, "solder_mask_margin", 1).ok()).unwrap_or(0.0);
+    let pad_mask_reach = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
+        .map_or(0.0, |width| width / 2.0 + 0.01);
+    let smallest_clearance = config
+        .connection_rules
+        .values()
+        .chain(config.default_rules.iter())
+        .map(|rules| rules.clearance_mm)
+        .fold(f64::INFINITY, f64::min);
+    let outer_layers: core::LayerMask = 1 | (1 << layers.len().saturating_sub(1));
     for item in pcb.children() {
         match item.head() {
             Some("footprint") => {
@@ -949,6 +964,32 @@ pub(super) fn lower(
                         blocks_vias: true,
                         label: label.clone(),
                     });
+                    // The pad's mask aperture, where it reaches past the
+                    // copper clearance (a "Hole, 3mm" footprint: a ring of
+                    // small pads with 0.1 mm margins whose apertures merge
+                    // into a mask-free annulus; a track keeping the copper
+                    // clearance from each small pad ran inside it and
+                    // bridged). A mask opening of the pad's net.
+                    let mask_margin = form_f64(pad, "solder_mask_margin", 1)
+                        .ok()
+                        .or_else(|| form_f64(item, "solder_mask_margin", 1).ok())
+                        .unwrap_or(board_mask_margin);
+                    if mask_margin > 0.0
+                        && mask_margin + pad_mask_reach > smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY)) - 1.0e-9
+                        && pad_layers & outer_layers != 0
+                    {
+                        obstacles.push(core::Obstacle {
+                            shape: shape(&lowered.geometry),
+                            layers: pad_layers & outer_layers,
+                            kind: core::ObstacleKind::Keepout,
+                            net,
+                            clearance: mask_margin + pad_mask_reach,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!("{label} mask aperture"),
+                        });
+                    }
                     // Other nets keep the hole clearance from a plated hole
                     // too, which reaches past a thin annular ring (a thermal
                     // via pad: 0.3 drill in 0.5 copper, eurorack-pmod's U1).
