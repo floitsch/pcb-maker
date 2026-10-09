@@ -316,27 +316,25 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
     let footprint_angle = form_at(footprint)?[2];
     let mut circles = 0;
     let mut straight = 0;
+    // A footprint's own mask graphics open the mask over its area: another
+    // part's pads placed there bridge (SNSP-CPU-01's J2 polygon: 63 pads
+    // of other parts under it). They are part of the body, tight or not.
+    let counts = |child: &Expr| form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline) || layer.ends_with(".Mask"));
     for child in footprint.children() {
         match child.head() {
-            Some("fp_line" | "fp_rect" | "fp_arc")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
-            {
+            Some("fp_line" | "fp_rect" | "fp_arc") if counts(child) => {
                 straight += 1;
                 for point in outline::outline_points(child)? {
                     include(point, 0.0);
                 }
             }
-            Some("fp_circle")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
-            {
+            Some("fp_circle") if counts(child) => {
                 circles += 1;
                 let center = form_xy(child, "center")?;
                 let end = form_xy(child, "end")?;
                 include(center, distance_squared(center, end).sqrt());
             }
-            Some("fp_poly")
-                if form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline)) =>
-            {
+            Some("fp_poly") if counts(child) => {
                 straight += 1;
                 for point in outline::pts_points(child)? {
                     include(point, 0.0);
