@@ -37,6 +37,16 @@ to 1231 unconnected, passes 5 to 5. Reproduce the table with
 
 The full table is in `docs/benchmarks.md`.
 
+**Layout sweep v12** (x165 = 1c7a557, 14 jobs, 10375 s in all): **41 of
+109 pass**; against v11 better 12 / same 77 / worse 12, unconnected 4722 to
+4771 (SNSP +90 and Quanta75 +25 are the known costs of the mask-body and
+plate rules; A13 +42 is a race-winner difference, rerun pending). Seven
+error rows: Telemetry's degenerate fill-keepout rule area (new lowering
+bug), the `refresh_pour` -> `find` stale-index panic on SUMEC, coco2,
+bumwings xiao_sd and Qfwfq, PolyKybd right at the 1800 s limit under
+load, the 0xCB panel's kicad-cli timeout. Table in `docs/benchmarks.md`.
+Compare: `compare.py build/github-layout-v11-spliced.log build/github-layout-v12.log`.
+
 **Freerouting against our cold route** (`benchmarks/github/freerouting.py`,
 headless, 1500 s each, both on the designer's placement with all copper
 removed; `freerouting_compare.py`): all 109 boards. Freerouting finishes 70,

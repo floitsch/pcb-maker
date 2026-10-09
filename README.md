@@ -21,7 +21,7 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **38 of 109** to a clean KiCad verdict
+  pcb-maker places and routes **41 of 109** to a clean KiCad verdict
   (0 unconnected, no copper error beyond the designer's own board) within
   30 minutes each. Most of the rest are complete but for a few connections
   or a few starved thermal reliefs; a handful are panels or boards whose
@@ -199,7 +199,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1800 s | 109 | 38 clean; 1231 connections open in all on the 29 boards of the earlier baseline (1598 before) | - |
+| Layout from stacked parts and constraints, 1800 s | 109 | 41 clean (v12); 1231 connections open in all on the 29 boards of the earlier baseline (1598 before) | - |
 | Routing the designer's placement cold, 1500 s | 109 | 50 clean, 206 connections open in all | 8 clean, 70 finished, 34 timed out, 913 open where finished |
 
 ```sh

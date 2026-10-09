@@ -18,6 +18,15 @@ constraint manager expresses and which of it the harvested boards use
 (KiCad's net classes, differential-pair names, tuning patterns), then the
 schema in `constraints.json` / the router config before any algorithm.
 
+## Congestion predictor (started 2026-10-09)
+
+A neural congestion predictor on the router's 16-cell tile grid (RUDY and
+density channels in, per-tile overflow and open count out; PyTorch on the
+GPU, `tract` in Rust) to let the placement race judge hundreds of
+candidates and to give the global placer a routability term. Ship only if
+it ranks candidates better than RUDY alone on held-out boards. Design and
+status in docs/congestion-model.md.
+
 ## Benchmarks
 
 - **Finish the Freerouting and cold-route sweeps on the harvested boards**
