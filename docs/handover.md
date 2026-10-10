@@ -259,6 +259,11 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   stall stop (N=12 iterations without a conflict improvement; 3-11 % less
   CPU, boards nearly unchanged) is queued for a tier pair. Capping the
   margin fails (SNSP needs the wide corridors).
+- Committed aa4e9e8: the negotiation ends twelve iterations after the
+  price cap without a conflict improvement (tier -8 % CPU, -18 % board
+  time, no pass lost). The 30-board tier's clean baseline on x508: 19 of
+  30 pass, 23 unconnected, 12 starved thermals, 31.5 min of wall at 8
+  jobs (`build/quick30-x508.log`).
 - The quick tier is 30 boards now (`benchmarks/agent-tasks/quick.json`,
   README): real layouts in about 1100 s and 3.7 GB; about 35 min at 8
   jobs.
