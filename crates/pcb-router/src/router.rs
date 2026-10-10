@@ -2733,7 +2733,17 @@ impl Router {
                     }
                 }
             } else if self.config.corridors && !self.cleanup {
-                let margin = (1 + reroutes / 3).min(10);
+                // One tile more every six reroutes. Widened every three,
+                // the corridors of the nets the negotiation kept rerouting
+                // gave their searches room the paths never used (Sisu and
+                // jetson: 73 % of a late iteration's expansions more than
+                // three tiles from the path found). The slower growth: on
+                // the quick tier 10 % less CPU, unconnected 32 to 30,
+                // starved thermals 20 to 15, vias -6 %, no pass lost; in
+                // route mode nonSNES SNSP-CPU-01 171 to 98 unconnected at
+                // +6 % vias. A cap instead (at most 3 or 5 tiles) left
+                // SNSP-CPU-01 unconverged: some nets need the wide detour.
+                let margin = (1 + reroutes / 6).min(10);
                 for margin in [margin, margin + 3] {
                     let mut read = std::mem::take(&mut scratch.read);
                     let corridor = self.plan_corridor(

@@ -102,40 +102,50 @@ board that could be placed legally was routed clean.
 
 The full harvested sweep (109 boards, 1800 s each) takes a night and was
 memory-bound: three layout jobs at a time, most cores idle. The quick tier
-judges a feature in a quarter of an hour by running many small boards side
+judges a feature in about half an hour by running many small boards side
 by side, and is meant to be diffed against its last run with `compare.py`.
 
 ```sh
-benchmarks/agent-tasks/run.py build/quick-x161 --tier quick --jobs 12 \
+benchmarks/agent-tasks/run.py build/quick-x161 --tier quick --jobs 8 \
   --binary build/bin/pcb-maker-x161 > build/quick-x161.log
 benchmarks/agent-tasks/compare.py build/quick-x160.log build/quick-x161.log --markdown
 ```
 
 `quick.json` lists the boards (by task name in
 `build/github-tasks-v5/tasks.json`, made by `from_pcbench.py --corpus
-benchmarks/github/boards.json`), each with its layers, lattice, its v11
-result and time, the failure kinds it covers, and the peak memory of its
-last quick run. The rules that chose them:
+benchmarks/github/boards.json`), each with its layers, lattice, the failure
+kinds it covers, its v11 result where it has one, and its time, peak memory
+and result in the tier's run on x506. Since `run.py`'s unplace fix
+(2026-10-10) every board is placed from stacked parts and routed, so the
+times are layout times, two to four times v11's route-mode times. The
+rules that chose the 30 boards (re-selected 2026-10-10 from the x506 run of
+the old 37, 8 jobs, load about 45, and the v13 sweep):
 
-- **Time:** the v11 sweep's time (three jobs at a time on a busy machine)
-  under about 300 s. Two exceptions, the only small 4- and 6-layer boards
-  with connections left open: MIDAS-MK1 (556 s, 4 layers, 8 unconnected)
-  and OpenFC (671 s, 6 layers, 2 unconnected). The runner starts the
-  longest boards first, so they do not lengthen the run.
-- **Memory:** a peak of at most about 3.7 GB with 2 search threads. KiCad's
-  DRC alone takes 2.2 GB on any board (`peak_rss_mb` counts it;
-  `layout_rss_mb` is the layout process alone).
-- **Coverage:** 26 two-layer, 9 four-layer and 2 six-layer boards; 21 that
-  passed in v11, 9 with starved thermals, 6 with unconnected items, 3 with
-  copper errors (a short and a starved thermal; solder-mask bridges or a
-  connection width; an edge clearance), 2 that needed a finer lattice
-  (0.05 and 0.075 mm).
+- **Time:** a layout in about 1100 s or less on x506 (the longest,
+  MIDAS-MK2.1, 1074 s; 13,698 s of board time in all, about half an hour
+  of wall clock at 8 jobs). The runner starts the longest boards first.
+  Times swing with the placement and the load (0xcb-static 153 to 403 s,
+  osprey 384 to 1238 s between runs).
+- **Memory:** a peak of at most about 3.7 GB with 2 search threads (the
+  largest now 3.4 GB). KiCad's DRC alone takes 2.2 GB on any board
+  (`peak_rss_mb` counts it; `layout_rss_mb` is the layout process alone).
+- **Coverage:** 20 two-layer, 8 four-layer and 2 six-layer boards; 19 that
+  passed in v11 (or v13 for the boards added), 6 with starved thermals, 4
+  with unconnected items, 2 with copper errors, 2 that needed a finer
+  lattice; framework_mobo_lefthalf stays as the cheap case the placer finds
+  no legal placement for.
+- **Dropped on 2026-10-10:** SmartSpin2k, PixelWave and ULK_sl_PG1316s
+  (1800 s timeouts), MIDAS-MK1 (1671 s; MIDAS-MK1.1 takes its place, 4
+  layers and connections left open in 696 s), laptop power (1336 s),
+  osprey (1238 s), silkscreen (1204 s), CyberKeeb2040 (4.4 GB),
+  bumwings_v001_core and bumwings_v001_xiao_s (4-6 GB; bumwings_v001 and
+  bumwings_v001R64_nano_sd take their places in the family).
 - **Left out:** the five PolyKybd molecule panels, the OpenESC and OpenRX
   panels, krishveercard and SUMEC (not targets, see docs/handover.md);
-  more than three boards of one family (bumwings, the second chiffre,
-  OM-FlexGrid); jiran-ble-lite (7 GB a router at its fine pitch); every
-  board slower than the limits above (Sisu, k30-SBC, the jetson, ...),
-  which stay for the full sweep.
+  more than three boards of one family (the other bumwings, the second
+  chiffre, OM-FlexGrid); jiran-ble-lite (7 GB a router at its fine pitch);
+  every board slower than the limits above (Sisu, k30-SBC, the jetson,
+  ...), which stay for the full sweep.
 
 How the runner shares the machine:
 
