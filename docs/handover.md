@@ -239,9 +239,20 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   KiCad at mounting-hole rings and pad boxes (45 designer poses illegal on
   ghoul), SmartSpin2k (a 585-connection panel whose first route alone
   needs 1000 s; not a target).
-- Speed is now structural: cheaper expansions are exhausted (five
-  candidates under 5 %); fewer searches and fewer expansions per search
-  are the next lever (a waste measurement is under way).
+- Speed is structural now: cheaper expansions are exhausted (five
+  candidates under 5 %). The waste measurement (`PCB_ROUTER_WASTE=1`,
+  bench-search) found chronically rerouted nets searching corridors up to
+  10 tiles wide for narrow paths, and on Sisu and jetson half the
+  expansions after iteration 20 gaining nothing. Committed (3c1f81d): the
+  corridor margin grows every sixth reroute instead of every third: quick
+  tier 10 % less CPU, unconnected 32 to 30, starved 20 to 15, vias -6 %,
+  no pass lost; SNSP route mode 171 to 98 unconnected at +6 % vias. A
+  stall stop (N=12 iterations without a conflict improvement; 3-11 % less
+  CPU, boards nearly unchanged) is queued for a tier pair. Capping the
+  margin fails (SNSP needs the wide corridors).
+- The quick tier is 30 boards now (`benchmarks/agent-tasks/quick.json`,
+  README): real layouts in about 1100 s and 3.7 GB; about 35 min at 8
+  jobs.
 
 ## Open problems, ranked
 
