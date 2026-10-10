@@ -225,6 +225,20 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   mostly won back by refinement (final within 10 % of the global
   placement on most tier boards); the 1.4-1.9x against the designers is
   the routing halos, whether less halo still routes is the next experiment.
+- Placer round 2 (a609a75): a touching-courtyard placement ranks last;
+  the race's seed count follows the placer's 40 % share of the work (the
+  placer's work clock was undercounting legalisation 20-fold; fixed);
+  courtyards that fill under 75 % of their box block with their shape
+  (ghoul places, urchin passes). Quick tier x617 against x500 (everything
+  since x500 together): passes 16 to 20, KiCad unconnected 67 to 29,
+  placement failures 4 to 1 (framework M1, the board's). The task
+  generator now tests overhang against the outline polygon: 35 of 109
+  tasks gain fixed parts (mounting holes in rounded corners, parts in
+  notches); tasks v6 for v14. Open: `halo_scale` experiment (does less
+  routing halo still route), the placer's model being stricter than
+  KiCad at mounting-hole rings and pad boxes (45 designer poses illegal on
+  ghoul), SmartSpin2k (a 585-connection panel whose first route alone
+  needs 1000 s; not a target).
 - Speed is now structural: cheaper expansions are exhausted (five
   candidates under 5 %); fewer searches and fewer expansions per search
   are the next lever (a waste measurement is under way).
