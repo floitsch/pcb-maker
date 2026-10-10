@@ -6,7 +6,14 @@ nets a placement-race probe leaves unfinished. It is meant to let the
 layout's placement race judge many candidate placements instead of three,
 and later to give the global placer a routability term.
 
-Status: RESULTS_PLACEHOLDER
+Status (2026-10-10): built end to end (exporter, data, training, tract
+inference, race integration). The race's pre-ranking is the default with
+**RUDY** as the ranker (no model): on the quick tier KiCad unconnected 98
+-> 64. The network ranks one board's placements about as well as RUDY,
+not better (within-board Spearman 0.27-0.37 against 0.35-0.40), and stays
+an experiment behind `congestion_model`. The label is the limit: one 75 s
+probe agrees with itself under another router seed at only Spearman 0.61
+within a board.
 
 ## Representation
 
@@ -65,7 +72,18 @@ of `router`):
 | `open_terminals` | terminals of unfinished nets |
 | scalars | `unfinished` (the race's own measure, `Router::unfinished`), conflicted and incomplete nets, iterations, expansions; per-net flags |
 
-LABEL_CHOICE_PLACEHOLDER
+The map label is `conflict` (in nodes per tile). `history` makes a denser,
+easier map (held-out precision 0.41 and recall 0.70 for tiles above one
+node, against 0.27-0.33 and 0.29-0.44), but a network trained on it ranks
+placements worse (within-board Spearman of its scalar 0.09-0.29 against
+0.19-0.37). The scalar head is trained on `ln(1 + unfinished)`.
+
+**Label noise.** The same 8 placements of 6 held-out boards probed again
+with `PCB_ROUTER_SEED=7` rank alike within a board with Spearman 0.86
+(4in1-mini), 0.94 (d20), 0.78 (OpenAirScope), 0.67 (SNSP-1CHIP), 0.38
+(Explorer), 0.02 (OpenFC): mean 0.61. No predictor can agree with a single
+probe much better than that, and the race's own pick among three probes is
+partly luck.
 
 Probe budget: on a pilot of 18 boards x 7 placements, the unfinished
 count after 25 s of work ranks placements of one board like the count
@@ -76,7 +94,31 @@ the race's criterion.
 
 ## Data
 
-DATA_PLACEHOLDER
+Boards: the 109 harvested benchmark boards, the 617 PCBench boards
+(`benchmarks/pcbench`), and 686 more GitHub boards harvested for training
+only (`harvest.py fetch --training`). Whole boards are held out by a hash
+of the name (15 %), plus 9 boards the race exercised in v11: 226 held-out
+boards, 23 of them harvested boards whose placements differ.
+
+Placements per board (`experiments/congestion/prepare.py`): the designer's;
+designer perturbations (5/15/40 legal moves with swaps and quarter turns,
+up to 2/5/10 mm, two seeds each); two shuffles (every part at a random spot,
+legalized: bad on purpose); our placer from stacked parts with every
+footprint free (`move_all`; 3-4 seeds) and two perturbations of seed 1; and
+for the 109 benchmark boards the task exactly as `benchmarks/agent-tasks/
+run.py` stacks it (with the 2026-10-10 unplace fix) at 16 placer seeds
+(held-out boards) or 8 (training boards): the race's candidates. Generation
+runs on spare cores at nice 19, one search thread per exporter, under the
+run.py memory gate with 20 GB kept free.
+
+Per sample (x401): lowering median 22 ms, features 33 ms, probe 55 s wall
+(p90 134 s; 75 s of work = 150M expansions at most). Unfinished nets:
+median 24.5, 0 in 17 % of the samples. `conflict` is nonzero in 0.2 % of a
+board's tiles (median), `history` in 11 %.
+
+Found on the way: `run.py`'s `unplace` read a pad's net only in KiCad 10
+syntax, so 89 of the 109 layout tasks had every part fixed (fixed in
+baa5817).
 
 ## Model and training
 
@@ -90,23 +132,82 @@ on the map (tiles that overflow weigh five times as much), Huber on
 `ln(1 + unfinished)`, and optionally a pairwise logistic ranking loss
 between placements of the same board (`--by-board --rank-weight`).
 
-MODEL_PLACEHOLDER
+Width 24 (530k parameters) trains 30 epochs in 2-3 minutes on the
+GTX 1650 (batches of one board's placements, flips). Variants measured on
+the held-out boards: the ranking loss helps (without it the scalar's
+within-board Spearman drops from about 0.2-0.37 to 0.07-0.27); width 16
+(235k) is as good as 24; the spread between training seeds of one
+configuration is as large as the differences between configurations, so
+the shipped experiment is an ensemble of four seeds exported as one ONNX
+graph (`export_ensemble.py`), trained without the quick tier's boards.
 
 ## Results
 
-RESULT_TABLES_PLACEHOLDER
+Held-out boards, all placement kinds (about 1000 samples, 84-93 boards;
+lower score = better placement; truth: the probe's unfinished nets):
+
+| Ranker | within-board Spearman | pair accuracy | across boards |
+| --- | ---: | ---: | ---: |
+| network, scalar head | 0.27-0.37 | 0.62-0.68 | 0.75-0.84 |
+| network, map sum | 0.24-0.38 | 0.62-0.67 | 0.54-0.79 |
+| network + RUDY (rank sum) | 0.42 | 0.69 | |
+| RUDY over capacity | 0.35-0.40 | 0.65-0.66 | 0.46 |
+| wirelength | 0.29 | 0.62 | 0.66 |
+
+The race simulated on the 23 held-out boards' 16 task seeds (sum of the
+best probe among those the race probes; today's race probes seeds 1-3):
+
+| Ranker | best of its top 1 | best of its top 3 | its best in the probe's best 3 | probe's best in its top 3 |
+| --- | ---: | ---: | ---: | ---: |
+| today (seeds 1-3) | | 2015 | | |
+| random seeds (expected) | 2414 | 1865 | 0.25 | 0.33 |
+| network (one model) | 1934-2139 | 1568-1796 | 0.43-0.65 | 0.39-0.65 |
+| network, 4-seed ensemble | 1997 | 1585 | 0.52 | 0.57 |
+| network + RUDY | 2023 | 1553 | 0.35 | 0.57 |
+| RUDY over capacity | 2043 | 1621 | 0.43 | 0.48 |
+| wirelength | 2071 | 1709 | 0.48 | 0.26 |
+| oracle | | 1466 | | |
+
+Tile map (conflict nodes per tile, held out): MAE 0.23-0.48 nodes;
+tiles above one node: precision 0.27-0.33, recall 0.29-0.44.
+
+Quick tier, one binary (x402), 36 boards all runs have (31 of 37 race):
+
+| | plain race (3 seeds) | RUDY, top 3 of 16 | network + RUDY, top 3 of 16 |
+| --- | ---: | ---: | ---: |
+| best race probe (sum) | 204 | 189 | 153 |
+| open after the first route | 149 | 112 | 108 |
+| KiCad unconnected | 98 | 64 | 64 |
+| passes | 16 | 18 | 15 |
+| boards better / worse (unconnected) | | 6 / 2 | 6 / 1 |
+| placement wall (37 boards) | 2792 s | 3978 s | 2900 s |
+
+Pass counts move on starved thermals and single placement findings
+(items_not_allowed, courtyards_overlap) of particular seeds, not on
+routing. Where the pre-ranking lost: on reCamera RUDY's race found a
+better probe (10 against 14) but the board resumed from it worse (first
+route 15 open against 8, KiCad 6 against 4): the probe misjudged, not the
+ranker; RUDY was also 0 for 9 of its 16 placements there (no tile above a
+quarter of capacity), so ties went to the placer's order. On USB_Keypad
+the ranker's three probed 6/5/6 against the plain race's 6/4/4 (KiCad 4
+against 2): a slightly worse pick, within the probe's noise (the same
+seeds probed by the exporter: 5-13).
 
 ## Integration
 
-`KiCadBoardLayoutConfig` (layout.json) has `congestion_model` (path to an
-ONNX file; off when absent), `congestion_candidates` (16), `congestion_probes`
-(3) and `congestion_score` (`open` or `overflow`). With a model, the placer
-makes `congestion_candidates` seeds; the kept placement and every other
+`KiCadBoardLayoutConfig` (layout.json) has `congestion_score` (`rudy`, the
+default; `none` for the plain race; with `congestion_model`, an ONNX file:
+`open`, `overflow` or `open+rudy`), `congestion_candidates` (16) and
+`congestion_probes` (3). The placer makes `congestion_candidates` seeds; the kept placement and every other
 seed's legal placement that keeps the constraints as well are lowered,
 rasterized and scored (`crates/pcb-kicad/src/congestion_rank.rs`); the
 race then probes only the best `congestion_probes`, as before.
 `board-layout.json` records the scores and the probed placements
-(`congestion`). Latency: LATENCY_PLACEHOLDER
+(`congestion`). Latency: features 7-70 ms, inference 5-58 ms on 24 x 24 to 107 x 79
+tiles (one network; the first call on a size builds the plan, 66-125 ms;
+the 4-network ensemble 18 ms on OpenFC), lowering a placement 18-440 ms
+(the largest part on big boards). tract matches PyTorch to 2e-4 relative
+on real samples.
 
 ## How to retrain and export
 
@@ -137,4 +238,15 @@ origins and licences in `benchmarks/github/training-manifest.json`).
 
 ## Limits
 
-LIMITS_PLACEHOLDER
+- The label: one probe is a noisy judge (0.61 between router seeds), and
+  the race's decision is what it is trained to predict. Means over router
+  seeds (generating) and the final layout of best and worst seeds are the
+  next measurements.
+- The network does not beat RUDY within a board; its advantage is across
+  boards, which the race never needs.
+- RUDY ties at 0 on uncrowded boards; a secondary key (total demand) would
+  break them.
+- 6- and 8-layer boards share two inner slots (averaged).
+- Flips only, no quarter turns (the router's preferred directions).
+- GroupNorm sees the zero padding of a batch; inference pads to multiples
+  of 8 only (a small train/inference mismatch).

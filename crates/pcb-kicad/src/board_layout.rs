@@ -47,18 +47,22 @@ pub struct KiCadBoardLayoutConfig {
     /// permuted. Used when `pin_swaps` is not given.
     pub swappable: Vec<KiCadSwappable>,
     pub pin_swap: KiCadPinSwapConfig,
-    /// A congestion model (ONNX, see `docs/congestion-model.md`): the
-    /// placer then makes `congestion_candidates` placements (seeds), the
-    /// model ranks them, and the placement race probes only the
-    /// `congestion_probes` it predicts route best. Off when absent.
+    /// The placement race's pre-ranking (`docs/congestion-model.md`): the
+    /// placer makes `congestion_candidates` placements (seeds), they are
+    /// ranked by `congestion_score`, and the race probes only the best
+    /// `congestion_probes`. `congestion_score`:
+    /// - `rudy` (default): RUDY routing demand above the tiles' free
+    ///   capacity; no model needed (quick tier: KiCad unconnected 98 -> 64
+    ///   against the plain race of three seeds);
+    /// - `none`: the plain race (the placer's `placement_seeds`, all
+    ///   probed);
+    /// - with `congestion_model` (an ONNX file, an experiment): `open`
+    ///   (its predicted unfinished nets), `overflow` (its predicted
+    ///   overflow summed over the board), or `open+rudy` (the sum of a
+    ///   placement's ranks by `open` and by RUDY).
     pub congestion_model: Option<PathBuf>,
     pub congestion_candidates: usize,
     pub congestion_probes: usize,
-    /// What ranks: `open` (the predicted unfinished nets), `overflow`
-    /// (the predicted overflow summed over the board), `open+rudy` (the
-    /// sum of the placement's ranks by `open` and by RUDY), or `rudy`
-    /// (RUDY demand above capacity, no model: the cheap baseline; it
-    /// turns the ranking on by itself).
     pub congestion_score: String,
 }
 
@@ -131,7 +135,7 @@ impl Default for KiCadBoardLayoutConfig {
             congestion_model: None,
             congestion_candidates: 16,
             congestion_probes: 3,
-            congestion_score: "open".into(),
+            congestion_score: "rudy".into(),
         }
     }
 }
@@ -175,9 +179,9 @@ pub struct KiCadBoardLayoutResult {
     /// each other seed's placement tried, the best routing on.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub placement_race: Vec<usize>,
-    /// With a congestion model: its score of every placement it ranked
-    /// (the kept one first, then the other seeds by wirelength) and the
-    /// ones the race probed, best first.
+    /// The race's pre-ranking: the score of every placement it ranked
+    /// (the kept one first, then the other seeds by the placer's key) and
+    /// the ones the race probed, best first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub congestion: Option<KiCadCongestionRanking>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
@@ -487,7 +491,16 @@ pub fn layout_kicad_board(
         Some(path) => Some(pcb_congestion::CongestionModel::load(path)?),
         None => None,
     };
-    if congestion_model.is_some() || config.congestion_score == "rudy" {
+    // Only where the race runs: one router seed, no pin swaps.
+    let pre_ranking = config.congestion_score != "none"
+        && (config.congestion_score == "rudy" || congestion_model.is_some())
+        && router_config.seeds.unwrap_or(1) <= 1
+        && config.pin_swaps.is_none()
+        && config.swappable.is_empty();
+    if config.congestion_score != "none" && config.congestion_score != "rudy" && congestion_model.is_none() {
+        return Err(format!("congestion_score {:?} needs a congestion_model", config.congestion_score));
+    }
+    if pre_ranking {
         placer_config.placement_seeds = placer_config.placement_seeds.max(config.congestion_candidates);
     }
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
@@ -645,12 +658,15 @@ pub fn layout_kicad_board(
             }
         }
     }
-    // With a congestion model, the seeds' placements are ranked by the
-    // routability it predicts, and only the best few are probed (a probe
-    // is a real route of up to `probe_seconds`; a prediction takes
-    // milliseconds). The race below then judges those as before.
+    // The seeds' placements are ranked by predicted routability (RUDY, or
+    // the model), and only the best few are probed (a probe is a real
+    // route of up to `probe_seconds`; a score takes milliseconds). The
+    // race below then judges those as before, in the ranking's order.
+    // Scores and their order depend only on the placements, which the
+    // placer makes per seed and sorts by its own key: nothing here
+    // depends on thread timing.
     let mut congestion = None;
-    if (congestion_model.is_some() || config.congestion_score == "rudy")
+    if pre_ranking
         && seeds == 1
         && pin_swaps.is_none()
         && others.len() + 1 > config.congestion_probes.max(1)
@@ -660,7 +676,8 @@ pub fn layout_kicad_board(
         let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, congestion_model.as_ref(), router_config, &core_config, connect, &config.congestion_score)?;
         let keep: Vec<usize> = ranked.order.iter().copied().take(config.congestion_probes.max(1)).collect();
         eprintln!(
-            "congestion model: {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
+            "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
+            config.congestion_score,
             pool.len(),
             ranked.seconds,
             ranked.lower_seconds,

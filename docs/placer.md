@@ -74,10 +74,30 @@ less copper); on PIC and the hierarchy board the automatic one is.
      fabrication outline and pads.
 
    The level used is reported, and the router-driven moves keep to it.
-   Three seeds run in parallel; the best placement is kept.
+   Several seeds run in parallel (`placement_seeds`, 3; the layout asks for
+   16, see the race below); the best placement by the placer's own key
+   (fewest illegal parts, least missed constraints, least wirelength) is
+   kept, the others are the race's alternatives.
 5. **Refinement.** Greedy legal moves, rotations and swaps that strictly
    reduce wirelength.
-6. **Coupling.** `layout-kicad-board` routes the placement once, then the
+6. **The placement race.** Wirelength is not routability. The layout ranks
+   the seeds' legal placements (those that keep the constraints as well as
+   the kept one) by RUDY: each net's spanning-tree length times its track
+   pitch spread over its bounding box, summed per 16 x 16-node router tile,
+   above a quarter of the tile's free capacity (every layer less obstacles
+   and pad copper; `pcb_congestion::rudy_overflow`). The best three by that
+   score are probed by the router for 75 s of work each, side by side, and
+   the one with the fewest unfinished nets routes on (ties to the better
+   ranked). Ranking takes 10-100 ms a placement (lowering, rasterizing);
+   the 16 seeds cost placement wall time (about 30 s a board on the quick
+   tier) but no extra placement work. Quick tier, 2026-10-10, one binary
+   (x402), the plain race of three seeds against the pre-ranked race of 16:
+   best race probe 204 -> 189 unfinished nets, open after the first route
+   149 -> 112, KiCad unconnected 98 -> 64 (6 boards better, 2 worse),
+   passes 16 -> 18. `congestion_score: "none"` in layout.json asks for the
+   plain race; `congestion_model` ranks with the learned predictor
+   instead (an experiment, [congestion-model.md](congestion-model.md)).
+7. **Coupling.** `layout-kicad-board` routes the placement once, then the
    router and placer take turns on one in-memory state: congested footprints
    are nudged, the router reroutes only what the nudge touched, and moves are
    kept when the board improves. See [coupling.md](coupling.md).

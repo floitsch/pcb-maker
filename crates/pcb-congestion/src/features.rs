@@ -504,6 +504,10 @@ mod tests {
         TileFrame { origin: [0.0, 0.0], pitch: 0.1, nx, ny, tile: 16, tiles_x: nx.div_ceil(16), tiles_y: ny.div_ceil(16) }
     }
 
+    fn pad_at(center: Point, half: f64, layers: u32, net: u32) -> Obstacle {
+        pad(center, half, layers, net)
+    }
+
     fn pad(center: Point, half: f64, layers: u32, net: u32) -> Obstacle {
         Obstacle {
             shape: Shape::rectangle(center, [half, half], 0.0),
@@ -596,6 +600,35 @@ mod tests {
         assert_eq!(rudy_overflow(&maps, 0.25), 0.0);
         let demand: f32 = maps.channel("rudy_mst").unwrap().iter().sum();
         assert!((rudy_overflow(&maps, 0.0) - demand).abs() < 1.0e-5);
+    }
+
+    /// The race's RUDY ranking on a known 2 x 2-tile case: a two-pin net
+    /// with a 2 mm track pitch from (0.4, 0.4) to (2.4, 2.4) demands
+    /// 4 mm x 2 mm over its 2 x 2 mm box (density 2) spread over the
+    /// four tiles by their overlap; each tile's capacity is its two free
+    /// layers less the pad copper. The same net with its pads 0.4 mm
+    /// apart in one tile demands less and ranks first.
+    #[test]
+    fn rudy_ranking_on_a_two_by_two_tile_board() {
+        let mut board = small_board();
+        board.classes[0] = RuleClass { trace_width: 1.0, clearance: 1.0, via_diameter: 0.6, via_drill: 0.3 };
+        let maps = rasterize(&board, &frame(32, 32));
+        let near = (1.55 - 0.4) / 1.6;
+        let far = (2.4 - 1.55) / 1.6;
+        let pad: f64 = 25.0 / 256.0;
+        // Tiles 0 and 3 hold a pad on the front (tile 3's through pad on
+        // both layers).
+        let capacity: [f64; 4] = [2.0 - pad, 2.0, 2.0, 2.0 - 2.0 * pad];
+        let demand = [near * near, far * near, near * far, far * far].map(|share| 2.0 * share);
+        let expected: f64 = demand.iter().zip(capacity).map(|(d, c)| (d - 0.25 * c).max(0.0)).sum();
+        let spread = rudy_overflow(&maps, 0.25);
+        assert!((spread as f64 - expected).abs() < 1.0e-4, "{spread} against {expected}");
+        // The second pad next to the first: a 0.8 mm net in one tile.
+        let mut close = board.clone();
+        close.obstacles[1] = pad_at([0.8, 0.8], 0.25, 3, 0);
+        close.nets[0].terminals[1].anchor = [0.8, 0.8];
+        let packed = rudy_overflow(&rasterize(&close, &frame(32, 32)), 0.25);
+        assert!(packed < spread, "{packed} against {spread}");
     }
 
     #[test]
