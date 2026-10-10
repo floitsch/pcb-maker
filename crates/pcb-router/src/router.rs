@@ -235,7 +235,13 @@ impl Default for Config {
             present_factor: 0.5,
             present_growth: 1.5,
             present_cap: 1.0e4,
-            stall_at_cap: 25,
+            // At the price cap, twelve iterations without a new low of
+            // conflicted nets end a negotiation: after that the rest seldom
+            // gains (Sisu stalled at 25 conflicted nets from iteration 21
+            // and negotiated on to 47; 54 % of its expansions came after
+            // iteration 20). Below the cap the rising price still moves
+            // nets (a three-track channel needs more than twelve).
+            stall_at_cap: 12,
             stall_drop: 0.0,
             stall_patience: 25,
             abandon_hopeless: true,
