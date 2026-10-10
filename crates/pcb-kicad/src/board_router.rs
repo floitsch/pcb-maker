@@ -2288,6 +2288,16 @@ pub fn route_kicad_board(
                                 (core::router::Router::new(board, &quiet), 0.0)
                             });
                             let unfinished = router.probe(probe_seconds);
+                            // Experiment hook (the ladder's judge,
+                            // docs/congestion-model.md): the probe's other
+                            // statistics.
+                            if std::env::var_os("PCB_LADDER_STATS").is_some() {
+                                let labels = router.congestion_labels();
+                                let nets = labels.net_routable.len();
+                                let incomplete = (0..nets).filter(|net| labels.net_routable[*net] && !labels.net_complete[*net]).count();
+                                let conflicted = (0..nets).filter(|net| labels.net_routable[*net] && labels.net_conflicted[*net]).count();
+                                eprintln!("ladder stats: rung {mode} unfinished {unfinished} conflicted {conflicted} incomplete {incomplete}");
+                            }
                             (*mode, unfinished, router, built_seconds + started.elapsed().as_secs_f64())
                         })
                     })
@@ -2305,7 +2315,9 @@ pub fn route_kicad_board(
                     seconds,
                     if side_by_side > 1 { format!(" ({side_by_side} side by side)") } else { String::new() }
                 );
-                if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
+                // Experiment hook: continue this rung whatever the probes say.
+                let forced = std::env::var("PCB_LADDER_FORCE_RUNG").ok().and_then(|value| value.parse::<usize>().ok());
+                if forced.map_or(leader.as_ref().is_none_or(|(best, ..)| unfinished < *best), |rung| rung == mode) {
                     router.config_mut().verbose = core_config(attempt).verbose;
                     leader = Some((unfinished, mode, router, board.clone(), attempt.clone()));
                 }
@@ -2323,6 +2335,22 @@ pub fn route_kicad_board(
         if let Some((_, mode, mut router, board, attempt)) = leader {
             let started = std::time::Instant::now();
             let remaining = (ladder_budget - spent(ladder_work)).max(60.0);
+            // Experiment hook: the open count after a short continuation
+            // of a copy (no polish), another statistic a judge could use.
+            if let Some(seconds) = std::env::var("PCB_LADDER_SHORT_RESUME").ok().and_then(|value| value.parse::<f64>().ok()) {
+                let mut copy = router.clone();
+                let short = copy.resume_polished(seconds, false);
+                let open: usize = short
+                    .status
+                    .iter()
+                    .map(|status| match status {
+                        core::NetStatus::Partial { unconnected_terminals } => *unconnected_terminals,
+                        core::NetStatus::Unreachable => 1,
+                        _ => 0,
+                    })
+                    .sum();
+                eprintln!("ladder stats: rung {mode} short resume {seconds} s: {open} open");
+            }
             let probed = router.expansions();
             // The router's own probe is in its work already.
             router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work) + work_of(probed)));

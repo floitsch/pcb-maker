@@ -310,7 +310,16 @@ impl Problem {
             .iter()
             .flat_map(|component| {
                 let shortest = component.body_size[0].min(component.body_size[1]) / 2.0;
-                component.far_side.iter().chain(&component.far_copper).map(move |far| {
+                // Hollow and shaped boxes too: a part without a courtyard
+                // blocks with copper graphics beyond its body (WLED_Matrix).
+                component
+                    .far_side
+                    .iter()
+                    .chain(&component.far_copper)
+                    .chain(&component.hollow)
+                    .chain(&component.courtyards)
+                    .chain(&component.tight_hollow)
+                    .map(move |far| {
                     let farthest = [[far[0], far[1]], [far[2], far[1]], [far[2], far[3]], [far[0], far[3]]]
                         .iter()
                         .map(|corner| (corner[0] - component.body_center[0]).hypot(corner[1] - component.body_center[1]))
