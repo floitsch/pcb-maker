@@ -6,14 +6,39 @@ nets a placement-race probe leaves unfinished. It is meant to let the
 layout's placement race judge many candidate placements instead of three,
 and later to give the global placer a routability term.
 
-Status (2026-10-10): built end to end (exporter, data, training, tract
-inference, race integration). The race's pre-ranking is the default with
-**RUDY** as the ranker (no model): on the quick tier KiCad unconnected 98
--> 64. The network ranks one board's placements about as well as RUDY,
-not better (within-board Spearman 0.27-0.37 against 0.35-0.40), and stays
-an experiment behind `congestion_model`. The label is the limit: one 75 s
-probe agrees with itself under another router seed at only Spearman 0.61
-within a board.
+Status (2026-10-11): **a closed negative as a race ranker.** Built end to
+end (exporter, data, training, tract inference, race integration) and
+measured; the network does not rank one board's placements better than
+RUDY, a hand-written demand estimate, and against the final layouts it is
+worse. What came out of it and stays:
+
+- the race's pre-ranking, now the layout's default, with **RUDY** as the
+  ranker (no model): 16 placer seeds, the best three by RUDY probed; on the
+  quick tier KiCad unconnected 98 -> 64 against the plain race of three
+  seeds;
+- the infrastructure: the tile rasterizer (`crates/pcb-congestion`), tract
+  inference, the read-only tile views of the router
+  (`pcb_router::router::congestion`), the sample exporter
+  (`export-congestion-sample`), the training and evaluation scripts
+  (`experiments/congestion`), the training-board harvest.
+
+Why it did not beat RUDY: the race needs a ranking *within* one board,
+among placements of the same parts that differ in detail, and the only
+affordable judge to learn from is a 75 s probe. That judge is noisy: one
+probe agrees with another under a different router seed at Spearman 0.44
+(23 held-out boards; 0.61 on a first 6), and against the final layout
+(1800 s, KiCad's unconnected count) a probe reaches about 0.55, the same
+as a second probe or the mean of two. The network learned what is easy in
+that label, the board-to-board scale of the unfinished count (Spearman
+0.75-0.84 across boards), but within a board it reached 0.27-0.37 against
+the probe (RUDY 0.35-0.40) and 0.13 against the finals (RUDY 0.30,
+wirelength 0.23). See "Results".
+
+A second attempt would need a better judge than the probe to learn from:
+the final layouts themselves as labels (1800 s a sample, so thousands of
+CPU-hours for a training set), or a probe statistic that tracks the final
+result clearly better than 0.55 (none of the probe's own statistics does:
+"Which probe statistic predicts the final result").
 
 ## Representation
 
@@ -81,9 +106,11 @@ placements worse (within-board Spearman of its scalar 0.09-0.29 against
 **Label noise.** The same 8 placements of 6 held-out boards probed again
 with `PCB_ROUTER_SEED=7` rank alike within a board with Spearman 0.86
 (4in1-mini), 0.94 (d20), 0.78 (OpenAirScope), 0.67 (SNSP-1CHIP), 0.38
-(Explorer), 0.02 (OpenFC): mean 0.61. No predictor can agree with a single
-probe much better than that, and the race's own pick among three probes is
-partly luck.
+(Explorer), 0.02 (OpenFC): mean 0.61. On all 23 held-out boards whose
+seeds differ (16 seeds each, router seed 1 against none) the mean is 0.44
+(-0.24 on capybully to 1.00 on Blue_Line). No predictor can agree with a
+single probe much better than that, and the race's own pick among three
+probes is partly luck.
 
 Probe budget: on a pilot of 18 boards x 7 placements, the unfinished
 count after 25 s of work ranks placements of one board like the count
@@ -193,6 +220,34 @@ the ranker's three probed 6/5/6 against the plain race's 6/4/4 (KiCad 4
 against 2): a slightly worse pick, within the probe's noise (the same
 seeds probed by the exporter: 5-13).
 
+## Which probe statistic predicts the final result
+
+92 final layouts (2026-10-10, x401, run.py, 1800 s each): on 23 held-out
+boards the two best and the two worst of 16 placer seeds by one probe,
+each laid out alone (no race). 82 have a KiCad result, 15 boards have
+finals that differ. Within-board Spearman against the final KiCad
+unconnected count, pair accuracy (81 pairs), and the regret of the seed
+the statistic picks (final unconnected above the best of the four):
+
+| Statistic | Spearman | pairs | regret |
+| --- | ---: | ---: | ---: |
+| the probe the seeds were selected by (biased by the selection) | 0.451 | 0.679 | 2.47 |
+| one independent probe (router seed 1 / 2) | 0.526 / 0.568 | 0.735 / 0.747 | 2.60 / 2.87 |
+| mean of the two independent probes | 0.546 | 0.741 | 1.73 |
+| the probe's conflicted nets | 0.503 | 0.685 | 3.73 |
+| the probe's incomplete nets | 0.486 | 0.679 | 13.2 |
+| open terminals after the layout's first route (not available to a race) | 0.555 | 0.778 | 2.67 |
+| RUDY over capacity | 0.300 | 0.630 | 7.33 |
+| wirelength | 0.234 | 0.593 | 7.80 |
+| the network (4-model ensemble) | 0.130 | 0.556 | 8.60 |
+
+The probe's best two seeds finish better than its worst two on 11
+boards, the same on 6, worse on 2: the probe is a real judge, the best
+available before routing, but averaging two probes (at the same work, two
+half-budget probes would do: 25 s and 75 s probes rank alike at 0.994)
+does not make it a clearly better one, so the race keeps one probe a
+placement.
+
 ## Integration
 
 `KiCadBoardLayoutConfig` (layout.json) has `congestion_score` (`rudy`, the
@@ -238,14 +293,15 @@ origins and licences in `benchmarks/github/training-manifest.json`).
 
 ## Limits
 
-- The label: one probe is a noisy judge (0.61 between router seeds), and
-  the race's decision is what it is trained to predict. Means over router
-  seeds (generating) and the final layout of best and worst seeds are the
-  next measurements.
+- The label: one probe is a noisy judge (0.44-0.61 between router seeds,
+  about 0.55 against the final layout), and it is what the network learns.
 - The network does not beat RUDY within a board; its advantage is across
   boards, which the race never needs.
-- RUDY ties at 0 on uncrowded boards; a secondary key (total demand) would
-  break them.
+- RUDY ties at 0 on uncrowded boards (9 of 16 placements on OpenFC and
+  reCamera); breaking the ties by demand above a tenth of the capacity
+  changed the probed seeds but not one final row (pinned pairs on both
+  boards; offline race@3 1601 against 1601), so ties keep the placer's
+  order.
 - 6- and 8-layer boards share two inner slots (averaged).
 - Flips only, no quarter turns (the router's preferred directions).
 - GroupNorm sees the zero padding of a batch; inference pads to multiples

@@ -276,12 +276,28 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
    the repair (`free_thermal_spokes`, budgeted, only when polishing) moves
    2 of 10 nets. Probably needs the exit direction of the neighbouring
    pads decided before negotiation (a fan-out step), not a cost.
-3. **The ladder's judge.** The probe (unfinished nets after 75 s of work)
-   picks the rung to continue; it chose tracks on k30 where connect ends
-   with fewer starved thermals, and it stops at the first complete rung regardless of starved
-   thermals (Castor x155: "0 open, 18 starved" kept). Rank by
-   (open, starved) before vias, and let a complete-but-starved rung be
-   rivalled.
+3. **The ladder's judge.** Measured 2026-10-11 (x406 = HEAD 916bfbf plus
+   env hooks `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_STATS`,
+   `PCB_LADDER_SHORT_RESUME`; `build/ladder-judge`,
+   `experiments/congestion/ladder_judge.py`): every probe-ladder rung of
+   k30, Castor, Hub and Sisu continued to its final in route mode. By
+   (open, starved, vias) the probe picked the best rung on 3 of 4: k30
+   tracks (0 open, 24 starved, 359 vias; connect 0/24/630, so the earlier
+   "connect is better" is not reproduced on HEAD), Sisu tracks (35 open
+   against 41-184), Castor connect (0 open, 8 starved). It failed on Hub:
+   tracks probed 20 unfinished against 97-103 for the connect rungs, but
+   ended 244 open against 127. The probe's count adds each stranded
+   pour pad of the connect rungs (Hub: 82 of its 97), which the
+   continuation then connects. The conflicted nets alone (no pour-pad
+   term) pick the best rung by final open count on all 4 (Hub rung 0: 127
+   open, 19 starved against the best 15). Incomplete nets also do on 4 of
+   4, open after a 30 s continuation on 3 of 4. Four boards are not
+   enough to change the judge; the next step is the same measurement on
+   more 4-layer boards, comparing the probe count with and without the
+   pour-pad term. Still open from before: the ladder stops at the first
+   complete rung whatever its starved thermals (Castor x155: "0 open, 18
+   starved" kept); rank by (open, starved) before vias, and let a
+   complete-but-starved rung be rivalled.
 4. **Crowded placement** (OpenESC, SNSP): the three directions are built
    as options and none wins; `replicate_channels`' rigid macros never get
    seated. The legalizer loses 30-90 % of the global placement's
