@@ -187,6 +187,23 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   investigation), Hub 132/159 with 40 (placed for the first time), Sisu
   183/192 with 12 (unchanged: it was always placed).
 
+## Committed on 2026-10-10 (the memory and congestion agents)
+
+- Rungs side by side with fixed work budgets, honest via-reduction budgets,
+  a 4-ary key heap (9-13 % less search CPU), polish-again after a trial's
+  polish, and the layout deciding by work everywhere: a board's layout now
+  reproduces exactly run to run (CyberKeeb 3 of 3, Sisu byte-identical).
+- The placement race pre-ranks 16 placer seeds by RUDY (routing demand over
+  tile capacity) and probes the best three: quick tier KiCad unconnected
+  98 to 64 (6 boards better, 2 worse), laptop power finds a legal seed.
+  Default from the next commit. The neural predictor ranks race candidates
+  about as well as RUDY (its label, a single 75 s probe, agrees with
+  itself only at Spearman 0.6 between router seeds) and stays an
+  experiment behind `congestion_model`; see docs/congestion-model.md.
+- Speed is now structural: cheaper expansions are exhausted (five
+  candidates under 5 %); fewer searches and fewer expansions per search
+  are the next lever (a waste measurement is under way).
+
 ## Open problems, ranked
 
 1. **Fill fidelity.** Measure our free mask against KiCad's fill polygons
