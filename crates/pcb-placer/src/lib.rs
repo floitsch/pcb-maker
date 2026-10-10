@@ -552,6 +552,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         poses: poses.clone(),
     });
     let problem = &relaxed;
+    let finishing = std::time::Instant::now();
     legal::refine(problem, &mut poses, config.refine_passes);
     legal::center_edge_copper(problem, &mut poses);
     // Moving one part can break a relation repaired before; repeat while
@@ -564,6 +565,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, &mut poses, 0.5);
+    if debug {
+        eprintln!("placer: refinement and relation repair {:.1}s", finishing.elapsed().as_secs_f64());
+    }
     let wirelength_final = problem.wirelength(&poses);
     frames.push(Frame {
         iteration: global.iterations + 2,

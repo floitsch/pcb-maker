@@ -301,6 +301,30 @@ fn is_legal_counting(
     others: impl Iterator<Item = usize>,
     work: &mut u64,
 ) -> bool {
+    clear_of(problem, poses, index, pose, others, work) && fits_board(problem, index, pose, work)
+}
+
+/// Whether a movable part at `pose` is on the board and keeps its hard
+/// constraints (a fixed one always is).
+fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bool {
+    if !problem.components[index].fixed {
+        *work += problem.outline.len() as u64;
+        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether part `index` at `pose` keeps clear of the parts in `others`.
+fn clear_of(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    others: impl Iterator<Item = usize>,
+    work: &mut u64,
+) -> bool {
     let body = rect(problem, index, pose);
     let side = problem.components[index].side;
     // The parts first: on a crowded board they turn down most spots, and
@@ -344,12 +368,6 @@ fn is_legal_counting(
                 return false;
             }
         } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other]) {
-            return false;
-        }
-    }
-    if !problem.components[index].fixed {
-        *work += problem.outline.len() as u64;
-        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
             return false;
         }
     }
@@ -635,10 +653,17 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
     let step = if problem.grid > 0.0 { problem.grid.max(0.5) } else { 0.5 };
     let mut still = Vec::new();
     let mut placed: Vec<usize> = (0..count).filter(|index| !failed.contains(index)).collect();
+    // Every spot is tested against the parts near it only (SmartSpin2k's
+    // panel, 890 parts: one eviction tested every part at every spot and
+    // took 20 minutes).
+    let mut buckets = Buckets::new(problem);
+    for &other in &placed {
+        buckets.insert(problem, other, poses[other]);
+    }
+    let mut near = Vec::new();
+    let mut work = 0;
     for &index in failed {
         let component = &problem.components[index];
-        let fixed: Vec<usize> = placed.iter().copied().filter(|other| problem.components[*other].fixed).collect();
-        let movable: Vec<usize> = placed.iter().copied().filter(|other| !problem.components[*other].fixed).collect();
         // The spot whose displaced movable parts are smallest in area.
         let mut best: Option<(f64, Pose, Vec<usize>)> = None;
         let mut y = bounds[1];
@@ -650,13 +675,20 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                         position: constraints::snap_position(problem, index, [x, y], *angle),
                         angle: *angle,
                     };
-                    if !is_legal(problem, poses, index, pose, fixed.iter().copied()) {
+                    if !fits_board(problem, index, pose, &mut work) {
                         continue;
                     }
+                    buckets.near(problem, index, pose, &mut near);
+                    let fixed = near.iter().copied().filter(|other| problem.components[*other].fixed);
+                    if !clear_of(problem, poses, index, pose, fixed, &mut work) {
+                        continue;
+                    }
+                    let mut movable: Vec<usize> = near.iter().copied().filter(|other| !problem.components[*other].fixed).collect();
+                    movable.sort_unstable();
                     let mut area = 0.0;
                     let mut displaced = Vec::new();
-                    for &other in &movable {
-                        if !is_legal(problem, poses, index, pose, std::iter::once(other)) {
+                    for other in movable {
+                        if !clear_of(problem, poses, index, pose, std::iter::once(other), &mut work) {
                             let size = problem.components[other].body_size;
                             area += size[0] * size[1];
                             displaced.push(other);
@@ -679,8 +711,11 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
         };
         let saved: Vec<Pose> = poses.to_vec();
         poses[index] = pose;
-        let mut settled: Vec<usize> = placed.iter().copied().filter(|other| !displaced.contains(other)).collect();
-        settled.push(index);
+        for &moved in &displaced {
+            buckets.remove(problem, moved, saved[moved]);
+        }
+        buckets.insert(problem, index, pose);
+        let mut seated = Vec::new();
         let mut all = true;
         for &moved in &displaced {
             let component = &problem.components[moved];
@@ -699,7 +734,11 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                         if spot.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
-                        if is_legal(problem, poses, moved, candidate, settled.iter().copied()) {
+                        if !fits_board(problem, moved, candidate, &mut work) {
+                            continue;
+                        }
+                        buckets.near(problem, moved, candidate, &mut near);
+                        if clear_of(problem, poses, moved, candidate, near.iter().copied(), &mut work) {
                             spot = Some((distance, candidate));
                         }
                     }
@@ -710,7 +749,8 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
             match spot {
                 Some((_, candidate)) => {
                     poses[moved] = candidate;
-                    settled.push(moved);
+                    buckets.insert(problem, moved, candidate);
+                    seated.push(moved);
                 }
                 None => {
                     all = false;
@@ -721,10 +761,18 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
         if all {
             placed.push(index);
         } else {
+            for &moved in &seated {
+                buckets.remove(problem, moved, poses[moved]);
+            }
+            buckets.remove(problem, index, pose);
+            for &moved in &displaced {
+                buckets.insert(problem, moved, saved[moved]);
+            }
             poses.copy_from_slice(&saved);
             still.push(index);
         }
     }
+    crate::add_work(work);
     still
 }
 
