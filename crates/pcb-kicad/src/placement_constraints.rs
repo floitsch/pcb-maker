@@ -596,6 +596,7 @@ fn apply_rows(
         let mut carried = problem.components[leader].clone();
         carried.pins.clear();
         carried.far_side.clear();
+        carried.far_copper.clear();
         carried.pads.clear();
         for (place, member) in members.iter().enumerate() {
             if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
@@ -630,6 +631,7 @@ fn apply_rows(
                 net: pin.net,
             }));
             carried.far_side.extend(shift(&component.far_side));
+            carried.far_copper.extend(shift(&component.far_copper));
             carried.pads.extend(shift(&pad_boxes[*member]));
             carried.halo = carried.halo.max(component.halo);
             carried.edge_inset = carried.edge_inset.min(component.edge_inset);
@@ -664,6 +666,7 @@ fn apply_rows(
             component.fixed = true;
             component.pins.clear();
             component.far_side.clear();
+            component.far_copper.clear();
             component.pads.clear();
             component.halo = 0.0;
             component.body_size = [0.01, 0.01];
@@ -1152,6 +1155,7 @@ mod tests {
             fixed,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
+            far_copper: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,

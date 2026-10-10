@@ -68,6 +68,27 @@ fn turn_of(angle: f64, half: Point) -> Option<(Point, Point)> {
     Some(([cos, sin], half))
 }
 
+/// Boxes of a part's own frame ([min x, min y, max x, max y]) on the
+/// board at `pose`, grown by `margin`: turned with the part when it is not
+/// at a quarter turn (a 45 degree 0402's pads are not the square around
+/// them).
+fn turned_rects(component: &crate::problem::Component, boxes: &[[f64; 4]], pose: Pose, margin: f64) -> Vec<Rect> {
+    let (sin, cos) = (-pose.angle).to_radians().sin_cos();
+    boxes
+        .iter()
+        .map(|local| {
+            let center = component.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], pose.angle);
+            let own = [(local[2] - local[0]) / 2.0 + margin, (local[3] - local[1]) / 2.0 + margin];
+            Rect {
+                center: [pose.position[0] + center[0], pose.position[1] + center[1]],
+                half: [cos.abs() * own[0] + sin.abs() * own[1], sin.abs() * own[0] + cos.abs() * own[1]],
+                round: false,
+                turn: turn_of(pose.angle, own),
+            }
+        })
+        .collect()
+}
+
 fn rect(problem: &Problem, index: usize, pose: Pose) -> Rect {
     let component = &problem.components[index];
     let half = component.half_extent(pose.angle);
@@ -380,6 +401,29 @@ fn clear_of(
     true
 }
 
+/// Debugging aid: why part `index` at `pose` may not sit beside `other`
+/// (`None` when it may), by the test that turns it down.
+pub fn conflict_kind(problem: &Problem, poses: &[Pose], index: usize, pose: Pose, other: usize) -> Option<&'static str> {
+    let mut work = 0;
+    if clear_of(problem, poses, index, pose, std::iter::once(other), &mut work) {
+        return None;
+    }
+    let (mine, theirs) = (&problem.components[index], &problem.components[other]);
+    Some(if mine.side.collides(theirs.side) {
+        if mine.copper_only || theirs.copper_only {
+            "pads in a cutout or pad keepout"
+        } else if mine.hollow_for(theirs) || theirs.hollow_for(mine) {
+            "shaped or hollow boxes"
+        } else if overlaps(rect(problem, index, pose).grown(-mine.halo), rect(problem, other, poses[other]).grown(-theirs.halo), -1.0e-3) {
+            "bodies overlap"
+        } else {
+            "bodies closer than the spacing"
+        }
+    } else {
+        "far side"
+    })
+}
+
 /// The work of setting up one spot to test (snapping, the body's box, the
 /// bucket query), in the units of one part-against-part test.
 const SPOT_WORK: usize = 24;
@@ -447,37 +491,29 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
     }
     let margin = problem.edge_margin;
     let outline = &problem.components[hole].cutout_outline;
+    let component = &problem.components[part];
+    let pads = turned_rects(component, &component.pads, pose_part, margin);
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
         // the hole runs diagonally.
-        return problem.components[part]
-            .pad_boxes(pose_part)
-            .into_iter()
-            .any(|(center, half)| rect_meets_polygon(center, [half[0] + margin, half[1] + margin], outline));
+        return pads.into_iter().any(|pad| rect_meets_polygon(&pad, outline));
     }
     let hole = rect(problem, hole, pose_hole);
-    problem.components[part].pad_boxes(pose_part).into_iter().any(|(center, half)| {
-        overlaps(
-            Rect {
-                center,
-                half: [half[0] + margin, half[1] + margin],
-                round: false,
-                turn: None,
-            },
-            hole,
-            0.0,
-        )
-    })
+    pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
 }
 
-/// Whether an axis-aligned box meets a polygon (overlap or touch).
-fn rect_meets_polygon(center: [f64; 2], half: [f64; 2], polygon: &[[f64; 2]]) -> bool {
-    let (x0, y0, x1, y1) = (center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]);
-    let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+/// Whether a box (turned or not) meets a polygon (overlap or touch).
+fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]]) -> bool {
+    let corners = rect.corners();
     if corners.iter().any(|corner| crate::problem::point_in_polygon(*corner, polygon)) {
         return true;
     }
-    if polygon.iter().any(|p| p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1) {
+    // A polygon corner inside the box.
+    let (axes, own) = rect.frame();
+    if polygon.iter().any(|p| {
+        let delta = [p[0] - rect.center[0], p[1] - rect.center[1]];
+        (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs() <= own[0] && (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs() <= own[1]
+    }) {
         return true;
     }
     let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -500,16 +536,12 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
         if !component.hollow_for(&problem.components[other]) {
             return vec![rect(problem, index, pose)];
         }
-        component
-            .blocking_boxes(&problem.components[other], pose)
-            .into_iter()
-            .map(|(center, half)| Rect {
-                center,
-                half,
-                round: false,
-                turn: None,
-            })
-            .collect()
+        let against = &problem.components[other];
+        let mut rects = turned_rects(component, &component.hollow, pose, 0.0);
+        if against.has_holes() && !component.holes_inside {
+            rects.extend(turned_rects(component, &component.courtyards, pose, 0.0));
+        }
+        rects
     };
     let theirs = blocking(b, pose_b, a);
     blocking(a, pose_a, b)
@@ -522,36 +554,35 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
 fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
     let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose| {
         let component = &problem.components[holes];
-        if component.far_side.is_empty() {
+        if component.far_side.is_empty() && component.far_copper.is_empty() {
             return false;
         }
-        let far = component.far_boxes(pose_holes);
+        let other = &problem.components[body];
+        let far = turned_rects(component, &component.far_side, pose_holes, 0.0);
+        let copper = turned_rects(component, &component.far_copper, pose_holes, 0.0);
+        // The other part's copper: its pads, or all of it where it has
+        // none (artwork, a copper graphic, a rule area).
+        let pads = || {
+            if other.pads.is_empty() {
+                vec![rect(problem, body, pose_body)]
+            } else {
+                turned_rects(other, &other.pads, pose_body, 0.0)
+            }
+        };
         if problem.far_side_pads_only {
             // Copper against copper only.
-            let pads = problem.components[body].pad_boxes(pose_body);
-            return far.iter().any(|(center, half)| {
-                pads.iter().any(|(pad_center, pad_half)| {
-                    overlaps(
-                        Rect { center: *center, half: *half, round: false, turn: None },
-                        Rect { center: *pad_center, half: *pad_half, round: false, turn: None },
-                        problem.min_spacing,
-                    )
-                })
-            });
+            let pads = pads();
+            return far.iter().chain(&copper).any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)));
         }
         let target = rect(problem, body, pose_body);
-        far.into_iter().any(|(center, half)| {
-            overlaps(
-                Rect {
-                    center,
-                    half,
-                    round: false,
-                    turn: None,
-                },
-                target,
-                problem.spacing,
-            )
-        })
+        if far.into_iter().any(|far| overlaps(far, target, problem.spacing)) {
+            return true;
+        }
+        // Copper that only copper may not come near.
+        !copper.is_empty() && {
+            let pads = pads();
+            copper.iter().any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)))
+        }
     };
     meets(a, pose_a, b, pose_b) || meets(b, pose_b, a, pose_a)
 }

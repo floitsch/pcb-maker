@@ -78,6 +78,9 @@ pub struct KiCadBoardPlacerConfig {
     /// placed closer than this (pads may sit on a body's edge). Read from
     /// the project when not given.
     pub copper_clearance_mm: Option<f64>,
+    /// The board's copper-to-hole clearance: a non-plated hole keeps it
+    /// from other parts' copper. Read from the project when not given.
+    pub hole_clearance_mm: Option<f64>,
     /// The board's copper-to-edge clearance: pads of parts held at an edge
     /// keep it. Read from the project when not given.
     #[serde(default)]
@@ -87,6 +90,12 @@ pub struct KiCadBoardPlacerConfig {
     /// not given: allowed unless KiCad's DRC treats a courtyard overlap as
     /// an error.
     pub tight_bodies: Option<bool>,
+    /// Whether the project makes a hole inside another part's courtyard an
+    /// error (`pth_inside_courtyard` or `npth_inside_courtyard`); `None`:
+    /// read it from the project. Where it does not, a part's holes and pads
+    /// on the other side keep only the copper clearance from that side's
+    /// pads (leads through the board still keep off bodies).
+    pub holes_in_courtyards_error: Option<bool>,
     /// Decoupling capacitors (small capacitors between a supply rail and
     /// ground) are pulled to the supply pins of the ICs on their rail,
     /// unless a constraint already names them.
@@ -142,8 +151,10 @@ impl Default for KiCadBoardPlacerConfig {
             constraints: None,
             constraint_weight: 50.0,
             copper_clearance_mm: None,
+            hole_clearance_mm: None,
             copper_edge_clearance_mm: None,
             tight_bodies: None,
+            holes_in_courtyards_error: None,
             auto_decoupling: true,
             placement_seeds: 3,
             supply_via_room: false,
@@ -269,6 +280,18 @@ fn normalize_angle(angle: f64) -> f64 {
 
 /// Whether the project's DRC lets courtyards overlap (its severity is not
 /// `error`; KiCad's default is).
+/// Whether the project's DRC makes a hole inside a courtyard an error
+/// (KiCad's default ignores it).
+pub(super) fn holes_in_courtyards_error(project: &Path) -> bool {
+    fs::read_to_string(project)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|project| {
+            let severities = &project["board"]["design_settings"]["rule_severities"];
+            ["pth_inside_courtyard", "npth_inside_courtyard"].iter().any(|rule| severities[rule].as_str() == Some("error"))
+        })
+}
+
 pub(super) fn courtyards_may_overlap(project: &Path) -> bool {
     fs::read_to_string(project)
         .ok()
@@ -1164,6 +1187,7 @@ fn rule_area_obstacle(
         fixed: true,
         angle_options: vec![0.0],
         far_side: Vec::new(),
+        far_copper: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -1276,6 +1300,18 @@ pub(super) fn lower_placement(
         let mut pins = Vec::new();
         let mut through = false;
         let mut far_side = Vec::new();
+        let mut far_copper = Vec::new();
+        // A part whose plated holes hold leads standing out of the board:
+        // a through-hole part (KiCad 6 on says so; older boards say nothing
+        // for one, and then a hole of a via's size holds no lead). A
+        // mounting hole's or an SMD part's plated holes hold none.
+        let attributes: Vec<&str> = footprint
+            .child("attr")
+            .map(|attr| attr.children().iter().skip(1).filter_map(Expr::atom).collect())
+            .unwrap_or_default();
+        let leaded_part = attributes.contains(&"through_hole");
+        let unattributed = footprint.child("attr").is_none();
+        let holes_error = config.holes_in_courtyards_error == Some(true);
         let mut own_pads = Vec::new();
         // Surface pads of pour nets: the body grows past them by the via
         // room, on the side they lie nearest to.
@@ -1298,8 +1334,13 @@ pub(super) fn lower_placement(
             let pad_at = form_at(pad)?;
             let size = pad_extent(pad);
             let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
+            // A non-plated hole keeps its own clearance, and the board's
+            // hole clearance, from other copper: the clearance tests add
+            // the copper clearance to the box, so the box takes the rest.
             let keep_away = if pad_type == "np_thru_hole" {
                 local_clearance::pad_clearance(pad, footprint)?
+                    .max(config.hole_clearance_mm.unwrap_or(0.0) - config.copper_clearance_mm.unwrap_or(0.2))
+                    .max(0.0)
             } else {
                 0.0
             };
@@ -1323,20 +1364,51 @@ pub(super) fn lower_placement(
                 pad_at[0] + cos * offset[0] - sin * offset[1],
                 pad_at[1] + sin * offset[0] + cos * offset[1],
             ];
-            let pad_box = [
+            let mut pad_box = [
                 (copper[0] - half[0]).min(pad_at[0] - half[0].min(half[1])),
                 (copper[1] - half[1]).min(pad_at[1] - half[0].min(half[1])),
                 (copper[0] + half[0]).max(pad_at[0] + half[0].min(half[1])),
                 (copper[1] + half[1]).max(pad_at[1] + half[0].min(half[1])),
             ];
+            // A custom pad's copper is its primitives too (OpenFC's test
+            // pads: a 1 mm anchor and a 2.2 x 1.6 polygon).
+            for (point, radius) in custom_pad_points(pad) {
+                let at = [pad_at[0] + cos * point[0] - sin * point[1], pad_at[1] + sin * point[0] + cos * point[1]];
+                pad_box = [
+                    pad_box[0].min(at[0] - radius),
+                    pad_box[1].min(at[1] - radius),
+                    pad_box[2].max(at[0] + radius),
+                    pad_box[3].max(at[1] + radius),
+                ];
+            }
+            // The hole alone (no clearance ring), at the pad's anchor.
+            let hole_half = (half[0] - keep_away).min(half[1] - keep_away).max(0.0);
+            let hole_box = [pad_at[0] - hole_half, pad_at[1] - hole_half, pad_at[0] + hole_half, pad_at[1] + hole_half];
             own_pads.push(pad_box);
             let on_other_side = pad.child("layers").is_some_and(|layers| {
                 layers.children().iter().skip(1).filter_map(Expr::atom).any(|layer| layer == other_copper || layer == "F&B.Cu")
             });
             if matches!(pad_type, "thru_hole" | "np_thru_hole") || on_other_side {
                 through = true;
-                // What the part occupies on the other side.
-                far_side.push(pad_box);
+                // What the part occupies on the other side. A lead through
+                // the board (a plated hole of a part that is not SMD) keeps
+                // off bodies there; a non-plated hole, an SMD part's vias
+                // and its pads on that side only keep the copper clearance
+                // from copper, unless the project forbids holes inside
+                // courtyards (then the hole itself keeps off them too).
+                let drill = pad
+                    .child("drill")
+                    .and_then(|drill| drill.children().iter().skip(1).find_map(|item| item.atom()?.parse::<f64>().ok()))
+                    .unwrap_or(0.0);
+                let lead = pad_type == "thru_hole" && (leaded_part || (unattributed && drill >= 0.6));
+                if lead {
+                    far_side.push(pad_box);
+                } else {
+                    far_copper.push(pad_box);
+                    if pad_type != "smd" && holes_error {
+                        far_side.push(hole_box);
+                    }
+                }
             }
             let Some(net) = node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net) else {
                 continue;
@@ -1393,6 +1465,7 @@ pub(super) fn lower_placement(
         };
         let other_mask = if other_copper == "F.Cu" { "F.Mask" } else { "B.Mask" };
         let mut own_graphics = false;
+        let mut own_graphic_boxes = Vec::new();
         let mut far_graphics = Vec::new();
         for child in footprint.children() {
             let Some(layer) = form_atom(child, "layer", 1) else {
@@ -1408,6 +1481,7 @@ pub(super) fn lower_placement(
                 far_graphics.push(graphic);
             } else if matches!(layer, "F.Cu" | "B.Cu" | "F.Mask" | "B.Mask") {
                 own_graphics = true;
+                own_graphic_boxes.push(graphic);
             }
         }
         // Artwork (a logo) has neither pads nor a courtyard: it occupies the
@@ -1430,7 +1504,7 @@ pub(super) fn lower_placement(
                 (true, true) => core::Side::Both,
             }
         } else {
-            far_side.extend(far_graphics.iter().copied());
+            far_copper.extend(far_graphics.iter().copied());
             far_side.extend(far_courtyard);
             own_side
         };
@@ -1489,7 +1563,16 @@ pub(super) fn lower_placement(
         // designer put resistor networks, regulators and mounting holes in
         // the corners of the switches' boxes, outside their courtyards.
         let mut shaped = Vec::new();
-        if !round && !artwork {
+        // A footprint without any courtyard blocks with its copper (pads,
+        // copper and mask graphics) alone, and holes may lie inside it:
+        // KiCad checks its copper, not a box around it (hackclub
+        // keyboar_'s Kailh sockets have no courtyard; the designer put
+        // every switch's diode between its pads).
+        let courtless = !courtyard_on("F.") && !courtyard_on("B.") && !own_pads.is_empty() && !artwork;
+        if courtless {
+            shaped = own_pads.clone();
+            shaped.extend(own_graphic_boxes.iter().copied());
+        } else if !round && !artwork {
             let slabs = courtyard_slabs(footprint, both_courtyards.then_some(other_prefix))?;
             let area: f64 = slabs.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
             if !slabs.is_empty() && area < 0.75 * body_size[0] * body_size[1] {
@@ -1527,6 +1610,7 @@ pub(super) fn lower_placement(
             fixed: false,
             angle_options,
             far_side: if through || far_graphics { far_side } else { Vec::new() },
+            far_copper,
             hollow: shaped,
             tight: if config.tight_bodies == Some(true) {
                 tight_body(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?
@@ -1535,7 +1619,7 @@ pub(super) fn lower_placement(
             },
             edge_inset,
             courtyards: courtyard.0,
-            holes_inside: courtyard.1,
+            holes_inside: courtyard.1 || courtless,
             pads: own_pads.clone(),
             copper_only: false,
             cutout_outline: Vec::new(),
@@ -1649,6 +1733,7 @@ pub(super) fn lower_placement(
             fixed: true,
             angle_options: vec![0.0],
             far_side: Vec::new(),
+            far_copper: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -1698,6 +1783,7 @@ pub(super) fn lower_placement(
             fixed: true,
             angle_options: vec![0.0],
             far_side: Vec::new(),
+            far_copper: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -2025,6 +2111,7 @@ fn apply_channels(
         let mut carried = problem.components[leader].clone();
         carried.pins.clear();
         carried.far_side.clear();
+        carried.far_copper.clear();
         carried.pads.clear();
         carried.hollow.clear();
         carried.tight_hollow.clear();
@@ -2056,9 +2143,10 @@ fn apply_channels(
                 carried.hollow.push(own_body);
                 carried.tight_hollow.push(own_tight);
                 carried.far_side.extend(component.far_side.iter().map(place));
+                carried.far_copper.extend(component.far_copper.iter().map(place));
             } else {
                 carried.far_side.push(own_body);
-                carried.hollow.extend(component.far_side.iter().map(place));
+                carried.hollow.extend(component.far_side.iter().chain(&component.far_copper).map(place));
             }
             carried.pins.extend(component.pins.iter().map(|pin| {
                 let at = core::problem::rotate(pin.offset, -angle);
@@ -2104,6 +2192,7 @@ fn apply_channels(
             component.fixed = true;
             component.pins.clear();
             component.far_side.clear();
+            component.far_copper.clear();
             component.pads.clear();
             component.hollow.clear();
             component.halo = 0.0;
@@ -2212,9 +2301,10 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
         problem.grid = problem.grid.min(0.1);
         problem.edge_margin = problem.edge_margin.min((problem.constraints.copper_edge + 0.05).min(problem.edge_margin));
         problem.constraints.courtyard_spacing = level == "touch";
+        problem.constraints.courtyard_spacing = level == "touch";
         for component in &mut problem.components {
             component.halo = 0.0;
-            if level == "tight" {
+            if level == "tight" || level == "touch" {
                 component.use_tight_body();
             }
         }
@@ -2223,6 +2313,7 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
     let bounds = problem.bounds();
     eprintln!("designer: outline bounds {bounds:?}, {} pieces, edge margin {}, {} points: {:?}", problem.pieces.len(), problem.edge_margin, problem.outline.len(), problem.outline.iter().step_by((problem.outline.len() / 40).max(1)).collect::<Vec<_>>());
     let mut illegal = 0;
+    let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
     for index in 0..count {
         if problem.components[index].fixed {
             continue;
@@ -2231,10 +2322,12 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
         let outside = !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::empty());
         if outside {
             reasons.push("outline or hard constraint".to_string());
+            *kinds.entry("outline or hard constraint").or_insert(0usize) += 1;
         }
-        for other in (0..count).filter(|_| !outside) {
-            if other != index && !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::once(other)) {
-                reasons.push(format!("{} ({:?})", lowered.references[other], problem.components[other].side));
+        for other in (0..count).filter(|other| !outside && *other != index) {
+            if let Some(kind) = core::legal::conflict_kind(&problem, &poses, index, poses[index], other) {
+                reasons.push(format!("{} ({:?}): {kind}", lowered.references[other], problem.components[other].side));
+                *kinds.entry(kind).or_insert(0usize) += 1;
             }
         }
         if !reasons.is_empty() {
@@ -2251,7 +2344,7 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
             );
         }
     }
-    eprintln!("designer: {illegal} movable parts illegal at the designer's poses (level {level:?})");
+    eprintln!("designer: {illegal} movable parts illegal at the designer's poses (level {level:?}); conflicts by kind {kinds:?}");
     Ok(())
 }
 
@@ -2269,6 +2362,7 @@ pub fn place_kicad_board(
     let mut config = resolve_constraints(config, source_directory)?;
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
+        || config.hole_clearance_mm.is_none()
         || (config.supply_via_room && config.supply_via_room_mm.is_none())
     {
         let rules = project_rules::resolve_project_rules(&source_directory.join(format!("{board_id}.kicad_pro")), &source_board).ok();
@@ -2278,12 +2372,19 @@ pub fn place_kicad_board(
         if config.copper_edge_clearance_mm.is_none() {
             config.copper_edge_clearance_mm = rules.as_ref().map(|rules| rules.edge_clearance_mm);
         }
+        if config.hole_clearance_mm.is_none() {
+            config.hole_clearance_mm = rules.as_ref().map(|rules| rules.hole_clearance_mm);
+        }
         if config.supply_via_room && config.supply_via_room_mm.is_none() {
             config.supply_via_room_mm = rules.as_ref().map(via_room).filter(|room| *room > 0.0);
         }
     }
     if config.tight_bodies.is_none() {
         config.tight_bodies = Some(courtyards_may_overlap(&source_directory.join(format!("{board_id}.kicad_pro"))));
+    }
+    if config.holes_in_courtyards_error.is_none() {
+        config.holes_in_courtyards_error =
+            Some(holes_in_courtyards_error(&source_directory.join(format!("{board_id}.kicad_pro"))));
     }
     let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)?;
     let config = &config;
@@ -2691,7 +2792,7 @@ mod tests {
         let logo = &problem.components[0];
         assert_eq!(logo.side, core::Side::Back, "artwork occupies the side of its copper");
         assert_eq!(problem.components[1].side, core::Side::Front);
-        assert_eq!(problem.components[1].far_side, vec![[-3.0, -3.0, 3.0, 3.0]]);
+        assert_eq!(problem.components[1].far_copper, vec![[-3.0, -3.0, 3.0, 3.0]]);
         let part = 2;
         assert_eq!(problem.components[part].side, core::Side::Back);
         let mut poses = problem.poses.clone();
@@ -2788,6 +2889,114 @@ mod tests {
     }
 
     #[test]
+    fn courtyard_less_parts_at_45_degrees_meet_by_their_turned_pads() {
+        // Two 0402s without courtyards, turned by 45 degrees, side by side
+        // across their long axes: the squares around their pads overlap,
+        // the pads do not.
+        let part = |x: f64, y: f64| {
+            format!(
+                r#"(footprint "R" (layer "F.Cu") (at {x} {y} 45)
+                (pad "1" smd rect (at -0.5 0 45) (size 0.6 0.5) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0 45) (size 0.6 0.5) (layers "F.Cu") (net 2 "B")))"#
+            )
+        };
+        // KiCad turns by -45: the part's own y axis points to (sin 45, cos 45)
+        // on the board, 1.2 mm along it.
+        let step = 1.2 / 2f64.sqrt();
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 30 30) (layer "Edge.Cuts")) {} {})"#,
+            part(15.0, 15.0),
+            part(15.0 + step, 15.0 + step)
+        ))
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        assert!(!problem.components[0].hollow.is_empty(), "no courtyard: the pads block");
+        assert!(core::legal::illegal_components(problem, &problem.poses).is_empty());
+        // Half as far apart, the pads meet.
+        let mut poses = problem.poses.clone();
+        poses[1].position = [15.0 + step / 2.0, 15.0 + step / 2.0];
+        assert!(core::legal::illegal_components(problem, &poses).contains(&1));
+    }
+
+    #[test]
+    fn a_diode_sits_between_the_pads_of_a_socket_without_a_courtyard() {
+        // A hot-swap socket without a courtyard (two pads 14 mm apart and
+        // a centre hole), and a diode with one.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "Socket" (layer "F.Cu") (at 20 15)
+                (pad "" np_thru_hole circle (at 0 0) (size 4 4) (drill 4) (layers "*.Cu" "*.Mask"))
+                (pad "1" smd rect (at -7 -3) (size 2.5 2.5) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 7 -3) (size 2.5 2.5) (layers "F.Cu") (net 2 "B")))
+            (footprint "D" (layer "F.Cu") (at 45 15)
+                (fp_rect (start -1.5 -0.8) (end 1.5 0.8) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.9 0) (size 0.8 1) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.9 0) (size 0.8 1) (layers "F.Cu") (net 3 "C"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        let mut poses = problem.poses.clone();
+        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
+        // Between the pads, clear of the hole: legal (KiCad checks copper).
+        poses[1].position = [20.0, 15.0 - 4.0];
+        assert!(legal(&poses));
+        // On a pad or on the hole: not.
+        poses[1].position = [20.0 - 7.0, 15.0 - 3.0];
+        assert!(!legal(&poses));
+        poses[1].position = [20.0, 15.0];
+        assert!(!legal(&poses));
+    }
+
+    #[test]
+    fn far_side_pads_keep_off_copper_and_leads_keep_off_bodies() {
+        // An SMD part with pads on both sides (a reversible footprint) and
+        // a through-hole part, both on the front; a part on the back.
+        let board = |holes_error: bool| {
+            let pcb = parse(
+                r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+                (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+                (footprint "Reversible" (layer "F.Cu") (at 15 15) (attr smd)
+                    (fp_rect (start -2 -1) (end 2 1) (layer "F.CrtYd"))
+                    (pad "1" smd rect (at -1.5 0) (size 0.8 1) (layers "F.Cu") (net 1 "A"))
+                    (pad "1" smd rect (at -1.5 0) (size 0.8 1) (layers "B.Cu") (net 1 "A"))
+                    (pad "2" smd rect (at 1.5 0) (size 0.8 1) (layers "F.Cu") (net 2 "B"))
+                    (pad "2" smd rect (at 1.5 0) (size 0.8 1) (layers "B.Cu") (net 2 "B")))
+                (footprint "Header" (layer "F.Cu") (at 40 15) (attr through_hole)
+                    (fp_rect (start -2 -1.5) (end 2 1.5) (layer "F.CrtYd"))
+                    (pad "1" thru_hole circle (at -1.27 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 1 "A"))
+                    (pad "2" thru_hole circle (at 1.27 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 2 "B")))
+                (footprint "Back" (layer "B.Cu") (at 30 3)
+                    (fp_rect (start -3 -0.6) (end 3 0.6) (layer "B.CrtYd"))
+                    (pad "1" smd rect (at -2.5 0) (size 0.8 0.9) (layers "B.Cu") (net 1 "A"))
+                    (pad "2" smd rect (at 2.5 0) (size 0.8 0.9) (layers "B.Cu") (net 3 "C"))))"#,
+            )
+            .unwrap();
+            let config = KiCadBoardPlacerConfig { holes_in_courtyards_error: Some(holes_error), ..Default::default() };
+            lower_placement(&pcb, &config, &[]).unwrap()
+        };
+        let lowered = board(false);
+        let problem = &lowered.problem;
+        assert!(problem.components[0].far_side.is_empty() && problem.components[0].far_copper.len() == 2);
+        assert_eq!(problem.components[1].far_side.len(), 2, "the header's leads");
+        let mut poses = problem.poses.clone();
+        let legal = |problem: &core::Problem, poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&2);
+        // The back part's body over the reversible part's back pads, its
+        // own pads clear of them: not an error.
+        poses[2].position = [15.0, 15.0];
+        assert!(legal(problem, &poses));
+        // Its pad on theirs: an error.
+        poses[2].position = [15.0 + 1.0, 15.0];
+        assert!(!legal(problem, &poses));
+        // Over the header's leads: the leads stand out of the board.
+        poses[2].position = [40.0, 15.0];
+        assert!(!legal(problem, &poses));
+    }
+
+    #[test]
     fn a_courtyard_drawn_as_several_shapes_keeps_them_apart() {
         let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
             [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
@@ -2835,6 +3044,7 @@ mod channel_tests {
             fixed: false,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
+            far_copper: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,

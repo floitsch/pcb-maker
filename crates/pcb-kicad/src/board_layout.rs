@@ -465,6 +465,9 @@ pub fn layout_kicad_board(
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
     }
+    if placer_config.hole_clearance_mm.is_none() {
+        placer_config.hole_clearance_mm = Some(router_config.hole_clearance_mm);
+    }
     placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
@@ -566,6 +569,11 @@ pub fn layout_kicad_board(
     // board placed with relaxed spacing, a move checked against the full
     // spacing is never legal.
     placer_config.tight_bodies = Some(placement.tight_bodies);
+    if placer_config.holes_in_courtyards_error.is_none() {
+        placer_config.holes_in_courtyards_error = Some(crate::board_placer::holes_in_courtyards_error(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ));
+    }
     let mut problem = lower_placement(&pcb, &placer_config, &[])?;
     let first_relaxation = placer::Relaxation {
         spacing: placement.spacing_mm,

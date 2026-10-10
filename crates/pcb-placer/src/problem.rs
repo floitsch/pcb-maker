@@ -58,6 +58,13 @@ pub struct Component {
     /// occupies on the other side of the board: its holes and plated pads.
     /// The rest of its body leaves that side free.
     pub far_side: Vec<[f64; 4]>,
+    /// Copper the part has on the other side that blocks only copper there
+    /// (own frame): pads of a part without leads through the board (an SMD
+    /// part's pads and vias on both sides, a non-plated hole with its
+    /// clearance ring), copper and mask graphics. KiCad checks them against
+    /// other copper, not against courtyards, so they keep the copper
+    /// clearance from the other side's pads, not from its bodies.
+    pub far_copper: Vec<[f64; 4]>,
     /// Boxes ([min x, min y, max x, max y], own frame) that block the
     /// part's own side in place of its body: a hollow part (a shield's
     /// outline around its header pads) lets other parts sit inside it.
@@ -188,7 +195,8 @@ impl Component {
         [center[0] - offset[0], center[1] - offset[1]]
     }
 
-    /// Board-space boxes (centre, half extent) of `far_side` at a pose.
+    /// Board-space boxes (centre, half extent) of `far_side` at a pose
+    /// (`far_copper` meets only copper: the legality test's business).
     pub fn far_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
         self.boxes(&self.far_side, pose)
     }
@@ -238,7 +246,7 @@ impl Component {
     /// Holes may not lie inside another part's courtyard, even a hollow
     /// one's (KiCad's `pth_inside_courtyard`).
     pub fn has_holes(&self) -> bool {
-        !self.far_side.is_empty()
+        !self.far_side.is_empty() || !self.far_copper.is_empty()
     }
 
     /// Whether the part blocks `other` with boxes rather than its whole
@@ -302,7 +310,7 @@ impl Problem {
             .iter()
             .flat_map(|component| {
                 let shortest = component.body_size[0].min(component.body_size[1]) / 2.0;
-                component.far_side.iter().map(move |far| {
+                component.far_side.iter().chain(&component.far_copper).map(move |far| {
                     let farthest = [[far[0], far[1]], [far[2], far[1]], [far[2], far[3]], [far[0], far[3]]]
                         .iter()
                         .map(|corner| (corner[0] - component.body_center[0]).hypot(corner[1] - component.body_center[1]))
