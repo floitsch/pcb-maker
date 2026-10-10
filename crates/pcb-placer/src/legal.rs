@@ -308,7 +308,13 @@ fn is_legal_counting(
 /// constraints (a fixed one always is).
 fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bool {
     if !problem.components[index].fixed {
+        // The outline walk; with constraints, the edge and region lists
+        // and the part's pads (its copper's offsets from the edges).
         *work += problem.outline.len() as u64;
+        if !problem.constraints.is_empty() {
+            let constraints = &problem.constraints;
+            *work += (constraints.edges.len() + constraints.regions.len() + 2 * problem.components[index].pads.len()) as u64;
+        }
         if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
             return false;
         }
@@ -374,6 +380,23 @@ fn clear_of(
     true
 }
 
+/// The work of setting up one spot to test (snapping, the body's box, the
+/// bucket query), in the units of one part-against-part test.
+const SPOT_WORK: usize = 24;
+
+/// The board's wirelength, counting its work (every pin).
+fn counted_wirelength(problem: &Problem, poses: &[Pose]) -> f64 {
+    crate::add_work(problem.components.iter().map(|component| component.pins.len()).sum::<usize>() as u64);
+    problem.wirelength(poses)
+}
+
+/// The relation penalty of one part, counting its work (every relation
+/// is looked at).
+fn counted_penalty(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
+    crate::add_work(4 * problem.constraints.relations.len() as u64);
+    constraints::relation_penalty(problem, poses, Some(index))
+}
+
 /// Placed parts by area: a spot is tested only against parts near it.
 struct Buckets {
     grid: crate::buckets::Grid,
@@ -400,10 +423,14 @@ impl Buckets {
         self.grid.remove(index, body.center, body.half);
     }
 
-    /// The parts that may meet part `index` at `pose`.
+    /// The parts that may meet part `index` at `pose`. Counts its work:
+    /// the cells looked at and the parts found, besides the spot's own
+    /// set-up (on SmartSpin2k's panel the legalization's spot searches did
+    /// twenty times the work they counted).
     fn near(&mut self, problem: &Problem, index: usize, pose: Pose, out: &mut Vec<usize>) {
         let body = rect(problem, index, pose);
-        self.grid.query(body.center, [body.half[0] + self.reach, body.half[1] + self.reach], out);
+        let cells = self.grid.query(body.center, [body.half[0] + self.reach, body.half[1] + self.reach], out);
+        crate::add_work((SPOT_WORK + cells + out.len()) as u64);
     }
 }
 
@@ -804,7 +831,7 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
         let score = |poses: &[Pose]| {
             (
                 constraints::relation_violation(problem, poses, relation),
-                constraints::relation_penalty(problem, poses, Some(index)) + problem.wirelength(poses),
+                counted_penalty(problem, poses, index) + counted_wirelength(problem, poses),
             )
         };
         let better = |a: (f64, f64), b: (f64, f64)| a.0 < b.0 - 1.0e-9 || (a.0 <= b.0 + 1.0e-9 && a.1 < b.1 - 1.0e-9);
@@ -892,10 +919,10 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
             if !is_legal(problem, poses, index, pose, 0..count) {
                 continue;
             }
-            let before = (problem.wirelength(poses), constraints::relation_penalty(problem, poses, Some(index)));
+            let before = (counted_wirelength(problem, poses), counted_penalty(problem, poses, index));
             let original = poses[index];
             poses[index] = pose;
-            let after = (problem.wirelength(poses), constraints::relation_penalty(problem, poses, Some(index)));
+            let after = (counted_wirelength(problem, poses), counted_penalty(problem, poses, index));
             if after.0 <= before.0 + tolerance && after.1 <= before.1 + 1.0e-9 {
                 turned += 1;
             } else {
@@ -928,6 +955,7 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         })
         .collect();
     let cost = |poses: &[Pose], nets: &[usize]| -> f64 {
+        crate::add_work(nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64);
         nets.iter()
             .map(|net| {
                 let mut bounds = [
@@ -994,7 +1022,7 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
             target = [target[0] / weight, target[1] / weight];
             let original = poses[index];
             let score = |poses: &[Pose]| {
-                cost(poses, &incident[index]) + constraints::relation_penalty(problem, poses, Some(index))
+                cost(poses, &incident[index]) + counted_penalty(problem, poses, index)
             };
             let mut best = (score(poses), original);
             let center = component.center(original);
@@ -1096,8 +1124,8 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                 nets.dedup();
                 let pair = |poses: &[Pose]| {
                     cost(poses, &nets)
-                        + constraints::relation_penalty(problem, poses, Some(a))
-                        + constraints::relation_penalty(problem, poses, Some(b))
+                        + counted_penalty(problem, poses, a)
+                        + counted_penalty(problem, poses, b)
                 };
                 let before = pair(poses);
                 poses.swap(a, b);

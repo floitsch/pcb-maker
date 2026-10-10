@@ -294,6 +294,20 @@ pub(crate) fn add_work(amount: u64) {
     WORK.with(|work| work.set(work.get() + amount));
 }
 
+/// Debugging aid (`PCB_PLACER_DEBUG`): a phase's wall time against the
+/// work it counted, from a mark taken at its start.
+fn phase_line(debug: bool, name: &str, mark: (std::time::Instant, u64)) {
+    if debug {
+        let seconds = mark.0.elapsed().as_secs_f64();
+        let counted = (work() - mark.1) as f64 / WORK_PER_SECOND;
+        eprintln!("placer phase {name}: {seconds:.2} s, work {counted:.2} s ({:.2})", counted / seconds.max(1.0e-6));
+    }
+}
+
+fn mark() -> (std::time::Instant, u64) {
+    (std::time::Instant::now(), work())
+}
+
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();
@@ -309,7 +323,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
             || anneal_config.stop_at_work.is_some_and(|stop| work() >= stop)
     };
+    let global_mark = mark();
     let global = global::global_place(problem, &config.global);
+    phase_line(debug, "global", global_mark);
     if debug {
         eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
     }
@@ -422,10 +438,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         {
             let mut kept = known_poses.clone();
             let keep: Vec<usize> = (0..relaxed.components.len()).filter(|index| !known_failed.contains(index)).collect();
+            let keeping_mark = mark();
             let mut failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
+            phase_line(debug, "legalize keeping", keeping_mark);
             if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
                 let mut evicted = kept.clone();
+                let evict_mark = mark();
                 let again = legal::evict_for(&relaxed, &mut evicted, &failed);
+                phase_line(debug, "evict", evict_mark);
                 if again.len() < failed.len() {
                     if debug {
                         eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
@@ -482,10 +502,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         annealed_shape = Some((grid, tight));
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
+        let anneal_mark = mark();
         anneal::anneal(&relaxed, &mut poses, &anneal_config);
+        phase_line(debug, "anneal", anneal_mark);
         let annealed = poses.clone();
         let anneal_seconds = level_started.elapsed().as_secs_f64();
+        let legalize_mark = mark();
         let mut failed = legal::legalize(&relaxed, &mut poses);
+        phase_line(debug, "legalize", legalize_mark);
         if debug {
             eprintln!(
                 "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: wirelength global {:.0}, annealed {:.0}, legalized {:.0}; anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
@@ -501,7 +525,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         // The parts that found no room go first in a second pass.
         if !failed.is_empty() {
             let mut retry = annealed;
+            let retry_mark = mark();
             let again = legal::legalize_first(&relaxed, &mut retry, &failed);
+            phase_line(debug, "legalize first", retry_mark);
             if again.len() < failed.len() {
                 poses = retry;
                 failed = again;
@@ -511,7 +537,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         // those new ones.
         if !failed.is_empty() && failed.len() <= (problem.components.len() / 50).max(3) {
             let mut evicted = poses.clone();
+            let evict_mark = mark();
             let again = legal::evict_for(&relaxed, &mut evicted, &failed);
+            phase_line(debug, "evict", evict_mark);
             if again.len() < failed.len() {
                 if debug {
                     eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
@@ -553,7 +581,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let problem = &relaxed;
     let finishing = std::time::Instant::now();
+    let refine_mark = mark();
     legal::refine(problem, &mut poses, config.refine_passes);
+    phase_line(debug, "refine", refine_mark);
+    let repair_mark = mark();
     legal::center_edge_copper(problem, &mut poses);
     // Moving one part can break a relation repaired before; repeat while
     // it helps.
@@ -565,6 +596,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, &mut poses, 0.5);
+    phase_line(debug, "repair and align", repair_mark);
     if debug {
         eprintln!("placer: refinement and relation repair {:.1}s", finishing.elapsed().as_secs_f64());
     }

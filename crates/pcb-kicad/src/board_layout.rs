@@ -505,7 +505,7 @@ pub fn layout_kicad_board(
     }
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
     work += placement.work_seconds;
-    eprintln!("layout: placed ({:.0} s, work {work:.0} s)", elapsed());
+    eprintln!("layout: placed ({:.0} s, work {work:.0} s, {} seeds)", elapsed(), placement.seeds);
     // The moves keep parts on `"edge": "any"` at the edges they were given.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut placer_config.constraints {
         for entry in &mut constraints.edge {
@@ -674,7 +674,13 @@ pub fn layout_kicad_board(
         pool.push((problem.problem.poses.clone(), first_relaxation));
         pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), **relaxation)));
         let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, congestion_model.as_ref(), router_config, &core_config, connect, &config.congestion_score)?;
-        let keep: Vec<usize> = ranked.order.iter().copied().take(config.congestion_probes.max(1)).collect();
+        // A placement that needed courtyards touching is a last resort
+        // whatever its score: it is probed only when too few others are
+        // (laptop power: RUDY picked a touching seed, 18 connections open
+        // against 9 for the best of the five that needed no touching).
+        let mut order = ranked.order.clone();
+        order.sort_by_key(|index| pool[*index].1.courtyard_spacing);
+        let keep: Vec<usize> = order.iter().copied().take(config.congestion_probes.max(1)).collect();
         eprintln!(
             "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
             config.congestion_score,

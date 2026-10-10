@@ -41,6 +41,9 @@ pub struct KiCadBoardPlacerConfig {
     /// courtyard so its pins can escape.
     pub track_pitch_mm: f64,
     pub pins_per_halo_track: f64,
+    /// Factor on the routing halos the pin counts ask for (not on
+    /// `halo_overrides_mm`): less room for escapes, shorter wires.
+    pub halo_scale: f64,
     pub maximum_halo_mm: f64,
     /// Per-reference halos replacing the pin-count rule (routing feedback).
     pub halo_overrides_mm: BTreeMap<String, f64>,
@@ -128,6 +131,7 @@ impl Default for KiCadBoardPlacerConfig {
             track_pitch_mm: 0.65,
             pins_per_halo_track: 8.0,
             maximum_halo_mm: 4.0,
+            halo_scale: 1.0,
             halo_overrides_mm: BTreeMap::new(),
             maximum_utilization: 0.6,
             edge_margin_mm: 0.5,
@@ -225,6 +229,10 @@ pub struct KiCadBoardPlacerResult {
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
+    /// How many seeds were placed (the work budget may stop them before
+    /// `placement_seeds`).
+    #[serde(default)]
+    pub seeds: usize,
     /// The edges parts on `"edge": "any"` were given, by part.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub edges_chosen: BTreeMap<String, String>,
@@ -766,6 +774,75 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
         }
     }
     Ok(relations)
+}
+
+/// The courtyard (own frame) as horizontal strips, one per span between
+/// the corners' heights, each as wide as the courtyard there (slanted
+/// sides counted at their wider end); strips alike stacked into one.
+/// Empty when the courtyard is not closed or has too many corners (arcs).
+fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>, String> {
+    let mut edges: Vec<([f64; 2], [f64; 2])> = Vec::new();
+    let mut chain = |points: &[[f64; 2]], closed: bool, edges: &mut Vec<([f64; 2], [f64; 2])>| {
+        for pair in points.windows(2) {
+            edges.push((pair[0], pair[1]));
+        }
+        if closed && points.len() > 2 {
+            edges.push((points[points.len() - 1], points[0]));
+        }
+    };
+    for child in footprint.children() {
+        if !form_atom(child, "layer", 1)
+            .is_some_and(|layer| layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side)))
+        {
+            continue;
+        }
+        match child.head() {
+            Some("fp_line" | "fp_arc") => chain(&outline::outline_points(child)?, false, &mut edges),
+            Some("fp_rect") => {
+                let (a, b) = (form_xy(child, "start")?, form_xy(child, "end")?);
+                chain(&[a, [b[0], a[1]], b, [a[0], b[1]]], true, &mut edges);
+            }
+            Some("fp_poly") => chain(&outline::pts_points(child)?, true, &mut edges),
+            Some("fp_circle") => {
+                let center = form_xy(child, "center")?;
+                let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
+                chain(&outline::circle_points(center, radius), false, &mut edges);
+            }
+            _ => {}
+        }
+    }
+    let mut heights: Vec<f64> = edges.iter().flat_map(|(a, b)| [a[1], b[1]]).collect();
+    heights.sort_by(f64::total_cmp);
+    heights.dedup_by(|a, b| (*a - *b).abs() < 1.0e-6);
+    if edges.is_empty() || heights.len() > 64 {
+        return Ok(Vec::new());
+    }
+    let x_at = |(a, b): ([f64; 2], [f64; 2]), y: f64| {
+        let t = ((y - a[1]) / (b[1] - a[1])).clamp(0.0, 1.0);
+        a[0] + t * (b[0] - a[0])
+    };
+    let mut slabs: Vec<[f64; 4]> = Vec::new();
+    for span in heights.windows(2) {
+        let (low, high) = (span[0], span[1]);
+        let middle = (low + high) / 2.0;
+        let mut crossing: Vec<([f64; 2], [f64; 2])> =
+            edges.iter().copied().filter(|(a, b)| (a[1] > middle) != (b[1] > middle)).collect();
+        if crossing.len() % 2 != 0 {
+            return Ok(Vec::new());
+        }
+        crossing.sort_by(|p, q| x_at(*p, middle).total_cmp(&x_at(*q, middle)));
+        for pair in crossing.chunks(2) {
+            let left = x_at(pair[0], low).min(x_at(pair[0], high));
+            let right = x_at(pair[1], low).max(x_at(pair[1], high));
+            match slabs.iter_mut().find(|slab| {
+                (slab[3] - low).abs() < 1.0e-6 && (slab[0] - left).abs() < 1.0e-6 && (slab[2] - right).abs() < 1.0e-6
+            }) {
+                Some(slab) => slab[3] = high,
+                None => slabs.push([left, low, right, high]),
+            }
+        }
+    }
+    Ok(slabs)
 }
 
 /// Boxes ([min x, min y, max x, max y], own frame) of the separate shapes
@@ -1405,8 +1482,24 @@ pub(super) fn lower_placement(
                 .fold(f64::INFINITY, f64::min)
                 .max(0.0)
         };
-        let courtyard =
-            courtyard_shapes_on_side(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?;
+        let both_courtyards = courtyard_on(own_prefix) && courtyard_on(other_prefix);
+        let mut courtyard = courtyard_shapes_on_side(footprint, both_courtyards.then_some(other_prefix))?;
+        // A courtyard far from rectangular (a hot-swap socket's outline)
+        // blocks with its own shape, as strips, and the pads: ghoul's
+        // designer put resistor networks, regulators and mounting holes in
+        // the corners of the switches' boxes, outside their courtyards.
+        let mut shaped = Vec::new();
+        if !round && !artwork {
+            let slabs = courtyard_slabs(footprint, both_courtyards.then_some(other_prefix))?;
+            let area: f64 = slabs.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
+            if !slabs.is_empty() && area < 0.75 * body_size[0] * body_size[1] {
+                if slabs.len() > 1 && courtyard.0.is_empty() {
+                    courtyard.0 = slabs.clone();
+                }
+                shaped = slabs;
+                shaped.extend(own_pads.iter().copied());
+            }
+        }
         connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
@@ -1425,6 +1518,7 @@ pub(super) fn lower_placement(
             } else if config.pins_per_halo_track > 0.0 {
                 ((pins.len() as f64 / config.pins_per_halo_track).ceil() * config.track_pitch_mm)
                     .min(config.maximum_halo_mm)
+                    * config.halo_scale
             } else {
                 0.0
             },
@@ -1433,7 +1527,7 @@ pub(super) fn lower_placement(
             fixed: false,
             angle_options,
             far_side: if through || far_graphics { far_side } else { Vec::new() },
-            hollow: Vec::new(),
+            hollow: shaped,
             tight: if config.tight_bodies == Some(true) {
                 tight_body(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?
             } else {
@@ -2117,6 +2211,7 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
         problem.spacing = problem.min_spacing;
         problem.grid = problem.grid.min(0.1);
         problem.edge_margin = problem.edge_margin.min((problem.constraints.copper_edge + 0.05).min(problem.edge_margin));
+        problem.constraints.courtyard_spacing = level == "touch";
         for component in &mut problem.components {
             component.halo = 0.0;
             if level == "tight" {
@@ -2229,21 +2324,62 @@ pub fn place_kicad_board(
     // wins. Placement takes seconds; the constraints are what the user asked
     // for.
     let seeds = config.placement_seeds.max(1) as u64;
+    // The seeds share the placement's work budget: they run in parallel
+    // waves, and seed k is kept only while the seeds before it, in seed
+    // order, used less than the budget (three seeds at least). Which seeds
+    // count depends on their work alone, not on the wave size or the wall
+    // clock (SmartSpin2k: sixteen seeds took 1218 s of placement on four
+    // cores and left the route no time).
+    let minimum_seeds = seeds.min(3);
+    let parallel = std::thread::available_parallelism().map_or(4, |count| count.get() as u64).max(1);
     let place_seeds = |problem: &core::Problem| -> Vec<core::Placement> {
-        let mut placements: Vec<core::Placement> = std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..seeds)
-                .map(|offset| {
-                    let mut seeded = placer_config.clone();
-                    seeded.global.seed = config.seed + offset;
-                    seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-                    scope.spawn(move || core::place(problem, &seeded))
-                })
-                .collect();
-            handles.into_iter().map(|handle| handle.join().expect("placement thread")).collect()
-        });
+        let mut placements: Vec<core::Placement> = Vec::new();
+        let mut used = 0u64;
+        let mut next = 0;
+        'waves: while next < seeds {
+            // The first wave is the seeds every board gets; later ones as
+            // many as the budget left is expected to hold at the seeds'
+            // mean work so far (a wave past the budget is wasted: on
+            // SmartSpin2k a seed takes minutes).
+            let wave = match placer_config.work_limit {
+                _ if placements.is_empty() => minimum_seeds.max(1),
+                None => parallel,
+                Some(limit) => {
+                    let mean = (used / placements.len() as u64).max(1);
+                    limit.saturating_sub(used).div_ceil(mean).clamp(1, parallel)
+                }
+            };
+            let batch: Vec<core::Placement> = std::thread::scope(|scope| {
+                let handles: Vec<_> = (next..(next + wave).min(seeds))
+                    .map(|offset| {
+                        let mut seeded = placer_config.clone();
+                        seeded.global.seed = config.seed + offset;
+                        seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+                        scope.spawn(move || core::place(problem, &seeded))
+                    })
+                    .collect();
+                handles.into_iter().map(|handle| handle.join().expect("placement thread")).collect()
+            });
+            next += batch.len() as u64;
+            for placement in batch {
+                if placements.len() as u64 >= minimum_seeds && placer_config.work_limit.is_some_and(|limit| used >= limit) {
+                    break 'waves;
+                }
+                used += placement.work;
+                placements.push(placement);
+            }
+        }
+        // A placement that needed courtyards touching (the last relaxation
+        // level) is a last resort: it ranks below every legal one that did
+        // not, however short its wires.
         let key = |placement: &core::Placement| {
             let missed: f64 = placement.constraints.iter().map(|status| status.violation).sum();
-            (placement.unplaced.len() + placement.illegal.len(), missed, placement.wirelength_final)
+            (
+                placement.unplaced.len() + placement.illegal.len(),
+                placement.relaxation.courtyard_spacing as usize,
+                missed,
+                placement.wirelength_final,
+            )
         };
         placements.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
         placements
@@ -2294,6 +2430,7 @@ pub fn place_kicad_board(
     }
     let work_seconds =
         placements.iter().map(|placement| placement.work).max().unwrap_or(0) as f64 / core::WORK_PER_SECOND;
+    let seeds_placed = placements.len();
     let placement = placements.remove(0);
     // The other legal placements, for layout to race when the best one by
     // wirelength does not route: wirelength is not routability.
@@ -2501,6 +2638,7 @@ pub fn place_kicad_board(
         edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
         work_seconds,
+        seeds: seeds_placed,
         footprints,
     };
     let report_path = output_directory.join("board-placer.json");
@@ -2618,6 +2756,35 @@ mod tests {
         assert!(!legal(&poses, front));
         poses[back].position = [40.0, 20.0];
         assert!(!legal(&poses, back));
+    }
+
+    #[test]
+    fn a_part_fits_in_the_notch_of_an_l_shaped_courtyard() {
+        // A socket whose courtyard is an L (10 x 10 with its top-right
+        // 6 x 6 quarter cut away), and a small part.
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "Socket" (layer "F.Cu") (at 20 15)
+                (fp_poly (pts (xy -5 -5) (xy -1 -5) (xy -1 1) (xy 5 1) (xy 5 5) (xy -5 5)) (layer "F.CrtYd") (width 0.05))
+                (pad "1" smd rect (at -3 3) (size 1 1) (layers "F.Cu") (net 1 "A")))
+            (footprint "R" (layer "F.Cu") (at 45 15)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        assert!(!problem.components[0].hollow.is_empty(), "the L blocks with its own shape");
+        let mut poses = problem.poses.clone();
+        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
+        // In the notch (local x 1..5, y -5..1): legal; in the L: not.
+        poses[1].position = [20.0 + 2.5, 15.0 - 2.5];
+        assert!(legal(&poses));
+        poses[1].position = [20.0 - 3.0, 15.0 - 2.5];
+        assert!(!legal(&poses));
     }
 
     #[test]

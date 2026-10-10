@@ -311,7 +311,8 @@ def run_admitted(task, arguments, token):
         escaped = [re.sub(r"([*?\\])", r"\\\1", r) for r in netless]
         constraints["fixed"] = constraints.get("fixed", []) + [r for r in escaped if r not in constraints.get("fixed", [])]
     (source / "constraints.json").write_text(json.dumps(constraints))
-    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {})}, **task.get("layout", {})}
+    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
+              **task.get("layout", {})}
     (work / "layout.json").write_text(json.dumps(layout))
     router = task.get("router") or {}
     router_argument = "auto"
@@ -377,6 +378,8 @@ def main():
                              "or the tier's own list)")
     parser.add_argument("--tier", choices=sorted(TIERS),
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
+    parser.add_argument("--placer", type=json.loads, default={},
+                        help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--threads", type=int, default=None,
                         help="search threads per board (RAYON_NUM_THREADS; default with several jobs: "

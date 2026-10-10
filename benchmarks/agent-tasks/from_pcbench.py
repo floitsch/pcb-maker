@@ -103,6 +103,60 @@ def mask_openings(board_file):
     return boxes
 
 
+def outside_polygon(footprint, polygon, tolerance=0.01):
+    """Whether a part's body reaches beyond the board's outline polygon by
+    more than `tolerance`: the body as drawn (turned with the part, a disc
+    for a round one), not the box around it (ErgoSNM's thumb keys at -30
+    degrees, mounting holes in rounded corners)."""
+
+    def inside(x, y):
+        result = False
+        for index in range(len(polygon)):
+            (ax, ay), (bx, by) = polygon[index], polygon[(index + 1) % len(polygon)]
+            if (ay > y) != (by > y) and x < ax + (y - ay) * (bx - ax) / (by - ay):
+                result = not result
+        return result
+
+    def distance_to_outline(x, y):
+        best = float("inf")
+        for index in range(len(polygon)):
+            (ax, ay), (bx, by) = polygon[index], polygon[(index + 1) % len(polygon)]
+            dx, dy = bx - ax, by - ay
+            length = dx * dx + dy * dy
+            t = 0.0 if length == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / length))
+            best = min(best, ((x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2) ** 0.5)
+        return best
+
+    circle = footprint.get("body_circle")
+    if circle:
+        (x, y), radius = circle
+        return not inside(x, y) or distance_to_outline(x, y) < radius - tolerance
+    corners = footprint.get("body_corners") or []
+    if len(corners) != 4:
+        return False
+    # Shrunk by the tolerance towards the centre.
+    cx, cy = sum(x for x, _ in corners) / 4, sum(y for _, y in corners) / 4
+
+    def shrink(x, y):
+        length = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+        return (x, y) if length <= tolerance else (x - (x - cx) / length * tolerance, y - (y - cy) / length * tolerance)
+
+    corners = [shrink(x, y) for x, y in corners]
+    if not all(inside(x, y) for x, y in corners):
+        return True
+
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    for index in range(len(polygon)):
+        a, b = polygon[index], polygon[(index + 1) % len(polygon)]
+        for side in range(4):
+            c, d = corners[side], corners[(side + 1) % 4]
+            if ((cross(c, d, a) > 0) != (cross(c, d, b) > 0)) and ((cross(a, b, c) > 0) != (cross(a, b, d) > 0)):
+                return True
+    return False
+
+
 def is_connector(footprint):
     reference = footprint["reference"]
     prefix = reference.rstrip("0123456789")
@@ -203,8 +257,12 @@ def main():
                 continue
             distances = {"left": body[0] - low[0], "top": body[1] - low[1],
                          "right": high[0] - body[2], "bottom": high[1] - body[3]}
-            if min(distances.values()) < -0.01:
-                # The designer lets it hang over the outline: it stays.
+            # The designer lets it hang over the outline: it stays. Over the
+            # outline's shape, not just its box: framework_mobo's M1 (a
+            # castellated module) reaches over a notch inside the box, fits
+            # nowhere else, and the placer found no legal spot for it.
+            polygon = outline.get("points") or []
+            if min(distances.values()) < -0.01 or (len(polygon) >= 3 and outside_polygon(footprint, polygon)):
                 fixed.append(footprint["reference"])
                 continue
             if not is_connector(footprint):

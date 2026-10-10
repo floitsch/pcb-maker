@@ -60,6 +60,9 @@ pub struct KiCadDescribedOutline {
     pub maximum: [f64; 2],
     pub width: f64,
     pub height: f64,
+    /// The outline itself (arcs as segments), for tests against its shape
+    /// rather than its box.
+    pub points: Vec<[f64; 2]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +77,10 @@ pub struct KiCadDescribedFootprint {
     pub size_mm: [f64; 2],
     /// The body's box on the board: [min x, min y, max x, max y].
     pub body: [f64; 4],
+    /// The body itself on the board: its corners, turned with the part, or
+    /// for a round body (a mounting hole) its centre and radius.
+    pub body_corners: Vec<[f64; 2]>,
+    pub body_circle: Option<([f64; 2], f64)>,
     pub through_hole: bool,
     pub locked: bool,
     /// Pad name and net (`None` for an unconnected pad).
@@ -120,6 +127,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             maximum,
             width: maximum[0] - minimum[0],
             height: maximum[1] - minimum[1],
+            points: loops.outline.clone(),
         }
     });
     let layers = board_router::LayerTable::from_pcb(&pcb)?;
@@ -130,7 +138,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
     let mut general: Vec<(String, String, String, String, String, String)> = Vec::new();
     for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
         let reference = footprint_reference(footprint).unwrap_or_default();
-        let (center, size, _) = local_body(footprint)?;
+        let (center, size, round_body) = local_body(footprint)?;
         let at = form_at(footprint)?;
         let (sin, cos) = (-at[2]).to_radians().sin_cos();
         let offset = [center[0] * cos - center[1] * sin, center[0] * sin + center[1] * cos];
@@ -169,6 +177,17 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             at,
             side: if crate::board_placer::on_back(footprint) { "back" } else { "front" }.into(),
             size_mm: [round(size[0]), round(size[1])],
+            body_corners: [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
+                .iter()
+                .map(|[sx, sy]| {
+                    let local = [sx * size[0] / 2.0, sy * size[1] / 2.0];
+                    [
+                        round(middle[0] + local[0] * cos - local[1] * sin),
+                        round(middle[1] + local[0] * sin + local[1] * cos),
+                    ]
+                })
+                .collect(),
+            body_circle: round_body.then(|| ([round(middle[0]), round(middle[1])], round(size[0] / 2.0))),
             body,
             through_hole,
             locked: footprint.child("locked").is_some()
