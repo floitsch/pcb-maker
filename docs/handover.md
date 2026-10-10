@@ -209,6 +209,24 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   about as well as RUDY (its label, a single 75 s probe, agrees with
   itself only at Spearman 0.6 between router seeds) and stays an
   experiment behind `congestion_model`; see docs/congestion-model.md.
+- Placer correctness (the placement agent, in 3b890fa and 93b83f5): a
+  fixed part's copper and mask graphics on its other side are obstacles
+  there (Castor's logo: the short is gone); parts at odd angles are tested
+  as turned rectangles and may turn square (ErgoSNM places: 58/58 clean);
+  a footprint with a courtyard on each side gets a body per side (urchin
+  places: 66/68); courtyards may touch where the pads inside keep the
+  copper clearance, as a last resort (laptop power places on every seed,
+  but RUDY then prefers a touching seed: 9 to 18 unconnected, a ranking
+  fix is under way); rule areas inside footprints and pads-only rule
+  areas are lowered (PixelWave 41 keepout findings to 0, 343/343 routed;
+  d20 27 to 0); eviction 7x faster. framework_mobo's M1 has no legal spot
+  at the designer's outline (its pads overhang the polygon): the task
+  generator should test overhang against the polygon. SmartSpin2k: 16
+  seeds cost 1218 s of placement on 4 cores (a placement budget for the
+  seed count is under way). Measured: the legaliser's wirelength loss is
+  mostly won back by refinement (final within 10 % of the global
+  placement on most tier boards); the 1.4-1.9x against the designers is
+  the routing halos, whether less halo still routes is the next experiment.
 - Speed is now structural: cheaper expansions are exhausted (five
   candidates under 5 %); fewer searches and fewer expansions per search
   are the next lever (a waste measurement is under way).
