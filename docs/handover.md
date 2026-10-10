@@ -239,6 +239,15 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   KiCad at mounting-hole rings and pad boxes (45 designer poses illegal on
   ghoul), SmartSpin2k (a 585-connection panel whose first route alone
   needs 1000 s; not a target).
+- Halo scale measured on the 30-board tier (x507): 0.75 and 0.5 cut the
+  placer's wirelength only 1.3 and 4 % (halos are already shrunk where
+  boards are crowded) and win nothing clearly (passes 19 / 19 / 17);
+  1.0 stays. The 1.4-1.9x gap to the designers' wirelength is not the
+  halos. The race's judge: the 75 s probe is the best pre-routing
+  predictor of a layout's final result (Spearman 0.55 on 92 finals; two
+  probes averaged no better; RUDY 0.30, wirelength 0.23, the network
+  0.13), so the network is a closed negative as a ranker and
+  `probe_seeds: 2` is not built.
 - Speed is structural now: cheaper expansions are exhausted (five
   candidates under 5 %). The waste measurement (`PCB_ROUTER_WASTE=1`,
   bench-search) found chronically rerouted nets searching corridors up to
