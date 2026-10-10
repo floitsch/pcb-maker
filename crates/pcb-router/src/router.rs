@@ -4170,8 +4170,16 @@ impl Router {
     /// clock stops it too, at `GUARD` times the budget.
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
         self.work_seconds() - clock.0 > budget
-            || (wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD)
+            || (self.wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD)
             || self.past_deadline()
+    }
+
+    /// Whether the wall clock guards the work budgets at `GUARD` times
+    /// them: only without a caller's deadline (route mode), which is
+    /// otherwise the one wall guard, so that the work alone decides the
+    /// routes; and not under `PCB_ROUTER_NO_WALL_GUARD` (`wall_guard`).
+    fn wall_guard(&self) -> bool {
+        self.config.deadline.is_none() && wall_guard()
     }
 
     /// Whether the caller's wall-clock deadline has passed.
@@ -5198,7 +5206,7 @@ impl Router {
                 && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
             if stalled > patience
                 || worked_out
-                || (wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds)
+                || (self.wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds)
                 || self.past_deadline()
             {
                 break;
@@ -5631,7 +5639,57 @@ impl Router {
         self.build_hot();
     }
 
+    /// Debug: a fingerprint of every net's branches and stamps.
+    fn fingerprint(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut mix = |value: u64| {
+            hash ^= value;
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        };
+        for state in &self.nets {
+            for branch in &state.branches {
+                for node in &branch.nodes {
+                    mix(((node.layer as u64) << 32) | node.cell as u64);
+                }
+                mix(u64::MAX);
+            }
+            for (map, cell) in &state.stamped {
+                mix(((*map as u64) << 32) | *cell as u64);
+            }
+        }
+        for history in &self.history {
+            for value in history {
+                mix(value.to_bits() as u64);
+            }
+        }
+        if std::env::var_os("PCB_ROUTER_FINGERPRINT_ALL").is_some() {
+            for map in &self.occupancy {
+                for value in map {
+                    mix(*value as u64);
+                }
+            }
+            for state in &self.nets {
+                for layer in &state.plane {
+                    for value in layer {
+                        mix(*value as u64);
+                    }
+                }
+                for value in &state.on_plane {
+                    mix(*value as u64);
+                }
+                mix(state.complete as u64);
+                for value in &state.connected {
+                    mix(*value as u64);
+                }
+            }
+        }
+        hash
+    }
+
     fn finish(&mut self, order: &[NetId]) -> RoutingResult {
+        if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+            eprintln!("fingerprint before resolve: {:016x}", self.fingerprint());
+        }
         let resolve_started = std::time::Instant::now();
         self.resolve_remaining(order);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
@@ -5639,11 +5697,17 @@ impl Router {
         let improved = if self.hopeless { 0 } else { self.clean_up(order) };
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.profile.cleanup += cleaned;
+        if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+            eprintln!("fingerprint after clean-up: {:016x}", self.fingerprint());
+        }
         let reduction_started = std::time::Instant::now();
         self.in_via_reduction = true;
         self.reduce_vias(order);
         self.in_via_reduction = false;
         self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
+        if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+            eprintln!("fingerprint after via reduction: {:016x}", self.fingerprint());
+        }
         // A repair for the final board, like the via reduction: a trial
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
         // in the first route, mostly hard searches flooding the lattice).
@@ -5652,6 +5716,9 @@ impl Router {
             self.free_thermal_spokes();
         }
         self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
+        if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+            eprintln!("fingerprint after thermal spokes: {:016x}", self.fingerprint());
+        }
         if self.config.verbose {
             eprintln!(
                 "clean up {cleaned:.2}s, via reduction {:.2}s",
@@ -5668,6 +5735,16 @@ impl Router {
             // vias the pour pieces really need.
             let stitching_started = std::time::Instant::now();
             let trimmed = self.trim_skeleton(net);
+            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                let (pours, _, main, spoke_islands) = self.analyze_pours_full(net, &|_| false);
+                eprintln!(
+                    "fingerprint before stitching {}: {:016x}, {} pieces, main {main}, spoke islands {:?}",
+                    self.board.nets[net as usize].name,
+                    self.fingerprint(),
+                    pours.pieces,
+                    spoke_islands
+                );
+            }
             let stitches = self.stitch_pours(net, order);
             self.profile.stitching += stitching_started.elapsed().as_secs_f64();
             if self.config.verbose {
@@ -6507,10 +6584,16 @@ impl Router {
         }
         // Two new vias keep the hole-to-hole distance between them.
         let mut chosen: Vec<(usize, usize, usize)> = Vec::new();
-        let mut candidates: Vec<(f64, usize, usize, usize)> = best.into_values().filter(|entry| entry.0.is_finite()).collect();
-        // Ties broken by the cell: a hash map's order must not decide.
-        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)));
-        for (_, layer, other, cell) in candidates {
+        let mut candidates: Vec<(f64, usize, usize, usize, usize)> = best
+            .into_iter()
+            .filter(|(_, entry)| entry.0.is_finite())
+            .map(|(island, (distance, layer, other, cell))| (distance, layer, other, cell, island))
+            .collect();
+        // Ties broken by the cell, then the island (two islands of one pad
+        // on two layers share an anchor and a best cell): a hash map's
+        // order must not decide.
+        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)).then(a.4.cmp(&b.4)));
+        for (_, layer, other, cell, _) in candidates {
             let at = self.grid.center_of(cell);
             if chosen.iter().any(|(_, _, placed)| {
                 *placed == cell || crate::geometry::distance(at, self.grid.center_of(*placed)) < spacing.max(class.via_diameter)

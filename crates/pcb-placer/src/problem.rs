@@ -211,6 +211,14 @@ impl Component {
         margin - self.edge_inset
     }
 
+    /// The room this body keeps around itself at the courtyard-spacing
+    /// level: half the copper clearance less how far its copper stays
+    /// inside it, and a hair at least (KiCad's courtyard test).
+    pub fn copper_share(&self, min_spacing: f64) -> f64 {
+        let inset = if self.round { 0.0 } else { self.edge_inset };
+        (min_spacing / 2.0 - inset).max(0.005)
+    }
+
     /// Switches the body to the tight one, if the part has one.
     pub fn use_tight_body(&mut self) {
         if let Some(tight) = self.tight {
@@ -285,6 +293,31 @@ impl Component {
 }
 
 impl Problem {
+    /// How far any part's far-side boxes reach beyond its body, at any
+    /// angle: a neighbour search around a body must look that much farther
+    /// (a hot-swap switch on the back: the switch's courtyard on the front
+    /// is larger than the socket's on the back).
+    pub fn far_reach(&self) -> f64 {
+        self.components
+            .iter()
+            .flat_map(|component| {
+                let shortest = component.body_size[0].min(component.body_size[1]) / 2.0;
+                component.far_side.iter().map(move |far| {
+                    let farthest = [[far[0], far[1]], [far[2], far[1]], [far[2], far[3]], [far[0], far[3]]]
+                        .iter()
+                        .map(|corner| (corner[0] - component.body_center[0]).hypot(corner[1] - component.body_center[1]))
+                        .fold(0.0, f64::max);
+                    // Inside the body at every angle: no reach.
+                    let inside = far[0] >= component.body_center[0] - component.body_size[0] / 2.0
+                        && far[1] >= component.body_center[1] - component.body_size[1] / 2.0
+                        && far[2] <= component.body_center[0] + component.body_size[0] / 2.0
+                        && far[3] <= component.body_center[1] + component.body_size[1] / 2.0;
+                    if inside { 0.0 } else { (farthest - shortest).max(0.0) }
+                })
+            })
+            .fold(0.0, f64::max)
+    }
+
     pub fn bounds(&self) -> [f64; 4] {
         let mut bounds = [
             f64::INFINITY,

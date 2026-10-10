@@ -95,12 +95,22 @@ impl State<'_> {
         self.rects[index] = rect;
     }
 
+    /// Half the spacing, or the body's own share of it at the
+    /// courtyard-spacing level.
+    fn share(&self, component: &crate::problem::Component) -> f64 {
+        if self.problem.constraints.courtyard_spacing {
+            component.copper_share(self.problem.min_spacing)
+        } else {
+            self.problem.spacing / 2.0
+        }
+    }
+
     /// The body inflated by its halo and half the spacing: two such
     /// rectangles overlap exactly when the parts are too close.
     fn rect(&self, index: usize, pose: Pose) -> Rect {
         let component = &self.problem.components[index];
         let half = component.half_extent(pose.angle);
-        let margin = component.halo + self.problem.spacing / 2.0;
+        let margin = component.halo + self.share(component);
         Rect {
             center: component.center(pose),
             half: [half[0] + margin, half[1] + margin],
@@ -210,7 +220,7 @@ impl State<'_> {
         // Leaving the board is as bad as overlapping something (for an
         // overhanging part, only with what belongs on the board).
         let component = &self.problem.components[index];
-        let margin = component.halo + self.problem.spacing / 2.0 - component.edge_margin(self.problem.edge_margin);
+        let margin = component.halo + self.share(component) - component.edge_margin(self.problem.edge_margin);
         let mut bare = [rect.half[0] - margin, rect.half[1] - margin];
         let mut rect = rect;
         if !self.problem.constraints.is_empty() {
@@ -344,7 +354,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         work: std::cell::Cell::new(0),
         grid: std::cell::RefCell::new(crate::buckets::Grid::new(bounds, 2.5, problem.components.len())),
         near: std::cell::RefCell::new(Vec::new()),
-        reach: problem.edge_margin + 0.5,
+        reach: problem.edge_margin + 0.5 + problem.far_reach(),
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round() as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
     };

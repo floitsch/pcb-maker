@@ -510,3 +510,49 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
     let right = placement.poses[0].position[0] + 2.0;
     assert!((19.4..=20.0).contains(&right), "right side at {right}");
 }
+
+#[test]
+fn parts_turned_by_odd_angles_meet_as_turned_rectangles() {
+    use pcb_placer::legal::is_legal;
+    let bar = Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [10.0, 2.0],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![30.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = chain(1);
+    problem.components = vec![bar.clone(), bar];
+    problem.spacing = 0.2;
+    // KiCad turns a local point by -angle: the bar's own axes on the board.
+    let (sin, cos) = (-30.0f64).to_radians().sin_cos();
+    let (ex, ey) = ([cos, sin], [-sin, cos]);
+    let local = |u: f64, v: f64| [40.0 + u * ex[0] + v * ey[0], 25.0 + u * ex[1] + v * ey[1]];
+    let at = |v: f64| Pose { position: local(0.0, v), angle: 30.0 };
+    problem.poses = vec![at(0.0), at(3.0)];
+    // Side by side 3 mm apart: the bars (2 mm wide) keep 1 mm, while the
+    // boxes around them (10.7 x 6.7 mm) overlap.
+    assert!(is_legal(&problem, &problem.poses, 1, problem.poses[1], 0..2));
+    // 2.1 mm apart: closer than the spacing.
+    assert!(!is_legal(&problem, &problem.poses, 1, at(2.1), 0..2));
+    // A board turned like the bars: a bar along its edge is on the board,
+    // though the box around it is not.
+    problem.outline = vec![local(-15.0, -15.0), local(15.0, -15.0), local(15.0, 15.0), local(-15.0, 15.0)];
+    problem.poses = vec![at(-10.0), at(13.5)];
+    assert!(is_legal(&problem, &problem.poses, 1, at(13.5), 0..2));
+    assert!(!is_legal(&problem, &problem.poses, 1, at(14.5), 0..2));
+}

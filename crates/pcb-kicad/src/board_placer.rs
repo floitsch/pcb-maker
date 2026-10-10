@@ -215,6 +215,9 @@ pub struct KiCadBoardPlacerResult {
     /// or the rules' copper-to-edge clearance when nothing else fit).
     #[serde(default = "default_edge_rule")]
     pub edge_rule_mm: f64,
+    /// Courtyards came as close as their copper allows (touching).
+    #[serde(default)]
+    pub courtyard_spacing: bool,
     /// The other seeds' legal placements (poses, relaxation and how far
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
@@ -285,12 +288,46 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
     body_with_outline(footprint, ".CrtYd").map(|(center, size, round, _)| (center, size, round))
 }
 
+/// The box ([min x, min y, max x, max y], own frame) of a footprint
+/// graphic (line, rectangle, arc, circle or polygon) with its stroke;
+/// `None` for anything else.
+fn graphic_box(child: &Expr) -> Result<Option<[f64; 4]>, String> {
+    if !matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")) {
+        return Ok(None);
+    }
+    let width = child
+        .child("stroke")
+        .and_then(|stroke| form_atom(stroke, "width", 1))
+        .or_else(|| form_atom(child, "width", 1))
+        .and_then(|width| width.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let mut points = outline::outline_points(child)?;
+    if child.head() == Some("fp_circle") {
+        let center = form_xy(child, "center")?;
+        let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
+        points.extend([[center[0] - radius, center[1] - radius], [center[0] + radius, center[1] + radius]]);
+    }
+    points.extend(outline::pts_points(child)?);
+    let bounds = points.into_iter().fold(
+        [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+        |bounds, point| {
+            [
+                bounds[0].min(point[0] - width / 2.0),
+                bounds[1].min(point[1] - width / 2.0),
+                bounds[2].max(point[0] + width / 2.0),
+                bounds[3].max(point[1] + width / 2.0),
+            ]
+        },
+    );
+    Ok(bounds[0].is_finite().then_some(bounds))
+}
+
 /// The body without the courtyard's margin: fabrication outline and pads
 /// ([min x, min y, max x, max y], own frame). `None` without a fabrication
 /// outline, or where it is no smaller than the courtyard.
-fn tight_body(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
-    let (center, size, _, outlined) = body_with_outline(footprint, ".Fab")?;
-    let (_, courtyard, _) = local_body(footprint)?;
+fn tight_body(footprint: &Expr, skip: Option<&str>) -> Result<Option<[f64; 4]>, String> {
+    let (center, size, _, outlined) = body_on_side(footprint, ".Fab", skip)?;
+    let (_, courtyard, _, _) = body_on_side(footprint, ".CrtYd", skip)?;
     if outlined == 0 || size[0] * size[1] >= courtyard[0] * courtyard[1] - 1.0e-9 {
         return Ok(None);
     }
@@ -305,6 +342,12 @@ fn tight_body(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
 /// The box around the graphics on layers ending in `outline` and the pads,
 /// whether it is a disc, and how many outline graphics there are.
 fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
+    body_on_side(footprint, outline, None)
+}
+
+/// `body_with_outline` leaving out the outline and mask graphics on the
+/// layers of one side (`"F."` or `"B."`).
+fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     let mut include = |point: [f64; 2], radius: f64| {
@@ -319,7 +362,11 @@ fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64;
     // A footprint's own mask graphics open the mask over its area: another
     // part's pads placed there bridge (SNSP-CPU-01's J2 polygon: 63 pads
     // of other parts under it). They are part of the body, tight or not.
-    let counts = |child: &Expr| form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(outline) || layer.ends_with(".Mask"));
+    let counts = |child: &Expr| {
+        form_atom(child, "layer", 1).is_some_and(|layer| {
+            (layer.ends_with(outline) || layer.ends_with(".Mask")) && !skip.is_some_and(|side| layer.starts_with(side))
+        })
+    };
     for child in footprint.children() {
         match child.head() {
             Some("fp_line" | "fp_rect" | "fp_arc") if counts(child) => {
@@ -728,6 +775,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
 /// not), which KiCad cannot build and does not check. Lines and arcs that
 /// share end points form one shape.
 fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
+    courtyard_shapes_on_side(footprint, None)
+}
+
+/// `courtyard_shapes` leaving out the courtyard on one side's layers.
+fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec<[f64; 4]>, bool), String> {
     let mut degrees: Vec<([f64; 2], usize)> = Vec::new();
     let mut shapes: Vec<(Vec<[f64; 2]>, [f64; 4])> = Vec::new();
     let grow = |bounds: &mut [f64; 4], point: [f64; 2], radius: f64| {
@@ -738,7 +790,9 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
     };
     let empty = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     for child in footprint.children() {
-        if !form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")) {
+        if !form_atom(child, "layer", 1)
+            .is_some_and(|layer| layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side)))
+        {
             continue;
         }
         let mut bounds = empty;
@@ -970,6 +1024,86 @@ pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
     table[tokens.len()][text.len()]
 }
 
+/// A rule area as a fixed obstacle for the placer, with its bounds and
+/// whether it keeps bodies out: one that forbids footprints blocks bodies
+/// on the sides of its layers; one that allows footprints but forbids pads
+/// keeps copper out only, as a cutout does (bodies may reach over it).
+/// `None` for other zones.
+fn rule_area_obstacle(
+    item: &Expr,
+) -> Result<Option<(core::Component, core::Pose, pcb_router::geometry::Aabb, bool)>, String> {
+    let Some(keepout) = item.child("keepout") else {
+        return Ok(None);
+    };
+    let bodies = form_atom(keepout, "footprints", 1) == Some("not_allowed");
+    let pads = form_atom(keepout, "pads", 1) == Some("not_allowed");
+    if !bodies && !pads {
+        return Ok(None);
+    }
+    let Some(polygon) = item.child("polygon").and_then(|polygon| polygon.child("pts")) else {
+        return Ok(None);
+    };
+    let mut points = Vec::new();
+    for point in polygon.children().iter().filter(|child| child.head() == Some("xy")) {
+        let coordinate = |index: usize| -> Result<f64, String> {
+            point
+                .children()
+                .get(index)
+                .and_then(Expr::atom)
+                .ok_or_else(|| "keepout point without coordinates".to_string())?
+                .parse::<f64>()
+                .map_err(|error| format!("invalid keepout coordinate: {error}"))
+        };
+        points.push([coordinate(1)?, coordinate(2)?]);
+    }
+    let Some(bounds) = points
+        .iter()
+        .map(|xy| pcb_router::geometry::Aabb { minimum: *xy, maximum: *xy })
+        .reduce(pcb_router::geometry::Aabb::union)
+    else {
+        return Ok(None);
+    };
+    let layers: Vec<&str> = item
+        .child("layers")
+        .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+        .or_else(|| form_atom(item, "layer", 1).map(|layer| vec![layer]))
+        .unwrap_or_default();
+    let all = layers.iter().any(|layer| layer.starts_with('*') || *layer == "F&B.Cu");
+    let side = match (all || layers.contains(&"F.Cu"), all || layers.contains(&"B.Cu")) {
+        (true, false) => core::Side::Front,
+        (false, true) => core::Side::Back,
+        // Inner layers only: no part sits there.
+        (false, false) if !layers.is_empty() => return Ok(None),
+        _ => core::Side::Both,
+    };
+    let component = core::Component {
+        name: "keepout".into(),
+        body_center: [0.0, 0.0],
+        body_size: [bounds.maximum[0] - bounds.minimum[0], bounds.maximum[1] - bounds.minimum[1]],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side,
+        fixed: true,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: !bodies,
+        cutout_outline: if bodies { Vec::new() } else { points },
+        tight_hollow: Vec::new(),
+    };
+    let pose = core::Pose {
+        position: [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0],
+        angle: 0.0,
+    };
+    Ok(Some((component, pose, bounds, bodies)))
+}
+
 pub(super) fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
@@ -1014,6 +1148,54 @@ pub(super) fn lower_placement(
         let at = form_at(footprint)?;
         let reference = footprint_reference(footprint).unwrap_or_default();
         let (mut body_center, mut body_size, round) = local_body(footprint)?;
+        // A footprint with a courtyard on each side (a hot-swap switch: the
+        // socket's on the back, the switch's on the front; a reversible
+        // part) takes its own side's courtyard as its body and the other's
+        // as what it occupies there: KiCad checks courtyards side by side
+        // (urchin's back switches claimed the front switch's square on the
+        // back too, and found no room among the mounting holes and logos
+        // the designer put between them).
+        let courtyard_on = |prefix: &str| {
+            footprint.children().iter().any(|child| {
+                matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
+                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.starts_with(prefix) && layer.ends_with(".CrtYd"))
+            })
+        };
+        // A part without SMD pads whose only courtyard is on the other side
+        // sits on that side (urchin's tenting puck: a front footprint with
+        // its courtyard on B.CrtYd).
+        let back = {
+            let back = on_back(footprint);
+            let (own, other) = if back { ("B.", "F.") } else { ("F.", "B.") };
+            let smd = footprint.children().iter().any(|child| {
+                child.head() == Some("pad") && child.children().get(2).and_then(Expr::atom) == Some("smd")
+            });
+            back != (!smd && !courtyard_on(own) && courtyard_on(other))
+        };
+        let (own_prefix, other_prefix) = if back { ("B.", "F.") } else { ("F.", "B.") };
+        let mut far_courtyard = None;
+        if courtyard_on(own_prefix) && courtyard_on(other_prefix) {
+            let (center, size, own_round, _) = body_on_side(footprint, ".CrtYd", Some(other_prefix))?;
+            if !own_round {
+                body_center = center;
+                body_size = size;
+            }
+            far_courtyard = footprint
+                .children()
+                .iter()
+                .filter(|child| {
+                    form_atom(child, "layer", 1).is_some_and(|layer| layer.starts_with(other_prefix) && layer.ends_with(".CrtYd"))
+                })
+                .map(graphic_box)
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+                // Where the project lets courtyards overlap, KiCad does not
+                // check the other side's either (ErgoSNM's diodes sit in
+                // the keys' socket outlines on the back).
+                .filter(|_| config.tight_bodies != Some(true));
+        }
         let mut pins = Vec::new();
         let mut through = false;
         let mut far_side = Vec::new();
@@ -1024,7 +1206,7 @@ pub(super) fn lower_placement(
         let mut named = BTreeMap::new();
         // The copper layer of the side the part is not on: an edge-mount
         // connector's SMD pads there occupy that side too.
-        let other_copper = if on_back(footprint) { "F.Cu" } else { "B.Cu" };
+        let other_copper = if back { "F.Cu" } else { "B.Cu" };
         for pad in footprint
             .children()
             .iter()
@@ -1123,29 +1305,71 @@ pub(super) fn lower_placement(
             body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
             body_size = [body[2] - body[0], body[3] - body[1]];
         }
-        // Artwork (a logo) has neither pads nor a courtyard: it occupies
-        // nothing, rather than being a 1 mm wall at its origin.
+        // Copper and mask graphics on the outer layers of the side the part
+        // is not on occupy that side as well: Castor's LOGO footprint sits
+        // on the front with its copper polygon on B.Cu, and a part placed
+        // on the back over it was shorted and bridged.
+        let (own_side, other_side) = if back {
+            (core::Side::Back, core::Side::Front)
+        } else {
+            (core::Side::Front, core::Side::Back)
+        };
+        let other_mask = if other_copper == "F.Cu" { "F.Mask" } else { "B.Mask" };
+        let mut own_graphics = false;
+        let mut far_graphics = Vec::new();
+        for child in footprint.children() {
+            let Some(layer) = form_atom(child, "layer", 1) else {
+                continue;
+            };
+            if !layer.ends_with(".Cu") && !layer.ends_with(".Mask") {
+                continue;
+            }
+            let Some(graphic) = graphic_box(child)? else {
+                continue;
+            };
+            if layer == other_copper || layer == other_mask {
+                far_graphics.push(graphic);
+            } else if matches!(layer, "F.Cu" | "B.Cu" | "F.Mask" | "B.Mask") {
+                own_graphics = true;
+            }
+        }
+        // Artwork (a logo) has neither pads nor a courtyard: it occupies the
+        // sides its copper and mask graphics are on (its body is their box),
+        // and nothing without any, rather than being a 1 mm wall at its
+        // origin.
         let artwork = !footprint.children().iter().any(|child| {
             child.head() == Some("pad")
                 || (matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                    && form_atom(child, "layer", 1)
-                        .is_some_and(|layer| layer.ends_with(".CrtYd") || layer.ends_with(".Cu")))
+                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")))
         });
         // A through-hole part sits on its footprint's side; on the other
-        // side only its holes and pads (`far_side`) are in the way.
+        // side only its holes and pads (`far_side`) are in the way, and its
+        // copper and mask graphics there.
         let side = if artwork {
-            core::Side::Neither
-        } else if on_back(footprint) {
-            core::Side::Back
+            match (own_graphics, !far_graphics.is_empty()) {
+                (false, false) => core::Side::Neither,
+                (true, false) => own_side,
+                (false, true) => other_side,
+                (true, true) => core::Side::Both,
+            }
         } else {
-            core::Side::Front
+            far_side.extend(far_graphics.iter().copied());
+            far_side.extend(far_courtyard);
+            own_side
         };
+        let far_graphics = !artwork && (!far_graphics.is_empty() || far_courtyard.is_some());
         let angle_options = if config.keep_rotation {
             vec![at[2]]
         } else {
-            (0..4)
-                .map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64))
-                .collect()
+            let mut angles: Vec<f64> = (0..4).map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64)).collect();
+            // A part at an odd angle (a thumb cluster's keys at -30) may
+            // also turn square to the board: the placer's bodies are boxes
+            // around the turned part, half as large again at 30 degrees
+            // (ErgoSNM: two keys found no room).
+            if normalize_angle(at[2]) % 90.0 > 1.0e-6 {
+                angles.extend([0.0, 90.0, 180.0, 270.0]);
+            }
+            angles
         };
         // How far the copper stays inside the body: the body may come that
         // much closer to the board edge.
@@ -1158,31 +1382,15 @@ pub(super) fn lower_placement(
             );
             // Copper graphics of the footprint count as copper too.
             for child in footprint.children() {
-                if !(matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
-                {
+                if !form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")) {
                     continue;
                 }
-                let width = child
-                    .child("stroke")
-                    .and_then(|stroke| form_atom(stroke, "width", 1))
-                    .and_then(|width| width.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-                let mut points = outline::outline_points(child)?;
-                if child.head() == Some("fp_circle") {
-                    let center = form_xy(child, "center")?;
-                    let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
-                    points.extend([[center[0] - radius, center[1] - radius], [center[0] + radius, center[1] + radius]]);
-                }
-                for point in outline::pts_points(child)? {
-                    points.push(point);
-                }
-                for point in points {
+                if let Some(graphic) = graphic_box(child)? {
                     pads = [
-                        pads[0].min(point[0] - width / 2.0),
-                        pads[1].min(point[1] - width / 2.0),
-                        pads[2].max(point[0] + width / 2.0),
-                        pads[3].max(point[1] + width / 2.0),
+                        pads[0].min(graphic[0]),
+                        pads[1].min(graphic[1]),
+                        pads[2].max(graphic[2]),
+                        pads[3].max(graphic[3]),
                     ];
                 }
             }
@@ -1197,7 +1405,8 @@ pub(super) fn lower_placement(
                 .fold(f64::INFINITY, f64::min)
                 .max(0.0)
         };
-        let courtyard = courtyard_shapes(footprint)?;
+        let courtyard =
+            courtyard_shapes_on_side(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?;
         connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
@@ -1223,9 +1432,13 @@ pub(super) fn lower_placement(
             side,
             fixed: false,
             angle_options,
-            far_side: if through { far_side } else { Vec::new() },
+            far_side: if through || far_graphics { far_side } else { Vec::new() },
             hollow: Vec::new(),
-            tight: if config.tight_bodies == Some(true) { tight_body(footprint)? } else { None },
+            tight: if config.tight_bodies == Some(true) {
+                tight_body(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?
+            } else {
+                None
+            },
             edge_inset,
             courtyards: courtyard.0,
             holes_inside: courtyard.1,
@@ -1260,86 +1473,21 @@ pub(super) fn lower_placement(
 
     // Rule areas that forbid footprints are obstacles too, and a part the
     // designer placed reaching into one (an antenna module at its keepout)
-    // is there on purpose and stays.
+    // is there on purpose and stays. One that allows footprints but forbids
+    // pads keeps copper out only (d20's back: KiCad flagged 27 of our pads
+    // in it).
     let footprint_count = components.len();
     let mut keepouts: Vec<pcb_router::geometry::Aabb> = Vec::new();
-    for item in pcb.children() {
-        if item.head() != Some("zone")
-            || !item.child("keepout").is_some_and(|keepout| {
-                form_atom(keepout, "footprints", 1) == Some("not_allowed")
-            })
-        {
+    for item in pcb.children().iter().filter(|item| item.head() == Some("zone")) {
+        let Some((component, pose, bounds, bodies)) = rule_area_obstacle(item)? else {
             continue;
-        }
-        let Some(polygon) = item.child("polygon").and_then(|polygon| polygon.child("pts")) else {
-            continue;
-        };
-        let mut bounds: Option<pcb_router::geometry::Aabb> = None;
-        for point in polygon.children().iter().filter(|child| child.head() == Some("xy")) {
-            let coordinate = |index: usize| -> Result<f64, String> {
-                point
-                    .children()
-                    .get(index)
-                    .and_then(Expr::atom)
-                    .ok_or_else(|| "keepout point without coordinates".to_string())?
-                    .parse::<f64>()
-                    .map_err(|error| format!("invalid keepout coordinate: {error}"))
-            };
-            let xy = [coordinate(1)?, coordinate(2)?];
-            let corner = pcb_router::geometry::Aabb {
-                minimum: xy,
-                maximum: xy,
-            };
-            bounds = Some(bounds.map_or(corner, |bounds| bounds.union(corner)));
-        }
-        let Some(bounds) = bounds else {
-            continue;
-        };
-        let layers: Vec<&str> = item
-            .child("layers")
-            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
-            .or_else(|| form_atom(item, "layer", 1).map(|layer| vec![layer]))
-            .unwrap_or_default();
-        let side = match (layers.iter().any(|l| *l == "F.Cu"), layers.iter().any(|l| *l == "B.Cu")) {
-            (true, false) => core::Side::Front,
-            (false, true) => core::Side::Back,
-            _ => core::Side::Both,
         };
         // A part inside a constraint keepout is not there on purpose.
-        if !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)) {
+        if bodies && !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)) {
             keepouts.push(bounds);
         }
-        components.push(core::Component {
-            name: "keepout".into(),
-            body_center: [0.0, 0.0],
-            body_size: [
-                bounds.maximum[0] - bounds.minimum[0],
-                bounds.maximum[1] - bounds.minimum[1],
-            ],
-            round: false,
-            halo: 0.0,
-            pins: Vec::new(),
-            side,
-            fixed: true,
-            angle_options: vec![0.0],
-            far_side: Vec::new(),
-            hollow: Vec::new(),
-            tight: None,
-            edge_inset: 0.0,
-            courtyards: Vec::new(),
-            holes_inside: false,
-            pads: Vec::new(),
-            copper_only: false,
-            cutout_outline: Vec::new(),
-            tight_hollow: Vec::new(),
-        });
-        poses.push(core::Pose {
-            position: [
-                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
-                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
-            ],
-            angle: 0.0,
-        });
+        components.push(component);
+        poses.push(pose);
         references.push("keepout".into());
         source_at.push([0.0; 3]);
         locked.push(true);
@@ -1575,6 +1723,38 @@ pub(super) fn lower_placement(
             return Err(format!("constraints file {} was not resolved", path.display()));
         }
     };
+    // A fixed footprint's own rule areas (an antenna module's keepout, in
+    // board coordinates) are obstacles like the board's: PixelWave's
+    // ESP32 on the back keeps parts out of its antenna area on both sides,
+    // and KiCad flagged 50 pads and parts we put there. A movable part's
+    // keepout moves with it: it blocks the other side as far-side box.
+    for (index, footprint) in pcb.children().iter().filter(|item| item.head() == Some("footprint")).enumerate() {
+        for zone in footprint.children().iter().filter(|child| child.head() == Some("zone")) {
+            let Some((component, pose, _, bodies)) = rule_area_obstacle(zone)? else {
+                continue;
+            };
+            if problem.components[index].fixed {
+                problem.components.push(component);
+                problem.poses.push(pose);
+                references.push("keepout".into());
+                source_at.push([0.0; 3]);
+            } else if bodies && component.side.collides(match problem.components[index].side {
+                core::Side::Front => core::Side::Back,
+                core::Side::Back => core::Side::Front,
+                _ => core::Side::Neither,
+            }) {
+                let at = source_at[index];
+                let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
+                let corners = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]];
+                let local = corners
+                    .map(|corner| core::problem::rotate([pose.position[0] + corner[0] - at[0], pose.position[1] + corner[1] - at[1]], at[2]));
+                problem.components[index].far_side.push(local.iter().fold(
+                    [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+                    |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
+                ));
+            }
+        }
+    }
     if config.auto_decoupling {
         let automatic = decoupling_relations(pcb, &problem)?;
         if !automatic.is_empty() {
@@ -1909,6 +2089,77 @@ fn choose_any_edges(
     Ok(chosen)
 }
 
+/// Debugging aid (`PCB_PLACER_DESIGNER=<designer's .kicad_pcb>`): the
+/// designer's poses judged by the placer's model at its loosest level, with
+/// what each illegal movable part meets.
+fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(designer).map_err(|error| format!("{}: {error}", designer.display()))?;
+    let pcb = parse(&text)?;
+    let mut at_by_reference: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
+    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+        at_by_reference.entry(footprint_reference(footprint).unwrap_or_default()).or_default().push(form_at(footprint)?);
+    }
+    let mut problem = lowered.problem.clone();
+    let mut poses = problem.poses.clone();
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    for (index, reference) in lowered.references.iter().enumerate() {
+        if problem.components[index].fixed {
+            continue;
+        }
+        let nth = seen.entry(reference.clone()).or_default();
+        if let Some(at) = at_by_reference.get(reference).and_then(|ats| ats.get(*nth)) {
+            poses[index] = core::Pose { position: [at[0], at[1]], angle: at[2] };
+        }
+        *nth += 1;
+    }
+    let level = std::env::var("PCB_PLACER_DESIGNER_LEVEL").unwrap_or_default();
+    if level != "full" {
+        problem.spacing = problem.min_spacing;
+        problem.grid = problem.grid.min(0.1);
+        problem.edge_margin = problem.edge_margin.min((problem.constraints.copper_edge + 0.05).min(problem.edge_margin));
+        for component in &mut problem.components {
+            component.halo = 0.0;
+            if level == "tight" {
+                component.use_tight_body();
+            }
+        }
+    }
+    let count = problem.components.len();
+    let bounds = problem.bounds();
+    eprintln!("designer: outline bounds {bounds:?}, {} pieces, edge margin {}, {} points: {:?}", problem.pieces.len(), problem.edge_margin, problem.outline.len(), problem.outline.iter().step_by((problem.outline.len() / 40).max(1)).collect::<Vec<_>>());
+    let mut illegal = 0;
+    for index in 0..count {
+        if problem.components[index].fixed {
+            continue;
+        }
+        let mut reasons = Vec::new();
+        let outside = !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::empty());
+        if outside {
+            reasons.push("outline or hard constraint".to_string());
+        }
+        for other in (0..count).filter(|_| !outside) {
+            if other != index && !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::once(other)) {
+                reasons.push(format!("{} ({:?})", lowered.references[other], problem.components[other].side));
+            }
+        }
+        if !reasons.is_empty() {
+            illegal += 1;
+            let component = &problem.components[index];
+            eprintln!(
+                "designer: {} ({:?}, body {:.2} x {:.2}, at {:?}) meets {}",
+                lowered.references[index],
+                component.side,
+                component.body_size[0],
+                component.body_size[1],
+                poses[index],
+                reasons.join(", ")
+            );
+        }
+    }
+    eprintln!("designer: {illegal} movable parts illegal at the designer's poses (level {level:?})");
+    Ok(())
+}
+
 pub fn place_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -1957,6 +2208,9 @@ pub fn place_kicad_board(
         apply_sides(&mut pcb, constraints)?;
     }
     let mut lowered = lower_placement(&pcb, config, &[])?;
+    if let Some(designer) = std::env::var_os("PCB_PLACER_DESIGNER") {
+        diagnose_designer(&lowered, Path::new(&designer))?;
+    }
     for warning in &lowered.constraint_warnings {
         eprintln!("warning: {warning}");
     }
@@ -2221,6 +2475,7 @@ pub fn place_kicad_board(
         edge_inset: placement.relaxation.edge_inset,
         edge_copper: placement.relaxation.edge_copper,
         edge_rule_mm: placement.relaxation.edge_rule,
+        courtyard_spacing: placement.relaxation.courtyard_spacing,
         utilization,
         hints,
         board_id: board_id.into(),
@@ -2270,6 +2525,99 @@ mod tests {
         for name in ["Net-(SW1-Pad2)", "+3V3", "/SWDIO", "Net-(U4-COL0)", "/FBUS_TX"] {
             assert!(!keep_short(name), "{name}");
         }
+    }
+
+    #[test]
+    fn a_front_footprints_copper_on_the_back_blocks_back_parts_there() {
+        // A netless logo on the front whose copper polygon lies on B.Cu
+        // (Castor's LOGO), and a part with a courtyard whose B.Mask graphic
+        // opens the back's mask; a back 0603 between two nets.
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "LOGO" (layer "F.Cu") (at 10 10)
+                (fp_poly (pts (xy -2 -2) (xy 2 -2) (xy 2 2) (xy -2 2)) (layer "B.Cu") (width 0)))
+            (footprint "Marked" (layer "F.Cu") (at 30 10)
+                (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+                (fp_poly (pts (xy -3 -3) (xy 3 -3) (xy 3 3) (xy -3 3)) (layer "B.Mask") (width 0))
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+            (footprint "L_0603" (layer "B.Cu") (at 20 3)
+                (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "B.CrtYd"))
+                (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "B.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "B.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        let logo = &problem.components[0];
+        assert_eq!(logo.side, core::Side::Back, "artwork occupies the side of its copper");
+        assert_eq!(problem.components[1].side, core::Side::Front);
+        assert_eq!(problem.components[1].far_side, vec![[-3.0, -3.0, 3.0, 3.0]]);
+        let part = 2;
+        assert_eq!(problem.components[part].side, core::Side::Back);
+        let mut poses = problem.poses.clone();
+        assert!(!core::legal::illegal_components(problem, &poses).contains(&part));
+        // Over the logo's copper, and under the other part's mask opening.
+        for position in [[10.0, 10.5], [30.0, 12.0]] {
+            poses[part].position = position;
+            assert!(core::legal::illegal_components(problem, &poses).contains(&part), "{position:?}");
+        }
+        // A front part may sit over the logo: its copper is on the back.
+        let mut front = problem.components[part].clone();
+        front.side = core::Side::Front;
+        let mut flipped = problem.clone();
+        flipped.components[part] = front;
+        poses[part].position = [10.0, 10.5];
+        assert!(!core::legal::illegal_components(&flipped, &poses).contains(&part));
+    }
+
+    #[test]
+    fn rule_areas_keep_out_what_they_forbid() {
+        // A back rule area that allows footprints but forbids pads (d20),
+        // and a fixed back module whose own keepout forbids footprints on
+        // both sides (PixelWave's ESP32 antenna area).
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (zone (layers "B.Cu") (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints allowed))
+                (polygon (pts (xy 2 2) (xy 20 2) (xy 20 28) (xy 2 28))))
+            (footprint "Module" (layer "B.Cu") (at 40 10) (locked yes)
+                (fp_rect (start -3 -3) (end 3 3) (layer "B.CrtYd"))
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu") (net 1 "A"))
+                (zone (layers "F.Cu" "B.Cu") (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints not_allowed))
+                    (polygon (pts (xy 35 14) (xy 45 14) (xy 45 24) (xy 35 24)))))
+            (footprint "Back" (layer "B.Cu") (at 30 3)
+                (fp_rect (start -5 -0.7) (end 5 0.7) (layer "B.CrtYd"))
+                (pad "1" smd rect (at -2.5 0) (size 0.8 0.9) (layers "B.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 2.5 0) (size 0.8 0.9) (layers "B.Cu") (net 2 "B")))
+            (footprint "Front" (layer "F.Cu") (at 30 27)
+                (fp_rect (start -1 -0.7) (end 1 0.7) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.9) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.9) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        let (back, front) = (1, 2);
+        let mut poses = problem.poses.clone();
+        assert!(core::legal::illegal_components(problem, &poses).is_empty());
+        let legal = |poses: &[core::Pose], part: usize| !core::legal::illegal_components(problem, poses).contains(&part);
+        // Pads in the pad keepout: not legal; the body reaching over its
+        // edge with the pads outside: legal.
+        poses[back].position = [10.0, 15.0];
+        assert!(!legal(&poses, back));
+        poses[back].position = [23.5, 15.0];
+        assert!(legal(&poses, back));
+        // A front part is not on the pad keepout's layer.
+        poses[front].position = [10.0, 15.0];
+        assert!(legal(&poses, front));
+        // The fixed module's keepout blocks both sides.
+        poses[front].position = [40.0, 20.0];
+        assert!(!legal(&poses, front));
+        poses[back].position = [40.0, 20.0];
+        assert!(!legal(&poses, back));
     }
 
     #[test]

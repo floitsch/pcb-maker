@@ -11,21 +11,112 @@ use crate::problem::{Point, Pose, Problem, point_in_polygon};
 #[derive(Clone, Copy, Debug)]
 struct Rect {
     center: Point,
+    /// Half extent of the axis-aligned box around the body.
     half: Point,
     round: bool,
+    /// A body turned by other than a quarter turn: its direction (cosine
+    /// and sine of the board-space angle of its own x axis) and its own half
+    /// sizes. Overlap and outline tests use the turned rectangle, not the
+    /// box around it (ErgoSNM's thumb keys at -30 degrees, whose boxes are
+    /// half as large again and leave the slanted edge).
+    turn: Option<(Point, Point)>,
+}
+
+impl Rect {
+    /// The rectangle grown by `margin` on every side.
+    fn grown(self, margin: f64) -> Rect {
+        Rect {
+            half: [self.half[0] + margin, self.half[1] + margin],
+            turn: self.turn.map(|(direction, own)| (direction, [own[0] + margin, own[1] + margin])),
+            ..self
+        }
+    }
+
+    /// The corners, in order around the rectangle.
+    fn corners(&self) -> [Point; 4] {
+        match self.turn {
+            None => [
+                [self.center[0] - self.half[0], self.center[1] - self.half[1]],
+                [self.center[0] + self.half[0], self.center[1] - self.half[1]],
+                [self.center[0] + self.half[0], self.center[1] + self.half[1]],
+                [self.center[0] - self.half[0], self.center[1] + self.half[1]],
+            ],
+            Some(([cos, sin], own)) => [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]].map(|[sx, sy]| {
+                let (x, y) = (sx * own[0], sy * own[1]);
+                [self.center[0] + cos * x - sin * y, self.center[1] + sin * x + cos * y]
+            }),
+        }
+    }
+
+    /// Own axes and half sizes (the board's for an unturned rectangle).
+    fn frame(&self) -> ([Point; 2], Point) {
+        match self.turn {
+            None => ([[1.0, 0.0], [0.0, 1.0]], self.half),
+            Some(([cos, sin], own)) => ([[cos, sin], [-sin, cos]], own),
+        }
+    }
+}
+
+/// The direction of a body at `angle` when it is not a quarter turn.
+fn turn_of(angle: f64, half: Point) -> Option<(Point, Point)> {
+    let quarter = angle.rem_euclid(90.0);
+    if quarter < 1.0e-6 || 90.0 - quarter < 1.0e-6 {
+        return None;
+    }
+    // KiCad turns a local point by -angle (y down).
+    let (sin, cos) = (-angle).to_radians().sin_cos();
+    Some(([cos, sin], half))
 }
 
 fn rect(problem: &Problem, index: usize, pose: Pose) -> Rect {
     let component = &problem.components[index];
     let half = component.half_extent(pose.angle);
+    let own = [component.body_size[0] / 2.0 + component.halo, component.body_size[1] / 2.0 + component.halo];
     Rect {
         center: component.center(pose),
         half: [half[0] + component.halo, half[1] + component.halo],
         round: component.round,
+        turn: if component.round { None } else { turn_of(pose.angle, own) },
     }
 }
 
+/// Whether two rectangles, at least one of them turned, come closer than
+/// `spacing` (separating axes; the spacing grows both, which is a little
+/// conservative at the corners).
+fn turned_overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
+    let delta = [b.center[0] - a.center[0], b.center[1] - a.center[1]];
+    let (axes_a, half_a) = a.frame();
+    let (axes_b, half_b) = b.frame();
+    let dot = |u: Point, v: Point| u[0] * v[0] + u[1] * v[1];
+    for axis in axes_a.iter().chain(axes_b.iter()) {
+        let reach_a = half_a[0] * dot(axes_a[0], *axis).abs() + half_a[1] * dot(axes_a[1], *axis).abs();
+        let reach_b = half_b[0] * dot(axes_b[0], *axis).abs() + half_b[1] * dot(axes_b[1], *axis).abs();
+        if dot(delta, *axis).abs() >= reach_a + reach_b + spacing - 1.0e-9 {
+            return false;
+        }
+    }
+    true
+}
+
 fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
+    if a.turn.is_some() || b.turn.is_some() {
+        match (a.round, b.round) {
+            (false, false) => return turned_overlaps(a, b, spacing),
+            (true, false) | (false, true) => {
+                // The disc's centre in the turned rectangle's frame.
+                let (disc, body) = if a.round { (a, b) } else { (b, a) };
+                let (axes, own) = body.frame();
+                let delta = [disc.center[0] - body.center[0], disc.center[1] - body.center[1]];
+                let local = [
+                    (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs(),
+                    (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs(),
+                ];
+                let outside = [(local[0] - own[0]).max(0.0), (local[1] - own[1]).max(0.0)];
+                return outside[0].hypot(outside[1]) < disc.half[0] + spacing - 1.0e-9;
+            }
+            (true, true) => {}
+        }
+    }
     let delta = [
         (a.center[0] - b.center[0]).abs(),
         (a.center[1] - b.center[1]).abs(),
@@ -49,6 +140,17 @@ fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
     }
 }
 
+/// The gap two bodies on one side keep: the spacing, or at the
+/// courtyard-spacing level what their copper needs.
+fn body_spacing(problem: &Problem, a: usize, b: usize) -> f64 {
+    if problem.constraints.courtyard_spacing {
+        let components = &problem.components;
+        components[a].copper_share(problem.min_spacing) + components[b].copper_share(problem.min_spacing)
+    } else {
+        problem.spacing
+    }
+}
+
 fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
     let orient = |p: Point, q: Point, r: Point| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
     let (d1, d2, d3, d4) = (orient(c, d, a), orient(c, d, b), orient(a, b, c), orient(a, b, d));
@@ -56,12 +158,7 @@ fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
 }
 
 fn inside_outline(problem: &Problem, body: Rect) -> bool {
-    let corners = [
-        [body.center[0] - body.half[0], body.center[1] - body.half[1]],
-        [body.center[0] + body.half[0], body.center[1] - body.half[1]],
-        [body.center[0] + body.half[0], body.center[1] + body.half[1]],
-        [body.center[0] - body.half[0], body.center[1] + body.half[1]],
-    ];
+    let corners = body.corners();
     if !corners.iter().all(|corner| point_in_polygon(*corner, &problem.outline)) {
         return false;
     }
@@ -81,10 +178,12 @@ fn inside_outline(problem: &Problem, body: Rect) -> bool {
 fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
     let component = &problem.components[index];
     let half = component.half_extent(pose.angle);
+    let own = [component.body_size[0] / 2.0 + margin, component.body_size[1] / 2.0 + margin];
     Rect {
         center: component.center(pose),
         half: [half[0] + margin, half[1] + margin],
         round: component.round,
+        turn: if component.round { None } else { turn_of(pose.angle, own) },
     }
 }
 
@@ -125,12 +224,14 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
                         center: [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0],
                         half: [(grown[2] - grown[0]) / 2.0, (grown[3] - grown[1]) / 2.0],
                         round: false,
+                        turn: None,
                     },
                 )
             });
         }
     }
-    if problem.constraints.is_empty() {
+    let held = problem.constraints.edges.iter().any(|(part, _, _)| *part == index) || problem.constraints.overhang(index).is_some();
+    if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
         let margin = problem.components[index].edge_margin(problem.edge_margin);
         return inside_outline(problem, bare(problem, index, pose, margin));
     }
@@ -161,6 +262,7 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             center: [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0],
             half: [(grown[2] - grown[0]) / 2.0, (grown[3] - grown[1]) / 2.0],
             round: false,
+            turn: None,
         },
     )
 }
@@ -232,11 +334,11 @@ fn is_legal_counting(
                     let bare = |part: usize, pose: Pose| {
                         let rect = rect(problem, part, pose);
                         let halo = problem.components[part].halo;
-                        Rect { half: [rect.half[0] - halo, rect.half[1] - halo], ..rect }
+                        rect.grown(-halo)
                     };
-                    overlaps(bare(index, pose), bare(other, poses[other]), problem.spacing)
+                    overlaps(bare(index, pose), bare(other, poses[other]), body_spacing(problem, index, other))
                 } else {
-                    overlaps(body, rect(problem, other, poses[other]), problem.spacing)
+                    overlaps(body, rect(problem, other, poses[other]), body_spacing(problem, index, other))
                 }
             } {
                 return false;
@@ -266,7 +368,7 @@ impl Buckets {
     fn new(problem: &Problem) -> Self {
         Buckets {
             grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len()),
-            reach: problem.spacing + problem.min_spacing + problem.edge_margin + 1.0,
+            reach: problem.spacing + problem.min_spacing + problem.edge_margin + 1.0 + problem.far_reach(),
         }
     }
 
@@ -315,6 +417,7 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
                 center,
                 half: [half[0] + margin, half[1] + margin],
                 round: false,
+                turn: None,
             },
             hole,
             0.0,
@@ -359,6 +462,7 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
                 center,
                 half,
                 round: false,
+                turn: None,
             })
             .collect()
     };
@@ -383,8 +487,8 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
             return far.iter().any(|(center, half)| {
                 pads.iter().any(|(pad_center, pad_half)| {
                     overlaps(
-                        Rect { center: *center, half: *half, round: false },
-                        Rect { center: *pad_center, half: *pad_half, round: false },
+                        Rect { center: *center, half: *half, round: false, turn: None },
+                        Rect { center: *pad_center, half: *pad_half, round: false, turn: None },
                         problem.min_spacing,
                     )
                 })
@@ -397,6 +501,7 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
                     center,
                     half,
                     round: false,
+                    turn: None,
                 },
                 target,
                 problem.spacing,

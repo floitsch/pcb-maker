@@ -89,6 +89,9 @@ pub struct Relaxation {
     /// Movable bodies keep only the rules' copper-to-edge clearance from
     /// the edge (not the placement's larger margin).
     pub edge_rule: f64,
+    /// Courtyards may touch where their copper keeps the clearance
+    /// (`Constraints::courtyard_spacing`).
+    pub courtyard_spacing: bool,
 }
 
 impl Relaxation {
@@ -106,6 +109,7 @@ impl Relaxation {
             }
         }
         problem.constraints.edge_copper = self.edge_copper;
+        problem.constraints.courtyard_spacing = self.courtyard_spacing;
         problem.edge_margin = problem.edge_margin.min(self.edge_rule);
     }
 }
@@ -357,6 +361,13 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     if !problem.constraints.edges.is_empty() {
         levels.push((0.0, 0.0, fine, true, tight, true, rule_margin, 0.0));
     }
+    // Last, courtyards may touch where the copper inside them keeps the
+    // clearance: how designers pack a crowded side.
+    let courtyard_level = levels.len();
+    {
+        let last = *levels.last().expect("levels");
+        levels.push(last);
+    }
     let mut relaxation = None;
     // The grid and bodies the last anneal ran with.
     let mut annealed_shape: Option<(f64, bool)> = None;
@@ -376,6 +387,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
         relaxed.constraints.edge_copper = edge_copper;
+        relaxed.constraints.courtyard_spacing = level == courtyard_level;
         relaxed.far_side_pads_only = tight && config.overlap_far_side_pads;
         relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
         for component in &mut relaxed.components {
@@ -439,6 +451,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     tight,
                     edge_copper,
                     edge_rule,
+                    courtyard_spacing: level == courtyard_level,
                 });
                 let done = failed.is_empty();
                 best = Some((failed, kept, relaxed.clone()));
@@ -475,7 +488,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let mut failed = legal::legalize(&relaxed, &mut poses);
         if debug {
             eprintln!(
-                "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
+                "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: wirelength global {:.0}, annealed {:.0}, legalized {:.0}; anneal {anneal_seconds:.1}s, legalize {:.1}s, {} failed, work {} ({:.0}/s overall)",
+                problem.wirelength(&global_poses),
+                problem.wirelength(&annealed),
+                problem.wirelength(&poses),
                 level_started.elapsed().as_secs_f64() - anneal_seconds,
                 failed.len(),
                 work() - work_started,
@@ -519,6 +535,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 tight,
                 edge_copper,
                 edge_rule,
+                courtyard_spacing: level == courtyard_level,
             });
             best = Some((failed, poses, relaxed));
         }

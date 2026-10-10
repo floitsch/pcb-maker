@@ -136,6 +136,12 @@ pub struct Constraints {
     /// Copper-to-edge clearance: on a side an edge constraint puts a part
     /// against, its pads (not its body) keep this far from the edge.
     pub copper_edge: f64,
+    /// Bodies keep apart only as far as their copper needs: two courtyards
+    /// may touch where the pads inside them keep the copper clearance
+    /// (KiCad forbids overlapping courtyards, not touching ones; laptop
+    /// power's designer packed 0603s edge to edge on a 96 % full side).
+    /// The last relaxation level.
+    pub courtyard_spacing: bool,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the

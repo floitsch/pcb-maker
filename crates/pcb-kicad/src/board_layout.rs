@@ -467,8 +467,11 @@ pub fn layout_kicad_board(
     }
     // Placement gets 40 % of the budget, as the placement race does.
     let placement_budget = 0.4 * config.total_seconds.max(0.0);
-    placer_config.deadline =
-        Some(layout_started + std::time::Duration::from_secs_f64(WALL_GUARD * placement_budget));
+    // The placement's budget is its work; its wall-clock guard is the
+    // layout's own deadline (at the placement's share of it, the placement
+    // stopped on a busy machine where the work would have gone on, and the
+    // layout depended on the load).
+    placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget);
     eprintln!("layout: sizing the outline");
     let outline_sizing =
@@ -560,6 +563,7 @@ pub fn layout_kicad_board(
         tight: placement.tight_bodies,
         edge_copper: placement.edge_copper,
         edge_rule: placement.edge_rule_mm,
+        courtyard_spacing: placement.courtyard_spacing,
     };
     first_relaxation.apply(&mut problem.problem);
     // The in-place router compares placements: it stops negotiating once
@@ -1057,9 +1061,10 @@ pub fn layout_kicad_board(
     // the wall clock left before the deadline, and skipped under four
     // minutes of it: PolyKybd right's polish spent 769 s on one via
     // reduction round and was thrown away.
-    let polish_left = router_config
-        .deadline
-        .map_or(f64::INFINITY, |deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64());
+    // What is left before the layout's nominal end, in work (the wall
+    // clock would make the polish depend on the machine's load; its
+    // deadline still guards the polish inside the router).
+    let polish_left = WALL_GUARD * config.total_seconds - work;
     // A board a move trial already polished polishes again when more than
     // half the layout's budget is left: the trial's via reduction had only
     // its own strict budget (CyberKeeb2040: a round reverted at 60 s, the
@@ -1154,9 +1159,8 @@ pub fn layout_kicad_board(
     // A ladder needs a few minutes of wall clock for a probe, the board
     // and KiCad's check; started with less it runs past the harness's
     // limit (the laptop motherboard: killed at 1800 s without a board).
-    let past_guard = router_config
-        .deadline
-        .is_some_and(|deadline| deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() < 240.0);
+    let past_guard = router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        || WALL_GUARD * config.total_seconds - work < 240.0;
     let fallback_config = if past_guard {
         None
     } else if current.0 > 0 {
@@ -1183,6 +1187,9 @@ pub fn layout_kicad_board(
         let mut fallback_config = fallback_config;
         let left = (config.total_seconds - work).max(120.0);
         fallback_config.ladder_budget_seconds = Some(fallback_config.ladder_budget_seconds.unwrap_or(1200.0).min(left));
+        // The ladder decides whether another attempt fits in work, up to
+        // the layout's nominal end.
+        fallback_config.deadline_work = Some((WALL_GUARD * config.total_seconds - work).max(0.0));
         let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
         if quality(&fallback, &fallback_directory) < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
