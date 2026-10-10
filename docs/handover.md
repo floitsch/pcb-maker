@@ -179,8 +179,17 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   open: the stitches crowd the signals), main-piece hysteresis (the main
   piece does not flip, it collapses when a stuck pour net is ripped up
   whole), not ripping pour nets up whole (worse), hard thermal guards.
-- Cost: the pour-aware check takes up to 15 % of a run (Hub 159 s of
-  276 s); an incremental check is in progress.
+- Cost: the pour-aware check's own-stamp lookup is a bitset now (k30
+  forced-connect checks 179 s to 78 s, Hub 207 s to 130 s, identical
+  results); skipping far pour nets never fires on boards whose pours cover
+  the board.
+- Same-copper comparison, route mode on v12's placed boards, x165 against
+  HEAD: k30 identical (tracks wins both), Castor 184 to 176 vias at 18
+  starved, Hub 18 to 20 unconnected, Sisu 20 to 13 unconnected. The
+  probe ladder picks the tracks rung by its 75 s probe even where the
+  connected rung's final result is better (k30 forced connect: 0 open,
+  14 starved against tracks' 16): the ladder's judge has the race's
+  noisy-probe problem.
 - Real-layout rows on x204 (fixed run.py): k30 173/173 with 3 starved
   (365 vias to 287), Qfwfq 64/64 clean, Telemetry 107/108, Castor 125/126
   with one unconnected, one short and one bridge (the short is under
@@ -217,8 +226,10 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
    the repair (`free_thermal_spokes`, budgeted, only when polishing) moves
    2 of 10 nets. Probably needs the exit direction of the neighbouring
    pads decided before negotiation (a fan-out step), not a cost.
-3. **The ladder stops at the first complete rung regardless of starved
-   thermals** (Castor x155: "0 open, 18 starved" kept). Rank by
+3. **The ladder's judge.** The probe (unfinished nets after 75 s of work)
+   picks the rung to continue; it chose tracks on k30 where connect ends
+   with fewer starved thermals, and it stops at the first complete rung regardless of starved
+   thermals (Castor x155: "0 open, 18 starved" kept). Rank by
    (open, starved) before vias, and let a complete-but-starved rung be
    rivalled.
 4. **Crowded placement** (OpenESC, SNSP): the three directions are built
