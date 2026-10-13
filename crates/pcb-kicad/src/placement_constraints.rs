@@ -145,6 +145,10 @@ pub struct KiCadRowConstraint {
     pub columns: Option<usize>,
     #[serde(default)]
     pub row_pitch_mm: Option<f64>,
+    /// The row may also take quarter turns as a whole (the placer's own
+    /// bus rows, whose axis follows the parts, not the board).
+    #[serde(skip)]
+    pub turns: bool,
 }
 
 /// Parts kept together: each one's body within `max_mm` of the central
@@ -594,6 +598,11 @@ fn apply_rows(
         let angle = problem.poses[leader].angle;
         let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
         let mut carried = problem.components[leader].clone();
+        // Where a member blocks with shaped boxes (`hollow`), the row
+        // blocks with every member's: its own boxes, or its whole body.
+        let shaped = members.iter().any(|member| !problem.components[*member].hollow.is_empty());
+        carried.hollow.clear();
+        carried.tight_hollow.clear();
         carried.pins.clear();
         carried.far_side.clear();
         carried.far_copper.clear();
@@ -633,6 +642,14 @@ fn apply_rows(
             carried.far_side.extend(shift(&component.far_side));
             carried.far_copper.extend(shift(&component.far_copper));
             carried.pads.extend(shift(&pad_boxes[*member]));
+            if shaped {
+                if component.hollow.is_empty() {
+                    let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
+                    carried.hollow.push([center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]);
+                } else {
+                    carried.hollow.extend(shift(&component.hollow));
+                }
+            }
             carried.halo = carried.halo.max(component.halo);
             carried.edge_inset = carried.edge_inset.min(component.edge_inset);
             if *member != leader {
@@ -652,10 +669,12 @@ fn apply_rows(
         carried.courtyards.clear();
         carried.holes_inside = false;
         // Turning the row by a half turn keeps it along its axis.
-        carried.angle_options.retain(|option| {
-            let turn = (option - angle).rem_euclid(360.0);
-            turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
-        });
+        if !row.turns {
+            carried.angle_options.retain(|option| {
+                let turn = (option - angle).rem_euclid(360.0);
+                turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
+            });
+        }
         if carried.angle_options.is_empty() {
             carried.angle_options = vec![angle];
         }

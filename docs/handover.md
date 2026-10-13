@@ -274,6 +274,51 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   README): real layouts in about 1100 s and 3.7 GB; about 35 min at 8
   jobs.
 
+## Committed on 2026-10-13 (the placement-gap agent, x644)
+
+Five boards that pass with the designer's placement and not with ours
+(zpn_devboard, video, MokyaLora, hackrf-one, homebrew_486; logs
+`build/gap-*`), each run pinned with ours against the designer's placement.
+Wirelength is not the gap: our HPWL is within 0.8-1.4x of the designer's on
+all five, and on four the loss is a modelling or task bug.
+
+- **MokyaLora** passes now: a movable footprint's own rule areas (a U.FL's
+  keepout) now move and turn with it, in the writer and in `run.py`'s
+  stacking (`move_zones`). About 15 of the 109 tasks change through
+  `run.py`, so baselines made before this differ on those boards (three
+  tier boards remeasured: `build/quick30-x510-zonetasks.log`).
+- **zpn_devboard** passes now (two runs, 0 open, 291-299 vias against the
+  designer's 136): `keep_on_pieces`, on by default, keeps the parts a net
+  joins to fixed parts on one piece on that piece; before, most of the
+  board had moved onto an empty breakaway (129 open after the first route).
+  Nothing changes on the tier.
+- **hackrf-one** loses its 6-9 `items_not_allowed`: a movable part's keepout
+  that forbids pads keeps the far side's pads out; a board rule area on
+  inner layers only that forbids pads keeps pads out on both sides (a
+  through-hole pad crosses them). It still fails on two solder-mask
+  bridges from mask-only test points the router does not treat as
+  obstacles (the designer's placement routed by us shows the same two).
+- **homebrew_486** is not a gap (plus or minus one unconnected run to run);
+  its v14 pass is flattered: a courtyard-less footprint blocks only with
+  its pads, so the second ISA slot interleaved the first 2.54 mm apart,
+  and on hackrf a header and an SOIC sat inside a turned LQFP's pad ring.
+- **video** is the one real objective gap: eight SIMM sockets in one column
+  at the designer's 8.89 mm pitch line the bus up; we scatter them.
+  `bus_rows` (identical footprints sharing a bus pin for pin placed as a
+  row; through-hole only; off) gets video from 315 to 259 open at the
+  designer's pitch and 499 with the automatic one, made mackerel-08 worse
+  (+6 starved, +21 vias, +1100 CPU s) and homebrew_486's SRAM rows lost two
+  connections; left off. Video needs more than aligned sockets.
+- Rows whose members block with shaped boxes now block with every member's
+  boxes (before only the first part's; likely the J9/U16 overlap on 486).
+
+Quick tier x642 against x510: 19/30 both, unconnected 30 to 29, other
+copper errors 8 to 3, starved 12 to 18 and +21 vias all from the bus rows
+on mackerel-08 (now off); 25 boards byte-identical. Next on this thread:
+courtyard-less ICs and connectors should block the inside of their pad
+box (not a blanket rule: ULK puts 42 diodes inside its switches' pad
+boxes).
+
 ## Open problems, ranked
 
 1. **Fill fidelity.** Measure our free mask against KiCad's fill polygons
@@ -312,7 +357,10 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
 4. **Crowded placement** (OpenESC, SNSP): the three directions are built
    as options and none wins; `replicate_channels`' rigid macros never get
    seated. The legalizer loses 30-90 % of the global placement's
-   wirelength on every board; that is the lever.
+   wirelength on every board; that is the lever. From the gap analysis
+   (above): courtyard-less ICs and connectors blocking inside their pad
+   box; mask-only test points as router obstacles; bus-aligned rows for
+   video.
 5. **Starved thermals as the only failure** on complete boards (rosco 5,
    Castor 2-15, mackerel-30 15, k30 10, mackerel-08 5, Hub 5, PixelWave 1,
    BAGEL 1). `solid_starved_thermals` (opt-in: a starved pad gets a solid

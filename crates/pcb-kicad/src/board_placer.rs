@@ -100,6 +100,23 @@ pub struct KiCadBoardPlacerConfig {
     /// ground) are pulled to the supply pins of the ICs on their rail,
     /// unless a constraint already names them.
     pub auto_decoupling: bool,
+    /// How close (body to pin) a decoupling capacitor up to 4.7 uF is
+    /// pulled to its IC's supply pin (2.5 mm). At 2.5 mm a third of the
+    /// capacitors ended within 3 mm of their pin where designers put 60 %
+    /// there (quick tier); 1 mm gave 25-78 % on five boards with the same
+    /// routes (not measured on the tier).
+    pub decoupling_mm: f64,
+    /// On a board of several pieces (two boards side by side), the parts
+    /// a net joins to fixed parts on one piece stay on that piece. On:
+    /// zpn_devboard passes (its parts had spread over an empty breakaway,
+    /// 129 open after the first route); nothing changes on the quick tier.
+    pub keep_on_pieces: bool,
+    /// Identical parts that share a bus pin for pin (SIMM sockets, SRAM
+    /// banks) are placed as a row (see `bus_rows`). Off by default.
+    pub bus_rows: bool,
+    /// The gap between a bus row's parts: their halo times the share of
+    /// pads off the bus, times this.
+    pub bus_row_gap_scale: f64,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
@@ -156,6 +173,10 @@ impl Default for KiCadBoardPlacerConfig {
             tight_bodies: None,
             holes_in_courtyards_error: None,
             auto_decoupling: true,
+            decoupling_mm: 2.5,
+            keep_on_pieces: true,
+            bus_rows: false,
+            bus_row_gap_scale: 1.0,
             placement_seeds: 3,
             supply_via_room: false,
             supply_via_room_mm: None,
@@ -520,6 +541,16 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     ];
     let delta = normalize_angle(at[2] - current[2]);
     set_form_at(footprint, at)?;
+    // Zones inside a footprint (a U.FL's keepout) are in board
+    // coordinates: they move and turn with it. MokyaLora's moved U.FL left
+    // its keepout behind, and KiCad found another part's pad in it.
+    if (at[0] != current[0] || at[1] != current[1] || delta != 0.0)
+        && let Expr::List(children) = footprint
+    {
+        for child in children.iter_mut().filter(|child| child.head() == Some("zone")) {
+            move_points(child, current, at);
+        }
+    }
     if delta != 0.0
         && let Expr::List(children) = footprint
     {
@@ -536,6 +567,28 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
         }
     }
     Ok(at)
+}
+
+/// Moves every `xy` point below `node` (board coordinates) from a
+/// footprint at `from` to the same place relative to it at `to`.
+fn move_points(node: &mut Expr, from: [f64; 3], to: [f64; 3]) {
+    let Expr::List(items) = node else {
+        return;
+    };
+    if items.first().and_then(Expr::atom) == Some("xy") {
+        let value = |items: &[Expr], index: usize| items.get(index).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok());
+        if let (Some(x), Some(y)) = (value(items, 1), value(items, 2)) {
+            let local = core::problem::rotate([x - from[0], y - from[1]], from[2]);
+            let board = core::problem::rotate(local, -to[2]);
+            let round = |value: f64| Expr::Atom((((value * 1.0e6).round() / 1.0e6) + 0.0).to_string());
+            items[1] = round(to[0] + board[0]);
+            items[2] = round(to[1] + board[1]);
+        }
+        return;
+    }
+    for item in items.iter_mut().skip(1) {
+        move_points(item, from, to);
+    }
 }
 
 /// A pad's size in its own frame, at least its drill (a hole may be
@@ -591,10 +644,10 @@ fn pad_extent(pad: &Expr) -> [f64; 2] {
 
 /// Decoupling capacitors pulled to IC supply pins: every capacitor between
 /// a rail and ground goes near a supply pin of an IC on that rail, whichever
-/// suits; up to 4.7 µF within 2.5 mm of the pin, bulk capacitors within
+/// suits; up to 4.7 µF within `decoupling_mm` (2.5 mm) of the pin, bulk capacitors within
 /// 5 mm. Crystals go within 3 mm of the IC pins they drive. Capacitors that a user
 /// constraint names, fixed ones and ones a row carries keep to those.
-fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core::constraints::Relation>, String> {
+fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Result<Vec<core::constraints::Relation>, String> {
     use crate::quality::{capacitance, ground, rail_name};
     use core::constraints::{Anchor, Relation};
     struct Supply {
@@ -759,7 +812,7 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem) -> Result<Vec<core:
         if anchors.is_empty() {
             continue;
         }
-        relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { 2.5 } });
+        relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { near_mm } });
     }
     // A switcher's inductor at the IC's switch pin: a small hot loop. Only
     // where a pin function says the pin switches (a supply filter's
@@ -1172,8 +1225,12 @@ fn rule_area_obstacle(
     let side = match (all || layers.contains(&"F.Cu"), all || layers.contains(&"B.Cu")) {
         (true, false) => core::Side::Front,
         (false, true) => core::Side::Back,
-        // Inner layers only: no part sits there.
-        (false, false) if !layers.is_empty() => return Ok(None),
+        // Inner layers only: no part sits there, but a through-hole pad
+        // crosses them (hackrf's keepouts under its SMA pins on In1/In2:
+        // KiCad found the moved connectors' ground pins in them). Kept out
+        // as copper on both sides, an SMD pad too (it would not need to be).
+        (false, false) if !layers.is_empty() && (bodies || !pads) => return Ok(None),
+        (false, false) if !layers.is_empty() => core::Side::Both,
         _ => core::Side::Both,
     };
     let component = core::Component {
@@ -1203,6 +1260,245 @@ fn rule_area_obstacle(
         angle: 0.0,
     };
     Ok(Some((component, pose, bounds, bodies)))
+}
+
+/// On a board of several pieces (two boards side by side), no copper
+/// joins one piece to another: a net lies on one piece. The parts a net
+/// joins (directly or through other parts) stay on the piece of the fixed
+/// parts among them, as a region constraint: zpn_devboard's movable parts
+/// spread over its second piece, which holds one connector, and left 129
+/// connections open after the first route (the designer's placement: 1).
+fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
+    if problem.pieces.len() < 2 {
+        return;
+    }
+    // Parts joined by nets, by union-find.
+    let mut parent: Vec<usize> = (0..footprints).collect();
+    fn root(parent: &mut [usize], mut part: usize) -> usize {
+        while parent[part] != part {
+            parent[part] = parent[parent[part]];
+            part = parent[part];
+        }
+        part
+    }
+    let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
+    for part in 0..footprints {
+        for pin in &problem.components[part].pins {
+            match first_on_net.get(&pin.net) {
+                Some(&other) => {
+                    let (a, b) = (root(&mut parent, part), root(&mut parent, other));
+                    parent[a] = b;
+                }
+                None => {
+                    first_on_net.insert(pin.net, part);
+                }
+            }
+        }
+    }
+    // The pieces the fixed parts of each group sit on.
+    let piece_of = |problem: &core::Problem, part: usize| {
+        let center = problem.components[part].center(problem.poses[part]);
+        problem.pieces.iter().position(|b| center[0] >= b[0] && center[0] <= b[2] && center[1] >= b[1] && center[1] <= b[3])
+    };
+    let mut anchors: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for part in 0..footprints {
+        if problem.components[part].fixed && !problem.components[part].pins.is_empty() {
+            let group = root(&mut parent, part);
+            if let Some(piece) = piece_of(problem, part) {
+                anchors.entry(group).or_default().insert(piece);
+            }
+        }
+    }
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        eprintln!("pieces: {} pieces, net groups anchored on them {:?}", problem.pieces.len(), anchors.values().map(|pieces| pieces.len()).collect::<Vec<_>>());
+    }
+    let constrained: BTreeSet<usize> = problem.constraints.regions.iter().map(|(part, _)| *part).collect();
+    for part in 0..footprints {
+        if problem.components[part].fixed || problem.components[part].pins.is_empty() || constrained.contains(&part) {
+            continue;
+        }
+        let group = root(&mut parent, part);
+        if let Some(pieces) = anchors.get(&group)
+            && pieces.len() == 1
+        {
+            let piece = problem.pieces[*pieces.iter().next().expect("one piece")];
+            problem.constraints.regions.push((part, piece));
+        }
+    }
+}
+
+/// Bus rows: identical footprints (the same library footprint, on one
+/// side) whose pads of one number carry one signal net, pin for pin (the
+/// SIMM sockets of a video card, a bank of SRAMs), placed as a row so
+/// that every bus net runs straight from part to part. The designers line
+/// them up (video's eight SIMMs at a 8.89 mm pitch, mackerel-08's seven
+/// DIP-32s at 20 mm); scattered, video's bus left 384 connections open
+/// after the first route against none on the designer's placement.
+/// Parts a constraint names, fixed ones, repeated references and boards
+/// of several pieces (panels) are left alone. The parts
+/// stack along their bodies' shorter side, `gap` apart (per part: its
+/// halo times the share of its pads not on the bus), in as many lines as
+/// make the block's shape closest to the board's. Only through-hole
+/// parts (SIMM sockets, DIPs, slots): surface parts need room between
+/// their facing pads that a rigid block does not give.
+fn bus_rows(
+    pcb: &Expr,
+    problem: &core::Problem,
+    references: &[String],
+    footprints: usize,
+    constraints: Option<&crate::placement_constraints::KiCadPlacementConstraints>,
+    gap_scale: f64,
+) -> Vec<crate::placement_constraints::KiCadRowConstraint> {
+    use crate::placement_constraints::KiCadRowConstraint;
+    // Every string a constraint holds, as a pattern: a part it matches is
+    // named (pin anchors name their part before the colon).
+    let mut named: Vec<String> = Vec::new();
+    fn strings(value: &serde_json::Value, into: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => into.push(text.split(':').next().unwrap_or("").to_string()),
+            serde_json::Value::Array(items) => items.iter().for_each(|item| strings(item, into)),
+            serde_json::Value::Object(map) => map.values().for_each(|item| strings(item, into)),
+            _ => {}
+        }
+    }
+    if let Some(constraints) = constraints
+        && let Ok(value) = serde_json::to_value(constraints)
+    {
+        strings(&value, &mut named);
+    }
+    // A panel (several pieces, references repeated per copy) keeps its
+    // copies apart: a row would pull them together.
+    if problem.pieces.len() > 1 {
+        return Vec::new();
+    }
+    let mut copies: BTreeMap<&str, usize> = BTreeMap::new();
+    for reference in &references[..footprints] {
+        *copies.entry(reference.as_str()).or_default() += 1;
+    }
+    let footprint_items: Vec<&Expr> = pcb.children().iter().filter(|item| item.head() == Some("footprint")).collect();
+    let mut pin_count: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut pads: Vec<BTreeMap<String, &str>> = Vec::new();
+    for footprint in &footprint_items {
+        let mut own = BTreeMap::new();
+        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+            let (Some(number), Some(net)) = (
+                pad.children().get(1).and_then(Expr::atom),
+                node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net),
+            ) else {
+                continue;
+            };
+            if own.insert(number.to_string(), net).is_none() {
+                *pin_count.entry(net).or_default() += 1;
+            }
+        }
+        pads.push(own);
+    }
+    // Candidates by library footprint and side.
+    let mut kinds: BTreeMap<(String, bool), Vec<usize>> = BTreeMap::new();
+    for part in 0..footprints.min(footprint_items.len()) {
+        let component = &problem.components[part];
+        if component.fixed
+            || pads[part].len() < 8
+            || copies[references[part].as_str()] > 1
+            || named.iter().any(|pattern| glob_matches(pattern, &references[part]))
+        {
+            continue;
+        }
+        let Some(library) = footprint_items[part].children().get(1).and_then(Expr::atom) else {
+            continue;
+        };
+        kinds.entry((library.to_string(), component.side == core::Side::Back)).or_default().push(part);
+    }
+    let bounds = problem.bounds();
+    let board = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
+    let mut rows = Vec::new();
+    for parts in kinds.values().filter(|parts| parts.len() >= 2) {
+        // Pairs sharing a bus: a quarter of the pads on common signal nets
+        // (power and big nets do not count), at least four.
+        let shared = |a: usize, b: usize| {
+            pads[a]
+                .iter()
+                .filter(|(number, net)| pin_count[**net] <= 40 && pads[b].get(*number) == Some(*net))
+                .count()
+        };
+        let mut parent: Vec<usize> = (0..parts.len()).collect();
+        fn root(parent: &mut [usize], mut item: usize) -> usize {
+            while parent[item] != item {
+                parent[item] = parent[parent[item]];
+                item = parent[item];
+            }
+            item
+        }
+        let mut share = vec![0.0f64; parts.len()];
+        for i in 0..parts.len() {
+            for j in i + 1..parts.len() {
+                let common = shared(parts[i], parts[j]);
+                if common >= 4 && common as f64 >= 0.25 * pads[parts[i]].len() as f64 {
+                    let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                    parent[a] = b;
+                    let fraction = common as f64 / pads[parts[i]].len() as f64;
+                    share[i] = share[i].max(fraction);
+                    share[j] = share[j].max(fraction);
+                }
+            }
+        }
+        let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        for i in 0..parts.len() {
+            let group = root(&mut parent, i);
+            groups.entry(group).or_default().push(i);
+        }
+        for members in groups.values().filter(|members| members.len() >= 2) {
+            let mut members: Vec<usize> = members.iter().map(|i| parts[*i]).collect();
+            members.sort_by_key(|part| natural(&references[*part]));
+            let leader = &problem.components[members[0]];
+            let fraction = members
+                .iter()
+                .map(|part| share[parts.iter().position(|p| p == part).expect("member")])
+                .fold(1.0f64, f64::min);
+            // Through-hole parts only: they take a bus straight from pin to
+            // pin through the board. Surface parts' pads face each other
+            // across the gap and need their whole halo to escape (the
+            // designers' SOP and TSOP banks: 4.4-5.9 mm apart); so spaced,
+            // homebrew_486's eight SRAMs found no legal spot as a block,
+            // and closer they cost two connections and 360 vias.
+            if !members.iter().all(|part| !problem.components[*part].far_side.is_empty()) {
+                continue;
+            }
+            let gap = (leader.halo * (1.0 - fraction) * gap_scale).max(problem.spacing);
+            // Along the body's shorter side, in the leader's frame; the
+            // row's axis is in the board's frame at the leader's angle.
+            let size = leader.body_size;
+            let short_x = size[0] <= size[1];
+            let (along, across) = if short_x { (size[0], size[1]) } else { (size[1], size[0]) };
+            let (pitch, line_pitch) = (along + gap, across + gap);
+            let quarter = ((problem.poses[members[0]].angle / 90.0).round() as i64).rem_euclid(2) == 1;
+            let axis = if short_x != quarter { "x" } else { "y" };
+            // Lines: the block's shape closest to the board's (either way
+            // round, as the row turns).
+            let count = members.len();
+            let fit = |lines: usize| {
+                let columns = count.div_ceil(lines);
+                let (a, b) = (columns as f64 * pitch, lines as f64 * line_pitch);
+                (a / board[0]).max(b / board[1]).min((b / board[0]).max(a / board[1]))
+            };
+            let lines = (1..=count).min_by(|a, b| fit(*a).total_cmp(&fit(*b)).then(a.cmp(b))).unwrap_or(1);
+            if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                eprintln!(
+                    "bus row: {:?} pitch {pitch:.2} mm, lines {lines} ({line_pitch:.2} mm), shared {fraction:.2}, axis {axis}",
+                    members.iter().map(|part| references[*part].as_str()).collect::<Vec<_>>()
+                );
+            }
+            rows.push(KiCadRowConstraint {
+                parts: members.iter().map(|part| references[*part].clone()).collect(),
+                pitch_mm: pitch,
+                axis: Some(axis.to_string()),
+                columns: (lines > 1).then(|| count.div_ceil(lines)),
+                row_pitch_mm: (lines > 1).then_some(line_pitch),
+                turns: true,
+            });
+        }
+    }
+    rows
 }
 
 pub(super) fn lower_placement(
@@ -1886,9 +2182,22 @@ pub(super) fn lower_placement(
             }
         }
     }
-    let constraint_warnings = match &config.constraints {
-        None => Vec::new(),
-        Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
+    let user_constraints = match &config.constraints {
+        Some(KiCadConstraintsSource::Inline(constraints)) => Some(constraints),
+        _ => None,
+    };
+    let automatic_rows = if config.bus_rows {
+        bus_rows(pcb, &problem, &references, footprint_count, user_constraints, config.bus_row_gap_scale)
+    } else {
+        Vec::new()
+    };
+    let with_rows = (!automatic_rows.is_empty()).then(|| {
+        let mut constraints = user_constraints.cloned().unwrap_or_default();
+        constraints.row.extend(automatic_rows);
+        constraints
+    });
+    let constraint_warnings = match (&config.constraints, &with_rows) {
+        (_, Some(constraints)) | (Some(KiCadConstraintsSource::Inline(constraints)), None) => apply_constraints(
             &mut problem,
             &references,
             &pad_offsets,
@@ -1899,7 +2208,8 @@ pub(super) fn lower_placement(
             constraints,
             config.constraint_weight,
         )?,
-        Some(KiCadConstraintsSource::File(path)) => {
+        (None, None) => Vec::new(),
+        (Some(KiCadConstraintsSource::File(path)), None) => {
             return Err(format!("constraints file {} was not resolved", path.display()));
         }
     };
@@ -1907,7 +2217,9 @@ pub(super) fn lower_placement(
     // board coordinates) are obstacles like the board's: PixelWave's
     // ESP32 on the back keeps parts out of its antenna area on both sides,
     // and KiCad flagged 50 pads and parts we put there. A movable part's
-    // keepout moves with it: it blocks the other side as far-side box.
+    // keepout moves with it: it blocks the other side as far-side box, or,
+    // where it forbids pads but not footprints, as far-side copper
+    // (MokyaLora's U.FL on the back keeps pads out on the front).
     for (index, footprint) in pcb.children().iter().filter(|item| item.head() == Some("footprint")).enumerate() {
         for zone in footprint.children().iter().filter(|child| child.head() == Some("zone")) {
             let Some((component, pose, _, bodies)) = rule_area_obstacle(zone)? else {
@@ -1918,7 +2230,7 @@ pub(super) fn lower_placement(
                 problem.poses.push(pose);
                 references.push("keepout".into());
                 source_at.push([0.0; 3]);
-            } else if bodies && component.side.collides(match problem.components[index].side {
+            } else if component.side.collides(match problem.components[index].side {
                 core::Side::Front => core::Side::Back,
                 core::Side::Back => core::Side::Front,
                 _ => core::Side::Neither,
@@ -1928,15 +2240,20 @@ pub(super) fn lower_placement(
                 let corners = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]];
                 let local = corners
                     .map(|corner| core::problem::rotate([pose.position[0] + corner[0] - at[0], pose.position[1] + corner[1] - at[1]], at[2]));
-                problem.components[index].far_side.push(local.iter().fold(
+                let local = local.iter().fold(
                     [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
                     |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
-                ));
+                );
+                if bodies {
+                    problem.components[index].far_side.push(local);
+                } else {
+                    problem.components[index].far_copper.push(local);
+                }
             }
         }
     }
     if config.auto_decoupling {
-        let automatic = decoupling_relations(pcb, &problem)?;
+        let automatic = decoupling_relations(pcb, &problem, config.decoupling_mm)?;
         if !automatic.is_empty() {
             if problem.constraints.relation_weight == 0.0 {
                 problem.constraints.relation_weight = config.constraint_weight;
@@ -1944,6 +2261,9 @@ pub(super) fn lower_placement(
             problem.constraints.automatic = automatic.len();
             problem.constraints.relations.extend(automatic);
         }
+    }
+    if config.keep_on_pieces {
+        keep_on_pieces(&mut problem, footprint_count);
     }
     apply_channels(&mut problem, &references, &pad_boxes, channels)?;
     problem.constraints.link_pairs();
@@ -2295,6 +2615,7 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
         }
         *nth += 1;
     }
+    eprintln!("designer: wirelength {:.1} mm at these poses", problem.wirelength(&poses));
     let level = std::env::var("PCB_PLACER_DESIGNER_LEVEL").unwrap_or_default();
     if level != "full" {
         problem.spacing = problem.min_spacing;
@@ -2857,6 +3178,222 @@ mod tests {
         assert!(!legal(&poses, front));
         poses[back].position = [40.0, 20.0];
         assert!(!legal(&poses, back));
+    }
+
+    #[test]
+    fn an_inner_layer_pad_keepout_keeps_pads_out() {
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (zone (layers "In1.Cu") (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints allowed))
+                (polygon (pts (xy 2 2) (xy 10 2) (xy 10 10) (xy 2 10))))
+            (footprint "J" (layer "F.Cu") (at 40 20) (attr through_hole)
+                (fp_rect (start -2 -1) (end 2 1) (layer "F.CrtYd"))
+                (pad "1" thru_hole circle (at -1 0) (size 1 1) (drill 0.6) (layers "*.Cu") (net 1 "A"))
+                (pad "2" thru_hole circle (at 1 0) (size 1 1) (drill 0.6) (layers "*.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        let mut poses = problem.poses.clone();
+        assert!(core::legal::illegal_components(problem, &poses).is_empty());
+        poses[0].position = [6.0, 6.0];
+        assert!(core::legal::illegal_components(problem, &poses).contains(&0));
+    }
+
+    #[test]
+    fn a_movable_parts_pad_keepout_moves_with_it() {
+        // MokyaLora's U.FL on the back: its own keepout forbids pads on
+        // every layer (footprints allowed). Placed elsewhere, the keepout
+        // goes with it, in the model and in the written board.
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "UFL" (layer "B.Cu") (at 10 10)
+                (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "B.CrtYd"))
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu") (net 1 "A"))
+                (zone (layers "F.Cu" "B.Cu") (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints allowed))
+                    (polygon (pts (xy 11 9) (xy 13 9) (xy 13 11) (xy 11 11)))))
+            (footprint "R" (layer "F.Cu") (at 45 15)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        let (ufl, front) = (0, 1);
+        assert!(!problem.components[ufl].fixed);
+        let mut poses = problem.poses.clone();
+        poses[ufl] = core::Pose { position: [30.0, 15.0], angle: 90.0 };
+        let legal = |poses: &[core::Pose]| core::legal::illegal_components(problem, poses).is_empty();
+        // The keepout's first pad sits 2 mm along the U.FL's x axis: turned
+        // by 90 degrees, 2 mm above it (y grows downwards).
+        poses[front].position = [30.5, 13.0];
+        assert!(!legal(&poses), "a front pad in the moved keepout");
+        poses[front].position = [30.5, 18.0];
+        assert!(legal(&poses), "the keepout is off the front part's pads");
+        // The written board carries the keepout along.
+        let mut footprint = pcb.children().iter().find(|item| item.head() == Some("footprint")).unwrap().clone();
+        write_footprint_pose(&mut footprint, poses[ufl]).unwrap();
+        let zone = footprint.child("zone").unwrap();
+        let points: Vec<[f64; 2]> = zone
+            .child("polygon")
+            .and_then(|polygon| polygon.child("pts"))
+            .unwrap()
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("xy"))
+            .map(|point| [point.children()[1].atom().unwrap().parse().unwrap(), point.children()[2].atom().unwrap().parse().unwrap()])
+            .collect();
+        assert_eq!(points, vec![[29.0, 14.0], [29.0, 12.0], [31.0, 12.0], [31.0, 14.0]]);
+    }
+
+    #[test]
+    fn parts_stay_on_the_piece_of_the_fixed_parts_they_join() {
+        // Two pieces side by side (zpn_devboard: a board and an empty
+        // breakaway); J1 is locked on the right one. R1 joins J1 through
+        // its net, R2 through R1: both stay on the right piece. R3 joins
+        // nothing fixed and may go anywhere.
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 30 30) (layer "Edge.Cuts"))
+            (gr_rect (start 40 0) (end 90 30) (layer "Edge.Cuts"))
+            (footprint "J" (layer "F.Cu") (at 60 15) (locked yes)
+                (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+                (property "Reference" "J1")
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+            (footprint "R" (layer "F.Cu") (at 10 10)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B")))
+            (footprint "R" (layer "F.Cu") (at 10 20)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R2")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 3 "C")))
+            (footprint "R" (layer "F.Cu") (at 20 20)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R3")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 4 "D"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 5 "E"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardPlacerConfig { keep_on_pieces: true, ..KiCadBoardPlacerConfig::default() };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let problem = &lowered.problem;
+        assert_eq!(problem.pieces.len(), 2);
+        let right = *problem.pieces.iter().find(|piece| piece[0] > 35.0).unwrap();
+        let mut regions = problem.constraints.regions.clone();
+        regions.sort_by_key(|(part, _)| *part);
+        assert_eq!(regions, vec![(1, right), (2, right)]);
+        // On by default; `keep_on_pieces: false` switches it off.
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig { keep_on_pieces: false, ..KiCadBoardPlacerConfig::default() }, &[]).unwrap();
+        assert!(lowered.problem.constraints.regions.is_empty());
+    }
+
+    #[test]
+    fn identical_parts_on_one_bus_become_a_row() {
+        // Three SIMM-like sockets (10 x 2 mm, eight pads) carry the same
+        // eight bus nets pin for pin; a fourth part of another footprint
+        // and a fifth socket a constraint names stay free.
+        let socket = |reference: &str, x: f64| {
+            let pads: String = (1..=8)
+                .map(|pin| format!(r#"(pad "{pin}" thru_hole circle (at {} 0) (size 0.8 0.8) (drill 0.4) (layers "*.Cu") (net {pin} "B{pin}"))"#, pin as f64 - 4.5))
+                .collect();
+            format!(
+                r#"(footprint "Lib:SIMM" (layer "F.Cu") (at {x} 15) (attr through_hole)
+                    (fp_rect (start -5 -1) (end 5 1) (layer "F.CrtYd"))
+                    (property "Reference" "{reference}") {pads})"#
+            )
+        };
+        let pcb = parse(&format!(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 80 60) (layer "Edge.Cuts"))
+            {} {} {} {}
+            (footprint "Lib:R" (layer "F.Cu") (at 40 40)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "B1"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 9 "X"))))"#,
+            socket("U1", 20.0),
+            socket("U2", 30.0),
+            socket("U3", 40.0),
+            socket("U4", 50.0),
+        ))
+        .unwrap();
+        let constraints: crate::placement_constraints::KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "near": [{"part": "U4", "part_of": "R1", "max_mm": 5}]}"#).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            bus_rows: true,
+            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let problem = &lowered.problem;
+        let followers: Vec<(usize, usize, [f64; 2])> =
+            problem.constraints.followers.iter().map(|follower| (follower.part, follower.leader, follower.offset)).collect();
+        // U2 and U3 follow U1, stacked along the sockets' short side (y)
+        // with the spacing between them: every bus pad lines up.
+        assert_eq!(followers.len(), 2, "{followers:?}");
+        let pitch = 2.0 + problem.spacing;
+        for (index, (part, leader, offset)) in followers.iter().enumerate() {
+            assert_eq!((*part, *leader), (index + 1, 0));
+            assert!(offset[0].abs() < 1.0e-9 && (offset[1].abs() - (index + 1) as f64 * pitch).abs() < 1.0e-9, "{offset:?}");
+        }
+        // The block may take quarter turns.
+        assert_eq!(problem.components[0].angle_options.len(), 4);
+        // Off by default.
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        assert!(lowered.problem.constraints.followers.is_empty());
+    }
+
+    #[test]
+    fn a_row_of_shaped_parts_blocks_with_every_members_shape() {
+        // Two L-shaped sockets as a row, 12 mm apart along x: the second
+        // one's L blocks as the first one's does, its notch stays free.
+        let socket = |reference: &str, x: f64| {
+            format!(
+                r#"(footprint "Socket" (layer "F.Cu") (at {x} 15)
+                (property "Reference" "{reference}")
+                (fp_poly (pts (xy -5 -5) (xy -1 -5) (xy -1 1) (xy 5 1) (xy 5 5) (xy -5 5)) (layer "F.CrtYd") (width 0.05))
+                (pad "1" smd rect (at -3 3) (size 1 1) (layers "F.Cu") (net 1 "A")))"#
+            )
+        };
+        let pcb = parse(&format!(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            {} {}
+            (footprint "R" (layer "F.Cu") (at 50 25)
+                (property "Reference" "R1")
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
+            socket("J1", 10.0),
+            socket("J2", 40.0),
+        ))
+        .unwrap();
+        let constraints: crate::placement_constraints::KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["J1", "J2"], "pitch_mm": 12}]}"#).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let problem = &lowered.problem;
+        let mut poses = problem.poses.clone();
+        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&2);
+        // J2 sits at x 22: in its notch legal, in its L not.
+        poses[2].position = [22.0 + 2.5, 15.0 - 2.5];
+        assert!(legal(&poses));
+        poses[2].position = [22.0 - 3.0, 15.0 - 2.5];
+        assert!(!legal(&poses));
     }
 
     #[test]

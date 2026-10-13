@@ -55,6 +55,24 @@ def block_end(text, start):
     raise ValueError("unbalanced expression")
 
 
+def move_zones(block, dx, dy):
+    """Shifts the points of a footprint's zones by (dx, dy): they are in
+    board coordinates and go with the footprint (MokyaLora's U.FL left its
+    keepout at the designer's place, where KiCad found our pads in it)."""
+    pieces, last = [], 0
+    for match in re.finditer(r"\(zone[\s\n]", block):
+        if match.start() < last:
+            continue
+        end = block_end(block, match.start())
+        zone = re.sub(r"\(xy ([-\d.eE+]+) ([-\d.eE+]+)\)",
+                      lambda xy: f"(xy {round(float(xy.group(1)) + dx, 6)} {round(float(xy.group(2)) + dy, 6)})",
+                      block[match.start():end])
+        pieces += [block[last:match.start()], zone]
+        last = end
+    pieces.append(block[last:])
+    return "".join(pieces)
+
+
 def unplace(board, point, remove_outline, keep=()):
     """Stacks every footprint with a net that is not locked (or in `keep`) at
     `point`; drops the Edge.Cuts graphics if asked. Returns the references
@@ -93,6 +111,7 @@ def unplace(board, point, remove_outline, keep=()):
                             parts = block[index + 4:close].split()
                             angle = f" {parts[2]}" if len(parts) > 2 else ""
                             block = block[:index] + f"(at {point[0]} {point[1]}{angle})" + block[close + 1:]
+                            block = move_zones(block, point[0] - float(parts[0]), point[1] - float(parts[1]))
                             break
                     elif character == ")":
                         depth -= 1
