@@ -319,6 +319,17 @@ courtyard-less ICs and connectors should block the inside of their pad
 box (not a blanket rule: ULK puts 42 diodes inside its switches' pad
 boxes).
 
+## Planted boards (2026-10-13)
+
+Boards routable by construction, three ways (`experiments/planted/`,
+`docs/experiments/planted-boards.md`): maze (unrealistic), grow (realistic
+at the easy level, cheap, but every one of 48 boards is easy for us: ours
+shorter with fewer vias on 45), derived (blockers in a routed real board;
+the only set that exposed failures, all starved thermals on complete
+routes). Planted tile occupancy is a weak congestion label (Spearman
+0.05-0.23 against our routing). No network; grow needs real difficulty
+(pours on 2 layers, BGAs, buses) before its results are worth training on.
+
 ## Open problems, ranked
 
 1. **Fill fidelity.** Measure our free mask against KiCad's fill polygons
