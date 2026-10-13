@@ -111,6 +111,14 @@ pub struct KiCadBoardPlacerConfig {
     /// zpn_devboard passes (its parts had spread over an empty breakaway,
     /// 129 open after the first route); nothing changes on the quick tier.
     pub keep_on_pieces: bool,
+    /// A footprint without a courtyard whose pads stand in rows of pins
+    /// (three or more at most 2.6 mm apart, holding three quarters of its
+    /// pads: a QFP, an SOIC, a header, a card slot) blocks with the whole
+    /// box of its pads, as a body there would; other courtyard-less
+    /// footprints (a key switch, a hot-swap socket) block with their pads
+    /// alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's
+    /// pad ring, homebrew_486's second ISA slot between the first's rows.
+    pub solid_pin_rows: bool,
     /// Identical parts that share a bus pin for pin (SIMM sockets, SRAM
     /// banks) are placed as a row (see `bus_rows`). Off by default.
     pub bus_rows: bool,
@@ -175,6 +183,7 @@ impl Default for KiCadBoardPlacerConfig {
             auto_decoupling: true,
             decoupling_mm: 2.5,
             keep_on_pieces: true,
+            solid_pin_rows: true,
             bus_rows: false,
             bus_row_gap_scale: 1.0,
             placement_seeds: 3,
@@ -850,6 +859,57 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         }
     }
     Ok(relations)
+}
+
+/// Whether a footprint's pads (own-frame centres) stand in rows of pins:
+/// at least four pads, three quarters of them in a row or column of three
+/// or more whose neighbours are at most 2.6 mm apart (a QFP's sides, a
+/// header's rows, a card slot). Pads at one position count once. A key
+/// switch's or a hot-swap socket's few pads, spread over its box, do not.
+fn pads_in_pin_rows(centers: &[[f64; 2]]) -> bool {
+    const PITCH: f64 = 2.6;
+    const TOLERANCE: f64 = 0.05;
+    let mut pads: Vec<[f64; 2]> = Vec::new();
+    for center in centers {
+        if !pads.iter().any(|pad| (pad[0] - center[0]).abs() < 1.0e-3 && (pad[1] - center[1]).abs() < 1.0e-3) {
+            pads.push(*center);
+        }
+    }
+    if pads.len() < 4 {
+        return false;
+    }
+    let mut member = vec![false; pads.len()];
+    for axis in 0..2 {
+        // Lines of pads sharing the other coordinate (within the tolerance
+        // of the line's first pad).
+        let mut lines: Vec<(f64, Vec<usize>)> = Vec::new();
+        for (index, pad) in pads.iter().enumerate() {
+            let across = pad[1 - axis];
+            match lines.iter_mut().find(|(at, _)| (at - across).abs() <= TOLERANCE) {
+                Some((_, line)) => line.push(index),
+                None => lines.push((across, vec![index])),
+            }
+        }
+        for (_, mut line) in lines {
+            line.sort_by(|a, b| pads[*a][axis].total_cmp(&pads[*b][axis]));
+            let mut start = 0;
+            for end in 1..=line.len() {
+                let broken = end == line.len() || {
+                    let gap = pads[line[end]][axis] - pads[line[end - 1]][axis];
+                    gap <= 1.0e-6 || gap > PITCH
+                };
+                if broken {
+                    if end - start >= 3 {
+                        for index in &line[start..end] {
+                            member[*index] = true;
+                        }
+                    }
+                    start = end;
+                }
+            }
+        }
+    }
+    member.iter().filter(|member| **member).count() as f64 >= 0.75 * pads.len() as f64
 }
 
 /// The courtyard (own frame) as horizontal strips, one per span between
@@ -1609,6 +1669,7 @@ pub(super) fn lower_placement(
         let unattributed = footprint.child("attr").is_none();
         let holes_error = config.holes_in_courtyards_error == Some(true);
         let mut own_pads = Vec::new();
+        let mut pin_centers: Vec<[f64; 2]> = Vec::new();
         // Surface pads of pour nets: the body grows past them by the via
         // room, on the side they lie nearest to.
         let mut supply_pads: Vec<[f64; 4]> = Vec::new();
@@ -1681,6 +1742,7 @@ pub(super) fn lower_placement(
             let hole_half = (half[0] - keep_away).min(half[1] - keep_away).max(0.0);
             let hole_box = [pad_at[0] - hole_half, pad_at[1] - hole_half, pad_at[0] + hole_half, pad_at[1] + hole_half];
             own_pads.push(pad_box);
+            pin_centers.push([pad_at[0], pad_at[1]]);
             let on_other_side = pad.child("layers").is_some_and(|layers| {
                 layers.children().iter().skip(1).filter_map(Expr::atom).any(|layer| layer == other_copper || layer == "F&B.Cu")
             });
@@ -1865,7 +1927,21 @@ pub(super) fn lower_placement(
         // keyboar_'s Kailh sockets have no courtyard; the designer put
         // every switch's diode between its pads).
         let courtless = !courtyard_on("F.") && !courtyard_on("B.") && !own_pads.is_empty() && !artwork;
-        if courtless {
+        // Unless its pads stand in rows of pins: then a body fills their
+        // box (`solid_pin_rows`), and the part blocks with that box.
+        let solid = courtless && config.solid_pin_rows && pads_in_pin_rows(&pin_centers);
+        if solid {
+            // The body is that box already, unless copper or mask graphics
+            // reach past it.
+            if !own_graphic_boxes.is_empty() {
+                let pads = own_pads.iter().fold(
+                    [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+                    |bounds, pad| [bounds[0].min(pad[0]), bounds[1].min(pad[1]), bounds[2].max(pad[2]), bounds[3].max(pad[3])],
+                );
+                shaped = vec![pads];
+                shaped.extend(own_graphic_boxes.iter().copied());
+            }
+        } else if courtless {
             shaped = own_pads.clone();
             shaped.extend(own_graphic_boxes.iter().copied());
         } else if !round && !artwork {
@@ -1915,7 +1991,7 @@ pub(super) fn lower_placement(
             },
             edge_inset,
             courtyards: courtyard.0,
-            holes_inside: courtyard.1 || courtless,
+            holes_inside: courtyard.1 || (courtless && !solid),
             pads: own_pads.clone(),
             copper_only: false,
             cutout_outline: Vec::new(),
@@ -2139,7 +2215,10 @@ pub(super) fn lower_placement(
         pieces: loops.pieces.clone(),
         constraints: Default::default(),
     };
-    problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.0);
+    // KiCad reports copper touching the edge even where the clearance is
+    // zero (hackrf's SMA connector P4, its pads flush with the outline: 5
+    // copper_edge_clearance findings; 0.01 mm off it, none).
+    problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.02);
     for index in 0..footprint_count {
         let reference = &references[index];
         let component = &problem.components[index];
@@ -3486,6 +3565,124 @@ mod tests {
         assert!(!legal(&poses));
         poses[1].position = [20.0, 15.0];
         assert!(!legal(&poses));
+    }
+
+    #[test]
+    fn pads_in_rows_of_pins_mean_a_body_fills_their_box() {
+        let grid = |columns: &[f64], rows: &[f64]| -> Vec<[f64; 2]> {
+            columns.iter().flat_map(|x| rows.iter().map(move |y| [*x, *y])).collect()
+        };
+        // A 2 x 3 header, an SOIC-8, a card slot's two rows.
+        assert!(pads_in_pin_rows(&grid(&[-2.54, 0.0, 2.54], &[-1.27, 1.27])));
+        assert!(pads_in_pin_rows(&grid(&[-2.7, 2.7], &[-1.905, -0.635, 0.635, 1.905])));
+        assert!(pads_in_pin_rows(&grid(&(0..31).map(|i| i as f64 * 2.54).collect::<Vec<_>>(), &[-5.08, 0.0])));
+        // A QFP's four sides of 0.5 mm pitch with an exposed pad.
+        let mut quad: Vec<[f64; 2]> = (0..8).map(|i| -1.75 + 0.5 * i as f64).flat_map(|t| [[-4.0, t], [4.0, t], [t, -4.0], [t, 4.0]]).collect();
+        quad.push([0.0, 0.0]);
+        assert!(pads_in_pin_rows(&quad));
+        // A key switch (ULK's PG1316: six pads over 14 mm), a hot-swap
+        // socket, a two-pad part, a pad stacked on itself.
+        assert!(!pads_in_pin_rows(&[[-6.35, -6.0], [-6.35, 6.0], [-2.5, 2.65], [2.5, 2.65], [6.35, -6.0], [6.35, 6.0]]));
+        assert!(!pads_in_pin_rows(&[[-7.56, -2.54], [-5.08, 0.0], [-3.81, -2.54], [0.0, 0.0], [2.54, -5.08], [5.08, 0.0], [6.29, -5.08]]));
+        assert!(!pads_in_pin_rows(&[[-0.5, 0.0], [0.5, 0.0]]));
+        assert!(!pads_in_pin_rows(&[[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [1.0, 0.0]]));
+    }
+
+    #[test]
+    fn a_courtyard_less_quad_blocks_inside_its_pad_ring() {
+        // hackrf's LQFP without a courtyard: 4 x 6 pads of 0.5 mm pitch on
+        // a 10 mm ring, and an SOT-23-sized part with a courtyard.
+        let mut pads = String::new();
+        for i in 0..6 {
+            let t = -1.25 + 0.5 * i as f64;
+            for (x, y, w, h) in [(-5.0, t, 1.2, 0.3), (5.0, t, 1.2, 0.3), (t, -5.0, 0.3, 1.2), (t, 5.0, 0.3, 1.2)] {
+                pads += &format!(r#"(pad "{i}" smd rect (at {x} {y}) (size {w} {h}) (layers "F.Cu") (net 1 "A"))"#);
+            }
+        }
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "QFP" (layer "F.Cu") (at 20 15) {pads})
+            (footprint "Q" (layer "F.Cu") (at 45 15)
+                (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.95 1) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.95 1) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))
+                (pad "3" smd rect (at 0 -1) (size 0.6 0.8) (layers "F.Cu") (net 3 "C"))))"#
+        ))
+        .unwrap();
+        let inside = |config: &KiCadBoardPlacerConfig| {
+            let lowered = lower_placement(&pcb, config, &[]).unwrap();
+            let problem = &lowered.problem;
+            let mut poses = problem.poses.clone();
+            poses[1].position = [20.0, 15.0];
+            !core::legal::illegal_components(problem, &poses).contains(&1)
+        };
+        assert!(!inside(&KiCadBoardPlacerConfig::default()), "the body fills the pad ring");
+        let off = KiCadBoardPlacerConfig { solid_pin_rows: false, ..KiCadBoardPlacerConfig::default() };
+        assert!(inside(&off), "off: only the pads block");
+    }
+
+    #[test]
+    fn a_header_without_a_courtyard_keeps_parts_from_between_its_rows() {
+        // Two 2 x 10 headers of 2.54 mm pitch whose rows lie 5.08 mm apart
+        // (a card slot's): the second may not interleave with the first.
+        let header = |reference: &str, y: f64| {
+            let mut pads = String::new();
+            for i in 0..10 {
+                for row in [-2.54, 2.54] {
+                    pads += &format!(
+                        r#"(pad "{i}" thru_hole circle (at {} {row}) (size 1.6 1.6) (drill 1) (layers "*.Cu" "*.Mask") (net 1 "A"))"#,
+                        i as f64 * 2.54
+                    );
+                }
+            }
+            format!(r#"(footprint "Slot" (layer "F.Cu") (at 10 {y}) (property "Reference" "{reference}") (attr through_hole) {pads})"#)
+        };
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 40) (layer "Edge.Cuts")) {} {})"#,
+            header("J1", 10.0),
+            header("J2", 30.0)
+        ))
+        .unwrap();
+        let interleaved = |config: &KiCadBoardPlacerConfig| {
+            let lowered = lower_placement(&pcb, config, &[]).unwrap();
+            let problem = &lowered.problem;
+            let mut poses = problem.poses.clone();
+            // J2's top row between J1's rows (at y 10), its bottom row
+            // below them.
+            poses[1].position = [10.0, 10.0 + 2.54];
+            !core::legal::illegal_components(problem, &poses).contains(&1)
+        };
+        assert!(!interleaved(&KiCadBoardPlacerConfig::default()));
+        assert!(interleaved(&KiCadBoardPlacerConfig { solid_pin_rows: false, ..KiCadBoardPlacerConfig::default() }));
+    }
+
+    #[test]
+    fn copper_keeps_off_the_edge_where_the_rule_is_zero() {
+        // An edge connector held on the left edge of a board whose copper
+        // edge clearance is zero: its pads may not touch the outline.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 40 30) (layer "Edge.Cuts"))
+            (footprint "SMA" (layer "F.Cu") (at 20 15) (property "Reference" "P4")
+                (pad "1" smd rect (at 2 0) (size 4 1.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 2 -3.5) (size 4 2.6) (layers "F.Cu") (net 2 "B"))
+                (pad "2" smd rect (at 2 3.5) (size 4 2.6) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let constraints: crate::placement_constraints::KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "edge": [{"part": "P4", "edge": "left", "max_mm": 1.5}]}"#).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+            copper_edge_clearance_mm: Some(0.0),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let problem = &lowered.problem;
+        assert!(problem.constraints.copper_edge >= 0.01);
+        let offsets = core::constraints::copper_edge_offsets(problem, 0, 0.0);
+        assert!(offsets[0] >= 0.01, "{offsets:?}");
     }
 
     #[test]

@@ -362,6 +362,31 @@ the only set that exposed failures, all starved thermals on complete
 routes). Planted tile occupancy is a weak congestion label (Spearman
 0.05-0.23 against our routing). No network; grow needs real difficulty
 (pours on 2 layers, BGAs, buses) before its results are worth training on.
+## Committed on 2026-10-13 evening (the bodies agent, x652)
+
+Census of the 109 boards: 3800 footprints with pads and no courtyard
+(2591 movable) on 92 boards; they blocked only with their pads, so hackrf's
+LQFP-144 held 32 parts and homebrew_486's ISA slots interleaved. A Fab-layer
+body rule fails (hackrf's library and the ISA16 draw none; where a Fab box
+exists, 42 of ULK's switches hold a diode on purpose). The pad-pattern rule
+`solid_pin_rows` (on): a footprint with 4 or more pads, three quarters of
+them in rows or columns of 3 or more at most 2.6 mm apart, blocks with its
+whole pad box plus copper and mask graphics; 625 footprints are solid, and
+only 17 hold a designer's part (16 fixed-on-fixed). Keyboard switches,
+hot-swap sockets and stabilisers stay hollow. `mask_only_pad_openings`
+(router, on): a pad with a mask layer and no copper is a mask opening of
+the net under it (hackrf's test points: its two solder-mask bridges on the
+designer's placement become a pass). Copper-edge floor of 0.02 mm in the
+placer (KiCad flags contact at zero clearance). Quick tier x651 against
+x644: 19/30 both, unconnected 29 both, 21 boards byte-identical; OpenFC,
+USB_Keypad and WLED change because parts no longer sit inside a QFN-80, a
+USB-C receptacle or a LED pad box. hackrf: 0 open, one starved thermal
+left (P5 VCC on the inner pour layer), but 1.6x the routed length now that
+its parts are legal (crowded placement, problem 4); homebrew_486 passes
+with its slots apart. Latent: the copper-pad aperture rule reads
+`solder_mask_margin`, a key KiCad never writes (`pad_to_mask_clearance`);
+noted in a comment. Logs `build/quick30-x644.log` (the reference),
+`build/quick30-x651.log`, `build/bodies-*`; scripts `experiments/bodies/`.
 
 ## Open problems, ranked
 

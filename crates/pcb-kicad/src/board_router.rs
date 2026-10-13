@@ -74,6 +74,11 @@ pub struct KiCadBoardRouterConfig {
     /// `add_pours` is given).
     #[serde(default)]
     pub automatic_planes: Option<bool>,
+    /// A pad with a mask opening and no copper (a mask-only test point)
+    /// opens the mask like a mask graphic: copper of a second net may not
+    /// go under it (default true). hackrf-one's two solder mask bridges.
+    #[serde(default)]
+    pub mask_only_pad_openings: Option<bool>,
     /// Price of sharing when a via reduction round starts.
     #[serde(default)]
     pub via_reduction_present: Option<f64>,
@@ -784,7 +789,9 @@ pub(super) fn lower(
     let mut solid_pads: Vec<String> = Vec::new();
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
-    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String)> = Vec::new();
+    // The margin is how far the opening reaches past its shapes (a
+    // mask-only pad's mask expansion).
+    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64)> = Vec::new();
     // Board copper graphics, with the net they carry, placed once the nets
     // of the pads are known.
     let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> = Vec::new();
@@ -847,6 +854,10 @@ pub(super) fn lower(
     // the copper around it: another net's copper within the mask web of it
     // bridges. Only margins that reach past the copper clearance matter.
     let board_mask_margin = pcb.child("setup").and_then(|setup| form_f64(setup, "solder_mask_margin", 1).ok()).unwrap_or(0.0);
+    // KiCad's own name for the board's mask expansion. (The copper pads'
+    // aperture rule above reads `solder_mask_margin`, which KiCad's setup
+    // does not write; left as it is, measured with it.)
+    let board_pad_to_mask = pcb.child("setup").and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok()).unwrap_or(0.0);
     let pad_mask_reach = pcb
         .child("setup")
         .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
@@ -891,7 +902,7 @@ pub(super) fn lower(
                             .collect();
                         if !shapes.is_empty() {
                             let layer = if side == "F.Mask" { 0 } else { layers.len() - 1 };
-                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string()));
+                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string(), 0.0));
                         }
                         continue;
                     }
@@ -952,6 +963,35 @@ pub(super) fn lower(
                     }
                     let pad_layers = layers.mask_of_item(pad)?;
                     if pad_layers == 0 {
+                        // A pad with a mask opening and no copper (hackrf's
+                        // mask-only test points over a track) bares the
+                        // copper under it: KiCad reports a solder mask
+                        // bridge when copper of a second net lies there. It
+                        // is an opening like a mask graphic, grown by the
+                        // pad's mask expansion.
+                        if config.mask_only_pad_openings != Some(false) {
+                            let names: Vec<&str> = pad
+                                .child("layers")
+                                .map(Expr::children)
+                                .unwrap_or_default()
+                                .iter()
+                                .skip(1)
+                                .filter_map(Expr::atom)
+                                .collect();
+                            let front = names.iter().any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"));
+                            let back = names.iter().any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"));
+                            let margin = form_f64(pad, "solder_mask_margin", 1)
+                                .ok()
+                                .or_else(|| form_f64(item, "solder_mask_margin", 1).ok())
+                                .unwrap_or(board_pad_to_mask)
+                                .max(0.0);
+                            let kind = format!("pad {label}");
+                            for (open, side) in [(front, 0), (back, layers.len() - 1)] {
+                                if open {
+                                    mask_openings.push((vec![shape(&lowered.geometry)], side, kind.clone(), margin));
+                                }
+                            }
+                        }
                         continue;
                     }
                     let net_name = node_net(pad).map(normalize_net);
@@ -1150,7 +1190,7 @@ pub(super) fn lower(
                     copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
                 }
                 for side in sides {
-                    mask_openings.push((shapes.clone(), side, kind.clone()));
+                    mask_openings.push((shapes.clone(), side, kind.clone(), 0.0));
                 }
             }
             Some("zone") if is_rule_area(item) => {
@@ -1246,8 +1286,8 @@ pub(super) fn lower(
         .child("setup")
         .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
         .map_or(0.0, |width| width / 2.0 + 0.01);
-    for (shapes, layer, kind) in mask_openings {
-        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
+    for (shapes, layer, kind, margin) in mask_openings {
+        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb())).inflated(margin);
         let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
             .iter()
             .filter(|obstacle| {
@@ -1286,7 +1326,7 @@ pub(super) fn lower(
             layers: 1 << layer,
             kind: core::ObstacleKind::Keepout,
             net,
-            clearance: mask_reach,
+            clearance: mask_reach + margin,
             clearance_override: None,
             blocks_tracks: true,
             blocks_vias: true,
@@ -3735,6 +3775,53 @@ mod pour_request_tests {
         let poured = openings(&lowered(zone));
         assert_eq!(poured.len(), 3);
         assert_eq!(poured[2], (net_b, "solder mask opening (gr_text)".to_string()));
+    }
+
+    #[test]
+    fn a_mask_only_pad_opens_the_mask_by_its_expansion() {
+        // hackrf's mask-only test point: a 0.762 mm pad on F.Mask alone,
+        // the board's mask expansion 0.05 mm.
+        let lowered = |zone: &str, config: KiCadBoardRouterConfig| {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (setup (pad_to_mask_clearance 0.05))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "TP" (layer "F.Cu") (at 5 5) (property "Reference" "TP1")
+                (pad "" smd circle (at 0 0) (size 0.762 0.762) (layers "F.Mask")))
+              (footprint "a" (at 15 5)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/B"))) {zone})"#
+            ))
+            .unwrap();
+            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+            let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..config };
+            lower(&pcb, &config, false).unwrap().board
+        };
+        let openings = |board: &core::Board| -> Vec<(Option<core::NetId>, f64, u32, String)> {
+            board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label.starts_with("solder mask opening"))
+                .map(|obstacle| (obstacle.net, obstacle.clearance, obstacle.layers, obstacle.label.clone()))
+                .collect()
+        };
+        // Over bare board it is no net's: nothing goes under it, by the
+        // expansion, and on the front only.
+        let bare = openings(&lowered("", KiCadBoardRouterConfig::default()));
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[0].0, None);
+        assert!((bare[0].1 - 0.05).abs() < 1.0e-9, "{}", bare[0].1);
+        assert_eq!(bare[0].2, 1);
+        assert_eq!(bare[0].3, "solder mask opening (pad TP1.)");
+        // Over a pour it is the pour's net's.
+        let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))"#;
+        let board = lowered(zone, KiCadBoardRouterConfig::default());
+        let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
+        assert_eq!(openings(&board)[0].0, net_b);
+        // Off: the pad is nothing to the router.
+        let off = KiCadBoardRouterConfig { mask_only_pad_openings: Some(false), ..KiCadBoardRouterConfig::default() };
+        assert!(openings(&lowered("", off)).is_empty());
     }
 
     #[test]
