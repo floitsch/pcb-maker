@@ -2296,7 +2296,16 @@ pub fn route_kicad_board(
                                 let nets = labels.net_routable.len();
                                 let incomplete = (0..nets).filter(|net| labels.net_routable[*net] && !labels.net_complete[*net]).count();
                                 let conflicted = (0..nets).filter(|net| labels.net_routable[*net] && labels.net_conflicted[*net]).count();
-                                eprintln!("ladder stats: rung {mode} unfinished {unfinished} conflicted {conflicted} incomplete {incomplete}");
+                                // Nets conflicted or incomplete; the rest of
+                                // `unfinished` is pour pads the pour does not
+                                // reach yet.
+                                let either = (0..nets)
+                                    .filter(|net| labels.net_routable[*net] && (labels.net_conflicted[*net] || !labels.net_complete[*net]))
+                                    .count();
+                                let stranded = unfinished.saturating_sub(either);
+                                eprintln!(
+                                    "ladder stats: rung {mode} unfinished {unfinished} conflicted {conflicted} incomplete {incomplete} nets {either} stranded {stranded}"
+                                );
                             }
                             (*mode, unfinished, router, built_seconds + started.elapsed().as_secs_f64())
                         })

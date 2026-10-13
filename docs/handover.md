@@ -270,6 +270,39 @@ Rerun lists kept: `build/github-layout-v11*.log`, `build/github-freerouting*.log
   time, no pass lost). The 30-board tier's clean baseline on x508: 19 of
   30 pass, 23 unconnected, 12 starved thermals, 31.5 min of wall at 8
   jobs (`build/quick30-x508.log`).
+- Speed, round three (2026-10-13; experiments in the worktree
+  `pcb-maker-speed2`, diff `build/speed2/speed2-experiments.diff`, logs
+  `build/speed2`, tiers `build/quick30-x333-L12.2.2.log`,
+  `build/quick30-x334-viastop.log` against `build/quick30-x510.log`), all
+  negative:
+  - Chronic nets searched near their last route (`PCB_ROUTER_LOCAL=12,2,2`:
+    a net rerouted 12 times or more searches its corridor cut to two tiles
+    around its previous route, tree and targets first, every other
+    reroute). Measured first: nets with 18+ reroutes find their path within
+    one tile of the previous route in 97-98 % of searches yet expand 72-78 %
+    of their nodes outside it. bench-search reaches lower conflict counts at
+    equal work (Sisu 17 at 350M expansions against 28; jetson 9 at 550M
+    against 25) and stops at 58 % / 82 % of the expansions. But the tier is
+    neutral (19/30 both, unconnected 30 to 24, CPU -5.5 % against x510 and
+    +9 % against x508: noise), Sisu in route mode -10 % CPU (pinned pair,
+    swapped: 0.894, 0.915) ends 34 open against 27, jetson identical (2
+    open) at -3 %. Route mode rarely reaches the chronic regime; where it
+    does, the full searches are what finds the detours.
+  - Not re-searching a conflict-free net: already so (a net's branches are
+    tested for conflicts at its turn, after the nets before it moved; a
+    speculative search that read a changed block is redone).
+  - A cheaper first iteration: iteration 0 is 1-2 % of the negotiation's
+    expansions on Sisu and jetson, the first three 3-7 %; not built.
+  - On the tier the negotiation is not the cost: the via reduction is (its
+    lines sum to 66 % of the v14 tier layouts' routing time, the clean-up's
+    to 27 %; 80 % of its rounds reverted, 72 %
+    because the round found no fewer vias, and after such a round the next
+    is kept 9-11 % of the time). Stopping at such a round
+    (`PCB_ROUTER_VIA_STOP`) cut the tier's via-reduction time 13 % and its
+    CPU 1.7 % (noise), +18 vias: a layout spends its work budget anyway
+    (more move trials), so a cheaper phase shows up as more trials, not as
+    less CPU. Speed on the tier means quality per work, and a phase that
+    ends by its budget gains nothing from being cheaper.
 - The quick tier is 30 boards now (`benchmarks/agent-tasks/quick.json`,
   README): real layouts in about 1100 s and 3.7 GB; about 35 min at 8
   jobs.
@@ -343,28 +376,35 @@ routes). Planted tile occupancy is a weak congestion label (Spearman
    the repair (`free_thermal_spokes`, budgeted, only when polishing) moves
    2 of 10 nets. Probably needs the exit direction of the neighbouring
    pads decided before negotiation (a fan-out step), not a cost.
-3. **The ladder's judge.** Measured 2026-10-11 (x406 = HEAD 916bfbf plus
-   env hooks `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_STATS`,
-   `PCB_LADDER_SHORT_RESUME`; `build/ladder-judge`,
-   `experiments/congestion/ladder_judge.py`): every probe-ladder rung of
-   k30, Castor, Hub and Sisu continued to its final in route mode. By
-   (open, starved, vias) the probe picked the best rung on 3 of 4: k30
-   tracks (0 open, 24 starved, 359 vias; connect 0/24/630, so the earlier
-   "connect is better" is not reproduced on HEAD), Sisu tracks (35 open
-   against 41-184), Castor connect (0 open, 8 starved). It failed on Hub:
-   tracks probed 20 unfinished against 97-103 for the connect rungs, but
-   ended 244 open against 127. The probe's count adds each stranded
-   pour pad of the connect rungs (Hub: 82 of its 97), which the
-   continuation then connects. The conflicted nets alone (no pour-pad
-   term) pick the best rung by final open count on all 4 (Hub rung 0: 127
-   open, 19 starved against the best 15). Incomplete nets also do on 4 of
-   4, open after a 30 s continuation on 3 of 4. Four boards are not
-   enough to change the judge; the next step is the same measurement on
-   more 4-layer boards, comparing the probe count with and without the
-   pour-pad term. Still open from before: the ladder stops at the first
-   complete rung whatever its starved thermals (Castor x155: "0 open, 18
-   starved" kept); rank by (open, starved) before vias, and let a
-   complete-but-starved rung be rivalled.
+3. **The ladder's judge.** Measured on 21 boards with every rung
+   continued to its final (2026-10-13, current code; `build/ladder-judge-v2`
+   our v14 placements of the tier's eight 4-layer boards, jetson and katia;
+   `build/ladder-judge-merged` nine designer placements from
+   `build/ladder-judge2` (x510) plus Hub rerun; `build/ladder-judge-v2x`
+   MIDAS-MK1; the stats line now prints `nets` (conflicted or incomplete)
+   and `stranded` pour pads; `experiments/congestion/ladder_judge.py <dirs>`).
+   Right by final open count: unfinished (today's judge) 16 of 21,
+   conflicted 14, conflicted-or-incomplete 14, incomplete 14, open after a
+   30 s continuation 17; by (open, starved) 14 / 12 / 12 / 12 / 15. Open
+   above the best rung, summed: unfinished +166 (Hub's designer placement
+   alone +121), conflicted +53, the 30 s continuation +20. Conflicted wins
+   Hub only by the tie rule (17 against 17 conflicted nets); on our MIDAS-MK2
+   and BAGEL the pour-pad term is what picks right (connect rungs: 6 and 20
+   stranded pads, ending 3 open and 1 starved against tracks' 0). No change.
+   The probe statistics of the 26 other v14 layouts that ran the probe
+   ladder (`build/ladder-judge-v14p`, `analyse.py` there) show a class no
+   count fixes: Hub, DSP-ADAU1452, koeg-board, zpn_devboard (old placement)
+   probe tracks far ahead in every count (conflicted too: 15 against 19,
+   136 against 137, 6 against 68, 0 against 51) while a fresh connect
+   attempt with less budget ends far better (126 against 268 open, 338
+   against 641, 147 against 204, 195 against 236); the 75 s probe is too
+   short there, and the regular rungs that follow recover it. If anything,
+   the 30 s continuation per probed rung (up to 120 s more of work) is the
+   judge to try. Still open from before: the ladder stops at the first
+   complete rung whatever its starved thermals (Castor, ours: all four
+   rungs probe 0 unfinished, rung 0 ends with 20 starved against tracks'
+   12); rank by (open, starved) before vias, and let a complete-but-starved
+   rung be rivalled.
 4. **Crowded placement** (OpenESC, SNSP): the three directions are built
    as options and none wins; `replicate_channels`' rigid macros never get
    seated. The legalizer loses 30-90 % of the global placement's

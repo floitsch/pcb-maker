@@ -4,56 +4,98 @@
 (route mode, PCB_LADDER_FORCE_RUNG), its probe statistics
 (PCB_LADDER_STATS, PCB_LADDER_SHORT_RESUME) and its final row.
 
-    experiments/congestion/ladder_judge.py build/ladder-judge"""
+    experiments/congestion/ladder_judge.py build/ladder-judge [more directories]
 
+Each directory holds <board>__rung<N>.log and the run's output directory
+<board>__rung<N>/ (KiCad's unconnected count from verification.json). A
+judge picks the rung with the lowest statistic, ties to the earlier rung (a
+rung at 0 ends the probing, which picks the same rung). A pick is right
+when no other rung's final is better by the criterion."""
+
+import json
 import re
 import sys
 from pathlib import Path
 
 NAMES = {0: "connect, exclusive planes", 1: "connect", 2: "connect, plane stubs", 3: "tracks"}
+JUDGES = ["unfinished", "conflicted", "incomplete", "nets", "short"]
+
+
+def board_rows(root, board):
+    stats, finals, short = {}, {}, {}
+    for log in root.glob(f"{board}__rung*.log"):
+        rung = int(re.search(r"rung(\d+)\.log$", log.name).group(1))
+        text = log.read_text(errors="replace")
+        for match in re.finditer(
+                r"ladder stats: rung (\d+) unfinished (\d+) conflicted (\d+) incomplete (\d+)(?: nets (\d+) stranded (\d+))?", text):
+            values = [int(v) if v is not None else None for v in match.groups()[1:]]
+            stats[int(match.group(1))] = dict(zip(["unfinished", "conflicted", "incomplete", "nets", "stranded"], values))
+        match = re.search(r"ladder stats: rung (\d+) short resume [\d.]+ s: (\d+) open", text)
+        if match:
+            short[int(match.group(1))] = int(match.group(2))
+        match = re.search(r"\(probed, continued\): (\d+) open, (\d+) starved, (\d+) vias", text)
+        if match:
+            open_, starved, vias = (int(v) for v in match.groups())
+            kicad = None
+            verification = root / f"{board}__rung{rung}" / "verification.json"
+            if verification.exists():
+                kicad = json.loads(verification.read_text()).get("selected_net_unconnected_items")
+            finals[rung] = {"open": open_, "starved": starved, "vias": vias, "kicad": kicad}
+    for rung in stats:
+        if rung in short:
+            stats[rung]["short"] = short[rung]
+    return stats, finals
+
+
+CRITERIA = {
+    "open": lambda f: (f["open"],),
+    "open, starved": lambda f: (f["open"], f["starved"]),
+    "open, starved, vias": lambda f: (f["open"], f["starved"], f["vias"]),
+}
 
 
 def main():
-    root = Path(sys.argv[1])
-    boards = sorted({re.sub(r"__rung\d+\.log$", "", p.name) for p in root.glob("*__rung*.log")})
-    totals = {"probe": 0, "conflicted": 0, "incomplete": 0, "short": 0}
-    counted = 0
-    for board in boards:
-        stats, finals, short = {}, {}, {}
-        for log in root.glob(f"{board}__rung*.log"):
-            rung = int(re.search(r"rung(\d+)\.log$", log.name).group(1))
-            text = log.read_text(errors="replace")
-            for match in re.finditer(r"ladder stats: rung (\d+) unfinished (\d+) conflicted (\d+) incomplete (\d+)", text):
-                stats[int(match.group(1))] = tuple(int(v) for v in match.groups()[1:])
-            match = re.search(r"ladder stats: rung (\d+) short resume [\d.]+ s: (\d+) open", text)
-            if match:
-                short[int(match.group(1))] = int(match.group(2))
-            match = re.search(r"\(probed, continued\): (\d+) open, (\d+) starved, (\d+) vias", text)
-            if match:
-                finals[rung] = tuple(int(v) for v in match.groups())
-        print(f"{board}:")
-        for rung in sorted(stats):
-            final = finals.get(rung)
-            print(f"  rung {rung} ({NAMES[rung]}): probe unfinished {stats[rung][0]}, conflicted {stats[rung][1]}, "
-                  f"incomplete {stats[rung][2]}, open after a 30 s continuation {short.get(rung, '-')}; final: "
-                  + (f"{final[0]} open, {final[1]} starved, {final[2]} vias" if final else "not finished"))
-        done = [rung for rung in finals if rung in stats]
-        if len(done) < 2:
-            continue
-        counted += 1
-        # Best final: fewest open, then fewest starved, then fewest vias.
-        best = min(finals[rung] for rung in done)
-        right = {rung for rung in done if finals[rung] == best}
-        picks = {
-            "probe": min(done, key=lambda r: (stats[r][0], r)),
-            "conflicted": min(done, key=lambda r: (stats[r][1], r)),
-            "incomplete": min(done, key=lambda r: (stats[r][2], r)),
-            "short": min((r for r in done if r in short), key=lambda r: (short[r], r), default=None),
-        }
-        print(f"  best final: rung {sorted(right)}; picked by " + ", ".join(f"{k}: {v}{' (right)' if v in right else ''}" for k, v in picks.items()))
-        for key, rung in picks.items():
-            totals[key] += rung in right
-    print(f"right picks over {counted} boards: " + ", ".join(f"{k} {v}" for k, v in totals.items()))
+    roots = [Path(argument) for argument in sys.argv[1:]]
+    right = {criterion: {judge: 0 for judge in JUDGES} for criterion in CRITERIA}
+    regret = {judge: [0, 0] for judge in JUDGES}
+    counted = {judge: 0 for judge in JUDGES}
+    for root in roots:
+        boards = sorted({re.sub(r"__rung\d+\.log$", "", p.name) for p in root.glob("*__rung*.log")})
+        for board in boards:
+            stats, finals = board_rows(root, board)
+            done = sorted(rung for rung in finals if rung in stats)
+            print(f"{root.name}/{board}:")
+            for rung in sorted(stats):
+                s, f = stats[rung], finals.get(rung)
+                print(f"  rung {rung} ({NAMES[rung]}): probe unfinished {s['unfinished']}, conflicted {s['conflicted']}, "
+                      f"incomplete {s['incomplete']}, nets {s.get('nets', '-')}, stranded pour pads {s.get('stranded', '-')}, "
+                      f"open after 30 s more {s.get('short', '-')}; final: "
+                      + (f"{f['open']} open (KiCad unconnected {f['kicad']}), {f['starved']} starved, {f['vias']} vias" if f else "not finished"))
+            if len(done) < 2:
+                continue
+            best_open = min(finals[r]["open"] for r in done)
+            best_starved = min(finals[r]["starved"] for r in done if finals[r]["open"] == best_open)
+            picks = {}
+            for judge in JUDGES:
+                if any(stats[r].get(judge) is None for r in done):
+                    continue
+                pick = min(done, key=lambda r: (stats[r][judge], r))
+                picks[judge] = pick
+                counted[judge] += 1
+                regret[judge][0] += finals[pick]["open"] - best_open
+                if finals[pick]["open"] == best_open:
+                    regret[judge][1] += finals[pick]["starved"] - best_starved
+                for criterion, key in CRITERIA.items():
+                    best = min(key(finals[r]) for r in done)
+                    right[criterion][judge] += key(finals[pick]) == best
+            best = min(CRITERIA["open, starved, vias"](finals[r]) for r in done)
+            print(f"  best final (open, starved, vias): rung {[r for r in done if CRITERIA['open, starved, vias'](finals[r]) == best]}; "
+                  "picked by " + ", ".join(f"{judge}: {rung} ({finals[rung]['open']} open, {finals[rung]['starved']} starved)" for judge, rung in picks.items()))
+    print()
+    for criterion in CRITERIA:
+        print(f"right by ({criterion}): " + ", ".join(f"{judge} {right[criterion][judge]}/{counted[judge]}" for judge in JUDGES))
+    print("open above the best rung's, summed (and starved above the best where open ties): "
+          + ", ".join(f"{judge} +{regret[judge][0]} (+{regret[judge][1]} starved)" for judge in JUDGES))
 
 
 if __name__ == "__main__":
