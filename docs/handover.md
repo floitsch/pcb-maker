@@ -46,6 +46,12 @@ v13 is the first sweep that places all of them, and its numbers will be
 lower. Route-mode conclusions (pour model, connect rungs, Freerouting
 comparison) are unaffected.
 
+**Layout sweep v14** (x510, tasks v6, 10 jobs, 12668 s): **34 of 109
+pass**, 3065 open in all; against v13 better 19 / same 51 / worse 24. The
+baseline for what comes next (`build/github-layout-v14.log`; tasks
+`build/github-tasks-v6`). Timeouts: link, katia, MegaDrive, the 0xCB
+panel; no legal placement: the molecule panels and the OpenESC 4in1 panel.
+
 **Layout sweep v13** (x503, 12 jobs, load 25-40, 14525 s): **31 of 109
 pass** with every board placed from stacked parts; 3586 open in all. The
 honest layout baseline from now on (v12's 41 was mostly routing). 7

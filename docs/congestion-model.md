@@ -28,7 +28,10 @@ affordable judge to learn from is a 75 s probe. That judge is noisy: one
 probe agrees with another under a different router seed at Spearman 0.44
 (23 held-out boards; 0.61 on a first 6), and against the final layout
 (1800 s, KiCad's unconnected count) a probe reaches about 0.55, the same
-as a second probe or the mean of two. The network learned what is easy in
+as a second probe or the mean of two. The later data-efficiency audit below
+found nine mismatched initial placements in that final-layout comparison;
+its numbers describe the original experiment, not a fully matched cohort.
+The network learned what is easy in
 that label, the board-to-board scale of the unfinished count (Spearman
 0.75-0.84 across boards), but within a board it reached 0.27-0.37 against
 the probe (RUDY 0.35-0.40) and 0.13 against the finals (RUDY 0.30,
@@ -108,9 +111,9 @@ with `PCB_ROUTER_SEED=7` rank alike within a board with Spearman 0.86
 (4in1-mini), 0.94 (d20), 0.78 (OpenAirScope), 0.67 (SNSP-1CHIP), 0.38
 (Explorer), 0.02 (OpenFC): mean 0.61. On all 23 held-out boards whose
 seeds differ (16 seeds each, router seed 1 against none) the mean is 0.44
-(-0.24 on capybully to 1.00 on Blue_Line). No predictor can agree with a
-single probe much better than that, and the race's own pick among three
-probes is partly luck.
+(-0.24 on capybully to 1.00 on Blue_Line). The race's own pick among three
+probes is partly luck. Repeat agreement measures label noise; it is not a
+hard upper bound on a predictor of expected final quality.
 
 Probe budget: on a pilot of 18 boards x 7 placements, the unfinished
 count after 25 s of work ranks placements of one board like the count
@@ -243,10 +246,11 @@ the statistic picks (final unconnected above the best of the four):
 
 The probe's best two seeds finish better than its worst two on 11
 boards, the same on 6, worse on 2: the probe is a real judge, the best
-available before routing, but averaging two probes (at the same work, two
-half-budget probes would do: 25 s and 75 s probes rank alike at 0.994)
-does not make it a clearly better one, so the race keeps one probe a
-placement.
+available before routing, but averaging two probes does not make it a
+clearly better one in this experiment, so the race keeps one probe a
+placement. The later cost audit below finds that two 25 s probes would
+not be the same work as one 75 s probe: early stopping makes a single
+25 s probe cost about 80% of a 75 s probe in search expansions.
 
 ## Integration
 
@@ -306,3 +310,188 @@ origins and licences in `benchmarks/github/training-manifest.json`).
 - Flips only, no quarter turns (the router's preferred directions).
 - GroupNorm sees the zero padding of a batch; inference pads to multiples
   of 8 only (a small train/inference mismatch).
+
+## Data-efficiency investigation (2026-10-10)
+
+The next experiment should collect **reliable within-board comparisons**,
+using cheap probes to screen candidates and spending final-layout work on a
+selected subset. Blanket continuation of the existing probe dataset is not
+justified by the present evidence. Nor does the earlier failed network prove
+that a predictor trained on better targets cannot work.
+
+### What was checked locally
+
+Reproduction (from the repository root; no routing runs):
+
+```sh
+python3 experiments/congestion/reconstruct_finals.py
+build/venv-nn/bin/python experiments/congestion/audit_labels.py \
+  --out build/label-audit/initial-audit.json
+build/venv-nn/bin/python -m unittest discover \
+  -s experiments/congestion -p 'test_*.py'
+```
+
+`reconstruct_finals.py` restores the original footprint poses from each
+`board-placer.json` into the archived source board, then exports features
+with x401, the historical feature exporter. It adjusts pad/text angles as
+the Rust placer does. It writes under `build/label-audit/initial-features`,
+including `labels.json`, source evidence hashes, the exporter hash, and the
+original split. These are historical **evaluation** records; do not move
+them into training. `train.py` does not consume these scalar final labels.
+
+The distinction between the initial and saved placement matters:
+`board_layout.rs` overwrites `layout/placed/*.kicad_pcb` with the poses after
+local moves. Rasterizing that file would label the result of the layout,
+not the placement whose quality the network is supposed to predict.
+
+Findings on the files currently present:
+
+- 3,516 probe samples on 258 boards, versus 1,412 prepared board jobs.
+  3,398 distinct feature inputs; the 118 redundant inputs offer only a
+  modest deduplication saving. None of the identical-input groups crosses
+  the existing split or has differing unfinished labels.
+- All 3,516 old headers lack the binary identifier added to the exporter
+  later. Future datasets need the binary **hash**, router seed, effective
+  configuration, input snapshot and split recorded, not just a filename.
+- Twelve repository families have sampled boards on both sides of the
+  split. A board-name split is not a board-family split. Revisions, panels
+  and related designs need grouping before the next independent evaluation;
+  large collections such as `hackclub/OnBoard` need finer origin grouping.
+- `generate.py` still unpacked four values from `run_measured`, which now
+  returns five. Both `cfinal/generate.log` and `cnoise2/generate.log` contain
+  30 such exceptions. Exported files can exist despite this bookkeeping
+  failure. Fixed the unpacking and retained CPU seconds in the run record;
+  a regression test exercises the runner interface.
+- There are 92 historical final-layout attempts, 82 with native KiCad
+  results, costing 33.69 recorded layout-process CPU-hours in total.
+  Reconstructing features reuses this work without routing again.
+- Of those 82, **73 initial feature tensors match the cached probe inputs
+  exactly**, including their frame and channel metadata. Nine do not:
+  BAGEL's four seeds, PixelWave's four seeds, and capybully seed 7. Same seed
+  alone does not prove same placement. The comparison below excludes them.
+  The original all-82 final correlation table above did not make this check.
+
+### Shorter probes save less than their nominal budgets suggest
+
+The available budget pilot has 89 matched samples (five boards with
+nonconstant labels and at least three samples). Exact feature checks pass
+for every comparison. This is smaller than the originally planned pilot
+quoted earlier in this document.
+
+| Probe budget | Within-board agreement with 75 s | Search expansions / 75 s |
+| --- | ---: | ---: |
+| 10 s | 0.923 Spearman | 0.503 |
+| 25 s | 0.994 Spearman | 0.805 |
+
+25 s is a reasonable screening budget to revalidate on the current router,
+but it saves about **20% of search expansions**, not two thirds. Most
+probes stall early. Two 25 s probes would therefore cost roughly 1.61
+single-75 s probes under this pilot's work distribution, not less than one.
+The historical wall times were load-confounded (the 25 s run was slower
+than the 75 s run); these ratios are work measurements, not measured CPU
+speedups. The current router's changed stall rules need a fresh paired
+measurement before projecting savings.
+
+Repeated probes mostly do preserve input identity: baseline versus router
+seed 1 has 412/412 identical inputs; seed 2 has 137/138; seed 3 has 41/41.
+On the first repeat the within-board correlation remains 0.444, so genuine
+router-seed variation remains after checking correspondence. This is not a
+mathematical ceiling on a predictor of expected final quality: repeated
+noisy observations and the underlying expected outcome are different targets.
+
+### Abstaining on uncertain comparisons looks useful
+
+Use the two independent repeat probes, not the original probe that selected
+the final-layout cohort. On the 73 matching placements there are 67 pairs
+with different final KiCad unconnected counts, from 13 informative boards.
+For each pair, the prediction is the order of the two-probe means.
+
+| Which pairs receive a label | Pairs retained | Correct final ordering |
+| --- | ---: | ---: |
+| All, ties worth half credit | 67 | 74.6% |
+| Both probes strictly agree on the order | 52 | 82.7% |
+| Agreement plus relative gap at least 0.25 | 35 | 88.6% |
+
+Relative gap is `abs(mean_a - mean_b) / (1 + (mean_a + mean_b)/2)`.
+The last policy retains 52% of the available non-tied pairs. Its board
+bootstrap interval is approximately 80–97%; the cohort is small and selected
+by the original probe's extremes. These are **exploratory**, not independent
+validation results. Filtering changes which pairs are evaluated, and says
+little yet about difficult near-ties among the best placements. The script
+also reports larger-gap settings; the tiny perfect subsets are not evidence
+of perfect labels. Set thresholds using training/calibration families and
+validate on fresh families before using them as a collection policy.
+
+### Recommended collection policy
+
+1. **Harvest existing routing work first.** Record the immutable initial
+   placement and its features when a normal benchmark/race run begins.
+   Attach the eventual native DRC/connectivity result when it completes.
+   This makes ordinary benchmark runs produce scalar training labels at
+   nearly the feature-export cost. Preserve failure/timeout status explicitly;
+   absence of a DRC report is never a zero-unconnected label. Retain copper
+   errors and constraint outcomes alongside connectivity so a shorted board
+   cannot become a misleading "good" example.
+2. **Spend cheap probes on relevant, distinct placements.** Sample legal
+   placer candidates and modest perturbations from diverse board families.
+   Export and hash the placement once, then reuse it across router seeds and
+   budgets. Screen at 25 s; measure 10 s as an alternative. Downweight obvious
+   shuffles and duplicated easy cases: the deployment task ranks plausible
+   candidates of one board, not arbitrary boards against each other.
+3. **Buy repetitions selectively.** Use another router seed to check promising
+   candidates and informative pair comparisons. Label confident ordering;
+   abstain on disagreements. Retain a random sample as well as uncertain/model-
+   disagreement cases, and log selection probabilities. Pure uncertainty
+   sampling can concentrate on irreducible randomness; pure top-score
+   selection can miss the failures the model needs to learn about.
+4. **Promote a small subset to a better judge.** Compare continuation budgets
+   of 100/300 s with full layouts on *identical frozen inputs*. Include
+   pour-aware continuation: the ladder study found stranded pour pads can
+   inflate a probe's unfinished count and later connect. Test native
+   connectivity and conflicted/incomplete counts separately. Longer calls to
+   the same stalled `probe` are unlikely to fix this systematic mismatch.
+   Reuse router state inside a run where possible; restarting every budget
+   repeats expensive work. A resumable labeling API is not implemented yet.
+5. **Keep target fidelities distinct.** Probe overflow maps can remain an
+   auxiliary/pretraining target; the final scalar head should learn native
+   connectivity or within-board preferences with confidence weights. Do not
+   relabel a final moved board's map as the initial placement's map. Record
+   whether the scalar predicts fixed-placement routing or the whole layout
+   optimizer including local moves; these are different objectives.
+
+A useful next calibration is 20 fresh training/calibration families with
+8 frozen candidates each: cheap screening for all, second-seed checks on a
+subset, 100/300 s continuation and final routing on two candidates per board
+(one promising, one randomly chosen). On the historical mean cost, 40 full
+attempts alone would be about 14.6 CPU-hours; that is a rough old-router
+estimate, excluding screening, reconstruction and designer-baseline DRC.
+Reserve a separate family cohort for final evaluation. Compare at equal
+measured CPU cost, using top-three regret against native connectivity,
+coverage of reliable pairs and family-bootstrap uncertainty. No such new
+routing campaign was launched during this audit.
+
+### Related work and what transfers
+
+[Deep Multi-Fidelity Active Learning (AISTATS 2022)](https://proceedings.mlr.press/v151/li22b.html)
+selects both the input and simulation fidelity to improve information gained
+per cost. That is the relevant pattern for choosing *which placement* and
+*how far to route it*; its published results concern scientific simulations,
+not this PCB router. Start with the measurable promotion policy above rather
+than assuming its full acquisition model will transfer.
+
+[Disentangled Multi-Fidelity Deep Bayesian Active Learning (ICML 2023)](https://proceedings.mlr.press/v202/wu23p.html)
+explicitly addresses propagation of errors from low-fidelity representations.
+That supports keeping probe and final targets distinct; it does not establish
+that this project's probe bias can be learned away.
+
+[Hyperband (JMLR 2018)](https://www.jmlr.org/papers/v18/16-558.html)
+is precedent for allocating progressively larger budgets to selected
+candidates. Here, direct successive halving risks discarding placements that
+look poor only because their pour pads have not yet been connected. Keep
+random promotions and measure ranking reversals before trusting elimination.
+
+[Active Testing (ICML 2021)](https://proceedings.mlr.press/v139/kossen21a.html)
+addresses efficient evaluation when labels are expensive and the bias caused
+by active selection. For this project, a fixed independent evaluation cohort
+is the simplest starting point; actively collected training performance must
+not be presented as an unbiased test result.

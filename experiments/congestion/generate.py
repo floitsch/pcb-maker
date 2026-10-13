@@ -93,7 +93,7 @@ def run_group(job, source, variants, arguments, peaks, lock):
     token = arguments.gate.admit(f"{name}/{source}", expected_mb(job, peaks))
     try:
         started = time.monotonic()
-        code, output, _, own_mb = agent_run.run_measured(command, arguments.timeout, env,
+        code, output, _, own_mb, cpu_seconds = agent_run.run_measured(command, arguments.timeout, env,
                                                          lambda pid: arguments.gate.started(token, pid))
     finally:
         arguments.gate.done(token)
@@ -108,7 +108,7 @@ def run_group(job, source, variants, arguments, peaks, lock):
     with lock:
         peaks[name] = max(peaks.get(name, 0), own_mb)
     return {"name": name, "source": source, "binary": arguments.binary.name, "code": code, "seconds": round(time.monotonic() - started, 1),
-            "own_mb": own_mb, "variants": len(run)}
+            "own_mb": own_mb, "cpu_seconds": cpu_seconds, "variants": len(run)}
 
 
 def main():
