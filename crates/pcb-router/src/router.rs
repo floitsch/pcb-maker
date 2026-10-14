@@ -9757,7 +9757,11 @@ mod tests {
         // stamps and its fill probe's items,
         // in the phase budgets' work and not in the search's; the count is
         // the same on every run, and a copy of the router keeps it.
-        let (router, _) = diagonal_channel(false);
+        let (mut router, _) = diagonal_channel(false);
+        // A caller's deadline far ahead: the wall-clock guard of `spent`
+        // (`GUARD` times these microsecond budgets) stays out of it, so
+        // only the work decides however busy the machine is.
+        router.config_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
         let fresh = router.clone();
         let clock = router.clock();
         let search = router.work_seconds();
