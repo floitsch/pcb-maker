@@ -2602,7 +2602,6 @@ pub fn route_kicad_board(
                 eprintln!("deadline reached: no further attempts");
                 break 'ladder;
             }
-            let rung_started = std::time::Instant::now();
             // The skeleton and the plane stubs only help when the plain
             // pour connection left pads of a pour net open; elsewhere they
             // just take room.
