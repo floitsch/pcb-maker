@@ -914,6 +914,70 @@ from the corner via inward into its own ring, which the DRC counts; not
 done. Logs `build/census/x801.txt`, `x824*.txt` in the fill3 worktree;
 `build/fill3-x801.log`, `build/fill3-x824.log`.
 
+## Committed on 2026-10-14 (placer fixes, x780)
+
+Three placer defects from the v15 triage (`build/triage*`).
+
+**1. The work clock under-counted the placer** (`placer phase` lines now
+print the thread's CPU time; the ratio is work over CPU). The legaliser
+booked 3-15 % of its CPU time on the 0xCB panels, the annealer 25-50 %
+on boards with many relations, against 100 % on keyboar_, so the
+layout's wall guard fired and results followed the load. Profiled with
+callgrind (instructions per counted unit; about 42 on keyboar_'s anneal,
+the reference) and fixed by counting what is done (details and the table
+in docs/placer.md): cutout polygons per edge visited (the panels' slots
+have thousands of points), box lists and pairs as the annealer counts
+them, the other part's box and the linked lookup per same-side test,
+relation anchors (glasgow's capacitors, 23 supply pins each), pin
+positions (3 units), held parts' pad offsets, edge and region scans.
+Exact speed-ups too: one pass over a cutout with a box prefilter (the
+pcb-panel's legalisation 224 s to 28 s of CPU a pass), pads' edge offsets
+only for parts an edge holds. Ratios, pairs on the two threads of a core
+(before / after, whole placement): 0xCB pcb-panel 0.11 / 0.95, 0xCB panel
+0.11 / 0.77, glasgow 0.40 / 1.08, vaio_re 0.72 / 0.98, MIDAS-MK2 0.52 /
+1.07, Castor 0.68 / 0.98, urchin 0.86 / 1.08, keyboar_ 1.02 / 1.02;
+phases now 0.63-1.6 (refine and repair on the panel up to 2.2, global
+1.5-2.3 as before) where they were 0.03-1.5. A seed does exactly what it
+did: only where budgets stop moves. The layout's placement step on the
+tier's 30 prepared tasks (16 seeds, x738 against x780): 29 identical;
+MIDAS-MK1.1 keeps 5 seeds instead of 12 (its seeds booked 0.45 of their
+CPU time, now 1.05: twelve were 2.4 times the budget), wirelength 2119 to
+2255 mm, the same 11 unconnected in the tier. Rebased on the determinism
+agent's work (x781 = x747 + this): the waves' work now counts each wave's
+slowest seed at its real cost too. CUT_LINE
+
+**2. Tabbed panels** (`keep_copies`, on): copies told apart by their
+nets (KiKit's `Board_N-` names) and repeated references, each with fixed
+parts apart from the others', keep their movable parts in their copy's
+region (cut halfway between the copies' fixed parts). The 0xCB
+pcb-panel and panel (four copies each) qualify; no tier board does. A
+repeated reference in a constraint now names its parts in turn (the
+molecules' J3 had a left, a top and a bottom edge at once).
+PANEL_RESULTS The PolyKybd molecules share their net names across
+copies (one net group), so the copy rule cannot see them; with the
+reference fix 5x4_wave places legally, the other four still fail: the
+designer stacked alternative connectors (J3 on J5, J4 on J6, pad on pad)
+on the one spot per tile the fixed switches leave, which our rules
+cannot reproduce. OpenESC's 4in1 panel is one net group too (its error
+is crowding); the 20x20 4in1-mini is a 4-in-1 board, not a panel.
+
+**3. Far-side courtyards of parts on one side** (`far_courtyard`, always
+on): the legality test and the annealer keep one part's courtyard on the
+other side from the other part's far side (holes, pads, courtyard).
+woagboard's back-mounted choc switches: 28 courtyard overlaps in the
+placement to 0 (KiCad DRC on the placed board). Not the cause elsewhere:
+koeg-board's 15 are the designer's own (fixed switches against netless
+mounting holes, both where the designer put them; the designer's board
+does not load in kicad-cli, exit 3, so the runner cannot subtract them);
+Quanta75's 45-66 were the runner's: its mounting holes are all "M2.5",
+some on GND, so the GND ones were stacked and then held at the stack by
+the netless ones' "M2.5" in `fixed`. run.py now leaves a netted
+footprint in place when a netless one shares its reference (Quanta75
+both 0 overlaps placed; it also changes WLED_Matrix's LDO1 and Hub's
+REF**). QUANTA_LAYOUT
+
+Quick tier x780 against x722: TIER_LINE
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

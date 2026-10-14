@@ -43,7 +43,8 @@ less copper); on PIC and the hierarchy board the automatic one is.
    fixed; everything else may move and turn in 90° steps. Large nets get a
    smaller weight so power does not collapse the layout. Pad boxes cover
    the drill. A through-hole part blocks the other side only with its
-   holes and pads. A hollow part (a shield outline) blocks only with its
+   holes and pads, and a part with a courtyard on both sides with that
+   one too, against parts on either side. A hollow part (a shield outline) blocks only with its
    pads, and with its courtyard against parts with holes, since KiCad
    forbids holes in a courtyard unless the courtyard is malformed and
    KiCad skips it. A board cutout keeps only copper away: a connector body
@@ -203,6 +204,92 @@ open connection, a starved thermal) costing two passes. Quick tier
 vias -3.7 %. Within the seed noise; not a default. Video's routing
 differs by up to 130 unconnected between runs of the same placement
 (x732 and x736 with identical placements: 392, 314, 325, 262 for seed 1).
+
+## Placement work against the CPU (calibrated 2026-10-14)
+
+Budgets count placement work (`pcb_placer::work`, 150 M units a second
+of one thread); the layout's wall clock only guards. `PCB_PLACER_DEBUG`
+prints per phase `placer phase <name>: <wall> s, cpu <thread cpu> s, work
+<counted> s (<counted / cpu>)`; the CPU time comes from
+`/proc/thread-self/schedstat`, so the ratio is the calibration whatever
+the load (absolute values still drift with it: keyboar_'s anneal measured
+0.89 to 1.45 at loads 25 to 50; compare boards run side by side).
+
+Before, the legaliser booked 3-15 % of its CPU time on the 0xCB panels
+(and the wall guard fired, so results followed the machine's load:
+vaio_re 63 or 151 open, glasgow "deadline reached"), the annealer 25-50 %
+on boards with many relations (glasgow, MIDAS, Castor) against 100 % on
+keyboar_. Profiled with callgrind (instructions per counted unit, about
+42 on the calibrated anneal), what was not counted:
+
+- a cutout's outline (the panels' slots between the copies, thousands of
+  points) was walked nine times per pad, counted once per part: now one
+  pass with a box prefilter decides unless an edge comes near the pad
+  (exact: the full test runs then), counted per edge visited (a quarter
+  unit); the 0xCB pcb-panel's legalisation went from 224 s to 28 s of CPU
+  a pass;
+- box lists (hollow parts, far sides, pads) and their pair tests: counted
+  as the annealer does (8 + 3 per box, 1 per pair);
+- the other part's box (two turns) and the linked-pair lookup per
+  same-side test in the legality test (4 units, and log2(linked)/2);
+- relations: each anchor a relation measures from costs about 4 units
+  (glasgow's decoupling capacitors are each near any of 23 supply pins),
+  and finding a part's relations scans every anchor; counted in the
+  annealer's move work and the legaliser's penalty;
+- pin positions in wirelength sums: 3 units a pin;
+- parts held at an edge: their pads' offsets and the board's box on every
+  test (eviction of a held connector, five times what it counted); the
+  edge and region lists, scanned per test (half a unit an entry);
+- exact speed-ups: a part not held at an edge no longer computes its pads'
+  edge offsets in every snap, overlap and hard-constraint test.
+
+Work ratio by phase (work / thread CPU; each pair placed at once on the
+two threads of a core, one seed, 720 s of work; before = x738's counting):
+
+| Board | Before (all; anneal, legalise, evict, refine, repair) | After |
+| --- | --- | --- |
+| 0xCB pcb-panel | 0.11; 0.52, 0.03, -, -, - | 0.95; 0.87, 0.93, 0.90, 1.50, 2.15 |
+| 0xCB panel | 0.11; 0.45, 0.07, 0.07, 0.22, 0.08 | 0.77; 0.66, 0.77, 0.63, 0.65, 0.75 |
+| glasgow | 0.40; 0.31, 0.40, 0.23, 0.48, 0.14 | 1.08; 0.98, 1.01, 1.05, 1.16, 1.12 |
+| vaio_re | 0.72; 0.72, 0.49, -, 0.78, 0.61 | 0.98; 0.93, 0.80, -, 1.24, 1.08 |
+| MIDAS-MK2 | 0.52; 0.49, 0.50, -, 0.62, 0.09 | 1.07; 0.98, 1.45, -, 1.63, 1.29 |
+| Castor | 0.68; 0.59, -, -, 1.52, 0.23 | 0.98; 0.88, 1.14, -, 1.57, 0.84 |
+| urchin | 0.86; 1.11, 0.23, -, -, - | 1.08; 1.09, 1.02, -, 1.00, - |
+| keyboar_ (reference) | 1.02; 1.02, 0.61, -, 0.55, - | 1.02; 1.01, 1.17, -, 1.04, - |
+
+(the pcb-panel's base placement was stopped after its first two
+legalisations, 209 s of CPU; keyboar_ and the 0xCB panel from separate
+pairs.) Global placement counts about twice its CPU time (1.5-2.3),
+unchanged: it is 1-3 % of the work. A single seed's placement is
+byte-identical before and after on glasgow, vaio_re, MIDAS-MK2, Castor,
+urchin, spell_tome and keyboar_: the work changes where budgets stop
+(the race's seed count, a level's or the annealer's work limit), not
+what a seed does.
+
+## Panels and courtyards on the far side (2026-10-14)
+
+- **Copies of a tabbed panel** (`keep_copies`, on): the copies are one
+  outline piece, so `keep_on_pieces` cannot tell them apart; their nets
+  can (KiKit names a copy's nets `Board_N-...`). Where two or more net
+  groups hold the same references (with pin counts), each with fixed
+  parts whose boxes do not overlap, every movable part of a copy gets a
+  region: the board's box cut halfway between its copy's fixed parts and
+  each other copy's, on the axis they are farther apart. Boards whose
+  nets form one group (all others, and panels whose copies share net
+  names: the PolyKybd molecules, OpenESC's 4in1 panel) do not change.
+- **A repeated reference** in a constraint (panels repeat every
+  reference) names its parts in turn: the n-th edge, rotation or place
+  entry for J3 is about the n-th J3 in board order. All of them used to
+  land on the first J3 (one connector asked to touch the left, top and
+  bottom edges at once).
+- **Courtyards on the far side of parts on one side**
+  (`Component::far_courtyard`): a back-mounted hot-swap switch has its
+  14 mm square on the front; KiCad checks it against the front
+  courtyards and holes of every part, the switches on the back included.
+  The legality test and the annealer now keep one part's far courtyard
+  from the other's far side (holes, pads, courtyard) at the bodies' gap;
+  neighbour searches reach `far_reach` farther where such parts exist.
+  woagboard's 26-28 courtyard overlaps go to 0.
 
 ## What went wrong on the way (kept as lessons)
 
