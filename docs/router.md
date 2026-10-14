@@ -325,14 +325,19 @@ Every routing decision is taken in work (search expansions at
 `EXPANSIONS_PER_SECOND`, placement work at the placer's own rate), so the
 same input and thread count give the same board however busy the machine
 is (`PCB_ROUTER_FINGERPRINT` prints phase fingerprints to compare runs).
-The wall clock only guards: in route mode at `GUARD` (4) times a budget,
-in a layout at its deadline, 1.1 times its budget (`WALL_GUARD`). Where
+The wall clock only guards: in route mode at `GUARD` (4) times a budget
+(the attempt ladder's own budget only once the wall clock over 4 is ahead
+of its work by more than a twentieth of that budget: the work counts only
+search expansions, not KiCad's checks), in a layout at its deadline, 1.1
+times its budget (`WALL_GUARD`). Where
 the wall clock, not the work, stops something, the run says so once per
 kind in its log (`wall guard: the wall clock cut the run short (...)`)
 and in its report (`cut` in `board-router.json` and `board-layout.json`,
 from `pcb_router::router::wall_cuts`); `run.py` copies it into the row
 (`cut`, also `["timeout"]` for a run the harness killed) and `compare.py`
-marks such rows CUT and leaves them out of better / same / worse.
+marks such rows CUT and leaves them out of better / same / worse. The
+command line's exit code is 3 for an incomplete result with a cut
+(docs/agents.md, section 4).
 
 A layout's routers stop at the layout's end in work (router
 `deadline_work`, armed before every phase from what is left of

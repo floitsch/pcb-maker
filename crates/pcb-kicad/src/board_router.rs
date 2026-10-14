@@ -465,6 +465,15 @@ pub struct KiCadBoardRouterResult {
     /// thread count then give the same board.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cut: Vec<String>,
+    /// The routing work of this run (the attempt ladder's), in seconds of
+    /// an idle machine: what the budgets count.
+    #[serde(default)]
+    pub work_seconds: f64,
+    /// Steps of the attempt ladder that did not run while connections
+    /// were still open, each with why (`narrow-signal step did not run:
+    /// the ladder's budget was used`). Empty on a complete board.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
 }
 
 /// Why a routing is not complete, for whoever has to fix the board.
@@ -2168,7 +2177,8 @@ pub fn route_kicad_board(
     } else {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(config, &parse(&text)?)?;
+        with_classes = crate::net_classes::with_net_classes(config, &parse(&text).map_err(crate::verdict::input_error)?)
+            .map_err(crate::verdict::input_error)?;
         &with_classes
     };
     // With interchangeable pins, the ladder routes a copy with the pins
@@ -2179,7 +2189,7 @@ pub fn route_kicad_board(
     let planned = {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        planned_pours(&parse(&text)?, config)?
+        planned_pours(&parse(&text).map_err(crate::verdict::input_error)?, config).map_err(crate::verdict::input_error)?
     };
     if config.add_pours.is_empty() && !planned.is_empty() {
         eprintln!(
@@ -2198,7 +2208,7 @@ pub fn route_kicad_board(
         let board = poured_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         let mut pcb = parse(&text)?;
-        add_pour_zones(&mut pcb, &planned)?;
+        add_pour_zones(&mut pcb, &planned).map_err(crate::verdict::input_error)?;
         fs::write(&board, format!("{}\n", encode(&pcb))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
             crate::net_classes::write_net_classes(&poured_directory, board_id, &pcb, &config.net_classes)?;
@@ -2208,7 +2218,7 @@ pub fn route_kicad_board(
     let swapped_directory = output_directory.with_extension("swapped");
     let (source_directory, pin_swaps) = match &config.pin_swaps {
         Some(path) => {
-            let spec = read_pin_swap_spec(&source_directory.join(path))?;
+            let spec = read_pin_swap_spec(&source_directory.join(path)).map_err(crate::verdict::input_error)?;
             let result =
                 swap_kicad_pins(source_directory, board_id, &swapped_directory, &spec, &config.pin_swap)?;
             eprintln!(
@@ -2331,6 +2341,9 @@ pub fn route_kicad_board(
         memory_mb().is_none_or(|(_, available)| megabytes < available * share)
     };
     let mut extra_rung_tried = false;
+    // Steps that did not run, with why: the report's `skipped` when the
+    // board stays incomplete.
+    let mut skipped: Vec<String> = Vec::new();
     let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
     let ladder_started = std::time::Instant::now();
     // The ladder's budget is spent in work (search expansions in seconds of
@@ -2341,19 +2354,27 @@ pub fn route_kicad_board(
     let ladder_work_now = std::cell::Cell::new(0.0f64);
     let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
     // Without a deadline (route mode) the wall clock guards the work at
-    // `GUARD` times it; with one, the deadline is the only wall guard.
+    // `GUARD` times it; with one, the deadline is the only wall guard. The
+    // guard takes over only when the wall clock is ahead by more than a
+    // twentieth of the budget: the work counts only search expansions, so
+    // the wall clock is always ahead of it at the start of the ladder and
+    // after KiCad's checks, and every route-mode run reported a "ladder"
+    // cut (0 s of wall clock for 0 s of work) that changed nothing.
+    let wall_margin = 0.05 * ladder_budget;
     let spent = |work: f64| {
         if config.deadline.is_some() || !core::router::wall_guard() {
             work
         } else {
             let wall = ladder_started.elapsed().as_secs_f64();
-            if wall / core::router::GUARD > work {
+            if wall / core::router::GUARD > work + wall_margin {
                 core::router::note_wall_cut(
                     "ladder",
                     format_args!("{wall:.0} s of wall clock for {work:.0} s of the ladder's work"),
                 );
+                wall / core::router::GUARD
+            } else {
+                work
             }
-            work.max(wall / core::router::GUARD)
         }
     };
     let past_deadline = || {
@@ -2404,6 +2425,7 @@ pub fn route_kicad_board(
         }
         if !rungs.is_empty() && (past_deadline() || work_left() < probe_seconds * 3.0 + 180.0) {
             eprintln!("deadline too near for the ladder: no attempts");
+            skipped.push("the rung probes did not run: too little work left before the deadline".into());
             rungs.clear();
         }
         // The probes run side by side, each a router of its own: as many
@@ -2610,6 +2632,10 @@ pub fn route_kicad_board(
                     "skipping pitch {:?}: projected {projected:.0} s exceeds the {budget:.0} s refinement budget",
                     pitch
                 );
+                skipped.push(format!(
+                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds refine_budget_seconds ({budget:.0} s)",
+                    pitch[0]
+                ));
                 break;
             }
         }
@@ -2623,6 +2649,11 @@ pub fn route_kicad_board(
                     pitch,
                     projected / 1024.0
                 );
+                skipped.push(format!(
+                    "the finer lattice ({} mm) was not tried: a router of about {:.1} GB does not fit the machine's memory",
+                    pitch[0],
+                    projected / 1024.0
+                ));
                 break;
             }
         }
@@ -2673,6 +2704,7 @@ pub fn route_kicad_board(
             let (connect, skeleton, exclusive, plane_stubs) = &modes[mode];
             if best.is_some() && (past_deadline() || no_time_for_another()) {
                 eprintln!("deadline reached: no further attempts");
+                skipped.push("further rungs of the attempt ladder did not run: the run's end was near (its deadline, or too little work left for another attempt)".into());
                 break 'ladder;
             }
             // The skeleton and the plane stubs only help when the plain
@@ -2867,6 +2899,9 @@ pub fn route_kicad_board(
             }
             if spent(ladder_work) > ladder_budget {
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
+                skipped.push(format!(
+                    "further rungs of the attempt ladder did not run: its budget of {ladder_budget:.0} s of work was used (ladder_budget_seconds)"
+                ));
                 break 'ladder;
             }
         }
@@ -2933,6 +2968,27 @@ pub fn route_kicad_board(
         }
     }
     let mut narrow_step_relaxed = false;
+    // Why a step for a board with connections open does not run, in the
+    // order its conditions are checked.
+    let blocked = || -> Option<&'static str> {
+        if spent(ladder_work) >= 1.5 * ladder_budget {
+            Some("the ladder's budget was used (ladder_budget_seconds)")
+        } else if past_deadline() {
+            Some("the deadline was reached")
+        } else if no_time_for_another() {
+            Some("too little work was left for another attempt")
+        } else {
+            None
+        }
+    };
+    if let (Some((opens, _)), Some(_), Some(narrow)) = (best.as_ref(), best_attempt.as_ref(), config.narrow_signal_mm)
+        && opens.0 > 0
+        && config.use_narrow_signals.is_none()
+        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+        && let Some(why) = blocked()
+    {
+        skipped.push(format!("the narrow-signal step (signals at {narrow} mm) did not run: {why}"));
+    }
     // Connections still open at the class widths: the best attempt once
     // more with signal nets at the project's smallest predefined width
     // (designers often keep the default class at a power width and draw
@@ -2986,6 +3042,14 @@ pub fn route_kicad_board(
     // Still open, and the project takes clearance findings as warnings:
     // the best attempt once more at the board's minimum clearance, which is
     // what the designer held to.
+    if let (Some((opens, _)), Some(_), Some(relaxed)) = (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
+        && opens.0 > 0
+        && !narrow_step_relaxed
+        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
+        && let Some(why) = blocked()
+    {
+        skipped.push(format!("the minimum-clearance step (clearance {relaxed} mm) did not run: {why}"));
+    }
     if let (Some((opens, _)), Some((attempt, connect)), Some(relaxed)) =
         (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
         && opens.0 > 0
@@ -3023,7 +3087,7 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
     }
-    let mut result = best.expect("at least one routing attempt").1;
+    let (final_open, mut result) = best.expect("at least one routing attempt");
     result.pin_swaps = pin_swaps;
     if prepared {
         fs::remove_dir_all(&poured_directory).map_err(|error| error.to_string())?;
@@ -3079,6 +3143,11 @@ pub fn route_kicad_board(
         }
     }
     result.cut = core::router::wall_cuts();
+    result.work_seconds = ladder_work;
+    // What did not run matters only to a board left incomplete.
+    if final_open.0 > 0 || final_open.1 > 0 {
+        result.skipped = skipped;
+    }
     let report_path = output_directory.join("board-router.json");
     fs::write(
         &report_path,
@@ -3516,6 +3585,8 @@ pub(super) fn finish_routed_board(
             ..diagnostics(board, result, layer_names)
         },
         cut: Vec::new(),
+        work_seconds: 0.0,
+        skipped: Vec::new(),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

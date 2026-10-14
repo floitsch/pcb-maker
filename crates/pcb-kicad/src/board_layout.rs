@@ -464,7 +464,7 @@ pub fn layout_kicad_board(
     } else {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)?;
+        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?).map_err(crate::verdict::input_error)?;
         &with_classes
     };
     // Every route of the layout ends by a wall-clock guard past its total
@@ -492,7 +492,7 @@ pub fn layout_kicad_board(
         router.config_mut().deadline_work = Some(own + (work_deadline - work).max(0.0));
     };
     let wall_passed = || router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
-    let mut placer_config = resolve_constraints(&config.placer, source_directory)?;
+    let mut placer_config = resolve_constraints(&config.placer, source_directory).map_err(crate::verdict::input_error)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
@@ -531,7 +531,7 @@ pub fn layout_kicad_board(
     // A congestion model ranks more of the placer's seeds than the race
     // could probe.
     let congestion_model = match &config.congestion_model {
-        Some(path) => Some(pcb_congestion::CongestionModel::load(path)?),
+        Some(path) => Some(pcb_congestion::CongestionModel::load(path).map_err(crate::verdict::input_error)?),
         None => None,
     };
     // Only where the race runs: one router seed, no pin swaps.
@@ -541,7 +541,7 @@ pub fn layout_kicad_board(
         && config.pin_swaps.is_none()
         && config.swappable.is_empty();
     if config.congestion_score != "none" && config.congestion_score != "rudy" && congestion_model.is_none() {
-        return Err(format!("congestion_score {:?} needs a congestion_model", config.congestion_score));
+        return Err(crate::verdict::input_error(format!("congestion_score {:?} needs a congestion_model", config.congestion_score)));
     }
     if pre_ranking {
         placer_config.placement_seeds = placer_config.placement_seeds.max(config.congestion_candidates);

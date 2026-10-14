@@ -130,6 +130,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   vias) from the project's `.kicad_pro`.
 - **Only routing?** When the placement is already final, use
   `pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto`.
+- **A designer's board as the reference.** When the board comes from a
+  finished design, `--reference <its-project-dir>` makes its own DRC
+  errors pre-existing (see 4).
 - **Router options.** Pass a JSON file instead of `auto`, for example
   `{"seeds": 4}`. The rules still come from the project.
   - `seeds`: route that many ways in parallel and keep the best: fewest
@@ -189,7 +192,67 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      at most 600 s while connections are open and 60 s
      (`polish_seconds`) once everything is routed.
 
-## 4. Read the verdict: `<out-dir>/board-layout.json`
+## 4. Read the verdict: exit code and `<out-dir>/verdict.json`
+
+Every run of `route-kicad-board`, `layout-kicad-board` and
+`place-kicad-board` ends with an exit code and a verdict that say the
+same. `pcb-maker --help` and `pcb-maker <command> --help` list them too.
+
+| Exit | `verdict.status` | Meaning | What to do |
+| --- | --- | --- | --- |
+| 0 | `complete` | The run finished and the result passes. | Use it. |
+| 1 | `incomplete` | The run finished and wrote its result, but connections are open, there are new DRC errors, constraints are missed or parts found no place. | Read `next_actions`. |
+| 2 | `usage_error` | Bad arguments or input: a missing file, invalid JSON, an unknown key or part, an output directory that exists. Nothing was routed. | Fix the input the message names. |
+| 3 | `cut` | Incomplete, and the wall clock (not the work) cut the run short (`cut`): the result depends on the machine's load. | Rerun on a less loaded machine or with a larger budget. |
+| 4 | `internal_error` | An internal error or a panic. | Report it with the input. |
+
+A process killed by a signal (a harness's timeout, out of memory) has no
+verdict; its exit status is the signal's (128 + n in a shell). Errors
+and incomplete results print one line on stderr.
+
+**The pass rule** is the benchmarks' (`benchmarks/agent-tasks/run.py`):
+KiCad's own DRC on the result decides, not the router's count. A result is
+complete when KiCad reports no unconnected item and no error beyond the
+ones the reference board already has, counted per type. Warnings,
+excluded findings and cosmetic types (`silk_*`, `text_*`, library
+findings, `missing_courtyard`, `isolated_copper`) do not count. A layout or
+placement must also place every part and keep every constraint. Without
+KiCad's check (`PCB_SKIP_NATIVE`), the router's own count decides.
+
+**The reference board** is where pre-existing findings come from (a
+fiducial near a hole, a rule the designer tightened later): `--reference
+<project-dir>` names it. Route mode defaults to the input project (its
+board as given); layout mode to none, since its input is not a placed
+board. `--reference none` counts every error. The reference is checked
+(one more KiCad DRC, kept as `reference-drc.json`) only when the result has
+errors that count.
+
+`<out-dir>/verdict.json` is written for every run that got as far as an
+output directory, also for an error (with `error`) or when the layout
+stopped because parts found no place (then there is no `board-layout.json`).
+A finished run also carries it as `verdict` in its report:
+
+| Field | Meaning |
+| --- | --- |
+| `status`, `exit_code`, `reason` | As above; `reason` is one line. |
+| `open_connections`, `unconnected_terminals` | The router's own count of unfinished connections and unreached pads. |
+| `kicad_unconnected_items` | KiCad's count, which decides (`null`: KiCad did not check). |
+| `new_findings` | KiCad errors per type beyond the reference's: the run's own. |
+| `preexisting_findings`, `preexisting_from` | Errors per type the reference board has too, and its project. |
+| `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
+| `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
+| `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. |
+| `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
+| `work_seconds`, `wall_seconds` | The work done (seconds of an idle machine, what budgets count) and the wall clock. |
+| `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
+| `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
+| `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
+
+The other commands exit 0 when done, 1 when their result is incomplete
+(`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with
+footprints missing), 2 on usage or input errors and 4 on internal errors.
+
+### The layout's report: `<out-dir>/board-layout.json`
 
 | Field | Meaning |
 | --- | --- |

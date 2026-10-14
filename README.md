@@ -94,8 +94,11 @@ are used: pads are connected to their pour, islands are stitched, and if
 that leaves something open the pour nets are routed as tracks instead.
 `<out-dir>` must not exist yet; it receives a copy of the project with the
 routed board, KiCad's ERC and DRC reports, and `board-router.json` with
-per-net results. The exit code is non-zero if anything is unconnected or
-violates a rule.
+per-net results. The exit code says how it went: 0 complete (KiCad finds
+nothing unconnected and no error beyond the input board's own), 1
+incomplete, 2 a usage or input error, 3 incomplete because the wall clock
+cut the run short, 4 an internal error; `verdict.json` says the same with
+the details ([docs/agents.md](docs/agents.md#4-read-the-verdict-exit-code-and-out-dirverdictjson)).
 
 ### Place and route
 

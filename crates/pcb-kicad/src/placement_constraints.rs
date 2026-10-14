@@ -301,7 +301,7 @@ pub enum KiCadConstraintsSource {
     Inline(KiCadPlacementConstraints),
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KiCadConstraintStatus {
     pub kind: String,
     pub part: String,

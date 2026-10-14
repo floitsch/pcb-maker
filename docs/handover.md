@@ -664,6 +664,80 @@ different priority (Telemetry, 5); marginal fine-pitch clearance within a
 few microns; hatched fill lying over thermal pads without relief (not
 understood); per-track DRC subtleties with islands.
 
+## Committed on 2026-10-14 (CLI exit codes)
+
+A benchmark agent found `route-kicad-board` exiting 1 on most harvested
+boards with 0 open connections: the CLI failed on any error-severity DRC
+finding, the designer's own included (USB_Cable_Tester on its v15
+placement, x782: 54/54 routed, KiCad 0 unconnected, one `courtyards_overlap`
+H4/J2 that the designer's board has too; Castor: 126/126, KiCad 0
+unconnected, 4 `solder_mask_bridge` and 3 `starved_thermal`, exactly the
+designer's board's, plus a cosmetic `footprint_type_mismatch`). The
+layout's exit code used the router's count instead (pads joined through a
+pour's fill counted open), and every error, a missing file and a panic
+alike, exited 1 (a panic 101).
+
+The contract now (`pcb-maker --help`, docs/agents.md section 4):
+
+| Exit | Status | When |
+| --- | --- | --- |
+| 0 | complete | KiCad: no unconnected item, no error beyond the reference board's per type (cosmetic types and warnings never count); layouts and placements also place every part and keep every constraint |
+| 1 | incomplete | finished, result written, but not complete |
+| 2 | usage_error | arguments, missing or invalid inputs, unknown keys or parts (`pcb_kicad::input_error` marks the library's input-stage errors), output directory exists (now checked before the run, not after an hour of routing) |
+| 3 | cut | incomplete and `cut` non-empty (a complete result with a cut is 0) |
+| 4 | internal_error | other errors and panics (one stderr line; the panic hook keeps the default report only with `RUST_BACKTRACE`) |
+
+The rule is run.py's: KiCad decides, not the router's count; the
+reference's errors are subtracted per type (`pcb_kicad::verdict`, unit
+tests there). The reference is `--reference <project-dir>`: route mode
+defaults to its input as given (for a harvested board, the designer's
+routed board, which is run.py's `designer_findings`), layout mode to none
+(its input is stacked parts); it is checked only when the result has errors
+that count (one more KiCad DRC, `reference-drc.json`). Schematic parity is
+reported, not judged (run.py does not judge it either; the old route check
+did).
+
+Every route, layout and placement writes `<out>/verdict.json` (also on an
+error once the output directory exists, and for a layout whose parts found
+no place, which writes no board-layout.json, so that scripts' "report
+missing" test still means "no layout") and the same as `verdict` in its
+report: status, exit code, one-line reason, router and KiCad open counts,
+new and pre-existing findings by type, cosmetic and warning counts, cut,
+work and wall seconds, absolute output paths, skipped ladder steps and
+next actions. board-router.json gained `work_seconds` (the ladder's work)
+and `skipped` (the narrow-signal and minimum-clearance steps, finer
+lattices and further rungs that did not run while connections were open,
+with why). run.py records `exit` and `verdict` per row and takes a missing
+report's error from verdict.json; its pass rule is unchanged. freerouting.py
+and the corpus and PCBench runners read only the reports; they are
+unchanged (their route runs now pay the reference DRC on boards whose
+result has errors: about 10-50 s of wall clock, not in `routing_seconds`).
+
+Found on the way: every route-mode run that skipped the probe ladder
+reported `cut: ["ladder"]` (x746 to x782): the ladder's `spent` noted a
+cut whenever the wall clock over 4 was ahead of the work, which at the
+ladder's start (0 s of work) is always. The guard now takes over only when
+the wall clock is ahead by more than a twentieth of the ladder's budget
+(60 s of work by default); below that the shares are the work's alone.
+USB_Cable_Tester routes the same board (86 vias, 2292.4 mm).
+
+Verified: USB_Cable_Tester route on its v15 placement, exit 1 (x782) to 0
+(x790), the courtyard overlap pre-existing; Castor (wntrblm mainboard, v15 placement) exit 1
+to 0 with the same board as x782 (126/126, 225 vias, 5186.2 mm), its 4
+solder_mask_bridge and 3 starved_thermal pre-existing in the input as in
+the designer's board, 419 s wall for 399 s of work, the reference DRC
+included; the tiny
+three-pad fixture in route, place and layout mode (complete, unplaced parts,
+a missed `near`), usage errors and a forced panic
+(`tests/cli_exit_codes.rs`, `PCB_MAKER_TEST_PANIC`).
+
+Left for agents to work around: a process killed by a signal (a harness's
+timeout, the OOM killer) has no verdict; `import-kicad-netlist` now exits 1
+when footprints are missing; research commands keep 0/1/2 (+4 on a panic)
+without the incomplete/internal distinction. Tests: pcb-kicad, pcb-router,
+pcb-placer and tests/cli_exit_codes.rs pass; tests/kicad_ladder.rs fails 3
+of 9 (the research ladder; a 2026-09-30 build fails there too).
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

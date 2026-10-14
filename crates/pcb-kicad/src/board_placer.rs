@@ -3020,10 +3020,11 @@ pub fn place_kicad_board(
 ) -> Result<KiCadBoardPlacerResult, String> {
     let started = std::time::Instant::now();
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
+    // Errors up to the lowering are the input's (`input_error`).
     let source = fs::read_to_string(&source_board)
-        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let mut pcb = parse(&source)?;
-    let mut config = resolve_constraints(config, source_directory)?;
+        .map_err(|error| crate::verdict::input_error(format!("failed to read {}: {error}", source_board.display())))?;
+    let mut pcb = parse(&source).map_err(crate::verdict::input_error)?;
+    let mut config = resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
         || config.hole_clearance_mm.is_none()
@@ -3050,7 +3051,7 @@ pub fn place_kicad_board(
         config.holes_in_courtyards_error =
             Some(holes_in_courtyards_error(&source_directory.join(format!("{board_id}.kicad_pro"))));
     }
-    let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)?;
+    let edges_chosen = choose_any_edges(source_directory, board_id, &mut config).map_err(crate::verdict::input_error)?;
     let config = &config;
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
@@ -3058,16 +3059,16 @@ pub fn place_kicad_board(
     {
         let mut part_area = 0.0;
         for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-            let (_, size, _) = local_body(footprint)?;
+            let (_, size, _) = local_body(footprint).map_err(crate::verdict::input_error)?;
             part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
         }
-        outline_size = Some(apply_outline(&mut pcb, outline, part_area)?);
+        outline_size = Some(apply_outline(&mut pcb, outline, part_area).map_err(crate::verdict::input_error)?);
     }
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
-        apply_keepouts(&mut pcb, &constraints.keepout)?;
-        apply_sides(&mut pcb, constraints)?;
+        apply_keepouts(&mut pcb, &constraints.keepout).map_err(crate::verdict::input_error)?;
+        apply_sides(&mut pcb, constraints).map_err(crate::verdict::input_error)?;
     }
-    let mut lowered = lower_placement(&pcb, config, &[])?;
+    let mut lowered = lower_placement(&pcb, config, &[]).map_err(crate::verdict::input_error)?;
     if let Some(designer) = std::env::var_os("PCB_PLACER_DESIGNER") {
         diagnose_designer(&lowered, Path::new(&designer))?;
     }

@@ -362,8 +362,23 @@ def run_admitted(task, arguments, token):
         row.update(error=f"timed out after {arguments.timeout} s", cut=["timeout"], **{"pass": False})
         return row
     report = work / "layout/board-layout.json"
+    # The binary's own verdict (docs/agents.md, "Exit codes"): its status
+    # and exit code go into the row; the pass rule below stays the
+    # runner's (it knows the task's expected misses and the designer's
+    # findings).
+    row["exit"] = code
+    verdict_file = work / "layout/verdict.json"
+    verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else None
+    if verdict:
+        row["verdict"] = verdict.get("status")
     if not report.exists():
-        row["error"] = output.strip().splitlines()[-1][:300] if output.strip() else "no output"
+        if verdict:
+            # Parts without a legal place, or an error: the verdict says which.
+            row["error"] = verdict.get("reason", "")[:300]
+            if verdict.get("cut"):
+                row["cut"] = verdict["cut"]
+        else:
+            row["error"] = output.strip().splitlines()[-1][:300] if output.strip() else "no output"
         row["pass"] = False
         return row
     result = json.loads(report.read_text())

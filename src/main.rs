@@ -2,6 +2,7 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
+mod agent_cli;
 mod freerouting_backend;
 
 use pcb_core::{
@@ -27,18 +28,229 @@ fn select_base_placement_fallback(
     fallback_final_rung.is_some_and(|fallback| fallback >= feedback_final_rung)
 }
 
+/// The first panic's message and place, for the one line `main` prints.
+static PANIC: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
+    // A panic is reported as one line (and in the run's report) by `main`;
+    // RUST_BACKTRACE keeps the default report with its backtrace too.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|text| text.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".into());
+        let place = info.location().map(|location| format!(" at {}:{}", location.file(), location.line())).unwrap_or_default();
+        if let Ok(mut first) = PANIC.lock()
+            && first.is_none()
+        {
+            *first = Some(format!("{}{place}", message.lines().next().unwrap_or("")));
+        }
+        if env::var_os("RUST_BACKTRACE").is_some() {
+            default_hook(info);
+        }
+    }));
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    let outcome = std::panic::catch_unwind(|| dispatch(arguments));
+    let code = match outcome {
+        Ok(code) => code,
+        Err(_) => {
+            let message = PANIC.lock().ok().and_then(|first| first.clone()).unwrap_or_else(|| "unknown panic".into());
+            let message = format!("internal error (panic): {message}");
+            agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, &message);
+            eprintln!("error: {message}");
+            pcb_kicad::EXIT_INTERNAL
+        }
+    };
+    ExitCode::from(code)
+}
+
+/// Runs a command and returns its exit code (`agent_cli::EXIT_CODES`).
+fn dispatch(arguments: Vec<String>) -> u8 {
+    let command = arguments.first().cloned().unwrap_or_else(|| "help".into());
+    let rest: Vec<String> = arguments.iter().skip(1).cloned().collect();
+    // pcb-maker <command> --help, pcb-maker help <command>.
+    let asked = if command == "help" || command == "--help" || command == "-h" {
+        Some(rest.first().cloned())
+    } else if rest.iter().any(|argument| argument == "--help" || argument == "-h") {
+        Some(Some(command.clone()))
+    } else {
+        None
+    };
+    if let Some(topic) = asked {
+        return match topic {
+            None => {
+                print_help();
+                pcb_kicad::EXIT_COMPLETE
+            }
+            Some(topic) => match agent_cli::help(&topic).or_else(|| research_usage(&topic)) {
+                Some(help) => {
+                    println!("{help}");
+                    pcb_kicad::EXIT_COMPLETE
+                }
+                None => {
+                    eprintln!("error: unknown command {topic:?}; pcb-maker --help lists them");
+                    pcb_kicad::EXIT_USAGE
+                }
+            },
+        };
+    }
+    if let Some(outcome) = agent_cli::run(&command, rest) {
+        return match outcome {
+            Ok(status) => status.exit_code(),
+            Err(agent_cli::Failure::Usage(message)) => {
+                agent_cli::report_failure(pcb_kicad::KiCadRunStatus::UsageError, &message);
+                eprintln!("error: {}", one_line(&message));
+                pcb_kicad::EXIT_USAGE
+            }
+            Err(agent_cli::Failure::Internal(message)) => {
+                agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, &message);
+                eprintln!("error: {}", one_line(&message));
+                pcb_kicad::EXIT_INTERNAL
+            }
+        };
+    }
+    // Research and benchmark commands: usage errors exit 2, anything else
+    // that fails (or is incomplete) 1.
+    match run(arguments) {
+        Ok(()) => pcb_kicad::EXIT_COMPLETE,
         Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
+            eprintln!("error: {}", one_line(&error));
+            if error.starts_with("usage:") || error.starts_with("unknown command") {
+                pcb_kicad::EXIT_USAGE
+            } else {
+                pcb_kicad::EXIT_INCOMPLETE
+            }
         }
     }
 }
 
-fn run() -> Result<(), String> {
-    let mut arguments = env::args().skip(1);
+/// An error message as one line (kicad-cli transcripts span many).
+fn one_line(message: &str) -> String {
+    let mut lines = message.lines().filter(|line| !line.trim().is_empty());
+    let first = lines.next().unwrap_or("").to_string();
+    let more = lines.count();
+    if more == 0 { first } else { format!("{first} (+{more} more lines)") }
+}
+
+fn print_help() {
+    println!("pcb-maker: automatic placement and routing for KiCad boards, judged by KiCad's own ERC and DRC.\n");
+    println!("Commands for agents (pcb-maker <command> --help for its arguments and defaults):");
+    for (name, line, _) in agent_cli::AGENT_COMMANDS {
+        println!("  {name:<24} {line}");
+    }
+    println!("\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, export-kicad-fab");
+    println!("(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 9 or newer) must be");
+    println!("on the PATH.\n");
+    println!("{}\n", agent_cli::EXIT_CODES);
+    println!("Environment:");
+    println!("  RAYON_NUM_THREADS          search threads of the router; default: every core.");
+    println!("  PCB_ROUTER_SEEDS           with router config auto: route that many ways and keep the best; default 1.");
+    println!("  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then the");
+    println!("                             router's own count); default unset.");
+    println!("  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset.");
+    println!("  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds; default unset.\n");
+    println!("Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,");
+    println!("4 panic):");
+    for line in RESEARCH_USAGE {
+        println!("  pcb-maker {line}");
+    }
+}
+
+/// The usage line of a research command.
+fn research_usage(command: &str) -> Option<String> {
+    RESEARCH_USAGE
+        .iter()
+        .find(|line| line.split_whitespace().next() == Some(command))
+        .map(|line| format!("usage: pcb-maker {line}"))
+}
+
+/// Usage lines of the research and benchmark commands, without the
+/// leading `pcb-maker`.
+const RESEARCH_USAGE: &[&str] = &[
+    "check <problem.json>",
+    "validate <problem.json> <candidate-or-result.json>",
+    "insert-connection <source.problem.json> <target.problem.json> <parent.candidate-or-result.json> <output.json> [config.json]",
+    "place <problem.json> <policy-name|config.json> [result.json]",
+    "trace-placement <problem.json> <policy-name|config.json> <trace.json>",
+    "route-grid <problem.json> [result.json] [routing-config.json]",
+    "route-grid-negotiated <problem.json> [result.json] [negotiated-config.json]",
+    "explore-conflict-actions <problem.json> [result.json] [config.json]",
+    "search-conflict-actions <problem.json> [result.json] [config.json]",
+    "continue-board <problem.json> [result.json] [config.json] [progress-prefix]",
+    "place-route-grid <problem.json> <policy-name|config.json> [result.json] [routing-config.json]",
+    "place-route-grid-negotiated <problem.json> <policy-name|config.json> [result.json] [negotiated-config.json]",
+    "analyze-corridors <problem.json> <policy-name|config.json> [result.json] [corridor-config.json]",
+    "analyze-route-families <problem.json> <policy-name|config.json> [result.json] [family-config.json]",
+    "repair-route-families <problem.json> <candidate-or-result.json> [result.json] [family-config.json]",
+    "repair-route-grid <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [repair-config.json]",
+    "optimize-route-junctions <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [junction-config.json]",
+    "repair-route-pressure <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [pressure-config.json]",
+    "repair-route-order <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [repair-config.json]",
+    "repair-route-ripup <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [ripup-config.json]",
+    "view-route <problem.json> <candidate-or-result.json> [output.html]",
+    "render-route-layers <problem.json> <candidate-or-result.json> <output-prefix>",
+    "view-continuous-repair <route-family-result.json> [output.html]",
+    "relax-continuous <problem.json> [result.json] [viewer.html] [subdivide|preserve-seed]",
+    "generate-semantic-kicad-ladder <problem.json> <placement-policy|config.json> <template-config.json> <output-directory>",
+    "solve-semantic-kicad-prefix <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <output-directory> [insertion-config.json]",
+    "materialize-kicad-rung <declaration.json> <rung> <output-directory>",
+    "insert-kicad-connection <declaration.json> <parent-rung-directory> <transaction-directory> [config.json]",
+    "progress-kicad-connections <declaration.json> <initial-parent-directory> <progression-directory> [config.json]",
+    "verify-kicad-rung <directory> <board-id>",
+    "normalize-kicad-footprint-links <directory> <board-id> [report.json]",
+    "shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>",
+    "inspect-kicad-board <board.kicad_pcb>",
+    "inspect-kicad-connections <board.kicad_pcb>",
+    "route-kicad-connection <board.kicad_pcb> <connection> <candidate.json> [config.json]",
+    "import-kicad-route-candidate <board.kicad_pcb> <connection> <candidate.json>",
+    "apply-kicad-route-candidate <board.kicad_pcb> <candidate.json> <output.kicad_pcb>",
+    "relax-kicad-reference-fields <board.kicad_pcb> <candidate.json> <drc.json> <iteration> <output-candidate.json> <evidence.json>",
+    "search-kicad-reference-fields <source-rung-directory> <board-id> <candidate.json> <output-directory>",
+    "render-kicad-layers <board.kicad_pcb> <output-prefix> [config.json]",
+    "measure-kicad-route-candidate <candidate.json>",
+    "shorten-kicad-route-candidate <board.kicad_pcb> <candidate.json> <output-candidate.json> <evidence.json> [config.json]",
+    "resistor-field [output.html]",
+    "resistor-ablation [output-prefix]",
+    "relax-kicad-route-candidate <board.kicad_pcb> <candidate.json> <committed-candidate.json> <proposal-candidate.json> <evidence.json> <config.json>",
+    "solve-semantic-kicad-placement-portfolio <problem.json> <placement-portfolio.json> <template-config.json> <target-rung> <output-directory> [insertion-config.json]",
+    "solve-semantic-kicad-order-portfolio <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <order-search-config.json> <output-directory> [insertion-config.json]",
+    "place-route-grid-width-continuation <problem.json> <placement-policy|config.json> <width-continuation-config.json> <output-directory>",
+    "solve-semantic-kicad-prefix-feedback <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <output-directory> <dut-routing-config.json> <pressure-config.json> [insertion-config.json]",
+    "diagnose-kicad-yielding-connections <board.kicad_pcb> <target-connection> <evidence.json> [config.json]",
+    "repair-kicad-single-connection-ripup <unrouted-target-directory> <board-id> <target-connection> <output-directory> [config.json]",
+    "search-kicad-via-actions <source-rung-directory> <board-id> <candidate.json> <output-directory> <config.json>",
+    "refine-kicad-vias <source-directory> <board-id> <candidate.json> <output-directory> <config.json>",
+    "discover-kicad-vias <board.kicad_pcb> <output-directory> <config.json>",
+    "replace-kicad-connection-with-zones <source-rung-directory> <board-id> <output-directory> <config.json>",
+    "materialize-route-family-portfolio <problem.json> <portfolio.json> <policy-name|config.json> [result.json]",
+    "benchmark-route-freerouting <benchmark.json> <output-directory>",
+    "benchmark-route-compare <comparison.json> <output-directory>",
+    "benchmark-route-corpus <corpus.json> <output-directory>",
+    "inspect-kicad-terminal-access <board.kicad_pcb> <connection> <report.json> [config.json]",
+    "inspect-kicad-routing-cut <board.kicad_pcb> <connection> <report.json> [config.json]",
+    "route-kicad-board-sequential <source-directory> <board-id> <output-directory> <config.json>",
+    "resume-kicad-board-sequential <checkpoint-directory> <output-directory> <resume-config.json>",
+    "bridge-kicad-open-connections <source-directory> <board-id> <config.json> <output-directory>",
+    "relax-kicad-joint-routes <source-directory> <board-id> <target-candidate.json> <config.json> <output-directory>",
+    "inspect-kicad-route-obstructions <board.kicad_pcb> <candidate.json> <routing-config.json> <output.json>",
+    "propose-kicad-pad-pair-route <board.kicad_pcb> <request.json> <output-directory>",
+    "route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>",
+    "route-kicad-board-adaptive <source-directory> <board-id> <output-directory> <config.json>",
+    "search-kicad-board-sequential-orders <source-directory> <board-id> <output-directory> <config.json>",
+    "export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]",
+    "score-congestion-sample <sample.json> <model.onnx>",
+    "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
+    "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
+    "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
+];
+
+/// The commands without the agent contract (and the agent commands that
+/// only read and write files, which `agent_cli` checks first).
+pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
+    let mut arguments = arguments.into_iter();
     let command = arguments.next().unwrap_or_else(|| "help".into());
     match command.as_str() {
         "check" => {
@@ -2228,10 +2440,7 @@ fn run() -> Result<(), String> {
             if report["silkscreen_complete"] == true {
                 Ok(())
             } else {
-                Err(
-                    "silkscreen repair remains incomplete; retained native report and rendering"
-                        .into(),
-                )
+                Err(agent_cli::SILKSCREEN_INCOMPLETE.into())
             }
         }
         "normalize-kicad-footprint-links" => {
@@ -2343,6 +2552,9 @@ fn run() -> Result<(), String> {
             }
             let report = pcb_kicad::import_kicad_netlist(Path::new(&input), Path::new(&output), &board_id, layers)?;
             println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+            if !report.missing.is_empty() {
+                return Err(agent_cli::IMPORT_INCOMPLETE.into());
+            }
             Ok(())
         }
         "export-kicad-fab" => {
@@ -2502,137 +2714,6 @@ fn run() -> Result<(), String> {
             println!("{}", serde_json::to_string(&reports).map_err(|error| error.to_string())?);
             Ok(())
         }
-        "layout-kicad-board" => {
-            let usage = "usage: pcb-maker layout-kicad-board <source-directory> <board-id> <output-directory> [router-config.json|auto] [layout-config.json]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            let config: pcb_kicad::KiCadBoardLayoutConfig = match arguments.next() {
-                Some(path) => serde_json::from_str(
-                    &std::fs::read_to_string(&path)
-                        .map_err(|error| format!("failed to read {path}: {error}"))?,
-                )
-                .map_err(|error| format!("failed to parse {path}: {error}"))?,
-                None => Default::default(),
-            };
-            let result = pcb_kicad::layout_kicad_board(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-                &config,
-                &router,
-            )?;
-            if let Some(size) = result.outline_sizing.iter().find(|trial| trial.used).and_then(|trial| trial.size_mm) {
-                println!(
-                    "outline: {:.1} x {:.1} mm, sized from the parts ({} tried)",
-                    size[0],
-                    size[1],
-                    result.outline_sizing.len()
-                );
-            }
-            println!(
-                "placed in {:.1}s; first route {:.1}s: {} open, {} vias, {:.0} mm",
-                result.placement_seconds,
-                result.first_route_seconds,
-                result.first_unconnected_terminals,
-                result.first_vias,
-                result.first_length_mm,
-            );
-            for step in &result.moves {
-                println!(
-                    "move {} {:?} -> {:?}: {} nets rerouted in {:.1}s, {} open, {} vias, {:.0} mm{}",
-                    step.reference,
-                    step.from,
-                    step.to,
-                    step.rerouted_nets,
-                    step.seconds,
-                    step.unconnected_terminals,
-                    step.vias,
-                    step.length_mm,
-                    if step.kept { " (kept)" } else { "" },
-                );
-            }
-            println!(
-                "final: routed {}/{} connections, {} vias, {:.1} mm, native complete={}",
-                result.routed.routed_connections,
-                result.routed.routable_connections,
-                result.routed.vias,
-                result.routed.length_mm,
-                result.routed.native.as_ref().map(|native| native.complete).unwrap_or(false),
-            );
-            let missed: Vec<String> = result
-                .constraints
-                .iter()
-                .filter(|status| !status.satisfied)
-                .map(|status| format!("{} {} ({:.1} mm)", status.kind, status.part, status.violation_mm))
-                .collect();
-            println!(
-                "constraints: {} of {} kept{}",
-                result.constraints.len() - missed.len(),
-                result.constraints.len(),
-                if missed.is_empty() { String::new() } else { format!("; missed: {}", missed.join(", ")) }
-            );
-            println!(
-                "silkscreen: {} labels moved{}",
-                result.labels.moved,
-                if result.labels.stuck.is_empty() { String::new() } else { format!(", no room for {:?}", result.labels.stuck) }
-            );
-            if let Some(quality) = &result.quality {
-                let serde_json::Value::Object(report) = serde_json::to_value(quality).map_err(|error| error.to_string())? else {
-                    unreachable!();
-                };
-                let decoupling = &report["decoupling"];
-                if decoupling["capacitors"].as_u64().unwrap_or(0) > 0 {
-                    println!(
-                        "decoupling: capacitors a median {} mm from a supply pin, {} within 3 mm",
-                        decoupling["capacitor_median_mm"], decoupling["capacitors_within_3mm"]
-                    );
-                }
-                for (key, label) in [("crystals", "crystal"), ("switch_inductors", "switch inductor"), ("esd", "ESD protector")] {
-                    for entry in report[key].as_array().into_iter().flatten() {
-                        let (name, distance) = match entry {
-                            serde_json::Value::Array(pair) => (pair[0].clone(), pair[1].clone()),
-                            other => (other["reference"].clone(), other["longest_mm"].clone()),
-                        };
-                        println!("{label} {}: {} mm from its pins", name.as_str().unwrap_or("?"), distance);
-                    }
-                }
-                for hot in report["hot_parts"].as_array().into_iter().flatten() {
-                    let planes: Vec<&str> = hot["planes"].as_array().into_iter().flatten().filter_map(|layer| layer.as_str()).collect();
-                    println!(
-                        "hot part {}: {} mm² pad on {}, {}, {} vias in the pad, {} mm² of tracks near it",
-                        hot["reference"].as_str().unwrap_or("?"),
-                        hot["pad_mm2"],
-                        hot["net"].as_str().unwrap_or("?"),
-                        if planes.is_empty() { "no plane".to_string() } else { format!("planes on {}", planes.join(", ")) },
-                        hot["vias_in_pad"],
-                        hot["track_mm2"]
-                    );
-                }
-                let cost = &report["cost"];
-                let totals: Vec<String> = cost["fabs"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|fab| {
-                        let currency = fab["currency"].as_str().unwrap_or("");
-                        let assembly = fab["assembly"].as_f64();
-                        let board = fab["total"].as_f64().unwrap_or(0.0) - assembly.unwrap_or(0.0);
-                        let assembly = assembly.map_or(String::new(), |assembly| format!(" (+ {assembly} {currency} assembly)"));
-                        format!("{} {:.2} {currency}{assembly}", fab["fab"].as_str().unwrap_or(""), board)
-                    })
-                    .collect();
-                println!("cost of {} boards (estimate, parts excluded): {}", cost["quantity"], totals.join(", "));
-                for hint in cost["hints"].as_array().into_iter().flatten() {
-                    println!("cost hint: {}", hint.as_str().unwrap_or(""));
-                }
-            }
-            if result.routed.unconnected_terminals > 0 || !result.routed.internal_violations.is_empty() {
-                return Err("layout is not electrically complete".into());
-            }
-            Ok(())
-        }
         "swap-kicad-pins" => {
             let usage = "usage: pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-swaps.json> [config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
@@ -2668,103 +2749,6 @@ fn run() -> Result<(), String> {
                 result.schematic_labels_changed,
                 result.seconds,
             );
-            Ok(())
-        }
-        "place-kicad-board" => {
-            let usage = "usage: pcb-maker place-kicad-board <source-directory> <board-id> <output-directory> [config.json]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let mut config: pcb_kicad::KiCadBoardPlacerConfig = match arguments.next() {
-                Some(path) => serde_json::from_str(
-                    &std::fs::read_to_string(&path)
-                        .map_err(|error| format!("failed to read {path}: {error}"))?,
-                )
-                .map_err(|error| format!("failed to parse {path}: {error}"))?,
-                None => Default::default(),
-            };
-            // The layout's placement budget, for measurements of the
-            // placement alone (the layout gives it 600 s of work).
-            if let Some(seconds) = std::env::var("PCB_PLACER_WORK_SECONDS").ok().and_then(|value| value.parse().ok()) {
-                config.work_seconds = Some(seconds);
-            }
-            let result = pcb_kicad::place_kicad_board(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-                &config,
-            )?;
-            println!(
-                "placed {} of {} components ({} nets): wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
-                result.movable,
-                result.components,
-                result.nets,
-                result.wirelength_source_mm,
-                result.wirelength_global_mm,
-                result.wirelength_legal_mm,
-                result.wirelength_final_mm,
-                result.global_iterations,
-                result.global_overflow,
-                result.unplaced,
-                result.illegal,
-                result.seconds,
-            );
-            if !result.unplaced.is_empty() || !result.illegal.is_empty() {
-                return Err("placement is not legal".into());
-            }
-            Ok(())
-        }
-        "route-kicad-board" => {
-            let usage = "usage: pcb-maker route-kicad-board <source-directory> <board-id> <output-directory> [config.json|auto]";
-            let source = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
-            }
-            let result = pcb_kicad::route_kicad_board(
-                Path::new(&source),
-                &board_id,
-                Path::new(&output),
-                &config,
-            )?;
-            println!(
-                "routed {}/{} connections ({} unconnected terminals), pours {}, {} vias, {:.1} mm, {} iterations; lowering {:.2}s routing {:.2}s internal check {:.2}s ({} violations) native {:.2}s complete={}",
-                result.routed_connections,
-                result.routable_connections,
-                result.unconnected_terminals,
-                result.pours,
-                result.vias,
-                result.length_mm,
-                result.iterations,
-                result.lowering_seconds,
-                result.routing_seconds,
-                result.internal_verification_seconds,
-                result.internal_violations.len(),
-                result.native_verification_seconds,
-                result.native.as_ref().map(|native| native.complete).unwrap_or(false),
-            );
-            if !result.internal_violations.is_empty() {
-                return Err(format!(
-                    "{} internal clearance violation(s); see board-router.json",
-                    result.internal_violations.len()
-                ));
-            }
-            if result.native.as_ref().is_some_and(|native| !native.complete) {
-                // Warnings (silkscreen, text size, missing libraries) do
-                // not make a board incomplete; errors, unconnected items and
-                // schematic mismatches do.
-                let (errors, warnings) = native_findings(&Path::new(&output).join("drc.json"))?;
-                let native = result.native.as_ref().expect("checked above");
-                if errors > 0 || native.selected_net_unconnected_items > 0 || native.schematic_parity_issues > 0 {
-                    return Err(format!(
-                        "native KiCad verification is not complete: {errors} error(s), {} unconnected item(s), {} schematic mismatch(es); see drc.json",
-                        native.selected_net_unconnected_items, native.schematic_parity_issues
-                    ));
-                }
-                eprintln!("native KiCad verification: complete, with {warnings} warning(s); see drc.json");
-            }
             Ok(())
         }
         "dump-pour-map" => {
@@ -3723,72 +3707,6 @@ fn run() -> Result<(), String> {
                     report.totals.failed
                 ))
             }
-        }
-        "help" | "--help" | "-h" => {
-            println!(
-                "usage:\n  pcb-maker check <problem.json>\n  pcb-maker validate <problem.json> <candidate-or-result.json>\n  pcb-maker insert-connection <source.problem.json> <target.problem.json> <parent.candidate-or-result.json> <output.json> [config.json]\n  pcb-maker place <problem.json> <policy-name|config.json> [result.json]\n  pcb-maker trace-placement <problem.json> <policy-name|config.json> <trace.json>\n  pcb-maker route-grid <problem.json> [result.json] [routing-config.json]\n  pcb-maker route-grid-negotiated <problem.json> [result.json] [negotiated-config.json]\n  pcb-maker explore-conflict-actions <problem.json> [result.json] [config.json]\n  pcb-maker search-conflict-actions <problem.json> [result.json] [config.json]\n  pcb-maker continue-board <problem.json> [result.json] [config.json] [progress-prefix]\n  pcb-maker place-route-grid <problem.json> <policy-name|config.json> [result.json] [routing-config.json]\n  pcb-maker place-route-grid-negotiated <problem.json> <policy-name|config.json> [result.json] [negotiated-config.json]\n  pcb-maker analyze-corridors <problem.json> <policy-name|config.json> [result.json] [corridor-config.json]\n  pcb-maker analyze-route-families <problem.json> <policy-name|config.json> [result.json] [family-config.json]\n  pcb-maker repair-route-families <problem.json> <candidate-or-result.json> [result.json] [family-config.json]\n  pcb-maker repair-route-grid <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [repair-config.json]\n  pcb-maker optimize-route-junctions <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [junction-config.json]\n  pcb-maker repair-route-pressure <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [pressure-config.json]\n  pcb-maker repair-route-order <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [repair-config.json]\n  pcb-maker repair-route-ripup <problem.json> <policy-name|config.json> [result.json] [routing-config.json] [ripup-config.json]\n  pcb-maker view-route <problem.json> <candidate-or-result.json> [output.html]\n  pcb-maker render-route-layers <problem.json> <candidate-or-result.json> <output-prefix>\n  pcb-maker view-continuous-repair <route-family-result.json> [output.html]\n  pcb-maker relax-continuous <problem.json> [result.json] [viewer.html] [subdivide|preserve-seed]\n  pcb-maker generate-semantic-kicad-ladder <problem.json> <placement-policy|config.json> <template-config.json> <output-directory>\n  pcb-maker solve-semantic-kicad-prefix <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <output-directory> [insertion-config.json]\n  pcb-maker materialize-kicad-rung <declaration.json> <rung> <output-directory>\n  pcb-maker insert-kicad-connection <declaration.json> <parent-rung-directory> <transaction-directory> [config.json]\n  pcb-maker progress-kicad-connections <declaration.json> <initial-parent-directory> <progression-directory> [config.json]\n  pcb-maker verify-kicad-rung <directory> <board-id>\n  pcb-maker repair-kicad-silkscreen <source-directory> <board-id> <output-directory>\n  pcb-maker normalize-kicad-footprint-links <directory> <board-id> [report.json]\n  pcb-maker strip-kicad-copper <source.kicad_pcb> <output.kicad_pcb> [report.json]\n  pcb-maker inspect-kicad-board <board.kicad_pcb>\n  pcb-maker inspect-kicad-connections <board.kicad_pcb>\n  pcb-maker route-kicad-connection <board.kicad_pcb> <connection> <candidate.json> [config.json]\n  pcb-maker import-kicad-route-candidate <board.kicad_pcb> <connection> <candidate.json>\n  pcb-maker apply-kicad-route-candidate <board.kicad_pcb> <candidate.json> <output.kicad_pcb>\n  pcb-maker relax-kicad-reference-fields <board.kicad_pcb> <candidate.json> <drc.json> <iteration> <output-candidate.json> <evidence.json>\n  pcb-maker search-kicad-reference-fields <source-rung-directory> <board-id> <candidate.json> <output-directory>\n  pcb-maker render-kicad-layers <board.kicad_pcb> <output-prefix> [config.json]\n  pcb-maker measure-kicad-route-candidate <candidate.json>\n  pcb-maker shorten-kicad-route-candidate <board.kicad_pcb> <candidate.json> <output-candidate.json> <evidence.json> [config.json]\n  pcb-maker resistor-field [output.html]\n  pcb-maker resistor-ablation [output-prefix]"
-            );
-            println!(
-                "  pcb-maker relax-kicad-route-candidate <board.kicad_pcb> <candidate.json> <committed-candidate.json> <proposal-candidate.json> <evidence.json> <config.json>"
-            );
-            println!(
-                "  pcb-maker solve-semantic-kicad-placement-portfolio <problem.json> <placement-portfolio.json> <template-config.json> <target-rung> <output-directory> [insertion-config.json]"
-            );
-            println!(
-                "  pcb-maker solve-semantic-kicad-order-portfolio <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <order-search-config.json> <output-directory> [insertion-config.json]"
-            );
-            println!(
-                "  pcb-maker place-route-grid-width-continuation <problem.json> <placement-policy|config.json> <width-continuation-config.json> <output-directory>"
-            );
-            println!(
-                "  pcb-maker solve-semantic-kicad-prefix-feedback <problem.json> <placement-policy|config.json> <template-config.json> <target-rung> <output-directory> <dut-routing-config.json> <pressure-config.json> [insertion-config.json]"
-            );
-            println!(
-                "  pcb-maker diagnose-kicad-yielding-connections <board.kicad_pcb> <target-connection> <evidence.json> [config.json]"
-            );
-            println!(
-                "  pcb-maker repair-kicad-single-connection-ripup <unrouted-target-directory> <board-id> <target-connection> <output-directory> [config.json]"
-            );
-            println!(
-                "  pcb-maker search-kicad-via-actions <source-rung-directory> <board-id> <candidate.json> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker refine-kicad-vias <source-directory> <board-id> <candidate.json> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker discover-kicad-vias <board.kicad_pcb> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker replace-kicad-connection-with-zones <source-rung-directory> <board-id> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker materialize-route-family-portfolio <problem.json> <portfolio.json> <policy-name|config.json> [result.json]"
-            );
-            println!("  pcb-maker benchmark-route-freerouting <benchmark.json> <output-directory>");
-            println!("  pcb-maker benchmark-route-compare <comparison.json> <output-directory>");
-            println!("  pcb-maker benchmark-route-corpus <corpus.json> <output-directory>");
-            println!("  pcb-maker inspect-kicad-board <board.kicad_pcb>");
-            println!("  pcb-maker inspect-kicad-terminal-access <board.kicad_pcb> <connection> <report.json> [config.json]");
-            println!("  pcb-maker inspect-kicad-routing-cut <board.kicad_pcb> <connection> <report.json> [config.json]");
-            println!(
-                "  pcb-maker route-kicad-board-sequential <source-directory> <board-id> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker resume-kicad-board-sequential <checkpoint-directory> <output-directory> <resume-config.json>"
-            );
-            println!(
-                "  pcb-maker bridge-kicad-open-connections <source-directory> <board-id> <config.json> <output-directory>\n  pcb-maker relax-kicad-joint-routes <source-directory> <board-id> <target-candidate.json> <config.json> <output-directory>\n  pcb-maker inspect-kicad-route-obstructions <board.kicad_pcb> <candidate.json> <routing-config.json> <output.json>\n  pcb-maker propose-kicad-pad-pair-route <board.kicad_pcb> <request.json> <output-directory>"
-            );
-            println!(
-                "  pcb-maker route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker route-kicad-board-adaptive <source-directory> <board-id> <output-directory> <config.json>"
-            );
-            println!(
-                "  pcb-maker search-kicad-board-sequential-orders <source-directory> <board-id> <output-directory> <config.json>"
-            );
-            Ok(())
         }
         other => Err(format!("unknown command {other:?}")),
     }
@@ -6508,21 +6426,3 @@ fn board_router_config(
     }
 }
 
-/// Error- and warning-severity findings in a KiCad DRC report, library
-/// metadata warnings left out.
-fn native_findings(report: &Path) -> Result<(usize, usize), String> {
-    let text = std::fs::read_to_string(report).map_err(|error| format!("failed to read {}: {error}", report.display()))?;
-    let report: serde_json::Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
-    let mut errors = 0;
-    let mut warnings = 0;
-    for finding in report["violations"].as_array().into_iter().flatten() {
-        if pcb_kicad::is_library_metadata_warning(finding) {
-            continue;
-        }
-        match finding["severity"].as_str() {
-            Some("error") => errors += 1,
-            _ => warnings += 1,
-        }
-    }
-    Ok((errors, warnings))
-}
