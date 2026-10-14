@@ -21,7 +21,7 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **34 of 109** to a clean KiCad verdict
+  pcb-maker places and routes **45 of 109** to a clean KiCad verdict
   (0 unconnected, no copper error beyond the designer's own board) within
   30 minutes each, every board placed from stacked parts. Most of the
   rest are complete but for a few connections or a few starved thermal

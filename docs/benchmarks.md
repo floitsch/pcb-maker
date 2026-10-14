@@ -1059,3 +1059,73 @@ re-run of everything on 2026-10-07: footprint keepouts, exclusive planes,
 constraints and pin swapping all work there now; the 31 mm boards still do
 not route on 2 layers (8 mm taller they do, with the GND pour in pieces),
 silkscreen stays unplaced.
+
+## Layout sweep v15 (2026-10-14): the spoke model, solid bodies, moving rule areas
+
+`pcb-maker-x723` (b63a604: the KiCad-exact thermal spoke model with manual
+spokes, island vias and stubs, the mask-opening clearance from the project,
+courtyard-less pin-row footprints blocking with their pad box, mask-only
+pads as openings, footprint rule areas moving with their footprint,
+`keep_on_pieces`, far-side and inner-layer pad keepouts) on the v6 tasks, 6
+jobs, 17910 s of wall clock: **45 of 109 pass** (v14: 34); against v14
+better on 20, same on 63, worse on 16; 3700 to 3829 open in all (video's
+499 is KiCad's cap; the 0xCB panel 129 to 210, the allwinner module 8 to
+81 and RP2040_base 100 to 173 carry the rise). Eleven boards that failed
+only on starved thermals or a stray error pass now (PixelWave, k30,
+mackerel-08 and -30, rosco, Castor, Telemetry, MokyaLora, spell_tome, two
+bumwings), zpn_devboard routes clean (its parts had spread over an empty
+breakaway), and link finishes inside the limit. Error rows: the five
+molecule panels and the OpenESC 4in1 panel find no legal placement; katia,
+MegaDrive and the 0xCB pcb-panel hit the 1800 s limit. The worse rows are
+the crowded boards (module, jetson, vaio, woagboard, protoesp, the 0xCB
+panel, video), where a placement change flips the result by tens of
+connections run to run (the routing-room agent's seed pairs; video is not
+even deterministic for one placement, under investigation), and where the
+pin-row rule now forbids the parts-inside-bodies placements that v14
+counted.
+
+Better (first 20 rows of `compare.py`):
+
+board                                                                |                   before |                    after |      s
+-------------------------------------------------------------------- | ------------------------ | ------------------------ | ------
+OpenDrone-hw__OpenESC-30x30__4in1                                    |               61/152 239 |               97/152 124 |    935
+CRImier__MyKiCad__zpn_devboard                                       |               128/167 71 |           167/167 0 pass |    855
+ohdsp__DSP-ADAU1452__DSP-ADAU1452                                    |         118/190 167 +49e |         146/190 105 +59e |   1713
+OpenDrone-hw__OpenESC-20x20__4in1-mini                               |                95/152 96 |               123/152 38 |    675
+OpenDrone-hw__OpenRX__OpenRX-panel-rev2                              |               44/127 257 |               56/127 236 |   1263
+thpoll83__PolyKybd__poly_corne_split42_right                         |           393/420 57 +1e |               398/420 46 |   1719
+briskspirit__Sisu_SSE-9__Sisu_SSE-9                                  |           188/192 18 +1e |                188/192 9 |   1206
+apfaudio__eurorack-pmod__eurorack-pmod-pcb                           |               116/133 27 |               125/133 20 |   1014
+Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1               |                 53/56 10 |                  55/56 4 |    402
+CDFER__Business-Cards__WLED_Matrix                                   |             99/104 9 +8e |           102/104 4 +13e |    690
+obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized              |         146/172 128 +70e |         148/172 123 +73e |   1708
+thpoll83__PolyKybd__poly_kybd_split72_left                           |               394/420 55 |               396/420 52 |   1696
+ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA                      |               150/156 12 |               151/156 11 |    743
+OpenDrone-hw__OpenFC-Lite__OpenFC                                    |                  81/82 2 |                  81/82 1 |    300
+byrantech__laptop__motherboard                                       |                233/236 3 |                234/236 2 |   1602
+byrantech__laptop__power                                             |                112/115 3 |                113/115 2 |   1320
+emertcakir__OpenAirScope__OpenAirScope                               |                178/184 6 |                179/184 5 |   1190
+greatscottgadgets__hackrf__hackrf-one                                |            318/319 1 +6e |            319/319 0 +1e |   1044
+sporkus__capybully_keyboard__capybully                               |                  32/32 2 |                  32/32 1 |   1777
+tzarc__keyboards__ghoul                                              |                142/148 7 |            142/148 6 +1e |   1762
+
+Worse:
+
+board                                                                |                   before |                    after |      s
+-------------------------------------------------------------------- | ------------------------ | ------------------------ | ------
+hackclub__OnBoard__koeg-board-pcb                                    |          166/175 11 +15e |          165/175 12 +17e |   1711
+Goga64__ULK__ULK                                                     |                  68/70 2 |              66/70 4 +1e |   1688
+ebastler__osprey__osprey_rev_a                                       |            102/103 1 +3e |            100/103 3 +2e |    822
+MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub                        |               139/159 32 |               137/159 35 |    910
+stonedDiscord__nonSNES__SNSP-CPU-1CHIP                               |           210/212 2 +16e |           206/212 5 +20e |   1069
+earth75__atat-1800__ATAT1800                                         |           242/278 49 +7e |           244/278 53 +7e |   1484
+stonedDiscord__nonSNES__SNSP-CPU-01                                  |         302/363 239 +22e |         300/363 246 +16e |   1702
+GlasgowEmbedded__glasgow__glasgow__revC3                             |              113/226 254 |              112/226 263 |   1318
+hackclub__OnBoard__woagboard                                         |            85/91 11 +34e |            76/91 26 +26e |   1046
+antmicro__jetson-nano-baseboard__jetson-nano-baseboard               |           333/340 9 +11e |           325/340 25 +1e |   1662
+CRImier__MyKiCad__protoesp                                           |            82/104 66 +5e |            76/104 83 +2e |   1342
+CRImier__MyKiCad__vaio_re                                            |           240/267 81 +1e |              225/267 101 |   1315
+Twisted-Fields__rp2040-motor-controller__RP2040_base                 |              148/186 100 |              151/186 173 |   1015
+vd-rd__sbc_allwinner_a13__module                                     |            221/223 8 +1e |           186/223 81 +1e |   1227
+0xCB-dev__0xCB-1337__panel                                           |          145/188 129 +2e |              137/188 210 |   1720
+Huaqiu-Electronics__ecad-viewer__video                               |              253/371 315 |              252/371 499 |   1673

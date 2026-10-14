@@ -46,6 +46,9 @@ v13 is the first sweep that places all of them, and its numbers will be
 lower. Route-mode conclusions (pour model, connect rungs, Freerouting
 comparison) are unaffected.
 
+**Layout sweep v15** (x723, tasks v6, 6 jobs, 17910 s, 2026-10-14): **45 of
+109 pass**, 3829 open; against v14 better 20 / same 63 / worse 16; the
+worse rows are the crowded boards (see docs/benchmarks.md).
 **Layout sweep v14** (x510, tasks v6, 10 jobs, 12668 s): **34 of 109
 pass**, 3065 open in all; against v13 better 19 / same 51 / worse 24. The
 baseline for what comes next (`build/github-layout-v14.log`; tasks
