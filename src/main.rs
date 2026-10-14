@@ -2675,7 +2675,7 @@ fn run() -> Result<(), String> {
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            let config: pcb_kicad::KiCadBoardPlacerConfig = match arguments.next() {
+            let mut config: pcb_kicad::KiCadBoardPlacerConfig = match arguments.next() {
                 Some(path) => serde_json::from_str(
                     &std::fs::read_to_string(&path)
                         .map_err(|error| format!("failed to read {path}: {error}"))?,
@@ -2683,6 +2683,11 @@ fn run() -> Result<(), String> {
                 .map_err(|error| format!("failed to parse {path}: {error}"))?,
                 None => Default::default(),
             };
+            // The layout's placement budget, for measurements of the
+            // placement alone (the layout gives it 600 s of work).
+            if let Some(seconds) = std::env::var("PCB_PLACER_WORK_SECONDS").ok().and_then(|value| value.parse().ok()) {
+                config.work_seconds = Some(seconds);
+            }
             let result = pcb_kicad::place_kicad_board(
                 Path::new(&source),
                 &board_id,

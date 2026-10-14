@@ -91,6 +91,7 @@ fn chain(parts: usize) -> Problem {
         edge_margin: 0.0,
         min_spacing: 0.0,
         far_side_pads_only: false,
+        shared_halos: false,
         pieces: Vec::new(),
         constraints: Default::default(),
     }
@@ -303,6 +304,7 @@ fn tight_bodies_are_the_last_resort() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        shared_halos: false,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -400,6 +402,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        shared_halos: false,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -452,6 +455,7 @@ fn parts_of_a_kind_are_turned_alike() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        shared_halos: false,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -510,6 +514,7 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
+        shared_halos: false,
         pieces: vec![[0.0, 0.0, 20.0, 20.0], [30.0, 0.0, 50.0, 20.0]],
         constraints: Default::default(),
     };
@@ -565,4 +570,128 @@ fn parts_turned_by_odd_angles_meet_as_turned_rectangles() {
     problem.poses = vec![at(-10.0), at(13.5)];
     assert!(is_legal(&problem, &problem.poses, 1, at(13.5), 0..2));
     assert!(!is_legal(&problem, &problem.poses, 1, at(14.5), 0..2));
+}
+
+/// A front part and a back part for the far-side and halo tests: the
+/// first with a 2 mm hole at its centre and copper only copper may not come
+/// near 3-5 mm below it, the second a 3 x 3 mm SMD part whose pad fills it.
+fn across_the_board() -> Problem {
+    let part = |side: Side, size: [f64; 2]| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: size,
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = chain(1);
+    problem.components = vec![
+        Component {
+            far_side: vec![[-1.0, -1.0, 1.0, 1.0]],
+            far_copper: vec![[-1.0, 3.0, 1.0, 5.0]],
+            ..part(Side::Front, [10.0, 10.0])
+        },
+        Component { pads: vec![[-1.5, -1.5, 1.5, 1.5]], ..part(Side::Back, [3.0, 3.0]) },
+    ];
+    problem.poses = vec![Pose { position: [40.0, 25.0], angle: 0.0 }; 2];
+    problem.spacing = 0.5;
+    problem.min_spacing = 0.2;
+    problem
+}
+
+#[test]
+fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() {
+    use pcb_placer::anneal::{AnnealConfig, overlaps};
+    use pcb_placer::legal::is_legal;
+    let problem = across_the_board();
+    let at = |x: f64, y: f64| {
+        let mut poses = problem.poses.clone();
+        poses[1] = Pose { position: [x, y], angle: 0.0 };
+        poses
+    };
+    let old = AnnealConfig::default();
+    let legal = AnnealConfig { legal_far_side: true, ..AnnealConfig::default() };
+    // 0.3 mm from the hole (the spacing is 0.5): the old model sees
+    // nothing closer than half the spacing.
+    let near_hole = at(42.8, 25.0);
+    assert!(!is_legal(&problem, &near_hole, 1, near_hole[1], 0..2));
+    assert_eq!(overlaps(&problem, &near_hole, &old)[1], 0.0);
+    assert!(overlaps(&problem, &near_hole, &legal)[1] > 0.0);
+    // Its pad 0.1 mm from the far side's copper (the clearance is 0.2):
+    // the old model does not see such copper at all.
+    let near_copper = at(40.0, 31.6);
+    assert!(!is_legal(&problem, &near_copper, 1, near_copper[1], 0..2));
+    assert_eq!(overlaps(&problem, &near_copper, &old)[1], 0.0);
+    assert!(overlaps(&problem, &near_copper, &legal)[1] > 0.0);
+    // Clear of both: legal, and no overlap either way.
+    let clear = at(40.0, 34.0);
+    assert!(is_legal(&problem, &clear, 1, clear[1], 0..2));
+    assert_eq!(overlaps(&problem, &clear, &legal)[1], 0.0);
+}
+
+#[test]
+fn shared_halos_keep_the_larger_halo_between_neighbours() {
+    use pcb_placer::legal::is_legal;
+    let mut problem = across_the_board();
+    for component in &mut problem.components {
+        component.side = Side::Front;
+        component.far_side.clear();
+        component.far_copper.clear();
+        component.body_size = [2.0, 1.0];
+        component.pads.clear();
+        component.halo = 0.65;
+    }
+    problem.components[1].halo = 0.3;
+    // Bodies 1.2 mm apart: the halos' sum and the spacing want 1.45, the
+    // larger halo and the spacing 1.15.
+    let poses = vec![
+        Pose { position: [40.0, 25.0], angle: 0.0 },
+        Pose { position: [43.2, 25.0], angle: 0.0 },
+    ];
+    assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+    problem.shared_halos = true;
+    assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+    assert!(is_legal(&problem, &poses, 0, poses[0], 0..2));
+    // 1.1 mm apart is too close either way.
+    let closer = vec![poses[0], Pose { position: [43.1, 25.0], angle: 0.0 }];
+    assert!(!is_legal(&problem, &closer, 1, closer[1], 0..2));
+    // A disc beside a rectangle's corner: the same answer from either side
+    // (growing one body by the halo instead of the gap was not).
+    problem.components[1].round = true;
+    problem.components[1].body_size = [2.0, 2.0];
+    for step in 0..40 {
+        let offset = 1.5 + 0.02 * step as f64;
+        let poses = vec![poses[0], Pose { position: [40.0 + 1.0 + offset * 0.7, 25.0 + 0.5 + offset * 0.7], angle: 0.0 }];
+        assert_eq!(
+            is_legal(&problem, &poses, 0, poses[0], 0..2),
+            is_legal(&problem, &poses, 1, poses[1], 0..2),
+            "offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn a_placement_with_shared_halos_is_legal() {
+    let mut problem = chain(12);
+    for component in &mut problem.components {
+        component.halo = if component.fixed { 0.0 } else { 0.65 };
+    }
+    problem.shared_halos = true;
+    let placement = place(&problem, &Config::new());
+    assert!(placement.unplaced.is_empty());
+    assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
 }

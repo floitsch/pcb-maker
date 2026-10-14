@@ -272,6 +272,12 @@ pub struct GlobalResult {
     pub overflow: f64,
 }
 
+/// How far a movable body's charge reaches beyond it: its halo, or half
+/// of it where neighbours share their halos (one halo per gap).
+fn halo_charge(problem: &Problem, component: &crate::problem::Component) -> f64 {
+    if problem.shared_halos { component.halo / 2.0 } else { component.halo }
+}
+
 pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let bounds = problem.bounds();
     let mut field = Field::new(config.bins, bounds);
@@ -363,9 +369,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .map(|index| {
             let component = &problem.components[*index];
             let half = component.half_extent(poses[*index].angle);
+            let halo = halo_charge(problem, component);
             Body {
                 component: Some(*index),
-                half: [half[0] + component.halo, half[1] + component.halo],
+                half: [half[0] + halo, half[1] + halo],
                 bare: half,
                 angle: poses[*index].angle,
                 pins: component.pins.len() as f64,
@@ -373,7 +380,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 density: if component.hollow.is_empty() {
                     1.0
                 } else {
-                    let whole = 4.0 * (half[0] + component.halo) * (half[1] + component.halo);
+                    let whole = 4.0 * (half[0] + halo) * (half[1] + halo);
                     (component.blocking_area() / whole.max(1.0e-9)).sqrt().min(1.0)
                 },
             }
@@ -754,7 +761,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             for (body, index) in movable.iter().enumerate() {
                 let component = &problem.components[*index];
                 let half = component.half_extent(poses[*index].angle);
-                bodies[body].half = [half[0] + component.halo, half[1] + component.halo];
+                let halo = halo_charge(problem, component);
+                bodies[body].half = [half[0] + halo, half[1] + halo];
                 bodies[body].bare = half;
                 bodies[body].angle = poses[*index].angle;
                 poses[*index].position = problem.components[*index]

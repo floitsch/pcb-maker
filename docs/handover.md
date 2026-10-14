@@ -421,6 +421,41 @@ edge cases, pads with repeated numbers and custom spoke templates (19 in
 the census, unmodelled). Cell-level fill agrees to 1-3 % but our map is in
 far more pieces than KiCad keeps (Castor F.Cu 128 against 17); untouched.
 Logs `build/quick30-x693.log`, `build/fill-starved`, `build/fill-census`.
+## Committed on 2026-10-14 (the legaliser agent, x701 / x711): the premise was wrong
+
+The legaliser does not lose 30-90 % of the global placement's wirelength.
+Measured with `PCB_PLACER_TRACE` (per seed the weighted HPWL after global
+placement, annealing, legalisation and refinement, plus the designer's for
+the same movable set) on the 30 tier boards and nine gap boards: the
+global placement is 30-90 % longer than the final one and the annealer
+removes that (annealed/global median 0.83); legalisation costs 4 % (median;
+Castor 25 %, MIDAS-MK2 28 % before refinement, where the nearest-spot
+legaliser moves 100-120 parts because larger parts placed first take
+their spots or a fixed through-hole part's far side is met); refinement
+wins most of it back (final/annealed median 1.00). Final/designer median
+0.85; above the designer only BAGEL 1.77, zpn 1.39, MIDAS-MK2 1.34, MK2.1
+1.28, hackrf 1.19, Castor 1.14. Video (0.96), OpenESC (0.61-0.73) and SNSP
+(0.85-0.93) are below the designers: their failures are not wirelength.
+The gap to the designers on crowded boards is the routing halos: no halos
+gives -22 % HPWL, and designers' own placements are illegal at our halo
+level for nearly every part (they put courtyards against each other). Four
+legalise-or-place-better variants (reflow only conflicted parts, push apart
+a step at a time, filler whitespace, four times the annealer's moves) do
+nothing beyond seed noise (about ±10 % per board); removed, numbers in
+docs/placer.md. Two options built, both off: `anneal_far_side_gaps` (the
+annealer sees the legality test's hole and far-side gaps; Castor's invisible
+conflicts 33 to 0, parts moved by legalisation 119 to 66; tier flat, video
+and OpenESC worse, SNSP better) and `shared_halos` (neighbours keep the
+larger halo, not the sum; six gap boards HPWL -6 %; tier 19 to 20 passes,
+unconnected 29 to 24, vias -8.8 %, but zpn loses its pass and hackrf +57 %
+vias). Placement with defaults is byte-identical to x652. Lesson: a
+placement change flips crowded boards by ±75 connections at random, so
+seed-repeated pairs are needed before any placement default changes. Next
+lever: routing room from congestion (a halo only where RUDY or the first
+route says a part's escapes need it) instead of the pin-count rule; less
+halo everywhere has now lost routing twice (x507 halo scale, shared halos).
+Scripts `experiments/placement-loss/`; logs `build/legal-*`,
+`build/quick30-x700*.log`.
 
 ## Open problems, ranked
 
@@ -465,13 +500,13 @@ Logs `build/quick30-x693.log`, `build/fill-starved`, `build/fill-census`.
    rungs probe 0 unfinished, rung 0 ends with 20 starved against tracks'
    12); rank by (open, starved) before vias, and let a complete-but-starved
    rung be rivalled.
-4. **Crowded placement** (OpenESC, SNSP): the three directions are built
-   as options and none wins; `replicate_channels`' rigid macros never get
-   seated. The legalizer loses 30-90 % of the global placement's
-   wirelength on every board; that is the lever. From the gap analysis
-   (above): courtyard-less ICs and connectors blocking inside their pad
-   box; mask-only test points as router obstacles; bus-aligned rows for
-   video.
+4. **Crowded placement** (OpenESC, SNSP, video, hackrf, BAGEL): the three
+   directions are built as options and none wins; `replicate_channels`'
+   rigid macros never get seated. The legaliser is not the lever (4 %,
+   see the 2026-10-14 section); the routing halos are worth 22 % of
+   wirelength on crowded boards but removing them loses routing. Next:
+   routing room from congestion rather than pin count; bus-aligned rows
+   for video; seed-repeated pairs as the judge.
 5. **Starved thermals as the only failure** on complete boards (rosco 5,
    Castor 2-15, mackerel-30 15, k30 10, mackerel-08 5, Hub 5, PixelWave 1,
    BAGEL 1). `solid_starved_thermals` (opt-in: a starved pad gets a solid

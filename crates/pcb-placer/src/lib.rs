@@ -68,6 +68,9 @@ pub struct Placement {
     pub relaxation: Relaxation,
     /// The placement work done (see `work`).
     pub work: u64,
+    /// The poses after each stage (global, annealed, legal, final), for
+    /// the measurement of where wirelength goes (`PCB_PLACER_TRACE`).
+    pub stage_poses: Vec<(&'static str, Vec<Pose>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -233,7 +236,9 @@ fn fit_halos(problem: &Problem, limit: f64) -> (Problem, [f64; 2]) {
             if component.fixed || component.copper_only || component.side == Side::Neither {
                 continue;
             }
-            let margin = 2.0 * scale_of(component, scales) * component.halo + problem.spacing;
+            // Shared halos: each gap holds one halo, half of it per part.
+            let sides = if problem.shared_halos { 1.0 } else { 2.0 };
+            let margin = sides * scale_of(component, scales) * component.halo + problem.spacing;
             let area = if component.hollow.is_empty() {
                 (component.body_size[0] + margin) * (component.body_size[1] + margin)
             } else {
@@ -385,6 +390,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         levels.push(last);
     }
     let mut relaxation = None;
+    // The annealed poses the best placement was legalized from.
+    let mut best_annealed: Option<Vec<Pose>> = None;
     // The grid and bodies the last anneal ran with.
     let mut annealed_shape: Option<(f64, bool)> = None;
     let level_count = levels.len();
@@ -506,6 +513,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         anneal::anneal(&relaxed, &mut poses, &anneal_config);
         phase_line(debug, "anneal", anneal_mark);
         let annealed = poses.clone();
+        let annealed_for_trace = annealed.clone();
         let anneal_seconds = level_started.elapsed().as_secs_f64();
         let legalize_mark = mark();
         let mut failed = legal::legalize(&relaxed, &mut poses);
@@ -566,6 +574,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 courtyard_spacing: level == courtyard_level,
             });
             best = Some((failed, poses, relaxed));
+            best_annealed = Some(annealed_for_trace);
         }
         if done {
             break;
@@ -573,6 +582,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     let (unplaced, mut poses, relaxed) = best.expect("at least one relaxation level ran");
     let wirelength_legal = problem.wirelength(&poses);
+    let mut stage_poses = vec![("global", global_poses.clone())];
+    if let Some(annealed) = best_annealed {
+        stage_poses.push(("annealed", annealed));
+    }
+    stage_poses.push(("legal", poses.clone()));
     frames.push(Frame {
         iteration: global.iterations + 1,
         overflow: global.overflow,
@@ -608,7 +622,22 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         poses: poses.clone(),
     });
     problem.sync_followers(&mut poses);
+    stage_poses.push(("final", poses.clone()));
     let illegal = legal::illegal_components(problem, &poses);
+    if debug {
+        for &index in &illegal {
+            let mut met: Vec<String> = Vec::new();
+            if !legal::is_legal(problem, &poses, index, poses[index], std::iter::empty()) {
+                met.push("outline or hard constraint".into());
+            }
+            for other in 0..problem.components.len() {
+                if other != index && let Some(kind) = legal::conflict_kind(problem, &poses, index, poses[index], other) {
+                    met.push(format!("{} {kind}", problem.components[other].name));
+                }
+            }
+            eprintln!("placer: illegal {} at {:?}: {}", problem.components[index].name, poses[index], met.join(", "));
+        }
+    }
     let constraints = constraints::report(problem, &poses);
     Placement {
         poses,
@@ -624,5 +653,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         constraints,
         relaxation: relaxation.expect("at least one relaxation level ran"),
         work: work() - work_started,
+        stage_poses,
     }
 }

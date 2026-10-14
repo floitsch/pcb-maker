@@ -388,6 +388,13 @@ fn clear_of(
                         rect.grown(-halo)
                     };
                     overlaps(bare(index, pose), bare(other, poses[other]), body_spacing(problem, index, other))
+                } else if problem.shared_halos {
+                    // The larger halo between them, as spacing between the
+                    // bodies (growing one body instead is not symmetric where
+                    // a disc meets a rectangle's corner).
+                    let (mine, theirs) = (problem.components[index].halo, problem.components[other].halo);
+                    let gap = body_spacing(problem, index, other) + mine.max(theirs);
+                    overlaps(body.grown(-mine), rect(problem, other, poses[other]).grown(-theirs), gap)
                 } else {
                     overlaps(body, rect(problem, other, poses[other]), body_spacing(problem, index, other))
                 }

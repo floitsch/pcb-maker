@@ -106,6 +106,64 @@ The written board is checked: every pad must land exactly where the placer's
 model said it would, including rotated footprints (KiCad stores pad and text
 angles as absolute values).
 
+## Where the wirelength goes (measured 2026-10-14)
+
+`PCB_PLACER_TRACE=<file>` writes, per seed, the weighted wirelength after
+global placement, annealing, legalization and refinement (and at the
+designer's poses with `PCB_PLACER_DESIGNER`), the relaxation level, and
+per movable part how far each stage moved it and what it met where the
+annealer left it. `experiments/placement-loss/` prepares tasks as the
+runner does, places them (`measure.py`, 16 seeds and the layout's 600 s of
+work via `PCB_PLACER_WORK_SECONDS`) and tabulates (`analyse.py`,
+`compare.py`). On the 30 quick-tier boards plus hackrf, video, the three
+OpenESC boards, both SNSPs and zpn (the kept seed, x652's placer):
+
+| Stage ratio | Median | Range |
+| --- | ---: | --- |
+| annealed / global | 0.83 | 0.36-1.54 |
+| legal / annealed | 1.04 | 1.00-1.45 |
+| final / legal (refinement) | 0.97 | 0.74-1.01 |
+| final / annealed | 1.00 | 0.88-1.29 |
+| final / designer | 0.85 | 0.16-1.77 |
+
+- The legalizer is not where the wire goes in sum: the global placement is
+  30-90 % longer than the final one, and the annealer, not the
+  legalizer, removes that. Legalization adds 8 % over all boards and
+  refinement wins 5 % back; a few crowded boards lose more (Castor 25 %,
+  MIDAS-MK2 28 % before refinement, 21 and 12 % after), where the
+  nearest-spot legalizer moves 100-120 parts, some 20-30 mm.
+- Four ways to legalize or place better found nothing within the seeds'
+  noise (median final wirelength on the six gap boards): keeping the
+  annealer's legal parts and reflowing only the conflicted ones (-0.5 %
+  on the tier), pushing overlapping parts apart a grid step at a time
+  before that (+2 %), filler whitespace in the global placement (+2 %,
+  +1 %), four times the annealer's moves (+4 %). The annealer is
+  converged under the current rules.
+- What the gap to the designers is: the routing halos. Without halos the
+  six gap boards' final wirelength drops 22 % (median 23 %), to 0.87-1.27x
+  the designers'; a spacing of 0.2 instead of 0.5 mm drops it 4 %. The
+  designers' own placements are illegal at our full level for nearly
+  every part (Castor 156 of 163, MIDAS-MK2 192 of 197): designers put
+  parts courtyard to courtyard.
+- The annealer does not see all the legality test forbids across the
+  board: a through-hole part's holes meet bodies at half the spacing, and
+  its copper-only far-side boxes not at all (Castor: 33 of 69 parts the
+  legalizer had to move were invisible to the annealer).
+  `anneal_far_side_gaps` (placer option, off) gives the annealer the
+  legality test's gaps; it halves the parts legalization moves on Castor
+  but wins no wirelength, and on the layout it is flat on the quick tier
+  (x700 against x651: 19 passes both, unconnected 29 to 30, starved
+  thermals 12 to 17, vias -4 %) and worse on two crowded boards (video
+  240 to 315 unconnected, OpenESC 4in1 120 to 132; SNSP-CPU-01 239 to
+  224 and mask bridges 22 to 5).
+- `shared_halos` (placer option, off): neighbours keep the larger of their
+  two halos between them instead of the sum; the halo budget and the
+  global placement's charge count one halo per gap. Six gap boards' median
+  final wirelength -6 %. Quick tier (with the annealer's gaps, x700):
+  passes 19 to 20, unconnected 30 to 24, starved thermals 17 to 9, vias
+  -5 %; but on the crowded boards zpn_devboard loses its pass (one mask
+  bridge, vias 299 to 348) and hackrf's vias go 429 to 673. Not a default.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

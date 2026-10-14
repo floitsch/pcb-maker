@@ -130,6 +130,11 @@ pub struct Problem {
     /// hot-swap socket's pads) keep clear of this part's pads only, not of
     /// its whole body: set at the tight levels when the caller allows it.
     pub far_side_pads_only: bool,
+    /// Two parts on one side keep the larger of their routing halos
+    /// between them, not the sum: the channel between neighbours carries
+    /// the escapes of both (two 0603s 1.8 mm apart at a 0.65 mm halo
+    /// each, where designers put them side by side).
+    pub shared_halos: bool,
     /// Bounding boxes of the board's pieces when it has several (two boards
     /// side by side): a part held at an edge is held at its piece's edge.
     pub pieces: Vec<[f64; 4]>,
@@ -274,6 +279,12 @@ impl Component {
         } else {
             self.hollow.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum()
         }
+    }
+
+    /// Board-space boxes (centre, half extent) of boxes of the part's own
+    /// frame at a pose.
+    pub fn boxes_of(&self, boxes: &[[f64; 4]], pose: Pose) -> Vec<(Point, Point)> {
+        self.boxes(boxes, pose)
     }
 
     fn boxes(&self, boxes: &[[f64; 4]], pose: Pose) -> Vec<(Point, Point)> {

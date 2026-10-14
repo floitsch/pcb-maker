@@ -1195,6 +1195,7 @@ mod tests {
             edge_margin: 0.5,
             min_spacing: 0.0,
             far_side_pads_only: false,
+            shared_halos: false,
             pieces: Vec::new(),
             constraints: Default::default(),
         };

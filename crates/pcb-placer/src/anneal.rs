@@ -25,6 +25,14 @@ pub struct AnnealConfig {
     /// No further stage starts once this thread's `crate::work()` reaches
     /// this count.
     pub stop_at_work: Option<u64>,
+    /// Parts across the board meet at the legality test's gaps
+    /// (`State::far_overlap`): holes the full spacing from bodies, far-side
+    /// copper the copper clearance from pads. Without it holes meet bodies
+    /// at half the spacing and far-side copper not at all, and the
+    /// legalizer moves what the annealer could not see (Castor: 33 of 69
+    /// conflicted parts). Off: flat on the quick tier, worse on video
+    /// and OpenESC 4in1 (2026-10-14).
+    pub legal_far_side: bool,
 }
 
 impl Default for AnnealConfig {
@@ -36,6 +44,7 @@ impl Default for AnnealConfig {
             seed: 7,
             deadline: None,
             stop_at_work: None,
+            legal_far_side: false,
         }
     }
 }
@@ -83,6 +92,8 @@ struct State<'a> {
     /// `PCB_PLACER_CHECK_OVERLAP`: each bucketed overlap sum is checked
     /// against the sum over all parts.
     check_overlap: bool,
+    /// `AnnealConfig::legal_far_side`.
+    legal_far_side: bool,
 }
 
 impl State<'_> {
@@ -178,6 +189,14 @@ impl State<'_> {
                             (rect.center, [rect.half[0] - mine, rect.half[1] - mine]),
                             (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
                         );
+                    } else if self.problem.shared_halos {
+                        // The larger halo between them.
+                        let (mine, theirs) = (component.halo, other_component.halo);
+                        let grow = mine.max(theirs) - mine;
+                        total += area(
+                            (rect.center, [rect.half[0] + grow, rect.half[1] + grow]),
+                            (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                        );
                     } else {
                         total += area((rect.center, rect.half), (body.center, body.half));
                     }
@@ -206,13 +225,19 @@ impl State<'_> {
                     }
                 }
             } else if side.opposite(other_component.side) {
-                // Across the board only holes and pads meet bodies.
-                for far in &own_far {
-                    total += area(*far, (body.center, body.half));
-                }
-                if !other_component.far_side.is_empty() {
-                    for far in built(other_component.far_boxes(self.poses[other])) {
-                        total += area(far, (rect.center, rect.half));
+                // Across the board only holes and pads meet bodies, at the
+                // gaps the legality test asks for (`legal::far_side_overlap`).
+                if self.legal_far_side {
+                    total += self.far_overlap(index, pose, &rect, other, self.poses[other], body, &built, &area)
+                        + self.far_overlap(other, self.poses[other], body, index, pose, &rect, &built, &area);
+                } else {
+                    for far in &own_far {
+                        total += area(*far, (body.center, body.half));
+                    }
+                    if !other_component.far_side.is_empty() {
+                        for far in built(other_component.far_boxes(self.poses[other])) {
+                            total += area(far, (rect.center, rect.half));
+                        }
                     }
                 }
             }
@@ -263,6 +288,70 @@ impl State<'_> {
         total
     }
 
+    /// The overlap of part `holes`' far-side boxes with part `body` across
+    /// the board, grown to the gaps `legal::far_side_overlap` asks for: its
+    /// holes and pads the spacing from the body (with its halo), its
+    /// copper that only copper may not come near the copper clearance from
+    /// the body's pads.
+    #[allow(clippy::too_many_arguments)]
+    fn far_overlap(
+        &self,
+        holes: usize,
+        holes_pose: Pose,
+        _holes_rect: &Rect,
+        body: usize,
+        body_pose: Pose,
+        body_rect: &Rect,
+        built: &dyn Fn(Vec<(Point, Point)>) -> Vec<(Point, Point)>,
+        area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
+    ) -> f64 {
+        let component = &self.problem.components[holes];
+        if component.far_side.is_empty() && component.far_copper.is_empty() {
+            return 0.0;
+        }
+        let other = &self.problem.components[body];
+        let grow = |boxes: Vec<(Point, Point)>, margin: f64| -> Vec<(Point, Point)> {
+            boxes.into_iter().map(|(center, half)| (center, [half[0] + margin, half[1] + margin])).collect()
+        };
+        // The body's copper: its pads, or all of it where it has none.
+        let share = self.share(other);
+        let pads = || {
+            if other.pads.is_empty() {
+                vec![(body_rect.center, [body_rect.half[0] - share, body_rect.half[1] - share])]
+            } else {
+                built(other.pad_boxes(body_pose))
+            }
+        };
+        let mut total = 0.0;
+        let min_spacing = self.problem.min_spacing;
+        if self.problem.far_side_pads_only {
+            let pads = pads();
+            let mut boxes = built(component.far_boxes(holes_pose));
+            boxes.extend(built(component.boxes_of(&component.far_copper, holes_pose)));
+            for far in grow(boxes, min_spacing) {
+                for pad in &pads {
+                    total += area(far, *pad);
+                }
+            }
+            return total;
+        }
+        if !component.far_side.is_empty() {
+            let margin = (self.problem.spacing - share).max(0.0);
+            for far in grow(built(component.far_boxes(holes_pose)), margin) {
+                total += area(far, (body_rect.center, body_rect.half));
+            }
+        }
+        if !component.far_copper.is_empty() {
+            let pads = pads();
+            for far in grow(built(component.boxes_of(&component.far_copper, holes_pose)), min_spacing) {
+                for pad in &pads {
+                    total += area(far, *pad);
+                }
+            }
+        }
+        total
+    }
+
     /// Relations involving `index`, plus its hard constraints priced so
     /// steeply that no wirelength gain pays for missing them.
     fn constraint_cost(&self, index: usize) -> f64 {
@@ -301,14 +390,7 @@ impl State<'_> {
 }
 
 
-/// Improves `poses` in place and returns the remaining overlap area.
-pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -> f64 {
-    let movable: Vec<usize> = (0..problem.components.len())
-        .filter(|index| !problem.components[*index].fixed)
-        .collect();
-    if movable.is_empty() {
-        return 0.0;
-    }
+fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -> State<'a> {
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); problem.net_weights.len()];
     for (index, component) in problem.components.iter().enumerate() {
         for (pin, description) in component.pins.iter().enumerate() {
@@ -339,13 +421,9 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     };
     let rectangular =
         (area - (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])).abs() < 1.0e-6 * area.max(1.0);
-    for index in &movable {
-        poses[*index].position =
-            constraints::snap_position(problem, *index, poses[*index].position, poses[*index].angle);
-    }
     let mut state = State {
         problem,
-        poses: poses.clone(),
+        poses: poses.to_vec(),
         rects: Vec::new(),
         members,
         incident,
@@ -354,9 +432,14 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         work: std::cell::Cell::new(0),
         grid: std::cell::RefCell::new(crate::buckets::Grid::new(bounds, 2.5, problem.components.len())),
         near: std::cell::RefCell::new(Vec::new()),
-        reach: problem.edge_margin + 0.5 + problem.far_reach(),
+        // The legality test's gaps across the board reach farther.
+        reach: problem.edge_margin
+            + 0.5
+            + problem.far_reach()
+            + if legal_far_side { problem.spacing + problem.min_spacing } else { 0.0 },
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round() as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        legal_far_side,
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
@@ -365,6 +448,28 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         state.grid.get_mut().insert(index, rect.center, rect.half);
     }
 
+    state
+}
+
+/// Debugging aid: the overlap the annealer sees for every part at `poses`.
+pub fn overlaps(problem: &Problem, poses: &[Pose], config: &AnnealConfig) -> Vec<f64> {
+    let state = build_state(problem, poses, config.legal_far_side);
+    (0..problem.components.len()).map(|index| state.overlap(index, state.rects[index])).collect()
+}
+
+/// Improves `poses` in place and returns the remaining overlap area.
+pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -> f64 {
+    let movable: Vec<usize> = (0..problem.components.len())
+        .filter(|index| !problem.components[*index].fixed)
+        .collect();
+    if movable.is_empty() {
+        return 0.0;
+    }
+    for index in &movable {
+        poses[*index].position =
+            constraints::snap_position(problem, *index, poses[*index].position, poses[*index].angle);
+    }
+    let mut state = build_state(problem, poses, config.legal_far_side);
     // Work per move (before and after), besides the parts the overlap
     // test visits (counted there): when the outline is not a rectangle,
     // four corners against it (cheap per edge next to a part's visit);
@@ -372,7 +477,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     // scans the relations. Fitted so that boards as different as katia,
     // link and OpenESC's do about the same work per second.
     let fixed = problem.constraints.relations.len()
-        + if rectangular { 0 } else { problem.outline.len() };
+        + if state.rectangular { 0 } else { problem.outline.len() };
     let move_work: Vec<u64> = (0..problem.components.len())
         .map(|index| {
             let pins: usize = state.incident[index].iter().map(|net| state.members[*net].len()).sum();
@@ -386,7 +491,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             problem.components.len(),
             movable.len(),
             problem.outline.len(),
-            if rectangular { "rectangular" } else { "shaped" },
+            if state.rectangular { "rectangular" } else { "shaped" },
             problem.constraints.relations.len(),
             problem.constraints.linked.len(),
             problem.components.iter().filter(|component| !component.far_side.is_empty()).count(),
@@ -394,6 +499,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         );
     }
     let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+    let bounds = state.bounds;
     let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
     let grid = if problem.grid > 0.0 { problem.grid } else { 0.05 };
     let mut radius = (config.initial_radius * board).max(2.0 * grid);
