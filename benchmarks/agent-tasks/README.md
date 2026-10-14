@@ -98,6 +98,51 @@ board that could be placed legally was routed clean.
     - An 18.6 mm capacitor between mounting holes and copper text on a
       22 mm board.
 
+## How to measure
+
+Since x747 a layout is deterministic for a given input, binary and thread
+count unless the wall clock cuts it (docs/router.md, "Determinism and the
+wall clock"; such rows carry `cut`, compare.py marks them CUT). One run per
+side answers a quality question: a repeat gives the same rows. The
+benchmark, not the machine, was the bottleneck (a quick tier about an hour
+at 6 jobs, a full sweep five hours, tiers serialised, pairs doubling every
+measurement). The discipline:
+
+- **Iterate on the short tier** (`--tier short`, 12 boards at a third of
+  the budget, about ten minutes at 6 jobs; section below). It holds the
+  boards whose results flip; a change that moves nothing there will
+  rarely move the quick tier.
+- **Merge gate: the 30-board quick tier at the full budget** (`--tier
+  quick`), once, diffed with `compare.py` against the last reference log.
+- **Judge by continuous objectives from one run**, not by pass counts:
+  passes move by single-error flips (USB_Cable_Tester passed in 5 of the
+  12 rounds below, eternal-keypad's pass hung on one `shorting_items`).
+  The run's last line (also `summary.json`) and compare.py's before/after
+  lines give KiCad's unconnected items, new copper errors, vias, length,
+  CPU seconds, work seconds, rows cut by the wall clock and the router's
+  unconnected terminals after the first route, summed over the boards
+  (new row fields: `work_seconds`, the verdict's work; and, for layouts,
+  `first_unconnected_terminals`, from board-layout.json: the router's
+  count of open terminals after the first route, not KiCad's).
+  Totals compare only over the same rows with a result (compare.py sums
+  the boards in both runs).
+- **Router questions in route mode** (`--route-from <earlier output
+  directory>`): the same placements routed again, no placement race, no
+  legaliser wall time.
+- **Pinned simultaneous pairs only for CPU claims**: both binaries at the
+  same time on symmetric halves of the cores, `taskset -c 0-7,16-23`
+  against `8-15,24-31` (logical CPUs n and n+16 share a physical core:
+  never give the two sides siblings), CPU seconds from rusage (the rows'
+  `cpu_seconds`, or the shell's `time`: user plus sys), never wall seconds.
+  A placement default change still needs several placer seeds per side
+  (`--placer '{"seed": N}'`): it reshuffles crowded boards at random
+  (docs/handover.md, the legaliser agent).
+- **One tier at a time on the machine**: take the lock,
+  `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...`; start
+  only with the load under 40 (`uptime`) and more than 20 GB available
+  (`free -g`). Results above a load of about 45 are unsound (the layout's
+  wall-clock guard fires and the rows are CUT).
+
 ## The quick tier (`--tier quick`)
 
 The full harvested sweep (109 boards, 1800 s each) takes a night and was
@@ -224,3 +269,189 @@ benchmarks/agent-tasks/compare.py build/quick-x160.log build/quick-<new>.log --m
 | Castor_and_Pollux__mainboard | 4 | 126/126 | 0 / starved_thermal 15 | no | 370 | 2149 (896) | 126/126, 0 / starved_thermal 15 |
 | MyKiCad__framework_mobo_lefthalf | 6 | 71/71 | 0 | yes | 179 | 2125 (331) | 71/71, 0, pass |
 | OpenFC-Lite__OpenFC | 6 | 80/82 | 2 | no | 768 | 2188 (668) | 80/82, 2 |
+
+## The short tier (`--tier short`)
+
+For iterating on a change: 12 boards of the quick tier at a third of the
+work budget, about ten minutes at 6 jobs. Use the quick tier at the full
+budget as the merge gate ("How to measure").
+
+```sh
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x791 --tier short --jobs 6 \
+  --binary build/bin/pcb-maker-x791 > build/short-x791.log
+benchmarks/agent-tasks/compare.py build/bench-short/short-x791.log build/short-x791.log
+```
+
+**Selection, by flip history.** `flippers.py` reads the quick-tier logs of
+the rounds since the placement gap work (x644, x651, x693, x722, x737,
+x746, x764, x768, x770, x780, x781, x782; one log a round, in order) and
+counts, per board, how often its pass verdict (compare.py's rule) and
+KiCad's unconnected count changed from one round to the next ("flips";
+an error row counts as a value of its own) and how often its copper error
+count changed. The boards that flip are the ones a change moves, so they
+carry the signal; the boards that never flip pass every time and would
+only spend the budget. Chosen: every board with two flips or more (nine),
+the fastest board with one (spell_tome; mackerel-08 at 516 s, Castor at
+996 s and rp2040zero left out to keep the tier short), and
+three fast boards that never changed as controls (Blue_Line, urchin,
+E-Fidget-Lite would do as well). MIDAS-MK1.1 and WLED_Matrix are the slow
+ones kept: both have connections open in every round, the cases a router
+or placement change should improve. Coverage: 8 two-layer, 2 four-layer
+(reCamera, MIDAS-MK1.1), 2 six-layer (OpenFC, framework_mobo, the cheap
+case the placer finds no legal placement for).
+
+```sh
+benchmarks/agent-tasks/flippers.py build/quick30-x{644,651,693,722,737,746,764,768,770,780,781,782}.log --markdown
+```
+
+Flips over the 12 rounds (Pass, Unconn., Errors: changes of the pass
+verdict, of KiCad's unconnected count, of the copper error count; s and
+CPU s: medians at the full budget):
+
+| Board | Layers | Flips | Pass | Unconn. | Errors | Passes | Unconnected | s | CPU s | Short |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| Business-Cards__USB_Cable_Tester__PCB | 2 | 6 | 6 | 0 | 7 | 5/12 | 0-0 | 181 | 244 | sensitive |
+| OpenFC-Lite__OpenFC | 6 | 5 | 2 | 3 | 0 | 1/12 | 0-2 | 420 | 1132 | sensitive |
+| MyKiCad__framework_mobo_lefthalf | 6 | 4 | 2 | 2 | 2 | 3/12 | 0-0 | 34 | 257 | sensitive |
+| OSHW-reCamera-Series__reCamera_S101_v1.1 | 4 | 4 | 0 | 4 | 0 | 0/12 | 4-10 | 326 | 1150 | sensitive |
+| ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA | 4 | 3 | 0 | 3 | 0 | 0/12 | 9-11 | 870 | 2841 | sensitive |
+| Business-Cards__WLED_Matrix | 2 | 2 | 0 | 2 | 7 | 0/12 | 4-6 | 664 | 2233 | sensitive |
+| Business-Cards__USB_Keypad | 2 | 2 | 0 | 2 | 4 | 0/12 | 2-3 | 269 | 858 | sensitive |
+| 0xCB-1337__1337-v4.0 | 2 | 2 | 2 | 0 | 2 | 11/12 | 0-0 | 248 | 358 | sensitive |
+| eternal-keypad__eternal-keypad | 2 | 2 | 2 | 0 | 2 | 1/12 | 0-0 | 345 | 631 | sensitive |
+| mackerel-68k__mackerel-08-v1 | 4 | 1 | 1 | 0 | 2 | 9/12 | 0-0 | 516 | 745 |  |
+| spell_tome__spell_tome_bottom | 2 | 1 | 1 | 0 | 1 | 10/12 | 0-0 | 86 | 115 | sensitive |
+| bumwings-kbd__bumwings_v001R64_rp2040zero_sd | 2 | 1 | 1 | 0 | 1 | 10/12 | 0-0 | 123 | 150 |  |
+| Castor_and_Pollux__mainboard | 4 | 1 | 1 | 0 | 1 | 10/12 | 0-0 | 996 | 1220 |  |
+| CharlieBoard__Blue_Line | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 32 | 52 | control |
+| OnBoard__E-Fidget-Lite | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 71 | 92 |  |
+| urchin__main | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 74 | 146 | control |
+| OnBoard__MotionCubeViewAllForces | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 129 | 363 |  |
+| bumwings-kbd__bumwings_v001 | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 150 | 180 |  |
+| ligra__ligra_back | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 152 | 227 |  |
+| OpenMuscle-FlexGrid__OM-60-Flex | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 210 | 427 |  |
+| 0xCB-Static__0xcb-static | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 213 | 671 |  |
+| bumwings-kbd__bumwings_v001R64_nano_sd | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 225 | 258 |  |
+| 0xCB-1337__pcb | 4 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 263 | 470 |  |
+| ergo-snm-keyboard__ErgoSNM_keyboard | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 366 | 637 |  |
+| ISS-PCB__MIDAS-MK2 | 4 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 389 | 878 |  |
+| Qfwfq__qfwfq | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 394 | 559 |  |
+| OnBoard__keyboar_ | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 395 | 955 |  |
+| ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA | 4 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 545 | 1028 |  |
+| ISS-PCB__BAGEL-MK1 | 4 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 673 | 1069 |  |
+| le_chiffre_keyboard_stm32__stm32_chiffre_36keys | 2 | 0 | 0 | 0 | 0 | 12/12 | 0-0 | 690 | 961 |  |
+
+**Budget.** `short.json`'s `budget_scale` (0.3333, `--budget-scale`
+overrides it) scales the layout's work budget: `total_seconds` 1500 to
+500 (the placement race stops at 40 % of it, the moves at 65 %, the final
+ladder gets what is left), `move_seconds` 600 to 200, `polish_seconds` 60
+to 20; the harness's timeout keeps a fixed 300 s for KiCad's checks and
+scales the rest (1800 to 800 s). The layout ends by work since x747
+(docs/router.md, "Determinism and the wall clock"), so the scale changes
+what the layout does, not how the machine's load cuts it. Most quick-tier
+boards finish well inside 500 s of work; the scale bites where the final
+ladder runs (boards with open connections), which is where the flips are.
+The placement seed is fixed by default (the placer's `seed` 1, the race's
+16 candidates derived from it), so the tier needs no seed of its own;
+`--placer '{"seed": N}'` changes it.
+
+**Runs on x791 (main, 2026-10-14), 6 jobs, 4 threads each:**
+
+| Board | Routed | KiCad unconnected / errors | Pass | Seconds | CPU s | Work s |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| WLED_Matrix | 102/104 | 4 / connection_width 8, copper_edge_clearance 2 | no | 503 | 1084 | 361 |
+| eternal-keypad | 69/69 | 0 / shorting_items 1 | no | 421 | 669 | 259 |
+| MIDAS-MK1.1 | 151/156 | 9 | no | 409 | 882 | 233 |
+| USB_Keypad | 37/39 | 2 | no | 404 | 1099 | 512 |
+| OpenFC | 81/82 | 1 | no | 362 | 971 | 449 |
+| reCamera_S101 | 55/56 | 4 | no | 344 | 1017 | 60 |
+| 1337-v4.0 | 47/47 | 0 | yes | 243 | 467 | 126 |
+| USB_Cable_Tester | 54/54 | 0 | yes | 189 | 251 | 184 |
+| spell_tome_bottom | 18/18 | 0 | yes | 85 | 113 | 26 |
+| urchin | 68/68 | 0 | yes | 54 | 128 | 44 |
+| framework_mobo_lefthalf | no legal placement (M1, J1) | - | no | 43 | 326 | 18 |
+| Blue_Line | 26/26 | 0 | yes | 34 | 57 | 4 |
+
+(Work: the verdict's, the final ladder included; the first run's rows
+carry the report's, which stops before that ladder.)
+
+- First run, load 36-48 (other agents' sweeps beside it): **604 s wall**,
+  5/12 pass; objectives: unconnected 20, new errors 11, vias 1017, length
+  19768 mm, CPU 7063 s, cut 0, first-route open terminals 41 (11 rows).
+  `build/bench-short/short-x791.log`.
+- Repeat, load 47-59: 736 s wall; the 11 rows the wall clock did not cut
+  are identical to the first run (routed, unconnected, errors, vias,
+  length); WLED_Matrix was CUT (the layout's wall guard, 1.1 times the
+  500 s budget, fired under that load) and lost 8 connection_width errors
+  and gained 10 vias. `build/bench-short/short-x791b.log`.
+- The board time is about 3100 s (515 s a job at 6 jobs, the bound for
+  any order); the six largest boards start first. Neither run had an
+  idle machine; on one the boards' wall time shrinks toward their work.
+- A third of the budget leaves less wall-clock margin in absolute terms
+  (50 s over 500 s of work, while KiCad's checks and the legaliser do not
+  shrink): WLED_Matrix is cut above a load of about 45. Keep the load
+  under 40, and read a CUT row as no evidence.
+- Against the full budget (x782's quick-tier rows; x782 to x791 changed
+  only the command line's exit codes): 9 of the 11 boards with a result
+  give the same board (routed, KiCad's counts and errors, vias), in less
+  than half the wall clock (MIDAS-MK1.1 907 to 409 s, 1337-v4.0 505 to
+  243 s); reCamera 53/56, 9 open to 55/56, 4 open, and WLED_Matrix
+  101/104, 5 open, 3 connection_width to 102/104, 4 open, 8
+  connection_width. Unconnected 26 to 20, passes 5 and 5. Compare
+  short-tier runs with short-tier runs: the budget changes the boards
+  whose final ladder runs.
+
+## Route mode (`--route-from`)
+
+For router experiments: `--route-from <earlier output directory>` routes
+each board's placement from that run (`<dir>/<task>/layout/placed`, the
+layout's final placement without tracks) with `route-kicad-board` instead of
+laying it out: no placement race, no legaliser wall time, the same
+placement for both binaries. The task's router settings go with it
+(`add_pours`), `--budget-scale` scales `ladder_budget_seconds` (default
+1200 s of work), and the row and pass rule are the layout's (KiCad's
+unconnected items and copper errors less the designer's findings) with
+`mode: "route"`, `route_from`, `constraints: 0` (the placement is given)
+and `work_seconds` (the ladder's work). With `--tier short` the tier's
+third of the budget applies to the ladder too; `--budget-scale 1` routes
+at the full budget. The binary runs with `--reference
+none`, as a layout does: its own verdict counts every error, the row's
+pass subtracts the designer's.
+
+```sh
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/route-x791 --tier short \
+  --route-from build/quick30-x782 --jobs 6 --binary build/bin/pcb-maker-x791 > build/route-x791.log
+```
+
+Verified 2026-10-14 on x791 against manual routes of the same placements
+(`route-kicad-board placed <id> out auto --reference none`,
+`RAYON_NUM_THREADS=4` as the runner sets with 2 jobs):
+
+| Board | Runner row | Manual route |
+| --- | --- | --- |
+| USB_Cable_Tester (x782 placement) | 54/54, 0 unconnected, 86 vias, 2292.4 mm, 144.7 s work, pass | 54/54, KiCad 0 unconnected, 86 vias, 2292.4 mm, 144.7 s work; 1 courtyards_overlap (the designer has 2) |
+| reCamera_S101 (x782 placement) | 53/56, 9 unconnected, 60 vias, 662.4 mm, 799.0 s work | 53/56, KiCad 9 unconnected, 60 vias, 662.4 mm, 799.0 s work |
+
+## Incremental sweeps (`--splice-from`)
+
+`--splice-from <log>` with `--only A B ...` runs only those boards and
+writes a log (and results.json) where the tier's other boards' rows are
+copied from the given log (a run.py log or output directory; the last row
+of a board wins) and marked `spliced: true`. The pass line and the
+objectives line count the whole tier and say how many rows are spliced;
+`compare.py` marks spliced rows SPL and prints their count. Use it to
+rerun the boards a change can touch, or the rows a run lost to a cut,
+without a full tier. A spliced row is the old binary's: say so when the
+result is quoted.
+
+```sh
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/quick-x791-two --tier quick \
+  --only bitshiftcrazy__spell_tome__spell_tome_bottom tomunderwood99__CharlieBoard__Blue_Line \
+  --splice-from build/quick30-x782.log --jobs 2 --binary build/bin/pcb-maker-x791 > build/quick-x791-two.log
+benchmarks/agent-tasks/compare.py build/quick30-x782.log build/quick-x791-two.log
+```
+
+The demo above (build/bench-short/splice-demo.log): 23/30 pass, 28 rows
+spliced, compare.py: "30 boards in both: better 0, same 29, worse 0;
+unconnected 26 -> 26; passes 23 -> 23" and "after: 28 of the 30 rows
+spliced from an earlier run (SPL)".

@@ -4,7 +4,9 @@
 
     benchmarks/agent-tasks/run.py <output> [--only NAME...] [--binary PATH]
     benchmarks/agent-tasks/run.py <output> --tier quick --jobs 12 --binary PATH
-
+    benchmarks/agent-tasks/run.py <output> --tier short --jobs 6 --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier quick --route-from build/quick30-x782 --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier quick --only A B --splice-from build/quick30-x782.log
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -15,7 +17,18 @@ native KiCad reports no unconnected item and no copper error.
 
 Each row records the board's peak memory: `peak_rss_mb` for the process
 tree (kicad-cli's DRC included, 2.2 GB on any board) and `layout_rss_mb` for
-the layout process alone."""
+the layout process alone (the route process in route mode).
+
+`--budget-scale` scales the layout's work budget (`total_seconds`,
+`move_seconds`, `polish_seconds`; in route mode the router's
+`ladder_budget_seconds`) and the harness's timeout (its fixed 300 s for
+KiCad's checks stays). `--route-from <sweep>` routes each board's placement
+from an earlier sweep (`<sweep>/<task>/layout/placed`) with
+`route-kicad-board` instead of laying it out. `--splice-from <log>` copies
+the rows of the boards not run (outside `--only`) from an earlier log,
+marked `spliced`. Every row has `mode` (layout or route); the run ends with
+the pass line and a line of continuous objectives (README.md, "How to
+measure"), also written to summary.json."""
 
 import argparse
 import json
@@ -29,9 +42,14 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from compare import by_name, objectives, objectives_line, rows_of  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
-TIERS = {"quick": HERE / "quick.json"}
+TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json"}
+# The harness's timeout less this is scaled with the budget: KiCad's checks
+# and the file work do not shrink with it.
+FIXED_TIMEOUT_SECONDS = 300
 COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|missing_courtyard|isolated_copper|nonmirrored_text)")
 
 
@@ -303,7 +321,22 @@ def run_task(task, arguments):
         arguments.gate.done(token)
 
 
+# The layout's budgets (KiCadBoardLayoutConfig's defaults), scaled by
+# --budget-scale; the router's ladder budget in route mode.
+LAYOUT_BUDGETS = {"total_seconds": 1500.0, "move_seconds": 600.0, "polish_seconds": 60.0}
+ROUTE_BUDGET = ("ladder_budget_seconds", 1200.0)
+
+
+def scaled_timeout(arguments):
+    if arguments.budget_scale == 1:
+        return arguments.timeout
+    fixed = min(FIXED_TIMEOUT_SECONDS, arguments.timeout)
+    return round(fixed + (arguments.timeout - fixed) * arguments.budget_scale)
+
+
 def run_admitted(task, arguments, token):
+    if arguments.route_from:
+        return route_admitted(task, arguments, token)
     name = task["name"]
     directory = Path(task["directory"])
     if not directory.is_absolute():
@@ -332,6 +365,11 @@ def run_admitted(task, arguments, token):
     (source / "constraints.json").write_text(json.dumps(constraints))
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
               **task.get("layout", {})}
+    if arguments.budget_scale != 1:
+        # The layout's budgets in work (docs/router.md, "Determinism and the
+        # wall clock"); the defaults are KiCadBoardLayoutConfig's.
+        for key, default in LAYOUT_BUDGETS.items():
+            layout[key] = round(layout.get(key, default) * arguments.budget_scale)
     (work / "layout.json").write_text(json.dumps(layout))
     router = task.get("router") or {}
     router_argument = "auto"
@@ -347,7 +385,8 @@ def run_admitted(task, arguments, token):
     command = [str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
                str(work / "layout"), router_argument, str(work / "layout.json")]
     load_before = os.getloadavg()[0]
-    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, arguments.timeout, env,
+    timeout = scaled_timeout(arguments)
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
                                                               lambda pid: arguments.gate.started(token, pid))
     (work / "layout.log").write_text(output)
     # CPU seconds are the speed measure: other work on the machine (sweeps,
@@ -355,11 +394,13 @@ def run_admitted(task, arguments, token):
     # The load averages say how loaded the machine was for this row.
     row = {"name": name, "seconds": round(time.monotonic() - started, 1), "cpu_seconds": cpu_seconds,
            "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
-           "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb}
+           "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "mode": "layout"}
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
     if code == "timeout":
         # The harness's limit cut the run: what it would have done depends
         # on the machine's load.
-        row.update(error=f"timed out after {arguments.timeout} s", cut=["timeout"], **{"pass": False})
+        row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
     report = work / "layout/board-layout.json"
     # The binary's own verdict (docs/agents.md, "Exit codes"): its status
@@ -401,12 +442,112 @@ def run_admitted(task, arguments, token):
         constraints=len(result["constraints"]), missed=missed, unexpected_misses=unexpected,
         native=copper,
     )
+    # The layout's work (its budget's measure: the verdict's, the final
+    # ladder's included; the report's own stops before that ladder) and
+    # the router's count of unconnected terminals after the first route
+    # (before the moves and the final ladder; the router's count, not
+    # KiCad's).
+    work_seconds = (verdict or {}).get("work_seconds")
+    if work_seconds is None:
+        work_seconds = result.get("work_seconds")
+    if work_seconds is not None:
+        row["work_seconds"] = round(work_seconds, 1)
+    if result.get("first_unconnected_terminals") is not None:
+        row["first_unconnected_terminals"] = result["first_unconnected_terminals"]
     # A board passes on KiCad's connectivity, not on the router's own count
     # (Florian, 2026-10-07): KiCad joins a pad through a pour's fill that
     # the router, routing pours as tracks, does not credit (MokyaLora's
     # one open pad, 261/262 with KiCad at 0 unconnected).
     row["pass"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
     return row
+
+
+def route_admitted(task, arguments, token):
+    """Route mode (`--route-from`): routes the task's placement from an
+    earlier sweep (`<sweep>/<task>/layout/placed`) with `route-kicad-board`,
+    for router experiments without the placement race and the legaliser.
+    The row and the pass rule are the layout's; constraints are not checked
+    (the placement is given)."""
+    name = task["name"]
+    directory = Path(task["directory"])
+    if not directory.is_absolute():
+        directory = ROOT / directory
+    work = arguments.output / name
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    placed = arguments.route_from / name / "layout" / "placed"
+    row = {"name": name, "mode": "route"}
+    if not (placed / f"{task['board_id']}.kicad_pcb").exists():
+        row.update(error=f"no placement in {placed}", **{"pass": False})
+        return row
+    shutil.copytree(placed, work / "placed")
+    allowed = designer_findings(directory, task["board_id"], work) if task.get("designer_budget") else {}
+    router = dict(task.get("router") or {})
+    if arguments.budget_scale != 1:
+        key, default = ROUTE_BUDGET
+        router[key] = round(router.get(key, default) * arguments.budget_scale)
+    router_argument = "auto"
+    if router:
+        (work / "router.json").write_text(json.dumps(router))
+        router_argument = str(work / "router.json")
+    env = None
+    if arguments.threads:
+        env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads))
+    # The binary's verdict counts every error (like a layout's); the row's
+    # pass rule subtracts the designer's findings, as for a layout.
+    command = [str(arguments.binary), "route-kicad-board", str(work / "placed"), task["board_id"],
+               str(work / "route"), router_argument, "--reference", "none"]
+    started = time.monotonic()
+    load_before = os.getloadavg()[0]
+    timeout = scaled_timeout(arguments)
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
+    (work / "route.log").write_text(output)
+    row.update({"seconds": round(time.monotonic() - started, 1), "cpu_seconds": cpu_seconds,
+                "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
+                "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "route_from": str(placed)})
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
+    if code == "timeout":
+        row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
+        return row
+    row["exit"] = code
+    report = work / "route/board-router.json"
+    if not report.exists():
+        verdict_file = work / "route/verdict.json"
+        verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else None
+        if verdict:
+            row["verdict"] = verdict.get("status")
+            row["error"] = verdict.get("reason", "")[:300]
+        else:
+            row["error"] = output.strip().splitlines()[-1][:300] if output.strip() else "no output"
+        row["pass"] = False
+        return row
+    result = json.loads(report.read_text())
+    if result.get("verdict"):
+        row["verdict"] = result["verdict"].get("status")
+    copper = native(work / "route", allowed)
+    if allowed:
+        row["designer_findings"] = allowed
+    if result.get("cut"):
+        row["cut"] = result["cut"]
+    row.update(
+        routed=f"{result['routed_connections']}/{result['routable_connections']}",
+        vias=result["vias"], length_mm=round(result["length_mm"], 1),
+        constraints=0, missed=[], unexpected_misses=[], native=copper,
+    )
+    if result.get("work_seconds") is not None:
+        row["work_seconds"] = round(result["work_seconds"], 1)
+    row["pass"] = bool(copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    return row
+
+
+def spliced_rows(path, names):
+    """The rows of `names` in an earlier log (compare.rows_of: a log or an
+    output directory), the last of each board, marked spliced."""
+    rows = by_name(rows_of(path))
+    return {name: {**rows[name], "spliced": True} for name in names if name in rows}
 
 
 def main():
@@ -431,6 +572,17 @@ def main():
                              "expected peaks of it and the boards running (0: always)")
     parser.add_argument("--expected-gb", type=float, default=3.0,
                         help="expected peak of a board the tier does not estimate")
+    parser.add_argument("--budget-scale", type=float, default=None,
+                        help="scale the work budget (layout: total_seconds, move_seconds, polish_seconds; "
+                             "route mode: ladder_budget_seconds) and the timeout beyond its fixed 300 s "
+                             "(default: the tier's budget_scale, else 1)")
+    parser.add_argument("--route-from", type=Path, default=None,
+                        help="route mode: route each board's placement from this earlier output directory "
+                             "(<dir>/<task>/layout/placed) with route-kicad-board instead of laying it out")
+    parser.add_argument("--splice-from", type=Path, default=None,
+                        help="an earlier log (or output directory): the rows of the boards not run "
+                             "(outside --only) are copied from it, marked spliced, into this run's log "
+                             "and results.json")
     arguments = parser.parse_args()
     arguments.output.mkdir(parents=True, exist_ok=True)
     tier = None
@@ -440,6 +592,14 @@ def main():
             arguments.tasks = ROOT / tier["tasks"]
     if arguments.tasks is None:
         arguments.tasks = HERE / "tasks.json"
+    if arguments.budget_scale is None:
+        arguments.budget_scale = (tier or {}).get("budget_scale", 1.0)
+    if arguments.budget_scale <= 0:
+        parser.error("--budget-scale must be positive")
+    if arguments.route_from is not None and not arguments.route_from.is_dir():
+        parser.error(f"--route-from: {arguments.route_from} is not a directory")
+    if arguments.splice_from is not None and not arguments.splice_from.exists():
+        parser.error(f"--splice-from: {arguments.splice_from} not found")
     if arguments.threads is None and arguments.jobs > 1:
         # Beyond a few threads a board routes hardly faster (k30-SBC: 34.2,
         # 32.4 and 31.3 s of search on 1, 2 and 4) but every thread holds a
@@ -448,8 +608,14 @@ def main():
     arguments.expected_mb = arguments.expected_gb * 1024
     arguments.gate = MemoryGate(arguments.min_free_gb)
     tasks = []
+    # The boards of the tier (or task list) that --only leaves out: with
+    # --splice-from their rows come from the earlier log.
+    left_out = []
     for task in json.loads(arguments.tasks.read_text())["tasks"]:
+        if tier is not None and task["name"] not in tier["boards"]:
+            continue
         if arguments.only and task["name"] not in arguments.only:
+            left_out.append(task["name"])
             continue
         if tier is not None:
             entry = tier["boards"].get(task["name"])
@@ -470,6 +636,19 @@ def main():
         # The longest first, so that the last job is not a slow one.
         tasks.sort(key=lambda task: -(task.get("expected_seconds") or 0))
     rows = {}
+    if arguments.splice_from is not None:
+        spliced = spliced_rows(arguments.splice_from, left_out)
+        missing = [name for name in left_out if name not in spliced]
+        if missing:
+            print(f"--splice-from: {len(missing)} boards not run have no row in {arguments.splice_from}: "
+                  f"{missing}", file=sys.stderr)
+        for name in left_out:
+            if name in spliced:
+                rows[name] = spliced[name]
+                print(json.dumps(spliced[name]), flush=True)
+    if arguments.route_from is not None or arguments.budget_scale != 1:
+        print(f"mode {'route from ' + str(arguments.route_from) if arguments.route_from else 'layout'}, "
+              f"budget scale {arguments.budget_scale:g}, timeout {scaled_timeout(arguments)} s", file=sys.stderr)
     started = time.monotonic()
     from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(arguments.jobs) as pool:
@@ -478,18 +657,29 @@ def main():
             try:
                 return run_task(task, arguments)
             except Exception as error:
-                return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}"}
+                return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
+                        "mode": "route" if arguments.route_from else "layout"}
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
             rows[row["name"]] = row
             print(json.dumps(row), flush=True)
-    ordered = [rows[task["name"]] for task in tasks if task["name"] in rows]
+    wall = time.monotonic() - started
+    ran = [rows[task["name"]] for task in tasks if task["name"] in rows]
+    ordered = ran + [rows[name] for name in left_out if name in rows]
     (arguments.output / "results.json").write_text(json.dumps(ordered, indent=1))
     passed = sum(1 for row in ordered if row["pass"])
-    peak = max((row.get("peak_rss_mb") or 0 for row in ordered), default=0)
-    print(f"{passed}/{len(ordered)} tasks pass ({time.monotonic() - started:.0f} s wall, "
-          f"largest peak {peak / 1024:.1f} GB)")
+    peak = max((row.get("peak_rss_mb") or 0 for row in ran), default=0)
+    spliced_count = len(ordered) - len(ran)
+    print(f"{passed}/{len(ordered)} tasks pass ({wall:.0f} s wall, "
+          f"largest peak {peak / 1024:.1f} GB"
+          + (f"; {spliced_count} rows spliced from {arguments.splice_from}" if spliced_count else "") + ")")
+    # Continuous measures, usable from one run (README.md, "How to measure").
+    summary = objectives(ordered)
+    summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
+                   mode="route" if arguments.route_from else "layout", spliced=spliced_count)
+    print(objectives_line(summary))
+    (arguments.output / "summary.json").write_text(json.dumps(summary, indent=1))
 
 
 if __name__ == "__main__":

@@ -879,6 +879,9 @@ Route mode: `benchmarks/corpus/run.py <out> --corpus benchmarks/github/boards.js
 summarised by cause with `benchmarks/github/summary.py <out>`. Layout tasks:
 `benchmarks/agent-tasks/from_pcbench.py <tasks> --corpus benchmarks/github/boards.json`
 then `benchmarks/agent-tasks/run.py <out> --tasks <tasks>/tasks.json`.
+To measure a change (short tier, route mode from fixed placements, spliced
+reruns, the objectives line), see benchmarks/agent-tasks/README.md, "How to
+measure".
 
 What the first boards found, before any full run finished (fixed the same
 day): chamfered roundrect pads were refused (4 boards), a rule area's holes

@@ -1,0 +1,272 @@
+{
+ "description": "Short tier: 12 boards of the quick tier chosen by flip history (flippers.py over the quick-tier logs x644, x651, x693, x722, x737, x746, x764, x768, x770, x780, x781 and x782): the boards whose pass verdict or KiCad unconnected count changed most often between rounds, favouring fast ones, plus three that never changed as controls. Run at a third of the work budget (budget_scale; run.py --budget-scale overrides it). Per board: its flip counts over the 12 rounds, the range of its unconnected count, its seconds and CPU seconds in the tier's first run at a third of the budget (x791, 2026-10-14, 6 jobs, load 36-48; the runner starts the longest first), its median seconds and CPU seconds at the full budget over the 12 rounds, its x791 result and the quick tier's peak_rss_mb for the memory gate. Reasons in README.md, 'The short tier'.",
+ "tasks": "build/github-tasks-v5/tasks.json",
+ "budget_scale": 0.3333,
+ "boards": {
+  "CDFER__Business-Cards__WLED_Matrix": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 2,
+   "pass_flips": 0,
+   "unconnected_flips": 2,
+   "error_flips": 7,
+   "unconnected_range": "4-6",
+   "seconds": 503.1,
+   "cpu_seconds": 1083.5,
+   "full_budget_seconds": 664,
+   "full_budget_cpu_seconds": 2233,
+   "peak_rss_mb": 2326,
+   "layout_rss_mb": 1395,
+   "x791": {
+    "routed": "102/104",
+    "unconnected": 4,
+    "errors": {
+     "copper_edge_clearance": 2,
+     "connection_width": 8
+    },
+    "vias": 142,
+    "pass": false
+   }
+  },
+  "duckyb__eternal-keypad__eternal-keypad": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 2,
+   "pass_flips": 2,
+   "unconnected_flips": 0,
+   "error_flips": 2,
+   "unconnected_range": "0-0",
+   "seconds": 421.0,
+   "cpu_seconds": 669.1,
+   "full_budget_seconds": 345,
+   "full_budget_cpu_seconds": 631,
+   "peak_rss_mb": 2188,
+   "layout_rss_mb": 1481,
+   "x791": {
+    "routed": "69/69",
+    "unconnected": 0,
+    "errors": {
+     "shorting_items": 1
+    },
+    "vias": 56,
+    "pass": false
+   }
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA": {
+   "layers": 4,
+   "role": "sensitive",
+   "flips": 3,
+   "pass_flips": 0,
+   "unconnected_flips": 3,
+   "error_flips": 0,
+   "unconnected_range": "9-11",
+   "seconds": 409.0,
+   "cpu_seconds": 881.5,
+   "full_budget_seconds": 870,
+   "full_budget_cpu_seconds": 2841,
+   "peak_rss_mb": 2208,
+   "layout_rss_mb": 1133,
+   "x791": {
+    "routed": "151/156",
+    "unconnected": 9,
+    "errors": {},
+    "vias": 240,
+    "pass": false
+   }
+  },
+  "CDFER__Business-Cards__USB_Keypad": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 2,
+   "pass_flips": 0,
+   "unconnected_flips": 2,
+   "error_flips": 4,
+   "unconnected_range": "2-3",
+   "seconds": 404.5,
+   "cpu_seconds": 1098.7,
+   "full_budget_seconds": 269,
+   "full_budget_cpu_seconds": 858,
+   "peak_rss_mb": 2254,
+   "layout_rss_mb": 1133,
+   "x791": {
+    "routed": "37/39",
+    "unconnected": 2,
+    "errors": {},
+    "vias": 81,
+    "pass": false
+   }
+  },
+  "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "layers": 6,
+   "role": "sensitive",
+   "flips": 5,
+   "pass_flips": 2,
+   "unconnected_flips": 3,
+   "error_flips": 0,
+   "unconnected_range": "0-2",
+   "seconds": 361.9,
+   "cpu_seconds": 971.3,
+   "full_budget_seconds": 420,
+   "full_budget_cpu_seconds": 1132,
+   "peak_rss_mb": 2207,
+   "layout_rss_mb": 896,
+   "x791": {
+    "routed": "81/82",
+    "unconnected": 1,
+    "errors": {},
+    "vias": 159,
+    "pass": false
+   }
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "layers": 4,
+   "role": "sensitive",
+   "flips": 4,
+   "pass_flips": 0,
+   "unconnected_flips": 4,
+   "error_flips": 0,
+   "unconnected_range": "4-10",
+   "seconds": 344.5,
+   "cpu_seconds": 1016.9,
+   "full_budget_seconds": 326,
+   "full_budget_cpu_seconds": 1150,
+   "peak_rss_mb": 2150,
+   "layout_rss_mb": 626,
+   "x791": {
+    "routed": "55/56",
+    "unconnected": 4,
+    "errors": {},
+    "vias": 72,
+    "pass": false
+   }
+  },
+  "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 2,
+   "pass_flips": 2,
+   "unconnected_flips": 0,
+   "error_flips": 2,
+   "unconnected_range": "0-0",
+   "seconds": 242.8,
+   "cpu_seconds": 466.6,
+   "full_budget_seconds": 248,
+   "full_budget_cpu_seconds": 358,
+   "peak_rss_mb": 2177,
+   "layout_rss_mb": 826,
+   "x791": {
+    "routed": "47/47",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 63,
+    "pass": true
+   }
+  },
+  "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 6,
+   "pass_flips": 6,
+   "unconnected_flips": 0,
+   "error_flips": 7,
+   "unconnected_range": "0-0",
+   "seconds": 188.8,
+   "cpu_seconds": 251.0,
+   "full_budget_seconds": 181,
+   "full_budget_cpu_seconds": 244,
+   "peak_rss_mb": 2188,
+   "layout_rss_mb": 416,
+   "x791": {
+    "routed": "54/54",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 131,
+    "pass": true
+   }
+  },
+  "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "layers": 2,
+   "role": "sensitive",
+   "flips": 1,
+   "pass_flips": 1,
+   "unconnected_flips": 0,
+   "error_flips": 1,
+   "unconnected_range": "0-0",
+   "seconds": 85.2,
+   "cpu_seconds": 112.9,
+   "full_budget_seconds": 86,
+   "full_budget_cpu_seconds": 115,
+   "peak_rss_mb": 2153,
+   "layout_rss_mb": 462,
+   "x791": {
+    "routed": "18/18",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 8,
+    "pass": true
+   }
+  },
+  "duckyb__urchin__main": {
+   "layers": 2,
+   "role": "control",
+   "flips": 0,
+   "pass_flips": 0,
+   "unconnected_flips": 0,
+   "error_flips": 0,
+   "unconnected_range": "0-0",
+   "seconds": 53.5,
+   "cpu_seconds": 128.5,
+   "full_budget_seconds": 74,
+   "full_budget_cpu_seconds": 146,
+   "peak_rss_mb": 2177,
+   "layout_rss_mb": 772,
+   "x791": {
+    "routed": "68/68",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 39,
+    "pass": true
+   }
+  },
+  "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "layers": 6,
+   "role": "sensitive",
+   "flips": 4,
+   "pass_flips": 2,
+   "unconnected_flips": 2,
+   "error_flips": 2,
+   "unconnected_range": "0-0",
+   "seconds": 43.0,
+   "cpu_seconds": 325.7,
+   "full_budget_seconds": 34,
+   "full_budget_cpu_seconds": 257,
+   "peak_rss_mb": 105,
+   "layout_rss_mb": 66,
+   "x791": {
+    "error": "incomplete: 2 parts without a legal place (M1, J1)"
+   }
+  },
+  "tomunderwood99__CharlieBoard__Blue_Line": {
+   "layers": 2,
+   "role": "control",
+   "flips": 0,
+   "pass_flips": 0,
+   "unconnected_flips": 0,
+   "error_flips": 0,
+   "unconnected_range": "0-0",
+   "seconds": 34.5,
+   "cpu_seconds": 57.2,
+   "full_budget_seconds": 32,
+   "full_budget_cpu_seconds": 52,
+   "peak_rss_mb": 2339,
+   "layout_rss_mb": 2341,
+   "x791": {
+    "routed": "26/26",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 26,
+    "pass": true
+   }
+  }
+ }
+}

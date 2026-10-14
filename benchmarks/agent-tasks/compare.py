@@ -13,7 +13,9 @@ one run has, then the totals: better / same / worse, unconnected in all,
 passes. A row the wall clock cut short (its `cut` field: the layout's
 deadline under load, the harness's timeout) depends on the machine's load,
 not only on the binary: it is marked CUT and left out of better / same /
-worse."""
+worse. A row copied from an earlier log (run.py --splice-from) is marked
+SPL and counted in the totals. Below the totals, each run's continuous
+objectives over the boards in both (README.md, "How to measure")."""
 
 import argparse
 import json
@@ -70,12 +72,61 @@ def cut(row):
     return row is not None and bool(row.get("cut"))
 
 
+def spliced(row):
+    return row is not None and bool(row.get("spliced"))
+
+
+def objectives(rows):
+    """Continuous measures over `rows`, usable from one run: KiCad's
+    unconnected items and new copper errors, vias, length, CPU and work
+    seconds, rows cut by the wall clock, and the router's unconnected
+    terminals after the first route (layouts only). Rows without a result
+    (an error, a timeout) add only to `failed`."""
+    results = [row for row in rows if unconnected(row) is not None]
+    with_work = [row for row in rows if row.get("work_seconds") is not None]
+    with_first = [row for row in rows if row.get("first_unconnected_terminals") is not None]
+    return {
+        "rows": len(rows),
+        "passes": sum(1 for row in rows if passes(row)),
+        "failed": len(rows) - len(results),
+        "unconnected": sum(unconnected(row) for row in results),
+        "new_errors": sum(errors(row) for row in results),
+        "vias": sum(row.get("vias") or 0 for row in results),
+        "length_mm": round(sum(row.get("length_mm") or 0 for row in results), 1),
+        "cpu_seconds": round(sum(row.get("cpu_seconds") or 0 for row in rows)),
+        "work_seconds": round(sum(row["work_seconds"] for row in with_work)),
+        "work_rows": len(with_work),
+        "cut": sum(1 for row in rows if cut(row)),
+        "first_unconnected_terminals": sum(row["first_unconnected_terminals"] for row in with_first),
+        "first_rows": len(with_first),
+    }
+
+
+def objectives_line(o, label="objectives"):
+    text = (f"{label}: unconnected {o['unconnected']}, new errors {o['new_errors']}, vias {o['vias']}, "
+            f"length {o['length_mm']:.0f} mm, CPU {o['cpu_seconds']} s")
+    if o["work_rows"]:
+        text += f", work {o['work_seconds']} s"
+        if o["work_rows"] != o["rows"]:
+            text += f" ({o['work_rows']} rows)"
+    text += f", cut {o['cut']}"
+    if o["first_rows"]:
+        text += f", first-route open terminals {o['first_unconnected_terminals']}"
+        if o["first_rows"] != o["rows"]:
+            text += f" ({o['first_rows']} rows)"
+    text += f"; {o['rows']} rows"
+    if o["failed"]:
+        text += f", {o['failed']} without a result"
+    return text
+
+
 def cell(row):
     if row is None:
         return "-"
     if row.get("error"):
         text = f"ERROR ({str(row['error'])[:30]})"
-        return text + " CUT" if cut(row) else text
+        text += " CUT" if cut(row) else ""
+        return text + " SPL" if spliced(row) else text
     text = f"{row.get('routed', '?')} {unconnected(row)}"
     if errors(row):
         text += f" +{errors(row)}e"
@@ -83,6 +134,8 @@ def cell(row):
         text += " pass"
     if cut(row):
         text += " CUT"
+    if spliced(row):
+        text += " SPL"
     return text
 
 
@@ -141,6 +194,12 @@ def main():
     print(f"{len(common)} boards in both: better {better}, same {same}, worse {worse}; "
           f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after}"
           + (f"; {cut_rows} cut by the wall clock in either run (not in better/same/worse)" if cut_rows else ""))
+    for label, table in (("before", before), ("after", after)):
+        count = sum(1 for n in common if spliced(table[n]))
+        if count:
+            print(f"{label}: {count} of the {len(common)} rows spliced from an earlier run (SPL)")
+    print(objectives_line(objectives([before[n] for n in common]), "before"))
+    print(objectives_line(objectives([after[n] for n in common]), "after "))
     if only_after:
         print(f"{len(only_after)} boards only after: {sum(1 for n in only_after if passes(after[n]))} pass")
     if only_before:
