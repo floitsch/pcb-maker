@@ -606,9 +606,9 @@ on eight logical CPUs 300/300/300 unconnected, 1362 vias, one fingerprint,
 1355-1475 s; on four pinned CPUs it still meets the deadline (placement
 alone 980-1385 s) and says so; without the guard there four runs of x744
 and x746 give 318 and one fingerprint. Quick tier x746 (load 7-30): all 30
-rows identical to x722, 22 pass, CPU geomean 0.97. The waves' count follows
-the cores the process may use, so a run pinned to fewer cores can end
-elsewhere than an unpinned one. Left: the clean-up's pour checks are not
+rows identical to x722, 22 pass, CPU geomean 0.97. The waves' count followed
+the cores the process may use, so a run pinned to fewer cores could end
+elsewhere than an unpinned one (fixed by the placement pool, below). Left: the clean-up's pour checks are not
 work (a route-mode budget guard fired once under load 56, on a losing
 rung). See docs/router.md, "Determinism and the wall clock".
 
@@ -1178,6 +1178,75 @@ list mix-up) and is void; WLED_Matrix on it was identical between x825
 and x828. Router test:
 `a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring`.
 Logs `build/fill3b-x8{25,27,28}.log`, `build/short-x829.log`.
+
+## Committed on 2026-10-14 (placement pool)
+
+The placement race ran its seeds in waves as wide as the machine's cores
+(`available_parallelism`, 32 here whatever `RAYON_NUM_THREADS` said), each
+wave as long as its slowest seed, and the waves' work counted toward the
+layout's work end (`waves_work_seconds`). Now (`race_seeds` in
+board_placer.rs) the seeds run in a pool of the process's search threads
+(`RAYON_NUM_THREADS`), a seed starting as a thread frees; they are judged
+in seed order as one after the other (seed k kept while the seeds before it
+used less than the budget, three at least; ties to the earlier seed), as
+the probe ladder judges its probes. The batches they start in are sized
+from the kept seeds' work alone (the first holds the three, each later one
+as many as the budget left holds at their mean work), so the seeds run and
+the seed kept do not depend on the threads. A seed the budget would not
+keep no longer runs: the waves ran one more seed after the budget was
+spent and counted it (glasgow 260 s, the 0xCB pcb-panel 171 s, MIDAS-MK1.1
+167 s of work for nothing). The clock counts the kept seeds as the
+reference machine (eight threads, the calibration of
+`EXPANSIONS_PER_SECOND`) runs them per batch (`pool_work_seconds`,
+replacing `waves_work_seconds`); `board-placer.json` adds `seeds_run`,
+`seed_kept` and `seeds_work_seconds` (their sum), and the layout's
+`layout: placed` line prints them.
+
+Six boards, one layout a side (x783 = main before, x830 = x783's tree plus
+this; four threads, tasks v6, `PCB_ROUTER_NO_WALL_GUARD=1` on both so the
+work alone decides, load 18-48; `build/pool/six-x7xx`). Wall and work in
+seconds; work is the longest seed; the clock is what the layout counted:
+
+| Board | placement wall | work | clock (waves / pool) | sum of kept seeds | kept / run | seed kept | final board |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| video | 421 / 457 | 439 | 567 / 567 | 1026 | 10 / 11 | 2 | identical, 263/371, 1238 vias |
+| 0xCB pcb-panel | 471 / 314 | 170 | 491 / 320 | 652 | 4 / 4 | 4 | identical; both end on kicad-cli's 900 s zone refill (exit 4) |
+| glasgow | 501 / 305 | 334 | 593 / 334 | 816 | 3 / 3 | 1 | identical, 112/226, 201 vias |
+| Castor | 29 / 54 | 9.8 | 19 / 28 | 145 | 16 / 16 | 1 | identical, pass |
+| USB_Keypad | 11 / 23 | 5.1 | 9.8 / 13.5 | 71 | 16 / 16 | 14 | identical |
+| urchin | 8.8 / 13.8 | 4.7 | 8.4 / 10.7 | 55 | 16 / 16 | 6 | identical, pass |
+
+The placements (poses) are identical on all six, so the kept seed is
+x783's too; the result boards are byte-identical. glasgow's first route
+negotiated with 467 s of work allowed instead of 337 s and took another
+path (its fingerprints differ until the final ladder), but ended on the
+same board. The placement's wall time follows the threads now: x783 ran up
+to 13 seeds at once per board whatever the search threads, x830 four in
+the tier, so boards of many short seeds place 1.5-3 times longer in wall
+time (Castor 29 to 54 s, the same CPU); boards that ran a wasted seed are
+faster. Placement alone with `RAYON_NUM_THREADS` 4, 8 and 16 on x830
+(`build/pool/rayon`): seeds run, kept seed, clock and poses identical on
+all six boards (walls 413/316/402 s video, 43/25/16 Castor, 308/286/274
+the pcb-panel, 272/291/294 glasgow, 16/12/9 USB_Keypad, 10/7.5/6.4
+urchin; the machine was loaded).
+
+Short tier (x831 = main 6b3ced6 plus this, `build/short-x831.log`, against
+`build/bench-short/short-x783.log`, both tasks v6): all 12 boards same,
+every placement and every result board byte-identical; unconnected 42,
+errors 6, vias 1165, length 22013 mm on both; work 2339 to 2428 s, CPU
+4920 to 5127 s. The clock moved on every board (16-seed boards 1-5 s
+more: the waves were 32 wide, the reference pool 8; WLED_Matrix 177 to
+113 s, MIDAS-MK1.1 300 to 133 s, reCamera 75 to 52 s less), and the work
+left went into routing that did not win: WLED_Matrix's ladder ran its
+two fine-pitch rungs (23 and 83 open against the kept 15; row work 282 to
+358 s), MIDAS-MK1.1's first route negotiated 137 s instead of 53 s (334 to
+347 s), reCamera's probe ladder ran where x783 had "deadline too near"
+(its rungs lost). CPU: the pool runs the same seeds or fewer, so the
+extra CPU is that routing; one pinned pair on reCamera
+(`PCB_MAKER_NO_CACHE=1`, `build/pool/pair-x7xx`, load 40-58): 937 to 1061
+s, the ladder's 4 probes and 3 rungs, identical row (55/56, 72 vias).
+Tests: `placement_seeds_are_judged_in_seed_order_whatever_the_threads`
+(threads 1-16, seeds finishing in reverse order, the sequential reference).
 
 ## Open problems, ranked
 
