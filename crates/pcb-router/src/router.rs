@@ -1015,6 +1015,11 @@ pub struct Scratch {
     open_expansions: u64,
     /// Searches that found no path at all.
     failed_searches: u64,
+    /// Lattice nodes the pour analyses took in (`pour_analysis_units`),
+    /// counted from `&self` (the analysis does not mutate the router).
+    pour_units: std::sync::atomic::AtomicU64,
+    /// Wall nanoseconds of those analyses (for the profile only).
+    pour_nanos: std::sync::atomic::AtomicU64,
 }
 
 impl Scratch {
@@ -1037,6 +1042,8 @@ impl Scratch {
             open_searches: 0,
             open_expansions: 0,
             failed_searches: 0,
+            pour_units: std::sync::atomic::AtomicU64::new(0),
+            pour_nanos: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1087,6 +1094,8 @@ impl Clone for Scratch {
             open_searches: self.open_searches,
             open_expansions: self.open_expansions,
             failed_searches: self.failed_searches,
+            pour_units: std::sync::atomic::AtomicU64::new(self.pour_units.load(std::sync::atomic::Ordering::Relaxed)),
+            pour_nanos: std::sync::atomic::AtomicU64::new(self.pour_nanos.load(std::sync::atomic::Ordering::Relaxed)),
             ..Self::default()
         }
     }
@@ -1164,6 +1173,12 @@ struct Profile {
     /// `&self`), wherever it is called from.
     analysis_nanos: Arc<std::sync::atomic::AtomicU64>,
     analysis_calls: Arc<std::sync::atomic::AtomicU64>,
+    /// Per phase (`PHASES`): the search work, the pour analyses' work
+    /// units and their wall seconds.
+    phase_search: [f64; PHASES.len()],
+    phase_pour_units: [u64; PHASES.len()],
+    phase_pour_wall: [f64; PHASES.len()],
+    phase_wall: [f64; PHASES.len()],
 }
 
 static BUILD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1176,7 +1191,33 @@ pub fn build_totals() -> (u64, f64) {
     (BUILD_CALLS.load(Relaxed), BUILD_NANOS.load(Relaxed) as f64 / 1.0e9)
 }
 
+/// The phases the `profile work:` line splits the work into.
+const PHASES: [&str; 6] = ["negotiation", "resolve", "clean-up", "via reduction", "thermal spokes", "stitching"];
+
+/// A phase's start for the profile: search work, pour units, pour wall
+/// nanoseconds, wall clock.
+type PhaseMark = (f64, u64, u64, std::time::Instant);
+
 impl Profile {
+    /// Per phase: wall seconds, search work, pour analyses' wall seconds
+    /// and their work units (lattice nodes, millions).
+    fn work_line(&self) -> String {
+        let phases: Vec<String> = PHASES
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                format!(
+                    "{name} {:.1}s wall, {:.1}s search work, pour {:.1}s wall in {:.0}M nodes",
+                    self.phase_wall[index],
+                    self.phase_search[index],
+                    self.phase_pour_wall[index],
+                    self.phase_pour_units[index] as f64 / 1.0e6
+                )
+            })
+            .collect();
+        format!("profile work: {}", phases.join("; "))
+    }
+
     fn line(&self, search: f64, stamp: f64) -> String {
         let analysis = self.analysis_nanos.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1.0e9;
         format!(
@@ -4358,6 +4399,24 @@ impl Router {
         self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND
     }
 
+    fn phase_mark(&self) -> PhaseMark {
+        (
+            self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND,
+            self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed),
+            self.scratch.pour_nanos.load(std::sync::atomic::Ordering::Relaxed),
+            std::time::Instant::now(),
+        )
+    }
+
+    /// Adds what was done since `mark` to the profile's `phase`.
+    fn phase_charge(&mut self, phase: usize, mark: PhaseMark) {
+        let now = self.phase_mark();
+        self.profile.phase_search[phase] += now.0 - mark.0;
+        self.profile.phase_pour_units[phase] += now.1 - mark.1;
+        self.profile.phase_pour_wall[phase] += (now.2 - mark.2) as f64 / 1.0e9;
+        self.profile.phase_wall[phase] += mark.3.elapsed().as_secs_f64();
+    }
+
     /// A budget's start: the work and the wall clock at this point.
     fn clock(&self) -> (f64, std::time::Instant) {
         (self.work_seconds(), std::time::Instant::now())
@@ -5216,6 +5275,7 @@ impl Router {
         let nested = self.in_via_reduction;
         let expansions_before = self.scratch.expansions;
         let work_before = self.work_seconds();
+        let phase_mark = self.phase_mark();
         let mut present = present;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
@@ -5479,6 +5539,7 @@ impl Router {
         self.present_reached = present;
         if !nested {
             self.profile.negotiation += profile_started.elapsed().as_secs_f64();
+            self.phase_charge(0, phase_mark);
         }
     }
 
@@ -5940,19 +6001,25 @@ impl Router {
             eprintln!("fingerprint before resolve: {:016x}", self.fingerprint());
         }
         let resolve_started = std::time::Instant::now();
+        let mark = self.phase_mark();
         self.resolve_remaining(order);
+        self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();
+        let mark = self.phase_mark();
         let improved = if self.hopeless { 0 } else { self.clean_up(order) };
+        self.phase_charge(2, mark);
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.profile.cleanup += cleaned;
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
             eprintln!("fingerprint after clean-up: {:016x}", self.fingerprint());
         }
         let reduction_started = std::time::Instant::now();
+        let mark = self.phase_mark();
         self.in_via_reduction = true;
         self.reduce_vias(order);
         self.in_via_reduction = false;
+        self.phase_charge(3, mark);
         self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
             eprintln!("fingerprint after via reduction: {:016x}", self.fingerprint());
@@ -5961,9 +6028,11 @@ impl Router {
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
         // in the first route, mostly hard searches flooding the lattice).
         let spokes_started = std::time::Instant::now();
+        let mark = self.phase_mark();
         if self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0 {
             self.free_thermal_spokes();
         }
+        self.phase_charge(4, mark);
         self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
             eprintln!("fingerprint after thermal spokes: {:016x}", self.fingerprint());
@@ -5983,6 +6052,7 @@ impl Router {
             // The skeleton is trimmed first so that stitching only adds the
             // vias the pour pieces really need.
             let stitching_started = std::time::Instant::now();
+            let mark = self.phase_mark();
             let trimmed = self.trim_skeleton(net);
             if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
                 let (pours, _, main, spoke_islands) = self.analyze_pours_full(net, &|_| false);
@@ -6000,6 +6070,7 @@ impl Router {
                 eprintln!("pour {}: {tails} nodes of plane ends without fill trimmed", self.board.nets[net as usize].name);
             }
             self.profile.stitching += stitching_started.elapsed().as_secs_f64();
+            self.phase_charge(5, mark);
             if self.config.verbose {
                 eprintln!(
                     "pour {}: {stitches} stitching vias, {trimmed} skeleton nodes trimmed, complete {}",
@@ -6083,6 +6154,7 @@ impl Router {
         self.profile.emit += emit_started.elapsed().as_secs_f64();
         if self.config.verbose {
             eprintln!("{}", self.profile.line(self.search_seconds, self.stamp_seconds));
+            eprintln!("{}", self.profile.work_line());
         }
         RoutingResult {
             diagnostics,
@@ -6305,7 +6377,43 @@ impl Router {
 
     /// `analyze_pours_full`, recording each pad's spokes in `report` when
     /// given (for `dump_pours`).
+    ///
+    /// Every analysis counts as work (`pour_analysis_units`).
     fn analyze_pours_reporting(
+        &self,
+        net: NetId,
+        skip: &dyn Fn(usize) -> bool,
+        report: Option<&mut Vec<SpokeRecord>>,
+    ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
+        let started = std::time::Instant::now();
+        let result = self.analyze_pours_uncounted(net, skip, report);
+        let units = self.pour_analysis_units(net);
+        self.scratch.pour_units.fetch_add(units, std::sync::atomic::Ordering::Relaxed);
+        self.scratch.pour_nanos.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        if std::env::var_os("PCB_ROUTER_POUR_TRACE").is_some() {
+            let state = &self.nets[net as usize];
+            let planes = state.plane.iter().filter(|mask| !mask.is_empty()).count();
+            let nodes: usize = state.branches.iter().map(|branch| branch.nodes.len()).sum();
+            eprintln!(
+                "pour trace: cells {} planes {planes} terminals {} nodes {nodes} stamped {} units {units} nanos {}",
+                self.grid.cells(),
+                state.terminal_nodes.len(),
+                state.stamped.len(),
+                started.elapsed().as_nanos()
+            );
+        }
+        result
+    }
+
+    /// The size of a pour analysis of `net`, in lattice nodes: its pour's
+    /// layers times the lattice (the fill mask and its labelling run over
+    /// every node of a pour layer).
+    fn pour_analysis_units(&self, net: NetId) -> u64 {
+        let planes = self.nets[net as usize].plane.iter().filter(|mask| !mask.is_empty()).count();
+        (planes * self.grid.cells()) as u64
+    }
+
+    fn analyze_pours_uncounted(
         &self,
         net: NetId,
         skip: &dyn Fn(usize) -> bool,
