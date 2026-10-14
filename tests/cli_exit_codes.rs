@@ -161,3 +161,18 @@ fn a_panic_exits_4_with_one_line_and_a_report() {
     assert!(verdict["error"].as_str().is_some_and(|error| error.contains("panic")));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_closed_stdout_ends_quietly_with_exit_0() {
+    // `pcb-maker --help | head -1`: the reader closes the pipe early.
+    let mut child = binary()
+        .arg("--help")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+}

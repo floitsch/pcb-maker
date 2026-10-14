@@ -735,8 +735,14 @@ Left for agents to work around: a process killed by a signal (a harness's
 timeout, the OOM killer) has no verdict; `import-kicad-netlist` now exits 1
 when footprints are missing; research commands keep 0/1/2 (+4 on a panic)
 without the incomplete/internal distinction. Tests: pcb-kicad, pcb-router,
-pcb-placer and tests/cli_exit_codes.rs pass; tests/kicad_ladder.rs fails 3
-of 9 (the research ladder; a 2026-09-30 build fails there too).
+pcb-placer and tests/cli_exit_codes.rs pass. Three tests of the root
+crate's tests/kicad_ladder.rs fail, before and after this change (the
+research ladder, code this change does not touch; a 2026-09-30 test build
+fails the first one too): native_one_connection_transaction_commits_or_exactly_rolls_back,
+native_shared_tree_insertion_reuses_copper_without_a_via_cluster and
+trace_tension_can_move_a_real_rung_one_footprint_without_breaking_kicad.
+A closed stdout (`pcb-maker --help | head`) ends quietly with exit 0 (or
+the verdict's code when a run already had one).
 
 ## Open problems, ranked
 

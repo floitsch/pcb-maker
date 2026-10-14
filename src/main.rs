@@ -48,7 +48,7 @@ fn main() -> ExitCode {
         {
             *first = Some(format!("{}{place}", message.lines().next().unwrap_or("")));
         }
-        if env::var_os("RUST_BACKTRACE").is_some() {
+        if env::var_os("RUST_BACKTRACE").is_some() && !is_closed_stdout(&message) {
             default_hook(info);
         }
     }));
@@ -58,6 +58,11 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(_) => {
             let message = PANIC.lock().ok().and_then(|first| first.clone()).unwrap_or_else(|| "unknown panic".into());
+            // A closed stdout (`pcb-maker --help | head`) ends the process
+            // quietly: exit 0, or the verdict's code when the run had one.
+            if is_closed_stdout(&message) {
+                return ExitCode::from(agent_cli::decided_exit().unwrap_or(pcb_kicad::EXIT_COMPLETE));
+            }
             let message = format!("internal error (panic): {message}");
             agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, &message);
             eprintln!("error: {message}");
@@ -65,6 +70,11 @@ fn main() -> ExitCode {
         }
     };
     ExitCode::from(code)
+}
+
+/// Whether a panic message is std's for printing to a closed stdout.
+fn is_closed_stdout(message: &str) -> bool {
+    message.starts_with("failed printing to stdout") && message.contains("Broken pipe")
 }
 
 /// Runs a command and returns its exit code (`agent_cli::EXIT_CODES`).

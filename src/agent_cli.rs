@@ -38,6 +38,14 @@ struct ReportTarget {
 
 static TARGET: Mutex<Option<ReportTarget>> = Mutex::new(None);
 
+/// The exit code of the verdict this run reached (-1: none yet).
+static DECIDED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// The exit code of the verdict the run reached, if it reached one.
+pub fn decided_exit() -> Option<u8> {
+    u8::try_from(DECIDED.load(std::sync::atomic::Ordering::Relaxed)).ok()
+}
+
 fn set_target(command: &str, report: PathBuf, outputs: BTreeMap<String, String>) {
     if let Ok(mut target) = TARGET.lock() {
         *target = Some(ReportTarget { command: command.into(), report, outputs, started: Instant::now() });
@@ -86,6 +94,7 @@ fn write_verdict(directory: &Path, report: Option<&Path>, verdict: &KiCadVerdict
 /// Prints the verdict: its line and next actions on stdout, and for a
 /// result that is not complete one line on stderr.
 fn announce(verdict: &KiCadVerdict, report: &Path) {
+    DECIDED.store(i32::from(verdict.exit_code), std::sync::atomic::Ordering::Relaxed);
     println!("verdict: {} (exit {}): {}", serde_json::to_value(verdict.status).unwrap_or_default().as_str().unwrap_or(""), verdict.exit_code, verdict.reason);
     for action in &verdict.next_actions {
         println!("next: {action}");
