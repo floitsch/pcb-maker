@@ -265,6 +265,38 @@ to 27 false alarms, pads not modelled 14 to 12):
   spoke (a neck exactly the minimum width), and an end in a sliver the
   lattice misses joins the piece a straight run of fill reaches.
 
+Thermal vias inside an exposed pad (`inner_pads`, on;
+`PCB_ROUTER_NO_INNER_PADS`; 2026-10-14). KiCad's filler treats a pad
+inside a larger pad of its net like any thermal pad: it cuts its relief
+(inside the larger pad's, so nothing changes there), in a hatched zone adds
+its ring (pad + gap to pad + gap + spoke width, clipped only by the zone's
+outline, then by other nets' clearances), builds its four spokes from its
+centre and keeps them where their ends land in that fill or meet another
+spoke; it knocks the plated holes of all thermal pads out of the fill at
+the end. The DRC checks every pad by its own ring (half a gap out): the
+crossings of any fill outline with it, an outline over the larger pad
+holding both pads (no island). So in a hatched zone (0xCB's QFN, U3.45 on
+B.Cu) each via has its ring and four spokes into it, and a via at the pad's
+corner, whose ring and outer spokes the neighbouring pins' clearances take,
+keeps one spoke: starved. In a solid zone the larger pad's relief takes the
+vias' spokes, and what crosses a via's ring is the larger pad's own spokes
+from its centre: one running right through the ring counts twice, one
+grazing it once, none none (no finding). The model: merged pads get
+records on every layer, reliefs and rings (`thermal_ring_pads`); spokes of
+pads of one terminal meet; a spoke of a pad inside its terminal's pad that
+lands counts (the outline holds both pads); foreign spokes across such a
+pad's ring are sampled from their centre and count twice when both ends
+lie outside the ring; a merged pad's DRC tracks are those whose copper
+overlaps its own (KiCad's connectivity: the exposed pad's tracks crossing a
+via), and no fill lies in a thermal pad's plated hole (a track to a via's
+centre ends in none). The DRC's track-end test keeps other nets'
+clearances to half a micron (`TRACK_END_TOLERANCE`, `track_end_tolerance`;
+`PCB_ROUTER_OLD_TRACK_ENDS`) rather than the spokes' 3 microns: 0xCB's
+corner via has a track from it ending 1.5 microns outside a sliver of fill
+between two pins. That is a knife edge: exact gives two false alarms,
+a micron loses those four findings. `experiments/pour-fidelity/pads_in_pads.py`
+lists the pads inside pads of a board.
+
 After a layout move's reroute the pours are refreshed (pads the rerouted
 signals cut off are routed again), and a plane end whose fill the signals
 took is trimmed back to its junction (`trim_dangling_plane_ends`;

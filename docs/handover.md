@@ -658,7 +658,8 @@ Fragmentation measured on 7 boards: our extra pieces are lattice sampling of
 necks; PixelWave's 1212 single-node blobs hold no spoke and no item; of 23
 island spokes in outlines our map split, 4 pads had a wrong verdict and the
 neck and spoke-overlap joins fixed 3. Remaining disagreements by cause:
-0xCB U3.45 thermal vias inside the exposed pad (10 misses; modelling them
+0xCB U3.45 thermal vias inside the exposed pad (10 misses, modelled since in
+"exposed-pad thermal vias"; modelling them
 made 15 false alarms); seams between overlapping same-net zones of
 different priority (Telemetry, 5); marginal fine-pitch clearance within a
 few microns; hatched fill lying over thermal pads without relief (not
@@ -826,6 +827,73 @@ jetson route 7 lowerings 1.3 s and 7 router builds 15.4 s (summed over
 threads) of 1558 s wall; Castor route 4 builds 4.3 s of 557 s; Castor
 layout 22 lowerings 0.1 s, 4 builds 2.6 s of 904 s. Under 1.1 % everywhere,
 below the 5 % bar.
+
+## Committed on 2026-10-14 (exposed-pad thermal vias)
+
+The largest class left by fill round two: 0xCB-1337's U3.45, ten
+starved-thermal findings on six census boards the model had no row for
+(thermal vias of the QFN's exposed pad, pads of its number merged into it,
+which the model checked only where they are copper of their own). What
+KiCad 10 does (zone_filler.cpp, drc_test_provider_zone_connections.cpp;
+KiCad's filled polygons drawn per outline): every thermal pad
+gets its relief, a hatched zone's ring (pad + gap to pad + gap + spoke
+width, clipped by the zone outline only, then by other nets' clearances)
+and four spokes from its centre, kept where their ends land in that fill
+or meet another spoke, a pad inside a larger same-net pad included; the
+thermal pads' plated holes are cut from the fill at the end. The DRC checks
+each pad by its own ring half a gap out (crossings with fill outlines; an
+outline over the larger pad holds both pads, no island) and its own
+connected tracks (KiCad's connectivity: any track whose copper overlaps the
+via, the exposed pad's tracks crossing it too). 0xCB's GND zone is hatched:
+each via has a ring 0.4 to 0.7 mm and four spokes into it; the vias at the
+exposed pad's corners lose their ring and outer spokes to the QFN pins'
+clearances and keep the inward spoke: one, starved. In a solid zone the
+larger pad's relief takes the vias' spokes and the DRC sees the larger
+pad's own spokes crossing a via's ring (mackerel's mounting holes on In1:
+2 on the spoke axes, 0 off them; solid there, so not in the census).
+
+Modelled (`inner_pads`, on, `PCB_ROUTER_NO_INNER_PADS`): merged pads get
+spoke records on every layer, reliefs and rings (`thermal_ring_pads`);
+spokes of pads of one terminal meet; a landed spoke of a pad inside its
+terminal's pad counts; foreign spokes across such a pad's ring are sampled
+from their centre and count twice when they run through it; a merged pad's
+DRC tracks are those overlapping its copper; no fill in a thermal pad's
+plated hole. The earlier attempt's 15 false alarms came from the missing
+rings (the vias' spokes found no fill), terminal-wide track ownership and
+the track to the centre via's hole. Separately (`track_end_tolerance`, on,
+`PCB_ROUTER_OLD_TRACK_ENDS`): the DRC's track-end test keeps other nets'
+clearances to 0.5 microns instead of the spokes' 3 (`TRACK_END_TOLERANCE`);
+four of the ten have a track from the corner via ending 1.5 microns outside
+a sliver of fill between pins U3.23 and U3.24. A knife edge: exact 12
+missed / 29 false alarms, 0.5 microns 12 / 27, 1 micron 16 / 27, 3 microns
+17 / 27.
+
+Census, same tooling and KiCad cache (x801 = x820 = x768 before; x824
+after, x823 before the rebase onto the DRC cache, identical):
+
+| | x801 | x824 | x823 without inner_pads | x823 without track_end_tolerance |
+|---|---|---|---|---|
+| DRC starved predicted | 146 | 157 | 147 | 152 |
+| missed | 13 | 12 | 12 | 17 |
+| false alarms | 27 | 27 | 27 | 27 |
+| starved pads not modelled | 12 | 2 | 12 | 2 |
+
+By cause (`causes.py`, missed incl. not modelled): missing 12 to 2, tracks
+4 to 3 (PixelWave's D45.4, the tolerance), the rest unchanged; false alarms
+unchanged by cause. Every thermal pad inside a pad in the census (0xCB's 78
+on six boards, Hub's U16.9_1/_2, Quanta75's U1.31; `pads_in_pads.py`,
+mackerel's and PixelWave's are solid): 85 rows, 10 starved found, 75 agree,
+none missed or false. Three router tests (hatched rings, the spoke through
+a via's ring, merged pads on all layers).
+
+Route mode on 0xCB's v15 placement, x801 against x824: identical boards
+(47/47, 47 vias, 1952 mm, KiCad unconnected 0), starved_thermal 2 both (the
+two corner vias, which the model now predicts), annular_width 13 (the
+footprint's vias) both. The router does not repair them: `manual_spokes`
+skips merged pads (no nodes of their own). A repair would be a short track
+from the corner via inward into its own ring, which the DRC counts; not
+done. Logs `build/census/x801.txt`, `x824*.txt` in the fill3 worktree;
+`build/fill3-x801.log`, `build/fill3-x824.log`.
 
 ## Open problems, ranked
 
