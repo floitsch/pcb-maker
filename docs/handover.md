@@ -822,6 +822,21 @@ hit (reCamera) and 2 identical boards checked side by side (51 entries).
 v15 layouts make 0-19 DRC calls (median 2). The cache pays across runs:
 reruns, A/B pairs on the same placement, the reference board.
 
+Follow-up (x802): `pcb-maker drc-kicad-board <project-dir> <board-id>
+<report.json> [--no-refill]` runs the cached DRC on the board and its
+rules as the reference check does (`pcb_kicad::kicad_drc_report`; exit 0
+no error that counts and nothing unconnected, 1 otherwise, 2 input, 4
+KiCad failed; `tests/cli_exit_codes.rs` with a fake kicad-cli). run.py's
+designer check and freerouting.py's designer and Freerouting-result checks
+use it when `<binary> --help` lists it (probed once per binary; older
+snapshots keep calling kicad-cli). Its report has every severity; the
+designer counts (errors only, not excluded, not cosmetic) equal the old
+`--severity-error` counts on qfwfq (546, at KiCad's 199 cap), WLED_Matrix,
+USB_Keypad, Castor, 1337-v4.0 and MIDAS-MK1.1. run.py rows gain
+`designer_drc_seconds`. Short-tier splice of spell_tome and Blue_Line
+twice: the designer DRC 7.2 s to 0.4 s and 4.6 s to 0.4 s, the layouts'
+own DRC hits too (CPU 100.5 to 91.9 s and 53.8 to 44.5 s), same results.
+
 Lowering and lattice building (the second target): measured, not cached.
 jetson route 7 lowerings 1.3 s and 7 router builds 15.4 s (summed over
 threads) of 1558 s wall; Castor route 4 builds 4.3 s of 557 s; Castor

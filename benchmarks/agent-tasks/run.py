@@ -163,21 +163,44 @@ def native(result_directory, allowed=None):
     return {"errors": errors, "unconnected": len(drc.get("unconnected_items", []))}
 
 
-def designer_findings(directory, board_id, work):
+_DRC_COMMAND = {}
+
+
+def has_drc_command(binary):
+    """Whether `binary` has `drc-kicad-board` (KiCad's DRC through its DRC
+    cache, x802 and later); asked once per binary, so that runs of older
+    snapshots keep calling kicad-cli."""
+    key = str(binary)
+    if key not in _DRC_COMMAND:
+        try:
+            listed = subprocess.run([key, "--help"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            listed = ""
+        _DRC_COMMAND[key] = "drc-kicad-board" in listed
+    return _DRC_COMMAND[key]
+
+
+def designer_findings(directory, board_id, work, binary=None):
     """Copper errors per type on the designer's own routed board, which a
     task from a real board need not do better than (harvested boards come
     with their makers' DRC findings: fiducials near holes, rules tightened
-    later)."""
+    later). With a binary that has `drc-kicad-board` the check goes through
+    its DRC cache (every severity in the report; errors are counted alike)."""
     reference = work / "reference"
-    shutil.copytree(directory, reference, ignore=shutil.ignore_patterns(
-        ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+    report = reference / "drc.json"
+    if binary is not None and has_drc_command(binary):
+        reference.mkdir(parents=True, exist_ok=True)
+        command, cwd = [str(binary), "drc-kicad-board", str(directory), board_id, str(report)], None
+    else:
+        shutil.copytree(directory, reference, ignore=shutil.ignore_patterns(
+            ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+        command = ["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
+                   "-o", "drc.json", f"{board_id}.kicad_pcb"]
+        cwd = reference
     try:
-        subprocess.run(["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
-                        "-o", "drc.json", f"{board_id}.kicad_pcb"], cwd=reference,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        subprocess.run(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
     except (OSError, subprocess.TimeoutExpired):
         return {}
-    report = reference / "drc.json"
     if not report.exists():
         return {}
     counts = {}
@@ -348,7 +371,9 @@ def run_admitted(task, arguments, token):
     shutil.copytree(directory, source, ignore=shutil.ignore_patterns(
         ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
     board = source / f"{task['board_id']}.kicad_pcb"
-    allowed = designer_findings(directory, task["board_id"], work) if task.get("designer_budget") else {}
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
     subprocess.run([str(arguments.binary), "strip-kicad-tracks", str(board), str(board)],
                    capture_output=True, check=True)
     constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
@@ -430,6 +455,8 @@ def run_admitted(task, arguments, token):
     copper = native(work / "layout/result", allowed)
     if allowed:
         row["designer_findings"] = allowed
+    if task.get("designer_budget"):
+        row["designer_drc_seconds"] = designer_seconds
     # What the wall clock cut short rather than the work (the layout's
     # deadline under load, the route-mode guard): such a row depends on the
     # machine's load and is no evidence for an A/B; without it the same
@@ -482,7 +509,9 @@ def route_admitted(task, arguments, token):
         row.update(error=f"no placement in {placed}", **{"pass": False})
         return row
     shutil.copytree(placed, work / "placed")
-    allowed = designer_findings(directory, task["board_id"], work) if task.get("designer_budget") else {}
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
     router = dict(task.get("router") or {})
     if arguments.budget_scale != 1:
         key, default = ROUTE_BUDGET
@@ -530,6 +559,8 @@ def route_admitted(task, arguments, token):
     copper = native(work / "route", allowed)
     if allowed:
         row["designer_findings"] = allowed
+    if task.get("designer_budget"):
+        row["designer_drc_seconds"] = designer_seconds
     if result.get("cut"):
         row["cut"] = result["cut"]
     row.update(

@@ -332,6 +332,22 @@ take the LCSC part number from a footprint property (`LCSC`, `LCSC Part`,
 rotations of polarised parts in the fab's preview: library orientations
 differ between KiCad and assemblers.
 
+## Check a board with KiCad
+
+```sh
+pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]
+```
+
+runs KiCad's DRC on the board and its rules (`.kicad_pro`, `.kicad_dru`;
+no schematic parity), zones refilled unless `--no-refill`, through the DRC
+cache (section 4), and writes KiCad's report (every severity) to
+`<report.json>`. One line on stdout counts errors by type, unconnected
+items, warnings and cosmetic findings, and the cache's calls and hits.
+Exit 0 when no error counts (warnings, excluded and cosmetic findings do
+not) and no item is unconnected, 1 otherwise, 2 for a missing project or
+board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
+check, `freerouting.py`) use it when the binary has it.
+
 ## Score a board
 
 ```sh

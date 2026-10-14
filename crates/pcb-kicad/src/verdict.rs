@@ -123,9 +123,18 @@ pub enum KiCadReference {
 
 /// KiCad's DRC errors by type on `project`'s board, counted as the
 /// benchmarks count the designer's board: zones refilled, errors only. The
-/// report is kept at `report`; the board and its rules are copied next to
-/// it for the check (kicad-cli may write next to the board).
+/// report is kept at `report` (see `kicad_drc_report`).
 pub fn reference_findings(project: &Path, board_id: &str, report: &Path) -> Result<BTreeMap<String, usize>, String> {
+    Ok(tally_drc(&kicad_drc_report(project, board_id, report, true)?).errors)
+}
+
+/// KiCad's DRC of `project`'s board, every severity, zones refilled when
+/// `refill_zones`, through the DRC cache; the report is written to
+/// `report` and returned. The board and its rules (`.kicad_pro`,
+/// `.kicad_dru`) are copied next to the report for the check, so that the
+/// check sees only them (no schematic parity) and the cache key is the
+/// same wherever the project lies.
+pub fn kicad_drc_report(project: &Path, board_id: &str, report: &Path, refill_zones: bool) -> Result<Value, String> {
     let scratch = report.with_extension("project");
     if scratch.exists() {
         fs::remove_dir_all(&scratch).map_err(|error| format!("failed to remove {}: {error}", scratch.display()))?;
@@ -138,17 +147,17 @@ pub fn reference_findings(project: &Path, board_id: &str, report: &Path) -> Resu
                 .map_err(|error| format!("failed to copy {}: {error}", file.display()))?;
         }
     }
-    let checked = crate::native_report::run_kicad_report(
-        // All severities (the report check wants them); only errors count.
-        &["pcb", "drc", "--format", "json", "--severity-all", "--refill-zones", "--output"],
-        report,
-        &scratch.join(format!("{board_id}.kicad_pcb")),
-    );
+    // All severities (the report check wants them); callers count errors.
+    let mut arguments = vec!["pcb", "drc", "--format", "json", "--severity-all"];
+    if refill_zones {
+        arguments.push("--refill-zones");
+    }
+    arguments.push("--output");
+    let checked = crate::native_report::run_kicad_report(&arguments, report, &scratch.join(format!("{board_id}.kicad_pcb")));
     let _ = fs::remove_dir_all(&scratch);
     checked?;
     let text = fs::read_to_string(report).map_err(|error| format!("failed to read {}: {error}", report.display()))?;
-    let value: Value = serde_json::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", report.display()))?;
-    Ok(tally_drc(&value).errors)
+    serde_json::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", report.display()))
 }
 
 /// Splits a result's errors into the ones beyond the reference's (new)

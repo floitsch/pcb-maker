@@ -90,7 +90,7 @@ mod board_router;
 mod verdict;
 pub use verdict::{
     DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference, KiCadRunFacts, KiCadRunStatus,
-    KiCadVerdict, decide, error_verdict, input_error, is_cosmetic, is_input_error, judge, read_drc_tally, reference_findings,
+    KiCadVerdict, decide, error_verdict, input_error, is_cosmetic, is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings,
     route_facts, split_findings, tally_drc, wall_cuts,
 };
 mod describe;

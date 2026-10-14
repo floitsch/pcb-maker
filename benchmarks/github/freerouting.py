@@ -179,31 +179,55 @@ def wait_for_memory(minimum_gb, what):
         waited += 15
 
 
-def reference_findings(name, board_id, directory, work):
+_DRC_COMMAND = {}
+
+
+def has_drc_command(binary):
+    """Whether `binary` has `drc-kicad-board` (KiCad's DRC through its DRC
+    cache, x802 and later); asked once per binary. Older snapshots: kicad-cli."""
+    key = str(binary)
+    if key not in _DRC_COMMAND:
+        try:
+            listed = subprocess.run([key, "--help"], capture_output=True, text=True, timeout=60).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            listed = ""
+        _DRC_COMMAND[key] = "drc-kicad-board" in listed
+    return _DRC_COMMAND[key]
+
+
+def reference_findings(name, board_id, directory, work, binary=None):
     """The designer's own DRC errors by type (a sweep's saved report when
     there is one, else computed here)."""
     saved = ROOT / "build/github-route-v2" / name / "reference/drc.json"
     report = None
+    # drc-kicad-board reports every severity: count its errors only.
+    errors_only = False
     if saved.exists():
         report = json.loads(saved.read_text())
     else:
         reference = work / "reference"
-        shutil.copytree(directory, reference, ignore=IGNORE)
+        if binary is not None and has_drc_command(binary):
+            reference.mkdir(parents=True, exist_ok=True)
+            command, cwd, errors_only = [str(binary), "drc-kicad-board", str(directory), board_id,
+                                         str(reference / "drc.json")], None, True
+        else:
+            shutil.copytree(directory, reference, ignore=IGNORE)
+            command, cwd = ["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
+                            "-o", "drc.json", f"{board_id}.kicad_pcb"], reference
         try:
-            subprocess.run(["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
-                            "-o", "drc.json", f"{board_id}.kicad_pcb"], cwd=reference,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+            subprocess.run(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
         except (OSError, subprocess.TimeoutExpired):
             pass
         if (reference / "drc.json").exists():
             report = json.loads((reference / "drc.json").read_text())
     if report is None:
         return {}, None
-    findings = dict(Counter(v["type"] for v in report.get("violations", []) if not COSMETIC.match(v["type"])))
+    findings = dict(Counter(v["type"] for v in report.get("violations", []) if not COSMETIC.match(v["type"])
+                            and (not errors_only or v.get("severity") == "error" and not v.get("excluded"))))
     return findings, len(report.get("unconnected_items", []))
 
 
-def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, before=None):
+def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, before=None, binary=None):
     """Freerouting on the cold board: the result board in <work>/result, a
     dictionary of what happened."""
     work.mkdir(parents=True, exist_ok=True)
@@ -302,8 +326,13 @@ def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, 
     # runs the same kicad-cli check, --severity-all, on its own result). The
     # cold board has no copper zones, so there is nothing to refill.
     try:
-        checked = measured(["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "-o", "drc.json",
-                            f"{board_id}.kicad_pcb"], None, 900, cwd=result)
+        if binary is not None and has_drc_command(binary):
+            # The same check through the binary's DRC cache.
+            checked = measured([binary, "drc-kicad-board", result, board_id, result / "drc.json", "--no-refill"],
+                               None, 900)
+        else:
+            checked = measured(["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "-o", "drc.json",
+                                f"{board_id}.kicad_pcb"], None, 900, cwd=result)
         row["drc_cpu_seconds"] = checked["cpu"]
         pipeline_cpu += checked["cpu"]
     except OSError:
@@ -429,7 +458,7 @@ def route_board(board, directory, arguments, config):
         baseline = frozenset(
             finding_key(v)
             for v in json.loads((baseline_directory / "drc.json").read_text()).get("violations", []))
-    reference, reference_unconnected = reference_findings(board["name"], board_id, directory, work)
+    reference, reference_unconnected = reference_findings(board["name"], board_id, directory, work, arguments.binary)
     row["reference_findings"] = reference
     row["reference_unconnected"] = reference_unconnected
 
@@ -440,7 +469,7 @@ def route_board(board, directory, arguments, config):
         entry = freeroute(cold, board_id, work / "freerouting", config, arguments.timeout, arguments.java_heap,
                           arguments.slot,
                           lambda: wait_for_memory(arguments.min_free_gb + max(heap_gb + 0.5, arguments.board_gb / 2),
-                                                  board["name"] + " (Freerouting)"))
+                                                  board["name"] + " (Freerouting)"), arguments.binary)
         if (work / "freerouting/result/drc.json").exists():
             entry["native"] = drc_summary(work / "freerouting/result", baseline, reference)
             entry["complete"] = entry["native"]["unconnected"] == 0

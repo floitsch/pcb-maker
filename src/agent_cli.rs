@@ -523,6 +523,38 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     Ok(verdict.status)
 }
 
+const DRC_USAGE: &str = "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]";
+
+/// KiCad's DRC of a board, through the DRC cache: complete when KiCad
+/// finds no error that counts and no unconnected item.
+fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
+    let refill = !arguments.iter().any(|argument| argument == "--no-refill");
+    let arguments = arguments.into_iter().filter(|argument| argument != "--no-refill").collect();
+    let (positional, _) = split_flags(arguments, &[], DRC_USAGE)?;
+    positional_count(&positional, 3..=3, DRC_USAGE)?;
+    let (source, board_id, report) = (&positional[0], &positional[1], Path::new(&positional[2]));
+    check_project(source, board_id)?;
+    if let Some(parent) = report.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|error| Failure::Usage(format!("failed to create {}: {error}", parent.display())))?;
+    }
+    let value = pcb_kicad::kicad_drc_report(Path::new(source), board_id, report, refill).map_err(Failure::Internal)?;
+    let tally = pcb_kicad::tally_drc(&value);
+    let cache = pcb_kicad::drc_cache_counts();
+    let errors: Vec<String> = tally.errors.iter().map(|(kind, count)| format!("{kind} {count}")).collect();
+    println!(
+        "drc: {} errors ({}), {} unconnected items, {} warnings, {} cosmetic; drc_cache: {{calls {}, hits {}}}; report {}",
+        tally.errors.values().sum::<usize>(),
+        errors.join(", "),
+        tally.unconnected,
+        tally.warnings,
+        tally.cosmetic,
+        cache.calls,
+        cache.hits,
+        path_text(report)
+    );
+    Ok(if tally.errors.is_empty() && tally.unconnected == 0 { KiCadRunStatus::Complete } else { KiCadRunStatus::Incomplete })
+}
+
 /// The commands that only read a project and write files: the arguments
 /// are checked here (exit 2), the work is the command's own (an error
 /// there exits 4).
@@ -583,6 +615,7 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
         "route-kicad-board" => route(arguments),
         "layout-kicad-board" => layout(arguments),
         "place-kicad-board" => place(arguments),
+        "drc-kicad-board" => drc(arguments),
         "describe-kicad-board" | "score-kicad-board" | "export-kicad-fab" | "repair-kicad-silkscreen" | "swap-kicad-pins"
         | "strip-kicad-tracks" | "strip-kicad-copper" | "import-kicad-netlist" => {
             checked_simple(command, &arguments).and_then(|()| {
@@ -692,7 +725,7 @@ missed, unplaced, illegal, hints, utilization, and verdict.";
 
 /// The commands for agents: name, one line, and the detailed help (when
 /// there is more to say than the usage line).
-pub const AGENT_COMMANDS: [(&str, &str, &str); 11] = [
+pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
     (
         "import-kicad-netlist",
         "makes a board from a schematic or netlist, with constraints.json and layout.json",
@@ -725,6 +758,11 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 11] = [
         "export-kicad-fab",
         "writes Gerbers, drill files, BOM and placement files, and the price at common fabs",
         "usage: pcb-maker export-kicad-fab <project-dir> <board-id> <out-dir>\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <out-dir>      where the fab files go; created if missing.\n\nPrints fab-export.json's content on stdout.",
+    ),
+    (
+        "drc-kicad-board",
+        "runs KiCad's DRC on a board (cached) and writes its JSON report",
+        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not) and no\nunconnected item, 1 when it does; one line on stdout counts them.",
     ),
     (
         "strip-kicad-tracks",
