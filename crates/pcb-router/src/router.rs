@@ -127,6 +127,14 @@ pub struct Config {
     /// Spokes in the pad's own frame (`Board::pad_spokes`) rather than
     /// along its box's axes (`PCB_ROUTER_OLD_SPOKE_FRAMES` for A/B).
     pub spoke_frames: bool,
+    /// Pads merged into a larger pad of their number are checked inside
+    /// its copper too, as KiCad builds and counts their spokes there (an
+    /// exposed pad's thermal vias; `PCB_ROUTER_NO_INNER_PADS` for A/B).
+    pub inner_pads: bool,
+    /// The DRC's track-end test keeps the clearance to half a micron
+    /// (`fill::TRACK_END_TOLERANCE`) rather than the spokes' 3 microns
+    /// (`PCB_ROUTER_OLD_TRACK_ENDS` for A/B).
+    pub track_end_tolerance: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -308,6 +316,8 @@ impl Default for Config {
             track_touch_fill: std::env::var_os("PCB_ROUTER_OLD_TRACK_PIECES").is_none(),
             neck_joins: std::env::var_os("PCB_ROUTER_NO_NECK_JOINS").is_none(),
             spoke_frames: std::env::var_os("PCB_ROUTER_OLD_SPOKE_FRAMES").is_none(),
+            inner_pads: std::env::var_os("PCB_ROUTER_NO_INNER_PADS").is_none(),
+            track_end_tolerance: std::env::var_os("PCB_ROUTER_OLD_TRACK_ENDS").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -6701,26 +6711,32 @@ impl Router {
         let mut records: Vec<SpokeRecord> = Vec::new();
         let mut spokes: Vec<Spoke> = Vec::new();
         // The terminals' pads on the layers they are reached on, and the
-        // pads merged into them on the layers where they are copper of
-        // their own, not inside their terminal's pad (U1.24's through-hole
-        // pad on F.Cu beside its B.Cu pad; inside the larger pad, KiCad's
-        // spokes of an exposed pad's thermal vias reach into that pad's
-        // relief in ways the model does not follow: counted, they turned
-        // 4 findings on 0xCB's U3.45 into 15 false alarms).
-        let mut spoke_pads: Vec<(usize, usize, crate::geometry::Point, std::collections::BTreeSet<usize>)> = Vec::new();
+        // pads merged into them on their layers: where they are copper of
+        // their own (U1.24's through-hole pad on F.Cu beside its B.Cu pad)
+        // and, with `inner_pads`, inside their terminal's pad, where KiCad
+        // builds and counts their spokes as any pad's (an exposed pad's
+        // thermal vias: in a hatched zone each has its ring, which its
+        // spokes reach; in a solid one the pad's relief takes them, and
+        // the DRC counts what crosses their rings, the pad's own spokes).
+        // Per pad, whether it lies inside its terminal's pad on the layer.
+        let mut spoke_pads: Vec<(usize, usize, crate::geometry::Point, std::collections::BTreeSet<usize>, std::collections::BTreeSet<usize>)> = Vec::new();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
-            spoke_pads.push((terminal, description.terminals[terminal].pad, description.terminals[terminal].anchor, layers_of_nodes));
+            spoke_pads.push((terminal, description.terminals[terminal].pad, description.terminals[terminal].anchor, layers_of_nodes, Default::default()));
         }
         for merged in self.board.merged_pads.iter().filter(|merged| merged.net == net && merged.host < state.terminal_nodes.len()) {
             let host = &self.board.obstacles[description.terminals[merged.host].pad];
+            let inside = |layer: &usize| host.layers & (1 << layer) != 0 && host.shape.contains(merged.anchor);
             let layers: std::collections::BTreeSet<usize> = (0..layers)
                 .filter(|layer| merged.layers & (1 << layer) != 0)
-                .filter(|layer| host.layers & (1 << layer) == 0 || !host.shape.contains(merged.anchor))
+                .filter(|layer| self.config.inner_pads || !inside(layer))
                 .collect();
-            spoke_pads.push((merged.host, merged.pad, merged.anchor, layers));
+            let inner = layers.iter().copied().filter(inside).collect();
+            spoke_pads.push((merged.host, merged.pad, merged.anchor, layers, inner));
         }
-        for (terminal, pad_index, pad_anchor, layers_of_nodes) in spoke_pads {
+        // Per record, whether its pad lies inside its terminal's pad.
+        let mut record_inner: Vec<bool> = Vec::new();
+        for (terminal, pad_index, pad_anchor, layers_of_nodes, inner) in spoke_pads {
             if isolated(terminal) || solid_pad(terminal) {
                 continue;
             }
@@ -6755,6 +6771,7 @@ impl Router {
                     }
                 }
                 records.push(SpokeRecord { terminal, pad: pad_index, anchor: pad_anchor, crossings: 0, layer, round, outcomes: [SpokeOutcome::NoFill; 4], tracks: 0 });
+                record_inner.push(inner.contains(&layer));
             }
         }
         let inside = |spoke: &Spoke, point: crate::geometry::Point| {
@@ -6764,6 +6781,8 @@ impl Router {
             along >= -1.0e-6 && along <= spoke.tip + 1.0e-6 && across <= spoke.width / 2.0 + 1.0e-6
         };
         let end_of = |spoke: &Spoke| [spoke.anchor[0] + spoke.direction[0] * spoke.tip, spoke.anchor[1] + spoke.direction[1] * spoke.tip];
+        // Per record, the pads whose spokes met its own.
+        let mut met_pads: Vec<Vec<usize>> = vec![Vec::new(); records.len()];
         // Per spoke, whether what is left of it joins the pad to the ring
         // half a gap out: neighbours' clearances may cut a spoke between the
         // pad and the ring (k30's U14.12 in a row of 0.8 mm pitch: its
@@ -6799,9 +6818,11 @@ impl Router {
                 // right angles). A pad doubled at one spot (a USB-C
                 // receptacle's A1 and B12) has one set of spokes in KiCad,
                 // which dedups coincident pads: its spokes do not meet.
+                // Pads of one terminal meet too where they are apart (an
+                // exposed pad's thermal vias, `inner_pads`).
                 let meets = spokes.iter().find(|other| {
                     other.layer == layer
-                        && records[other.record].terminal != records[spoke.record].terminal
+                        && (records[other.record].terminal != records[spoke.record].terminal || (self.config.inner_pads && other.pad != spoke.pad))
                         && crate::geometry::distance(other.anchor, spoke.anchor) > 1.0e-6
                         && crate::geometry::distance(other.anchor, spoke.anchor) <= other.tip + spoke.tip
                         && inside(other, end)
@@ -6811,6 +6832,7 @@ impl Router {
                     && (!self.config.spoke_clearance || probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, spoke.tip, spoke.side))
                 {
                     records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Pad(records[other.record].terminal as u32);
+                    met_pads[spoke.record].push(other.pad);
                 }
                 continue;
             }
@@ -7156,12 +7178,23 @@ impl Router {
         }
         // Pass two: spokes into pieces with another item count and join.
         let mut tallies: Vec<(usize, Vec<usize>)> = Vec::new();
-        for ((record, touched), joined) in records.iter_mut().zip(&touched_spokes).zip(&record_attached) {
+        for (((record, touched), joined), inner) in records.iter_mut().zip(&touched_spokes).zip(&record_attached).zip(&record_inner) {
             let mut good = 0;
             let mut islands: Vec<usize> = Vec::new();
             for (index, outcome) in record.outcomes.iter_mut().enumerate() {
                 let tracked = &touched[index];
-                if let SpokeOutcome::Pad(other) = *outcome {
+                if *inner && matches!(*outcome, SpokeOutcome::Good(_)) {
+                    // Inside its terminal's pad a spoke lands in fill that
+                    // overlaps that pad (in a hatched zone, its own ring):
+                    // the outline holds both pads, two items.
+                    if let SpokeOutcome::Good(piece) = *outcome
+                        && piece != 0
+                        && joined[index]
+                    {
+                        union(parent, terminal_base + record.terminal, piece as usize);
+                    }
+                    good += 1;
+                } else if let SpokeOutcome::Pad(other) = *outcome {
                     // One outline holds both pads: the spoke counts.
                     union(parent, terminal_base + record.terminal, terminal_base + other as usize);
                     good += 1;
@@ -7228,10 +7261,27 @@ impl Router {
             }
             best.is_some_and(|(_, piece)| terminal_roots.contains(&find(parent, piece as usize)))
         };
+        // Per layer, the plated holes of the net's thermal pads there.
+        let thermal_holes: Vec<Vec<usize>> = (0..layers)
+            .map(|layer| {
+                self.board
+                    .obstacles
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, obstacle)| obstacle.kind == crate::board::ObstacleKind::Hole && obstacle.net == Some(net) && obstacle.label.ends_with(" plated hole"))
+                    .filter(|(_, obstacle)| {
+                        let bounds = obstacle.shape.aabb();
+                        let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+                        rings[layer].iter().any(|(pad, _)| self.board.obstacles[*pad].shape.contains(centre))
+                    })
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .collect();
         let records_outcomes: Vec<[SpokeOutcome; 4]> = records.iter().map(|record| record.outcomes).collect();
         let records_pads: Vec<(usize, usize, crate::geometry::Point)> = records.iter().map(|record| (record.terminal, record.pad, record.anchor)).collect();
         let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
-        for (record, (good, islands)) in records.iter_mut().zip(tallies) {
+        for (record_index, (record, (good, islands))) in records.iter_mut().zip(tallies).enumerate() {
             // Other pads' spokes across this pad's ring half a gap out: the
             // DRC counts every crossing of the fill with the ring, and KiCad
             // adds spokes after cutting the reliefs (Castor's U6.11 between
@@ -7242,7 +7292,7 @@ impl Router {
                 let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == record.layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
                 let pad = &self.board.obstacles[record.pad];
                 let minimum = self.board.classes[state.plane_class[record.layer]].trace_width;
-                let met: Vec<u32> = record.outcomes.iter().filter_map(|outcome| if let SpokeOutcome::Pad(other) = outcome { Some(*other) } else { None }).collect();
+                let met = &met_pads[record_index];
                 let bounds = pad.shape.aabb();
                 let radius = 0.5 * (bounds.maximum[0] - bounds.minimum[0]).hypot(bounds.maximum[1] - bounds.minimum[1]) + gap;
                 let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
@@ -7250,7 +7300,7 @@ impl Router {
                     other.layer == record.layer && other.pad != record.pad && crate::geometry::distance(other.anchor, centre) <= other.tip + other.width + radius
                 }) {
                     let (other_terminal, _, other_anchor) = records_pads[other.record];
-                    if crate::geometry::distance(other_anchor, record.anchor) < 1.0e-6 || met.contains(&(other_terminal as u32)) {
+                    if crate::geometry::distance(other_anchor, record.anchor) < 1.0e-6 || met.contains(&other.pad) {
                         continue;
                     }
                     let counted = match records_outcomes[other.record][other.index] {
@@ -7263,9 +7313,12 @@ impl Router {
                     }
                     // Where its strip comes within half a gap of the pad,
                     // the brush keeps room in it.
-                    let steps = (((other.tip - other.edge) / (minimum / 4.0)).ceil() as usize).max(1);
+                    // Inside its terminal's pad, the strip over that pad
+                    // (spokes start at their pad's centre).
+                    let start = if record_inner[record_index] { 0.0 } else { other.edge };
+                    let steps = (((other.tip - start) / (minimum / 4.0)).ceil() as usize).max(1);
                     let crosses = (0..=steps).any(|step| {
-                        let along = other.edge + (other.tip - other.edge) * step as f64 / steps as f64;
+                        let along = start + (other.tip - start) * step as f64 / steps as f64;
                         [-other.width / 2.0, -other.side, 0.0, other.side, other.width / 2.0].iter().any(|offset| {
                             let at = [
                                 other.anchor[0] + other.direction[0] * along - other.direction[1] * offset,
@@ -7281,7 +7334,14 @@ impl Router {
                         })
                     });
                     if crosses {
-                        record.crossings += 1;
+                        // Inside its terminal's pad a strip may run right
+                        // through the pad's ring (the pad's own spokes from
+                        // its centre across a thermal via): KiCad counts the
+                        // crossings on both sides, two spokes.
+                        let through = record_inner[record_index]
+                            && pad.shape.distance_to_point(other.anchor) > gap / 2.0 + other.width / 2.0
+                            && pad.shape.distance_to_point(end_of(other)) > gap / 2.0 + other.width / 2.0;
+                        record.crossings += if through { 2 } else { 1 };
                         // A strip over the pad's copper joins the two pads.
                         if pad.shape.distance_to_segment(other.anchor, end_of(other)) <= other.width / 2.0 {
                             union(parent, terminal_base + record.terminal, terminal_base + other_terminal);
@@ -7350,6 +7410,23 @@ impl Router {
                     }) || probe.in_ring(record.layer, point)
                         || (probe.final_fill_at(record.layer, point) && kept_piece(parent, record.layer, point))
                 };
+                // KiCad's fill keeps out of a thermal pad's plated hole (an
+                // exposed pad's thermal via: a track to its centre ends in
+                // no fill, 0xCB's U3.45).
+                // The test is at a point, which KiCad's fill covers only
+                // where it keeps the clearance to a micron or so
+                // (`TRACK_END_TOLERANCE`).
+                let in_fill = |parent: &mut Vec<usize>, point: crate::geometry::Point| {
+                    !(self.config.inner_pads && thermal_holes[record.layer].iter().any(|hole| self.board.obstacles[*hole].shape.contains(point)))
+                        && if self.config.track_end_tolerance { probe.for_track_end(|| in_fill(parent, point)) } else { in_fill(parent, point) }
+                };
+                // A pad merged into its terminal has the tracks whose copper
+                // overlaps its own (KiCad's connectivity: 0xCB's thermal
+                // vias, which the exposed pad's tracks cross), not all its
+                // terminal's.
+                let merged_pad = record.pad != terminal.pad && self.config.inner_pads;
+                let half_width = self.board.classes[description.class].trace_width / 2.0;
+                let connected = |a: crate::geometry::Point, b: crate::geometry::Point, radius: f64| !merged_pad || pad.shape.distance_to_segment(a, b) <= radius + 1.0e-6;
                 // A branch ends at this pad, or at a pad of the net at its
                 // very spot (a USB-C receptacle's A1 and B12: KiCad connects
                 // a track to both).
@@ -7364,7 +7441,9 @@ impl Router {
                         continue;
                     }
                     let mut segments: Vec<(crate::geometry::Point, crate::geometry::Point)> = Vec::new();
-                    if let Some((start, end, _)) = state.adopted.get(&index) {
+                    let mut radius = half_width;
+                    if let Some((start, end, adopted)) = state.adopted.get(&index) {
+                        radius = *adopted;
                         if (at_pad(branch.start_terminal) || at_pad(branch.end_terminal))
                             && pad.layers & (1 << branch.nodes[0].layer) != 0
                         {
@@ -7403,7 +7482,7 @@ impl Router {
                         }
                     }
                     for (a, b) in segments {
-                        let counted = if near_pad(a) { in_fill(parent, b) } else { near_pad(b) && in_fill(parent, a) };
+                        let counted = connected(a, b, radius) && if near_pad(a) { in_fill(parent, b) } else { near_pad(b) && in_fill(parent, a) };
                         if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() && !counted {
                             eprintln!(
                                 "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} kept {} {}",
@@ -7884,16 +7963,26 @@ impl Router {
                 continue;
             };
             let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+            let thermal = |label: &str| self.board.isolated_pads.binary_search(&label.to_string()).is_err() && self.board.solid_pads.binary_search(&label.to_string()).is_err();
             for terminal in &description.terminals {
-                if self.board.isolated_pads.binary_search(&terminal.label).is_ok()
-                    || self.board.solid_pads.binary_search(&terminal.label).is_ok()
-                {
+                if !thermal(&terminal.label) {
                     continue;
                 }
                 if self.board.obstacles[terminal.pad].layers & (1 << layer) == 0 {
                     continue;
                 }
                 result[layer].push((terminal.pad, reach));
+            }
+            // KiCad cuts a relief (and in a hatched zone adds a ring) around
+            // every thermal pad, a pad merged into its terminal's larger pad
+            // too (an exposed pad's thermal vias, on the far side or inside
+            // the pad).
+            if self.config.inner_pads {
+                for merged in self.board.merged_pads.iter().filter(|merged| merged.net == net && merged.layers & (1 << layer) != 0) {
+                    if description.terminals.get(merged.host).is_some_and(|host| thermal(&host.label)) {
+                        result[layer].push((merged.pad, reach));
+                    }
+                }
             }
         }
         result
@@ -10076,11 +10165,95 @@ mod tests {
             vec!["P.2".into()],
         );
         board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad: 1, anchor: [5.0, 5.0], layers: 0b11 });
+        // Inside the larger pad too with `inner_pads`.
+        for (inner_pads, layers) in [(false, vec![0]), (true, vec![0, 1])] {
+            let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads, ..Config::default() });
+            let (report, _, _) = spoke_report(&router, 0);
+            let merged: Vec<usize> = report.iter().filter(|record| record.pad == 1).map(|record| record.layer).collect();
+            assert_eq!(merged, layers);
+            assert!(report.iter().find(|record| record.pad == 1).unwrap().outcomes.iter().any(|outcome| matches!(outcome, SpokeOutcome::Good(_))));
+        }
+    }
+
+    #[test]
+    fn thermal_vias_inside_an_exposed_pad_have_their_own_rings_in_a_hatched_zone() {
+        // P.1, an exposed pad 2 mm square, with two thermal vias of its
+        // number merged into it: one at its centre, one in its corner by
+        // the walls of Q. In a hatched zone KiCad gives every thermal pad a
+        // ring a spoke wide, inside the exposed pad too, and keeps a via's
+        // spokes where they reach it (0xCB's U3.45): the centre via has
+        // four; the corner via's ring and spokes outside the pad fall to
+        // Q's clearance, its inward spoke alone stays, and the DRC finds
+        // it starved. The outline holds both pads: no island.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
+            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
+            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
+            copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
+        ];
+        let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
+        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        let mut board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+            ],
+            planes,
+            Vec::new(),
+        );
+        for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
+            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+        }
+        let good = |record: &SpokeRecord| record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count() + record.crossings;
         let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
         let (report, _, _) = spoke_report(&router, 0);
-        let merged: Vec<usize> = report.iter().filter(|record| record.pad == 1).map(|record| record.layer).collect();
-        assert_eq!(merged, vec![0]);
-        assert!(report.iter().find(|record| record.pad == 1).unwrap().outcomes.iter().any(|outcome| matches!(outcome, SpokeOutcome::Good(_))));
+        let centre = report.iter().find(|record| record.pad == 1).unwrap();
+        assert_eq!(good(centre), 4, "{:?}", centre.outcomes);
+        let corner = report.iter().find(|record| record.pad == 2).unwrap();
+        assert_eq!(good(corner), 1, "{:?}", corner.outcomes);
+        assert!(corner.outcomes.iter().all(|outcome| !matches!(outcome, SpokeOutcome::Island(_))));
+        // Without `inner_pads` neither via is checked on the pad's layer.
+        let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads: false, ..Config::default() });
+        let (report, _, _) = spoke_report(&router, 0);
+        assert!(report.iter().all(|record| record.pad == 0));
+    }
+
+    #[test]
+    fn the_exposed_pads_spoke_through_a_thermal_vias_ring_counts_twice() {
+        // In a solid zone the exposed pad's relief takes its thermal vias'
+        // spokes; the DRC counts what crosses a via's ring: the pad's own
+        // spoke along +x runs from its centre right through via A's ring,
+        // crossing it on both sides, two spokes (mackerel's mounting holes
+        // on In1). Via B, off the spokes, crosses no fill: not connected,
+        // no finding either.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
+            copper(Shape::Circle { center: [5.6, 5.0], radius: 0.2 }, 0, "P.1"),
+            copper(Shape::Circle { center: [4.4, 4.4], radius: 0.2 }, 0, "P.1"),
+            copper(Shape::Circle { center: [8.0, 5.0], radius: 0.4 }, 0, "P.2"),
+        ];
+        // P.2, solid, is the fill's second item.
+        let mut board = board(
+            1,
+            obstacles,
+            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(3, [8.0, 5.0], "P.2")] }],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            vec!["P.2".into()],
+        );
+        for (pad, anchor) in [(1, [5.6, 5.0]), (2, [4.4, 4.4])] {
+            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+        }
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let (report, _, _) = spoke_report(&router, 0);
+        let on_spoke = report.iter().find(|record| record.pad == 1).unwrap();
+        assert!(on_spoke.outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::NoFill)), "{:?}", on_spoke.outcomes);
+        assert_eq!(on_spoke.crossings, 2);
+        let off_spoke = report.iter().find(|record| record.pad == 2).unwrap();
+        assert!(off_spoke.outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::NoFill)), "{:?}", off_spoke.outcomes);
+        assert_eq!(off_spoke.crossings, 0);
     }
 
     #[test]

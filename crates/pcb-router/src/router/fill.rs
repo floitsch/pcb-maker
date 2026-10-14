@@ -38,6 +38,16 @@ pub(super) const KICAD_MAX_ERROR: f64 = 0.005;
 /// and a track's clearance, and KiCad keeps it).
 const EPSILON: f64 = 0.003;
 
+/// `EPSILON` for the DRC's test of a track's end in the fill: a point,
+/// where KiCad's fill keeps the clearance to a micron on straight edges
+/// (its pruning) and up to 5 microns more on arcs (polygons outside the
+/// curve), not a spoke's end with room around it. Census of 44 boards: at
+/// `EPSILON` 17 misses and 27 false alarms, 0.001 mm 16 and 27, 0.0005 mm
+/// 12 and 27 (0xCB's U3.45 thermal vias: a track from one ends 1.5 microns
+/// outside a sliver of fill between two QFN pins), exact 12 and 29. A
+/// knife edge: these ends lie within a micron of the fill's rim.
+const TRACK_END_TOLERANCE: f64 = 0.0005;
+
 #[derive(Clone, Copy)]
 enum Item {
     /// One of the board's obstacles.
@@ -70,6 +80,10 @@ pub(super) struct FillProbe<'a> {
     /// Per hatch hole (layer and its place in the pattern), whether KiCad
     /// keeps it (`hole_kept`).
     holes: std::cell::RefCell<HashMap<(usize, i64, i64), bool>>,
+    /// How much closer than the clearance to other nets' copper a brush
+    /// centre may come (`EPSILON`, `TRACK_END_TOLERANCE` inside
+    /// `for_track_end`; the board's edges and the reliefs keep `EPSILON`).
+    tolerance: std::cell::Cell<f64>,
 }
 
 fn bucket_range(minimum: Point, maximum: Point) -> (i64, i64, i64, i64) {
@@ -87,7 +101,16 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
-        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(HashMap::new()) }
+        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(HashMap::new()), tolerance: std::cell::Cell::new(EPSILON) }
+    }
+
+    /// `f` with brush centres allowed `TRACK_END_TOLERANCE` closer than
+    /// the clearance to other nets' copper rather than `EPSILON`.
+    pub(super) fn for_track_end<T>(&self, f: impl FnOnce() -> T) -> T {
+        let before = self.tolerance.replace(TRACK_END_TOLERANCE);
+        let result = f();
+        self.tolerance.set(before);
+        result
     }
 
     fn half(&self, layer: usize) -> f64 {
@@ -444,6 +467,7 @@ impl<'a> FillProbe<'a> {
         let half = brush.trace_width / 2.0;
         let index = self.index();
         let span = index.span;
+        let tolerance = self.tolerance.get();
         let (x0, y0, x1, y1) = bucket_range([point[0] - span, point[1] - span], [point[0] + span, point[1] + span]);
         let mut edges: Vec<(Point, Point)> = Vec::new();
         for by in y0..=y1 {
@@ -460,12 +484,12 @@ impl<'a> FillProbe<'a> {
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
-                            obstacle.shape.distance_to_point(point) < clearance + half - EPSILON
+                            obstacle.shape.distance_to_point(point) < clearance + half - tolerance
                         }
                         Item::Segment { a, b, half_width, clearance } => {
-                            point_segment_distance(point, *a, *b) < half_width + clearance.max(brush.clearance) + half - EPSILON
+                            point_segment_distance(point, *a, *b) < half_width + clearance.max(brush.clearance) + half - tolerance
                         }
-                        Item::Via { at, radius, clearance } => distance(point, *at) < radius + clearance.max(brush.clearance) + half - EPSILON,
+                        Item::Via { at, radius, clearance } => distance(point, *at) < radius + clearance.max(brush.clearance) + half - tolerance,
                         Item::Edge { a, b, margin } => {
                             edges.push((*a, *b));
                             point_segment_distance(point, *a, *b) < *margin - EPSILON
