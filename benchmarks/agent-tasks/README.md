@@ -293,7 +293,7 @@ carry the signal; the boards that never flip pass every time and would
 only spend the budget. Chosen: every board with two flips or more (nine),
 the fastest board with one (spell_tome; mackerel-08 at 516 s, Castor at
 996 s and rp2040zero left out to keep the tier short), and
-three fast boards that never changed as controls (Blue_Line, urchin,
+two fast boards that never changed as controls (Blue_Line and urchin;
 E-Fidget-Lite would do as well). MIDAS-MK1.1 and WLED_Matrix are the slow
 ones kept: both have connections open in every round, the cases a router
 or placement change should improve. Coverage: 8 two-layer, 2 four-layer
