@@ -744,6 +744,23 @@ trace_tension_can_move_a_real_rung_one_footprint_without_breaking_kicad.
 A closed stdout (`pcb-maker --help | head`) ends quietly with exit 0 (or
 the verdict's code when a run already had one).
 
+## Committed on 2026-10-14 (benchmark tooling: short tier, route mode, splicing)
+
+Florian's feedback: we spent most of the day waiting for CPU, because every
+agent ended with a serialised full-budget 30-board tier and paired every
+measurement. `benchmarks/agent-tasks/README.md` "How to measure" now states
+the discipline: the short tier (`--tier short`, 12 flip-prone boards from
+`flippers.py` over x644..x782, a third of the budget via `--budget-scale`,
+about 600 s at 6 jobs; WLED_Matrix gets wall-cut above load 45 at that
+budget) for iteration; the 30-board tier at full budget only as the merge
+gate; quality judged by one run per side (the layout is deterministic unless
+`cut`); pinned simultaneous pairs only for CPU claims; router questions in
+route mode on fixed placements (`--route-from <sweep dir>`, verified
+identical to manual routes on two boards); incremental sweeps with
+`--splice-from <log>` (rows marked `spliced`, compare.py shows SPL); an
+objectives line (unconnected, new errors, vias, length, CPU, work, cuts,
+first-route open terminals) in the summary and summary.json.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
