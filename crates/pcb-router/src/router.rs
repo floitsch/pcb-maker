@@ -440,6 +440,12 @@ const STUB_FIT: f64 = 1.0e-6;
 
 pub const EXPANSIONS_PER_SECOND: f64 = 2.0e6;
 pub const GUARD: f64 = 4.0;
+/// Lattice nodes of pour layers the pour analysis (`analyze_pours`, one
+/// thread) takes in per second of an idle machine: the budgets of the
+/// phases after negotiation count it as work beside the search
+/// (`budget_work`; calibrated below a load of 20, see docs/router.md,
+/// "Determinism and the wall clock").
+pub const POUR_NODES_PER_SECOND: f64 = 20.0e6;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -1207,10 +1213,11 @@ impl Profile {
             .enumerate()
             .map(|(index, name)| {
                 format!(
-                    "{name} {:.1}s wall, {:.1}s search work, pour {:.1}s wall in {:.0}M nodes",
+                    "{name} {:.1}s wall, {:.1}s search work, pour {:.1}s wall, {:.1}s work ({:.0}M nodes)",
                     self.phase_wall[index],
                     self.phase_search[index],
                     self.phase_pour_wall[index],
+                    self.phase_pour_units[index] as f64 / POUR_NODES_PER_SECOND,
                     self.phase_pour_units[index] as f64 / 1.0e6
                 )
             })
@@ -4417,21 +4424,36 @@ impl Router {
         self.profile.phase_wall[phase] += mark.3.elapsed().as_secs_f64();
     }
 
+    /// The pour analyses' work so far, in seconds of an idle machine
+    /// (their lattice nodes at `POUR_NODES_PER_SECOND`).
+    fn pour_work_seconds(&self) -> f64 {
+        self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed) as f64 / POUR_NODES_PER_SECOND
+    }
+
+    /// The work the phase budgets (`clock`, `spent`) count: the search's
+    /// and the pour analyses'. A clean-up on a pour board spends much of
+    /// its time checking that a batch strands no pour pad (Sisu: 21-35 s
+    /// of a 61-66 s budget); counted as search alone, its budget ran on in
+    /// wall clock with the load, and under load the wall guard ended it.
+    fn budget_work(&self) -> f64 {
+        self.work_seconds() + self.pour_work_seconds()
+    }
+
     /// A budget's start: the work and the wall clock at this point.
     fn clock(&self) -> (f64, std::time::Instant) {
-        (self.work_seconds(), std::time::Instant::now())
+        (self.budget_work(), std::time::Instant::now())
     }
 
     /// Whether `budget` (work seconds) is spent since `clock`; the wall
     /// clock stops it too, at `GUARD` times the budget.
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
-        if self.work_seconds() - clock.0 > budget || self.past_work_deadline() {
+        if self.budget_work() - clock.0 > budget || self.past_work_deadline() {
             return true;
         }
         if self.wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD {
             note_wall_cut(
                 "budget guard",
-                format_args!("{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done", clock.1.elapsed().as_secs_f64(), self.work_seconds() - clock.0),
+                format_args!("{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done", clock.1.elapsed().as_secs_f64(), self.budget_work() - clock.0),
             );
             return true;
         }
@@ -5823,7 +5845,7 @@ impl Router {
                 }
                 break;
             }
-            let left = budget - (self.work_seconds() - started.0);
+            let left = budget - (self.budget_work() - started.0);
             if strict && let Some(cost) = last_round.filter(|cost| *cost > left) {
                 if self.config.verbose {
                     eprintln!(
@@ -5832,7 +5854,7 @@ impl Router {
                 }
                 break;
             }
-            let round_started = self.work_seconds();
+            let round_started = self.budget_work();
             let before = self.quality();
             let stranded_before = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
             let starved_before = if self.config.via_reduction_keeps_spokes { self.starved_pads() } else { 0 };
@@ -5875,7 +5897,7 @@ impl Router {
             self.config.heuristic_weight = weight;
             if strict {
                 // The clean-up gets what the negotiation left.
-                let left = (budget - (self.work_seconds() - started.0)).max(0.0);
+                let left = (budget - (self.budget_work() - started.0)).max(0.0);
                 self.config.cleanup_seconds = self.config.cleanup_seconds.min(left);
             }
             // Only the nets this round touched can have got worse.
@@ -5889,7 +5911,7 @@ impl Router {
                 .collect();
             self.clean_up(&touched);
             (self.config.negotiation_seconds, self.config.negotiation_expansions, self.config.cleanup_seconds) = limits;
-            last_round = Some(self.work_seconds() - round_started);
+            last_round = Some(self.budget_work() - round_started);
             self.config.via_cost = via_cost;
             let after = self.quality();
             let stranded_after = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
@@ -6394,12 +6416,15 @@ impl Router {
             let state = &self.nets[net as usize];
             let planes = state.plane.iter().filter(|mask| !mask.is_empty()).count();
             let nodes: usize = state.branches.iter().map(|branch| branch.nodes.len()).sum();
+            let nanos = started.elapsed().as_nanos();
+            let solid: usize = result.0.solid.iter().map(|layer| layer.iter().filter(|free| **free).count()).sum();
+            let inside: usize = state.plane.iter().map(|layer| layer.iter().filter(|inside| **inside).count()).sum();
             eprintln!(
-                "pour trace: cells {} planes {planes} terminals {} nodes {nodes} stamped {} units {units} nanos {}",
+                "pour trace: cells {} planes {planes} terminals {} nodes {nodes} stamped {} units {units} nanos {nanos} solid {solid} inside {inside} pieces {}",
                 self.grid.cells(),
                 state.terminal_nodes.len(),
                 state.stamped.len(),
-                started.elapsed().as_nanos()
+                result.0.pieces
             );
         }
         result
@@ -8981,6 +9006,7 @@ impl Router {
             (2.0 * widest / self.grid.pitch).ceil() as usize + 3
         };
         let started = self.clock();
+        let pour_work_before = self.pour_work_seconds();
         let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
         'passes: for _ in 0..self.config.cleanup_passes {
             let mut improved = false;
@@ -9161,7 +9187,12 @@ impl Router {
         }
         self.cleanup = false;
         if self.config.verbose && pour_stranded.is_some() {
-            eprintln!("clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks ({pour_analyses} analyses)");
+            eprintln!(
+                "clean-up: {pour_rejected} batches kept out for stranding pour pads, {pour_check_seconds:.1} s of pour checks ({pour_analyses} analyses); {:.1} s of work of a budget of {budget:.0} s, {:.1} s of it pour analyses, in {:.1} s of wall clock",
+                self.budget_work() - started.0,
+                self.pour_work_seconds() - pour_work_before,
+                started.1.elapsed().as_secs_f64()
+            );
         }
         improvements
     }
@@ -9563,6 +9594,30 @@ mod tests {
         };
         let config = Config { pitches: vec![0.1], ..Config::default() };
         (Router::new(&board, &config), middle)
+    }
+
+    #[test]
+    fn pour_analyses_count_as_budget_work() {
+        // Each analysis counts its pour's layers times the lattice, at
+        // `POUR_NODES_PER_SECOND`, in the phase budgets' work and not in the
+        // search's; a copy of the router keeps the count.
+        let (router, _) = diagonal_channel(false);
+        let clock = router.clock();
+        let search = router.work_seconds();
+        router.analyze_pours(0);
+        router.analyze_pours_full(0, &|_| false);
+        let nodes = router.grid().cells() as f64;
+        assert_eq!(router.pour_analysis_units(0), router.grid().cells() as u64);
+        let expected = 2.0 * nodes / POUR_NODES_PER_SECOND;
+        assert!((router.budget_work() - clock.0 - expected).abs() < 1.0e-12);
+        assert_eq!(router.work_seconds(), search);
+        let copy = router.clone();
+        assert!((copy.budget_work() - router.budget_work()).abs() < 1.0e-12);
+        // A budget smaller than that work is spent by it alone.
+        assert!(router.spent(&clock, 0.5 * expected));
+        assert!(!router.spent(&clock, 2.0 * expected));
+        // Another net without a pour counts nothing.
+        assert_eq!(router.pour_analysis_units(1), 0);
     }
 
     #[test]
