@@ -531,6 +531,49 @@ video's routing is not deterministic for an identical placement (392, 314,
 325, 262 unconnected for seed 1). Logs `build/room-*`,
 `build/quick30-x737.log`.
 
+## Triage of the v15 regressions (2026-10-14, no code changed)
+
+A read-only triage of the 16 boards v15 (x723) lost against v14 (x510), by
+pinned route-mode pairs on the same placement, layout repeats, and layout
+with `solid_pin_rows` off. Outputs in `build/triage/` and `build/triage-*/`.
+
+- The router is not the cause. On the same placement x510 and x723 give
+  identical tracks-mode results (counts, vias, length; x723 reports fewer
+  starved thermals), connect mode differs by a few connections either way.
+  CPU x723/x510 0.98-1.06. Every x723 layout repeat reproduced its v15 row
+  exactly unless the wall deadline fired.
+- Ladder budget cliff (module 8 to 81 open, jetson 9 to 25, vaio_re): the
+  last ladder step, signals at the project's narrowest predefined width plus
+  the relaxed clearance, is what nearly completes these boards (module 126
+  to 17 open, jetson 48 to 6 in route mode). In layout mode the first route
+  eats the budget and the step's guards (`no_time_for_another`,
+  `spent < 1.5 * ladder_budget`) refuse it. Assigned: reserve the step's
+  cost or run it as an early rung.
+- Placement perturbation (RP2040_base 100 to 173, Hub, SNSP, glasgow): a
+  rule change shifts the legaliser's path and the race picks another seed;
+  v14's RP2040 placement is legal under `solid_pin_rows`, the rule only
+  perturbs (off: 100 open again). Seed-repeated pairs are the only sound
+  judge of such changes.
+- Wall clock not booked as work (0xCB panel, glasgow, vaio_re): the
+  legalise phases book 0.10-0.15 of their wall time as work (panel 504-966 s
+  wall for 34 s of work), so the layout deadline fires and the result
+  depends on machine load (vaio_re 63 or 151 open for one placement).
+  Assigned.
+- Tabbed panels (0xCB panel, OpenESC 4in1, molecule panels): one outline
+  piece, so `keep_on_pieces` never fires and 15-22 parts of one copy land
+  on another copy; the router then reports 49 of 188 nets without a path.
+  Assigned: confine each net group to its own fixed parts' region.
+- Far-side courtyards (woagboard 26 courtyard overlaps; koeg-board and
+  Quanta75 may share the cause): `legal.rs` `clear_of` checks far-side
+  rects only between parts on opposite sides; KiCad checks two back-mounted
+  parts' front courtyards against each other. Assigned.
+- protoesp and vaio_re lost because v14's placements put parts inside
+  module and connector bodies that `solid_pin_rows` now blocks (honest).
+- None of v15's 45 passes relies on a bug: `inside_bodies.py` finds only
+  fixed designer parts inside solid boxes, the designer-budgeted errors are
+  internal to footprints. Caveat: qfwfq's hole_clearance sits at KiCad's
+  199 cap, like the designer's.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
