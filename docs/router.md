@@ -300,6 +300,21 @@ against the fill with none, and the filler prunes with its own micron.
 Exact gives two false alarms, a micron loses those four findings. `experiments/pour-fidelity/pads_in_pads.py`
 lists the pads inside pads of a board.
 
+A starved via inside an exposed pad gets a track of its own
+(`add_inner_spokes`, `inner_spokes`, on; `PCB_ROUTER_NO_INNER_SPOKES`):
+`manual_spokes` cannot help it (a merged pad has no lattice nodes), so a
+straight track of the net's width runs from its centre into the fill over
+the exposed pad, in a hatched zone its own ring, its copper wholly inside
+the exposed pad's (every clearance the pad keeps, it keeps), the shortest
+of sixteen directions; KiCad's DRC counts a track connected to the via that
+starts in its ring and ends in fill as a spoke. It is kept only if the
+model then finds the via no longer short, and emitted as exact copper
+(`NetState::inner_spokes`). While it runs the fill model reads the hatch
+also in the tracks rung (`Router::hatch_any_plane`), whose planes do not
+connect but which KiCad fills all the same; elsewhere the tracks rung keeps
+its model (reading it there changed 0xCB's tracks-rung routing and left
+MX3.S1 an island).
+
 After a layout move's reroute the pours are refreshed (pads the rerouted
 signals cut off are routed again), and a plane end whose fill the signals
 took is trimmed back to its junction (`trim_dangling_plane_ends`;

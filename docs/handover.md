@@ -1136,6 +1136,48 @@ expansions only; counting the pour work there too (a `work()` in
 `RoutingResult` instead of `expansions`) would make `deadline_work` and the
 ladder's budget consistent with the phase budgets, at the price of shifting
 more rows (every pour board's attempts), so it wants its own measurement.
+## Committed on 2026-10-14 (inner-pad spokes)
+
+The exposed-pad model (above) found 0xCB-1337's two starved corner vias
+but the router could not repair them: `manual_spokes` starts its tracks
+from a pad's lattice nodes, and a via merged into the exposed pad has none.
+`add_inner_spokes` (`inner_spokes`, on, `PCB_ROUTER_NO_INNER_SPOKES`; after
+the manual spokes) gives such a via, where the spoke model finds it short
+on a layer inside the exposed pad, a straight track of the net's width from
+its centre into fill over the pad (in a hatched zone its own ring), its
+copper wholly inside the exposed pad's, the shortest of sixteen directions,
+kept only if the model then counts the via whole. KiCad's DRC counts a
+track connected to the pad that starts in its ring and ends in fill as a
+spoke; inside the exposed pad's copper the track keeps every clearance the
+pad keeps. The tracks are exact copper (`NetState::inner_spokes`), counted
+by the DRC track rule in `kicad_spokes`. Checked with kicad-cli on the
+x825 board plus the two tracks before building it in: starved 2 to 0, no
+other finding.
+
+One trap: the tracks rung lowers pours with `connect` false, and the fill
+probe read a zone's hatch only from connecting planes, so in that rung the
+vias' rings did not exist and the model saw them unconnected (no finding,
+no repair), while the ladder picked that rung's board. While
+`add_inner_spokes` runs the probe now reads the hatch of any plane
+(`Router::hatch_any_plane`); reading it in the tracks rung everywhere
+changed 0xCB's tracks-rung routing (46 vias, MX3.S1 left an isolated
+island), so it stays scoped. The tracks rung's fill model ignoring hatched
+zones is a gap of its own.
+
+Route mode on 0xCB's v15 placement (tasks v6), x825 against x828: the
+same board plus two segments of 0.42 mm (length 1952.3 to 1953.2 mm),
+starved_thermal 2 to 0, no new finding (annular_width 13 is the
+footprint's vias), CPU 160 to 138 s. Census of 44 boards: x828 identical
+to x825 (157 predicted, 12 missed, 27 false alarms, 2 not modelled). Short
+tier (tasks v6) x829 against build/bench-short/short-x783.log: 11 boards
+byte-identical, 0xCB-1337 the same board plus the two segments, its
+starved_thermal 2 to 0 (it passed before on the designer's 3); passes 6 to
+6, unconnected 42 to 42, vias 1165 to 1165, length 22013 to 22014 mm, CPU
+4920 to 4951 s. An earlier tier against short-x791 was tasks v5 (the
+list mix-up) and is void; WLED_Matrix on it was identical between x825
+and x828. Router test:
+`a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring`.
+Logs `build/fill3b-x8{25,27,28}.log`, `build/short-x829.log`.
 
 ## Open problems, ranked
 
