@@ -92,7 +92,11 @@ pub(super) struct FillProbe<'a> {
     /// centre may come (`EPSILON`, `TRACK_END_TOLERANCE` inside
     /// `for_track_end`; the board's edges and the reliefs keep `EPSILON`).
     tolerance: std::cell::Cell<f64>,
+    /// The probe's work: items put in the index and items its queries
+    /// looked at, added to the router's pour work by `charge`.
+    ops: std::cell::Cell<u64>,
 }
+
 
 fn bucket_range(minimum: Point, maximum: Point) -> (i64, i64, i64, i64) {
     (
@@ -109,7 +113,12 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
-        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(HashMap::new()), tolerance: std::cell::Cell::new(EPSILON) }
+        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(HashMap::new()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0) }
+    }
+
+    /// Adds the probe's work so far to its router's pour work.
+    pub(super) fn charge(&self) {
+        self.router.scratch.probe_ops.fetch_add(self.ops.replace(0), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `f` with brush centres allowed `TRACK_END_TOLERANCE` closer than
@@ -429,6 +438,7 @@ impl<'a> FillProbe<'a> {
                     insert(layer, (bounds.minimum, bounds.maximum), Item::Ring { pad: *pad, reach: *pad_reach }, &mut buckets);
                 }
             }
+            self.ops.set(self.ops.get() + buckets.values().map(Vec::len).sum::<usize>() as u64);
             Index { buckets, span: reach + extent + half_most + board.edge_clearance + 1.0e-3 }
         })
     }
@@ -483,6 +493,7 @@ impl<'a> FillProbe<'a> {
                 let Some(items) = index.buckets.get(&(layer, bx, by)) else {
                     continue;
                 };
+                self.ops.set(self.ops.get() + items.len() as u64);
                 for item in items {
                     let blocked = match item {
                         Item::Obstacle(position) => {
@@ -542,6 +553,7 @@ impl<'a> FillProbe<'a> {
                 let Some(items) = index.buckets.get(&(layer, bx, by)) else {
                     continue;
                 };
+                self.ops.set(self.ops.get() + items.len() as u64);
                 for item in items {
                     let room = match item {
                         Item::Obstacle(position) => {

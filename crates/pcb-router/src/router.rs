@@ -440,12 +440,17 @@ const STUB_FIT: f64 = 1.0e-6;
 
 pub const EXPANSIONS_PER_SECOND: f64 = 2.0e6;
 pub const GUARD: f64 = 4.0;
-/// Lattice nodes of pour layers the pour analysis (`analyze_pours`, one
-/// thread) takes in per second of an idle machine: the budgets of the
-/// phases after negotiation count it as work beside the search
-/// (`budget_work`; calibrated below a load of 20, see docs/router.md,
-/// "Determinism and the wall clock").
-pub const POUR_NODES_PER_SECOND: f64 = 20.0e6;
+/// The pour analysis's work (`analyze_pours`, one thread), in nanoseconds
+/// of an idle machine: per lattice node inside the net's pour (the fill
+/// mask and its labelling), per stamp of the net (its own copper, masked
+/// out) and per item a fill probe indexes or looks at (`fill::FillProbe`,
+/// the spoke tests). The budgets of the phases after negotiation count it
+/// beside the search (`budget_work`). Calibrated on seven boards at one
+/// thread (docs/router.md, "Determinism and the wall clock"): the model
+/// gives 0.89-1.07 of the analyses' wall time.
+pub const POUR_NODE_NANOS: u64 = 41;
+pub const POUR_STAMP_NANOS: u64 = 38;
+pub const PROBE_ITEM_NANOS: u64 = 47;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -1021,11 +1026,15 @@ pub struct Scratch {
     open_expansions: u64,
     /// Searches that found no path at all.
     failed_searches: u64,
-    /// Lattice nodes the pour analyses took in (`pour_analysis_units`),
-    /// counted from `&self` (the analysis does not mutate the router).
+    /// The pour analyses' work in nanoseconds of an idle machine
+    /// (`pour_analysis_nanos`, `POUR_NODE_NANOS`), counted from `&self`
+    /// (the analysis does not mutate the router).
     pour_units: std::sync::atomic::AtomicU64,
     /// Wall nanoseconds of those analyses (for the profile only).
     pour_nanos: std::sync::atomic::AtomicU64,
+    /// Items the fill probes (`fill::FillProbe`: the pour analysis's
+    /// spoke tests) put in their index and looked at.
+    probe_ops: std::sync::atomic::AtomicU64,
 }
 
 impl Scratch {
@@ -1050,6 +1059,7 @@ impl Scratch {
             failed_searches: 0,
             pour_units: std::sync::atomic::AtomicU64::new(0),
             pour_nanos: std::sync::atomic::AtomicU64::new(0),
+            probe_ops: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1102,6 +1112,7 @@ impl Clone for Scratch {
             failed_searches: self.failed_searches,
             pour_units: std::sync::atomic::AtomicU64::new(self.pour_units.load(std::sync::atomic::Ordering::Relaxed)),
             pour_nanos: std::sync::atomic::AtomicU64::new(self.pour_nanos.load(std::sync::atomic::Ordering::Relaxed)),
+            probe_ops: std::sync::atomic::AtomicU64::new(self.probe_ops.load(std::sync::atomic::Ordering::Relaxed)),
             ..Self::default()
         }
     }
@@ -1180,9 +1191,9 @@ struct Profile {
     analysis_nanos: Arc<std::sync::atomic::AtomicU64>,
     analysis_calls: Arc<std::sync::atomic::AtomicU64>,
     /// Per phase (`PHASES`): the search work, the pour analyses' work
-    /// units and their wall seconds.
+    /// and wall seconds, the phase's wall seconds.
     phase_search: [f64; PHASES.len()],
-    phase_pour_units: [u64; PHASES.len()],
+    phase_pour_work: [f64; PHASES.len()],
     phase_pour_wall: [f64; PHASES.len()],
     phase_wall: [f64; PHASES.len()],
 }
@@ -1200,25 +1211,24 @@ pub fn build_totals() -> (u64, f64) {
 /// The phases the `profile work:` line splits the work into.
 const PHASES: [&str; 6] = ["negotiation", "resolve", "clean-up", "via reduction", "thermal spokes", "stitching"];
 
-/// A phase's start for the profile: search work, pour units, pour wall
+/// A phase's start for the profile: search work, pour work, pour wall
 /// nanoseconds, wall clock.
-type PhaseMark = (f64, u64, u64, std::time::Instant);
+type PhaseMark = (f64, f64, u64, std::time::Instant);
 
 impl Profile {
     /// Per phase: wall seconds, search work, pour analyses' wall seconds
-    /// and their work units (lattice nodes, millions).
+    /// and work.
     fn work_line(&self) -> String {
         let phases: Vec<String> = PHASES
             .iter()
             .enumerate()
             .map(|(index, name)| {
                 format!(
-                    "{name} {:.1}s wall, {:.1}s search work, pour {:.1}s wall, {:.1}s work ({:.0}M nodes)",
+                    "{name} {:.1}s wall, {:.1}s search work, pour {:.1}s wall, {:.1}s work",
                     self.phase_wall[index],
                     self.phase_search[index],
                     self.phase_pour_wall[index],
-                    self.phase_pour_units[index] as f64 / POUR_NODES_PER_SECOND,
-                    self.phase_pour_units[index] as f64 / 1.0e6
+                    self.phase_pour_work[index],
                 )
             })
             .collect();
@@ -4409,7 +4419,7 @@ impl Router {
     fn phase_mark(&self) -> PhaseMark {
         (
             self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND,
-            self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed),
+            self.pour_work_seconds(),
             self.scratch.pour_nanos.load(std::sync::atomic::Ordering::Relaxed),
             std::time::Instant::now(),
         )
@@ -4419,15 +4429,17 @@ impl Router {
     fn phase_charge(&mut self, phase: usize, mark: PhaseMark) {
         let now = self.phase_mark();
         self.profile.phase_search[phase] += now.0 - mark.0;
-        self.profile.phase_pour_units[phase] += now.1 - mark.1;
+        self.profile.phase_pour_work[phase] += now.1 - mark.1;
         self.profile.phase_pour_wall[phase] += (now.2 - mark.2) as f64 / 1.0e9;
         self.profile.phase_wall[phase] += mark.3.elapsed().as_secs_f64();
     }
 
     /// The pour analyses' work so far, in seconds of an idle machine
-    /// (their lattice nodes at `POUR_NODES_PER_SECOND`).
+    /// (`pour_analysis_nanos`, and `PROBE_ITEM_NANOS` per fill probe item).
     fn pour_work_seconds(&self) -> f64 {
-        self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed) as f64 / POUR_NODES_PER_SECOND
+        let nanos = self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed)
+            + self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) * PROBE_ITEM_NANOS;
+        nanos as f64 / 1.0e9
     }
 
     /// The work the phase budgets (`clock`, `spent`) count: the search's
@@ -6400,7 +6412,7 @@ impl Router {
     /// `analyze_pours_full`, recording each pad's spokes in `report` when
     /// given (for `dump_pours`).
     ///
-    /// Every analysis counts as work (`pour_analysis_units`).
+    /// Every analysis counts as work (`pour_analysis_nanos`).
     fn analyze_pours_reporting(
         &self,
         net: NetId,
@@ -6408,34 +6420,36 @@ impl Router {
         report: Option<&mut Vec<SpokeRecord>>,
     ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let started = std::time::Instant::now();
+        let ops_before = self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed);
         let result = self.analyze_pours_uncounted(net, skip, report);
-        let units = self.pour_analysis_units(net);
+        let units = self.pour_analysis_nanos(net);
         self.scratch.pour_units.fetch_add(units, std::sync::atomic::Ordering::Relaxed);
         self.scratch.pour_nanos.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
         if std::env::var_os("PCB_ROUTER_POUR_TRACE").is_some() {
+            // For calibrating the work's constants: the counts beside the
+            // wall time.
             let state = &self.nets[net as usize];
-            let planes = state.plane.iter().filter(|mask| !mask.is_empty()).count();
-            let nodes: usize = state.branches.iter().map(|branch| branch.nodes.len()).sum();
-            let nanos = started.elapsed().as_nanos();
-            let solid: usize = result.0.solid.iter().map(|layer| layer.iter().filter(|free| **free).count()).sum();
-            let inside: usize = state.plane.iter().map(|layer| layer.iter().filter(|inside| **inside).count()).sum();
             eprintln!(
-                "pour trace: cells {} planes {planes} terminals {} nodes {nodes} stamped {} units {units} nanos {nanos} solid {solid} inside {inside} pieces {}",
-                self.grid.cells(),
-                state.terminal_nodes.len(),
+                "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns",
+                self.pour_inside(net),
                 state.stamped.len(),
-                result.0.pieces
+                self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) - ops_before,
+                started.elapsed().as_nanos()
             );
         }
         result
     }
 
-    /// The size of a pour analysis of `net`, in lattice nodes: its pour's
-    /// layers times the lattice (the fill mask and its labelling run over
-    /// every node of a pour layer).
-    fn pour_analysis_units(&self, net: NetId) -> u64 {
-        let planes = self.nets[net as usize].plane.iter().filter(|mask| !mask.is_empty()).count();
-        (planes * self.grid.cells()) as u64
+    /// The work of a pour analysis of `net` but its fill probe's, in
+    /// nanoseconds of an idle machine: the lattice nodes inside its pour
+    /// (the fill mask and its labelling) and its stamps.
+    fn pour_analysis_nanos(&self, net: NetId) -> u64 {
+        self.pour_inside(net) as u64 * POUR_NODE_NANOS + self.nets[net as usize].stamped.len() as u64 * POUR_STAMP_NANOS
+    }
+
+    /// Lattice nodes inside the pour of `net`, over its layers.
+    fn pour_inside(&self, net: NetId) -> usize {
+        self.nets[net as usize].plane.iter().map(|mask| mask.iter().filter(|inside| **inside).count()).sum()
     }
 
     fn analyze_pours_uncounted(
@@ -7644,6 +7658,7 @@ impl Router {
         if let Some(report) = report.as_deref_mut() {
             report.extend(records);
         }
+        probe.charge();
         spoke_islands
     }
 
@@ -9598,26 +9613,35 @@ mod tests {
 
     #[test]
     fn pour_analyses_count_as_budget_work() {
-        // Each analysis counts its pour's layers times the lattice, at
-        // `POUR_NODES_PER_SECOND`, in the phase budgets' work and not in the
-        // search's; a copy of the router keeps the count.
+        // Each analysis counts the lattice nodes inside its pour, its
+        // stamps and its fill probe's items,
+        // in the phase budgets' work and not in the search's; the count is
+        // the same on every run, and a copy of the router keeps it.
         let (router, _) = diagonal_channel(false);
+        let fresh = router.clone();
         let clock = router.clock();
         let search = router.work_seconds();
         router.analyze_pours(0);
         router.analyze_pours_full(0, &|_| false);
-        let nodes = router.grid().cells() as f64;
-        assert_eq!(router.pour_analysis_units(0), router.grid().cells() as u64);
-        let expected = 2.0 * nodes / POUR_NODES_PER_SECOND;
+        let inside = router.nets[0].plane[0].iter().filter(|inside| **inside).count();
+        assert!(inside > 0);
+        assert_eq!(router.pour_inside(0), inside);
+        let own = inside as u64 * POUR_NODE_NANOS + router.nets[0].stamped.len() as u64 * POUR_STAMP_NANOS;
+        assert_eq!(router.pour_analysis_nanos(0), own);
+        let probe = router.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) * PROBE_ITEM_NANOS;
+        let expected = (2 * own + probe) as f64 / 1.0e9;
         assert!((router.budget_work() - clock.0 - expected).abs() < 1.0e-12);
         assert_eq!(router.work_seconds(), search);
         let copy = router.clone();
-        assert!((copy.budget_work() - router.budget_work()).abs() < 1.0e-12);
+        assert_eq!(copy.budget_work(), router.budget_work());
+        fresh.analyze_pours(0);
+        fresh.analyze_pours_full(0, &|_| false);
+        assert_eq!(fresh.budget_work(), router.budget_work());
         // A budget smaller than that work is spent by it alone.
         assert!(router.spent(&clock, 0.5 * expected));
         assert!(!router.spent(&clock, 2.0 * expected));
-        // Another net without a pour counts nothing.
-        assert_eq!(router.pour_analysis_units(1), 0);
+        // A net without a pour counts nothing.
+        assert_eq!(router.pour_analysis_nanos(1), 0);
     }
 
     #[test]
