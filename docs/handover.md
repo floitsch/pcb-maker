@@ -457,6 +457,44 @@ halo everywhere has now lost routing twice (x507 halo scale, shared halos).
 Scripts `experiments/placement-loss/`; logs `build/legal-*`,
 `build/quick30-x700*.log`.
 
+## Committed on 2026-10-14 (the island agent, x722 / x723)
+
+The islands are real in KiCad's fill, not our fragmentation
+(`experiments/pour-fidelity/islands.py`): signal tracks and vias on the
+plane layers cut them off in the tracks rung. KiCad experiments (kicad-cli
+on mackerel-30 C50.2): a pad's own track ending inside the island cures
+the finding, as does a track crossing it; a plated pad's fill stops at the
+drill, so a track leaving a round through-hole pad between its diagonal
+spokes touches none of them (the fill agent's "own track touches every
+spoke piece" was wrong there). Changes, all on: `track_meets_spokes` (a
+pad's own track joins a spoke's piece only where its first run overlaps the
+spoke's strip outside the drill; census found 116 to 124, missed 36 to 28,
+false alarms 87 to 90; `PCB_ROUTER_OLD_TRACKED`), `island_vias` (a short
+pad whose manual spoke reaches no kept fill gets a stitching via from its
+island to the net's main piece on another layer, also in tracks mode;
+`PCB_ROUTER_NO_ISLAND_VIAS`), `island_stubs` (failing a via, a straight
+track of the pad's own into its island, slivers included;
+`PCB_ROUTER_NO_ISLAND_STUBS`). The stub changes no connection: the island
+already hangs off the pad; it only satisfies KiCad's two-items rule. Its
+broader form (stub every island-only pad) was rejected: 18 pads KiCad
+passes for every 1 fixed. USB_Cable_Tester's bridges were not a pour
+problem: KiCad exposes copper within `solder_mask_to_copper_clearance`
+plus the aperture's expansion (0.1 mm there; our model had 0.075); now read
+from the project (`solder_mask_to_copper_mm`) and used as the opening
+clearance, always on. A pour keepout under openings exposing another net
+was measured and not built: 1 real case in 128 results against 475 false
+firings (`mask_bridges.py`). Pairs x710 to x722 (route mode, v14
+placements): k30 starved 14 to 1 (+10 island vias), mackerel-30 19 to 3,
+Castor 5 to 4, Hub 4 to 4, USB_Cable_Tester bridges 3 to 0; CPU within
+±4 % paired. Quick tier x693 to x722: 21 to 22 pass (mackerel-08), 29 of
+30 same, unconnected 22 to 22; USB_Cable_Tester's race picked another seed
+whose /SHLD connect branch ends where KiCad leaves no fill (pour optimism,
+one track_dangling). Remaining starved pads explained pad by pad in the
+agent's report: spoke landing and piece fidelity (28 missed, 90 false
+alarms), repeated pad numbers, a fine-pitch spoke-clearance case (k30
+U14.12), slivers with no manual path. Reference tier log now
+`build/quick30-x722.log`.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

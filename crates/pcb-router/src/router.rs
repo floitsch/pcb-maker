@@ -93,6 +93,26 @@ pub struct Config {
     /// straight track into the main piece of its pour, which KiCad's DRC
     /// counts as a spoke (`add_manual_spokes`, after the stitching).
     pub manual_spokes: bool,
+    /// A pad whose spokes on a layer reach only fill pieces nothing else
+    /// of the net touches (KiCad's "spokes connected to isolated island")
+    /// and that no straight manual spoke joins to a kept piece gets a
+    /// stitching via from such an island to the net's main piece on
+    /// another layer, where one fits (`add_manual_spokes`): the island
+    /// then holds the pad and the via, and is part of the plane.
+    pub island_vias: bool,
+    /// A pad's own track joins the fill piece of one of its spokes only
+    /// where the track's first run overlaps the spoke outside the pad's
+    /// drill hole (`kicad_spokes`; without it, a routed track joins all
+    /// of them, as if the spokes met at the pad's centre).
+    pub track_meets_spokes: bool,
+    /// Failing that, a straight track of the pad on the island's layer
+    /// into the island (`add_manual_spokes`): KiCad's connectivity joins
+    /// the track to the piece it overlaps, the piece has two items and is
+    /// no island, and the DRC counts its spokes and the track. It changes
+    /// no connection (the island was the pad's already); k30 and
+    /// mackerel-30's tracks rungs, whose inner planes the signals cut into
+    /// islands around through-hole pads.
+    pub island_stubs: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -261,6 +281,9 @@ impl Default for Config {
             // model, no manual spokes.
             kicad_spokes: std::env::var_os("PCB_ROUTER_OLD_SPOKES").is_none(),
             manual_spokes: std::env::var_os("PCB_ROUTER_NO_MANUAL_SPOKES").is_none(),
+            island_vias: std::env::var_os("PCB_ROUTER_NO_ISLAND_VIAS").is_none(),
+            track_meets_spokes: std::env::var_os("PCB_ROUTER_OLD_TRACKED").is_none(),
+            island_stubs: std::env::var_os("PCB_ROUTER_NO_ISLAND_STUBS").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -6668,64 +6691,100 @@ impl Router {
             // track of the pad touches it too.
             records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Good(best.map_or(0, |(_, piece)| piece));
         }
-        let mut tracked_records: Vec<bool> = Vec::new();
+        // The pads' drill holes: KiCad's fill keeps out of a plated hole,
+        // so a spoke reaches into a through-hole pad only up to its hole.
+        let holes: HashMap<&str, f64> = self
+            .board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.kind == crate::board::ObstacleKind::Hole)
+            .filter_map(|obstacle| {
+                let label = obstacle.label.strip_suffix(" plated hole")?;
+                let bounds = obstacle.shape.aabb();
+                Some((label, ((bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1]) / 2.0).max(0.0)))
+            })
+            .collect();
+        // Per record, which of its spokes the pad's own tracks on the layer
+        // touch, and so join to the piece the spoke lands in (a second
+        // item: Castor's D11.3, KiCad counts its one spoke, its exit stub
+        // in the piece). With `track_meets_spokes` a track touches a spoke
+        // only where its first run overlaps the spoke's strip outside the
+        // pad's hole (mackerel-30's C50.2: a track leaving a round pad
+        // along an axis misses its diagonal spokes, which reach the pad
+        // only up to its drill, and KiCad finds the piece they land in an
+        // isolated island); without it a routed track touches them all.
+        let mut touched_spokes: Vec<[bool; 4]> = Vec::new();
         for (record_index, record) in records.iter().enumerate() {
             let (terminal, layer, outcomes) = (record.terminal, record.layer, record.outcomes);
-            {
-                let mut seen: Vec<u32> = Vec::new();
-                for outcome in &outcomes {
-                    if let SpokeOutcome::Good(piece) = outcome
-                        && *piece != 0
-                        && !seen.contains(piece)
-                    {
-                        seen.push(*piece);
+            let kept: Vec<&Spoke> = spokes
+                .iter()
+                .filter(|spoke| spoke.record == record_index && matches!(outcomes[spoke.index], SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+                .collect();
+            let hole = if self.config.track_meets_spokes { holes.get(description.terminals[terminal].label.as_str()).copied().unwrap_or(0.0) } else { 0.0 };
+            let strip_of = |spoke: &Spoke| {
+                let (d, w) = (spoke.direction, spoke.width / 2.0);
+                let normal = [-d[1] * w, d[0] * w];
+                let near = [spoke.anchor[0] + d[0] * hole.min(spoke.tip), spoke.anchor[1] + d[1] * hole.min(spoke.tip)];
+                let far = [spoke.anchor[0] + d[0] * spoke.tip, spoke.anchor[1] + d[1] * spoke.tip];
+                crate::geometry::Shape::Polygon {
+                    points: vec![
+                        [near[0] + normal[0], near[1] + normal[1]],
+                        [far[0] + normal[0], far[1] + normal[1]],
+                        [far[0] - normal[0], far[1] - normal[1]],
+                        [near[0] - normal[0], near[1] - normal[1]],
+                    ],
+                }
+            };
+            let mut touched = [false; 4];
+            for (index, branch) in state.branches.iter().enumerate() {
+                if skip(index) || branch.nodes.is_empty() {
+                    continue;
+                }
+                let ends_here = (branch.start_terminal as usize == terminal && branch.nodes.first().is_some_and(|node| node.layer as usize == layer))
+                    || (branch.end_terminal as usize == terminal && branch.nodes.last().is_some_and(|node| node.layer as usize == layer));
+                if !ends_here {
+                    continue;
+                }
+                let segments: Vec<(crate::geometry::Point, crate::geometry::Point, f64)> = if let Some((start, end, radius)) = state.adopted.get(&index) {
+                    vec![(*start, *end, *radius)]
+                } else if self.config.track_meets_spokes {
+                    self.first_run(net, terminal, branch)
+                } else {
+                    for spoke in &kept {
+                        touched[spoke.index] = true;
+                    }
+                    continue;
+                };
+                for spoke in &kept {
+                    let strip = strip_of(spoke);
+                    if segments.iter().any(|(a, b, radius)| strip.distance_to_segment(*a, *b) <= *radius) {
+                        touched[spoke.index] = true;
                     }
                 }
-                // The spokes start at the pad's centre, where its tracks
-                // start: a track of the pad on this layer touches every
-                // piece its spokes reach, a second item (Castor's D11.3:
-                // KiCad counts its one spoke, its exit stub in the piece).
-                // (A routed board's own track touches them only where it
-                // crosses one of the pad's kept spokes: a track may leave
-                // the pad's edge.)
-                let kept: Vec<&Spoke> = spokes
-                    .iter()
-                    .filter(|spoke| spoke.record == record_index && matches!(outcomes[spoke.index], SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
-                    .collect();
-                let tracked = state.branches.iter().enumerate().any(|(index, branch)| {
-                    let ends_here = (branch.start_terminal as usize == terminal && branch.nodes.first().is_some_and(|node| node.layer as usize == layer))
-                        || (branch.end_terminal as usize == terminal && branch.nodes.last().is_some_and(|node| node.layer as usize == layer));
-                    !skip(index)
-                        && ends_here
-                        && state.adopted.get(&index).is_none_or(|(start, end, radius)| {
-                            kept.iter().any(|spoke| {
-                                let (d, w) = (spoke.direction, spoke.width / 2.0);
-                                let normal = [-d[1] * w, d[0] * w];
-                                let far = [spoke.anchor[0] + d[0] * spoke.tip, spoke.anchor[1] + d[1] * spoke.tip];
-                                let strip = crate::geometry::Shape::Polygon {
-                                    points: vec![
-                                        [spoke.anchor[0] + normal[0], spoke.anchor[1] + normal[1]],
-                                        [far[0] + normal[0], far[1] + normal[1]],
-                                        [far[0] - normal[0], far[1] - normal[1]],
-                                        [spoke.anchor[0] - normal[0], spoke.anchor[1] - normal[1]],
-                                    ],
-                                };
-                                strip.distance_to_segment(*start, *end) <= *radius
-                            })
-                        })
-                });
-                for piece in seen {
-                    *items.entry(piece).or_default() += 1 + tracked as usize;
-                }
-                tracked_records.push(tracked);
             }
+            let mut seen: Vec<(u32, bool)> = Vec::new();
+            for (index, outcome) in outcomes.iter().enumerate() {
+                if let SpokeOutcome::Good(piece) = outcome
+                    && *piece != 0
+                {
+                    match seen.iter_mut().find(|(seen, _)| seen == piece) {
+                        Some(entry) => entry.1 |= touched[index],
+                        None => seen.push((*piece, touched[index])),
+                    }
+                }
+            }
+            for (piece, tracked) in seen {
+                *items.entry(piece).or_default() += 1 + tracked as usize;
+            }
+            touched_spokes.push(touched);
         }
         // Pass two: spokes into pieces with another item count and join.
         let mut tallies: Vec<(usize, Vec<usize>)> = Vec::new();
-        for (record, tracked) in records.iter_mut().zip(&tracked_records) {
+        for (record, touched) in records.iter_mut().zip(&touched_spokes) {
             let mut good = 0;
             let mut islands: Vec<usize> = Vec::new();
-            for outcome in record.outcomes.iter_mut() {
+            for (index, outcome) in record.outcomes.iter_mut().enumerate() {
+                let tracked = &touched[index];
                 if let SpokeOutcome::Pad(other) = *outcome {
                     // One outline holds both pads: the spoke counts.
                     union(parent, terminal_base + record.terminal, terminal_base + other as usize);
@@ -6898,6 +6957,45 @@ impl Router {
         spoke_islands
     }
 
+    /// The copper of `branch` leaving terminal `terminal` (one of its
+    /// ends) on its first layer: the stub from the pad's anchor to the
+    /// lattice (an escape's polyline) and the first straight run, each
+    /// segment with half its width. Empty when the branch does not end at
+    /// the terminal.
+    fn first_run(&self, net: NetId, terminal: usize, branch: &Branch) -> Vec<(crate::geometry::Point, crate::geometry::Point, f64)> {
+        let state = &self.nets[net as usize];
+        let anchor = self.board.nets[net as usize].terminals[terminal].anchor;
+        let mut segments = Vec::new();
+        for (end, forward) in [(branch.start_terminal, true), (branch.end_terminal, false)] {
+            if end as usize != terminal || branch.nodes.is_empty() {
+                continue;
+            }
+            let nodes: Vec<Node> = if forward { branch.nodes.clone() } else { branch.nodes.iter().rev().copied().collect() };
+            let first = self.grid.center_of(nodes[0].cell as usize);
+            let half = self.width_at(net, nodes[0].cell) / 2.0;
+            match state.escapes.get(&nodes[0]) {
+                Some((_, width, polyline)) => segments.extend(polyline.windows(2).map(|pair| (pair[0], pair[1], width / 2.0))),
+                None if crate::geometry::distance(anchor, first) > 1.0e-7 => segments.push((anchor, first, half)),
+                None => {}
+            }
+            let step = |a: Node, b: Node| {
+                let (ax, ay) = self.grid.xy(a.cell as usize);
+                let (bx, by) = self.grid.xy(b.cell as usize);
+                (a.layer == b.layer).then_some((bx as i64 - ax as i64, by as i64 - ay as i64))
+            };
+            if nodes.len() >= 2
+                && let Some(direction) = step(nodes[0], nodes[1])
+            {
+                let mut last = 1;
+                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) {
+                    last += 1;
+                }
+                segments.push((first, self.grid.center_of(nodes[last].cell as usize), half));
+            }
+        }
+        segments
+    }
+
     /// Whether the spokes of a pad on a layer leave it a starved thermal to
     /// KiCad's DRC, and how many more counted spokes it needs: none counted
     /// and none into islands is no thermal connection (not starved); with
@@ -6969,6 +7067,38 @@ impl Router {
                 };
                 *tried.entry((record.terminal, record.layer)).or_default() += 1;
                 let layer = record.layer;
+                // The pieces only this pad's spokes reach (KiCad's isolated
+                // islands).
+                let islands: Vec<u32> = record
+                    .outcomes
+                    .iter()
+                    .filter_map(|outcome| match outcome {
+                        SpokeOutcome::Island(piece) if *piece != 0 => Some(*piece),
+                        _ => None,
+                    })
+                    .collect();
+                // The directions of its spokes into an island the lattice
+                // misses (a sliver: piece 0), and how far out of the pad's
+                // centre the fill begins along them (its edge and the gap).
+                let slivers: Vec<(crate::geometry::Point, f64)> = {
+                    let terminal = &self.board.nets[net as usize].terminals[record.terminal];
+                    let bounds = self.board.obstacles[terminal.pad].shape.aabb();
+                    let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+                    let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+                    let d = std::f64::consts::FRAC_1_SQRT_2;
+                    let directions: [[f64; 2]; 4] = if record.round { [[d, d], [d, -d], [-d, d], [-d, -d]] } else { [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]] };
+                    record
+                        .outcomes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, outcome)| **outcome == SpokeOutcome::Island(0))
+                        .map(|(index, _)| {
+                            let direction = directions[index];
+                            let edge = if record.round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                            (direction, edge + gap)
+                        })
+                        .collect()
+                };
                 let class = self.board.nets[net as usize].class;
                 let state = &self.nets[net as usize];
                 let own = OwnStamps::new(
@@ -6979,7 +7109,10 @@ impl Router {
                 let free = |map: usize, cell: usize| self.occupancy[map][cell] as usize == own.contains(map, cell) as usize;
                 let statics = &self.statics[class];
                 let trace = self.map_index(class, layer);
+                // The shortest straight track into a kept piece, and into
+                // one of the pad's islands.
                 let mut best: Option<Vec<Node>> = None;
+                let mut best_island: Option<Vec<Node>> = None;
                 // The track ends in fill, not on a node the net's own
                 // copper made free (Castor's C10.2: a step onto its own
                 // track, which KiCad's DRC does not count).
@@ -6989,7 +7122,6 @@ impl Router {
                 // the main piece first.
                 let terminal_base = pours.pieces + 1;
                 let kept: HashSet<usize> = (0..state.terminal_nodes.len()).map(|terminal| find(&mut parent, terminal_base + terminal)).collect();
-                let _ = main;
                 let starts: Vec<Node> = state.terminal_nodes[record.terminal].iter().copied().filter(|node| node.layer as usize == layer).collect();
                 for start in starts {
                     if !statics.trace_allowed(layer, start.cell as usize, net) || !free(trace, start.cell as usize) {
@@ -7026,31 +7158,79 @@ impl Router {
                                 }
                                 break;
                             }
+                            // Into an island: one of its pieces, or the
+                            // fill along a spoke into a sliver.
+                            let along_sliver = || {
+                                let (from, to) = (self.grid.center_of(start.cell as usize), self.grid.center_of(cell));
+                                let length = crate::geometry::distance(from, to);
+                                length > 0.0
+                                    && slivers.iter().any(|(direction, reach)| {
+                                        ((to[0] - from[0]) * direction[0] + (to[1] - from[1]) * direction[1]) / length > 0.99 && length >= *reach
+                                    })
+                            };
+                            if ((piece != 0 && islands.contains(&piece)) || along_sliver()) && probe.fill_at(layer, self.grid.center_of(cell)) {
+                                if best_island.as_ref().is_none_or(|best| path.len() < best.len()) {
+                                    best_island = Some(path.clone());
+                                }
+                                break;
+                            }
                             (x, y) = (next_x, next_y);
                         }
                     }
                 }
-                let Some(nodes) = best else {
-                    if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
-                        eprintln!(
-                            "manual spoke: none for {} on layer {layer} ({} start nodes)",
-                            self.board.nets[net as usize].terminals[record.terminal].label,
-                            state.terminal_nodes[record.terminal].iter().filter(|node| node.layer as usize == layer).count()
-                        );
+                let label = &self.board.nets[net as usize].terminals[record.terminal].label;
+                if let Some(nodes) = best {
+                    if self.config.verbose {
+                        eprintln!("manual spoke: {label} on layer {layer}, {} nodes", nodes.len());
                     }
-                    tried.insert((record.terminal, record.layer), 2);
+                    self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
+                    self.stamp(net);
+                    added += 1;
                     continue;
-                };
-                if self.config.verbose {
+                }
+                // No track reaches kept fill: a via from an island to the
+                // main piece on another layer.
+                if self.config.island_vias && !islands.is_empty() && self.board.layer_count >= 2 {
+                    let anchor = self.board.nets[net as usize].terminals[record.terminal].anchor;
+                    let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
+                    for piece in &islands {
+                        anchors.entry(find(&mut parent, *piece as usize)).or_insert(anchor);
+                    }
+                    let chosen = self.stitching_vias(net, &pours, &mut parent, main, &anchors, true);
+                    if let Some((layer, other, cell)) = chosen.first().copied() {
+                        if self.config.verbose {
+                            eprintln!("island via: {label} on layer {layer} to layer {other}");
+                        }
+                        self.nets[net as usize].branches.push(Branch {
+                            nodes: vec![Node { layer: layer as u8, cell: cell as u32 }, Node { layer: other as u8, cell: cell as u32 }],
+                            start_terminal: PLANE_TERMINAL,
+                            end_terminal: PLANE_TERMINAL,
+                        });
+                        self.stamp(net);
+                        added += 1;
+                        continue;
+                    }
+                }
+                // Else the pad's own track into its island: two items in it.
+                if self.config.island_stubs
+                    && let Some(nodes) = best_island
+                {
+                    if self.config.verbose {
+                        eprintln!("island stub: {label} on layer {layer}, {} nodes", nodes.len());
+                    }
+                    self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
+                    self.stamp(net);
+                    added += 1;
+                    continue;
+                }
+                if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     eprintln!(
-                        "manual spoke: {} on layer {layer}, {} nodes",
-                        self.board.nets[net as usize].terminals[record.terminal].label,
-                        nodes.len()
+                        "manual spoke: none for {label} on layer {layer} ({} start nodes, {} islands)",
+                        self.nets[net as usize].terminal_nodes[record.terminal].iter().filter(|node| node.layer as usize == layer).count(),
+                        islands.len()
                     );
                 }
-                self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
-                self.stamp(net);
-                added += 1;
+                tried.insert((record.terminal, record.layer), 2);
             }
         }
         added
@@ -8891,6 +9071,133 @@ mod tests {
         let branch = &router.nets[0].branches[0];
         assert_eq!((branch.start_terminal, branch.end_terminal), (0, PLANE_TERMINAL));
         assert!(router.branch_is_legal(0, branch));
+    }
+
+    /// P.1, a through-hole pad (0.8 mm, drill 0.4 mm), in a box of Q walls
+    /// on layer 0: its spokes there land in a piece that nothing else of P
+    /// touches (KiCad's isolated island). P.2, solid, outside the box. With
+    /// `both_layers`, P's pour covers layer 1 too, where nothing cuts it.
+    fn island_board(both_layers: bool) -> Board {
+        let mut obstacles = vec![
+            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.4 }, 0, "P.1"),
+            copper(Shape::Circle { center: [8.5, 8.5], radius: 0.4 }, 0, "P.2"),
+            copper(rect([3.5, 5.0], [0.1, 1.6]), 1, "Q.1"),
+            copper(rect([6.5, 5.0], [0.1, 1.6]), 1, "Q.2"),
+            copper(rect([5.0, 3.5], [1.6, 0.1]), 1, "Q.3"),
+            copper(rect([5.0, 6.5], [1.6, 0.1]), 1, "Q.4"),
+        ];
+        obstacles[0].layers = 0b11;
+        obstacles[1].layers = 0b11;
+        obstacles.push(Obstacle {
+            shape: Shape::Circle { center: [5.0, 5.0], radius: 0.2 },
+            layers: 0b11,
+            kind: ObstacleKind::Hole,
+            net: Some(0),
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "P.1 plated hole".into(),
+        });
+        let through = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b11, pad, contact: None, label: label.into() };
+        let mut planes = vec![plane(0, 0, Some((0.3, 0.4)))];
+        if both_layers {
+            planes.push(plane(0, 1, Some((0.3, 0.4))));
+        }
+        board(
+            2,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![through(0, [5.0, 5.0], "P.1"), through(1, [8.5, 8.5], "P.2")] },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![terminal(2, [3.5, 5.0], "Q.1"), terminal(3, [6.5, 5.0], "Q.2"), terminal(4, [5.0, 3.5], "Q.3"), terminal(5, [5.0, 6.5], "Q.4")],
+                },
+            ],
+            planes,
+            vec!["P.2".into()],
+        )
+    }
+
+    /// P.1's track on layer 1: out of the pad along +x to (5.9, 5.0), over
+    /// the island's fill on layer 0 (KiCad's DRC counts it as a spoke of
+    /// layer 0: it starts in the pad and ends in that layer's fill), then
+    /// up and out of the box.
+    fn layer_one_track(router: &Router) -> Branch {
+        let grid = router.grid();
+        let mut nodes: Vec<Node> = (0..=9).map(|step| Node { layer: 1, cell: grid.nearest_node([5.0 + 0.1 * step as f64, 5.0]).unwrap() as u32 }).collect();
+        nodes.extend((1..=30).map(|step| Node { layer: 1, cell: grid.nearest_node([5.9, 5.0 + 0.1 * step as f64]).unwrap() as u32 }));
+        Branch { nodes, start_terminal: 0, end_terminal: PLANE_TERMINAL }
+    }
+
+    fn island_record(router: &Router) -> SpokeRecord {
+        spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0 && record.layer == 0).unwrap()
+    }
+
+    #[test]
+    fn a_track_leaving_a_through_hole_pad_between_its_spokes_does_not_join_their_island() {
+        // P.1 leaves on layer 0 by a via at its centre: its track there is
+        // no longer than the pad's hole. KiCad's fill reaches a plated pad
+        // only up to its drill, so the track touches no spoke and the
+        // island stays one (mackerel-30's C50.2 on In1). The old rule
+        // joined a routed track to every piece its spokes reach.
+        let board = island_board(false);
+        let outcomes = |track_meets_spokes: bool| {
+            let mut router = Router::new(&board, &Config { pitches: vec![0.1], track_meets_spokes, ..Config::default() });
+            let centre = router.grid().nearest_node([5.0, 5.0]).unwrap() as u32;
+            router.nets[0].branches = vec![Branch { nodes: vec![Node { layer: 0, cell: centre }, Node { layer: 1, cell: centre }], start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+            island_record(&router).outcomes
+        };
+        assert!(outcomes(true).iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))), "{:?}", outcomes(true));
+        assert!(outcomes(false).iter().all(|outcome| matches!(outcome, SpokeOutcome::Good(_))), "{:?}", outcomes(false));
+    }
+
+    #[test]
+    fn a_pad_in_an_island_gets_a_track_into_it() {
+        // Layer 0's island holds only P.1, and its track on layer 1 counts
+        // as a spoke, so the island's spokes do not: a starved thermal. No
+        // straight track reaches kept fill and no other layer has a pour to
+        // stitch to: P.1 gets a track on layer 0 into its island, the
+        // island holds two items and its spokes count.
+        let board = island_board(false);
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        router.nets[0].branches = vec![layer_one_track(&router)];
+        router.stamp(0);
+        let before = island_record(&router);
+        assert_eq!(before.tracks, 1);
+        assert!(Router::spokes_short(&before) > 0, "{before:?}");
+        assert_eq!(router.add_manual_spokes(), 1);
+        let added = router.nets[0].branches.last().unwrap().clone();
+        assert_eq!((added.start_terminal, added.end_terminal), (0, PLANE_TERMINAL));
+        assert!(added.nodes.iter().all(|node| node.layer == 0));
+        assert!(router.branch_is_legal(0, &added));
+        assert_eq!(Router::spokes_short(&island_record(&router)), 0);
+        // Without island stubs nothing helps.
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], island_stubs: false, ..Config::default() });
+        router.nets[0].branches = vec![layer_one_track(&router)];
+        router.stamp(0);
+        assert_eq!(router.add_manual_spokes(), 0);
+    }
+
+    #[test]
+    fn a_pad_in_an_island_gets_a_via_to_the_main_piece_on_another_layer() {
+        // As above, with P's pour on layer 1 too: a via from the island to
+        // layer 1's fill (the main piece, which P.2 holds) joins the island
+        // to the plane, and its spokes count.
+        let board = island_board(true);
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        router.nets[0].branches = vec![layer_one_track(&router)];
+        router.stamp(0);
+        assert!(Router::spokes_short(&island_record(&router)) > 0);
+        assert!(router.add_manual_spokes() >= 1);
+        let via = router.nets[0].branches[1].clone();
+        assert_eq!(via.nodes.len(), 2);
+        assert_eq!(via.nodes[0].cell, via.nodes[1].cell);
+        assert_ne!(via.nodes[0].layer, via.nodes[1].layer);
+        let at = router.grid().center_of(via.nodes[0].cell as usize);
+        assert!((3.6..6.4).contains(&at[0]) && (3.6..6.4).contains(&at[1]), "{at:?}");
+        assert_eq!(Router::spokes_short(&island_record(&router)), 0);
     }
 
     #[test]

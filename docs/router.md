@@ -206,8 +206,11 @@ zone_filler.cpp and drc_test_provider_zone_connections.cpp of KiCad 10:
 - the DRC ignores spokes into a fill piece that touches nothing but the
   pad ("isolated island"); a piece with any second item (another pad's
   spokes, a track or via of the net, the pad's own track, which touches
-  its spokes at the pad's centre) is no island, and connects what it
-  touches;
+  its spokes outside the pad's drill hole: a through-hole pad's fill
+  reaches the pad only up to its hole, so a track leaving between the
+  spokes touches none of them, `track_meets_spokes`) is no island, and
+  connects what it touches (KiCad joins a track to every fill piece its
+  copper overlaps, not only at its ends);
 - while a pad is short, the DRC counts each track segment connected to it
   that starts within half a gap of it and ends in fill (on any layer, in
   this layer's fill; a kept spoke is fill, as far as other nets'
@@ -228,7 +231,15 @@ meet (a USB-C receptacle's A1 and B12 share one spot).
 A pad still short after the stitching gets straight tracks into its pour
 (`manual_spokes`, on): a track of the net's own class from the pad into a
 piece KiCad keeps, which the DRC counts as a spoke; a track keeps the net
-class's clearance, often less than the zone's.
+class's clearance, often less than the zone's. A pad whose spokes reach
+only islands (pieces nothing else of the net touches, typical of inner
+planes the signals cut up in the tracks rung) gets, when no straight track
+reaches kept fill, a stitching via from the island to the net's main piece
+on another layer (`island_vias`), and failing that a straight track of its
+own on that layer into the island (`island_stubs`): the island then holds
+two items and the DRC counts its spokes. The stub changes no connection
+(the island hung on the pad already); it is what KiCad's rule asks for.
+k30's tracks rung: 14 starved thermals to 1; mackerel-30's: 19 to 3.
 
 ### Plane skeleton (fallback)
 

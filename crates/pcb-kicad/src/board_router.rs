@@ -221,6 +221,14 @@ pub struct KiCadBoardRouterConfig {
     /// connections stay open.
     #[serde(default)]
     pub relaxed_clearance_mm: Option<f64>,
+    /// The project's solder-mask-to-copper clearance (`rules.
+    /// solder_mask_to_copper_clearance`, KiCad's default 0): KiCad's DRC
+    /// finds a solder mask aperture bridging copper of another net within
+    /// it plus the aperture's mask expansion (USB_Cable_Tester: a track
+    /// 0.094 mm from a battery holder's F.Mask polygon over a GND fill, at
+    /// 0.05 + 0.05 mm).
+    #[serde(default)]
+    pub solder_mask_to_copper_mm: Option<f64>,
     /// Pads KiCad finds short of thermal spokes (where only one fits, as on
     /// fine-pitch pins) get a solid zone connection in the result, and the
     /// board is verified again. Off by default: thermal reliefs are there
@@ -798,8 +806,10 @@ pub(super) fn lower(
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
     // The margin is how far the opening reaches past its shapes (a
-    // mask-only pad's mask expansion).
-    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64)> = Vec::new();
+    // mask-only pad's mask expansion); the last value is the aperture's
+    // mask expansion as KiCad's bridge test takes it (a graphic's own
+    // `solder_mask_margin`, else the board's `pad_to_mask_clearance`).
+    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64, f64)> = Vec::new();
     // Board copper graphics, with the net they carry, placed once the nets
     // of the pads are known.
     let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> = Vec::new();
@@ -910,7 +920,8 @@ pub(super) fn lower(
                             .collect();
                         if !shapes.is_empty() {
                             let layer = if side == "F.Mask" { 0 } else { layers.len() - 1 };
-                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string(), 0.0));
+                            let expansion = form_f64(graphic, "solder_mask_margin", 1).ok().unwrap_or(board_pad_to_mask).max(0.0);
+                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string(), 0.0, expansion));
                         }
                         continue;
                     }
@@ -996,7 +1007,7 @@ pub(super) fn lower(
                             let kind = format!("pad {label}");
                             for (open, side) in [(front, 0), (back, layers.len() - 1)] {
                                 if open {
-                                    mask_openings.push((vec![shape(&lowered.geometry)], side, kind.clone(), margin));
+                                    mask_openings.push((vec![shape(&lowered.geometry)], side, kind.clone(), margin, margin));
                                 }
                             }
                         }
@@ -1197,8 +1208,15 @@ pub(super) fn lower(
                     let net = node_net(item).filter(|raw| routable_net(raw)).map(|raw| normalize_net(raw).to_string());
                     copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
                 }
+                // KiCad's bridge test grows a shape by its mask expansion,
+                // a text by nothing.
+                let expansion = if item.head() == Some("gr_text") {
+                    0.0
+                } else {
+                    form_f64(item, "solder_mask_margin", 1).ok().unwrap_or(board_pad_to_mask).max(0.0)
+                };
                 for side in sides {
-                    mask_openings.push((shapes.clone(), side, kind.clone(), 0.0));
+                    mask_openings.push((shapes.clone(), side, kind.clone(), 0.0, expansion));
                 }
             }
             Some("zone") if is_rule_area(item) => {
@@ -1294,7 +1312,13 @@ pub(super) fn lower(
         .child("setup")
         .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
         .map_or(0.0, |width| width / 2.0 + 0.01);
-    for (shapes, layer, kind, margin) in mask_openings {
+    // KiCad's bridge test (DRC_TEST_PROVIDER_SOLDER_MASK, KiCad 10)
+    // exposes copper within the project's solder-mask-to-copper clearance
+    // plus the aperture's expansion, and never less than the web rule
+    // above.
+    let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
+    for (shapes, layer, kind, margin, expansion) in mask_openings {
+        let reach = (mask_reach + margin).max(mask_to_copper + expansion);
         let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb())).inflated(margin);
         let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
             .iter()
@@ -1334,7 +1358,7 @@ pub(super) fn lower(
             layers: 1 << layer,
             kind: core::ObstacleKind::Keepout,
             net,
-            clearance: mask_reach + margin,
+            clearance: reach,
             clearance_override: None,
             blocks_tracks: true,
             blocks_vias: true,
@@ -3710,6 +3734,44 @@ mod pour_request_tests {
         let board = lower(&pcb, &config, false).unwrap().board;
         let opening = board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap();
         assert!((opening.clearance - 0.06).abs() < 1.0e-9, "{}", opening.clearance);
+    }
+
+    #[test]
+    fn mask_openings_keep_the_solder_mask_to_copper_clearance_and_their_expansion() {
+        // KiCad's bridge test: copper within the project's solder-mask-to-
+        // copper clearance plus the aperture's expansion (a graphic's own
+        // margin, else the board's pad_to_mask_clearance) is exposed.
+        // USB_Cable_Tester: 0.05 + 0.05 mm, a track 0.094 mm from a
+        // battery holder's F.Mask polygon bridged it to the GND fill. The
+        // web rule (half the minimum width, 0.075 mm here) stays a floor; a
+        // text has no expansion.
+        let lowered = |margin: &str, mask_to_copper: Option<f64>, text: bool| {
+            let opening = if text {
+                r#"(gr_text "X" (at 5 5 0) (layer "F.Mask") (effects (font (size 1 1) (thickness 0.15))) (render_cache "X" 0 (polygon (pts (xy 4.5 4.5) (xy 5.5 4.5) (xy 5.5 5.5) (xy 4.5 5.5)))))"#.to_string()
+            } else {
+                format!(r#"(gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) {margin} (layer "F.Mask"))"#)
+            };
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+                  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+                  (setup (pad_to_mask_clearance 0.05) (solder_mask_min_width 0.13))
+                  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                  (footprint "a" (at 12 5)
+                    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+                    (pad "2" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "/A")))
+                  {opening})"#
+            ))
+            .unwrap();
+            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: mask_to_copper, ..KiCadBoardRouterConfig::default() };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap().clearance
+        };
+        let close = |value: f64, expected: f64| assert!((value - expected).abs() < 1.0e-9, "{value} against {expected}");
+        close(lowered("", Some(0.05), false), 0.05 + 0.05);
+        close(lowered("(solder_mask_margin 0.2)", Some(0.05), false), 0.05 + 0.2);
+        close(lowered("", None, false), 0.075);
+        close(lowered("", Some(0.05), true), 0.075);
     }
 
     #[test]

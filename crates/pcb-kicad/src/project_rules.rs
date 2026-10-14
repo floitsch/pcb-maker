@@ -216,6 +216,7 @@ pub fn resolve_project_rules(
         edge_clearance_mm: rules["min_copper_edge_clearance"].as_f64().unwrap_or(0.5),
         hole_clearance_mm: rules["min_hole_clearance"].as_f64().unwrap_or(0.25),
         hole_to_hole_clearance_mm: rules["min_hole_to_hole"].as_f64().unwrap_or(0.25),
+        solder_mask_to_copper_mm: rules["solder_mask_to_copper_clearance"].as_f64(),
         ..KiCadBoardRouterConfig::default()
     })
 }
