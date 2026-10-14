@@ -987,7 +987,13 @@ some on GND, so the GND ones were stacked and then held at the stack by
 the netless ones' "M2.5" in `fixed`. run.py now leaves a netted
 footprint in place when a netless one shares its reference (Quanta75
 both 0 overlaps placed; it also changes WLED_Matrix's LDO1 and Hub's
-REF**). QUANTA_LAYOUT
+REF**). Layouts on x792 (one run each): woagboard 26 courtyard
+overlaps and 25 unconnected on x791 to 0 and 8 (one items_not_allowed;
+both runs cut by the wall clock at load 20-50); Quanta75 Stamp passes
+(0 overlaps, 162/162; v15 45 overlaps), Quanta75 Bare 0 overlaps (v15
+66), 126 unconnected, 8 starved thermals (cut). The layout's verdict
+could name the parts a repeated reference or a copy region held when a
+placement fails (`unplaced`, `next_actions`); not done.
 
 Quick tier x782 (x769 + this) against x768, both on the tier's own task
 list (github-tasks-v5): 29 of 30 rows identical (routed, vias, length,
