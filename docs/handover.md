@@ -574,7 +574,7 @@ with `solid_pin_rows` off. Outputs in `build/triage/` and `build/triage-*/`.
   internal to footprints. Caveat: qfwfq's hole_clearance sits at KiCad's
   199 cap, like the designer's.
 
-## 2026-10-14 (the determinism agent, x746, uncommitted in pcb-maker-determ)
+## Committed on 2026-10-14 (the determinism agent, x746 / x747)
 
 Video's 262-392 unconnected for one placement was the layout's wall-clock
 deadline (1.1 x 1500 s), not a race: in the four room-pair runs the
