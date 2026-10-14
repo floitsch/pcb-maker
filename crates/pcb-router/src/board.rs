@@ -102,6 +102,27 @@ pub struct Plane {
     /// Pads join the pour wherever its fill touches them (KiCad's solid
     /// connection), not only through thermal spokes.
     pub solid: bool,
+    /// KiCad's hatched fill: a web with square holes, a ring around each
+    /// thermal pad (None: solid).
+    pub hatch: Option<Hatch>,
+}
+
+/// A hatched zone's pattern (KiCad 10, zone_filler.cpp addHatchFillTypeOnZone
+/// and buildHatchZoneThermalRings), in mm and degrees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hatch {
+    /// The web's width.
+    pub thickness: f64,
+    /// The holes' side.
+    pub gap: f64,
+    pub orientation: f64,
+    /// 0 square holes, 1 chamfered, 2 and more rounded corners.
+    pub smoothing_level: u32,
+    /// The corner's size as a share of half the gap.
+    pub smoothing_value: f64,
+    /// A hole the fill's edge cuts to less than this share of a whole one
+    /// is filled.
+    pub min_hole_area: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +146,80 @@ pub struct Board {
     /// joins a pour (no connection): both sorted.
     pub solid_pads: Vec<String>,
     pub isolated_pads: Vec<String>,
+    /// Per pad (index into `obstacles`), the frame KiCad builds its
+    /// thermal spokes in, where the lowering knows it; pads without one get
+    /// spokes along the axes of their bounding box (diagonal for a circle).
+    pub pad_spokes: std::collections::HashMap<usize, PadSpokes>,
+    /// Pads that share a number with a larger pad they overlap, which is
+    /// their terminal (an exposed pad's thermal vias): KiCad's DRC checks
+    /// each one's spokes where it is copper of its own (the vias on the
+    /// other side of the board, U1.24's through-hole pad on F.Cu beside its
+    /// B.Cu pad).
+    pub merged_pads: Vec<MergedPad>,
+}
+
+/// A pad merged into its net's terminal `host` (`Board::merged_pads`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MergedPad {
+    pub net: NetId,
+    /// Index into the net's terminals.
+    pub host: usize,
+    /// Index into `Board::obstacles` of the pad's copper.
+    pub pad: usize,
+    pub anchor: Point,
+    pub layers: LayerMask,
+}
+
+/// The frame of a pad's thermal spokes as KiCad builds them (zone_filler.cpp,
+/// buildThermalSpokes): four spokes 90 degrees apart from the pad's shape
+/// position, at the pad's spoke angle in its own frame (a round pad's are
+/// built along the axes and then turned by it), each to the pad's box at
+/// orientation 0 grown by the gap; then turned with the pad.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PadSpokes {
+    /// The pad's shape position (its drill offset applied).
+    pub center: Point,
+    /// Half the pad's size at orientation 0.
+    pub half: [f64; 2],
+    /// The pad's orientation, degrees as KiCad's file gives it (absolute;
+    /// Y down: a point turns as `RotatePoint` turns it).
+    pub orientation: f64,
+    /// The pad's thermal spoke angle, degrees (KiCad's default: 45 for a
+    /// circle, else 90).
+    pub spoke_angle: f64,
+    /// A circle, or an oval of equal sides.
+    pub circular: bool,
+}
+
+impl PadSpokes {
+    /// The four spokes from `center`: per spoke its direction, the
+    /// distance from the centre to the pad's box along it, and to the box
+    /// grown by `reach` (where KiCad tests the spoke's end).
+    pub fn spokes(&self, reach: f64) -> [(Point, f64, f64); 4] {
+        // KiCad's RotatePoint: x' = x cos + y sin, y' = -x sin + y cos.
+        let turn = |vector: Point, degrees: f64| {
+            let (sine, cosine) = degrees.to_radians().sin_cos();
+            [vector[0] * cosine + vector[1] * sine, -vector[0] * sine + vector[1] * cosine]
+        };
+        let mut result = [([0.0, 0.0], 0.0, 0.0); 4];
+        for (index, slot) in result.iter_mut().enumerate() {
+            if self.circular {
+                let radius = self.half[0].max(self.half[1]);
+                let axis = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]][index];
+                *slot = (turn(turn(axis, self.spoke_angle), self.orientation), radius, radius + reach);
+            } else {
+                let (sine, cosine) = (self.spoke_angle + 90.0 * index as f64).to_radians().sin_cos();
+                let along = |half: [f64; 2]| {
+                    let x = if cosine.abs() > 1.0e-12 { half[0] / cosine.abs() } else { f64::INFINITY };
+                    let y = if sine.abs() > 1.0e-12 { half[1] / sine.abs() } else { f64::INFINITY };
+                    x.min(y)
+                };
+                let local = [if cosine.abs() > 1.0e-12 { cosine } else { 0.0 }, if sine.abs() > 1.0e-12 { sine } else { 0.0 }];
+                *slot = (turn(local, self.orientation), along(self.half), along([self.half[0] + reach, self.half[1] + reach]));
+            }
+        }
+        result
+    }
 }
 
 impl Board {
@@ -144,6 +239,19 @@ impl Board {
             obstacle.clearance.max(obstacle_class)
         });
         class.clearance.max(obstacle_side)
+    }
+
+    /// The clearance KiCad's zone filler keeps between a pour of brush
+    /// `class` and copper `obstacle`: as `copper_clearance`, but a pad's
+    /// own override replaces the zone's clearance too, also when smaller
+    /// (DRC_ENGINE: local overrides take precedence; Hub's USB-C J3, pads
+    /// overridden to 0.15 mm in a 0.5 mm zone, keeps its diagonal spokes
+    /// past the neighbouring pins).
+    pub fn fill_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
+        if std::env::var_os("PCB_ROUTER_OLD_FILL_CLEARANCE").is_some() {
+            return self.copper_clearance(class, obstacle);
+        }
+        obstacle.clearance_override.unwrap_or_else(|| self.copper_clearance(class, obstacle))
     }
 }
 

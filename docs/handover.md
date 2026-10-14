@@ -612,6 +612,58 @@ elsewhere than an unpinned one. Left: the clean-up's pour checks are not
 work (a route-mode budget guard fired once under load 56, on a losing
 rung). See docs/router.md, "Determinism and the wall clock".
 
+## Committed on 2026-10-14 (fill round two, x768 / x769)
+
+The census of 44 boards (`experiments/pour-fidelity/census.py`, KiCad's
+starved-thermal findings against our pour model) before and after, same
+tooling (the tooling now reads standard layer names; rosco's In1.Cu is
+called "Route2"):
+
+| | x760 (= x738 model) | x768 |
+|---|---|---|
+| DRC starved findings predicted | 129 | 146 |
+| missed | 28 | 13 |
+| false alarms | 90 | 27 |
+| starved pads not modelled | 14 | 12 |
+
+What changed, all on by default, each with the census step it bought (env
+switches for A/B): track ends found anywhere across a trimmed spoke; spokes
+meet at any angle; pad clearance overrides replace the zone clearance in the
+fill, also when smaller (`Board::fill_clearance`, `PCB_ROUTER_OLD_FILL_CLEARANCE`);
+sliver ends; spokes in the pad's own frame (`Board::pad_spokes`,
+`PCB_ROUTER_OLD_SPOKE_FRAMES`; the routing guards keep the box axes, frames
+there cost Hub 29 to 35 unconnected); repeated pad numbers checked on layers
+where they are copper of their own (`Board::merged_pads`); no relief cuts a
+spoke in the DRC track-end test; cut-off spokes bring no item; hatched zones
+(`Plane::hatch`: spoke end half a web out, a ring around thermal pads,
+KiCad's hole grid); coincident pads share tracks; foreign spokes across a
+pad's ring count (`PCB_ROUTER_NO_FOREIGN_SPOKES`); tracks and vias are items
+of every piece their copper overlaps (`PCB_ROUTER_OLD_TRACK_PIECES`); 3 micron
+tolerance on brush clearances; joined outlines for a pad's overlapping spokes
+and lattice-cut necks (`PCB_ROUTER_NO_NECK_JOINS`). Router fixes: `reroute()`
+refreshes the pours after negotiation; `trim_dangling_plane_ends` cuts a
+plane tail whose fill was taken back (USB_Cable_Tester /SHLD: a layout move
+rerouted signals over the plane end, not fill optimism).
+
+Route-mode pairs against x738 (pinned, same time): Castor starved 4 to 3,
+k30 1 to 0, mackerel-30 3 to 2, Hub 4 to 4 with 29 unconnected (x761 and
+x765 had 35 from spoke frames in the guards, fixed in x767); CPU 0.94 to
+1.05. Quick tier `build/quick30-x768.log` against x746: pass 22 to 23
+(USB_Cable_Tester), starved 7 to 6, vias 2847 to 2814, unconnected 22 to 25
+(reCamera 4 to 9, its ladder went another way; MIDAS 11 to 9). Eleven router
+tests, one per class. `experiments/pour-fidelity/render.py` draws KiCad's
+fill against our map around a pad.
+
+Fragmentation measured on 7 boards: our extra pieces are lattice sampling of
+necks; PixelWave's 1212 single-node blobs hold no spoke and no item; of 23
+island spokes in outlines our map split, 4 pads had a wrong verdict and the
+neck and spoke-overlap joins fixed 3. Remaining disagreements by cause:
+0xCB U3.45 thermal vias inside the exposed pad (10 misses; modelling them
+made 15 false alarms); seams between overlapping same-net zones of
+different priority (Telemetry, 5); marginal fine-pitch clearance within a
+few microns; hatched fill lying over thermal pads without relief (not
+understood); per-track DRC subtleties with islands.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

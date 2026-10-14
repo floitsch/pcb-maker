@@ -36,6 +36,8 @@ impl Builder {
                 planes: Vec::new(),
                 solid_pads: Vec::new(),
                 isolated_pads: Vec::new(),
+                pad_spokes: Default::default(),
+                merged_pads: Vec::new(),
             },
         }
     }
@@ -195,6 +197,7 @@ fn pour_connects_pads_with_stub_vias_only() {
         thermal_gap: 0.0,
         exclusive: false,
         solid: false,
+        hatch: None,
     });
     let result = route(&builder.board, &config());
     assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);
@@ -237,6 +240,7 @@ fn plane_skeleton_is_trimmed_back_to_what_the_pour_cannot_provide() {
         thermal_gap: 0.0,
         exclusive: false,
         solid: false,
+        hatch: None,
     });
     let config = Config {
         plane_skeleton: true,

@@ -147,7 +147,9 @@ def kicad_spokes(board, zones):
             if polys.OutlineCount() == 0:
                 continue
             box = polys.BBox()
-            layer_name = str(board.GetLayerName(layer))
+            # The standard name: our dump's (a board may rename its
+            # layers, rosco's In1.Cu is "Route2").
+            layer_name = str(board.GetStandardLayerName(layer))
             single_cache = {}
             for pad in by_net.get(zone.GetNetCode(), []):
                 if not pad.FlashLayer(layer):
@@ -252,17 +254,22 @@ def ours(dump):
             key = (row["pad"], names[row["layer"]], row["anchor"][0], row["anchor"][1])
             good = sum(1 for spoke in row["spokes"] if spoke.startswith("good"))
             island = sum(1 for spoke in row["spokes"] if spoke.startswith("island"))
-            result[key] = {"ours": good, "ours_island": island, "ours_tracks": row.get("tracks", 0), "our_spokes": row["spokes"], "round": row["round"]}
+            # Other pads' spokes across the pad's ring count as its own.
+            crossings = row.get("crossings", 0)
+            result[key] = {"ours": good + crossings, "ours_island": island, "ours_tracks": row.get("tracks", 0), "ours_crossings": crossings, "our_spokes": row["spokes"], "round": row["round"]}
     return result
 
 
-def starved_from_drc(path):
-    """(label, layer) -> [(position, description)] of the DRC's starved pads."""
+def starved_from_drc(path, names=None):
+    """(label, layer) -> [(position, description)] of the DRC's starved pads
+    (`names` maps the board's layer names to the standard ones)."""
+    names = names or {}
     result = {}
     for violation in json.load(open(path)).get("violations", []):
         if violation["type"] != "starved_thermal":
             continue
         layer = re.search(r"layer ([^;]+);", violation["description"]).group(1)
+        layer = names.get(layer, layer)
         for item in violation["items"]:
             match = re.match(r"(?:PTH |SMD |NPTH )?[Pp]ad (\S+) \[[^\]]*\] of (\S+)", item["description"])
             if match:
@@ -292,15 +299,25 @@ def main():
     parser.add_argument("--drc")
     parser.add_argument("--json")
     parser.add_argument("--save-filled")
+    parser.add_argument("--kicad-cache", help="KiCad's rows from (or to) this JSON file: the fill is the board's, not the model's")
     parser.add_argument("--all", action="store_true", help="print every pad, not only those where KiCad and ours differ")
     args = parser.parse_args()
-    board = pcbnew.LoadBoard(args.board)
-    zones = fill(board)
-    if args.save_filled:
-        board.Save(args.save_filled)
-    kicad = kicad_spokes(board, zones)
+    if args.kicad_cache and os.path.exists(args.kicad_cache):
+        kicad = {tuple(row["key"]): row["row"] for row in json.load(open(args.kicad_cache))}
+    else:
+        board = pcbnew.LoadBoard(args.board)
+        zones = fill(board)
+        if args.save_filled:
+            board.Save(args.save_filled)
+        kicad = kicad_spokes(board, zones)
+        if args.kicad_cache:
+            json.dump([{"key": list(key), "row": row} for key, row in kicad.items()], open(args.kicad_cache, "w"))
     model = ours(args.dump)
-    starved = match_starved(starved_from_drc(args.drc), kicad) if args.drc else {}
+    names = {}
+    if args.drc:
+        named = pcbnew.LoadBoard(args.board)
+        names = {str(named.GetLayerName(layer)): str(named.GetStandardLayerName(layer)) for layer in named.GetEnabledLayers().CuStack()}
+    starved = match_starved(starved_from_drc(args.drc, names), kicad) if args.drc else {}
     rows = []
     by_label = {}
     for key in model:

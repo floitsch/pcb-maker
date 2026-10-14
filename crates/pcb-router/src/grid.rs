@@ -392,6 +392,16 @@ impl FillTrace {
         }
     }
 
+    /// Claims a remembered value for `net` too (copper the fill keeps
+    /// away from as well as the tracks).
+    fn claim(&mut self, layer: usize, index: usize, net: Option<NetId>) {
+        if self.differs[layer][index / 64] & (1 << (index % 64)) != 0
+            && let Some(value) = self.values.get_mut(&(layer as u32, index as u32))
+        {
+            claim(value, net);
+        }
+    }
+
     fn get(&self, layer: usize, index: usize) -> Option<u32> {
         (self.differs[layer][index / 64] & (1 << (index % 64)) != 0)
             .then(|| self.values[&(layer as u32, index as u32)])
@@ -504,18 +514,34 @@ impl StaticMaps {
         let mask_opening = |obstacle: &&crate::board::Obstacle| {
             obstacle.kind == ObstacleKind::Keepout && obstacle.label.starts_with("solder mask opening")
         };
+        // A pad's own clearance override replaces the zone's clearance in
+        // KiCad's fill also where it is smaller than this class's (which
+        // the tracks keep): such pads come after the others, and the fill
+        // keeps only the override from them (`Board::fill_clearance`).
+        let overridden = |obstacle: &&crate::board::Obstacle| {
+            obstacle.kind == ObstacleKind::Copper
+                && !mask_opening(obstacle)
+                && board.fill_clearance(&rules, obstacle) < board.copper_clearance(&rules, obstacle) - 1.0e-9
+        };
         let ordered: Vec<&crate::board::Obstacle> = board
             .obstacles
             .iter()
-            .filter(|obstacle| !mask_opening(obstacle))
+            .filter(|obstacle| !mask_opening(obstacle) && !overridden(obstacle))
+            .chain(board.obstacles.iter().filter(|obstacle| overridden(obstacle)))
             .chain(board.obstacles.iter().filter(|obstacle| mask_opening(obstacle)))
             .collect();
-        let first_opening = ordered.iter().position(mask_opening);
+        let first_apart = ordered.iter().position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
         let mut fill_trace: Option<FillTrace> = None;
         for (position, obstacle) in ordered.into_iter().enumerate() {
-            if Some(position) == first_opening {
+            if Some(position) == first_apart {
                 fill_trace = Some(FillTrace::new(board.layer_count, cells));
             }
+            // From the first pad apart on: where the fill keeps away too
+            // (within the fill's reach of an overridden pad; any other
+            // copper), a remembered value is claimed as well.
+            let opening = mask_opening(&obstacle);
+            let fill_reach = (obstacle.kind == ObstacleKind::Copper && !opening)
+                .then(|| half_width + board.fill_clearance(&rules, obstacle) + SAFETY);
             let (trace_reach, via_reach) = match obstacle.kind {
                 ObstacleKind::Copper => {
                     let clearance = board.copper_clearance(&rules, obstacle);
@@ -584,7 +610,10 @@ impl StaticMaps {
                         if distance < trace_reach {
                             if !edge_zone[index] {
                                 if let Some(fill) = &mut fill_trace {
-                                    fill.remember(layer, index, trace[layer][index]);
+                                    match fill_reach {
+                                        Some(reach) if distance < reach => fill.claim(layer, index, obstacle.net),
+                                        _ => fill.remember(layer, index, trace[layer][index]),
+                                    }
                                 }
                                 claim(&mut trace[layer][index], obstacle.net);
                             }

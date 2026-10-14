@@ -225,8 +225,52 @@ from a node. Measured with `experiments/pour-fidelity` (`census.py`,
 171 starved findings): the old model flagged 77 of them and 866 pads KiCad
 does not; this one flags 116 and 87 (19 more are pads it does not have:
 pads sharing a number, custom pads). Thermal reliefs do not cut spokes
-(KiCad adds them after the reliefs), and only facing spokes of pads apart
-meet (a USB-C receptacle's A1 and B12 share one spot).
+(KiCad adds them after the reliefs). Spokes of pads apart meet whatever
+their directions (KiCad asks only that each end lies in the other spoke;
+a pad doubled at one spot has one set of spokes).
+
+What KiCad's filler and DRC do besides, modelled since (2026-10-14, the
+fill2 agent; census: 129 to 146 findings predicted, 28 to 13 missed, 90
+to 27 false alarms, pads not modelled 14 to 12):
+
+- spokes in the pad's own frame (`Board::pad_spokes`, `PadSpokes`): turned
+  with the pad (0xCB's parts at 45 degrees), at its spoke angle (a
+  rectangular pad's `thermal_bridge_angle 45` gives diagonal spokes to its
+  box grown by the gap); the routing guards keep the box's axes (in the
+  pad's frame they cost Hub 6 connections);
+- a pad's clearance override replaces the zone's clearance in the fill,
+  also when smaller (`Board::fill_clearance`, in the probe and in the
+  static fill map, where overridden pads are stamped last);
+- hatched zones (`Plane::hatch`): the spoke's end half a web out, a ring a
+  spoke wide around each thermal pad (in the fill the spoke ends are
+  tested against and in the final fill), and the holes on KiCad's grid
+  (turned about the origin, smoothed, a web left along the fill's edge,
+  holes cut small by the edge or around a whole ring filled) for the
+  DRC's track ends;
+- a spoke cut off from its pad by clearances near the pad still crosses
+  the ring, but brings no item to the piece it lands in (k30's U14.12);
+- other pads' kept spokes across a pad's ring count as its spokes
+  (`foreign_spokes`), the DRC counting every crossing of the fill;
+- a track or via is an item of every piece its copper overlaps
+  (`track_touch_fill`), each straight run one item; a pad is one item of
+  an outline however many of its pieces it reaches; a pad's spokes that
+  overlap (all of them without a hole) make the pieces they land in one
+  outline, as does a neck between pieces the lattice cuts (`neck_joins`);
+- tracks of a pad at the same spot count for both (USB-C A1 and B12);
+  pads merged into a larger pad of their number are checked on the
+  layers where they are copper of their own (`Board::merged_pads`);
+- brush centres keep the clearances to 3 microns (KiCad's pruning
+  epsilon and arc approximation), track ends test what clearances leave
+  of a spoke anywhere across it, a spoke's end is searched for along the
+  spoke (a neck exactly the minimum width), and an end in a sliver the
+  lattice misses joins the piece a straight run of fill reaches.
+
+After a layout move's reroute the pours are refreshed (pads the rerouted
+signals cut off are routed again), and a plane end whose fill the signals
+took is trimmed back to its junction (`trim_dangling_plane_ends`;
+USB_Cable_Tester's dangling /SHLD stub).
+
+`render.py` draws KiCad's fill and our map around a pad.
 
 A pad still short after the stitching gets straight tracks into its pour
 (`manual_spokes`, on): a track of the net's own class from the pad into a

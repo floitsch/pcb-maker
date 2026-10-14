@@ -18,7 +18,7 @@ pub mod router;
 pub mod verify;
 
 pub use board::{
-    Board, ClassId, LayerMask, Net, NetId, NetRoute, Obstacle, ObstacleKind, Plane, RuleClass,
+    Board, ClassId, Hatch, LayerMask, MergedPad, Net, NetId, NetRoute, Obstacle, ObstacleKind, PadSpokes, Plane, RuleClass,
     Segment,
     Terminal, Via,
 };

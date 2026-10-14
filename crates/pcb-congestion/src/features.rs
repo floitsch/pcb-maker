@@ -548,6 +548,8 @@ mod tests {
             planes: Vec::new(),
             solid_pads: Vec::new(),
             isolated_pads: Vec::new(),
+            pad_spokes: Default::default(),
+            merged_pads: Vec::new(),
         }
     }
 

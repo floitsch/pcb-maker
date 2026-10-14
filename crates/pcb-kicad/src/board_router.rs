@@ -825,6 +825,7 @@ pub(super) fn lower(
     // of the pads are known.
     let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> = Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
+    let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> = std::collections::HashMap::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
     // ground or a rail) route at the project's smallest predefined width.
     let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
@@ -1047,6 +1048,13 @@ pub(super) fn lower(
                         }
                     }
                     let pad_obstacle = obstacles.len();
+                    // A custom pad's box holds its primitives: its
+                    // spokes stay along the axes of its copper's box.
+                    if pad.children().get(3).and_then(Expr::atom) != Some("custom")
+                        && let Ok(frame) = pad_spokes_frame(pad, lowered.center)
+                    {
+                        pad_spokes.insert(pad_obstacle, frame);
+                    }
                     obstacles.push(core::Obstacle {
                         shape: shape(&lowered.geometry),
                         layers: pad_layers,
@@ -1245,7 +1253,8 @@ pub(super) fn lower(
     // with holes in it, an exposed pad's thermal vias): the largest is the
     // terminal, the others just its copper. OpenRX's panel hangs half of
     // each wire pad's holes over the edge, unreachable as terminals.
-    for net in &mut nets {
+    let mut merged_pads: Vec<core::MergedPad> = Vec::new();
+    for (net_id, net) in nets.iter_mut().enumerate() {
         let area = |terminal: &core::Terminal| {
             let bounds = obstacles[terminal.pad].shape.aabb();
             (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[1] - bounds.minimum[1])
@@ -1253,6 +1262,7 @@ pub(super) fn lower(
         let mut order: Vec<usize> = (0..net.terminals.len()).collect();
         order.sort_by(|a, b| area(&net.terminals[*b]).total_cmp(&area(&net.terminals[*a])).then(a.cmp(b)));
         let mut keep = vec![true; net.terminals.len()];
+        let mut host = vec![usize::MAX; net.terminals.len()];
         for (position, &large) in order.iter().enumerate() {
             if !keep[large] {
                 continue;
@@ -1263,7 +1273,27 @@ pub(super) fn lower(
                     && obstacles[net.terminals[large].pad].shape.contains(net.terminals[small].anchor)
                 {
                     keep[small] = false;
+                    host[small] = large;
                 }
+            }
+        }
+        let mut renumbered = vec![usize::MAX; net.terminals.len()];
+        let mut next = 0;
+        for (index, kept) in keep.iter().enumerate() {
+            if *kept {
+                renumbered[index] = next;
+                next += 1;
+            }
+        }
+        for (index, terminal) in net.terminals.iter().enumerate() {
+            if !keep[index] {
+                merged_pads.push(core::MergedPad {
+                    net: net_id as core::NetId,
+                    host: renumbered[host[index]],
+                    pad: terminal.pad,
+                    anchor: terminal.anchor,
+                    layers: obstacles[terminal.pad].layers,
+                });
             }
         }
         let mut index = 0;
@@ -1454,6 +1484,7 @@ pub(super) fn lower(
                 // plane: it carries no signals.
                 exclusive: layers.names[layer].starts_with("In") && polygon_area(&pour.polygon) >= 0.9 * board_area,
                 solid: pour.solid,
+                hatch: pour.hatch,
             });
         }
     }
@@ -1502,7 +1533,39 @@ pub(super) fn lower(
                 isolated_pads.sort();
                 isolated_pads
             },
+            pad_spokes,
+            merged_pads,
         },
+    })
+}
+
+/// KiCad's frame for a pad's thermal spokes (`core::PadSpokes`): its shape
+/// position, size at orientation 0, absolute orientation and spoke angle
+/// (the pad's `thermal_bridge_angle`, else 45 degrees for a circle and 90
+/// for any other shape, a custom pad's by its anchor).
+fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, String> {
+    let pad_at = form_at(pad)?;
+    let size = form_xy(pad, "size")?;
+    let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
+    let anchor = if shape == "custom" {
+        pad.child("options").and_then(|options| form_atom(options, "anchor", 1)).unwrap_or("circle")
+    } else {
+        shape
+    };
+    let offset = match pad.child("drill").filter(|drill| drill.child("offset").is_some()) {
+        Some(drill) => {
+            let (x, y) = (form_f64(drill, "offset", 1).unwrap_or(0.0), form_f64(drill, "offset", 2).unwrap_or(0.0));
+            let (sine, cosine) = (-pad_at[2]).to_radians().sin_cos();
+            [x * cosine - y * sine, x * sine + y * cosine]
+        }
+        None => [0.0, 0.0],
+    };
+    Ok(core::PadSpokes {
+        center: [center[0] + offset[0], center[1] + offset[1]],
+        half: [size[0] / 2.0, size[1] / 2.0],
+        orientation: pad_at[2],
+        spoke_angle: form_f64(pad, "thermal_bridge_angle", 1).unwrap_or(if anchor == "circle" { 45.0 } else { 90.0 }),
+        circular: shape == "circle" || (shape == "oval" && (size[0] - size[1]).abs() < 1.0e-9),
     })
 }
 
@@ -1961,6 +2024,8 @@ pub(super) struct Pour {
     thermal_gap: f64,
     /// `(connect_pads yes ...)`: pads join wherever the fill touches.
     solid: bool,
+    /// `(fill (mode hatch) ...)`.
+    hatch: Option<core::Hatch>,
     polygon: Vec<[f64; 2]>,
 }
 
@@ -2012,6 +2077,14 @@ pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                         + form_f64(fill, "thermal_bridge_width", 1).unwrap_or(0.5)
                 })
                 .unwrap_or(1.0),
+            hatch: zone.child("fill").filter(|fill| form_atom(fill, "mode", 1) == Some("hatch")).map(|fill| core::Hatch {
+                thickness: form_f64(fill, "hatch_thickness", 1).unwrap_or(1.0),
+                gap: form_f64(fill, "hatch_gap", 1).unwrap_or(1.5),
+                orientation: form_f64(fill, "hatch_orientation", 1).unwrap_or(0.0),
+                smoothing_level: form_f64(fill, "hatch_smoothing_level", 1).unwrap_or(0.0).max(0.0) as u32,
+                smoothing_value: form_f64(fill, "hatch_smoothing_value", 1).unwrap_or(0.0),
+                min_hole_area: form_f64(fill, "hatch_min_hole_area", 1).unwrap_or(0.3),
+            }),
             polygon: rule_area_polygon_points(zone)?,
         });
     }

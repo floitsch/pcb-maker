@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Toit contributors.
 """Starved thermals against the router's pour model, over many boards.
 
-    python3 -I census.py <binary> <out-directory> <result-directory>...
+    python3 -I census.py [--kicad-cache DIR] [--jobs N] <binary> <out-directory> <result-directory>...
 
 Each result directory holds a routed `<id>.kicad_pcb` and KiCad's
 `drc.json` for it. Per board: `dump-pour-map` on the routed board (the
@@ -13,6 +13,7 @@ believed connected (a fidelity miss), plus the model's pessimistic pads
 (ours < 2 good, KiCad >= 2).
 """
 
+import concurrent.futures
 import glob
 import json
 import os
@@ -39,25 +40,46 @@ def name_of(directory):
     return parts[-2] + "-" + parts[-1]
 
 
+def prepare(binary, out, cache, directory):
+    """Runs the model's dump and spokes.py for one board (KiCad's side from
+    the cache when it holds the board): the per-board JSON's path, or None."""
+    identifier = board_id(directory)
+    if identifier is None or not os.path.exists(os.path.join(directory, "drc.json")):
+        print(f"skip {directory}", file=sys.stderr)
+        return None
+    name = name_of(directory)
+    dump = os.path.join(out, name + ".dump")
+    result = os.path.join(out, name + ".json")
+    if not os.path.exists(result):
+        subprocess.run([binary, "dump-pour-map", directory, identifier, dump], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        extra = ["--kicad-cache", os.path.join(cache, name + ".kicad.json")] if cache else []
+        subprocess.run([sys.executable, "-I", os.path.join(HERE, "spokes.py"), os.path.join(directory, identifier + ".kicad_pcb"),
+                        dump, "--drc", os.path.join(directory, "drc.json"), "--json", result] + extra,
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return name, result
+
+
 def main():
-    binary, out = sys.argv[1], sys.argv[2]
+    arguments = sys.argv[1:]
+    cache, jobs = None, 1
+    while arguments and arguments[0].startswith("--"):
+        if arguments[0] == "--kicad-cache":
+            cache = arguments[1]
+            os.makedirs(cache, exist_ok=True)
+        elif arguments[0] == "--jobs":
+            jobs = int(arguments[1])
+        arguments = arguments[2:]
+    binary, out = arguments[0], arguments[1]
     os.makedirs(out, exist_ok=True)
     totals = {"starved": 0, "both": 0, "missed": 0, "false_alarm": 0, "model_missing": 0, "pads": 0}
     details = []
-    for directory in sys.argv[3:]:
-        identifier = board_id(directory)
-        if identifier is None or not os.path.exists(os.path.join(directory, "drc.json")):
-            print(f"skip {directory}", file=sys.stderr)
+    with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
+        prepared = list(pool.map(lambda directory: prepare(binary, out, cache, directory), arguments[2:]))
+    for entry in prepared:
+        if entry is None:
             continue
-        name = name_of(directory)
-        dump = os.path.join(out, name + ".dump")
-        result = os.path.join(out, name + ".json")
-        if not os.path.exists(result):
-            subprocess.run([binary, "dump-pour-map", directory, identifier, dump], check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run([sys.executable, "-I", os.path.join(HERE, "spokes.py"), os.path.join(directory, identifier + ".kicad_pcb"),
-                            dump, "--drc", os.path.join(directory, "drc.json"), "--json", result],
-                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        name, result = entry
         rows = json.load(open(result))
         counts = {"starved": 0, "both": 0, "missed": 0, "false_alarm": 0, "model_missing": 0, "pads": len(rows)}
         for row in rows:
