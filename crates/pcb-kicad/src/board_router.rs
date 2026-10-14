@@ -140,6 +140,11 @@ pub struct KiCadBoardRouterConfig {
     /// way; the wall-clock deadline stays as the last guard.
     #[serde(skip)]
     pub deadline_work: Option<f64>,
+    /// The work at which a router of this attempt stops as at the
+    /// deadline (router `deadline_work`, its own work counted from zero;
+    /// set by the ladder from `deadline_work`, not read from a file).
+    #[serde(skip)]
+    pub router_deadline_work: Option<f64>,
     /// How many seeds of one attempt route at once (memory; the number of
     /// seeds, and so the result, does not depend on it).
     #[serde(skip)]
@@ -454,6 +459,12 @@ pub struct KiCadBoardRouterResult {
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// What stood in the way, when something did.
     pub diagnostics: KiCadRoutingDiagnostics,
+    /// What the wall clock cut short (`pcb_router::router::WALL_CUTS`),
+    /// rather than the work: a result that depends on the machine's load.
+    /// Empty when the work decided everything, and the same input and
+    /// thread count then give the same board.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cut: Vec<String>,
 }
 
 /// Why a routing is not complete, for whoever has to fix the board.
@@ -2259,13 +2270,26 @@ pub fn route_kicad_board(
     // Without a deadline (route mode) the wall clock guards the work at
     // `GUARD` times it; with one, the deadline is the only wall guard.
     let spent = |work: f64| {
-        if config.deadline.is_some() {
+        if config.deadline.is_some() || !core::router::wall_guard() {
             work
         } else {
-            work.max(ladder_started.elapsed().as_secs_f64() / core::router::GUARD)
+            let wall = ladder_started.elapsed().as_secs_f64();
+            if wall / core::router::GUARD > work {
+                core::router::note_wall_cut(
+                    "ladder",
+                    format_args!("{wall:.0} s of wall clock for {work:.0} s of the ladder's work"),
+                );
+            }
+            work.max(wall / core::router::GUARD)
         }
     };
-    let past_deadline = || config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    let past_deadline = || {
+        let past = config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        if past {
+            core::router::note_wall_cut("deadline", format_args!("the ladder at {:.0} s of its work", ladder_work_now.get()));
+        }
+        past
+    };
     // What the last attempt took, in work: no attempt starts with less
     // than that left before the run's nominal end (an attempt checks the
     // deadline only in its negotiation; MokyaLora's last rung started at
@@ -2389,7 +2413,15 @@ pub fn route_kicad_board(
                     .collect();
                 handles.into_iter().map(|handle| handle.join().expect("probe thread")).collect()
             });
+            let mut out_of_work = false;
             for ((mode, unfinished, mut router, seconds), (_, board, attempt)) in probed.into_iter().zip(wave) {
+                // As one probe after the other: a probe the work left would
+                // not have started counts for nothing, however many ran side
+                // by side (that number follows the memory available).
+                if leader.is_some() && work_left() < probe_seconds * 2.0 + 120.0 {
+                    out_of_work = true;
+                    break;
+                }
                 let (connect, _, exclusive, plane_stubs) = modes[mode];
                 ladder_work += work_of(router.expansions());
                 ladder_work_now.set(ladder_work);
@@ -2413,7 +2445,7 @@ pub fn route_kicad_board(
                 }
             }
             next += side_by_side;
-            if leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
+            if out_of_work || leader.as_ref().is_some_and(|(best, ..)| *best == 0) {
                 break;
             }
         }
@@ -2439,6 +2471,11 @@ pub fn route_kicad_board(
             let probed = router.expansions();
             // The router's own probe is in its work already.
             router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work) + work_of(probed)));
+            // It stops where the run's work ends, not where the wall
+            // clock does (the deadline stays as the guard against load).
+            if config.deadline_work.is_some() {
+                router.config_mut().deadline_work = Some(work_of(probed) + work_left().max(0.0));
+            }
             let routed = router.resume((remaining / 3.0).clamp(60.0, 900.0));
             let router_expansions = router.expansions();
             ladder_work += work_of(router_expansions - probed);
@@ -2531,6 +2568,7 @@ pub fn route_kicad_board(
             (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
         });
         let pitch_left = (ladder_budget - spent(ladder_work)).max(0.0);
+        let pitch_work_left = work_left().max(0.0);
         let rung_attempt = |mode: usize| -> KiCadBoardRouterConfig {
             let (_, skeleton, exclusive, plane_stubs) = modes[mode];
             let mut attempt = config.clone();
@@ -2544,6 +2582,9 @@ pub fn route_kicad_board(
                 attempt.negotiation_seconds = Some(seconds);
             }
             attempt.run_work = Some((ladder_budget, pitch_left));
+            // Every rung of the pitch stops where the run's work ends as
+            // the pitch starts (decided before they run, as the budget).
+            attempt.router_deadline_work = config.deadline_work.map(|_| pitch_work_left);
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
             }
@@ -2965,6 +3006,7 @@ pub fn route_kicad_board(
             }
         }
     }
+    result.cut = core::router::wall_cuts();
     let report_path = output_directory.join("board-router.json");
     fs::write(
         &report_path,
@@ -3151,6 +3193,7 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     let mut router_config = core::Config {
         verbose: true,
         deadline: config.deadline,
+        deadline_work: config.router_deadline_work,
         ..core::Config::default()
     };
     if let Some(via_cost) = config.via_cost_mm {
@@ -3196,6 +3239,15 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // The polish after it may not take longer than the negotiation was
         // allowed.
         router_config.via_reduction_seconds = seconds.min(300.0);
+    } else {
+        // The router's default budget, in work too: left in seconds it was
+        // the only limit of an attempt the ladder repeats from a probed
+        // rung (its seeds, the narrow-signal and relaxed-clearance steps),
+        // and video's narrow-signal attempt stopped at 900 s of wall clock
+        // wherever the load had brought it (1124 s of work on one run).
+        let seconds = router_config.negotiation_seconds;
+        router_config.negotiation_expansions = (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+        router_config.negotiation_seconds = seconds * core::router::GUARD;
     }
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
@@ -3391,6 +3443,7 @@ pub(super) fn finish_routed_board(
             starved_thermals: starved_thermal_diagnostics(output_directory),
             ..diagnostics(board, result, layer_names)
         },
+        cut: Vec::new(),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

@@ -574,6 +574,44 @@ with `solid_pin_rows` off. Outputs in `build/triage/` and `build/triage-*/`.
   internal to footprints. Caveat: qfwfq's hole_clearance sits at KiCad's
   199 cap, like the designer's.
 
+## 2026-10-14 (the determinism agent, x746, uncommitted in pcb-maker-determ)
+
+Video's 262-392 unconnected for one placement was the layout's wall-clock
+deadline (1.1 x 1500 s), not a race: in the four room-pair runs the
+negotiation is identical to its last iteration and the runs part where the
+deadline cut the hard repair (48, 70, 72, 98 nets rerouted). Video's work
+lagged its wall clock (placement: 193 s of work, 630-1385 s of wall clock;
+its seeds run in waves, each as long as its longest seed), so the deadline,
+not the work, ended its layout under any load. Other wall-clock decisions
+found: the via reduction's allowance in a layout (a third of the wall clock
+left: Castor's final ladder 196 s on x738, 260 s of work now), the default
+900 s negotiation of the attempts the ladder repeats from a probed rung
+(wall clock only: video's narrow-signal step, 364 against 339 unconnected
+on two runs), the pour nets' one-minute pre-negotiation in route mode, and
+the probe ladder's check of the work left only between waves (the number
+of rungs judged followed free memory). Route mode (Castor, Sisu: three runs
+each) and the small boards' layouts were already deterministic.
+
+Changed: the layout's routers stop at its end in work (router
+`deadline_work`, armed before every phase; the end is `total_seconds`, the
+wall-clock deadline 10 % later is the load margin); the waves of placement
+seeds count toward that end (`waves_work_seconds`); the first route's
+negotiation gets at most half of what is left; the via-reduction allowance,
+the default negotiation budget and the pour pre-negotiation are in work;
+probes are judged one after the other whatever ran side by side; every
+wall-clock cut is logged (`wall guard: ...`) and reported (`cut` in the
+reports and in run.py's rows, CUT in compare.py); `PCB_ROUTER_NO_WALL_GUARD`
+drops the layout's deadline too. Video (seed 1, four threads): three runs
+on eight logical CPUs 300/300/300 unconnected, 1362 vias, one fingerprint,
+1355-1475 s; on four pinned CPUs it still meets the deadline (placement
+alone 980-1385 s) and says so; without the guard there four runs of x744
+and x746 give 318 and one fingerprint. Quick tier x746 (load 7-30): all 30
+rows identical to x722, 22 pass, CPU geomean 0.97. The waves' count follows
+the cores the process may use, so a run pinned to fewer cores can end
+elsewhere than an unpinned one. Left: the clean-up's pour checks are not
+work (a route-mode budget guard fired once under load 56, on a losing
+rung). See docs/router.md, "Determinism and the wall clock".
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

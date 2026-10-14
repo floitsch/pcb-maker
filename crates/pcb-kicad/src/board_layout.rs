@@ -188,6 +188,11 @@ pub struct KiCadBoardLayoutResult {
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub routed: KiCadBoardRouterResult,
+    /// What the wall clock cut short (`pcb_router::router::WALL_CUTS`)
+    /// rather than the work: the layout then depends on the machine's
+    /// load. Empty when the work decided everything.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cut: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -226,6 +231,8 @@ fn size_outline(
     placer_config: &mut KiCadBoardPlacerConfig,
     router_config: &KiCadBoardRouterConfig,
     work: &mut f64,
+    work_deadline: f64,
+    waves_excess: &mut f64,
 ) -> Result<Vec<KiCadOutlineTrial>, String> {
     let Some(shrink) = automatic_outline(placer_config).map(|outline| outline.shrink) else {
         return Ok(Vec::new());
@@ -261,6 +268,7 @@ fn size_outline(
         let directory = sizing.join(format!("{factor}"));
         let placement = place_kicad_board(source_directory, board_id, &directory, &config)?;
         *work += placement.work_seconds;
+        *waves_excess += (placement.waves_work_seconds - placement.work_seconds).max(0.0);
         let legal = placement.unplaced.is_empty() && placement.illegal.is_empty();
         let open = if legal {
             let placed = directory.join(format!("{board_id}.kicad_pcb"));
@@ -274,6 +282,8 @@ fn size_outline(
             let layers = LayerTable::from_pcb(&pcb)?;
             let connect = !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
             let board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+            let mut quick = quick.clone();
+            quick.deadline_work = Some((work_deadline - *work - *waves_excess).max(0.0));
             let mut router = core::router::Router::new(&board, &quick);
             let result = router.run_in_place();
             *work += router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
@@ -440,6 +450,13 @@ pub fn layout_kicad_board(
     // board out the same way. The wall clock only guards against running
     // far past it.
     let mut work = 0.0;
+    // The placement's work counts its longest seed (the budget's measure);
+    // its seeds run in waves, and the clock sees every wave: the
+    // difference counts toward the deadline in work (`work_deadline`), not
+    // toward the budgets (video: 193 s of placement work, 630 s of wall
+    // clock; its first route ran into the wall-clock deadline at a point
+    // that depended on the load).
+    let mut waves_excess = 0.0;
     // Requested net classes set their nets' rules (and the spacing).
     let with_classes;
     let router_config = if router_config.net_classes.is_empty() {
@@ -453,13 +470,28 @@ pub fn layout_kicad_board(
     // Every route of the layout ends by a wall-clock guard past its total
     // budget: on a much busier or slower machine the work would run on
     // past what the agent waits for.
+    // (None under `PCB_ROUTER_NO_WALL_GUARD`: the work alone decides.)
     let with_deadline = KiCadBoardRouterConfig {
-        deadline: router_config.deadline.or(Some(
-            layout_started + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0)),
-        )),
+        deadline: router_config.deadline.or(core::router::wall_guard().then(|| {
+            layout_started + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0))
+        })),
         ..router_config.clone()
     };
     let router_config = &with_deadline;
+    // The layout's end in work, its nominal end: every router of the
+    // layout stops there (`arm`), the polish and the final ladder are
+    // planned up to it, so that where a run stops does not depend on the
+    // machine's load. The wall-clock deadline `WALL_GUARD` past it is the
+    // margin for load (and for what the work does not count); a run that
+    // reaches it first says so (`cut`). With both at 1.1 times the budget,
+    // the wall clock decided every crowded board under a sweep's load
+    // (video: work 1373 s of 1650 when the deadline cut its repair).
+    let work_deadline = config.total_seconds.max(0.0);
+    let arm = |router: &mut core::router::Router, work: f64| {
+        let own = router.work();
+        router.config_mut().deadline_work = Some(own + (work_deadline - work).max(0.0));
+    };
+    let wall_passed = || router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
     let mut placer_config = resolve_constraints(&config.placer, source_directory)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
@@ -481,8 +513,16 @@ pub fn layout_kicad_board(
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget);
     eprintln!("layout: sizing the outline");
-    let outline_sizing =
-        size_outline(source_directory, board_id, output_directory, &mut placer_config, router_config, &mut work)?;
+    let outline_sizing = size_outline(
+        source_directory,
+        board_id,
+        output_directory,
+        &mut placer_config,
+        router_config,
+        &mut work,
+        work_deadline,
+        &mut waves_excess,
+    )?;
     let placed_directory = output_directory.join("placed");
     eprintln!("layout: placing ({:.0} s, work {work:.0} s)", elapsed());
     // What sizing the outline left of the placement budget (a little at
@@ -508,7 +548,17 @@ pub fn layout_kicad_board(
     }
     let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
     work += placement.work_seconds;
-    eprintln!("layout: placed ({:.0} s, work {work:.0} s, {} seeds)", elapsed(), placement.seeds);
+    waves_excess += (placement.waves_work_seconds - placement.work_seconds).max(0.0);
+    let waves_excess = waves_excess;
+    if wall_passed() {
+        core::router::note_wall_cut("placement", format_args!("the placement ended past the deadline, {work:.0} s of work done"));
+    }
+    eprintln!(
+        "layout: placed ({:.0} s, work {work:.0} s, {} seeds; {:.0} s more of it in waves of seeds)",
+        elapsed(),
+        placement.seeds,
+        waves_excess
+    );
     // The moves keep parts on `"edge": "any"` at the edges they were given.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut placer_config.constraints {
         for entry in &mut constraints.edge {
@@ -607,6 +657,8 @@ pub fn layout_kicad_board(
     // without fewer conflicted nets end it (OpenAirScope's moves
     // negotiated ~34 iterations, 126-229 s each).
     core_config.stall_patience = core_config.stall_patience.min(8);
+    // A new router of the first route stops where the layout's work ends.
+    core_config.deadline_work = Some((work_deadline - work - waves_excess).max(0.0));
 
     let first_started = std::time::Instant::now();
     let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
@@ -618,6 +670,15 @@ pub fn layout_kicad_board(
             let handles: Vec<_> = (0..seeds)
                 .map(|index| {
                     let mut seeded = core_config.clone();
+                    // As the race's resume below: at most half of what is
+                    // left before the deadline negotiates.
+                    let left = seeded.deadline_work.unwrap_or(f64::INFINITY);
+                    let half = ((left / 2.0).max(1.0) * core::router::EXPANSIONS_PER_SECOND) as u64;
+                    seeded.negotiation_expansions = if seeded.negotiation_expansions == 0 {
+                        half
+                    } else {
+                        seeded.negotiation_expansions.min(half)
+                    };
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = core_config.verbose && index == 0;
                     scope.spawn(move || {
@@ -814,8 +875,24 @@ pub fn layout_kicad_board(
         }
         // The placements past the work limit count for nothing.
         race.truncate(raced);
+        arm(&mut kept, work + waves_excess);
+        // The negotiation gets at most half of what is left before the
+        // deadline: the hard repair after it may take as long as the
+        // negotiation did, and a deadline inside the negotiation leaves
+        // every net still in conflict open (video: 195 nets in conflict
+        // when the wall clock ended its repair after 26 to 98 of them, at
+        // a point that depended on the load).
+        let left = (work_deadline - work - waves_excess).max(0.0);
+        // (The router's negotiation budget in work: its seconds are the
+        // wall-clock guard, `GUARD` times that.)
+        let budget = core_config.negotiation_expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
+        let mut seconds = (budget - probe_seconds).max(60.0);
+        if seconds > left / 2.0 {
+            seconds = (left / 2.0).max(1.0);
+            eprintln!("layout: the first route negotiates on for at most {seconds:.0} s of work ({left:.0} s left before the deadline)");
+        }
         let before = kept.expansions();
-        let result = kept.resume_polished((core_config.negotiation_seconds - probe_seconds).max(60.0), false);
+        let result = kept.resume_polished(seconds, false);
         work += kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;
         (kept, result)
     } else {
@@ -867,6 +944,7 @@ pub fn layout_kicad_board(
         eprintln!("layout: {} open after the first route: no moves, the final ladder gets the time", best.0);
     }
     for _ in 0..if many_open { 0 } else { config.moves } {
+        arm(&mut router, work + waves_excess);
         if best.0 == 0 && since_improvement >= config.patience {
             break;
         }
@@ -989,6 +1067,7 @@ pub fn layout_kicad_board(
             }
             problem.problem.poses = poses;
             let trial_board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+            arm(&mut router, work + waves_excess);
             let expansions_before = router.expansions();
             let rerouted = match router.update(&trial_board) {
                 Ok(count) => count,
@@ -1053,6 +1132,7 @@ pub fn layout_kicad_board(
     // share: on the laptop motherboard 493 s of it gained nothing, and the
     // ladder, which had completed that board to 2 unconnected, ran out of
     // time. With many open the pour mode is in question: the ladder's.
+    arm(&mut router, work + waves_excess);
     if best.0 > 0 && !many_open && !router.past_deadline() {
         let left = (config.total_seconds - work).max(0.0);
         let share = (0.2 * left).min(240.0);
@@ -1062,6 +1142,7 @@ pub fn layout_kicad_board(
             // restored with the result.
             let saved_router = router.clone();
             let expansions_before = router.expansions();
+            arm(&mut router, work + waves_excess);
             {
                 let defaults = core::router::Config::default();
                 let full = router.config_mut();
@@ -1096,7 +1177,7 @@ pub fn layout_kicad_board(
     // What is left before the layout's nominal end, in work (the wall
     // clock would make the polish depend on the machine's load; its
     // deadline still guards the polish inside the router).
-    let polish_left = WALL_GUARD * config.total_seconds - work;
+    let polish_left = work_deadline - work - waves_excess;
     // A board a move trial already polished polishes again when more than
     // half the layout's budget is left: the trial's via reduction had only
     // its own strict budget (CyberKeeb2040: a round reverted at 60 s, the
@@ -1105,6 +1186,7 @@ pub fn layout_kicad_board(
     if polish_again {
         eprintln!("layout: polished by a move trial, {:.0} s of {:.0} s of work left: polishing again", config.total_seconds - work, config.total_seconds);
     }
+    arm(&mut router, work + waves_excess);
     if (!polished || polish_again) && !many_open && !router.past_deadline() && polish_left >= 240.0 {
         let saved_router = router.clone();
         let expansions_before = router.expansions();
@@ -1191,8 +1273,13 @@ pub fn layout_kicad_board(
     // A ladder needs a few minutes of wall clock for a probe, the board
     // and KiCad's check; started with less it runs past the harness's
     // limit (the laptop motherboard: killed at 1800 s without a board).
-    let past_guard = router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
-        || WALL_GUARD * config.total_seconds - work < 240.0;
+    let past_guard = work_deadline - work - waves_excess < 240.0 || {
+        let past = wall_passed();
+        if past {
+            core::router::note_wall_cut("layout", format_args!("no final ladder, {work:.0} s of work done"));
+        }
+        past
+    };
     let fallback_config = if past_guard {
         None
     } else if current.0 > 0 {
@@ -1221,7 +1308,7 @@ pub fn layout_kicad_board(
         fallback_config.ladder_budget_seconds = Some(fallback_config.ladder_budget_seconds.unwrap_or(1200.0).min(left));
         // The ladder decides whether another attempt fits in work, up to
         // the layout's nominal end.
-        fallback_config.deadline_work = Some((WALL_GUARD * config.total_seconds - work).max(0.0));
+        fallback_config.deadline_work = Some((work_deadline - work - waves_excess).max(0.0));
         let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
         if quality(&fallback, &fallback_directory) < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
@@ -1257,6 +1344,7 @@ pub fn layout_kicad_board(
         pin_swaps,
         constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
         routed,
+        cut: core::router::wall_cuts(),
     };
     let report_path = output_directory.join("board-layout.json");
     fs::write(

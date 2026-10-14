@@ -253,6 +253,12 @@ pub struct Config {
     /// much work its budgets still allow: every budget counts as spent
     /// from then on (an agent waits for the result).
     pub deadline: Option<std::time::Instant>,
+    /// The work (this router's own, in seconds of an idle machine) at
+    /// which routing returns what it has, as at `deadline`: the caller's
+    /// deadline counted in work, so that where a run stops does not depend
+    /// on how busy the machine is (the layout sets it from its own budget;
+    /// `deadline` stays as the guard against load).
+    pub deadline_work: Option<f64>,
 }
 
 impl Default for Config {
@@ -326,6 +332,7 @@ impl Default for Config {
             seed: None,
             verbose: false,
             deadline: None,
+            deadline_work: None,
         }
     }
 }
@@ -662,11 +669,41 @@ impl KeyHeap {
     }
 }
 
+/// What the wall clock cut short in this process (`note_wall_cut`), one
+/// bit per kind (`WALL_CUTS`).
+static WALL_CUT_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The kinds of wall-clock cut, in bit order.
+pub const WALL_CUTS: [&str; 6] = ["deadline", "negotiation guard", "budget guard", "ladder", "placement", "layout"];
+
+/// Records that the wall clock, not the work, stopped `what` (one of
+/// `WALL_CUTS`): the result then depends on how fast the machine ran, and
+/// the run says so (its log once per kind, its report's `cut`). Everything
+/// else in a run is decided by work and is the same for the same input
+/// and thread count.
+pub fn note_wall_cut(what: &str, detail: std::fmt::Arguments) {
+    let Some(bit) = WALL_CUTS.iter().position(|kind| *kind == what) else {
+        return;
+    };
+    let before = WALL_CUT_BITS.fetch_or(1 << bit, std::sync::atomic::Ordering::Relaxed);
+    if before & (1 << bit) == 0 {
+        eprintln!("wall guard: the wall clock cut the run short ({what}: {detail}); its result depends on the machine's load");
+    }
+}
+
+/// The kinds of wall-clock cut this process saw (`note_wall_cut`).
+pub fn wall_cuts() -> Vec<String> {
+    let bits = WALL_CUT_BITS.load(std::sync::atomic::Ordering::Relaxed);
+    WALL_CUTS.iter().enumerate().filter(|(bit, _)| bits & (1 << bit) != 0).map(|(_, kind)| kind.to_string()).collect()
+}
+
 /// Whether the wall clock guards the work budgets (always, unless
 /// `PCB_ROUTER_NO_WALL_GUARD` is set: for measuring the router's speed
 /// under valgrind, where the clock runs fifty times slower than the work,
-/// so that a run's routes do not depend on how fast it ran).
-fn wall_guard() -> bool {
+/// so that a run's routes do not depend on how fast it ran; and for
+/// checking that a run is deterministic on a machine too busy for its
+/// budget: the layout then sets no wall-clock deadline either).
+pub fn wall_guard() -> bool {
     static GUARDED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *GUARDED.get_or_init(|| std::env::var_os("PCB_ROUTER_NO_WALL_GUARD").is_none())
 }
@@ -4265,9 +4302,17 @@ impl Router {
     /// Whether `budget` (work seconds) is spent since `clock`; the wall
     /// clock stops it too, at `GUARD` times the budget.
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
-        self.work_seconds() - clock.0 > budget
-            || (self.wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD)
-            || self.past_deadline()
+        if self.work_seconds() - clock.0 > budget || self.past_work_deadline() {
+            return true;
+        }
+        if self.wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD {
+            note_wall_cut(
+                "budget guard",
+                format_args!("{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done", clock.1.elapsed().as_secs_f64(), self.work_seconds() - clock.0),
+            );
+            return true;
+        }
+        self.past_wall_deadline()
     }
 
     /// Whether the wall clock guards the work budgets at `GUARD` times
@@ -4278,9 +4323,31 @@ impl Router {
         self.config.deadline.is_none() && wall_guard()
     }
 
-    /// Whether the caller's wall-clock deadline has passed.
+    /// Whether the caller's deadline has passed: its work
+    /// (`deadline_work`) or, on a machine too busy for it, its wall clock.
     pub fn past_deadline(&self) -> bool {
-        self.config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        self.past_work_deadline() || self.past_wall_deadline()
+    }
+
+    /// Whether this router's work has reached the caller's `deadline_work`.
+    fn past_work_deadline(&self) -> bool {
+        self.config.deadline_work.is_some_and(|limit| self.work_seconds() >= limit)
+    }
+
+    /// Whether the caller's wall-clock deadline has passed (noted as a cut:
+    /// the work deadline, when there is one, did not stop it first).
+    fn past_wall_deadline(&self) -> bool {
+        let past = self.config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        if past {
+            note_wall_cut("deadline", format_args!("{:.0} s of this router's work done", self.work_seconds()));
+        }
+        past
+    }
+
+    /// The work this router has done, in seconds of an idle machine
+    /// (search expansions at `EXPANSIONS_PER_SECOND`).
+    pub fn work(&self) -> f64 {
+        self.work_seconds()
     }
 
     /// Routable nets in conflict or not complete, plus the pads of pour
@@ -4715,10 +4782,20 @@ impl Router {
         let pour_nets: Vec<NetId> = saved.iter().map(|(net, _, _)| *net).collect();
         // The pour nets negotiate among themselves (their vias compete for
         // the same spots next to alternating pads), then stay.
-        let seconds = self.config.negotiation_seconds;
-        self.config.negotiation_seconds = seconds.min(60.0);
+        // At most a minute: of work where the wall clock guards (route
+        // mode; a minute of wall clock made it depend on the load), as
+        // before under a caller's deadline (the layout: stall alone).
+        let limits = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        if self.wall_guard() {
+            let minute = (60.0 * EXPANSIONS_PER_SECOND) as u64;
+            self.config.negotiation_expansions =
+                if limits.1 == 0 { minute } else { limits.1.min(minute) };
+            self.config.negotiation_seconds = limits.0.min(60.0 * GUARD);
+        } else {
+            self.config.negotiation_seconds = limits.0.min(60.0);
+        }
         self.negotiate(&pour_nets, pour_nets.clone());
-        self.config.negotiation_seconds = seconds;
+        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limits;
         for (net, plane, on_plane) in saved {
             let state = &mut self.nets[net as usize];
             state.plane = plane;
@@ -5300,11 +5377,17 @@ impl Router {
             // seconds stay as the last guard.
             let worked_out = self.config.negotiation_expansions > 0
                 && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
-            if stalled > patience
-                || worked_out
-                || (self.wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds)
-                || self.past_deadline()
-            {
+            if stalled > patience || worked_out || self.past_work_deadline() {
+                break;
+            }
+            if self.wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
+                note_wall_cut(
+                    "negotiation guard",
+                    format_args!("{:.0} s of wall clock, {:.0} s of work", started.elapsed().as_secs_f64(), (self.scratch.expansions - expansions_before) as f64 / EXPANSIONS_PER_SECOND),
+                );
+                break;
+            }
+            if self.past_wall_deadline() {
                 break;
             }
             // Nets without any path are not congestion; when a quarter of
@@ -5588,7 +5671,13 @@ impl Router {
                 // At most 300 s: doubling the quick tier's via-reduction
                 // time for 100 vias was too much; k30-SBC's 182 s round fits.
                 let mut allowance = (left / 3.0).min(300.0);
-                if let Some(deadline) = self.config.deadline {
+                // A third of what is left before the deadline: of its work
+                // when the caller counts it (the wall clock left would make
+                // the budget depend on the machine's load), else of its
+                // wall clock.
+                if let Some(limit) = self.config.deadline_work {
+                    allowance = allowance.min((limit - self.work_seconds()).max(0.0) / 3.0);
+                } else if let Some(deadline) = self.config.deadline {
                     allowance = allowance.min(deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() / 3.0);
                 }
                 if allowance > budget && self.config.verbose {

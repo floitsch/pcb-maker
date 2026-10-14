@@ -10,7 +10,10 @@ boards, so a board rerun on a newer binary counts with the sweep. The
 table lists the boards of the after-run that the before-run has too,
 sorted by the change of KiCad's unconnected count, then the boards only
 one run has, then the totals: better / same / worse, unconnected in all,
-passes."""
+passes. A row the wall clock cut short (its `cut` field: the layout's
+deadline under load, the harness's timeout) depends on the machine's load,
+not only on the binary: it is marked CUT and left out of better / same /
+worse."""
 
 import argparse
 import json
@@ -62,16 +65,24 @@ def passes(row):
     return unconnected(row) == 0 and not errors(row) and not row.get("unexpected_misses")
 
 
+def cut(row):
+    """Whether the wall clock, not the work, ended part of the run."""
+    return row is not None and bool(row.get("cut"))
+
+
 def cell(row):
     if row is None:
         return "-"
     if row.get("error"):
-        return f"ERROR ({str(row['error'])[:30]})"
+        text = f"ERROR ({str(row['error'])[:30]})"
+        return text + " CUT" if cut(row) else text
     text = f"{row.get('routed', '?')} {unconnected(row)}"
     if errors(row):
         text += f" +{errors(row)}e"
     if passes(row):
         text += " pass"
+    if cut(row):
+        text += " CUT"
     return text
 
 
@@ -100,7 +111,7 @@ def main():
     print(f"{'board':{width}}{sep}{'before':>24}{sep}{'after':>24}{sep}{'s':>6}")
     if arguments.markdown:
         print(f"{'-' * width} | {'-' * 24} | {'-' * 24} | {'-' * 6}")
-    better = same = worse = 0
+    better = same = worse = cut_rows = 0
     total_before = total_after = 0
     for name in common:
         b, a = before[name], after[name]
@@ -108,7 +119,9 @@ def main():
         if ub is not None and ua is not None:
             total_before += ub
             total_after += ua
-            if ua < ub:
+            if cut(a) or cut(b):
+                cut_rows += 1
+            elif ua < ub:
                 better += 1
             elif ua > ub:
                 worse += 1
@@ -126,7 +139,8 @@ def main():
     passes_after = sum(1 for n in common if passes(after[n]))
     print()
     print(f"{len(common)} boards in both: better {better}, same {same}, worse {worse}; "
-          f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after}")
+          f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after}"
+          + (f"; {cut_rows} cut by the wall clock in either run (not in better/same/worse)" if cut_rows else ""))
     if only_after:
         print(f"{len(only_after)} boards only after: {sum(1 for n in only_after if passes(after[n]))} pass")
     if only_before:

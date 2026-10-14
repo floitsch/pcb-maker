@@ -348,6 +348,12 @@ pub struct KiCadBoardPlacerResult {
     /// The most placement work a seed did, in seconds of an idle machine.
     #[serde(default)]
     pub work_seconds: f64,
+    /// The placement's work as the wall clock sees it: the seeds run in
+    /// waves side by side (as many at once as the machine has cores), and
+    /// each wave lasts as long as its longest seed; their sum. Which waves
+    /// run depends on the seeds' work and the cores, not on the load.
+    #[serde(default)]
+    pub waves_work_seconds: f64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
 
@@ -3093,6 +3099,9 @@ pub fn place_kicad_board(
     // cores and left the route no time).
     let minimum_seeds = seeds.min(3);
     let parallel = std::thread::available_parallelism().map_or(4, |count| count.get() as u64).max(1);
+    // The waves' work as the clock sees it: per wave, the most a seed of it
+    // did (the seeds of a wave run side by side), summed.
+    let waves_work = std::cell::Cell::new(0u64);
     let place_seeds = |problem: &core::Problem| -> Vec<core::Placement> {
         let mut placements: Vec<core::Placement> = Vec::new();
         let mut used = 0u64;
@@ -3122,6 +3131,7 @@ pub fn place_kicad_board(
                 handles.into_iter().map(|handle| handle.join().expect("placement thread")).collect()
             });
             next += batch.len() as u64;
+            waves_work.set(waves_work.get() + batch.iter().map(|placement| placement.work).max().unwrap_or(0));
             for placement in batch {
                 if placements.len() as u64 >= minimum_seeds && placer_config.work_limit.is_some_and(|limit| used >= limit) {
                     break 'waves;
@@ -3404,6 +3414,7 @@ pub fn place_kicad_board(
         edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
         work_seconds,
+        waves_work_seconds: waves_work.get() as f64 / core::WORK_PER_SECOND,
         seeds: seeds_placed,
         footprints,
     };

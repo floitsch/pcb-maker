@@ -357,7 +357,9 @@ def run_admitted(task, arguments, token):
            "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
            "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb}
     if code == "timeout":
-        row.update(error=f"timed out after {arguments.timeout} s", **{"pass": False})
+        # The harness's limit cut the run: what it would have done depends
+        # on the machine's load.
+        row.update(error=f"timed out after {arguments.timeout} s", cut=["timeout"], **{"pass": False})
         return row
     report = work / "layout/board-layout.json"
     if not report.exists():
@@ -372,6 +374,12 @@ def run_admitted(task, arguments, token):
     copper = native(work / "layout/result", allowed)
     if allowed:
         row["designer_findings"] = allowed
+    # What the wall clock cut short rather than the work (the layout's
+    # deadline under load, the route-mode guard): such a row depends on the
+    # machine's load and is no evidence for an A/B; without it the same
+    # binary and thread count give the same board.
+    if result.get("cut"):
+        row["cut"] = result["cut"]
     row.update(
         routed=f"{routed['routed_connections']}/{routed['routable_connections']}",
         vias=routed["vias"], length_mm=round(routed["length_mm"], 1),

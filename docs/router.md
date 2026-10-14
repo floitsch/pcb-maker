@@ -275,6 +275,61 @@ state is restored. This is where most of the via savings come from: the
 cleanup pass alone cannot remove a via, because a single net rerouted against
 all other copper is boxed in, while renegotiation lets the neighbours move.
 
+## Determinism and the wall clock (2026-10-14)
+
+Every routing decision is taken in work (search expansions at
+`EXPANSIONS_PER_SECOND`, placement work at the placer's own rate), so the
+same input and thread count give the same board however busy the machine
+is (`PCB_ROUTER_FINGERPRINT` prints phase fingerprints to compare runs).
+The wall clock only guards: in route mode at `GUARD` (4) times a budget,
+in a layout at its deadline, 1.1 times its budget (`WALL_GUARD`). Where
+the wall clock, not the work, stops something, the run says so once per
+kind in its log (`wall guard: the wall clock cut the run short (...)`)
+and in its report (`cut` in `board-router.json` and `board-layout.json`,
+from `pcb_router::router::wall_cuts`); `run.py` copies it into the row
+(`cut`, also `["timeout"]` for a run the harness killed) and `compare.py`
+marks such rows CUT and leaves them out of better / same / worse.
+
+A layout's routers stop at the layout's end in work (router
+`deadline_work`, armed before every phase from what is left of
+`total_seconds`), not at the wall-clock deadline. The placement's seeds run
+in waves side by side, and a wave lasts as long as its longest seed: the
+waves' work beyond the longest seed (`waves_work_seconds` against
+`work_seconds`) counts toward that end, not toward the budgets; how many
+seeds a wave holds follows the cores the process may use, so a run pinned
+to fewer cores can end elsewhere than an unpinned one (video: 392 s of
+waves beyond its longest seed on four cores, 281 s on eight). The first
+route's negotiation gets at most half of what is left before it, so that
+the hard repair after it has as much (a deadline inside the negotiation
+leaves every net still in conflict open). `PCB_ROUTER_NO_WALL_GUARD` drops
+the layout's wall-clock deadline too: the work alone decides, for checking
+that a run is deterministic on a machine too busy for its budget.
+
+Memory decides only how many routers run side by side (the placement
+race's probes, the probe ladder's rungs, the regular rungs, the seeds),
+never which count: they are judged in order as if one ran after the other,
+a probe the work left would not have started counting for nothing (the
+probe ladder checked the work left only between waves, so under the
+layout's `deadline_work` the number of rungs judged followed the memory
+free at the start; it now checks before each probe of a wave).
+
+A router given no negotiation budget (`negotiation_seconds` unset) has
+its default 900 s in work too; it used to be 900 s of wall clock and the
+only limit of the attempts the ladder repeats from a probed rung (the best
+rung's seeds, the narrow-signal and relaxed-clearance steps: video's
+narrow-signal attempt stopped wherever the load had brought it), and the
+pour nets' pre-negotiation in route mode has its minute in work.
+
+What remains load-dependent: the clean-up's pour checks are not counted
+as work (Sisu: 37-104 s of pour checks in a 62 s clean-up budget), so
+under heavy load the route-mode guard (`GUARD` times the budget) can stop
+a clean-up (seen once, on a losing rung, reported as `budget guard`); a
+run that reaches the wall clock first (a
+machine slower or busier than the work's calibration by more than the 10 %
+margin: video's placement took 980-1275 s of wall clock for 193 s of work
+on four pinned cores beside other jobs), and the harness's timeout. Both
+are reported as above.
+
 ## Known limits / next steps
 
 - Two copper layers, through vias only (the core is N-layer; the adapter is
