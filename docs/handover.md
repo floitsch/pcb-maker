@@ -1235,8 +1235,9 @@ Short tier (x831 = main 6b3ced6 plus this, `build/short-x831.log`, against
 every placement and every result board byte-identical; unconnected 42,
 errors 6, vias 1165, length 22013 mm on both; work 2339 to 2428 s, CPU
 4920 to 5127 s. The clock moved on every board (16-seed boards 1-5 s
-more: the waves were 32 wide, the reference pool 8; WLED_Matrix 177 to
-113 s, MIDAS-MK1.1 300 to 133 s, reCamera 75 to 52 s less), and the work
+more: the waves were 32 wide, the reference pool 8; less where a wave
+waited on one slow seed or ran a wasted one: WLED_Matrix 177 to 113 s,
+MIDAS-MK1.1 300 to 133 s, reCamera 75 to 52 s), and the work
 left went into routing that did not win: WLED_Matrix's ladder ran its
 two fine-pitch rungs (23 and 83 open against the kept 15; row work 282 to
 358 s), MIDAS-MK1.1's first route negotiated 137 s instead of 53 s (334 to
