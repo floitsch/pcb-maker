@@ -585,6 +585,7 @@ pub fn layout_kicad_board(
         edge_copper: placement.edge_copper,
         edge_rule: placement.edge_rule_mm,
         courtyard_spacing: placement.courtyard_spacing,
+        halos: placement.halos.clone(),
     };
     first_relaxation.apply(&mut problem.problem);
     // The in-place router compares placements: it stops negotiating once
@@ -680,7 +681,7 @@ pub fn layout_kicad_board(
         && others.len() + 1 > config.congestion_probes.max(1)
     {
         pool.push((problem.problem.poses.clone(), first_relaxation));
-        pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), **relaxation)));
+        pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), (*relaxation).clone())));
         let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, congestion_model.as_ref(), router_config, &core_config, connect, &config.congestion_score)?;
         // A placement that needed courtyards touching is a last resort
         // whatever its score: it is probed only when too few others are

@@ -125,6 +125,27 @@ pub struct KiCadBoardPlacerConfig {
     /// The annealer keeps the legality test's gaps across the board
     /// (`core::anneal::AnnealConfig::legal_far_side`). Off by default.
     pub anneal_far_side_gaps: bool,
+    /// Routing room from congestion (`core::room`): after a placement with
+    /// the pin-count halos, each part's halo is scaled by the routing
+    /// demand (RUDY, nets a pour carries left out) around it relative to
+    /// the board's median, within the same halo area, and the parts anneal
+    /// again from there. Off by default.
+    #[serde(default)]
+    pub routing_room: bool,
+    /// Share of the pin-count halos' area the routing-room halos take.
+    #[serde(default = "default_routing_room_share")]
+    pub routing_room_share: f64,
+    /// Parts with less demand than this share of the median get no halo.
+    #[serde(default = "default_routing_room_floor")]
+    pub routing_room_floor: f64,
+    /// The largest factor on a part's pin-count halo.
+    #[serde(default = "default_routing_room_most")]
+    pub routing_room_most: f64,
+    /// Every part's pin-count halo is scaled by its demand, also where the
+    /// level left it none (`core::room::RoutingRoom::all_parts`); false:
+    /// only the halos the level kept are redistributed.
+    #[serde(default = "default_routing_room_all_parts")]
+    pub routing_room_all_parts: bool,
     /// Identical parts that share a bus pin for pin (SIMM sockets, SRAM
     /// banks) are placed as a row (see `bus_rows`). Off by default.
     pub bus_rows: bool,
@@ -192,6 +213,11 @@ impl Default for KiCadBoardPlacerConfig {
             solid_pin_rows: true,
             shared_halos: false,
             anneal_far_side_gaps: false,
+            routing_room: false,
+            routing_room_share: default_routing_room_share(),
+            routing_room_floor: default_routing_room_floor(),
+            routing_room_most: default_routing_room_most(),
+            routing_room_all_parts: default_routing_room_all_parts(),
             bus_rows: false,
             bus_row_gap_scale: 1.0,
             placement_seeds: 3,
@@ -201,6 +227,35 @@ impl Default for KiCadBoardPlacerConfig {
             replicate_channels: false,
         }
     }
+}
+
+fn default_routing_room_share() -> f64 {
+    1.0
+}
+
+fn default_routing_room_floor() -> f64 {
+    0.5
+}
+
+fn default_routing_room_most() -> f64 {
+    2.0
+}
+
+fn default_routing_room_all_parts() -> bool {
+    true
+}
+
+/// The placer's routing-room settings (`KiCadBoardPlacerConfig::routing_room`):
+/// every net is demand but those a pour carries.
+fn routing_room(config: &KiCadBoardPlacerConfig, lowered: &LoweredPlacement) -> Option<core::room::RoutingRoom> {
+    config.routing_room.then(|| core::room::RoutingRoom {
+        net_demand: lowered.poured.iter().map(|poured| if *poured { 0.0 } else { 1.0 }).collect(),
+        share: config.routing_room_share,
+        floor: config.routing_room_floor,
+        most: config.routing_room_most,
+        all_parts: config.routing_room_all_parts,
+        ..Default::default()
+    })
 }
 
 /// Room a via with its clearance takes, by the board's largest rules.
@@ -271,6 +326,10 @@ pub struct KiCadBoardPlacerResult {
     /// Courtyards came as close as their copper allows (touching).
     #[serde(default)]
     pub courtyard_spacing: bool,
+    /// Per footprint, the halo the placement gave it where routing room
+    /// set the halos (`core::Relaxation::halos`).
+    #[serde(skip)]
+    pub halos: Option<std::sync::Arc<Vec<f64>>>,
     /// The other seeds' legal placements (poses, relaxation and how far
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
@@ -1183,6 +1242,8 @@ pub(super) struct LoweredPlacement {
     pub routing_layers: f64,
     /// Per footprint: which sheet instance it comes from, and what it is.
     pub identities: Vec<Option<ChannelIdentity>>,
+    /// Per net of the problem: whether a pour carries it.
+    pub poured: Vec<bool>,
 }
 
 /// What tells a footprint's channel: its sheet instance (`/ESC1/`), the
@@ -2357,6 +2418,12 @@ pub(super) fn lower_placement(
     problem.constraints.link_pairs();
     let mut constraint_warnings = constraint_warnings;
     constraint_warnings.extend(stacked_warnings);
+    let mut poured = vec![false; problem.net_weights.len()];
+    for (name, id) in &net_ids {
+        if *id < poured.len() && pour_nets.contains(name.as_str()) {
+            poured[*id] = true;
+        }
+    }
     Ok(LoweredPlacement {
         problem,
         references,
@@ -2364,6 +2431,7 @@ pub(super) fn lower_placement(
         constraint_warnings,
         routing_layers,
         identities,
+        poured,
     })
 }
 
@@ -3011,6 +3079,7 @@ pub fn place_kicad_board(
     placer_config.work_limit = config.work_seconds.map(|seconds| (seconds.max(0.0) * core::WORK_PER_SECOND) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
+    placer_config.routing_room = routing_room(config, &lowered);
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked
@@ -3069,6 +3138,7 @@ pub fn place_kicad_board(
             (
                 placement.unplaced.len() + placement.illegal.len(),
                 placement.relaxation.courtyard_spacing as usize,
+                placement.routing_room_failed as usize,
                 missed,
                 placement.wirelength_final,
             )
@@ -3308,6 +3378,7 @@ pub fn place_kicad_board(
         edge_copper: placement.relaxation.edge_copper,
         edge_rule_mm: placement.relaxation.edge_rule,
         courtyard_spacing: placement.relaxation.courtyard_spacing,
+        halos: placement.relaxation.halos.clone(),
         utilization,
         hints,
         board_id: board_id.into(),
@@ -3567,6 +3638,44 @@ mod tests {
         // On by default; `keep_on_pieces: false` switches it off.
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig { keep_on_pieces: false, ..KiCadBoardPlacerConfig::default() }, &[]).unwrap();
         assert!(lowered.problem.constraints.regions.is_empty());
+    }
+
+    #[test]
+    fn routing_room_leaves_the_poured_nets_out_of_the_demand() {
+        // GND has a zone; A and B do not.
+        let pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 30 30) (layer "Edge.Cuts"))
+            (zone (net 3) (net_name "GND") (layer "B.Cu")
+                (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+            (footprint "R" (layer "F.Cu") (at 10 10)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 3 "GND")))
+            (footprint "R" (layer "F.Cu") (at 20 20)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R2")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardPlacerConfig::default();
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let net_of = |reference: &str, pad: usize| {
+            let index = lowered.references.iter().position(|name| name == reference).unwrap();
+            lowered.problem.components[index].pins[pad].net
+        };
+        assert!(lowered.poured[net_of("R1", 1)], "{:?}", lowered.poured);
+        assert!(!lowered.poured[net_of("R1", 0)] && !lowered.poured[net_of("R2", 1)]);
+        // Off by default; on, the demand leaves GND out.
+        assert!(routing_room(&config, &lowered).is_none());
+        let on = KiCadBoardPlacerConfig { routing_room: true, routing_room_share: 0.75, ..config };
+        let room = routing_room(&on, &lowered).unwrap();
+        assert_eq!(room.net_demand[net_of("R1", 1)], 0.0);
+        assert_eq!(room.net_demand[net_of("R1", 0)], 1.0);
+        assert_eq!(room.share, 0.75);
     }
 
     #[test]
@@ -4026,6 +4135,7 @@ mod channel_tests {
             constraint_warnings: Vec::new(),
             routing_layers: 2.0,
             identities,
+            poured: vec![false; 5],
         }
     }
 

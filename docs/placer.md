@@ -164,6 +164,46 @@ OpenESC boards, both SNSPs and zpn (the kept seed, x652's placer):
   -5 %; but on the crowded boards zpn_devboard loses its pass (one mask
   bridge, vias 299 to 348) and hackrf's vias go 429 to 673. Not a default.
 
+## Routing room from congestion (measured 2026-10-14, off)
+
+`routing_room` (placer option, off): after a seed is placed with the
+pin-count halos, each movable part's halo becomes its pin-count halo
+times `factor * demand / median demand` (RUDY around the part's body
+grown by 1 mm, nets a pour carries left out; none below half the median,
+at most twice the pin-count halo), with `factor` chosen so the halos take
+`routing_room_share` (1.0) of the area the level's halos took; the parts
+anneal again from the legal placement (small moves), legalize and refine.
+Parts the new halos leave without room fall back to the level's halo,
+then to none; a seed whose pass still fails keeps the pin-count halos
+and ranks after the others. `routing_room_all_parts` (on) lets parts the
+level left without halo get one. The moves after routing keep the
+per-part halos (`Relaxation::halos`). Code `crates/pcb-placer/src/room.rs`,
+scripts `experiments/routing-room/`.
+
+What the routed boards say (x693 tier and x652 gap runs, 35 boards;
+`halo_use.py`, `analyse.py`): the routing density in a part's 1 mm band
+does not follow its pin count (Spearman about 0 per board, -0.3 to 0.4)
+but follows the RUDY demand there (median 0.6, 0.1-0.8) and the 25 s
+probe's history (similar). On boards with full halos 15-76 % of the halo
+area carries under 5 % of its routing capacity; keeping the half of the
+halo area with the highest RUDY keeps 58-79 % of the routing inside
+halos on the crowded boards, the half by pin count about 50 %.
+
+What the layouts say (seed-repeated pairs, seeds 1, 101, 201, logs
+`build/room-pair-*`): the option never fires on video, OpenESC 4in1 and
+hackrf (their kept level has no halos; hackrf drops to it because one
+part finds no room at the first level). On the five boards where it
+fires, passes over the 15 runs: off 11, share 1.0 within the level 9,
+share 1.0 all parts 11, share 0.75 9, share 0.5 9. Share 1.0 moves HPWL
+by -15 % (BAGEL), -6 % (MK2.1) and +5 to +9 % (MK2, Castor, zpn); share
+0.5 shortens HPWL on all five (median -8 %) and routed length on four,
+with unconnected medians still 0 but single errors (a mask bridge, one
+open connection, a starved thermal) costing two passes. Quick tier
+(x737 against x722, one seed): 22 to 24 passes, unconnected 22 both,
+vias -3.7 %. Within the seed noise; not a default. Video's routing
+differs by up to 130 unconnected between runs of the same placement
+(x732 and x736 with identical placements: 392, 314, 325, 262 for seed 1).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

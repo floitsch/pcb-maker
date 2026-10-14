@@ -495,6 +495,39 @@ alarms), repeated pad numbers, a fine-pitch spoke-clearance case (k30
 U14.12), slivers with no manual path. Reference tier log now
 `build/quick30-x722.log`.
 
+## Committed on 2026-10-14 (the routing-room agent, x737 / x738): measured, built, off
+
+Halo granted against halo used on 35 routed boards
+(`experiments/routing-room/halo_use.py`, `analyse.py`; a part's band is
+its body grown 1 mm; a 25 s probe's conflict and history maps from
+`export-congestion-sample`): pin count does not predict where routing goes
+(Spearman about 0 per board), RUDY in the band does (0.4-0.84, median 0.6)
+and the probe's history likewise; 7-34 % of halo area is used and 0-74 %
+idle (zpn 33 %, keyboar_ 48 %, 0xcb-static 74 %); keeping the half of the
+halo area with the highest RUDY keeps 58-79 % of the routing inside halos
+on crowded boards, the half by pin count about 50 %. `routing_room` (off;
+`routing_room_share` 1.0, `_floor` 0.5, `_most` 2.0, `_all_parts` on;
+`crates/pcb-placer/src/room.rs`): per-part demand from RUDY over each
+net's spanning tree, halo = pin-count halo times min(2, k demand/median),
+k by bisection so the total stays at share times the level's area; after
+the normal placement a re-anneal with small moves, legalise, refine; a seed
+whose pass fails keeps pin-count halos and sorts after the others. Seed
+pairs (seeds 1, 101, 201, pinned): the option never fires on video,
+OpenESC and hackrf (their kept level has no halos; hackrf walks down to
+halo 0 because one part finds no room); on BAGEL, MK2.1, MK2, Castor and
+zpn passes over 15 runs off 11, on 11 (BAGEL and MK2.1 win, where the level
+had stripped small parts' halos; MK2, Castor and zpn lose 5-9 % HPWL as
+busy clusters spread; zpn gains 1-3 mask bridges); CPU geomean 1.15x (the
+second anneal on every seed). Share 0.5 gives HPWL -8 % on all five without
+the routing collapse of the uniform x507 scale, but two passes lost to
+single errors (within seed noise). Quick tier x722 to x737 with the option:
+22 to 24 pass, both single-error flips (USB_Cable_Tester's track_dangling,
+eternal-keypad's shorting_items), vias -3.7 %, 8 boards identical. Verdict:
+implementation sound, idea as built a wash; left off. Found on the way:
+video's routing is not deterministic for an identical placement (392, 314,
+325, 262 unconnected for seed 1). Logs `build/room-*`,
+`build/quick30-x737.log`.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

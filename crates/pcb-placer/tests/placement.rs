@@ -695,3 +695,67 @@ fn a_placement_with_shared_halos_is_legal() {
     assert!(placement.unplaced.is_empty());
     assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
 }
+
+/// A chain with a busy end: parts R0-R5 also carry a bundle of nets
+/// between them (several wires each), the rest of the chain only its
+/// links.
+fn busy_chain() -> Problem {
+    let mut problem = chain(14);
+    let base = problem.net_weights.len();
+    for index in 0..6 {
+        let component = &mut problem.components[2 + index];
+        for wire in 0..6 {
+            component.pins.push(Pin { offset: [0.0, -1.0 + 0.4 * wire as f64], net: base + wire });
+        }
+    }
+    problem.net_weights.extend(std::iter::repeat_n(1.0, 6));
+    for component in &mut problem.components {
+        component.halo = if component.fixed { 0.0 } else { 0.65 };
+    }
+    problem
+}
+
+#[test]
+fn routing_room_gives_the_busy_parts_the_halos_and_stays_legal() {
+    use pcb_placer::room::RoutingRoom;
+    let problem = busy_chain();
+    let mut config = Config::new();
+    config.routing_room = Some(RoutingRoom { net_demand: vec![1.0; problem.net_weights.len()], ..Default::default() });
+    let placement = place(&problem, &config);
+    assert!(placement.unplaced.is_empty());
+    assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
+    let halos = placement.relaxation.halos.as_ref().expect("routing room set the halos");
+    // The bundle's parts have more halo than before, the quiet ones less.
+    let busy: f64 = (2..8).map(|index| halos[index]).sum::<f64>() / 6.0;
+    let quiet: f64 = (8..16).map(|index| halos[index]).sum::<f64>() / 8.0;
+    assert!(busy > quiet, "busy {busy} quiet {quiet}: {halos:?}");
+    assert!((8..16).all(|index| halos[index] < 0.65), "{halos:?}");
+    assert!(busy > 0.65, "{halos:?}");
+    // The fixed connectors keep theirs; nothing exceeds twice the old halo.
+    assert_eq!((halos[0], halos[1]), (0.0, 0.0));
+    assert!(halos.iter().all(|halo| *halo <= 2.0 * 0.65 + 1.0e-9), "{halos:?}");
+    // The relaxation applies the same halos to the unscaled problem, as
+    // the layout's moves see it.
+    let mut again = problem.clone();
+    placement.relaxation.apply(&mut again);
+    for (component, halo) in again.components.iter().zip(halos.iter()) {
+        assert_eq!(component.halo, *halo);
+    }
+    let placed = Problem { poses: placement.poses.clone(), ..again };
+    assert!(pcb_placer::legal::illegal_components(&placed, &placement.poses).is_empty());
+}
+
+#[test]
+fn without_routing_room_the_placement_is_unchanged() {
+    let problem = busy_chain();
+    let first = place(&problem, &Config::new());
+    assert!(first.relaxation.halos.is_none());
+    // A plane on every net leaves no demand: the halos stay as they were
+    // (the median is zero), and no second pass runs.
+    let mut config = Config::new();
+    config.routing_room = Some(pcb_placer::room::RoutingRoom { net_demand: vec![0.0; problem.net_weights.len()], ..Default::default() });
+    let second = place(&problem, &config);
+    assert!(second.illegal.is_empty());
+    assert!(second.relaxation.halos.is_none());
+    assert_eq!(second.poses, first.poses);
+}
