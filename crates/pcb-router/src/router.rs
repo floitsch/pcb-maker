@@ -20,6 +20,7 @@ use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
 /// Read-only tile views of the negotiation, for the congestion model.
 pub mod congestion;
+mod fill;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -83,6 +84,15 @@ pub struct Config {
     /// clearance from other nets' copper all the way to the fill, as
     /// KiCad's does (`analyze_pours_full`).
     pub spoke_clearance: bool,
+    /// Thermal spokes as KiCad draws and counts them (`kicad_spokes`): the
+    /// spoke's end at the gap and half the minimum width, its width no
+    /// more than the pad's, a piece that joins two pads is no island, and
+    /// a pad's own track into the fill counts as a spoke.
+    pub kicad_spokes: bool,
+    /// A pad that the spoke model finds short of KiCad's two spokes gets a
+    /// straight track into the main piece of its pour, which KiCad's DRC
+    /// counts as a spoke (`add_manual_spokes`, after the stitching).
+    pub manual_spokes: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -247,6 +257,10 @@ impl Default for Config {
             abandon_hopeless: true,
             pour_islands: true,
             spoke_clearance: true,
+            // Experiment hooks for A/B runs of whole tiers: the old spoke
+            // model, no manual spokes.
+            kicad_spokes: std::env::var_os("PCB_ROUTER_OLD_SPOKES").is_none(),
+            manual_spokes: std::env::var_os("PCB_ROUTER_NO_MANUAL_SPOKES").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -384,8 +398,39 @@ struct Branch {
     end_terminal: u16,
 }
 
+/// What the pour model makes of one thermal spoke of a pad
+/// (`analyze_pours_full`): no fill where the spoke would land, fill it
+/// cannot reach for other nets' copper beside it, a piece without copper
+/// of the net (an island to KiCad), or a piece that holds such copper.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SpokeOutcome {
+    NoFill,
+    Blocked,
+    Island(u32),
+    Good(u32),
+    /// A spoke meeting a spoke of another pad of the net (that terminal).
+    Pad(u32),
+}
+
+/// A pad's spokes on one layer as the pour model sees them, in the order
+/// +x, -x, +y, -y (round pads: the diagonals +x+y, +x-y, -x+y, -x-y).
+#[derive(Clone, Debug)]
+pub struct SpokeRecord {
+    pub terminal: usize,
+    pub layer: usize,
+    pub round: bool,
+    pub outcomes: [SpokeOutcome; 4],
+    /// The pad's own tracks that KiCad's DRC counts as spokes (a run
+    /// leaving the pad and ending in fill), counted when the spokes alone
+    /// are short of two (`kicad_spokes`).
+    pub tracks: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 struct NetState {
+    /// Branches made from a routed board's own tracks
+    /// (`adopt_existing_copper`), by index: the track's exact ends.
+    adopted: HashMap<usize, (crate::geometry::Point, crate::geometry::Point, f64)>,
     terminal_nodes: Vec<Vec<Node>>,
     branches: Vec<Branch>,
     connected: Vec<bool>,
@@ -2072,46 +2117,7 @@ impl Router {
                 }
             }
         }
-        let mut plane: Vec<Vec<bool>> = Vec::new();
-        let mut plane_class = vec![description.class; self.board.layer_count];
-        for pour in self
-            .board
-            .planes
-            .iter()
-            .filter(|pour| pour.net == net && pour.connect)
-        {
-            if plane.is_empty() {
-                plane = vec![Vec::new(); self.board.layer_count];
-            }
-            plane_class[pour.layer] = pour.class;
-            let statics = &self.statics[pour.class];
-            if plane[pour.layer].is_empty() {
-                plane[pour.layer] = vec![false; self.grid.cells()];
-            }
-            let Some((x0, y0, x1, y1)) = self.grid.node_range(
-                crate::geometry::Shape::Polygon {
-                    points: pour.polygon.clone(),
-                }
-                .aabb(),
-            ) else {
-                continue;
-            };
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let cell = self.grid.index(x, y);
-                    let center = self.grid.center(x, y);
-                    if statics.fill_allowed(pour.layer, cell, net)
-                        && crate::geometry::point_in_polygon(center, &pour.polygon)
-                        && !pour
-                            .excluded
-                            .iter()
-                            .any(|other| crate::geometry::point_in_polygon(center, other))
-                    {
-                        plane[pour.layer][cell] = true;
-                    }
-                }
-            }
-        }
+        let (plane, plane_class) = self.pour_masks(net, true);
         let on_plane: Vec<bool> = terminal_nodes
             .iter()
             .enumerate()
@@ -2182,6 +2188,57 @@ impl Router {
             neck_zones,
             ..Default::default()
         }
+    }
+
+    /// Per layer, the nodes where a pour of `net` may fill (its polygon
+    /// less higher-priority pours, where its brush's static map lets it;
+    /// empty for a layer without one; no layers without any pour), and
+    /// the brush class per layer. `connected_only`: only the pours pads
+    /// connect through (the routing's); else every pour of the net (what
+    /// KiCad fills on a board whose pour nets are routed as tracks).
+    fn pour_masks(&self, net: NetId, connected_only: bool) -> (Vec<Vec<bool>>, Vec<usize>) {
+        let description = &self.board.nets[net as usize];
+        let mut plane: Vec<Vec<bool>> = Vec::new();
+        let mut plane_class = vec![description.class; self.board.layer_count];
+        for pour in self
+            .board
+            .planes
+            .iter()
+            .filter(|pour| pour.net == net && (pour.connect || !connected_only))
+        {
+            if plane.is_empty() {
+                plane = vec![Vec::new(); self.board.layer_count];
+            }
+            plane_class[pour.layer] = pour.class;
+            let statics = &self.statics[pour.class];
+            if plane[pour.layer].is_empty() {
+                plane[pour.layer] = vec![false; self.grid.cells()];
+            }
+            let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                crate::geometry::Shape::Polygon {
+                    points: pour.polygon.clone(),
+                }
+                .aabb(),
+            ) else {
+                continue;
+            };
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let cell = self.grid.index(x, y);
+                    let center = self.grid.center(x, y);
+                    if statics.fill_allowed(pour.layer, cell, net)
+                        && crate::geometry::point_in_polygon(center, &pour.polygon)
+                        && !pour
+                            .excluded
+                            .iter()
+                            .any(|other| crate::geometry::point_in_polygon(center, other))
+                    {
+                        plane[pour.layer][cell] = true;
+                    }
+                }
+            }
+        }
+        (plane, plane_class)
     }
 
     /// The rule class `net` routes with at `cell`: its neck class inside
@@ -5770,6 +5827,14 @@ impl Router {
                 );
             }
         }
+        if self.config.manual_spokes && self.config.kicad_spokes && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0) {
+            let started = std::time::Instant::now();
+            let added = self.add_manual_spokes();
+            self.profile.thermal_spokes += started.elapsed().as_secs_f64();
+            if self.config.verbose && added > 0 {
+                eprintln!("manual spokes: {added} tracks from starved pads into their pours");
+            }
+        }
         if self.config.verbose {
             eprintln!(
                 "cleanup: {improved} improvements, {:.2}s",
@@ -6055,6 +6120,17 @@ impl Router {
         net: NetId,
         skip: &dyn Fn(usize) -> bool,
     ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
+        self.analyze_pours_reporting(net, skip, None)
+    }
+
+    /// `analyze_pours_full`, recording each pad's spokes in `report` when
+    /// given (for `dump_pours`).
+    fn analyze_pours_reporting(
+        &self,
+        net: NetId,
+        skip: &dyn Fn(usize) -> bool,
+        mut report: Option<&mut Vec<SpokeRecord>>,
+    ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
         let own = {
@@ -6215,114 +6291,126 @@ impl Router {
                 }
             }
         }
-        let with_items: HashSet<usize> = touched.iter().map(|piece| find(&mut parent, *piece)).collect();
-        let has_item = |parent: &mut Vec<usize>, piece: usize| with_items.contains(&find(parent, piece));
-        let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
-        for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
-            if isolated(terminal) || solid_pad(terminal) {
-                continue;
-            }
-            let pad = &self.board.obstacles[description.terminals[terminal].pad];
-            let anchor = description.terminals[terminal].anchor;
-            let bounds = pad.shape.aabb();
-            let round = matches!(pad.shape, crate::geometry::Shape::Circle { .. });
-            // In layer order: a hash set's order made the union order, and
-            // so the roots, the main piece's tie-break and the stitching
-            // vias' anchors, differ from run to run.
-            let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
-            for layer in layers_of_nodes {
-                if pours.label[layer].is_empty() || solid[layer] {
+        let spoke_islands = if self.config.kicad_spokes {
+            self.kicad_spokes(net, &pours, &mut parent, terminal_base, skip, &rings, report)
+        } else {
+            let with_items: HashSet<usize> = touched.iter().map(|piece| find(&mut parent, *piece)).collect();
+            let has_item = |parent: &mut Vec<usize>, piece: usize| with_items.contains(&find(parent, piece));
+            let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
+            for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
+                if isolated(terminal) || solid_pad(terminal) {
                     continue;
                 }
-                let gap = self
-                    .board
-                    .planes
-                    .iter()
-                    .filter(|plane| plane.net == net && plane.layer == layer)
-                    .map(|plane| plane.thermal_reach)
-                    .fold(0.0f64, f64::max)
-                    .max(self.grid.pitch);
-                let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
-                let directions: [[f64; 2]; 4] = if round {
-                    let d = std::f64::consts::FRAC_1_SQRT_2;
-                    [[d, d], [d, -d], [-d, d], [-d, -d]]
-                } else {
-                    [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
-                };
-                // KiCad wants two spokes into kept fill on the layer; a
-                // spoke into an island matters only to a pad short of them.
-                let mut good = 0;
-                let mut islands: Vec<usize> = Vec::new();
-                // The spoke's strip, as far as the brush's map tells: its
-                // middle and the lines half a spoke less half a brush to
-                // either side (a brush centre there keeps the clearance
-                // the spoke's edge needs).
-                let bridge = self
-                    .board
-                    .planes
-                    .iter()
-                    .filter(|plane| plane.net == net && plane.layer == layer)
-                    .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
-                    .fold(0.0f64, f64::max);
-                let side = ((bridge - self.board.classes[state.plane_class[layer]].trace_width) / 2.0).max(0.0);
-                let plane_map = self.map_index(state.plane_class[layer], layer);
-                let clear = |cell: usize| {
-                    state.plane[layer][cell]
-                        && self.occupancy[plane_map][cell] as usize == own.contains(plane_map, cell) as usize
-                };
-                for direction in directions {
-                    // From the pad's edge along the spoke, the fill must
-                    // begin within the gap and a little more.
-                    let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
-                    for extra in [gap, gap + self.grid.pitch] {
-                        let distance = edge + extra;
-                        let point = [anchor[0] + direction[0] * distance, anchor[1] + direction[1] * distance];
-                        let Some(cell) = self.grid.nearest_node(point) else {
-                            continue;
-                        };
-                        let piece = pours.label[layer][cell];
-                        // KiCad keeps a spoke only where it keeps the
-                        // clearance all the way from the pad to the fill:
-                        // on a fine-pitch row the neighbours' clearance
-                        // cuts it (k30's U2.7: fill 0.7 mm right of the pad
-                        // counted as a spoke past pad 6's corner, 0.2 mm
-                        // from the spoke; KiCad left the pad unconnected).
-                        if piece != 0 && self.config.spoke_clearance {
-                            let steps = ((extra / (self.grid.pitch / 2.0)).ceil() as usize).max(1);
-                            let blocked = (1..=steps).any(|step| {
-                                let along = edge + extra * step as f64 / steps as f64;
-                                [-side, 0.0, side].iter().any(|offset| {
-                                    let at = [
-                                        anchor[0] + direction[0] * along - direction[1] * offset,
-                                        anchor[1] + direction[1] * along + direction[0] * offset,
-                                    ];
-                                    self.grid.nearest_node(at).is_none_or(|cell| !clear(cell))
-                                })
-                            });
-                            if blocked {
+                let pad = &self.board.obstacles[description.terminals[terminal].pad];
+                let anchor = description.terminals[terminal].anchor;
+                let bounds = pad.shape.aabb();
+                let round = matches!(pad.shape, crate::geometry::Shape::Circle { .. });
+                // In layer order: a hash set's order made the union order, and
+                // so the roots, the main piece's tie-break and the stitching
+                // vias' anchors, differ from run to run.
+                let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
+                for layer in layers_of_nodes {
+                    if pours.label[layer].is_empty() || solid[layer] {
+                        continue;
+                    }
+                    let gap = self
+                        .board
+                        .planes
+                        .iter()
+                        .filter(|plane| plane.net == net && plane.layer == layer)
+                        .map(|plane| plane.thermal_reach)
+                        .fold(0.0f64, f64::max)
+                        .max(self.grid.pitch);
+                    let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+                    let directions: [[f64; 2]; 4] = if round {
+                        let d = std::f64::consts::FRAC_1_SQRT_2;
+                        [[d, d], [d, -d], [-d, d], [-d, -d]]
+                    } else {
+                        [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
+                    };
+                    // KiCad wants two spokes into kept fill on the layer; a
+                    // spoke into an island matters only to a pad short of them.
+                    let mut good = 0;
+                    let mut islands: Vec<usize> = Vec::new();
+                    let mut outcomes = [SpokeOutcome::NoFill; 4];
+                    // The spoke's strip, as far as the brush's map tells: its
+                    // middle and the lines half a spoke less half a brush to
+                    // either side (a brush centre there keeps the clearance
+                    // the spoke's edge needs).
+                    let bridge = self
+                        .board
+                        .planes
+                        .iter()
+                        .filter(|plane| plane.net == net && plane.layer == layer)
+                        .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                        .fold(0.0f64, f64::max);
+                    let side = ((bridge - self.board.classes[state.plane_class[layer]].trace_width) / 2.0).max(0.0);
+                    let plane_map = self.map_index(state.plane_class[layer], layer);
+                    let clear = |cell: usize| {
+                        state.plane[layer][cell]
+                            && self.occupancy[plane_map][cell] as usize == own.contains(plane_map, cell) as usize
+                    };
+                    for (direction_index, direction) in directions.into_iter().enumerate() {
+                        // From the pad's edge along the spoke, the fill must
+                        // begin within the gap and a little more.
+                        let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                        for extra in [gap, gap + self.grid.pitch] {
+                            let distance = edge + extra;
+                            let point = [anchor[0] + direction[0] * distance, anchor[1] + direction[1] * distance];
+                            let Some(cell) = self.grid.nearest_node(point) else {
+                                continue;
+                            };
+                            let piece = pours.label[layer][cell];
+                            // KiCad keeps a spoke only where it keeps the
+                            // clearance all the way from the pad to the fill:
+                            // on a fine-pitch row the neighbours' clearance
+                            // cuts it (k30's U2.7: fill 0.7 mm right of the pad
+                            // counted as a spoke past pad 6's corner, 0.2 mm
+                            // from the spoke; KiCad left the pad unconnected).
+                            if piece != 0 && self.config.spoke_clearance {
+                                let steps = ((extra / (self.grid.pitch / 2.0)).ceil() as usize).max(1);
+                                let blocked = (1..=steps).any(|step| {
+                                    let along = edge + extra * step as f64 / steps as f64;
+                                    [-side, 0.0, side].iter().any(|offset| {
+                                        let at = [
+                                            anchor[0] + direction[0] * along - direction[1] * offset,
+                                            anchor[1] + direction[1] * along + direction[0] * offset,
+                                        ];
+                                        self.grid.nearest_node(at).is_none_or(|cell| !clear(cell))
+                                    })
+                                });
+                                if blocked {
+                                    outcomes[direction_index] = SpokeOutcome::Blocked;
+                                    break;
+                                }
+                            }
+                            if piece != 0 {
+                                if has_item(&mut parent, piece as usize) {
+                                    union(&mut parent, terminal_base + terminal, piece as usize);
+                                    good += 1;
+                                    outcomes[direction_index] = SpokeOutcome::Good(piece);
+                                } else {
+                                    islands.push(piece as usize);
+                                    outcomes[direction_index] = SpokeOutcome::Island(piece);
+                                }
                                 break;
                             }
                         }
-                        if piece != 0 {
-                            if has_item(&mut parent, piece as usize) {
-                                union(&mut parent, terminal_base + terminal, piece as usize);
-                                good += 1;
-                            } else {
-                                islands.push(piece as usize);
-                            }
-                            break;
-                        }
                     }
-                }
-                if good < 2 {
-                    for piece in islands {
-                        if !spoke_islands.iter().any(|(island, _)| *island == piece) {
-                            spoke_islands.push((piece, terminal));
+                    if let Some(report) = report.as_deref_mut() {
+                        report.push(SpokeRecord { terminal, layer, round, outcomes, tracks: 0 });
+                    }
+                    if good < 2 {
+                        for piece in islands {
+                            if !spoke_islands.iter().any(|(island, _)| *island == piece) {
+                                spoke_islands.push((piece, terminal));
+                            }
                         }
                     }
                 }
             }
-        }
+            spoke_islands
+        };
         let mut votes: HashMap<usize, usize> = HashMap::new();
         for terminal in 0..terminal_count {
             *votes
@@ -6347,6 +6435,625 @@ impl Router {
             leaders.first().copied().unwrap_or(0)
         };
         (pours, parent, largest, spoke_islands)
+    }
+
+    /// The pads' thermal spokes as KiCad makes and counts them (the
+    /// `kicad_spokes` model), joining each pad to the pieces its counted
+    /// spokes reach. Returns the spoke islands (piece, terminal) of pads
+    /// short of two spokes.
+    ///
+    /// KiCad (zone_filler.cpp, buildThermalSpokes and fillCopperZone)
+    /// draws a spoke from the pad's centre to its box grown by the thermal
+    /// gap and half the zone's minimum width, and keeps it when that end
+    /// lies in the fill (the fill before spokes, opened by the minimum
+    /// width); the spoke is as wide as the zone's spoke width but no wider
+    /// than the pad, and none is drawn when that is narrower than the
+    /// minimum width. Other nets' clearances then trim it, and the
+    /// opening removes what is left narrower than the minimum width. The
+    /// DRC (drc_test_provider_zone_connections.cpp) counts a spoke where
+    /// the fill crosses the ring half a gap around the pad, ignores those
+    /// into a fill piece connected to nothing but the pad, and, while a
+    /// pad is short, counts a track that leaves the pad and ends in fill.
+    /// A piece reached by two pads' spokes connects them (KiCad's
+    /// connectivity joins every item a fill piece touches); a piece that
+    /// only the one pad touches is the "isolated island" of its report.
+    ///
+    /// On the lattice a spoke lands where a brush centre (a free node)
+    /// lies within half the minimum width and half a pitch of its end, and
+    /// it is blocked where, along it from the middle of the gap to its end,
+    /// no node across its width leaves the brush room.
+    #[allow(clippy::too_many_arguments)]
+    fn kicad_spokes(
+        &self,
+        net: NetId,
+        pours: &crate::pour::PourMap,
+        parent: &mut Vec<usize>,
+        terminal_base: usize,
+        skip: &dyn Fn(usize) -> bool,
+        rings: &[Vec<(usize, f64)>],
+        mut report: Option<&mut Vec<SpokeRecord>>,
+    ) -> Vec<(usize, usize)> {
+        let layers = self.board.layer_count;
+        let state = &self.nets[net as usize];
+        let description = &self.board.nets[net as usize];
+        let pitch = self.grid.pitch;
+        let union = |parent: &mut Vec<usize>, a: usize, b: usize| {
+            let (a, b) = (find(parent, a), find(parent, b));
+            parent[a] = b;
+        };
+        let isolated = |terminal: usize| self.board.isolated_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        let solid_pad = |terminal: usize| self.board.solid_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        let solid: Vec<bool> = (0..layers)
+            .map(|layer| self.board.planes.iter().any(|plane| plane.net == net && plane.layer == layer && plane.solid))
+            .collect();
+        let label_at = |layer: usize, cell: usize| pours.label[layer].get(cell).copied().unwrap_or(0);
+        // Items per piece (KiCad's CN_ZONE_LAYER::HasSingleConnection):
+        // each branch with a node in it, each pad joined solidly, and each
+        // pad whose spoke lands in it.
+        let mut items: HashMap<u32, usize> = HashMap::new();
+        for (index, branch) in state.branches.iter().enumerate() {
+            if skip(index) {
+                continue;
+            }
+            let mut seen: Vec<u32> = Vec::new();
+            for node in &branch.nodes {
+                let piece = label_at(node.layer as usize, node.cell as usize);
+                if piece != 0 && !seen.contains(&piece) {
+                    seen.push(piece);
+                }
+            }
+            for piece in seen {
+                *items.entry(piece).or_default() += 1;
+            }
+        }
+        let reach = (0.8 / pitch).ceil() as usize;
+        for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
+            if isolated(terminal) {
+                continue;
+            }
+            let mut seen: Vec<u32> = Vec::new();
+            for node in nodes.iter().filter(|node| solid[node.layer as usize] || solid_pad(terminal)) {
+                if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
+                    && !seen.contains(&piece)
+                {
+                    seen.push(piece);
+                }
+            }
+            for piece in seen {
+                *items.entry(piece).or_default() += 1;
+            }
+        }
+        let probe = fill::FillProbe::new(self, net, rings);
+        // Pass one: the spokes' geometry, then where each lands (Good holds
+        // the piece until the items are counted).
+        struct Spoke {
+            record: usize,
+            index: usize,
+            pad: usize,
+            layer: usize,
+            anchor: crate::geometry::Point,
+            direction: crate::geometry::Point,
+            edge: f64,
+            tip: f64,
+            gap: f64,
+            width: f64,
+            side: f64,
+        }
+        let mut records: Vec<SpokeRecord> = Vec::new();
+        let mut spokes: Vec<Spoke> = Vec::new();
+        for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
+            if isolated(terminal) || solid_pad(terminal) {
+                continue;
+            }
+            let pad = &self.board.obstacles[description.terminals[terminal].pad];
+            let anchor = description.terminals[terminal].anchor;
+            let bounds = pad.shape.aabb();
+            let round = matches!(pad.shape, crate::geometry::Shape::Circle { .. });
+            let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+            let directions: [[f64; 2]; 4] = if round {
+                let d = std::f64::consts::FRAC_1_SQRT_2;
+                [[d, d], [d, -d], [-d, d], [-d, -d]]
+            } else {
+                [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]]
+            };
+            let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
+            for layer in layers_of_nodes {
+                if pours.label[layer].is_empty() || solid[layer] {
+                    continue;
+                }
+                let planes = || self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer && !plane.solid);
+                let gap = planes().map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+                let bridge = planes().map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+                let minimum = self.board.classes[state.plane_class[layer]].trace_width;
+                let width = bridge.min(2.0 * half[0].min(half[1]));
+                // No spoke narrower than the minimum width.
+                if width + 1.0e-9 >= minimum {
+                    for (index, direction) in directions.iter().enumerate() {
+                        let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                        spokes.push(Spoke {
+                            record: records.len(),
+                            index,
+                            pad: description.terminals[terminal].pad,
+                            layer,
+                            anchor,
+                            direction: *direction,
+                            edge,
+                            tip: edge + gap + fill::KICAD_MAX_ERROR + minimum / 2.0,
+                            gap,
+                            width,
+                            side: ((width - minimum) / 2.0).max(0.0),
+                        });
+                    }
+                }
+                records.push(SpokeRecord { terminal, layer, round, outcomes: [SpokeOutcome::NoFill; 4], tracks: 0 });
+            }
+        }
+        let inside = |spoke: &Spoke, point: crate::geometry::Point| {
+            let offset = [point[0] - spoke.anchor[0], point[1] - spoke.anchor[1]];
+            let along = offset[0] * spoke.direction[0] + offset[1] * spoke.direction[1];
+            let across = (offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0]).abs();
+            along >= -1.0e-6 && along <= spoke.tip + 1.0e-6 && across <= spoke.width / 2.0 + 1.0e-6
+        };
+        let end_of = |spoke: &Spoke| [spoke.anchor[0] + spoke.direction[0] * spoke.tip, spoke.anchor[1] + spoke.direction[1] * spoke.tip];
+        for spoke in &spokes {
+            let layer = spoke.layer;
+            let minimum = self.board.classes[state.plane_class[layer]].trace_width;
+            let end = end_of(spoke);
+            // The DRC counts the spoke where the fill crosses the ring half a
+            // gap around the pad: a brush centre within half the minimum
+            // width of it, joined to the spoke's end (centres all the way).
+            let from = (spoke.edge + spoke.gap / 2.0 + minimum / 2.0).min(spoke.tip);
+            // KiCad keeps the spoke when its end lies in the fill, or in
+            // a spoke of another pad whose end lies in this one (two pads
+            // side by side: mackerel-08's J10 pins on In1, Castor's J2
+            // shield).
+            if !probe.fill_at(layer, end) {
+                // Facing spokes of pads apart (a pad doubled at one spot,
+                // a USB-C receptacle's A1 and B12, shares its spokes' ends,
+                // which KiCad does not take as meeting).
+                let meets = spokes.iter().find(|other| {
+                    other.layer == layer
+                        && records[other.record].terminal != records[spoke.record].terminal
+                        && other.direction[0] * spoke.direction[0] + other.direction[1] * spoke.direction[1] < -0.5
+                        && crate::geometry::distance(other.anchor, spoke.anchor) > 1.0e-6
+                        && crate::geometry::distance(other.anchor, spoke.anchor) <= other.tip + spoke.tip
+                        && inside(other, end)
+                        && inside(spoke, end_of(other))
+                });
+                if let Some(other) = meets
+                    && (!self.config.spoke_clearance || probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, spoke.tip, spoke.side))
+                {
+                    records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Pad(records[other.record].terminal as u32);
+                }
+                continue;
+            }
+            // What is left of it after the clearances, from the middle of
+            // the gap to its end, keeps the brush's width (k30's U2.7: a neighbour's clearance cuts it on
+            // a fine-pitch row).
+            if self.config.spoke_clearance && !probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, spoke.tip, spoke.side) {
+                if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                    let steps = 8;
+                    for step in 0..=steps {
+                        let along = from + (spoke.tip - from) * step as f64 / steps as f64;
+                        let at = [spoke.anchor[0] + spoke.direction[0] * along, spoke.anchor[1] + spoke.direction[1] * along];
+                        if let Some(why) = probe.blocker(layer, at, None) {
+                            eprintln!(
+                                "blocked spoke {} layer {layer} dir {:?} width {:.3} side {:.3} at {along:.3} ({:.3}..{:.3}): {why}",
+                                description.terminals[records[spoke.record].terminal].label,
+                                spoke.direction, spoke.width, spoke.side, from, spoke.tip
+                            );
+                            break;
+                        }
+                    }
+                }
+                records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Blocked;
+                continue;
+            }
+            // The piece it joins: the nearest of the pour map's (none for
+            // a sliver the lattice misses: a piece of its own).
+            let radius = minimum / 2.0 + pitch;
+            let mut best: Option<(f64, u32)> = None;
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: end, maximum: end }.inflated(radius)) {
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let piece = label_at(layer, self.grid.index(x, y));
+                        let distance = crate::geometry::distance(end, self.grid.center(x, y));
+                        if piece != 0 && distance <= radius && best.is_none_or(|(best, _)| distance < best) {
+                            best = Some((distance, piece));
+                        }
+                    }
+                }
+            }
+            // Piece 0 stands for that sliver: the spoke counts only where a
+            // track of the pad touches it too.
+            records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Good(best.map_or(0, |(_, piece)| piece));
+        }
+        let mut tracked_records: Vec<bool> = Vec::new();
+        for (record_index, record) in records.iter().enumerate() {
+            let (terminal, layer, outcomes) = (record.terminal, record.layer, record.outcomes);
+            {
+                let mut seen: Vec<u32> = Vec::new();
+                for outcome in &outcomes {
+                    if let SpokeOutcome::Good(piece) = outcome
+                        && *piece != 0
+                        && !seen.contains(piece)
+                    {
+                        seen.push(*piece);
+                    }
+                }
+                // The spokes start at the pad's centre, where its tracks
+                // start: a track of the pad on this layer touches every
+                // piece its spokes reach, a second item (Castor's D11.3:
+                // KiCad counts its one spoke, its exit stub in the piece).
+                // (A routed board's own track touches them only where it
+                // crosses one of the pad's kept spokes: a track may leave
+                // the pad's edge.)
+                let kept: Vec<&Spoke> = spokes
+                    .iter()
+                    .filter(|spoke| spoke.record == record_index && matches!(outcomes[spoke.index], SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+                    .collect();
+                let tracked = state.branches.iter().enumerate().any(|(index, branch)| {
+                    let ends_here = (branch.start_terminal as usize == terminal && branch.nodes.first().is_some_and(|node| node.layer as usize == layer))
+                        || (branch.end_terminal as usize == terminal && branch.nodes.last().is_some_and(|node| node.layer as usize == layer));
+                    !skip(index)
+                        && ends_here
+                        && state.adopted.get(&index).is_none_or(|(start, end, radius)| {
+                            kept.iter().any(|spoke| {
+                                let (d, w) = (spoke.direction, spoke.width / 2.0);
+                                let normal = [-d[1] * w, d[0] * w];
+                                let far = [spoke.anchor[0] + d[0] * spoke.tip, spoke.anchor[1] + d[1] * spoke.tip];
+                                let strip = crate::geometry::Shape::Polygon {
+                                    points: vec![
+                                        [spoke.anchor[0] + normal[0], spoke.anchor[1] + normal[1]],
+                                        [far[0] + normal[0], far[1] + normal[1]],
+                                        [far[0] - normal[0], far[1] - normal[1]],
+                                        [spoke.anchor[0] - normal[0], spoke.anchor[1] - normal[1]],
+                                    ],
+                                };
+                                strip.distance_to_segment(*start, *end) <= *radius
+                            })
+                        })
+                });
+                for piece in seen {
+                    *items.entry(piece).or_default() += 1 + tracked as usize;
+                }
+                tracked_records.push(tracked);
+            }
+        }
+        // Pass two: spokes into pieces with another item count and join.
+        let mut tallies: Vec<(usize, Vec<usize>)> = Vec::new();
+        for (record, tracked) in records.iter_mut().zip(&tracked_records) {
+            let mut good = 0;
+            let mut islands: Vec<usize> = Vec::new();
+            for outcome in record.outcomes.iter_mut() {
+                if let SpokeOutcome::Pad(other) = *outcome {
+                    // One outline holds both pads: the spoke counts.
+                    union(parent, terminal_base + record.terminal, terminal_base + other as usize);
+                    good += 1;
+                } else if let SpokeOutcome::Good(0) = *outcome {
+                    if *tracked {
+                        good += 1;
+                    } else {
+                        *outcome = SpokeOutcome::Island(0);
+                    }
+                } else if let SpokeOutcome::Good(piece) = *outcome {
+                    if items.get(&piece).copied().unwrap_or(0) >= 2 {
+                        union(parent, terminal_base + record.terminal, piece as usize);
+                        good += 1;
+                    } else {
+                        *outcome = SpokeOutcome::Island(piece);
+                        islands.push(piece as usize);
+                    }
+                }
+            }
+            tallies.push((good, islands));
+        }
+        // Pass three, with every join made: the DRC's track spokes. KiCad
+        // removes a fill piece no pad's cluster reaches (an orphan) before
+        // the DRC looks, so a track ending there counts for nothing
+        // (Castor's RV10.1: its F.Cu track ends over an orphan of B.Cu).
+        // KiCad's clusters join a piece to the pads whose spokes reach it
+        // whether the DRC counts them or not (BAGEL's J102.1: its In1 track
+        // ends over a piece of In2 that pads spoke into as islands).
+        let mut terminal_roots: HashSet<usize> = (0..state.terminal_nodes.len()).map(|terminal| find(parent, terminal_base + terminal)).collect();
+        for record in &records {
+            for outcome in &record.outcomes {
+                if let SpokeOutcome::Island(piece) = outcome
+                    && *piece != 0
+                {
+                    terminal_roots.insert(find(parent, *piece as usize));
+                }
+            }
+        }
+        let kept_piece = |parent: &mut Vec<usize>, layer: usize, point: crate::geometry::Point| {
+            let radius = self.board.classes[state.plane_class[layer]].trace_width / 2.0 + pitch;
+            let mut best: Option<(f64, u32)> = None;
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: point, maximum: point }.inflated(radius)) {
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let piece = label_at(layer, self.grid.index(x, y));
+                        let distance = crate::geometry::distance(point, self.grid.center(x, y));
+                        if piece != 0 && distance <= radius && best.is_none_or(|(best, _)| distance < best) {
+                            best = Some((distance, piece));
+                        }
+                    }
+                }
+            }
+            best.is_some_and(|(_, piece)| terminal_roots.contains(&find(parent, piece as usize)))
+        };
+        let records_outcomes: Vec<[SpokeOutcome; 4]> = records.iter().map(|record| record.outcomes).collect();
+        let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
+        for (record, (good, islands)) in records.iter_mut().zip(tallies) {
+            if good < 2 {
+                // The pad's own tracks (KiCad's DRC: each track segment
+                // connected to the pad that starts within half a gap of it
+                // and ends in this layer's fill, on any layer; else, one
+                // that ends there and starts in the fill). A routed branch
+                // is its stub from the pad's anchor and its first straight
+                // run; an adopted one its track.
+                let terminal = &description.terminals[record.terminal];
+                let pad = &self.board.obstacles[terminal.pad];
+                let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == record.layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+                let near_pad = |point: crate::geometry::Point| pad.shape.distance_to_point(point) <= gap / 2.0;
+                let minimum = self.board.classes[state.plane_class[record.layer]].trace_width;
+                let in_fill = |parent: &mut Vec<usize>, point: crate::geometry::Point| {
+                    // A kept spoke is fill too, as far as other nets'
+                    // clearances leave the brush room in it (they start at
+                    // their pads' centres: a track to the pad's edge ends on
+                    // its own spoke, Castor's C12.1; U11.10's spoke is cut
+                    // over the pad by its neighbours in the row).
+                    spokes.iter().any(|spoke| {
+                        if spoke.layer != record.layer
+                            || matches!(records_outcomes[spoke.record][spoke.index], SpokeOutcome::NoFill | SpokeOutcome::Blocked)
+                            || !inside(spoke, point)
+                        {
+                            return false;
+                        }
+                        let offset = [point[0] - spoke.anchor[0], point[1] - spoke.anchor[1]];
+                        let along = offset[0] * spoke.direction[0] + offset[1] * spoke.direction[1];
+                        let across = (offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0]).clamp(-spoke.side, spoke.side);
+                        [0.0, -0.25, 0.25, -0.45, 0.45].iter().any(|shift| {
+                            let along = (along + shift * minimum).clamp(0.0, spoke.tip);
+                            let centre = [
+                                spoke.anchor[0] + spoke.direction[0] * along + spoke.direction[1] * across,
+                                spoke.anchor[1] + spoke.direction[1] * along - spoke.direction[0] * across,
+                            ];
+                            crate::geometry::distance(centre, point) <= minimum / 2.0 && probe.fits(record.layer, centre, &[spoke.pad])
+                        })
+                    }) || (probe.fill_at(record.layer, point) && kept_piece(parent, record.layer, point))
+                };
+                for (index, branch) in state.branches.iter().enumerate() {
+                    if skip(index) || branch.nodes.is_empty() {
+                        continue;
+                    }
+                    let mut segments: Vec<(crate::geometry::Point, crate::geometry::Point)> = Vec::new();
+                    if let Some((start, end, _)) = state.adopted.get(&index) {
+                        if (branch.start_terminal as usize == record.terminal || branch.end_terminal as usize == record.terminal)
+                            && pad.layers & (1 << branch.nodes[0].layer) != 0
+                        {
+                            segments.push((*start, *end));
+                        }
+                    } else {
+                        for (end, forward) in [(branch.start_terminal, true), (branch.end_terminal, false)] {
+                            if end as usize != record.terminal {
+                                continue;
+                            }
+                            let nodes: Vec<Node> = if forward { branch.nodes.clone() } else { branch.nodes.iter().rev().copied().collect() };
+                            // Connected to the pad: on one of its layers.
+                            if pad.layers & (1 << nodes[0].layer) == 0 {
+                                continue;
+                            }
+                            let first = self.grid.center_of(nodes[0].cell as usize);
+                            match state.escapes.get(&nodes[0]) {
+                                Some((_, _, polyline)) => segments.extend(polyline.windows(2).map(|pair| (pair[0], pair[1]))),
+                                None if crate::geometry::distance(terminal.anchor, first) > 1.0e-7 => segments.push((terminal.anchor, first)),
+                                None => {}
+                            }
+                            let step = |a: Node, b: Node| {
+                                let (ax, ay) = self.grid.xy(a.cell as usize);
+                                let (bx, by) = self.grid.xy(b.cell as usize);
+                                (a.layer == b.layer).then_some((bx as i64 - ax as i64, by as i64 - ay as i64))
+                            };
+                            if nodes.len() >= 2
+                                && let Some(direction) = step(nodes[0], nodes[1])
+                            {
+                                let mut last = 1;
+                                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) {
+                                    last += 1;
+                                }
+                                segments.push((first, self.grid.center_of(nodes[last].cell as usize)));
+                            }
+                        }
+                    }
+                    for (a, b) in segments {
+                        let counted = if near_pad(a) { in_fill(parent, b) } else { near_pad(b) && in_fill(parent, a) };
+                        if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() && !counted {
+                            eprintln!(
+                                "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} kept {} {}",
+                                terminal.label, record.layer, near_pad(a), near_pad(b),
+                                probe.fill_at(record.layer, a), probe.fill_at(record.layer, b),
+                                kept_piece(parent, record.layer, a), kept_piece(parent, record.layer, b)
+                            );
+                        }
+                        if counted {
+                            record.tracks += 1;
+                            if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                                eprintln!("track spoke {} layer {}: branch {index} {a:?}..{b:?}", terminal.label, record.layer);
+                            }
+                        }
+                    }
+                }
+            }
+            if good + record.tracks < 2 {
+                for piece in islands {
+                    if !spoke_islands.iter().any(|(island, _)| *island == piece) {
+                        spoke_islands.push((piece, record.terminal));
+                    }
+                }
+            }
+        }
+        if let Some(report) = report.as_deref_mut() {
+            report.extend(records);
+        }
+        spoke_islands
+    }
+
+    /// Whether the spokes of a pad on a layer leave it a starved thermal to
+    /// KiCad's DRC, and how many more counted spokes it needs: none counted
+    /// and none into islands is no thermal connection (not starved); with
+    /// tracks counted, the islands no longer stand in for spokes.
+    fn spokes_short(record: &SpokeRecord) -> usize {
+        let good = record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count();
+        let islands = record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Island(_))).count();
+        if good == 0 && islands == 0 {
+            return 0;
+        }
+        let counted = good + record.tracks;
+        if counted == 0 && islands >= 2 {
+            return 0;
+        }
+        2usize.saturating_sub(counted)
+    }
+
+    /// For each pad the spoke model finds a starved thermal (fewer than
+    /// two spokes as KiCad counts them), straight tracks from the pad into
+    /// the main piece of its pour, as many as it is short, each on free
+    /// lattice nodes (the net's own rules, no other net's copper): KiCad's
+    /// DRC counts a track that starts within half a gap of the pad and
+    /// ends in fill as a spoke, and a track keeps the net class's
+    /// clearance, often less than the zone's (Castor's C49.2 and U14.2,
+    /// in a field of other nets' pads that the fill keeps 0.5 mm from).
+    /// Returns the tracks added.
+    pub fn add_manual_spokes(&mut self) -> usize {
+        let mut added = 0;
+        // Every net with a pour, those routed as tracks too (the tracks
+        // rung): KiCad fills their zones all the same, with the masks
+        // set for the analysis only.
+        let nets: Vec<NetId> = (0..self.nets.len() as NetId)
+            .filter(|net| self.nets[*net as usize].routable && self.board.planes.iter().any(|plane| plane.net == *net && plane.thermal_gap > 0.0))
+            .collect();
+        for net in nets {
+            let lent = self.nets[net as usize].plane.is_empty();
+            if lent {
+                let (plane, plane_class) = self.pour_masks(net, false);
+                let state = &mut self.nets[net as usize];
+                state.plane = plane;
+                state.plane_class = plane_class;
+            }
+            added += self.add_manual_spokes_of(net);
+            if lent {
+                let class = self.board.nets[net as usize].class;
+                let state = &mut self.nets[net as usize];
+                state.plane = Vec::new();
+                state.plane_class = vec![class; self.board.layer_count];
+            }
+        }
+        added
+    }
+
+    /// `add_manual_spokes` for one net whose pour masks are set.
+    fn add_manual_spokes_of(&mut self, net: NetId) -> usize {
+        let cells = self.grid.cells();
+        let nx = self.grid.nx as i64;
+        let ny = self.grid.ny as i64;
+        let reach = (2.5 / self.grid.pitch).ceil() as i64;
+        let mut added = 0;
+        {
+            // Per pad and layer: tracks tried; a failed try ends its tries.
+            let mut tried: HashMap<(usize, usize), usize> = HashMap::new();
+            loop {
+                let mut report = Vec::new();
+                let (pours, mut parent, main, _) = self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+                let Some(record) = report.iter().find(|record| Self::spokes_short(record) > 0 && tried.get(&(record.terminal, record.layer)).copied().unwrap_or(0) < 2) else {
+                    break;
+                };
+                *tried.entry((record.terminal, record.layer)).or_default() += 1;
+                let layer = record.layer;
+                let class = self.board.nets[net as usize].class;
+                let state = &self.nets[net as usize];
+                let own = OwnStamps::new(
+                    &state.stamped,
+                    &[self.map_index(class, layer), self.diagonal_map(class, layer, 0), self.diagonal_map(class, layer, 1)],
+                    cells,
+                );
+                let free = |map: usize, cell: usize| self.occupancy[map][cell] as usize == own.contains(map, cell) as usize;
+                let statics = &self.statics[class];
+                let trace = self.map_index(class, layer);
+                let mut best: Option<Vec<Node>> = None;
+                // The track ends in fill, not on a node the net's own
+                // copper made free (Castor's C10.2: a step onto its own
+                // track, which KiCad's DRC does not count).
+                let rings = self.thermal_ring_pads(net);
+                let probe = fill::FillProbe::new(self, net, &rings);
+                // Into a piece joined to a pad of the net (KiCad keeps it),
+                // the main piece first.
+                let terminal_base = pours.pieces + 1;
+                let kept: HashSet<usize> = (0..state.terminal_nodes.len()).map(|terminal| find(&mut parent, terminal_base + terminal)).collect();
+                let _ = main;
+                let starts: Vec<Node> = state.terminal_nodes[record.terminal].iter().copied().filter(|node| node.layer as usize == layer).collect();
+                for start in starts {
+                    if !statics.trace_allowed(layer, start.cell as usize, net) || !free(trace, start.cell as usize) {
+                        continue;
+                    }
+                    for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
+                        let mut path = vec![start];
+                        let (mut x, mut y) = ((start.cell as i64) % nx, (start.cell as i64) / nx);
+                        for _ in 0..reach {
+                            let previous = (y * nx + x) as usize;
+                            let (next_x, next_y) = (x + *dx as i64, y + *dy as i64);
+                            if next_x < 0 || next_y < 0 || next_x >= nx || next_y >= ny {
+                                break;
+                            }
+                            let cell = (next_y * nx + next_x) as usize;
+                            let diagonal_ok = if *dx != 0 && *dy != 0 {
+                                let (from, orientation) = if *dx > 0 { (previous, (*dy < 0) as usize) } else { (cell, (*dy > 0) as usize) };
+                                free(self.diagonal_map(class, layer, orientation), from)
+                            } else {
+                                true
+                            };
+                            if !statics.trace_allowed(layer, cell, net)
+                                || !statics.edge_allowed(layer, previous, direction, net)
+                                || !free(trace, cell)
+                                || !diagonal_ok
+                            {
+                                break;
+                            }
+                            path.push(Node { layer: layer as u8, cell: cell as u32 });
+                            let piece = pours.label[layer][cell];
+                            if piece != 0 && kept.contains(&find(&mut parent, piece as usize)) && probe.fill_at(layer, self.grid.center_of(cell)) {
+                                if best.as_ref().is_none_or(|best| path.len() < best.len()) {
+                                    best = Some(path.clone());
+                                }
+                                break;
+                            }
+                            (x, y) = (next_x, next_y);
+                        }
+                    }
+                }
+                let Some(nodes) = best else {
+                    if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                        eprintln!(
+                            "manual spoke: none for {} on layer {layer} ({} start nodes)",
+                            self.board.nets[net as usize].terminals[record.terminal].label,
+                            state.terminal_nodes[record.terminal].iter().filter(|node| node.layer as usize == layer).count()
+                        );
+                    }
+                    tried.insert((record.terminal, record.layer), 2);
+                    continue;
+                };
+                if self.config.verbose {
+                    eprintln!(
+                        "manual spoke: {} on layer {layer}, {} nodes",
+                        self.board.nets[net as usize].terminals[record.terminal].label,
+                        nodes.len()
+                    );
+                }
+                self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
+                self.stamp(net);
+                added += 1;
+            }
+        }
+        added
     }
 
     /// Per layer, the pads of `net` whose thermal relief keeps the pour's
@@ -6424,6 +7131,83 @@ impl Router {
     /// copper stamps the node, 8 inside a thermal ring, 16 free (what the
     /// pieces are labelled from), 32 a node of the net's own branches.
     /// For overlaying KiCad's fill (experiments/pour-fidelity).
+    /// For `dump_pours` on a routed board: the pour nets' existing tracks
+    /// and vias (fixed obstacles of their own net) become branches, so the
+    /// pour model sees them as copper of the net in its pieces, as it sees
+    /// its own routes. Branch ends join the branches they meet; no stamping (the obstacles
+    /// already hold their nodes for the net). Analysis only.
+    pub fn adopt_existing_copper(&mut self) {
+        let layers = self.board.layer_count;
+        for obstacle in &self.board.obstacles {
+            let Some(net) = obstacle.net else {
+                continue;
+            };
+            if obstacle.kind != crate::board::ObstacleKind::Copper
+                || !(obstacle.label == "existing track" || obstacle.label == "existing via")
+                || self.nets[net as usize].plane.is_empty()
+            {
+                continue;
+            }
+            let mut nodes: Vec<Node> = Vec::new();
+            match &obstacle.shape {
+                crate::geometry::Shape::Capsule { start, end, .. } => {
+                    let length = crate::geometry::distance(*start, *end);
+                    let steps = ((length / (self.grid.pitch / 4.0)).ceil() as usize).max(1);
+                    for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0) {
+                        for step in 0..=steps {
+                            let t = step as f64 / steps as f64;
+                            let at = [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t];
+                            if let Some(cell) = self.grid.nearest_node(at) {
+                                let node = Node { layer: layer as u8, cell: cell as u32 };
+                                if nodes.last() != Some(&node) {
+                                    nodes.push(node);
+                                }
+                            }
+                        }
+                    }
+                }
+                shape => {
+                    let bounds = shape.aabb();
+                    let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+                    if let Some(cell) = self.grid.nearest_node(center) {
+                        for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0) {
+                            nodes.push(Node { layer: layer as u8, cell: cell as u32 });
+                        }
+                    }
+                }
+            }
+            if nodes.is_empty() {
+                continue;
+            }
+            // A track's end within half a thermal gap of a pad of the net
+            // ends on that pad (KiCad's DRC counts such a track as a spoke
+            // when it ends in fill).
+            // Other ends join the branches they meet (KiCad's tracks and
+            // vias connect where they touch).
+            let mut ends = [NO_TERMINAL, NO_TERMINAL];
+            if let crate::geometry::Shape::Capsule { start, end, .. } = &obstacle.shape {
+                let gap = self.board.planes.iter().filter(|plane| plane.net == net).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+                for (slot, point) in [*start, *end].into_iter().enumerate() {
+                    if let Some(terminal) = self.board.nets[net as usize]
+                        .terminals
+                        .iter()
+                        .position(|terminal| {
+                            let pad = &self.board.obstacles[terminal.pad];
+                            pad.layers & obstacle.layers != 0 && pad.shape.distance_to_point(point) <= gap / 2.0
+                        })
+                    {
+                        ends[slot] = terminal as u16;
+                    }
+                }
+            }
+            if let crate::geometry::Shape::Capsule { start, end, radius } = &obstacle.shape {
+                let index = self.nets[net as usize].branches.len();
+                self.nets[net as usize].adopted.insert(index, (*start, *end, *radius));
+            }
+            self.nets[net as usize].branches.push(Branch { nodes, start_terminal: ends[0], end_terminal: ends[1] });
+        }
+    }
+
     pub fn dump_pours(&self, directory: &std::path::Path) -> std::io::Result<()> {
         use std::io::Write;
         std::fs::create_dir_all(directory)?;
@@ -6434,7 +7218,8 @@ impl Router {
             if state.plane.is_empty() {
                 continue;
             }
-            let (pours, _, _, _) = self.analyze_pours_full(net, &|_| false);
+            let mut spokes = Vec::new();
+            let (pours, _, _, _) = self.analyze_pours_reporting(net, &|_| false, Some(&mut spokes));
             let mut rings: Vec<Vec<bool>> = (0..layers)
                 .map(|layer| if state.plane[layer].is_empty() { Vec::new() } else { vec![true; cells] })
                 .collect();
@@ -6449,6 +7234,37 @@ impl Router {
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '_' { c } else { '_' })
                 .collect();
+            // Per pad and layer, the spokes as the model sees them: one
+            // JSON object a line.
+            {
+                let mut file = std::io::BufWriter::new(std::fs::File::create(directory.join(format!("{file_name}.spokes")))?);
+                for record in &spokes {
+                    let terminal = &self.board.nets[net as usize].terminals[record.terminal];
+                    let outcomes: Vec<String> = record
+                        .outcomes
+                        .iter()
+                        .map(|outcome| match outcome {
+                            SpokeOutcome::NoFill => "\"none\"".to_string(),
+                            SpokeOutcome::Blocked => "\"blocked\"".to_string(),
+                            SpokeOutcome::Island(piece) => format!("\"island {piece}\""),
+                            SpokeOutcome::Good(piece) => format!("\"good {piece}\""),
+                            SpokeOutcome::Pad(other) => format!("\"good pad {other}\""),
+                        })
+                        .collect();
+                    writeln!(
+                        file,
+                        "{{\"net\": \"{}\", \"pad\": \"{}\", \"layer\": {}, \"anchor\": [{}, {}], \"round\": {}, \"spokes\": [{}], \"tracks\": {}}}",
+                        name.replace('\\', "\\\\").replace('"', "\\\""),
+                        terminal.label.replace('\\', "\\\\").replace('"', "\\\""),
+                        record.layer,
+                        terminal.anchor[0],
+                        terminal.anchor[1],
+                        record.round,
+                        outcomes.join(", "),
+                        record.tracks,
+                    )?;
+                }
+            }
             for layer in 0..layers {
                 if state.plane[layer].is_empty() {
                     continue;
@@ -7825,26 +8641,31 @@ mod tests {
 
     #[test]
     fn a_spoke_passing_another_nets_copper_too_closely_does_not_count() {
-        // P.1 sits in a 0.6 mm row between two pads of Q. Its spokes land in
-        // fill that P.2 (a solid pad) holds, but each passes a Q pad closer
-        // than the clearance on its way there: KiCad keeps none of them.
+        // P.1 sits in a row between two pads of Q that reach 0.5 mm past
+        // it, 0.7 mm apart. Its spokes land in fill that P.2 (a solid pad)
+        // holds, but on the way there a brush between the Q pads would come
+        // closer than the zone's clearance (0.3 mm, more than the tracks'
+        // 0.2) to them: it keeps 0.425 mm from each. KiCad keeps none.
         let obstacles = vec![
-            copper(rect([5.0, 5.0], [0.75, 0.2]), 0, "P.1"),
+            copper(rect([5.0, 5.0], [0.75, 0.15]), 0, "P.1"),
             copper(Shape::Circle { center: [8.5, 8.5], radius: 0.4 }, 0, "P.2"),
-            copper(rect([5.0, 4.4], [0.75, 0.2]), 1, "Q.1"),
-            copper(rect([5.0, 5.6], [0.75, 0.2]), 1, "Q.2"),
+            copper(rect([5.0, 4.5], [1.25, 0.15]), 1, "Q.1"),
+            copper(rect([5.0, 5.5], [1.25, 0.15]), 1, "Q.2"),
         ];
         let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() };
-        let board = board(
+        let mut pour = plane(0, 0, Some((0.5, 0.5)));
+        pour.class = 1;
+        let mut board = board(
             1,
             obstacles,
             vec![
                 Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [8.5, 8.5], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [5.0, 4.4], "Q.1"), terminal(3, [5.0, 5.6], "Q.2")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [5.0, 4.5], "Q.1"), terminal(3, [5.0, 5.5], "Q.2")] },
             ],
-            vec![plane(0, 0, Some((0.5, 0.5)))],
+            vec![pour],
             vec!["P.2".into()],
         );
+        board.classes.push(RuleClass { trace_width: 0.25, clearance: 0.3, via_diameter: 0.6, via_drill: 0.3 });
         let joined = |spoke_clearance: bool| {
             let router = Router::new(&board, &Config { pitches: vec![0.1], spoke_clearance, ..Config::default() });
             let (pours, mut parent, _, _) = router.analyze_pours_full(0, &|_| false);
@@ -7907,6 +8728,245 @@ mod tests {
         let state = &router.nets[0];
         assert!(state.on_plane[2]);
         assert!(state.branches.is_empty());
+    }
+
+    /// The spokes of `net`'s pads as the model sees them, with the
+    /// union-find and the terminal base of the analysis.
+    fn spoke_report(router: &Router, net: NetId) -> (Vec<SpokeRecord>, Vec<usize>, usize) {
+        let mut report = Vec::new();
+        let (pours, parent, _, _) = router.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+        (report, parent, pours.pieces + 1)
+    }
+
+    fn terminal(pad: usize, at: [f64; 2], label: &str) -> Terminal {
+        Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() }
+    }
+
+    #[test]
+    fn a_spoke_ends_at_the_gap_and_half_the_minimum_width() {
+        // Right of P.1 a wall of Q leaves a channel of brush centres 0.15 mm
+        // wide, from 0.425 to 0.575 mm off the pad: KiCad's spoke ends at
+        // the gap and half the minimum width (0.43 mm) and lands there; the
+        // old probe, at the gap and the spoke's width (0.7 mm), found no
+        // fill. P.2 is solid: the fill has an item.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(rect([8.15, 5.0], [1.75, 4.0]), 1, "Q.1"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [8.15, 5.0], "Q.1")] },
+            ],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            vec!["P.2".into()],
+        );
+        let outcome = |kicad_spokes: bool| {
+            let router = Router::new(&board, &Config { pitches: vec![0.1], kicad_spokes, ..Config::default() });
+            let (report, _, _) = spoke_report(&router, 0);
+            report.iter().find(|record| record.terminal == 0).unwrap().outcomes[0]
+        };
+        assert!(matches!(outcome(true), SpokeOutcome::Good(piece) if piece != 0));
+        assert_eq!(outcome(false), SpokeOutcome::NoFill);
+    }
+
+    #[test]
+    fn a_piece_that_two_pads_spoke_into_is_no_island() {
+        // P.1 and P.2 (thermal) in a pour without any other copper of P:
+        // one fill piece touches both, so KiCad's connectivity joins them
+        // through it and its DRC counts their spokes. P.3, alone in a
+        // piece walled off by Q, has spokes into a piece that only it
+        // touches: an isolated island to the DRC.
+        let obstacles = vec![
+            copper(rect([2.0, 2.0], [0.4, 0.4]), 0, "P.1"),
+            copper(rect([4.0, 2.0], [0.4, 0.4]), 0, "P.2"),
+            copper(rect([8.0, 8.0], [0.4, 0.4]), 0, "P.3"),
+            copper(rect([6.5, 8.0], [0.1, 3.0]), 1, "Q.1"),
+            copper(rect([8.5, 5.5], [2.0, 0.1]), 1, "Q.2"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [2.0, 2.0], "P.1"), terminal(1, [4.0, 2.0], "P.2"), terminal(2, [8.0, 8.0], "P.3")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.5, 8.0], "Q.1"), terminal(4, [8.5, 5.5], "Q.2")] },
+            ],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            Vec::new(),
+        );
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let (report, mut parent, base) = spoke_report(&router, 0);
+        let outcomes = |terminal: usize| report.iter().find(|record| record.terminal == terminal).unwrap().outcomes;
+        assert!(outcomes(0).iter().all(|outcome| matches!(outcome, SpokeOutcome::Good(_))));
+        assert!(outcomes(2).iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))));
+        assert_eq!(find(&mut parent, base), find(&mut parent, base + 1));
+        assert_ne!(find(&mut parent, base), find(&mut parent, base + 2));
+        // The old model: a piece without a track, a via or a solid pad is
+        // an island to every pad.
+        let old = Router::new(&board, &Config { pitches: vec![0.1], kicad_spokes: false, ..Config::default() });
+        let (report, _, _) = spoke_report(&old, 0);
+        assert!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))));
+    }
+
+    /// P.1 at the middle of a pour, walled in by Q on three sides (+x, +y
+    /// and -y, right next to its spokes) so that only its -x spoke lands;
+    /// P.2, solid, gives the fill an item.
+    fn one_spoke_board() -> Board {
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
+            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(rect([6.0, 5.0], [0.25, 0.25]), 1, "Q.1"),
+            copper(rect([5.0, 6.0], [0.25, 0.25]), 1, "Q.2"),
+            copper(rect([5.0, 4.0], [0.25, 0.25]), 1, "Q.3"),
+        ];
+        board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [6.0, 5.0], "Q.1"), terminal(3, [5.0, 6.0], "Q.2"), terminal(4, [5.0, 4.0], "Q.3")] },
+            ],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            vec!["P.2".into()],
+        )
+    }
+
+    #[test]
+    fn a_track_from_the_pad_into_the_fill_counts_as_a_spoke() {
+        // KiCad's DRC counts a track that starts within half a gap of the
+        // pad and ends in fill as a spoke; a track that bends in the gap
+        // does not count (its first segment ends outside the fill).
+        let board = one_spoke_board();
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let grid = router.grid().clone();
+        let node = |at: [f64; 2]| Node { layer: 0, cell: grid.nearest_node(at).unwrap() as u32 };
+        let record = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        let before = record(&router);
+        assert_eq!(before.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_))).count(), 1);
+        assert_eq!(Router::spokes_short(&before), 1);
+        // Diagonally out of the pad, past the corners of Q, into the fill.
+        let straight: Vec<Node> = (0..=12).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
+        router.nets[0].branches = vec![Branch { nodes: straight, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+        let after = record(&router);
+        assert_eq!(after.tracks, 1);
+        assert_eq!(Router::spokes_short(&after), 0);
+        // Bent inside the gap: the first run ends at (5.3, 5.3), in the
+        // pad's relief.
+        let mut bent: Vec<Node> = (0..=3).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
+        bent.extend((1..=9).map(|step| node([5.3 + 0.1 * step as f64, 5.3 + 0.1 * (step / 2) as f64])));
+        router.nets[0].branches = vec![Branch { nodes: bent, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+        assert_eq!(record(&router).tracks, 0);
+    }
+
+    #[test]
+    fn manual_spokes_add_a_track_from_a_starved_pad_into_the_main_piece() {
+        let board = one_spoke_board();
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        assert_eq!(router.add_manual_spokes(), 1);
+        let state = &router.nets[0];
+        assert_eq!(state.branches.len(), 1);
+        let branch = &state.branches[0];
+        assert_eq!((branch.start_terminal, branch.end_terminal), (0, PLANE_TERMINAL));
+        assert!(router.branch_is_legal(0, branch));
+        let record = spoke_report(&router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        assert_eq!(Router::spokes_short(&record), 0);
+        // Nothing more to add.
+        assert_eq!(router.add_manual_spokes(), 0);
+    }
+
+    #[test]
+    fn manual_spokes_reach_pours_of_nets_routed_as_tracks() {
+        // The tracks rung: P's pour does not connect pads (the net is routed
+        // as tracks), but KiCad fills it and counts P.1's spokes all the
+        // same; the router lends the net its pour masks for the analysis.
+        let mut board = one_spoke_board();
+        board.planes[0].connect = false;
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        assert!(router.nets[0].plane.is_empty());
+        assert_eq!(router.add_manual_spokes(), 1);
+        assert!(router.nets[0].plane.is_empty());
+        let branch = &router.nets[0].branches[0];
+        assert_eq!((branch.start_terminal, branch.end_terminal), (0, PLANE_TERMINAL));
+        assert!(router.branch_is_legal(0, branch));
+    }
+
+    #[test]
+    fn spokes_of_two_pads_side_by_side_meet() {
+        // P.1 and P.2 0.5 mm apart: no brush fits between them (it keeps
+        // 0.425 mm from each), but each spoke's end lies in the other's
+        // spoke, and KiCad keeps both: one outline holds the two pads.
+        let obstacles = vec![
+            copper(rect([4.0, 5.0], [0.4, 0.4]), 0, "P.1"),
+            copper(rect([4.9 + 0.4, 5.0], [0.4, 0.4]), 0, "P.2"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [4.0, 5.0], "P.1"), terminal(1, [5.3, 5.0], "P.2")] }],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            Vec::new(),
+        );
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let (report, mut parent, base) = spoke_report(&router, 0);
+        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes[0], SpokeOutcome::Pad(1));
+        assert_eq!(report.iter().find(|record| record.terminal == 1).unwrap().outcomes[1], SpokeOutcome::Pad(0));
+        assert_eq!(find(&mut parent, base), find(&mut parent, base + 1));
+    }
+
+    #[test]
+    fn no_spoke_is_narrower_than_the_minimum_width() {
+        // A pad 0.2 mm wide: its spokes would be 0.2 mm wide (no wider than
+        // the pad), less than the zone's 0.25 mm minimum: KiCad draws none.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.5, 0.1]), 0, "P.1"),
+            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] }],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            vec!["P.2".into()],
+        );
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let (report, _, _) = spoke_report(&router, 0);
+        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes, [SpokeOutcome::NoFill; 4]);
+    }
+
+    #[test]
+    fn the_fill_probe_finds_brush_centres_between_the_nodes() {
+        // Two walls of Q 0.7 mm apart leave brush centres only for x in
+        // [5.025, 5.075] (0.325 mm from each): no node of the 0.1 mm
+        // lattice lies there, the probe finds the fill all the same.
+        let obstacles = vec![
+            copper(rect([3.7, 5.0], [1.0, 4.0]), 1, "Q.1"),
+            copper(rect([6.4, 5.0], [1.0, 4.0]), 1, "Q.2"),
+            copper(Shape::Circle { center: [5.0, 9.5], radius: 0.2 }, 0, "P.1"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(2, [5.0, 9.5], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(0, [3.7, 5.0], "Q.1"), terminal(1, [6.4, 5.0], "Q.2")] },
+            ],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            Vec::new(),
+        );
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let grid = router.grid().clone();
+        let state = &router.nets[0];
+        assert!(!state.plane[0][grid.nearest_node([5.0, 5.0]).unwrap()]);
+        assert!(!state.plane[0][grid.nearest_node([5.1, 5.0]).unwrap()]);
+        let rings = vec![Vec::new()];
+        let probe = fill::FillProbe::new(&router, 0, &rings);
+        assert!(probe.fits(0, [5.05, 5.0], &[]));
+        assert!(!probe.fits(0, [5.0, 5.0], &[]));
+        assert!(probe.fill_at(0, [5.0, 5.0]));
+        assert!(!probe.fill_at(0, [4.85, 5.0]));
     }
 
 }

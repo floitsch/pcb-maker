@@ -188,6 +188,48 @@ nets pay extra so the thermal spokes survive. If the router or KiCad still
 sees open items, the pour nets are routed as tracks instead and the better
 board is kept.
 
+### Thermal spokes as KiCad counts them
+
+A pad joins a pour through thermal spokes, and KiCad's DRC reports a
+starved thermal where it counts fewer than two. The spoke model
+(`kicad_spokes`, on; `analyze_pours_full`, `router/fill.rs`) follows
+zone_filler.cpp and drc_test_provider_zone_connections.cpp of KiCad 10:
+
+- a spoke runs from the pad's centre to its box grown by the gap, half the
+  zone's minimum width and 0.005 mm, and is kept where that end lies in
+  the fill (a brush centre within half the minimum width) or in another
+  pad's spoke whose end lies in this one (pads side by side);
+- it is as wide as the zone's spoke width but no wider than the pad, and
+  none is drawn when that is narrower than the minimum width; other nets'
+  clearances then cut it, and it counts where a brush still fits from
+  the ring half a gap around the pad to its end;
+- the DRC ignores spokes into a fill piece that touches nothing but the
+  pad ("isolated island"); a piece with any second item (another pad's
+  spokes, a track or via of the net, the pad's own track, which touches
+  its spokes at the pad's centre) is no island, and connects what it
+  touches;
+- while a pad is short, the DRC counts each track segment connected to it
+  that starts within half a gap of it and ends in fill (on any layer, in
+  this layer's fill; a kept spoke is fill, as far as other nets'
+  clearances leave it), and falls back to the island spokes only when
+  nothing else counts.
+
+Whether a point lies in the fill is asked off the lattice (`FillProbe`:
+the obstacles and the other nets' routed copper at their exact
+distances), since the lattice misses brush centres a fraction of a pitch
+from a node. Measured with `experiments/pour-fidelity` (`census.py`,
+`spokes.py`, `causes.py`) on 44 routed boards (4274 thermal pad layers,
+171 starved findings): the old model flagged 77 of them and 866 pads KiCad
+does not; this one flags 116 and 87 (19 more are pads it does not have:
+pads sharing a number, custom pads). Thermal reliefs do not cut spokes
+(KiCad adds them after the reliefs), and only facing spokes of pads apart
+meet (a USB-C receptacle's A1 and B12 share one spot).
+
+A pad still short after the stitching gets straight tracks into its pour
+(`manual_spokes`, on): a track of the net's own class from the pad into a
+piece KiCad keeps, which the DRC counts as a spoke; a track keeps the net
+class's clearance, often less than the zone's.
+
 ### Plane skeleton (fallback)
 
 When a pour ends up shredded by the signal routing, stitching after the fact

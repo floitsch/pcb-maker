@@ -98,6 +98,14 @@ pub struct KiCadBoardRouterConfig {
     /// negotiation (default on; see `pcb_router::Config::pour_islands`).
     #[serde(default)]
     pub pour_islands: Option<bool>,
+    /// Thermal spokes as KiCad draws and counts them (default on; see
+    /// `pcb_router::Config::kicad_spokes`).
+    #[serde(default)]
+    pub kicad_spokes: Option<bool>,
+    /// Straight tracks from pads short of KiCad's two spokes into their
+    /// pour (default on; see `pcb_router::Config::manual_spokes`).
+    #[serde(default)]
+    pub manual_spokes: Option<bool>,
     /// Reach of the neck width around narrow pads (default 1.5 mm; 0 off).
     #[serde(default)]
     pub neck_reach_mm: Option<f64>,
@@ -1480,7 +1488,11 @@ pub fn dump_kicad_pour_map(
     let pcb = parse(&source)?;
     let Lowered { board } = lower(&pcb, config, true)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
-    let router = core::router::Router::new(&board, &core_config(config));
+    let mut router = core::router::Router::new(&board, &core_config(config));
+    router.adopt_existing_copper();
+    if std::env::var_os("PCB_ROUTER_DUMP_MANUAL_SPOKES").is_some() {
+        eprintln!("manual spokes: {} added", router.add_manual_spokes());
+    }
     router.dump_pours(output_directory).map_err(|error| error.to_string())?;
     let names: Vec<String> = layer_names.iter().map(|name| format!("\"{name}\"")).collect();
     fs::write(output_directory.join("layers.json"), format!("[{}]\n", names.join(", "))).map_err(|error| error.to_string())
@@ -3181,6 +3193,12 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     }
     if let Some(islands) = config.pour_islands {
         router_config.pour_islands = islands;
+    }
+    if let Some(kicad_spokes) = config.kicad_spokes {
+        router_config.kicad_spokes = kicad_spokes;
+    }
+    if let Some(manual_spokes) = config.manual_spokes {
+        router_config.manual_spokes = manual_spokes;
     }
     if let Some(reach) = config.neck_reach_mm {
         router_config.neck_reach = reach;

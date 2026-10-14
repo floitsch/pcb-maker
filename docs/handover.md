@@ -388,13 +388,48 @@ with its slots apart. Latent: the copper-pad aperture rule reads
 noted in a comment. Logs `build/quick30-x644.log` (the reference),
 `build/quick30-x651.log`, `build/bodies-*`; scripts `experiments/bodies/`.
 
+## Committed on 2026-10-14 (the fill agent, x693 / x710)
+
+Starved thermals were not optimistic fill misses: in a census of 44 routed
+boards (4274 thermal pad-layers, 171 DRC starved findings;
+`experiments/pour-fidelity/{spokes,census,classify,causes}.py`, `spokes.py`
+counts spokes in pcbnew exactly as the DRC does, `dump-pour-map` writes
+`<net>.spokes`) the old model predicted 77 of the findings but raised 866
+false alarms, so the router could not tell real starved pads from false
+ones. `kicad_spokes` (on; `PCB_ROUTER_OLD_SPOKES` for A/B) copies KiCad
+10.0.7's zone_filler and zone-connection DRC: spoke end at gap + half the
+minimum width, spoke width min(spoke, pad minor), landing test off the
+lattice with exact distances (`router/fill.rs` FillProbe), clearance from
+the DRC ring, facing spokes of neighbouring pads meet, the island rule
+("single" = exactly one item touches the piece), and the DRC's rule that a
+track leaving the pad into kept fill counts as a spoke. New census: 116
+predicted, 36 missed, 87 false alarms. `manual_spokes` (on;
+`PCB_ROUTER_NO_MANUAL_SPOKES`): after stitching, a pad our model finds
+short of two spokes gets straight tracks of its own class into a piece
+KiCad keeps (the DRC counts them as spokes); also for pour nets routed as
+tracks. Quick tier x651 to x693: 19 to 21 pass (Castor, spell_tome,
+rp2040zero), starved 12 to 2, unconnected 29 to 22, vias 2859 to 2838, CPU
+ratio geomean 0.87 under different load (no slowdown). USB_Cable_Tester
+lost its pass: GND fill under U1's F.Mask polygon (two solder-mask
+bridges), a routing change from the spoke model, not the repair; the pour
+under a mask opening of another net is the gap the bodies agent noted.
+Starved-only boards in route mode: Castor 20 to 5, PixelWave 30 to 1, Hub
+15 to 4, rosco 9 to 3, k30 21 to 14, mackerel-30 21 to 19. The rest:
+inner-layer through-hole pads whose spokes reach only island pieces (k30,
+mackerel-30; needs stitching of single pieces in tracks mode), island-rule
+edge cases, pads with repeated numbers and custom spoke templates (19 in
+the census, unmodelled). Cell-level fill agrees to 1-3 % but our map is in
+far more pieces than KiCad keeps (Castor F.Cu 128 against 17); untouched.
+Logs `build/quick30-x693.log`, `build/fill-starved`, `build/fill-census`.
+
 ## Open problems, ranked
 
-1. **Fill fidelity.** Measure our free mask against KiCad's fill polygons
-   (`GetFilledPolysList` in pcbnew) where they differ; then either test the
-   brush at sub-cell offsets for necks, or take KiCad's own fill as the pour
-   map. Everything downstream of the pour model (stranded pads, stitching,
-   the connect rungs' quality, starved thermals) depends on it.
+1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
+   inner-layer pads in tracks mode (stitch single pieces or add a via),
+   the island-rule and track-rule edge cases, pads with repeated numbers
+   and custom spoke templates, piece fragmentation against KiCad's kept
+   outlines, and a pour of one net filling under a mask opening that
+   exposes another net's pad (USB_Cable_Tester).
 2. **One-spoke pads on fine-pitch rows** (k30's U10 pad 8, 1.77 x 0.50 mm:
    the two corridors along the row are closed by the neighbours, and the
    neighbours' exit tracks run through the two left). A hard block failed;
