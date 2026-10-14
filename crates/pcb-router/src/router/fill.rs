@@ -134,9 +134,12 @@ impl<'a> FillProbe<'a> {
         self.router.board.classes[self.router.nets[self.net as usize].plane_class[layer]].trace_width / 2.0
     }
 
-    /// The hatch of the net's pour on `layer`, if it is hatched.
+    /// The hatch of the net's pour on `layer`, if it is hatched (of a pour
+    /// the net is routed past as tracks too while `Router::hatch_any_plane`
+    /// is set).
     pub(super) fn hatch(&self, layer: usize) -> Option<Hatch> {
-        self.router.board.planes.iter().find(|plane| plane.net == self.net && plane.layer == layer && plane.connect && plane.hatch.is_some()).and_then(|plane| plane.hatch)
+        let any = self.router.hatch_any_plane;
+        self.router.board.planes.iter().find(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || any) && plane.hatch.is_some()).and_then(|plane| plane.hatch)
     }
 
     /// How far past the gap KiCad tests a spoke's end: half the minimum
@@ -178,7 +181,7 @@ impl<'a> FillProbe<'a> {
         let bridge = board
             .planes
             .iter()
-            .filter(|plane| plane.net == self.net && plane.layer == layer && plane.connect)
+            .filter(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || self.router.hatch_any_plane))
             .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
             .fold(0.0f64, f64::max);
         for (pad, reach) in &self.rings[layer] {
@@ -302,7 +305,7 @@ impl<'a> FillProbe<'a> {
         let bridge = board
             .planes
             .iter()
-            .filter(|plane| plane.net == self.net && plane.layer == layer && plane.connect)
+            .filter(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || self.router.hatch_any_plane))
             .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
             .fold(0.0f64, f64::max);
         let encloses_ring = self.rings[layer].iter().any(|(pad, reach)| {

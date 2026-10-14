@@ -135,6 +135,10 @@ pub struct Config {
     /// half a micron (`fill::TRACK_END_TOLERANCE`), rather than the spokes'
     /// 3 microns (`PCB_ROUTER_OLD_TRACK_ENDS` for A/B).
     pub track_end_tolerance: bool,
+    /// A thermal via inside an exposed pad that the spoke model finds
+    /// starved gets a short track from its centre into the fill over the
+    /// pad (`add_inner_spokes`; `PCB_ROUTER_NO_INNER_SPOKES` for A/B).
+    pub inner_spokes: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -318,6 +322,7 @@ impl Default for Config {
             spoke_frames: std::env::var_os("PCB_ROUTER_OLD_SPOKE_FRAMES").is_none(),
             inner_pads: std::env::var_os("PCB_ROUTER_NO_INNER_PADS").is_none(),
             track_end_tolerance: std::env::var_os("PCB_ROUTER_OLD_TRACK_ENDS").is_none(),
+            inner_spokes: std::env::var_os("PCB_ROUTER_NO_INNER_SPOKES").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -528,6 +533,12 @@ struct NetState {
     /// Terminal nodes outside their (too narrow) pad, with the lattice
     /// nodes sampled along the straight stub from the pad centre.
     escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)>,
+    /// Short tracks from a pad merged into its terminal's larger pad (an
+    /// exposed pad's thermal via) into fill over that pad, which KiCad's
+    /// DRC counts as the via's spokes (`add_inner_spokes`): layer, start
+    /// (the via's centre), end and width. Inside the larger pad's copper
+    /// they keep every clearance it keeps.
+    inner_spokes: Vec<(usize, crate::geometry::Point, crate::geometry::Point, f64)>,
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
@@ -1287,6 +1298,10 @@ pub struct Router {
     /// Bits per (map, cell): set while one net is stamped, so that a cell
     /// two offsets reach counts once; cleared again from the stamped list.
     stamp_mark: Vec<Vec<u64>>,
+    /// While set, the fill model reads a hatched zone's hatch also when
+    /// its net is routed as tracks (`add_inner_spokes` only: KiCad fills
+    /// the zone all the same; elsewhere the tracks rung keeps its model).
+    hatch_any_plane: bool,
     history: Vec<Vec<f32>>,
     /// `stamps[net class][querying class]`
     stamps: Vec<Vec<Stamps>>,
@@ -1520,6 +1535,7 @@ impl Router {
             statics: Arc::new(statics),
             occupancy: vec![vec![0; cells]; maps],
             stamp_mark: vec![vec![0; cells.div_ceil(64)]; maps],
+            hatch_any_plane: false,
             history: vec![vec![0.0; cells]; layers + 1],
             stamps,
             nets: Vec::new(),
@@ -7646,6 +7662,16 @@ impl Router {
                         }
                     }
                 }
+                // The short tracks from pads inside their terminal's pad
+                // (`inner_spokes`), tracks of the net as any.
+                for (layer, a, b, width) in &state.inner_spokes {
+                    if *layer == record.layer
+                        && pad.shape.distance_to_segment(*a, *b) <= width / 2.0 + 1.0e-6
+                        && if near_pad(*a) { in_fill(parent, *b) } else { near_pad(*b) && in_fill(parent, *a) }
+                    {
+                        record.tracks += 1;
+                    }
+                }
             }
             if good + record.tracks < 2 {
                 for piece in islands {
@@ -7890,11 +7916,122 @@ impl Router {
                 state.plane_class = plane_class;
             }
             added += self.add_manual_spokes_of(net);
+            if self.config.inner_spokes && self.config.inner_pads {
+                added += self.add_inner_spokes(net);
+            }
             if lent {
                 let class = self.board.nets[net as usize].class;
                 let state = &mut self.nets[net as usize];
                 state.plane = Vec::new();
                 state.plane_class = vec![class; self.board.layer_count];
+            }
+        }
+        added
+    }
+
+    /// For each pad merged into its terminal's larger pad (an exposed
+    /// pad's thermal via) that the spoke model finds starved on a layer
+    /// where it lies inside that pad: a straight track of the net's width
+    /// from its centre to fill over the larger pad (in a hatched zone its
+    /// own ring), its copper wholly inside the larger pad's, the shortest
+    /// of sixteen directions. KiCad's DRC counts a track connected to the
+    /// pad that starts in its ring and ends in fill as a spoke; inside the
+    /// larger pad's copper it keeps every clearance that pad keeps. Kept
+    /// only if the model then finds the pad no longer short (0xCB's U3.45
+    /// corner vias, whose ring and outer spokes the QFN's pins take).
+    fn add_inner_spokes(&mut self, net: NetId) -> usize {
+        self.hatch_any_plane = true;
+        let added = self.add_inner_spokes_of(net);
+        self.hatch_any_plane = false;
+        added
+    }
+
+    fn add_inner_spokes_of(&mut self, net: NetId) -> usize {
+        let mut added = 0;
+        let mut tried: HashSet<(usize, usize)> = HashSet::new();
+        loop {
+            let mut report = Vec::new();
+            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+            let description = &self.board.nets[net as usize];
+            let inner = |record: &SpokeRecord| {
+                let host = &self.board.obstacles[description.terminals[record.terminal].pad];
+                record.pad != description.terminals[record.terminal].pad && host.layers & (1 << record.layer) != 0 && host.shape.contains(record.anchor)
+            };
+            let Some(record) = report.iter().find(|record| inner(record) && Self::spokes_short(record) > 0 && !tried.contains(&(record.pad, record.layer))) else {
+                break;
+            };
+            tried.insert((record.pad, record.layer));
+            let (layer, anchor, pad, short) = (record.layer, record.anchor, record.pad, Self::spokes_short(record));
+            let host = &self.board.obstacles[description.terminals[record.terminal].pad];
+            let width = self.board.classes[description.class].trace_width;
+            let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+            let bridge = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+            let bounds = self.board.obstacles[pad].shape.aabb();
+            let radius = 0.5 * (bounds.maximum[0] - bounds.minimum[0]).max(bounds.maximum[1] - bounds.minimum[1]);
+            // Copper wholly inside the larger pad: its ends and sides.
+            let inside_host = |a: crate::geometry::Point, b: crate::geometry::Point| {
+                let length = crate::geometry::distance(a, b).max(1.0e-9);
+                let d = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+                let h = width / 2.0;
+                let steps = ((length / (h / 2.0)).ceil() as usize).max(1);
+                (0..=steps).all(|step| {
+                    let t = length * step as f64 / steps as f64;
+                    let at = [a[0] + d[0] * t, a[1] + d[1] * t];
+                    [[-d[1] * h, d[0] * h], [d[1] * h, -d[0] * h], [0.0, 0.0]].iter().all(|offset| host.shape.contains([at[0] + offset[0], at[1] + offset[1]]))
+                }) && host.shape.contains([b[0] + d[0] * h, b[1] + d[1] * h])
+            };
+            let candidate = {
+                let rings = self.thermal_ring_pads(net);
+                let probe = fill::FillProbe::new(self, net, &rings);
+                let holes: Vec<&crate::board::Obstacle> = self
+                    .board
+                    .obstacles
+                    .iter()
+                    .filter(|obstacle| obstacle.kind == crate::board::ObstacleKind::Hole && obstacle.net == Some(net))
+                    .collect();
+                let mut best: Option<(f64, crate::geometry::Point)> = None;
+                // From the ring half a gap out to the far side of a
+                // hatched zone's ring.
+                let (near, far) = (radius + gap / 2.0 + width / 2.0, radius + gap + bridge.max(width));
+                for index in 0..16 {
+                    let angle = std::f64::consts::TAU * index as f64 / 16.0;
+                    let direction = [angle.cos(), angle.sin()];
+                    let steps = 8;
+                    for step in 0..=steps {
+                        let length = near + (far - near) * step as f64 / steps as f64;
+                        let end = [anchor[0] + direction[0] * length, anchor[1] + direction[1] * length];
+                        if best.is_some_and(|(best, _)| best <= length) {
+                            break;
+                        }
+                        if holes.iter().any(|hole| hole.shape.contains(end)) || !inside_host(anchor, end) {
+                            continue;
+                        }
+                        if probe.for_track_end(|| probe.in_ring(layer, end) || probe.final_fill_at(layer, end)) {
+                            best = Some((length, end));
+                            break;
+                        }
+                    }
+                }
+                best.map(|(_, end)| end)
+            };
+            if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                eprintln!("inner spoke for pad {pad} layer {layer} at {anchor:?} short {short}: {candidate:?}");
+            }
+            let Some(end) = candidate else {
+                continue;
+            };
+            let state = &mut self.nets[net as usize];
+            state.inner_spokes.push((layer, anchor, end, width));
+            let mut report = Vec::new();
+            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+            let after = report.iter().find(|record| record.pad == pad && record.layer == layer).map_or(short, Self::spokes_short);
+            if after < short {
+                if self.config.verbose {
+                    eprintln!("inner spoke: {} pad at {anchor:?} on layer {layer} to {end:?}", self.board.obstacles[pad].label);
+                }
+                added += 1;
+            } else {
+                self.nets[net as usize].inner_spokes.pop();
             }
         }
         added
@@ -9443,6 +9580,9 @@ impl Router {
                 run_start = index;
             }
         }
+        for (layer, start, end, width) in &state.inner_spokes {
+            route.segments.push(Segment { layer: *layer, start: *start, end: *end, width: *width });
+        }
         (route, stubs)
     }
 
@@ -10406,6 +10546,49 @@ mod tests {
         let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads: false, ..Config::default() });
         let (report, _, _) = spoke_report(&router, 0);
         assert!(report.iter().all(|record| record.pad == 0));
+    }
+
+    #[test]
+    fn a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring() {
+        // The corner via of `thermal_vias_inside_an_exposed_pad_have_their_
+        // own_rings_in_a_hatched_zone`, starved with one spoke: a track from
+        // its centre into its ring over the exposed pad (which KiCad's DRC
+        // counts as a spoke) makes two, its copper inside the exposed pad's.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
+            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
+            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
+            copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
+        ];
+        let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
+        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        let mut board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+            ],
+            planes,
+            Vec::new(),
+        );
+        for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
+            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+        }
+        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let corner = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.pad == 2).unwrap();
+        assert_eq!(Router::spokes_short(&corner(&router)), 1);
+        assert_eq!(router.add_inner_spokes(0), 1);
+        let after = corner(&router);
+        assert_eq!((Router::spokes_short(&after), after.tracks), (0, 1));
+        let (layer, start, end, width) = router.nets[0].inner_spokes[0];
+        assert_eq!((layer, start), (0, [5.75, 5.75]));
+        assert!(board.obstacles[0].shape.contains(end));
+        assert!((width - 0.25).abs() < 1.0e-9);
+        assert!(router.materialize(0).0.segments.iter().any(|segment| segment.start == start && segment.end == end));
+        // Nothing more to add.
+        assert_eq!(router.add_inner_spokes(0), 0);
     }
 
     #[test]
