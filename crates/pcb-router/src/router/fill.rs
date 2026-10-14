@@ -41,11 +41,19 @@ const EPSILON: f64 = 0.003;
 /// `EPSILON` for the DRC's test of a track's end in the fill: a point,
 /// where KiCad's fill keeps the clearance to a micron on straight edges
 /// (its pruning) and up to 5 microns more on arcs (polygons outside the
-/// curve), not a spoke's end with room around it. Census of 44 boards: at
-/// `EPSILON` 17 misses and 27 false alarms, 0.001 mm 16 and 27, 0.0005 mm
-/// 12 and 27 (0xCB's U3.45 thermal vias: a track from one ends 1.5 microns
-/// outside a sliver of fill between two QFN pins), exact 12 and 29. A
-/// knife edge: these ends lie within a micron of the fill's rim.
+/// curve), not a spoke's end with room around it. The value is KiCad's DRC
+/// epsilon (`BOARD_DESIGN_SETTINGS::GetDRCEpsilon`, ADVANCED_CFG
+/// `m_DRCEpsilon` = 0.0005 mm, 500 nm on 0xCB's board in pcbnew), which its
+/// clearance tests subtract from every clearance (`sub_e` in
+/// drc_test_provider_copper_clearance.cpp; edge, physical and hole
+/// clearance alike). The starved-thermal check itself tests the point
+/// against the filled polygons with no epsilon and the filler prunes with
+/// its own micron, so this is KiCad's tolerance for "keeps the clearance",
+/// not a constant of that check. Census of 44 boards: at `EPSILON` 17
+/// misses and 27 false alarms, 0.001 mm 16 and 27, 0.0005 mm 12 and 27
+/// (0xCB's U3.45 thermal vias: a track from one ends 1.5 microns outside a
+/// sliver of fill between two QFN pins), exact 12 and 29. These ends lie
+/// within a micron of the fill's rim.
 const TRACK_END_TOLERANCE: f64 = 0.0005;
 
 #[derive(Clone, Copy)]

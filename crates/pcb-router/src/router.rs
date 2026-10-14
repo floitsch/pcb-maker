@@ -131,9 +131,9 @@ pub struct Config {
     /// its copper too, as KiCad builds and counts their spokes there (an
     /// exposed pad's thermal vias; `PCB_ROUTER_NO_INNER_PADS` for A/B).
     pub inner_pads: bool,
-    /// The DRC's track-end test keeps the clearance to half a micron
-    /// (`fill::TRACK_END_TOLERANCE`) rather than the spokes' 3 microns
-    /// (`PCB_ROUTER_OLD_TRACK_ENDS` for A/B).
+    /// The DRC's track-end test keeps the clearance to KiCad's DRC epsilon,
+    /// half a micron (`fill::TRACK_END_TOLERANCE`), rather than the spokes'
+    /// 3 microns (`PCB_ROUTER_OLD_TRACK_ENDS` for A/B).
     pub track_end_tolerance: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.

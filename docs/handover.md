@@ -864,9 +864,13 @@ the track to the centre via's hole. Separately (`track_end_tolerance`, on,
 `PCB_ROUTER_OLD_TRACK_ENDS`): the DRC's track-end test keeps other nets'
 clearances to 0.5 microns instead of the spokes' 3 (`TRACK_END_TOLERANCE`);
 four of the ten have a track from the corner via ending 1.5 microns outside
-a sliver of fill between pins U3.23 and U3.24. A knife edge: exact 12
-missed / 29 false alarms, 0.5 microns 12 / 27, 1 micron 16 / 27, 3 microns
-17 / 27.
+a sliver of fill between pins U3.23 and U3.24. Half a micron is KiCad's
+DRC epsilon (`BOARD_DESIGN_SETTINGS::GetDRCEpsilon`, ADVANCED_CFG
+`m_DRCEpsilon` 0.0005 mm, 500 nm read back in pcbnew), which its clearance
+providers subtract from every clearance (`sub_e`); the zone-connection
+check's point test uses none and the filler prunes with 1 micron, so the
+number is KiCad's clearance tolerance, not that check's. Exact 12 missed /
+29 false alarms, 0.5 microns 12 / 27, 1 micron 16 / 27, 3 microns 17 / 27.
 
 Census, same tooling and KiCad cache (x801 = x820 = x768 before; x824
 after, x823 before the rebase onto the DRC cache, identical):

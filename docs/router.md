@@ -293,8 +293,11 @@ centre ends in none). The DRC's track-end test keeps other nets'
 clearances to half a micron (`TRACK_END_TOLERANCE`, `track_end_tolerance`;
 `PCB_ROUTER_OLD_TRACK_ENDS`) rather than the spokes' 3 microns: 0xCB's
 corner via has a track from it ending 1.5 microns outside a sliver of fill
-between two pins. That is a knife edge: exact gives two false alarms,
-a micron loses those four findings. `experiments/pour-fidelity/pads_in_pads.py`
+between two pins. Half a micron is KiCad's DRC epsilon (`GetDRCEpsilon`,
+ADVANCED_CFG `m_DRCEpsilon` 0.0005 mm), which its clearance tests subtract
+from every clearance; the starved-thermal check itself tests the point
+against the fill with none, and the filler prunes with its own micron.
+Exact gives two false alarms, a micron loses those four findings. `experiments/pour-fidelity/pads_in_pads.py`
 lists the pads inside pads of a board.
 
 After a layout move's reroute the pours are refreshed (pads the rerouted
