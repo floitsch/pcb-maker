@@ -761,6 +761,72 @@ identical to manual routes on two boards); incremental sweeps with
 objectives line (unconnected, new errors, vias, length, CPU, work, cuts,
 first-route open terminals) in the summary and summary.json.
 
+## Committed on 2026-10-14 (DRC cache)
+
+KiCad's DRC (`kicad-cli pcb drc`, 6-40 s of wall clock, about 20 s of CPU
+and 2.2 GB per call) is now cached on disk (`crates/pcb-kicad/src/drc_cache.rs`,
+hooked into `native_report::run_kicad_report`, so every DRC of a route,
+layout, verify-kicad-rung and the reference check goes through it; ERC is
+about 1 s and is not cached). Key: SHA-256 (sha2 is in the tree) of the
+kicad-cli version, the DRC arguments, the board's file name (the report's
+`source`), every KiCad design file under the board's directory by relative
+path and bytes (`.kicad_pcb`, `.kicad_pro`, `.kicad_dru`, `.kicad_sch`,
+`.kicad_sym`, `.kicad_mod`, library tables; hidden entries skipped), the
+global `fp-lib-table`/`sym-lib-table` and the `KICAD*` environment.
+`kicad_common.json` is left out on purpose: kicad-cli rewrites it on every
+run. KiCad's installed libraries are not hashed (they feed only the
+`lib_footprint_*` warnings, which never count). Value: KiCad's report
+bytes; a hit is validated like a fresh report and published with a rename.
+Entries are `<key>.json` in `$PCB_MAKER_CACHE_DIR/drc`, else
+`$XDG_CACHE_HOME/pcb-maker/drc`, else `~/.cache/pcb-maker/drc`;
+`PCB_MAKER_NO_CACHE=1` turns it off; temporary file plus rename; least
+recently used out beyond 2000 entries or 2 GB (a hit touches its entry);
+any cache failure falls back to running KiCad. Visible as `drc_cache:
+{calls, hits}` in verdict.json (and the reports' `verdict`) and on the
+`board check:` stderr line, which also gives the lowering and lattice
+totals so far. Snapshot x801.
+
+Correctness (verify-kicad-rung, fresh with `PCB_MAKER_NO_CACHE=1`, then a
+miss, then a hit, each in its own copy of the project): on Castor's routed
+board, spell_tome, fence-esp32 (with schematic parity), jetson and Hub the
+hit's drc.json is byte-identical to the miss's and verification.json is
+identical across all three. Fresh against miss (two fresh runs) differs on
+jetson and Hub beyond the date: KiCad's DRC is not byte-deterministic (the
+order of findings, and which item pair names a missing connection); the
+counts per type agree. One byte in the board (a footprint coordinate) and
+one byte in the `.kicad_pro` each missed and added an entry on all five.
+Unit tests: key derivation (every input changes it, unrelated and hidden
+files do not, length-prefixed fields), atomic writes under eight
+concurrent writers, eviction; an integration test with a fake kicad-cli
+(two DRCs of one board: one KiCad run, one entry, identical bytes; a
+changed byte or argument misses; a corrupt entry is dropped).
+
+Savings, x801. Per call (verify-kicad-rung): Castor 5.8 s wall / 21.8 s CPU
+to 1.1 s / 1.1 s (the rest is the preview SVG export, uncached), jetson
+17-23 s to 6 s. Castor route mode on its v15 placement: 2 DRC calls (the
+result and the reference), cold 557 s wall / 598 s CPU, warm 489 s / 578 s,
+same board and drc.json; the board check's KiCad 38.3 s to 0.7 s. Short
+tier (4 jobs, 2 threads, `build/drccache/short-{cold,warm}.log`): 54 DRC
+calls, warm 53 hits (WLED_Matrix's cold run was cut by the deadline, the
+warm one not, so its final board differs); 11 of 12 results identical;
+tier wall 873 to 683 s, CPU 7008 to 5167 s (load-sensitive), and the
+layout's peak memory drops from 2.1-2.3 GB to its own (0.4-1.4 GB) where
+every DRC hits. run.py's designer DRC calls kicad-cli itself and is not
+cached.
+
+Within one run (cold cache) almost no DRC is on a byte-identical board:
+spell_tome layout 1 call, Castor layout 2, Castor route 2, jetson route 5
+(4 attempts and the reference), 0 hits each; the short tier 54 calls, 1
+hit (reCamera) and 2 identical boards checked side by side (51 entries).
+v15 layouts make 0-19 DRC calls (median 2). The cache pays across runs:
+reruns, A/B pairs on the same placement, the reference board.
+
+Lowering and lattice building (the second target): measured, not cached.
+jetson route 7 lowerings 1.3 s and 7 router builds 15.4 s (summed over
+threads) of 1558 s wall; Castor route 4 builds 4.3 s of 557 s; Castor
+layout 22 lowerings 0.1 s, 4 builds 2.6 s of 904 s. Under 1.1 % everywhere,
+below the 5 % bar.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
