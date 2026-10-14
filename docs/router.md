@@ -426,10 +426,31 @@ rung's seeds, the narrow-signal and relaxed-clearance steps: video's
 narrow-signal attempt stopped wherever the load had brought it), and the
 pour nets' pre-negotiation in route mode has its minute in work.
 
-What remains load-dependent: the clean-up's pour checks are not counted
-as work (Sisu: 37-104 s of pour checks in a 62 s clean-up budget), so
-under heavy load the route-mode guard (`GUARD` times the budget) can stop
-a clean-up (seen once, on a losing rung, reported as `budget guard`); a
+The phase budgets after negotiation (resolve, clean-up, via reduction,
+thermal spokes: `clock` and `spent`) count the pour analyses as work beside
+the search (`budget_work`): a clean-up on a pour board spends much of its
+time checking that a batch strands no pour pad (Sisu: 21-47 s of pour
+checks in a 61-66 s budget, uncounted until 2026-10-14, so its budget ran
+on in wall clock with the load and the route-mode guard once stopped it).
+An analysis costs `POUR_NODE_NANOS` (41) per lattice node inside the net's
+pour, `POUR_STAMP_NANOS` (38) per stamp of the net and `PROBE_ITEM_NANOS`
+(47) per item its fill probe indexes or looks at (`fill::FillProbe`
+counts them; the spoke tests). Calibrated on seven boards (Castor, Sisu,
+reCamera, USB_Cable_Tester, spell_tome, 1337-v4.0, k30-SBC; route mode, one
+thread, load 17-22): the model gives 0.89-1.07 of the analyses' wall time
+per board; at load 21-25 0.70-1.10 (the wall time grows with the load, the
+work does not). `PCB_ROUTER_POUR_TRACE` prints each analysis's counts,
+modelled work and wall time for recalibrating; the verbose `profile work:`
+line splits wall time, search work and pour work by phase, and the
+clean-up's last line says how much of its budget it used and how much of
+that was pour analyses. Not counted: the negotiation's stamping and
+conflict bookkeeping (its limit is search expansions; at one thread its
+wall time runs 10-40 % ahead of search and pour work), the pour analyses
+in the ladder's and the layout's work tallies and in `deadline_work`
+(those still count search expansions), and the manual spokes' fill
+probe.
+
+What remains load-dependent: a
 run that reaches the wall clock first (a
 machine slower or busier than the work's calibration by more than the 10 %
 margin: video's placement took 980-1275 s of wall clock for 193 s of work

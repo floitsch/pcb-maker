@@ -1079,6 +1079,64 @@ comparison is x776 against a v6 base, build/quick30-x783.log (pending:
 not finished when this was written). Logs `build/ladder-reserve/`
 (summary.py there), `build/quick30-x776.log`.
 
+## Committed on 2026-10-15 (clean-up work accounting, x814)
+
+The determinism agent left the clean-up's pour checks out of the work:
+the pour analyses that keep a batch from stranding pour pads ran on wall
+clock (Sisu: 21-47 s of pour checks in a 61-66 s budget; search work alone
+covered 52-80 % of the clean-up's wall time), so a busy machine
+stretched the clean-up and the route-mode guard (4 x the budget) could stop
+it. Now every pour analysis counts as work in the phase budgets
+(`budget_work` behind `clock` and `spent`: resolve, clean-up, via
+reduction, thermal spokes): 41 ns per lattice node inside the net's pour,
+38 ns per stamp of the net, 47 ns per item the fill probe indexes or looks
+at (the spoke tests; `FillProbe` counts them). Calibration (route mode, one
+thread, `PCB_ROUTER_POUR_TRACE`, seven boards): per board the model gives
+0.89-1.07 of the analyses' wall time at load 17-22, 0.70-1.10 at 21-25
+(x814, Castor and reCamera lowest); a lattice-only model spread 0.5-1.65
+(the spoke tests are a third to two thirds of the time on reCamera and
+Castor). At one thread the clean-up's counted work is now 0.98 of its wall
+time on Castor (0.64 before). The verbose log has a `profile work:` line
+(wall, search work, pour wall and work per phase) and the clean-up's last
+line gives its work, its budget and the pour share. What stays uncounted
+is in docs/router.md, "Determinism and the wall clock" (the negotiation's
+stamping, the ladder's and the layout's tallies, `deadline_work`).
+
+Route mode on v15 placements, x777 (main) against x814 side by side, two
+jobs, load 29-35, one run each:
+
+| | before | after |
+|---|---|---|
+| Sisu result | 7 unconnected, 408 vias, 5924.8 mm | identical (the winning attempt, signals at 0.1 mm on pours=tracks, has no pour checks) |
+| Sisu clean-ups on the pour rungs | 404 / 308 / 234 analyses | 404 / 290 / 220; work 60.1 of 63, 69.3 of 66, 60.9 of 61 s in 80.9 / 80.5 / 61.8 s wall (work/wall 0.74-0.99) |
+| Castor result | 0 unconnected, 3 starved (allowed 3, pass), 225 vias, 5186.2 mm | 0 unconnected, 4 starved (fail by one), 209 vias, 5156.1 mm |
+| Castor clean-ups | first one finished its passes | each ends by work (60.1 of 60 s in 82.7 s wall, 60.3 of 60 in 59.6, 68.8 of 71 in 60.9) |
+
+No wall guard fired on either side. Castor's change is the budget meaning
+less work than before: the first clean-up stops earlier, the via
+reduction starts elsewhere (16 vias fewer) and one pad more is starved;
+a flip of the kind the short tier holds, not a fault of the accounting.
+
+Short tier x814 (load 9 at the start, 7 at the end) against
+build/bench-short/short-x783.log (both tasks v6): 12 of 12 the same by
+compare.py (better 0, same 12, worse 0; unconnected 42 to 42, passes 6 to
+6), 11 rows identical in vias, length and work. The one that moved,
+1337-v4.0 (passes on both): vias 64 to 76, length 1594 to 1611 mm, work
+169 to 130 s. Its first polish's via reduction (strict, 60 s) now counts
+the pour analyses of its renegotiations and clean-ups, so after two rounds
+it stops ("round 2 would take about 24s of the 15s left of 60s") where it
+ran three (71 to 69 vias); the second polish starts from that board. Tests:
+`cargo test --release -p pcb-router -p pcb-kicad` pass (new:
+`pour_analyses_count_as_budget_work`). Logs: build/cleanup-x777,
+build/cleanup-x814 (route mode), build/short-x814.log, calibration
+build/cleanup-cal3-x813 and build/cleanup-val-x814.
+
+Next: the ladder's and the layout's work tallies still count search
+expansions only; counting the pour work there too (a `work()` in
+`RoutingResult` instead of `expansions`) would make `deadline_work` and the
+ladder's budget consistent with the phase budgets, at the price of shifting
+more rows (every pour board's attempts), so it wants its own measurement.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
