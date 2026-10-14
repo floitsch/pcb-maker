@@ -129,6 +129,13 @@ measurement). The discipline:
 - **Router questions in route mode** (`--route-from <earlier output
   directory>`): the same placements routed again, no placement race, no
   legaliser wall time.
+- **The DRC cache and CPU claims**: since x801 KiCad DRC reports are cached
+  by board and rule hash (`~/.cache/pcb-maker/drc`, docs/agents.md). The
+  side of a pair that finishes a board first pays the reference DRC and the
+  other side hits it, which biases CPU seconds by 10 to 25 s per board, so
+  CPU pairs run with `PCB_MAKER_NO_CACHE=1` on both sides, or both sides
+  warm. Quality comparisons are unaffected: a hit is byte-identical to the
+  stored run. run.py's own designer DRC is not cached yet.
 - **Pinned simultaneous pairs only for CPU claims**: both binaries at the
   same time on symmetric halves of the cores, `taskset -c 0-7,16-23`
   against `8-15,24-31` (logical CPUs n and n+16 share a physical core:
