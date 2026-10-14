@@ -914,7 +914,7 @@ from the corner via inward into its own ring, which the DRC counts; not
 done. Logs `build/census/x801.txt`, `x824*.txt` in the fill3 worktree;
 `build/fill3-x801.log`, `build/fill3-x824.log`.
 
-## Committed on 2026-10-14 (placer fixes, x780)
+## Committed on 2026-10-14 (placer fixes, x792)
 
 Three placer defects from the v15 triage (`build/triage*`).
 
@@ -944,7 +944,18 @@ MIDAS-MK1.1 keeps 5 seeds instead of 12 (its seeds booked 0.45 of their
 CPU time, now 1.05: twelve were 2.4 times the budget), wirelength 2119 to
 2255 mm, the same 11 unconnected in the tier. Rebased on the determinism
 agent's work (x781 = x747 + this): the waves' work now counts each wave's
-slowest seed at its real cost too. CUT_LINE
+slowest seed at its real cost too. Layouts, one run a side (x791 =
+main against x792 = main + this, four threads each, load 16-49): 0xCB
+pcb-panel, x791 never finished placing (1800 s timeout, cut); x792 placed
+in 329 s (170 s of work, 321 s more in waves), routed (177 open after the
+first route) and ended on kicad-cli's 900 s zone refill (open problem 7,
+no KiCad count). 0xCB panel, x791 placed in 1248 s for 34 s of work and
+was cut twice (router deadline, no final ladder), 136/188 routed, 213
+unconnected; x792 placed in 222 s, cut once (a router deadline, 14 s of
+its work done, load 30), 152/188, 86 unconnected. glasgow, both
+identical (112/226, 263 unconnected, no cut), placement 755 to 544 s of
+wall. vaio_re, no cut either side, 163 to 138 unconnected (8 seeds
+kept instead of 11).
 
 **2. Tabbed panels** (`keep_copies`, on): copies told apart by their
 nets (KiKit's `Board_N-` names) and repeated references, each with fixed
@@ -953,7 +964,9 @@ region (cut halfway between the copies' fixed parts). The 0xCB
 pcb-panel and panel (four copies each) qualify; no tier board does. A
 repeated reference in a constraint now names its parts in turn (the
 molecules' J3 had a left, a top and a bottom edge at once).
-PANEL_RESULTS The PolyKybd molecules share their net names across
+Parts whose nearest fixed part belongs to another copy, the 0xCB panel:
+13-20 in v14, v15 and on x791, 0 on x792; pcb-panel on x792: 2 (C47 and
+C1, next to a cut line). The PolyKybd molecules share their net names across
 copies (one net group), so the copy rule cannot see them; with the
 reference fix 5x4_wave places legally, the other four still fail: the
 designer stacked alternative connectors (J3 on J5, J4 on J6, pad on pad)
@@ -976,7 +989,15 @@ footprint in place when a netless one shares its reference (Quanta75
 both 0 overlaps placed; it also changes WLED_Matrix's LDO1 and Hub's
 REF**). QUANTA_LAYOUT
 
-Quick tier x780 against x722: TIER_LINE
+Quick tier x782 (x769 + this) against x768, both on the tier's own task
+list (github-tasks-v5): 29 of 30 rows identical (routed, vias, length,
+KiCad findings); WLED_Matrix 4 to 5 unconnected, from run.py's change
+(its netted LDO1 now stays where the designer put it); 23 passes both,
+unconnected 25 to 26, vias 2814 to 2824, CPU geomean 0.94, no cut rows.
+The same binary's placements on github-tasks-v6 (the 30 tier boards
+prepared once, x738 against x780): 29 identical, MIDAS-MK1.1 as above.
+Logs `build/quick30-x782.log` (v5), `build/quick30-x781.log` (v6, 23 of
+30; framework_mobo passes on v6's constraints, which fix M1).
 
 ## Open problems, ranked
 
