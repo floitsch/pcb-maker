@@ -65,6 +65,13 @@ pub struct Component {
     /// other copper, not against courtyards, so they keep the copper
     /// clearance from the other side's pads, not from its bodies.
     pub far_copper: Vec<[f64; 4]>,
+    /// The part's courtyard on the other side, where it has one on both
+    /// ([min x, min y, max x, max y], own frame; `far_side` holds it too):
+    /// a back-mounted hot-swap switch's 14 mm square on the front. KiCad
+    /// checks it against that side's courtyards and holes, including
+    /// those of parts on the part's own side (two back switches' front
+    /// squares may not overlap).
+    pub far_courtyard: Vec<[f64; 4]>,
     /// Boxes ([min x, min y, max x, max y], own frame) that block the
     /// part's own side in place of its body: a hollow part (a shield's
     /// outline around its header pads) lets other parts sit inside it.
@@ -316,6 +323,18 @@ impl Problem {
     /// angle: a neighbour search around a body must look that much farther
     /// (a hot-swap switch on the back: the switch's courtyard on the front
     /// is larger than the socket's on the back).
+    /// The extra reach a neighbour search needs where two parts on one
+    /// side may meet with their courtyards on the other side
+    /// (`Component::far_courtyard`): both reach beyond their bodies, so
+    /// `far_reach` once more; nothing on boards without such parts.
+    pub fn far_courtyard_reach(&self) -> f64 {
+        if self.components.iter().any(|component| !component.far_courtyard.is_empty()) {
+            self.far_reach()
+        } else {
+            0.0
+        }
+    }
+
     pub fn far_reach(&self) -> f64 {
         self.components
             .iter()

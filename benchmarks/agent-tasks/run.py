@@ -99,6 +99,19 @@ def unplace(board, point, remove_outline, keep=()):
     text = board.read_text()
     pieces, last, netless = [], 0, []
     pattern = re.compile(r"\((footprint|gr_line|gr_rect|gr_arc|gr_circle|gr_poly)[\s\"]")
+    connected = r'\(pad [^\n]*[\s\S]*?\(net (?:\d+ )?"(?!unconnected-)[^"]+"\)'
+    reference_pattern = r'\((?:property "Reference"|fp_text reference) "([^"]*)"'
+    # The netless footprints stay, fixed by reference: a footprint with a
+    # net that shares its reference stays too (Quanta75's mounting holes
+    # are all "M2.5", some on GND: stacked, they were held at the stack by
+    # the netless ones' "M2.5" and overlapped there).
+    staying = set()
+    for match in pattern.finditer(text):
+        if match.group(1) == "footprint":
+            block = text[match.start():block_end(text, match.start())]
+            reference = re.search(reference_pattern, block)
+            if reference and reference.group(1) and not re.search(connected, block):
+                staying.add(reference.group(1))
     for match in pattern.finditer(text):
         start = match.start()
         if start < last:
@@ -107,15 +120,14 @@ def unplace(board, point, remove_outline, keep=()):
         block = text[start:end]
         pieces.append(text[last:start])
         if match.group(1) == "footprint":
-            reference = re.search(r'\((?:property "Reference"|fp_text reference) "([^"]*)"', block)
+            reference = re.search(reference_pattern, block)
             # A pad's net is `(net "X")` in KiCad 10 files and `(net 5 "X")`
             # before; only the first form was read, so every footprint of an
             # older file counted as netless and stayed fixed (89 of the 109
             # harvested tasks never placed anything until 2026-10-09).
-            connected = r'\(pad [^\n]*[\s\S]*?\(net (?:\d+ )?"(?!unconnected-)[^"]+"\)'
             movable = re.search(connected, block) and not re.search(
                 r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
-                reference and reference.group(1) in keep)
+                reference and (reference.group(1) in keep or reference.group(1) in staying))
             if reference and reference.group(1) and not re.search(connected, block):
                 netless.append(reference.group(1))
             if movable:

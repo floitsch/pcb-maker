@@ -200,6 +200,12 @@ impl State<'_> {
                     } else {
                         total += area((rect.center, rect.half), (body.center, body.half));
                     }
+                    // Courtyards on the other side meet there too
+                    // (`legal::far_courtyard_overlap`).
+                    if !component.far_courtyard.is_empty() || !other_component.far_courtyard.is_empty() {
+                        total += self.far_courtyards(index, pose, other, self.poses[other], &built, &area)
+                            + self.far_courtyards(other, self.poses[other], index, pose, &built, &area);
+                    }
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
                     // spacing, as the rectangles are) only.
@@ -352,6 +358,37 @@ impl State<'_> {
         total
     }
 
+    /// The overlap of part `yard`'s courtyard on the other side with part
+    /// `other`'s courtyard, holes and pads there, for two parts on the
+    /// same side, each grown by its share of the spacing.
+    fn far_courtyards(
+        &self,
+        yard: usize,
+        yard_pose: Pose,
+        other: usize,
+        other_pose: Pose,
+        built: &dyn Fn(Vec<(Point, Point)>) -> Vec<(Point, Point)>,
+        area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
+    ) -> f64 {
+        let (component, against) = (&self.problem.components[yard], &self.problem.components[other]);
+        if component.far_courtyard.is_empty() || against.far_side.is_empty() {
+            return 0.0;
+        }
+        let (mine, theirs) = (self.share(component), self.share(against));
+        let yards = built(component.boxes_of(&component.far_courtyard, yard_pose));
+        let blocking = built(against.far_boxes(other_pose));
+        let mut total = 0.0;
+        for (center, half) in &yards {
+            for (their_center, their_half) in &blocking {
+                total += area(
+                    (*center, [half[0] + mine, half[1] + mine]),
+                    (*their_center, [their_half[0] + theirs, their_half[1] + theirs]),
+                );
+            }
+        }
+        total
+    }
+
     /// Relations involving `index`, plus its hard constraints priced so
     /// steeply that no wirelength gain pays for missing them.
     fn constraint_cost(&self, index: usize) -> f64 {
@@ -436,6 +473,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         reach: problem.edge_margin
             + 0.5
             + problem.far_reach()
+            + problem.far_courtyard_reach()
             + if legal_far_side { problem.spacing + problem.min_spacing } else { 0.0 },
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round() as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
@@ -476,12 +514,27 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     // the wirelength visits the part's pins' nets; the constraint cost
     // scans the relations. Fitted so that boards as different as katia,
     // link and OpenESC's do about the same work per second.
-    let fixed = problem.constraints.relations.len()
-        + if state.rectangular { 0 } else { problem.outline.len() };
+    // The hard constraints' test scans every edge and region entry for
+    // the part's own (a panel's copies put a region on every part).
+    let held = &problem.constraints;
+    // Finding a part's relations scans every relation, and every anchor of
+    // a decoupling capacitor's (glasgow's 82 relations, 23 anchors each).
+    let scan: usize = held
+        .relations
+        .iter()
+        .map(|relation| match relation {
+            constraints::Relation::NearAny { anchors, .. } => 1 + anchors.len() / 16,
+            _ => 1,
+        })
+        .sum();
+    let fixed = scan
+        + if state.rectangular { 0 } else { problem.outline.len() }
+        + if held.is_empty() { 0 } else { (held.edges.len() + held.regions.len()) / 2 };
+    // The relations a part is in are evaluated before and after its move.
     let move_work: Vec<u64> = (0..problem.components.len())
         .map(|index| {
             let pins: usize = state.incident[index].iter().map(|net| state.members[*net].len()).sum();
-            (2 * (fixed + pins)) as u64
+            2 * (fixed as u64 + crate::PIN_WORK * pins as u64) + 2 * constraints::relation_work(problem, index)
         })
         .collect();
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {

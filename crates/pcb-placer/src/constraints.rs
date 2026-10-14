@@ -246,8 +246,9 @@ fn side_index(edge: Edge) -> usize {
 pub fn side_margins(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
     let mut margins = [problem.components[index].edge_margin(problem.edge_margin); 4];
     let constraints = &problem.constraints;
-    let offsets = copper_edge_offsets(problem, index, angle);
+    let mut offsets = None;
     for (_, edge, _) in constraints.edges.iter().filter(|(part, _, _)| *part == index) {
+        let offsets = *offsets.get_or_insert_with(|| copper_edge_offsets(problem, index, angle));
         margins[side_index(*edge)] = offsets[side_index(*edge)];
     }
     if let Some((edge, _)) = constraints.overhang(index) {
@@ -451,9 +452,14 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     let (center, half) = body(problem, index, pose);
     let low = [center[0] - half[0], center[1] - half[1]];
     let high = [center[0] + half[0], center[1] + half[1]];
-    let bounds = edge_frame(problem, center);
     let mut violation: f64 = overhang_violation(problem, index, pose);
-    let offsets = copper_edge_offsets(problem, index, pose.angle);
+    // The board's box and the pads' offsets only for a part an edge holds.
+    let held = constraints.edges.iter().any(|(part, _, _)| *part == index);
+    let (bounds, offsets) = if held {
+        (edge_frame(problem, center), copper_edge_offsets(problem, index, pose.angle))
+    } else {
+        ([0.0; 4], [0.0; 4])
+    };
     for (part, edge, reach) in &constraints.edges {
         if *part != index {
             continue;
@@ -592,6 +598,24 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
             (-gap).max(0.0) + (gap - max_gap).max(0.0) + across.max(0.0)
         }
     }
+}
+
+/// The work (see `crate::work`) of evaluating the relations that involve
+/// `index`: each anchor a relation measures from costs a turn and a
+/// distance, about four units (glasgow's decoupling capacitors, each near
+/// any of 23 supply pins, cost the annealer three times the work it
+/// counted).
+pub fn relation_work(problem: &Problem, index: usize) -> u64 {
+    problem
+        .constraints
+        .relations
+        .iter()
+        .filter(|relation| relation.involves(index))
+        .map(|relation| match relation {
+            Relation::NearAny { anchors, .. } => 1 + 4 * anchors.len() as u64,
+            _ => 5,
+        })
+        .sum()
 }
 
 /// Weighted violation of the relations that involve `index` (all of them
@@ -786,11 +810,18 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
     if constraints.edges.is_empty() && constraints.overhangs.is_empty() {
         return phase;
     }
+    // Most parts have neither: the board's box and the pads' offsets are
+    // work the snap of every anneal move paid for nothing.
+    let held = constraints.edges.iter().any(|(part, _, _)| *part == index);
+    let overhang = constraints.overhang(index);
+    if !held && overhang.is_none() {
+        return phase;
+    }
     let grid = problem.grid;
     let component = &problem.components[index];
     let half = component.half_extent(angle);
     let bounds = edge_frame(problem, at);
-    let offsets = copper_edge_offsets(problem, index, angle);
+    let offsets = if held { copper_edge_offsets(problem, index, angle) } else { [0.0; 4] };
     for (part, edge, _) in &constraints.edges {
         if *part != index {
             continue;
@@ -806,7 +837,7 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
         center[axis] = coordinate;
         phase[axis] = component.position_for_center(center, angle)[axis].rem_euclid(grid);
     }
-    if let Some((edge, local)) = constraints.overhang(index) {
+    if let Some((edge, local)) = overhang {
         let outside = overhang_box(problem, index, Pose { position: [0.0, 0.0], angle }, local);
         let (axis, origin) = match edge {
             Edge::Left => (0, bounds[0] - outside[2]),

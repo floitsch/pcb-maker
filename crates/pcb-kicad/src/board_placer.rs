@@ -111,6 +111,11 @@ pub struct KiCadBoardPlacerConfig {
     /// zpn_devboard passes (its parts had spread over an empty breakaway,
     /// 129 open after the first route); nothing changes on the quick tier.
     pub keep_on_pieces: bool,
+    /// On a panel of copies joined by tabs (one outline piece), each
+    /// copy's movable parts stay in its copy's region (see
+    /// `keep_copies_apart`): the copies are told apart by their nets. On:
+    /// boards whose nets form one group do not change.
+    pub keep_copies: bool,
     /// A footprint without a courtyard whose pads stand in rows of pins
     /// (three or more at most 2.6 mm apart, holding three quarters of its
     /// pads: a QFP, an SOIC, a header, a card slot) blocks with the whole
@@ -210,6 +215,7 @@ impl Default for KiCadBoardPlacerConfig {
             auto_decoupling: true,
             decoupling_mm: 2.5,
             keep_on_pieces: true,
+            keep_copies: true,
             solid_pin_rows: true,
             shared_halos: false,
             anneal_far_side_gaps: false,
@@ -1380,6 +1386,7 @@ fn rule_area_obstacle(
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -1460,6 +1467,146 @@ fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
             problem.constraints.regions.push((part, piece));
         }
     }
+}
+
+/// A panel of copies joined by tabs is one outline piece, so
+/// `keep_on_pieces` cannot tell the copies apart; their nets can: each
+/// copy's parts form a group no net leaves (KiKit names a copy's nets
+/// `Board_N-...`), and the copies' groups hold the same references. Where
+/// two or more such groups each have fixed parts and the boxes of those
+/// do not overlap, every movable part of a copy stays in its copy's
+/// region: the board's box, cut halfway between the copy's fixed parts
+/// and every other copy's, on the axis they are farther apart. On the
+/// 0xCB pcb-panel (four copies, one piece) 15-22 parts of one copy landed
+/// on another's area. Boards whose nets form one group (most boards, and
+/// panels whose copies share net names) are left alone. Returns the
+/// number of copies confined.
+fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
+    if problem.pieces.len() >= 2 || footprints < 4 {
+        return 0;
+    }
+    let mut parent: Vec<usize> = (0..footprints).collect();
+    fn root(parent: &mut [usize], mut part: usize) -> usize {
+        while parent[part] != part {
+            parent[part] = parent[parent[part]];
+            part = parent[part];
+        }
+        part
+    }
+    let mut first_on_net: BTreeMap<usize, usize> = BTreeMap::new();
+    for part in 0..footprints {
+        for pin in &problem.components[part].pins {
+            match first_on_net.get(&pin.net) {
+                Some(&other) => {
+                    let (a, b) = (root(&mut parent, part), root(&mut parent, other));
+                    parent[a] = b;
+                }
+                None => {
+                    first_on_net.insert(pin.net, part);
+                }
+            }
+        }
+    }
+    let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    for part in 0..footprints {
+        if !problem.components[part].pins.is_empty() {
+            groups.entry(root(&mut parent, part)).or_default().push(part);
+        }
+    }
+    if groups.len() < 2 {
+        return 0;
+    }
+    // A copy: a group whose references (with pin counts) another group
+    // repeats.
+    let signature = |members: &[usize]| -> Vec<(String, usize)> {
+        let mut parts: Vec<(String, usize)> =
+            members.iter().map(|part| (problem.components[*part].name.clone(), problem.components[*part].pins.len())).collect();
+        parts.sort();
+        parts
+    };
+    let mut kinds: BTreeMap<Vec<(String, usize)>, usize> = BTreeMap::new();
+    for members in groups.values() {
+        *kinds.entry(signature(members)).or_default() += 1;
+    }
+    let body_box = |problem: &core::Problem, part: usize| {
+        let component = &problem.components[part];
+        let (center, half) = (component.center(problem.poses[part]), component.half_extent(problem.poses[part].angle));
+        [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+    };
+    // Each copy's fixed parts' box, and its movable parts.
+    let mut copies: Vec<([f64; 4], Vec<usize>)> = Vec::new();
+    for members in groups.values() {
+        if kinds[&signature(members)] < 2 {
+            continue;
+        }
+        let mut anchor = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut movable = Vec::new();
+        for &part in members {
+            if problem.components[part].fixed {
+                let b = body_box(problem, part);
+                anchor = [anchor[0].min(b[0]), anchor[1].min(b[1]), anchor[2].max(b[2]), anchor[3].max(b[3])];
+            } else {
+                movable.push(part);
+            }
+        }
+        if anchor[0].is_finite() && !movable.is_empty() {
+            copies.push((anchor, movable));
+        }
+    }
+    if copies.len() < 2 {
+        return 0;
+    }
+    // The copies' fixed parts must keep apart: interleaved copies have no
+    // region of their own.
+    let gap = |a: &[f64; 4], b: &[f64; 4]| -> [f64; 2] { [(b[0] - a[2]).max(a[0] - b[2]), (b[1] - a[3]).max(a[1] - b[3])] };
+    for (index, (a, _)) in copies.iter().enumerate() {
+        for (b, _) in &copies[index + 1..] {
+            let [x, y] = gap(a, b);
+            if x <= 0.0 && y <= 0.0 {
+                return 0;
+            }
+        }
+    }
+    let bounds = problem.bounds();
+    let constrained: BTreeSet<usize> = problem.constraints.regions.iter().map(|(part, _)| *part).collect();
+    let mut regions = Vec::new();
+    for (index, (anchor, _)) in copies.iter().enumerate() {
+        let mut region = bounds;
+        for (other, (theirs, _)) in copies.iter().enumerate() {
+            if other == index {
+                continue;
+            }
+            let [x, y] = gap(anchor, theirs);
+            if x >= y {
+                if theirs[0] >= anchor[2] {
+                    region[2] = region[2].min((anchor[2] + theirs[0]) / 2.0);
+                } else {
+                    region[0] = region[0].max((theirs[2] + anchor[0]) / 2.0);
+                }
+            } else if theirs[1] >= anchor[3] {
+                region[3] = region[3].min((anchor[3] + theirs[1]) / 2.0);
+            } else {
+                region[1] = region[1].max((theirs[3] + anchor[1]) / 2.0);
+            }
+        }
+        regions.push(region);
+    }
+    for ((_, movable), region) in copies.iter().zip(&regions) {
+        for &part in movable {
+            if !constrained.contains(&part) {
+                problem.constraints.regions.push((part, *region));
+            }
+        }
+    }
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        eprintln!(
+            "copies: {} copies held apart ({} movable parts), regions {:?}",
+            copies.len(),
+            copies.iter().map(|(_, movable)| movable.len()).sum::<usize>(),
+            regions.iter().map(|r| r.map(|v| (v * 10.0).round() / 10.0)).collect::<Vec<_>>()
+        );
+    }
+    copies.len()
 }
 
 /// Bus rows: identical footprints (the same library footprint, on one
@@ -2058,6 +2205,7 @@ pub(super) fn lower_placement(
             angle_options,
             far_side: if through || far_graphics { far_side } else { Vec::new() },
             far_copper,
+            far_courtyard: if artwork { Vec::new() } else { far_courtyard.into_iter().collect() },
             hollow: shaped,
             tight: if config.tight_bodies == Some(true) {
                 tight_body(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?
@@ -2181,6 +2329,7 @@ pub(super) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -2231,6 +2380,7 @@ pub(super) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -2420,6 +2570,9 @@ pub(super) fn lower_placement(
     if config.keep_on_pieces {
         keep_on_pieces(&mut problem, footprint_count);
     }
+    if config.keep_copies {
+        keep_copies_apart(&mut problem, footprint_count);
+    }
     apply_channels(&mut problem, &references, &pad_boxes, channels)?;
     problem.constraints.link_pairs();
     let mut constraint_warnings = constraint_warnings;
@@ -2594,6 +2747,7 @@ fn apply_channels(
         carried.pins.clear();
         carried.far_side.clear();
         carried.far_copper.clear();
+        carried.far_courtyard.clear();
         carried.pads.clear();
         carried.hollow.clear();
         carried.tight_hollow.clear();
@@ -2626,6 +2780,7 @@ fn apply_channels(
                 carried.tight_hollow.push(own_tight);
                 carried.far_side.extend(component.far_side.iter().map(place));
                 carried.far_copper.extend(component.far_copper.iter().map(place));
+                carried.far_courtyard.extend(component.far_courtyard.iter().map(place));
             } else {
                 carried.far_side.push(own_body);
                 carried.hollow.extend(component.far_side.iter().chain(&component.far_copper).map(place));
@@ -2675,6 +2830,7 @@ fn apply_channels(
             component.pins.clear();
             component.far_side.clear();
             component.far_copper.clear();
+            component.far_courtyard.clear();
             component.pads.clear();
             component.hollow.clear();
             component.halo = 0.0;
@@ -3653,6 +3809,55 @@ mod tests {
     }
 
     #[test]
+    fn copies_of_a_tabbed_panel_keep_their_parts() {
+        // One outline piece holding two copies (KiKit names their nets
+        // Board_0-... and Board_1-...): each copy's J1 is locked, its R1
+        // joins it through a net. Each R1 stays on its copy's side of the
+        // line halfway between the copies' fixed parts.
+        let copy = |index: usize, x: f64| {
+            format!(
+                r#"(footprint "J" (layer "F.Cu") (at {x} 15) (locked yes)
+                (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+                (property "Reference" "J1")
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "Board_{index}-A")))
+            (footprint "R" (layer "F.Cu") (at 50 15)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net "Board_{index}-A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net "Board_{index}-B")))"#
+            )
+        };
+        let board = |copies: &str| {
+            parse(&format!(
+                r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 100 30) (layer "Edge.Cuts"))
+            {copies})"#
+            ))
+            .unwrap()
+        };
+        let pcb = board(&format!("{}\n{}", copy(0, 10.0), copy(1, 90.0)));
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let problem = &lowered.problem;
+        assert!(problem.pieces.len() < 2);
+        let mut regions = problem.constraints.regions.clone();
+        regions.sort_by_key(|(part, _)| *part);
+        // J1 bodies end at 12 and start at 88: the cut is at 50.
+        assert_eq!(regions, vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]);
+        // Switched off, or a single copy, or copies whose nets join: none.
+        let off = KiCadBoardPlacerConfig { keep_copies: false, ..KiCadBoardPlacerConfig::default() };
+        assert!(lower_placement(&pcb, &off, &[]).unwrap().problem.constraints.regions.is_empty());
+        let single = board(&copy(0, 10.0));
+        assert!(lower_placement(&single, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+        let shared = board(&format!("{}\n{}", copy(0, 10.0), copy(0, 90.0)));
+        assert!(lower_placement(&shared, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+        // Parts that are not copies of each other (another reference) stay
+        // free too: a board of two circuits is not a panel.
+        let other = board(&format!("{}\n{}", copy(0, 10.0), copy(1, 90.0).replace("\"R1\"", "\"R2\"")));
+        assert!(lower_placement(&other, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+    }
+
+    #[test]
     fn routing_room_leaves_the_poured_nets_out_of_the_demand() {
         // GND has a zone; A and B do not.
         let pcb = parse(
@@ -4094,6 +4299,7 @@ mod channel_tests {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,

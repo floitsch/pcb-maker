@@ -606,6 +606,7 @@ fn apply_rows(
         carried.pins.clear();
         carried.far_side.clear();
         carried.far_copper.clear();
+        carried.far_courtyard.clear();
         carried.pads.clear();
         for (place, member) in members.iter().enumerate() {
             if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
@@ -641,6 +642,7 @@ fn apply_rows(
             }));
             carried.far_side.extend(shift(&component.far_side));
             carried.far_copper.extend(shift(&component.far_copper));
+            carried.far_courtyard.extend(shift(&component.far_courtyard));
             carried.pads.extend(shift(&pad_boxes[*member]));
             if shaped {
                 if component.hollow.is_empty() {
@@ -686,6 +688,7 @@ fn apply_rows(
             component.pins.clear();
             component.far_side.clear();
             component.far_copper.clear();
+            component.far_courtyard.clear();
             component.pads.clear();
             component.halo = 0.0;
             component.body_size = [0.01, 0.01];
@@ -726,6 +729,27 @@ pub(super) fn apply_constraints(
             None => Ok(index),
         }
     };
+    // A reference several parts share (a panel's copies) names them in
+    // turn: the n-th entry of one kind for it is about its n-th part in
+    // board order (from_pcbench writes an entry per footprint). All of
+    // them on its first part asked one connector to touch the left, top
+    // and bottom edges at once (the molecule panels' J3 to J6).
+    let instance = |reference: &str, used: &mut BTreeMap<String, usize>| -> Result<usize, String> {
+        let parts: Vec<usize> = (0..footprints).filter(|index| references[*index] == reference).collect();
+        if parts.len() < 2 {
+            return find(reference);
+        }
+        let count = used.entry(reference.to_string()).or_default();
+        let index = parts[*count % parts.len()];
+        *count += 1;
+        match leaders.get(&index) {
+            Some(leader) => Err(format!(
+                "{reference} is carried by its row: constrain the row's first part, {}",
+                references[*leader]
+            )),
+            None => Ok(index),
+        }
+    };
     // Globs skip the parts rows carry (their first part stands for them).
     let matching = |pattern: &str| -> Vec<usize> {
         (0..footprints)
@@ -736,8 +760,9 @@ pub(super) fn apply_constraints(
     let mut constrained = BTreeSet::new();
     let bounds = problem.bounds();
 
+    let mut used = BTreeMap::new();
     for rotation in &constraints.rotation {
-        let index = find(&rotation.part)?;
+        let index = instance(&rotation.part, &mut used)?;
         let mut angles = rotation.angles.clone();
         angles.extend(rotation.angle);
         if angles.is_empty() {
@@ -767,8 +792,9 @@ pub(super) fn apply_constraints(
         "bottom" => Ok("top"),
         other => Err(format!("unknown device_front {other:?} (left, right, top or bottom)")),
     };
+    let mut used = BTreeMap::new();
     for entry in &constraints.place {
-        let index = find(&entry.part)?;
+        let index = instance(&entry.part, &mut used)?;
         match (&entry.at, entry.x, entry.y) {
             (Some(at), None, None) => {
                 let word = match at.as_str() {
@@ -833,8 +859,9 @@ pub(super) fn apply_constraints(
             }
         }
     }
+    let mut used = BTreeMap::new();
     for entry in &constraints.edge {
-        let index = find(&entry.part)?;
+        let index = instance(&entry.part, &mut used)?;
         let reach = entry.max_mm.unwrap_or(if entry.flush { 0.0 } else { 1.0 });
         problem.constraints.edges.push((index, edge(&entry.edge)?, reach.max(0.0) + 1.0e-3));
         if let Some(overhang) = &entry.overhang {
@@ -1175,6 +1202,7 @@ mod tests {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -1255,6 +1283,37 @@ mod tests {
         assert!(problem.components[0].fixed && problem.constraints.edges.is_empty());
         let problem = run(r#"{"version": 1, "move_all": true, "place": [{"part": "J1", "at": "bottom"}]}"#);
         assert_eq!(problem.constraints.edges, vec![(0, Edge::Bottom, 1.0 + 1.0e-3)]);
+    }
+
+    #[test]
+    fn a_repeated_reference_names_its_parts_in_turn() {
+        // A panel's copies repeat references: C1 twice. The first edge
+        // entry for C1 is about the first C1, the second about the second
+        // (all on the first asked one part to touch two opposite edges).
+        let (mut problem, mut references, pads) = problem();
+        references[2] = "C1".to_string();
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1,
+                "edge": [{"part": "C1", "edge": "left"}, {"part": "C1", "edge": "right"}],
+                "rotation": [{"part": "C1", "angle": 90}, {"part": "C1", "angle": 0}]}"#,
+        )
+        .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
+        assert_eq!(edges, vec![(1, Edge::Left), (2, Edge::Right)]);
+        assert_eq!(problem.components[1].angle_options, vec![90.0]);
+        assert_eq!(problem.components[2].angle_options, vec![0.0]);
     }
 
     #[test]

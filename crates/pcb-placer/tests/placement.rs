@@ -23,6 +23,7 @@ fn chain(parts: usize) -> Problem {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -65,6 +66,7 @@ fn chain(parts: usize) -> Problem {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
@@ -190,6 +192,7 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         angle_options: vec![0.0],
         far_side,
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -235,6 +238,7 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -284,6 +288,7 @@ fn tight_bodies_are_the_last_resort() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: Some([-1.0, -1.0, 1.0, 1.0]),
         edge_inset: 0.0,
@@ -335,6 +340,7 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -382,6 +388,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -431,6 +438,7 @@ fn parts_of_a_kind_are_turned_alike() {
         angle_options: vec![0.0, 90.0, 180.0, 270.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -483,6 +491,7 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -540,6 +549,7 @@ fn parts_turned_by_odd_angles_meet_as_turned_rectangles() {
         angle_options: vec![30.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -588,6 +598,7 @@ fn across_the_board() -> Problem {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
         edge_inset: 0.0,
@@ -603,6 +614,7 @@ fn across_the_board() -> Problem {
         Component {
             far_side: vec![[-1.0, -1.0, 1.0, 1.0]],
             far_copper: vec![[-1.0, 3.0, 1.0, 5.0]],
+            far_courtyard: Vec::new(),
             ..part(Side::Front, [10.0, 10.0])
         },
         Component { pads: vec![[-1.5, -1.5, 1.5, 1.5]], ..part(Side::Back, [3.0, 3.0]) },
@@ -758,4 +770,68 @@ fn without_routing_room_the_placement_is_unchanged() {
     assert!(second.illegal.is_empty());
     assert!(second.relaxation.halos.is_none());
     assert_eq!(second.poses, first.poses);
+}
+
+/// Two back-mounted hot-swap switches: on the back a 9 x 6 mm socket, on
+/// the front their 14 mm square courtyard (woagboard's choc switches).
+/// KiCad checks the front squares against each other although both parts
+/// are on the back.
+#[test]
+fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
+    use pcb_placer::anneal::{AnnealConfig, overlaps};
+    use pcb_placer::legal::is_legal;
+    let square = [-7.0, -7.0, 7.0, 7.0];
+    let switch = Component {
+        name: String::new(),
+        body_center: [0.0, -3.0],
+        body_size: [9.0, 6.0],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side: Side::Back,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: vec![[-1.0, -1.0, 1.0, 1.0], square],
+        far_copper: Vec::new(),
+        far_courtyard: vec![square],
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = chain(1);
+    problem.components = vec![switch.clone(), switch.clone()];
+    problem.spacing = 0.5;
+    let at = |x: f64| Pose { position: [x, 25.0], angle: 0.0 };
+    problem.poses = vec![at(30.0), at(42.0)];
+    // 12 mm apart the sockets (9 mm wide) keep 3 mm, but the front squares
+    // overlap by 2 mm.
+    assert!(!is_legal(&problem, &problem.poses, 1, at(42.0), 0..2));
+    // 14.5 mm apart the squares keep the spacing.
+    assert!(is_legal(&problem, &problem.poses, 1, at(44.5), 0..2));
+    // The annealer sees the overlap too.
+    assert!(overlaps(&problem, &problem.poses, &AnnealConfig::default())[1] > 0.0);
+    let mut apart = problem.poses.clone();
+    apart[1] = at(44.5);
+    assert_eq!(overlaps(&problem, &apart, &AnnealConfig::default())[1], 0.0);
+    // Without the far courtyard (a switch whose front holds only its holes)
+    // 12 mm apart is fine.
+    let mut plain = problem.clone();
+    for component in &mut plain.components {
+        component.far_courtyard.clear();
+        component.far_side.truncate(1);
+    }
+    assert!(is_legal(&plain, &plain.poses, 1, at(42.0), 0..2));
+    // The placer keeps them apart.
+    let placement = pcb_placer::place(&problem, &pcb_placer::Config::new());
+    assert!(placement.illegal.is_empty() && placement.unplaced.is_empty());
+    let gap = (placement.poses[0].position[0] - placement.poses[1].position[0])
+        .abs()
+        .max((placement.poses[0].position[1] - placement.poses[1].position[1]).abs());
+    assert!(gap >= 14.5 - 1.0e-6, "squares {gap} mm apart");
 }

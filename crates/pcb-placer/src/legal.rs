@@ -334,13 +334,30 @@ fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bo
         *work += problem.outline.len() as u64;
         if !problem.constraints.is_empty() {
             let constraints = &problem.constraints;
-            *work += (constraints.edges.len() + constraints.regions.len() + 2 * problem.components[index].pads.len()) as u64;
+            // The edge and region lists are scanned for the part's own
+            // entries, a few comparisons each (a panel's copies put a
+            // region on each of its 344 movable parts).
+            *work += ((constraints.edges.len() + constraints.regions.len()).div_ceil(2) + 2 * problem.components[index].pads.len()) as u64;
+            *work += 2 * held_work(problem, index);
         }
         if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
             return false;
         }
     }
     true
+}
+
+/// The extra work of a part an edge or an overhang holds: its pads are
+/// turned for their offsets from the edges, and the board's box is taken
+/// from the outline (glasgow's eviction of a held connector did five
+/// times the work it counted).
+fn held_work(problem: &Problem, index: usize) -> u64 {
+    let constraints = &problem.constraints;
+    if constraints.edges.iter().any(|(part, _, _)| *part == index) || constraints.overhang(index).is_some() {
+        (4 * problem.components[index].pads.len() + problem.outline.len() / 4) as u64
+    } else {
+        0
+    }
 }
 
 /// Whether part `index` at `pose` keeps clear of the parts in `others`.
@@ -354,6 +371,7 @@ fn clear_of(
 ) -> bool {
     let body = rect(problem, index, pose);
     let side = problem.components[index].side;
+    let linked_work = linked_work(problem);
     // The parts first: on a crowded board they turn down most spots, and
     // the outline test walks every outline edge.
     for other in others {
@@ -369,16 +387,18 @@ fn clear_of(
         if side.collides(other_side) {
             let (mine, theirs) = (&problem.components[index], &problem.components[other]);
             if mine.copper_only || theirs.copper_only {
-                let hole = if mine.copper_only { mine } else { theirs };
-                *work += hole.cutout_outline.len() as u64;
-                if copper_meets_cutout(problem, index, pose, other, poses[other]) {
+                if copper_meets_cutout(problem, index, pose, other, poses[other], work) {
                     return false;
                 }
                 continue;
             }
             let hollow = mine.hollow_for(theirs) || theirs.hollow_for(mine);
+            if !hollow {
+                // The other's box (two turns) and the linked-pair lookup.
+                *work += RECT_WORK + linked_work;
+            }
             if if hollow {
-                hollow_overlap(problem, index, pose, other, poses[other])
+                hollow_overlap(problem, index, pose, other, poses[other], work)
             } else {
                 if problem.constraints.linked(index, other) {
                     // Parts tied together meet without their halos.
@@ -401,7 +421,10 @@ fn clear_of(
             } {
                 return false;
             }
-        } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other]) {
+            if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
+                return false;
+            }
+        } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other], work) {
             return false;
         }
     }
@@ -435,16 +458,31 @@ pub fn conflict_kind(problem: &Problem, poses: &[Pose], index: usize, pose: Pose
 /// bucket query), in the units of one part-against-part test.
 const SPOT_WORK: usize = 24;
 
+/// The work of a part's box at a pose (its centre and extent each turn
+/// it), beyond the test itself.
+const RECT_WORK: u64 = 4;
+
+/// The work of looking a pair up among the linked pairs (a search of
+/// a set of that size; nothing where there are none), as the annealer
+/// counts it.
+fn linked_work(problem: &Problem) -> u64 {
+    let linked = problem.constraints.linked.len();
+    if linked == 0 { 0 } else { ((linked as f64 + 1.0).log2() / 2.0).round() as u64 }
+}
+
 /// The board's wirelength, counting its work (every pin).
 fn counted_wirelength(problem: &Problem, poses: &[Pose]) -> f64 {
-    crate::add_work(problem.components.iter().map(|component| component.pins.len()).sum::<usize>() as u64);
+    crate::add_work(crate::PIN_WORK * problem.components.iter().map(|component| component.pins.len()).sum::<usize>() as u64);
     problem.wirelength(poses)
 }
 
 /// The relation penalty of one part, counting its work (every relation
 /// is looked at).
 fn counted_penalty(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
-    crate::add_work(4 * problem.constraints.relations.len() as u64);
+    if problem.constraints.relations.is_empty() {
+        return 0.0;
+    }
+    crate::add_work(4 * problem.constraints.relations.len() as u64 + constraints::relation_work(problem, index));
     constraints::relation_penalty(problem, poses, Some(index))
 }
 
@@ -460,7 +498,12 @@ impl Buckets {
     fn new(problem: &Problem) -> Self {
         Buckets {
             grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len()),
-            reach: problem.spacing + problem.min_spacing + problem.edge_margin + 1.0 + problem.far_reach(),
+            reach: problem.spacing
+                + problem.min_spacing
+                + problem.edge_margin
+                + 1.0
+                + problem.far_reach()
+                + problem.far_courtyard_reach(),
         }
     }
 
@@ -487,7 +530,7 @@ impl Buckets {
 
 /// Whether a part's copper comes closer than the edge margin to a cutout
 /// (either way round); its body may reach over the hole.
-fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
+fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
     let (hole, pose_hole, part, pose_part) = if problem.components[a].copper_only {
         (a, pose_a, b, pose_b)
     } else {
@@ -500,18 +543,81 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
     let outline = &problem.components[hole].cutout_outline;
     let component = &problem.components[part];
     let pads = turned_rects(component, &component.pads, pose_part, margin);
+    *work += list_work(pads.len());
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
-        // the hole runs diagonally.
-        return pads.into_iter().any(|pad| rect_meets_polygon(&pad, outline));
+        // the hole runs diagonally. A pad outside the outline's box cannot
+        // meet it (a tabbed panel's slots run around whole copies, with
+        // thousands of points).
+        let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for point in outline {
+            extent = [extent[0].min(point[0]), extent[1].min(point[1]), extent[2].max(point[0]), extent[3].max(point[1])];
+        }
+        *work += edge_work(outline.len());
+        return pads.into_iter().any(|pad| {
+            *work += 1;
+            !box_apart(&pad, extent, POLYGON_SLACK) && rect_meets_polygon(&pad, outline, work)
+        });
     }
     let hole = rect(problem, hole, pose_hole);
+    *work += pads.len() as u64;
     pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
 }
 
+/// The work of building a list of boxes (an allocation, and a turn of each
+/// box) in units of one part-against-part test.
+fn list_work(boxes: usize) -> u64 {
+    8 + 3 * boxes as u64
+}
+
+/// The work of one pass over `edges` polygon edges: a few comparisons
+/// each, a quarter of a part-against-part test.
+fn edge_work(edges: usize) -> u64 {
+    (edges as u64).div_ceil(4)
+}
+
+/// How far (mm) a polygon's edges must stay from a box for the box's
+/// corners to lie on one side of it alike, float rounding included.
+const POLYGON_SLACK: f64 = 1.0e-6;
+
+/// Whether the box around `rect` and `extent` ([min x, min y, max x, max
+/// y]) are more than `slack` apart.
+fn box_apart(rect: &Rect, extent: [f64; 4], slack: f64) -> bool {
+    rect.center[0] + rect.half[0] + slack < extent[0]
+        || rect.center[0] - rect.half[0] - slack > extent[2]
+        || rect.center[1] + rect.half[1] + slack < extent[1]
+        || rect.center[1] - rect.half[1] - slack > extent[3]
+}
+
 /// Whether a box (turned or not) meets a polygon (overlap or touch).
-fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]]) -> bool {
+fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool {
+    // One pass first: where no edge comes near the box around the rect,
+    // no polygon corner lies in it, no edge crosses it, and its corners
+    // lie on one side of the outline alike, so the first corner's side is
+    // the answer (the full test below makes nine passes).
+    *work += edge_work(polygon.len());
     let corners = rect.corners();
+    let first = corners[0];
+    let mut inside = false;
+    let mut near = false;
+    for index in 0..polygon.len() {
+        let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+        let extent = [a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])];
+        if !box_apart(rect, extent, POLYGON_SLACK) {
+            near = true;
+            break;
+        }
+        if (a[1] > first[1]) != (b[1] > first[1]) {
+            let x = a[0] + (first[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+            if first[0] < x {
+                inside = !inside;
+            }
+        }
+    }
+    if !near {
+        return inside;
+    }
+    *work += 9 * edge_work(polygon.len());
     if corners.iter().any(|corner| crate::problem::point_in_polygon(*corner, polygon)) {
         return true;
     }
@@ -537,7 +643,7 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]]) -> bool {
 
 /// Whether two parts on the same side meet where one of them is hollow:
 /// only its blocking boxes count.
-fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
+fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
     let blocking = |index: usize, pose: Pose, other: usize| -> Vec<Rect> {
         let component = &problem.components[index];
         if !component.hollow_for(&problem.components[other]) {
@@ -551,15 +657,16 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
         rects
     };
     let theirs = blocking(b, pose_b, a);
-    blocking(a, pose_a, b)
-        .into_iter()
-        .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, problem.spacing)))
+    let mine = blocking(a, pose_a, b);
+    // The lists, and every pair at worst.
+    *work += list_work(mine.len()) + list_work(theirs.len()) + (mine.len() * theirs.len()) as u64;
+    mine.into_iter().any(|mine| theirs.iter().any(|other| overlaps(mine, *other, problem.spacing)))
 }
 
 /// Whether a part's holes and pads on the far side meet the other part's
 /// body there (either way round), for parts on opposite sides.
-fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose) -> bool {
-    let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose| {
+fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+    let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose, work: &mut u64| {
         let component = &problem.components[holes];
         if component.far_side.is_empty() && component.far_copper.is_empty() {
             return false;
@@ -567,31 +674,58 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
         let other = &problem.components[body];
         let far = turned_rects(component, &component.far_side, pose_holes, 0.0);
         let copper = turned_rects(component, &component.far_copper, pose_holes, 0.0);
+        *work += list_work(far.len()) + list_work(copper.len());
         // The other part's copper: its pads, or all of it where it has
         // none (artwork, a copper graphic, a rule area).
-        let pads = || {
-            if other.pads.is_empty() {
+        let pads = |work: &mut u64| {
+            let pads = if other.pads.is_empty() {
                 vec![rect(problem, body, pose_body)]
             } else {
                 turned_rects(other, &other.pads, pose_body, 0.0)
-            }
+            };
+            *work += list_work(pads.len());
+            pads
         };
         if problem.far_side_pads_only {
             // Copper against copper only.
-            let pads = pads();
+            let pads = pads(work);
+            *work += ((far.len() + copper.len()) * pads.len()) as u64;
             return far.iter().chain(&copper).any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)));
         }
         let target = rect(problem, body, pose_body);
+        *work += far.len() as u64;
         if far.into_iter().any(|far| overlaps(far, target, problem.spacing)) {
             return true;
         }
         // Copper that only copper may not come near.
         !copper.is_empty() && {
-            let pads = pads();
+            let pads = pads(work);
+            *work += (copper.len() * pads.len()) as u64;
             copper.iter().any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)))
         }
     };
-    meets(a, pose_a, b, pose_b) || meets(b, pose_b, a, pose_a)
+    meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
+}
+
+/// Whether two parts on the same side meet on the other side: one's
+/// courtyard there (`far_courtyard`) against the other's courtyard, holes
+/// and pads there, the gap their bodies keep. KiCad checks courtyards on
+/// both sides: woagboard's back-mounted choc switches have their 14 mm
+/// squares on the front, larger than their sockets on the back, and the
+/// bodies alone let the squares overlap.
+fn far_courtyard_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+    let meets = |yard: usize, pose_yard: Pose, other: usize, pose_other: Pose, work: &mut u64| {
+        let (component, against) = (&problem.components[yard], &problem.components[other]);
+        if component.far_courtyard.is_empty() || against.far_side.is_empty() {
+            return false;
+        }
+        *work += (component.far_courtyard.len() * against.far_side.len()) as u64;
+        let gap = body_spacing(problem, yard, other);
+        let yards = turned_rects(component, &component.far_courtyard, pose_yard, 0.0);
+        let theirs = turned_rects(against, &against.far_side, pose_other, 0.0);
+        yards.iter().any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))
+    };
+    meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
 }
 
 pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {
@@ -736,6 +870,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
             let mut x = bounds[0];
             while x <= bounds[2] {
                 for angle in &component.angle_options {
+                    work += SPOT_WORK as u64 + held_work(problem, index);
                     let pose = Pose {
                         position: constraints::snap_position(problem, index, [x, y], *angle),
                         angle: *angle,
@@ -791,6 +926,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                 let mut x = bounds[0];
                 while x <= bounds[2] {
                     for angle in &component.angle_options {
+                        work += SPOT_WORK as u64 + held_work(problem, moved);
                         let candidate = Pose {
                             position: constraints::snap_position(problem, moved, [x, y], *angle),
                             angle: *angle,
@@ -993,7 +1129,7 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         })
         .collect();
     let cost = |poses: &[Pose], nets: &[usize]| -> f64 {
-        crate::add_work(nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64);
+        crate::add_work(crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64);
         nets.iter()
             .map(|net| {
                 let mut bounds = [

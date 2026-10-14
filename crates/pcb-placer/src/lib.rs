@@ -308,6 +308,10 @@ thread_local! {
 /// in seconds become work limits at this rate.
 pub const WORK_PER_SECOND: f64 = 150.0e6;
 
+/// The work of one pin's position (a turn of its offset) in a wirelength
+/// sum, in units of one part-against-part test.
+pub(crate) const PIN_WORK: u64 = 3;
+
 /// The placement work done on this thread so far.
 pub fn work() -> u64 {
     WORK.with(|work| work.get())
@@ -317,18 +321,37 @@ pub(crate) fn add_work(amount: u64) {
     WORK.with(|work| work.set(work.get() + amount));
 }
 
-/// Debugging aid (`PCB_PLACER_DEBUG`): a phase's wall time against the
-/// work it counted, from a mark taken at its start.
-fn phase_line(debug: bool, name: &str, mark: (std::time::Instant, u64)) {
+/// The CPU time this thread has run (Linux: `/proc/thread-self/schedstat`),
+/// in seconds; `None` where that is not available.
+fn thread_cpu_seconds() -> Option<f64> {
+    let text = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    let nanoseconds: f64 = text.split_whitespace().next()?.parse().ok()?;
+    Some(nanoseconds * 1.0e-9)
+}
+
+/// Debugging aid (`PCB_PLACER_DEBUG`): a phase's wall time and the thread's
+/// CPU time against the work it counted, from a mark taken at its start.
+/// The ratio is work over CPU time (the wall clock on a busy machine runs
+/// on while the thread waits); near 1 when the work is calibrated.
+fn phase_line(debug: bool, name: &str, mark: Mark) {
     if debug {
         let seconds = mark.0.elapsed().as_secs_f64();
+        let cpu = match (mark.2, thread_cpu_seconds()) {
+            (Some(start), Some(now)) => now - start,
+            _ => seconds,
+        };
         let counted = (work() - mark.1) as f64 / WORK_PER_SECOND;
-        eprintln!("placer phase {name}: {seconds:.2} s, work {counted:.2} s ({:.2})", counted / seconds.max(1.0e-6));
+        eprintln!(
+            "placer phase {name}: {seconds:.2} s, cpu {cpu:.2} s, work {counted:.2} s ({:.2})",
+            counted / cpu.max(1.0e-6)
+        );
     }
 }
 
-fn mark() -> (std::time::Instant, u64) {
-    (std::time::Instant::now(), work())
+type Mark = (std::time::Instant, u64, Option<f64>);
+
+fn mark() -> Mark {
+    (std::time::Instant::now(), work(), thread_cpu_seconds())
 }
 
 /// Refinement, edge-copper centring, relation repair and alignment: what
