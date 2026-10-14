@@ -414,12 +414,18 @@ command line's exit code is 3 for an incomplete result with a cut
 A layout's routers stop at the layout's end in work (router
 `deadline_work`, armed before every phase from what is left of
 `total_seconds`), not at the wall-clock deadline. The placement's seeds run
-in waves side by side, and a wave lasts as long as its longest seed: the
-waves' work beyond the longest seed (`waves_work_seconds` against
-`work_seconds`) counts toward that end, not toward the budgets; how many
-seeds a wave holds follows the cores the process may use, so a run pinned
-to fewer cores can end elsewhere than an unpinned one (video: 392 s of
-waves beyond its longest seed on four cores, 281 s on eight). The first
+in a pool (`race_seeds` in board_placer.rs), as many at once as the
+process has search threads (`RAYON_NUM_THREADS`), a seed starting as a
+thread frees; they are judged in seed order as if one ran after the
+other, and the batches they start in are sized from the kept seeds' work,
+so the seeds run, the seeds kept and the placement do not depend on the
+threads. The clock counts the kept seeds as the reference machine runs
+them (eight threads, the router's calibration: `pool_work_seconds`); the
+part beyond the longest seed (`work_seconds`) counts toward that end, not
+toward the budgets. Until 2026-10-14 the seeds ran in waves as wide as the
+machine's cores, each as long as its slowest seed, and the waves' work
+counted, so the end followed the cores (video: 392 s of waves beyond its
+longest seed on four cores, 281 s on eight). The first
 route's negotiation gets at most half of what is left before it, so that
 the hard repair after it has as much (a deadline inside the negotiation
 leaves every net still in conflict open). `PCB_ROUTER_NO_WALL_GUARD` drops

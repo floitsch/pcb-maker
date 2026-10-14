@@ -343,7 +343,7 @@ pub struct KiCadBoardPlacerResult {
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
-    /// How many seeds were placed (the work budget may stop them before
+    /// How many seeds were kept (the work budget may stop them before
     /// `placement_seeds`).
     #[serde(default)]
     pub seeds: usize,
@@ -354,12 +354,22 @@ pub struct KiCadBoardPlacerResult {
     /// The most placement work a seed did, in seconds of an idle machine.
     #[serde(default)]
     pub work_seconds: f64,
-    /// The placement's work as the wall clock sees it: the seeds run in
-    /// waves side by side (as many at once as the machine has cores), and
-    /// each wave lasts as long as its longest seed; their sum. Which waves
-    /// run depends on the seeds' work and the cores, not on the load.
+    /// The kept seeds' work as the clock sees it: as the reference machine
+    /// runs them, `REFERENCE_THREADS` at once in a pool (`race_seeds`), a
+    /// seed starting as a thread frees. It depends on the seeds' work
+    /// alone, not on the threads or the load.
     #[serde(default)]
-    pub waves_work_seconds: f64,
+    pub pool_work_seconds: f64,
+    /// The kept seeds' work in all (as one after the other).
+    #[serde(default)]
+    pub seeds_work_seconds: f64,
+    /// How many seeds ran: the kept ones and those a batch ran past the
+    /// budget (they count for nothing).
+    #[serde(default)]
+    pub seeds_run: usize,
+    /// The seed of the placement kept (`seed` plus its offset).
+    #[serde(default)]
+    pub seed_kept: u64,
     pub footprints: Vec<KiCadPlacedFootprint>,
 }
 
@@ -3168,6 +3178,114 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
     Ok(())
 }
 
+/// The machine the work clock is calibrated on (the router's
+/// `EXPANSIONS_PER_SECOND`: an idle 8-core machine): the placement race's
+/// seeds count as its threads would run them.
+pub(crate) const REFERENCE_THREADS: usize = 8;
+
+/// A placement race's outcome (`race_seeds`).
+pub(crate) struct SeedRace<T> {
+    /// The kept seeds' offsets and results, in seed order.
+    pub kept: Vec<(u64, T)>,
+    /// How many seeds ran (the kept ones and those past the budget).
+    pub run: u64,
+    /// The kept seeds' work as `REFERENCE_THREADS` threads would run each
+    /// batch (`pool_makespan`), summed over the batches.
+    pub pool_work: u64,
+}
+
+/// How long `threads` threads take for `works`, each starting in turn on
+/// the thread that frees first.
+pub(crate) fn pool_makespan(works: &[u64], threads: usize) -> u64 {
+    let mut free = vec![0u64; threads.max(1)];
+    for work in works {
+        let earliest = (0..free.len()).min_by_key(|thread| free[*thread]).unwrap_or(0);
+        free[earliest] += work;
+    }
+    free.into_iter().max().unwrap_or(0)
+}
+
+/// Runs seeds `0..seeds` of a race in a pool of `threads` and keeps them as
+/// running one after the other would: seed k is kept while the work of the
+/// seeds before it is under `limit` (the first `minimum` always). The
+/// seeds run in batches, each in a pool where a seed starts as a thread
+/// frees: the first holds the `minimum`; each later one as many seeds as
+/// the budget left holds at the kept seeds' mean work (all that are left
+/// without a limit). The batches, so the seeds run and the ones kept,
+/// follow from the seeds' work alone, whatever `threads` and whichever
+/// seed finishes first; seeds a batch ran past the budget count for
+/// nothing.
+pub(crate) fn race_seeds<T: Send>(
+    seeds: u64,
+    minimum: u64,
+    limit: Option<u64>,
+    threads: usize,
+    work: impl Fn(&T) -> u64,
+    run: impl Fn(u64) -> T + Sync,
+) -> SeedRace<T> {
+    let mut race = SeedRace { kept: Vec::new(), run: 0, pool_work: 0 };
+    let mut used = 0u64;
+    let mut next = 0u64;
+    while next < seeds {
+        let batch = match limit {
+            _ if race.kept.is_empty() => minimum.max(1),
+            None => seeds - next,
+            Some(limit) => {
+                let mean = (used / race.kept.len() as u64).max(1);
+                limit.saturating_sub(used).div_ceil(mean).max(1)
+            }
+        }
+        .min(seeds - next);
+        let results = run_pool(next..next + batch, threads, &run);
+        race.run += batch;
+        let mut batch_works = Vec::new();
+        let mut spent = false;
+        for (offset, result) in (next..).zip(results) {
+            if race.kept.len() as u64 >= minimum && limit.is_some_and(|limit| used >= limit) {
+                spent = true;
+                break;
+            }
+            let own = work(&result);
+            used += own;
+            batch_works.push(own);
+            race.kept.push((offset, result));
+        }
+        race.pool_work += pool_makespan(&batch_works, REFERENCE_THREADS);
+        next += batch;
+        // The next seed would not be kept either: it does not run.
+        if spent || (race.kept.len() as u64 >= minimum && limit.is_some_and(|limit| used >= limit)) {
+            break;
+        }
+    }
+    race
+}
+
+/// Runs `run` on every index of `range` with `threads` threads, each taking
+/// the next index as it frees; the results in index order.
+fn run_pool<T: Send>(range: std::ops::Range<u64>, threads: usize, run: &(impl Fn(u64) -> T + Sync)) -> Vec<T> {
+    let count = (range.end - range.start) as usize;
+    let next = std::sync::atomic::AtomicU64::new(range.start);
+    let slots: Vec<std::sync::Mutex<Option<T>>> = (0..count).map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, count.max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if index >= range.end {
+                        break;
+                    }
+                    let result = run(index);
+                    *slots[(index - range.start) as usize].lock().expect("placement slot") = Some(result);
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|slot| slot.into_inner().expect("placement slot").expect("placement thread"))
+        .collect()
+}
+
 pub fn place_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -3248,55 +3366,33 @@ pub fn place_kicad_board(
     // wins. Placement takes seconds; the constraints are what the user asked
     // for.
     let seeds = config.placement_seeds.max(1) as u64;
-    // The seeds share the placement's work budget: they run in parallel
-    // waves, and seed k is kept only while the seeds before it, in seed
-    // order, used less than the budget (three seeds at least). Which seeds
-    // count depends on their work alone, not on the wave size or the wall
-    // clock (SmartSpin2k: sixteen seeds took 1218 s of placement on four
-    // cores and left the route no time).
+    // The seeds share the placement's work budget: seed k is kept only
+    // while the seeds before it, in seed order, used less than the budget
+    // (three seeds at least). They run in a pool (`race_seeds`), as many
+    // at once as the process has search threads; which seeds run and
+    // which are kept depends on their work alone, not on the threads or
+    // the wall clock (SmartSpin2k: sixteen seeds took 1218 s of placement
+    // on four cores and left the route no time).
     let minimum_seeds = seeds.min(3);
-    let parallel = std::thread::available_parallelism().map_or(4, |count| count.get() as u64).max(1);
-    // The waves' work as the clock sees it: per wave, the most a seed of it
-    // did (the seeds of a wave run side by side), summed.
-    let waves_work = std::cell::Cell::new(0u64);
-    let place_seeds = |problem: &core::Problem| -> Vec<core::Placement> {
-        let mut placements: Vec<core::Placement> = Vec::new();
-        let mut used = 0u64;
-        let mut next = 0;
-        'waves: while next < seeds {
-            // The first wave is the seeds every board gets; later ones as
-            // many as the budget left is expected to hold at the seeds'
-            // mean work so far (a wave past the budget is wasted: on
-            // SmartSpin2k a seed takes minutes).
-            let wave = match placer_config.work_limit {
-                _ if placements.is_empty() => minimum_seeds.max(1),
-                None => parallel,
-                Some(limit) => {
-                    let mean = (used / placements.len() as u64).max(1);
-                    limit.saturating_sub(used).div_ceil(mean).clamp(1, parallel)
-                }
-            };
-            let batch: Vec<core::Placement> = std::thread::scope(|scope| {
-                let handles: Vec<_> = (next..(next + wave).min(seeds))
-                    .map(|offset| {
-                        let mut seeded = placer_config.clone();
-                        seeded.global.seed = config.seed + offset;
-                        seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-                        scope.spawn(move || core::place(problem, &seeded))
-                    })
-                    .collect();
-                handles.into_iter().map(|handle| handle.join().expect("placement thread")).collect()
-            });
-            next += batch.len() as u64;
-            waves_work.set(waves_work.get() + batch.iter().map(|placement| placement.work).max().unwrap_or(0));
-            for placement in batch {
-                if placements.len() as u64 >= minimum_seeds && placer_config.work_limit.is_some_and(|limit| used >= limit) {
-                    break 'waves;
-                }
-                used += placement.work;
-                placements.push(placement);
-            }
-        }
+    let threads = rayon::current_num_threads().max(1);
+    // The kept seeds' work as the clock of the reference machine sees it
+    // (`REFERENCE_THREADS` at once), and in all; the seeds run, the kept
+    // seed. Summed over the races (the repeated channels race twice).
+    let pool_work = std::cell::Cell::new(0u64);
+    let seeds_work = std::cell::Cell::new(0u64);
+    let seeds_run = std::cell::Cell::new(0u64);
+    let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
+        let race = race_seeds(seeds, minimum_seeds, placer_config.work_limit, threads, |placement: &core::Placement| placement.work, |offset| {
+            let mut seeded = placer_config.clone();
+            seeded.global.seed = config.seed + offset;
+            seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+            core::place(problem, &seeded)
+        });
+        pool_work.set(pool_work.get() + race.pool_work);
+        seeds_work.set(seeds_work.get() + race.kept.iter().map(|(_, placement)| placement.work).sum::<u64>());
+        seeds_run.set(seeds_run.get() + race.run);
+        let mut placements: Vec<(u64, core::Placement)> =
+            race.kept.into_iter().map(|(offset, placement)| (config.seed + offset, placement)).collect();
         // A placement that needed courtyards touching (the last relaxation
         // level) is a last resort: it ranks below every legal one that did
         // not, however short its wires.
@@ -3310,7 +3406,8 @@ pub fn place_kicad_board(
                 placement.wirelength_final,
             )
         };
-        placements.sort_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+        // Stable: a tie goes to the earlier seed.
+        placements.sort_by(|(_, a), (_, b)| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
         placements
     };
     // Repeated channels: a first placement, with every instance's parts
@@ -3334,7 +3431,7 @@ pub fn place_kicad_board(
     };
     if config.replicate_channels {
         if !groups.is_empty() {
-            let templates = channel_templates(&lowered, &groups, &placements[0].poses);
+            let templates = channel_templates(&lowered, &groups, &placements[0].1.poses);
             eprintln!(
                 "channels: {} ({} instances of {} parts): placed alike",
                 groups.len(),
@@ -3343,20 +3440,22 @@ pub fn place_kicad_board(
             );
             let replicated = lower_placement(&pcb, config, &templates)?;
             let again = place_seeds(&replicated.problem);
-            if again[0].unplaced.is_empty() && again[0].illegal.is_empty() {
+            if again[0].1.unplaced.is_empty() && again[0].1.illegal.is_empty() {
                 lowered = replicated;
                 placements = again;
             } else {
                 let stuck: Vec<&str> = again[0]
+                    .1
                     .unplaced
                     .iter()
-                    .chain(&again[0].illegal)
+                    .chain(&again[0].1.illegal)
                     .map(|index| replicated.references[*index].as_str())
                     .collect();
                 eprintln!("channels: the replicated placement left {stuck:?} without room; the free one stands");
             }
         }
     }
+    let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) = placements.into_iter().unzip();
     if let Some(trace) = std::env::var_os("PCB_PLACER_TRACE") {
         trace_placements(&lowered, &placements, &placer_config.anneal, Path::new(&trace))?;
     }
@@ -3571,8 +3670,11 @@ pub fn place_kicad_board(
         edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
         work_seconds,
-        waves_work_seconds: waves_work.get() as f64 / core::WORK_PER_SECOND,
+        pool_work_seconds: pool_work.get() as f64 / core::WORK_PER_SECOND,
+        seeds_work_seconds: seeds_work.get() as f64 / core::WORK_PER_SECOND,
         seeds: seeds_placed,
+        seeds_run: seeds_run.get() as usize,
+        seed_kept: kept_seeds[0],
         footprints,
     };
     let report_path = output_directory.join("board-placer.json");
@@ -3587,6 +3689,52 @@ pub fn place_kicad_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_seeds_are_judged_in_seed_order_whatever_the_threads() {
+        let works = [50u64, 10, 70, 20, 30, 5, 40, 60, 25, 15, 35, 45];
+        // One seed after the other: kept while the seeds before used less
+        // than the limit, three at least.
+        let sequential = |limit: Option<u64>| -> Vec<u64> {
+            let mut kept = Vec::new();
+            let mut used = 0;
+            for (seed, work) in works.iter().enumerate() {
+                if kept.len() >= 3 && limit.is_some_and(|limit| used >= limit) {
+                    break;
+                }
+                used += work;
+                kept.push(seed as u64);
+            }
+            kept
+        };
+        for limit in [None, Some(1), Some(100), Some(150), Some(200), Some(10_000)] {
+            let mut outcomes = Vec::new();
+            for threads in [1, 2, 3, 4, 8, 16] {
+                let ran = std::sync::Mutex::new(Vec::new());
+                let race = race_seeds(works.len() as u64, 3, limit, threads, |result: &(u64, u64)| result.1, |seed| {
+                    // Later seeds finish first.
+                    std::thread::sleep(std::time::Duration::from_micros(300 * (works.len() as u64 - seed)));
+                    ran.lock().unwrap().push(seed);
+                    (seed, works[seed as usize])
+                });
+                let kept: Vec<u64> = race.kept.iter().map(|(offset, _)| *offset).collect();
+                assert_eq!(kept, sequential(limit), "limit {limit:?}, {threads} threads");
+                assert!(race.kept.iter().all(|(offset, (seed, _))| offset == seed));
+                let mut ran = ran.into_inner().unwrap();
+                ran.sort();
+                assert_eq!(ran.len() as u64, race.run);
+                outcomes.push((ran, race.pool_work));
+            }
+            assert!(outcomes.windows(2).all(|pair| pair[0] == pair[1]), "limit {limit:?}: {outcomes:?}");
+        }
+        // Up to the limit: the kept seeds and no more ran.
+        let race = race_seeds(works.len() as u64, 3, Some(150), 4, |result: &u64| *result, |seed| works[seed as usize]);
+        assert_eq!(race.kept.len(), 4);
+        assert_eq!(race.pool_work, 70 + 20);
+        assert_eq!(pool_makespan(&[4, 4, 4], REFERENCE_THREADS), 4);
+        assert_eq!(pool_makespan(&[3; 9], REFERENCE_THREADS), 6);
+        assert_eq!(pool_makespan(&[10, 1, 1, 1, 1, 1, 1, 1, 1, 1], 8), 10);
+    }
 
     #[test]
     fn nets_named_for_a_switch_node_feedback_rf_or_crystal_are_kept_short() {

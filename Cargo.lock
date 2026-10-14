@@ -682,6 +682,7 @@ dependencies = [
  "pcb-placer",
  "pcb-router",
  "pcb-topo",
+ "rayon",
  "serde",
  "serde_json",
  "sha2",

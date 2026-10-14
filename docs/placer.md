@@ -77,8 +77,16 @@ less copper); on PIC and the hierarchy board the automatic one is.
    The level used is reported, and the router-driven moves keep to it.
    Several seeds run in parallel (`placement_seeds`, 3; the layout asks for
    16, see the race below); the best placement by the placer's own key
-   (fewest illegal parts, least missed constraints, least wirelength) is
-   kept, the others are the race's alternatives.
+   (fewest illegal parts, least missed constraints, least wirelength; a
+   tie to the earlier seed) is kept, the others are the race's
+   alternatives. The seeds share the work budget: seed k is kept while the
+   seeds before it used less (three at least). They run in a pool of the
+   process's search threads, judged in seed order whatever finishes first,
+   in batches sized from the kept seeds' work (`race_seeds`), so the seeds
+   run and kept do not depend on the threads; `board-placer.json` reports
+   `seeds` (kept), `seeds_run`, `seed_kept`, `seeds_work_seconds` and
+   `pool_work_seconds` (what the layout's clock counts: the kept seeds on
+   the reference machine's eight threads).
 5. **Refinement.** Greedy legal moves, rotations and swaps that strictly
    reduce wirelength.
 6. **The placement race.** Wirelength is not routability. The layout ranks
