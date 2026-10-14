@@ -76,7 +76,9 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
 /// Writes `verdict` as `<directory>/verdict.json` and, when the run wrote
 /// its report (`report`), as the report's `verdict` too.
 fn write_verdict(directory: &Path, report: Option<&Path>, verdict: &KiCadVerdict) -> Result<(), String> {
-    let value = serde_json::to_value(verdict).map_err(|error| error.to_string())?;
+    let mut value = serde_json::to_value(verdict).map_err(|error| error.to_string())?;
+    // KiCad DRC runs this process asked for and how many the cache answered.
+    value["drc_cache"] = serde_json::to_value(pcb_kicad::drc_cache_counts()).map_err(|error| error.to_string())?;
     let path = directory.join("verdict.json");
     fs::write(&path, serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))?;

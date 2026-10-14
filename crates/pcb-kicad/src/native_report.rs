@@ -230,14 +230,34 @@ pub(super) fn run_kicad_report(
     output: &Path,
     input: &Path,
 ) -> Result<(), String> {
-    run_report_command(OsStr::new("kicad-cli"), arguments, output, input)
+    run_report_command_cached(
+        OsStr::new("kicad-cli"),
+        arguments,
+        output,
+        input,
+        crate::drc_cache::directory_from_env().as_deref(),
+    )
 }
 
+#[cfg(test)]
 fn run_report_command(
     program: &OsStr,
     arguments: &[&str],
     output: &Path,
     input: &Path,
+) -> Result<(), String> {
+    run_report_command_cached(program, arguments, output, input, None)
+}
+
+/// Runs a native report, a DRC through the cache in `cache` (see
+/// `drc_cache`): a hit is validated and published exactly as a fresh
+/// report is.
+fn run_report_command_cached(
+    program: &OsStr,
+    arguments: &[&str],
+    output: &Path,
+    input: &Path,
+    cache: Option<&Path>,
 ) -> Result<(), String> {
     let kind = match arguments.get(..2) {
         Some(["sch", "erc"]) => ReportKind::Erc,
@@ -252,6 +272,33 @@ fn run_report_command(
         );
     }
     remove_if_present(output)?;
+    let cache = match kind {
+        ReportKind::Drc => {
+            crate::drc_cache::count_call();
+            // The key is taken before KiCad runs: the inputs as given.
+            cache.and_then(|directory| {
+                crate::drc_cache::DrcCache::for_run(directory.to_path_buf(), program, arguments, input)
+            })
+        }
+        ReportKind::Erc => None,
+    };
+    if let Some(cache) = &cache {
+        if let Some(bytes) = cache.lookup() {
+            let valid = serde_json::from_slice::<Value>(&bytes)
+                .map_err(|error| error.to_string())
+                .and_then(|report| validate_report(&report, kind, input));
+            match valid {
+                Ok(()) => {
+                    crate::drc_cache::write_atomically(output, &bytes).map_err(|error| {
+                        format!("failed to publish native report {}: {error}", output.display())
+                    })?;
+                    cache.count_hit();
+                    return Ok(());
+                }
+                Err(_) => cache.discard(),
+            }
+        }
+    }
     let parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -267,6 +314,12 @@ fn run_report_command(
     }
     let report = super::read_json(&fresh)?;
     validate_report(&report, kind, input)?;
+    if let Some(cache) = &cache {
+        match fs::read(&fresh) {
+            Ok(bytes) => cache.store(&bytes),
+            Err(error) => eprintln!("DRC cache: failed to read {}: {error}", fresh.display()),
+        }
+    }
     fs::rename(&fresh, output).map_err(|error| {
         format!(
             "failed to publish native report {}: {error}",
@@ -494,6 +547,64 @@ mod tests {
                     .unwrap()
                     .is_dir())
             );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn two_drc_runs_on_the_same_board_make_one_cache_entry_and_one_kicad_run() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let project = directory.0.join("project");
+        let cache = directory.0.join("cache");
+        fs::create_dir(&project).unwrap();
+        let board = project.join("board.kicad_pcb");
+        fs::write(&board, "(kicad_pcb (version 20240108))\n").unwrap();
+        fs::write(project.join("board.kicad_pro"), "{}\n").unwrap();
+        let runs = directory.0.join("runs");
+        let mut valid = report(ReportKind::Drc);
+        valid["violations"] = json!([finding()]);
+        let body = format!(
+            "if [ \"$1\" = version ]; then echo 10.0.7; exit 0; fi\necho run >> {}\n{}",
+            runs.display(),
+            write_report_script(&valid, 0)
+        );
+        let cli = fake_cli(&directory.0, &body);
+        let arguments = ["pcb", "drc", "--format", "json", "--severity-all", "--output"];
+        let run = |output: &Path| {
+            run_report_command_cached(cli.as_os_str(), &arguments, output, &board, Some(&cache)).unwrap();
+            fs::read(output).unwrap()
+        };
+        let kicad_runs = || fs::read_to_string(&runs).map_or(0, |text| text.lines().count());
+        let entries = || fs::read_dir(&cache).map_or(0, |entries| entries.count());
+        let counts = crate::drc_cache::drc_cache_counts();
+        let first = run(&project.join("drc.json"));
+        assert_eq!((kicad_runs(), entries()), (1, 1));
+        let second = run(&directory.0.join("second.json"));
+        assert_eq!((kicad_runs(), entries()), (1, 1), "the second run is a hit");
+        assert_eq!(first, second, "a hit gives the fresh report's bytes");
+        assert_eq!(super::super::read_json(&directory.0.join("second.json")).unwrap(), valid);
+        let after = crate::drc_cache::drc_cache_counts();
+        assert!(after.calls >= counts.calls + 2 && after.hits >= counts.hits + 1);
+        // One byte more in the board, or other arguments: a miss and a new entry.
+        fs::write(&board, "(kicad_pcb (version 20240108)) \n").unwrap();
+        run(&project.join("drc.json"));
+        assert_eq!((kicad_runs(), entries()), (2, 2));
+        let refill = ["pcb", "drc", "--format", "json", "--severity-all", "--refill-zones", "--output"];
+        run_report_command_cached(cli.as_os_str(), &refill, &project.join("drc.json"), &board, Some(&cache)).unwrap();
+        assert_eq!((kicad_runs(), entries()), (3, 3));
+        // A corrupt entry is dropped and the DRC runs again.
+        for entry in fs::read_dir(&cache).unwrap() {
+            fs::write(entry.unwrap().path(), "{").unwrap();
+        }
+        run(&project.join("drc.json"));
+        assert_eq!(kicad_runs(), 4);
+        assert_eq!(super::super::read_json(&project.join("drc.json")).unwrap(), valid);
+        // No temporary files are left next to the outputs or in the cache.
+        for place in [&project, &cache, &directory.0] {
+            for entry in fs::read_dir(place).unwrap() {
+                let name = entry.unwrap().file_name().into_string().unwrap();
+                assert!(!name.ends_with(".tmp"), "left {name} in {}", place.display());
+            }
         }
     }
 

@@ -807,7 +807,30 @@ pub(super) struct Lowered {
     pub board: core::Board,
 }
 
+static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LOWER_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Calls of `lower` in this process and their seconds (summed over
+/// threads), for the board check's line.
+pub(super) fn lowering_totals() -> (u64, f64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (LOWER_CALLS.load(Relaxed), LOWER_NANOS.load(Relaxed) as f64 / 1.0e9)
+}
+
 pub(super) fn lower(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<Lowered, String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let started = std::time::Instant::now();
+    let lowered = lower_board(pcb, config, connect_pours);
+    LOWER_CALLS.fetch_add(1, Relaxed);
+    LOWER_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+    lowered
+}
+
+fn lower_board(
     pcb: &Expr,
     config: &KiCadBoardRouterConfig,
     connect_pours: bool,
@@ -3542,9 +3565,12 @@ pub(super) fn finish_routed_board(
         Some(verify_materialized_rung(output_directory, board_id)?)
     };
     let native_verification_seconds = native_started.elapsed().as_secs_f64();
+    let drc_cache = crate::drc_cache_counts();
+    let (lowerings, lowering_total) = lowering_totals();
+    let (builds, build_total) = core::router::build_totals();
     eprintln!(
-        "board check: internal verification {verify_seconds:.1}s, KiCad {native_verification_seconds:.1}s (lowering {:.1}s, routing {:.1}s)",
-        timings[0], timings[1]
+        "board check: internal verification {verify_seconds:.1}s, KiCad {native_verification_seconds:.1}s (lowering {:.1}s, routing {:.1}s); drc_cache: {{calls {}, hits {}}}; so far {lowerings} lowerings {lowering_total:.1}s, {builds} lattices {build_total:.1}s",
+        timings[0], timings[1], drc_cache.calls, drc_cache.hits
     );
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
     let report = KiCadBoardRouterResult {

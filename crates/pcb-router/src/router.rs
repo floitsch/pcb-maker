@@ -1156,6 +1156,16 @@ struct Profile {
     analysis_calls: Arc<std::sync::atomic::AtomicU64>,
 }
 
+static BUILD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static BUILD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Routers built (`Router::new`: lattice, obstacles, pours) in this
+/// process and their seconds, summed over threads.
+pub fn build_totals() -> (u64, f64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (BUILD_CALLS.load(Relaxed), BUILD_NANOS.load(Relaxed) as f64 / 1.0e9)
+}
+
 impl Profile {
     fn line(&self, search: f64, stamp: f64) -> String {
         let analysis = self.analysis_nanos.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1.0e9;
@@ -1310,6 +1320,14 @@ impl Router {
     }
 
     pub fn new(board: &Board, config: &Config) -> Self {
+        let started = std::time::Instant::now();
+        let router = Self::build(board, config);
+        BUILD_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        BUILD_NANOS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        router
+    }
+
+    fn build(board: &Board, config: &Config) -> Self {
         let built = std::time::Instant::now();
         let (board, neck_of) = Self::with_neck_classes(board, config);
         let board = &board;

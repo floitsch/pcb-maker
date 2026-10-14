@@ -247,6 +247,25 @@ A finished run also carries it as `verdict` in its report:
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
 | `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
+| `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
+
+**KiCad's DRC is cached.** Every DRC (15-25 s and 2.2 GB on a large
+board) is kept in `$XDG_CACHE_HOME/pcb-maker/drc/` (`~/.cache/pcb-maker/drc/`
+without it) under a hash of everything it reads: the board's bytes and file
+name, the KiCad files of the project (`.kicad_pro`, `.kicad_dru`,
+schematic sheets, project libraries and library tables), the user's global
+library tables, `KICAD*` environment variables, the `kicad-cli version` and
+the DRC's arguments. A rerun on unchanged inputs (the reference board, an
+attempt that ends with the same board, a second run of the same task)
+takes the stored report: KiCad's exact bytes, validated as a fresh report
+is; only its `date` is the first run's. `PCB_MAKER_CACHE_DIR=<dir>` keeps
+the cache in `<dir>/drc/`, `PCB_MAKER_NO_CACHE=1` turns it off. Processes
+side by side share it safely (entries are written whole, then renamed);
+it keeps at most 2000 entries and 2 GB, dropping the least recently used.
+KiCad's own libraries are not hashed (only the `lib_footprint_*`
+warnings, which never count, read them); after changing them without a new
+KiCad version, delete the directory. The stderr line `board check: ...`
+and `drc_cache` in the verdict count the calls and hits.
 
 The other commands exit 0 when done, 1 when their result is incomplete
 (`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with
