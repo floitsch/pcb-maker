@@ -1,6 +1,6 @@
 {
  "description": "Quick-evaluation tier: harvested boards that are laid out (placed and routed) in about 1100 s or less and in at most about 3.7 GB, run many at once (run.py --tier quick --jobs 8). Reasons in README.md. Per board: layers, lattice nodes and pitch, the failure kinds it covers, its v11 result where it has one, and from the tier's run on x506 (2026-10-10, 8 jobs, 2 threads each, load about 45): seconds (the runner starts the longest first), the result (x506), peak_rss_mb for the process tree (KiCad's DRC alone takes 2.2 GB), which the runner's memory gate expects, and layout_rss_mb for the layout process alone. Boards added on 2026-10-10 carry the v13 sweep's numbers (x503, 12 jobs, load 25-40) instead.",
- "tasks": "build/github-tasks-v5/tasks.json",
+ "tasks": "build/github-tasks-v6/tasks.json",
  "boards": {
   "CRImier__MyKiCad__framework_mobo_lefthalf": {
    "layers": 6,

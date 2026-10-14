@@ -144,6 +144,22 @@ measurement). The discipline:
   A placement default change still needs several placer seeds per side
   (`--placer '{"seed": N}'`): it reshuffles crowded boards at random
   (docs/handover.md, the legaliser agent).
+- **Lesson: one task list per comparison.** Pass `--tasks` on both sides
+  or rely on the tier's default on both, never mix: v5 and v6 differ in
+  the constraints of 12 of the 30 quick-tier boards (v6 fixes more parts),
+  and quick30-x768 (v5) against x776 (v6) read as 174 more vias and 9 more
+  errors from commits that changed no routing; on the 18 boards with the
+  same constraints every row was identical. run.py now records `tasks`,
+  `tasks_sha256` and `constraints_sha256` (the prepared constraints) in
+  every row and the summary; compare.py names both lists on its first line
+  (inferred from the prepared boards for older logs), says TASK LISTS
+  DIFFER when they do, marks boards with other prepared constraints INPUT
+  (not better / same / worse) and gives the objectives again over the
+  boards with the same input. A reference log run before this change on
+  the tier default (v5, the short tier's references among them) needs a
+  v6 rerun before it is a base. Not checked:
+  the prepared board itself (run.py's unplace rules can move a part
+  without changing the constraints, as WLED_Matrix's LDO1 in x782).
 - **One tier at a time on the machine**: take the lock,
   `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...`; start
   only with the load under 40 (`uptime`) and more than 20 GB available
@@ -163,9 +179,11 @@ benchmarks/agent-tasks/run.py build/quick-x161 --tier quick --jobs 8 \
 benchmarks/agent-tasks/compare.py build/quick-x160.log build/quick-x161.log --markdown
 ```
 
-`quick.json` lists the boards (by task name in
-`build/github-tasks-v5/tasks.json`, made by `from_pcbench.py --corpus
-benchmarks/github/boards.json`), each with its layers, lattice, the failure
+`quick.json` lists the boards (by task name in its task list,
+`build/github-tasks-v6/tasks.json` since 2026-10-14, the list of the v14
+and v15 sweeps; `build/github-tasks-v5/tasks.json`, made by
+`from_pcbench.py --corpus benchmarks/github/boards.json`, before: the tier
+logs up to x782 and x768 are v5, x770, x780, x781 and x776 are v6), each with its layers, lattice, the failure
 kinds it covers, its v11 result where it has one, and its time, peak memory
 and result in the tier's run on x506. Since `run.py`'s unplace fix
 (2026-10-10) every board is placed from stacked parts and routed, so the

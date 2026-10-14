@@ -1060,13 +1060,24 @@ layout v15 it lost on koeg (164 against 134) and Explorer (8 against 4).
 The narrow step's DRC risk: the widths are the project's own menu (at or
 above its minimum width), so KiCad raises no width finding; DSP's 5 new
 errors are starved thermals of the narrow attempt's pours. Quick tier
-x776 (this change on b2f5fbf) against build/quick30-x768.log: 24 of 30
-pass (23; framework_mobo_lefthalf was an error row in x768), unconnected
-25 -> 25, better 0 / same 29 / worse 0; no tier board reserved or ran the
-step (none prints the reservation line), so the row differences in vias
-(BAGEL, Castor, USB_Keypad, WLED_Matrix's connection_width 2 -> 11) come
-from the commits between x768 and b2f5fbf, not from this change. Logs
-`build/ladder-reserve/` (summary.py there), `build/quick30-x776.log`.
+x776 (this change on b2f5fbf, run on github-tasks-v6): no tier board
+reserved or ran the step (none prints the reservation line). Its first
+comparison, against build/quick30-x768.log, was not one: x768 ran on the
+tier's default list then, github-tasks-v5, and v5 and v6 differ in the
+constraints of 12 of the 30 boards (v6 fixes more parts: Castor J2 at the
+designer's place instead of an edge constraint, BAGEL U102, USB_Keypad
+and WLED_Matrix M1-M4, ...). Exactly those 12 rows changed (BAGEL 319 to
+360 vias, Castor 230 to 249, USB_Keypad 81 to 100, WLED_Matrix's
+connection_width 2 to 11; framework_mobo_lefthalf passes on v6); the 18
+boards with the same constraints gave identical rows (1738 vias, 56520 mm
+both). Castor swapped: x776 on v5 gives x768's row (230 vias, 4746.5 mm),
+x768 on v6 gives x776's (249, 5601.1), same ladder and via-reduction lines
+(`build/via-bisect/`). No commit between x768 and b2f5fbf changed routing:
+the `spent` change of the exit codes only acts without a deadline (route
+mode), the DRC cache only adds counters. The reservation's tier
+comparison is x776 against a v6 base, build/quick30-x783.log (pending:
+not finished when this was written). Logs `build/ladder-reserve/`
+(summary.py there), `build/quick30-x776.log`.
 
 ## Open problems, ranked
 
@@ -1148,6 +1159,11 @@ from the commits between x768 and b2f5fbf, not from this change. Logs
 - `pgrep -f` and `pkill -f` match their own shell: a waiter on `pgrep`
   never ends, `pkill` kills the session. Kill by PID.
 - No backticks in `git commit -m`.
+- One task list per benchmark comparison: the tiers default to
+  github-tasks-v6 since 2026-10-14 (v5 before); a log against one on the
+  other list compares inputs, not binaries (x768 v5 against x776 v6 looked
+  like 174 more vias). compare.py's first line names both lists and says
+  TASK LISTS DIFFER; rows on other prepared constraints are marked INPUT.
 - Benchmarks use a copied binary; run nothing heavy beside a sweep whose
   timings matter; pin experiments with `taskset`.
 - The machine (Ryzen 9 5950X, 32 threads, 62 GB, 32 GB swap): the runners

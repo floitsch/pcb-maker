@@ -31,6 +31,7 @@ the pass line and a line of continuous objectives (README.md, "How to
 measure"), also written to summary.json."""
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -43,7 +44,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from compare import by_name, objectives, objectives_line, rows_of  # noqa: E402
+from compare import by_name, constraints_digest, objectives, objectives_line, rows_of  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
 TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json"}
@@ -400,6 +401,10 @@ def run_admitted(task, arguments, token):
         escaped = [re.sub(r"([*?\\])", r"\\\1", r) for r in netless]
         constraints["fixed"] = constraints.get("fixed", []) + [r for r in escaped if r not in constraints.get("fixed", [])]
     (source / "constraints.json").write_text(json.dumps(constraints))
+    # What the layout got: compare.py marks a board whose prepared
+    # constraints differ between two runs (another task list, or run.py's
+    # rules) instead of comparing it.
+    constraints_sha256 = constraints_digest(constraints)
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
               **task.get("layout", {})}
     if arguments.budget_scale != 1:
@@ -431,7 +436,8 @@ def run_admitted(task, arguments, token):
     # The load averages say how loaded the machine was for this row.
     row = {"name": name, "seconds": round(time.monotonic() - started, 1), "cpu_seconds": cpu_seconds,
            "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
-           "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "mode": "layout"}
+           "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "mode": "layout",
+           "constraints_sha256": constraints_sha256}
     if arguments.budget_scale != 1:
         row["budget_scale"] = arguments.budget_scale
     if code == "timeout":
@@ -648,6 +654,16 @@ def main():
         # 32.4 and 31.3 s of search on 1, 2 and 4) but every thread holds a
         # search scratch of the board's size.
         arguments.threads = max(1, min(4, (os.cpu_count() or 1) // arguments.jobs))
+    # Every row and the summary name the task list (compare.py checks that
+    # two runs used the same: quick30-x768 on v5 against x776 on v6 looked
+    # like a routing change).
+    tasks_path = arguments.tasks.resolve()
+    try:
+        arguments.tasks_label = str(tasks_path.relative_to(ROOT))
+    except ValueError:
+        arguments.tasks_label = str(tasks_path)
+    arguments.tasks_sha256 = hashlib.sha256(tasks_path.read_bytes()).hexdigest()
+    print(f"tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})", file=sys.stderr)
     arguments.expected_mb = arguments.expected_gb * 1024
     arguments.gate = MemoryGate(arguments.min_free_gb)
     tasks = []
@@ -705,6 +721,7 @@ def main():
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
+            row.update(tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256)
             rows[row["name"]] = row
             print(json.dumps(row), flush=True)
     wall = time.monotonic() - started
@@ -720,8 +737,9 @@ def main():
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
-                   mode="route" if arguments.route_from else "layout", spliced=spliced_count)
-    print(objectives_line(summary))
+                   mode="route" if arguments.route_from else "layout", spliced=spliced_count,
+                   tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256)
+    print(objectives_line(summary) + f"; tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})")
     (arguments.output / "summary.json").write_text(json.dumps(summary, indent=1))
 
 

@@ -15,11 +15,24 @@ deadline under load, the harness's timeout) depends on the machine's load,
 not only on the binary: it is marked CUT and left out of better / same /
 worse. A row copied from an earlier log (run.py --splice-from) is marked
 SPL and counted in the totals. Below the totals, each run's continuous
-objectives over the boards in both (README.md, "How to measure")."""
+objectives over the boards in both (README.md, "How to measure").
+
+The first line names each run's task list (run.py's `tasks` and
+`tasks_sha256` rows; for logs before them, the build/github-tasks-*
+lists whose constraints every prepared board contains). When the lists
+differ it says so in capitals. A board whose prepared constraints
+(`constraints_sha256`, else `<run>/<board>/source/constraints.json`)
+differ between the runs ran on another input: it is marked INPUT and left
+out of better / same / worse, and the objectives are given again over the
+boards with the same input (x768 on tasks v5 against x776 on v6 read as
+174 more vias from three commits that changed no routing)."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def rows_of(path):
@@ -37,6 +50,112 @@ def rows_of(path):
             except json.JSONDecodeError:
                 pass
     return rows
+
+
+def output_directory(path):
+    """The run's output directory: the argument itself, or the log's name
+    without `.log` (run.py's layout: build/quick30-x776.log next to
+    build/quick30-x776/)."""
+    path = Path(path)
+    return path if path.is_dir() else path.with_suffix("")
+
+
+def constraints_digest(constraints):
+    """sha256 of a constraints object, independent of key order and
+    formatting (run.py's `constraints_sha256`)."""
+    return hashlib.sha256(json.dumps(constraints, sort_keys=True).encode()).hexdigest()
+
+
+def prepared_constraints(directory, name):
+    try:
+        return json.loads((directory / name / "source" / "constraints.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def input_digest(row, directory):
+    """The prepared constraints' digest of a layout row: its own field, or
+    computed from the run's output directory; None for route rows and when
+    neither is there."""
+    if row is None or row.get("mode") == "route":
+        return None
+    if row.get("constraints_sha256"):
+        return row["constraints_sha256"]
+    constraints = prepared_constraints(directory, row["name"])
+    return constraints_digest(constraints) if constraints is not None else None
+
+
+def contains(task, prepared):
+    """Whether run.py could have prepared `prepared` from the task's
+    constraints: it only adds fixed parts (the netless footprints)."""
+    return (set(task.get("fixed", [])) <= set(prepared.get("fixed", []))
+            and all(task.get(key) == prepared.get(key) for key in task if key != "fixed"))
+
+
+def candidate_lists(path):
+    found = []
+    for base in (output_directory(path).resolve().parent, ROOT / "build"):
+        for candidate in sorted(base.glob("github-tasks-*/tasks.json")):
+            if candidate.resolve() not in [c.resolve() for c in found]:
+                found.append(candidate)
+    return found
+
+
+def task_list(path, rows):
+    """(label, identity) of the run's task list. Recorded (the rows' `tasks`
+    and `tasks_sha256`): ("recorded", digest, {list directory}); else
+    inferred from the prepared constraints: ("inferred", None, {the list
+    directories every prepared board fits}); None when unknown."""
+    recorded = {(row.get("tasks"), row.get("tasks_sha256")) for row in rows
+                if row.get("tasks") and not row.get("spliced")}
+    if len(recorded) == 1:
+        label, digest = next(iter(recorded))
+        return f"{label} (sha256 {(digest or '?')[:12]})", ("recorded", digest, {Path(label).parent.name})
+    if len(recorded) > 1:
+        labels = ", ".join(sorted(str(label) for label, _ in recorded))
+        return f"several: {labels}", ("recorded", "several:" + labels, {Path(label).parent.name for label, _ in recorded})
+    directory = output_directory(path)
+    prepared = {row["name"]: prepared_constraints(directory, row["name"]) for row in rows
+                if row.get("mode") != "route"}
+    prepared = {name: value for name, value in prepared.items() if value is not None}
+    if not prepared:
+        return "unknown (no tasks field, no prepared constraints)", None
+    matching = []
+    for candidate in candidate_lists(path):
+        try:
+            tasks = {task["name"]: task for task in json.loads(candidate.read_text())["tasks"]}
+        except (OSError, ValueError, KeyError):
+            continue
+        ok = True
+        for name, value in prepared.items():
+            task = tasks.get(name)
+            try:
+                own = json.loads((candidate.parent / task["constraints"]).read_text()) if task else None
+            except (OSError, ValueError):
+                own = None
+            if own is None or not contains(own, value):
+                ok = False
+                break
+        if ok:
+            matching.append(candidate)
+    if len(matching) == 1:
+        label = f"build/{matching[0].parent.name}/tasks.json"
+        return f"{label} (inferred from {len(prepared)} prepared boards)", ("inferred", None, {matching[0].parent.name})
+    if matching:
+        names = ", ".join(c.parent.name for c in matching)
+        return (f"no tasks field; one of {names} (inferred from {len(prepared)} prepared boards)",
+                ("inferred", None, {c.parent.name for c in matching}))
+    return "unknown (no tasks field; no build/github-tasks-* list matches)", None
+
+
+def lists_differ(before, after):
+    """Whether two task lists (task_list's identities) are known to differ:
+    both recorded with other digests, or no list directory both could be."""
+    if before is None or after is None:
+        return False
+    if before[0] == "recorded" and after[0] == "recorded":
+        return before[1] != after[1]
+    return not (before[2] & after[2])
 
 
 def by_name(rows):
@@ -146,11 +265,31 @@ def main():
     parser.add_argument("--splice", nargs="*", default=[])
     parser.add_argument("--markdown", action="store_true")
     arguments = parser.parse_args()
-    before = by_name(rows_of(arguments.before))
-    after = by_name(rows_of(arguments.after))
+    before_rows, after_rows = rows_of(arguments.before), rows_of(arguments.after)
+    before = by_name(before_rows)
+    after = by_name(after_rows)
+    after_directory = {name: output_directory(arguments.after) for name in after}
     for path in arguments.splice:
-        after.update(by_name(rows_of(path)))
+        spliced_in = by_name(rows_of(path))
+        after.update(spliced_in)
+        after_directory.update({name: output_directory(path) for name in spliced_in})
     common = sorted(set(before) & set(after))
+    before_list, before_identity = task_list(arguments.before, before_rows)
+    after_list, after_identity = task_list(arguments.after, after_rows)
+    # Boards prepared from other constraints: another input, not a change.
+    other_input = set()
+    for name in common:
+        digest_before = input_digest(before[name], output_directory(arguments.before))
+        digest_after = input_digest(after[name], after_directory[name])
+        if digest_before is not None and digest_after is not None and digest_before != digest_after:
+            other_input.add(name)
+    lists = f"before {before_list}; after {after_list}"
+    if lists_differ(before_identity, after_identity):
+        print(f"TASK LISTS DIFFER, {len(other_input)} BOARDS ON OTHER INPUTS (INPUT): {lists}")
+    elif other_input:
+        print(f"INPUTS DIFFER ON {len(other_input)} BOARDS (INPUT: their prepared constraints differ): {lists}")
+    else:
+        print(f"tasks: {lists}")
 
     def delta(name):
         a, b = unconnected(after[name]), unconnected(before[name])
@@ -164,7 +303,7 @@ def main():
     print(f"{'board':{width}}{sep}{'before':>24}{sep}{'after':>24}{sep}{'s':>6}")
     if arguments.markdown:
         print(f"{'-' * width} | {'-' * 24} | {'-' * 24} | {'-' * 6}")
-    better = same = worse = cut_rows = 0
+    better = same = worse = cut_rows = input_rows = 0
     total_before = total_after = 0
     for name in common:
         b, a = before[name], after[name]
@@ -172,7 +311,9 @@ def main():
         if ub is not None and ua is not None:
             total_before += ub
             total_after += ua
-            if cut(a) or cut(b):
+            if name in other_input:
+                input_rows += 1
+            elif cut(a) or cut(b):
                 cut_rows += 1
             elif ua < ub:
                 better += 1
@@ -180,7 +321,8 @@ def main():
                 worse += 1
             else:
                 same += 1
-        print(f"{name:{width}}{sep}{cell(b):>24}{sep}{cell(a):>24}{sep}{round(a.get('seconds', 0)):>6}")
+        after_cell = cell(a) + (" INPUT" if name in other_input else "")
+        print(f"{name:{width}}{sep}{cell(b):>24}{sep}{after_cell:>24}{sep}{round(a.get('seconds', 0)):>6}")
     only_after = sorted(set(after) - set(before))
     only_before = sorted(set(before) - set(after))
     for name in only_after:
@@ -193,13 +335,19 @@ def main():
     print()
     print(f"{len(common)} boards in both: better {better}, same {same}, worse {worse}; "
           f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after}"
-          + (f"; {cut_rows} cut by the wall clock in either run (not in better/same/worse)" if cut_rows else ""))
+          + (f"; {cut_rows} cut by the wall clock in either run (not in better/same/worse)" if cut_rows else "")
+          + (f"; {input_rows} on other inputs (INPUT, not in better/same/worse)" if input_rows else ""))
     for label, table in (("before", before), ("after", after)):
         count = sum(1 for n in common if spliced(table[n]))
         if count:
             print(f"{label}: {count} of the {len(common)} rows spliced from an earlier run (SPL)")
     print(objectives_line(objectives([before[n] for n in common]), "before"))
     print(objectives_line(objectives([after[n] for n in common]), "after "))
+    if other_input:
+        same_input = [n for n in common if n not in other_input]
+        print(f"over the {len(same_input)} boards with the same input:")
+        print(objectives_line(objectives([before[n] for n in same_input]), "before"))
+        print(objectives_line(objectives([after[n] for n in same_input]), "after "))
     if only_after:
         print(f"{len(only_after)} boards only after: {sum(1 for n in only_after if passes(after[n]))} pass")
     if only_before:
