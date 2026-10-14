@@ -185,6 +185,13 @@ pub struct KiCadBoardRouterConfig {
     /// three pour rungs with their seed retries.
     #[serde(default)]
     pub ladder_budget_seconds: Option<f64>,
+    /// With a work deadline (the layout's ladder) and a project whose
+    /// final narrow-signal or minimum-clearance step applies, this share
+    /// of the ladder's first attempt's work is kept back for that step
+    /// from the start (`narrow_step_reserve`; 0: none, the step gets what
+    /// the rungs leave).
+    #[serde(default)]
+    pub narrow_reserve_share: Option<f64>,
     /// Seconds one negotiation may run (default 900 s). The ladder sets it
     /// per attempt from what is left of its budget, so that a hopeless
     /// first rung leaves time for the next (video's exclusive-plane rung
@@ -2174,6 +2181,48 @@ pub(crate) fn memory_mb() -> Option<(f64, f64)> {
     Some((peak, available))
 }
 
+/// Whether the ladder's final step applies to this project: signals at
+/// the project's narrowest predefined width (narrower than some class), or
+/// the board's minimum clearance where the project rates clearance
+/// findings as warnings (smaller than some class's clearance).
+pub(crate) fn narrow_step_applies(config: &KiCadBoardRouterConfig) -> bool {
+    let rules = || config.connection_rules.values().chain(config.default_rules.iter());
+    let narrow = config.use_narrow_signals.is_none()
+        && config
+            .narrow_signal_mm
+            .is_some_and(|narrow| rules().any(|rules| rules.trace_width_mm > narrow + 1.0e-9));
+    let relaxed = config
+        .relaxed_clearance_mm
+        .is_some_and(|relaxed| rules().any(|rules| rules.clearance_mm > relaxed + 1.0e-9));
+    narrow || relaxed
+}
+
+/// Work kept back for the final narrow-signal step, from the ladder's
+/// first attempt's work: a share of it, at least 120 s (an attempt's
+/// floor elsewhere in the ladder) and at most `cap`.
+pub(crate) fn narrow_step_reserve(first_attempt_work: f64, share: f64, cap: f64) -> f64 {
+    if share <= 0.0 {
+        return 0.0;
+    }
+    (first_attempt_work * share).max(120.0).min(cap)
+}
+
+/// The work the narrow-signal step needs left to run, with `kept` kept
+/// for it: half of that, and at least three times its negotiation's floor
+/// of 60 s (repair and polish take up to twice the negotiation again).
+pub(crate) fn narrow_step_minimum(kept: f64) -> f64 {
+    (0.5 * kept).max(180.0)
+}
+
+/// The narrow-signal attempt's negotiation in work seconds when the ladder
+/// kept work for it: a third of what is left (repair and polish take up
+/// to twice the negotiation again), within 60 to 900 s, and never more
+/// than the attempt it varies had.
+pub(crate) fn narrow_step_negotiation(work_left: f64, own: Option<f64>) -> f64 {
+    let share = (work_left / 3.0).clamp(60.0, 900.0);
+    own.map_or(share, |own| own.min(share))
+}
+
 /// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the
 /// complete project to `output`.
 pub fn route_kicad_board(
@@ -2413,7 +2462,24 @@ pub fn route_kicad_board(
     // 1560 s and ran to 1890 s, past the harness's limit).
     let last_attempt_work = std::cell::Cell::new(120.0f64);
     let work_left = || config.deadline_work.map_or(f64::INFINITY, |left| left - ladder_work_now.get());
-    let no_time_for_another = || work_left() < last_attempt_work.get().max(120.0);
+    // The final narrow-signal (or minimum-clearance) step comes after
+    // every rung and seed round; with a work deadline (the layout's
+    // ladder, whose deadline is barely beyond its budget) the rungs used
+    // to take all of it (the A13 module: 126 open to 17 by the step in
+    // one run, never run in the next). Once the first attempt tells what
+    // an attempt costs, a share of that is kept back for the step: the
+    // rungs and seed rounds see the work left without it. Zero when the
+    // step does not apply or there is no work deadline.
+    let reserve = std::cell::Cell::new(0.0f64);
+    let reserve_wanted = config.deadline_work.is_some() && narrow_step_applies(config);
+    let reserve_share = std::env::var("PCB_NARROW_RESERVE")
+        .ok()
+        .and_then(|value| value.parse::<f64>().ok())
+        .or(config.narrow_reserve_share)
+        .unwrap_or(0.75);
+    let reserve_cap = config.deadline_work.map_or(0.0, |left| (0.4 * left).min(600.0));
+    let mut reserve_set = false;
+    let no_time_for_another = || work_left() - reserve.get() < last_attempt_work.get().max(120.0);
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -2636,6 +2702,16 @@ pub fn route_kicad_board(
             );
             slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
             last_attempt_work.set(work_of(router_expansions));
+            if reserve_wanted && !reserve_set && opens.0 > 0 {
+                reserve_set = true;
+                reserve.set(narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap));
+                eprintln!(
+                    "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {:.0} s)",
+                    reserve.get(),
+                    work_left(),
+                    work_of(router_expansions)
+                );
+            }
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
             best_attempt = Some((attempt.clone(), connect));
@@ -2837,6 +2913,9 @@ pub fn route_kicad_board(
                 && attempt_seconds <= budget / 2.0
                 && mode + 1 == modes.len()
                 && !past_deadline()
+                // The seeds count as `retry` attempts of work: not out of
+                // the work kept for the narrow-signal step.
+                && (reserve.get() == 0.0 || work_left() - reserve.get() >= retry as f64 * attempt_seconds)
             {
                 seeds_tried = true;
                 let mut seeded = attempt.clone();
@@ -2884,6 +2963,15 @@ pub fn route_kicad_board(
                 result.routing_seconds
             );
             last_attempt_work.set(attempt_seconds);
+            if reserve_wanted && !reserve_set && opens.0 > 0 {
+                reserve_set = true;
+                reserve.set(narrow_step_reserve(attempt_seconds, reserve_share, reserve_cap));
+                eprintln!(
+                    "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {attempt_seconds:.0} s)",
+                    reserve.get(),
+                    work_left()
+                );
+            }
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
@@ -2950,7 +3038,10 @@ pub fn route_kicad_board(
             break;
         };
         let cost = work_of(best_result.expansions).max(1.0);
-        let affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
+        let mut affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
+        if reserve.get() > 0.0 {
+            affordable = affordable.min(((work_left() - reserve.get()) / cost).floor().max(0.0) as usize);
+        }
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
         // As many at once as fit half the memory available; how many seeds
         // route does not depend on it.
@@ -2991,15 +3082,38 @@ pub fn route_kicad_board(
         }
     }
     let mut narrow_step_relaxed = false;
+    // The work kept for the step is its own now. With it, the step needs
+    // half of it still there (the last rung may have run over its share),
+    // and at least 180 s (three times the negotiation's floor: jetson's
+    // ladder kept 129 s with 70 left, and a step of 60 s negotiation took
+    // 232 s and left 268 open), and negotiates in a third of what is
+    // left, so that it ends in the work deadline whatever the machine's
+    // load; without it, the step needs an attempt's work as before (route
+    // mode: no work deadline).
+    let kept = reserve.replace(0.0);
+    let step_has_time = || if kept > 0.0 { work_left() >= narrow_step_minimum(kept) } else { !no_time_for_another() };
+    let step_budget = |step: &mut KiCadBoardRouterConfig| {
+        if kept > 0.0 {
+            step.negotiation_seconds = Some(narrow_step_negotiation(work_left(), step.negotiation_seconds));
+            step.run_work = Some((ladder_budget, work_left().max(0.0)));
+            // The attempt it varies may carry its pitch's work deadline,
+            // taken when that pitch started: the step's is what is left now.
+            step.router_deadline_work = Some(work_left().max(0.0));
+        }
+    };
     // Why a step for a board with connections open does not run, in the
     // order its conditions are checked.
     let blocked = || -> Option<&'static str> {
-        if spent(ladder_work) >= 1.5 * ladder_budget {
+        if spent(ladder_work_now.get()) >= 1.5 * ladder_budget {
             Some("the ladder's budget was used (ladder_budget_seconds)")
         } else if past_deadline() {
             Some("the deadline was reached")
-        } else if no_time_for_another() {
-            Some("too little work was left for another attempt")
+        } else if !step_has_time() {
+            Some(if kept > 0.0 {
+                "too little work was left of what was kept for it (half of that, at least 180 s)"
+            } else {
+                "too little work was left for another attempt"
+            })
         } else {
             None
         }
@@ -3010,6 +3124,7 @@ pub fn route_kicad_board(
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
         && let Some(why) = blocked()
     {
+        eprintln!("the narrow-signal step did not run: {why} ({:.0} s of work left)", work_left());
         skipped.push(format!("the narrow-signal step (signals at {narrow} mm) did not run: {why}"));
     }
     // Connections still open at the class widths: the best attempt once
@@ -3022,11 +3137,12 @@ pub fn route_kicad_board(
         && config.use_narrow_signals.is_none()
         && spent(ladder_work) < 1.5 * ladder_budget
         && !past_deadline()
-        && !no_time_for_another()
+        && step_has_time()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
     {
         let mut narrowed = attempt.clone();
         narrowed.use_narrow_signals = Some(true);
+        step_budget(&mut narrowed);
         // A project that takes clearance findings as warnings gets its
         // minimum clearance in the same attempt (the A13 module's designer
         // drew 0.1016 tracks 0.149 from balls in classes of 0.2).
@@ -3041,12 +3157,14 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
         let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &narrowed, *connect)?;
+        ladder_work += work_of(result.expansions);
+        ladder_work_now.set(ladder_work);
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
         let narrow_opens = open(&result, &scratch);
         eprintln!(
-            "attempt with signals at {narrow} mm{}: {} open, {} starved, {} vias, {:.1} s",
+            "attempt with signals at {narrow} mm{}: {} open, {} starved, {} vias, {:.1} s, work {:.0} s",
             config.relaxed_clearance_mm.map(|relaxed| format!(" and clearance {relaxed} mm")).unwrap_or_default(),
-            narrow_opens.0, narrow_opens.1, result.vias, result.routing_seconds
+            narrow_opens.0, narrow_opens.1, result.vias, result.routing_seconds, work_of(result.expansions)
         );
         let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
             (narrow_opens, result.vias, result.length_mm)
@@ -3079,10 +3197,11 @@ pub fn route_kicad_board(
         && !narrow_step_relaxed
         && spent(ladder_work) < 1.5 * ladder_budget
         && !past_deadline()
-        && !no_time_for_another()
+        && step_has_time()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
     {
         let mut relaxed_attempt = attempt.clone();
+        step_budget(&mut relaxed_attempt);
         relaxed_attempt.relaxed_clearance_mm = None;
         for rules in relaxed_attempt.connection_rules.values_mut().chain(relaxed_attempt.default_rules.iter_mut()) {
             rules.clearance_mm = rules.clearance_mm.min(relaxed);
@@ -3091,6 +3210,8 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
         let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &relaxed_attempt, *connect)?;
+        ladder_work += work_of(result.expansions);
+        ladder_work_now.set(ladder_work);
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
         let relaxed_opens = open(&result, &scratch);
         eprintln!(
@@ -4244,5 +4365,68 @@ mod pour_request_tests {
         let unknown = KiCadPourRequest { net: "VCC".into(), ..request(&["F.Cu"]) };
         assert!(add_pour_zones(&mut pcb, &[unknown]).is_err());
         assert!(add_pour_zones(&mut pcb, &[request(&["In1.Cu"])]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod narrow_step_tests {
+    use super::*;
+
+    fn rules(width: f64, clearance: f64) -> KiCadConnectionRoutingRules {
+        KiCadConnectionRoutingRules { trace_width_mm: width, clearance_mm: clearance, via_size_mm: 0.6, via_drill_mm: 0.3 }
+    }
+
+    #[test]
+    fn the_step_applies_only_with_a_narrower_width_or_a_relaxed_clearance() {
+        let plain = KiCadBoardRouterConfig { default_rules: Some(rules(0.2, 0.2)), ..KiCadBoardRouterConfig::default() };
+        assert!(!narrow_step_applies(&plain));
+        // A menu width no narrower than every class: nothing to narrow.
+        let same = KiCadBoardRouterConfig { narrow_signal_mm: Some(0.2), ..plain.clone() };
+        assert!(!narrow_step_applies(&same));
+        let narrower = KiCadBoardRouterConfig { narrow_signal_mm: Some(0.15), ..plain.clone() };
+        assert!(narrow_step_applies(&narrower));
+        // Already narrow (the step itself): it does not apply again.
+        let narrowed = KiCadBoardRouterConfig { use_narrow_signals: Some(true), ..narrower.clone() };
+        assert!(!narrow_step_applies(&narrowed));
+        let relaxed = KiCadBoardRouterConfig { relaxed_clearance_mm: Some(0.1), ..plain.clone() };
+        assert!(narrow_step_applies(&relaxed));
+        let not_smaller = KiCadBoardRouterConfig { relaxed_clearance_mm: Some(0.2), ..plain.clone() };
+        assert!(!narrow_step_applies(&not_smaller));
+        // A wide class among narrow ones is enough.
+        let mut classes = plain.clone();
+        classes.default_rules = Some(rules(0.125, 0.2));
+        classes.connection_rules.insert("/PWR".into(), rules(0.5, 0.2));
+        classes.narrow_signal_mm = Some(0.125);
+        assert!(narrow_step_applies(&classes));
+    }
+
+    #[test]
+    fn the_reserve_is_a_share_of_the_first_attempt_within_its_floor_and_cap() {
+        assert_eq!(narrow_step_reserve(400.0, 0.75, 600.0), 300.0);
+        // A cheap first attempt still keeps the ladder's floor of 120 s.
+        assert_eq!(narrow_step_reserve(50.0, 0.75, 600.0), 120.0);
+        assert_eq!(narrow_step_reserve(1000.0, 0.75, 600.0), 600.0);
+        // The cap wins over the floor (little work left at all).
+        assert_eq!(narrow_step_reserve(50.0, 0.75, 80.0), 80.0);
+        assert_eq!(narrow_step_reserve(400.0, 0.0, 600.0), 0.0);
+    }
+
+    #[test]
+    fn the_step_needs_half_its_reserve_and_three_floors_of_negotiation() {
+        // The A13 module: 278 s kept, about 600 s left: it runs.
+        assert_eq!(narrow_step_minimum(278.0), 180.0);
+        assert_eq!(narrow_step_minimum(600.0), 300.0);
+        // Jetson: 129 s kept, 70 s left: it does not.
+        assert!(70.0 < narrow_step_minimum(129.0));
+    }
+
+    #[test]
+    fn the_step_negotiates_a_third_of_what_is_left() {
+        assert_eq!(narrow_step_negotiation(450.0, None), 150.0);
+        assert_eq!(narrow_step_negotiation(90.0, None), 60.0);
+        assert_eq!(narrow_step_negotiation(6000.0, None), 900.0);
+        // Never more than the attempt it varies had.
+        assert_eq!(narrow_step_negotiation(450.0, Some(100.0)), 100.0);
+        assert_eq!(narrow_step_negotiation(450.0, Some(200.0)), 150.0);
     }
 }

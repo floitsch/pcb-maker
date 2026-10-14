@@ -1005,6 +1005,69 @@ prepared once, x738 against x780): 29 identical, MIDAS-MK1.1 as above.
 Logs `build/quick30-x782.log` (v5), `build/quick30-x781.log` (v6, 23 of
 30; framework_mobo passes on v6's constraints, which fix M1).
 
+## Committed on 2026-10-14 (ladder reservation)
+
+The layout's ladder now keeps work for its last step, the best attempt
+again with signals at the project's narrowest predefined width (plus the
+minimum clearance when the project rates clearance findings as warnings),
+on projects where that step applies (`narrow_step_applies`: 43 of the 109
+v6 tasks have a narrower menu width or a relaxed clearance). In layout
+mode the ladder's work end is about its budget, so the regular rungs used
+to spend everything and the step never ran (module, DSP, Hub, vaio_re in
+v15). Once the ladder's first attempt has run with connections open,
+`narrow_reserve_share` (0.75) of that attempt's work, at least 120 s and
+at most 0.4 of the ladder's work and 600 s, is held back: every later
+rung, the seed retries and the seed rounds check the work left without it.
+The step runs when half the reservation and at least 180 s are left (the
+floor: on jetson, with 70 s left, a 60 s negotiation took 232 s and was
+useless), negotiates a third of what is left with its router's work
+deadline at what is left (it had no work budget when it varied a probed
+rung, so it ran to the wall clock: DSP 619 open in v15), its work counts
+in `work_seconds`, and `skipped` says why it did not run. Route mode and
+projects without the step are unchanged (no reservation: the code paths
+are gated on it). A limit on how many rungs run side by side was built
+and removed: the rungs are judged in order either way, so it only
+serialised waves and cost wall clock (Telemetry).
+
+Layout runs, one per side, pinned (A 0-7,16-23, B 8-15,24-31, 4 threads
+each); unconnected is KiCad's count, errors KiCad's; "step" = whether the
+narrow step ran (router's open count after it):
+
+| board | base / ours | unconnected | errors | vias | CPU ours/base | step base / ours |
+| --- | --- | --- | --- | --- | --- | --- |
+| A13 module | x747 / x772 | 81 -> 18 | 1 / 1 (pre-existing) | 414 / 404 | 0.86 | no / yes (37) |
+| vaio_re | x769 / x773 | 163 -> 73 | 0 / 0 | 604 / 572 | 1.02 | no / yes (165) |
+| DSP-ADAU1452 | x791 / x774 | 129 -> 108 | 0 / 5 starved thermals | 188 / 185 | 1.07 | no / yes (230) |
+| Hub | x791 / x774 | 30 / 30 | 0 / 0 | 187 / 187 | 0.90 | no / yes (176, not kept) |
+| MokyaLora (passes) | x791 / x774 | 0 / 0 | 0 / 0 | 334 / 334 | 0.96 | yes / yes (bounded: 157 s) |
+| TelemetryOnboard | x791 / x774 | 1 -> 0 (pass) | 0 / 0 | 102 / 108 | 0.93 | no / yes (0); both wall-cut |
+| jetson | x769 / x773 | 25 / 25, identical | 1 / 1 | 782 / 782 | 0.96 | no ladder (first route 1283 of 1500 s) |
+| ghoul | x791 / x775 | 9 / 9, identical | 1 / 1 | 604 / 604 | 1.00 | step blocked: wall cut in placement |
+| OpenFC (no step) | x791 / x775 | 1 / 1, identical fingerprints | 0 / 0 | 159 / 159 | 1.07 | - |
+| protoesp (no step) | x791 / x775 | 92 / 92, identical | 2 / 2 | 295 / 295 | 1.00 | - |
+
+The bases moved during the work (determinism, fill round two, exit codes);
+each pair has both sides on the same base. Earlier pairs on x738 (before
+the determinism change): module 81 -> 13, vaio_re 101 -> 21, Hub 35 -> 29,
+DSP and koeg unchanged. Jetson cannot be helped by the ladder: its first
+route takes the layout's budget (in route mode the step takes it from 48
+to 6 open); a narrow first route when the project has the step is the
+lever there, untested. Narrow is not a better default for the ladder's
+first attempt: on designer placements (route-v12) the step beat the whole
+class-width ladder on 9 of 16 boards (DSP 114 to 12, jetson 29 to 8,
+vaio_re 36 to 16, Telemetry 8 to 0) and lost on 5 by 2-28 open, and in
+layout v15 it lost on koeg (164 against 134) and Explorer (8 against 4).
+The narrow step's DRC risk: the widths are the project's own menu (at or
+above its minimum width), so KiCad raises no width finding; DSP's 5 new
+errors are starved thermals of the narrow attempt's pours. Quick tier
+x776 (this change on b2f5fbf) against build/quick30-x768.log: 24 of 30
+pass (23; framework_mobo_lefthalf was an error row in x768), unconnected
+25 -> 25, better 0 / same 29 / worse 0; no tier board reserved or ran the
+step (none prints the reservation line), so the row differences in vias
+(BAGEL, Castor, USB_Keypad, WLED_Matrix's connection_width 2 -> 11) come
+from the commits between x768 and b2f5fbf, not from this change. Logs
+`build/ladder-reserve/` (summary.py there), `build/quick30-x776.log`.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

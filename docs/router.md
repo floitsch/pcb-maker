@@ -345,6 +345,28 @@ skeleton; pour nets as tracks; then the same on finer lattices (0.075 and
 `refine_budget_seconds` (240 s). StickHub is the board that needs the finer
 rung: 8 open on the regular lattice, clean at 0.075 mm.
 
+After the rungs, the finer pitches and the best rung's seed rounds, a
+board still open gets one more attempt: the best attempt with signal nets
+at the project's narrowest predefined width (its width menu, when that is
+narrower than a class; poured nets, grounds and rails keep their class
+width), and with the board's minimum clearance when the project rates
+clearance findings as warnings; or, with no narrower width, only the
+minimum clearance. In route mode the step has the ladder's budget plus a
+half. In the layout's ladder the work end is the ladder's budget, so the
+rungs used to leave the step nothing (the A13 module: 126 open to 17 by
+the step in one run, not run in the next). There, when the step applies,
+the ladder keeps work back for it once its first attempt has run
+(`narrow_reserve_share` of that attempt's work, default 0.75, at least
+120 s, at most 0.4 of the work left at the start and 600 s;
+`PCB_NARROW_RESERVE` overrides the share): each further rung, the seed
+retries and the seed rounds see the work left without it. The step then
+runs if half the reservation and at least 180 s are still there, and
+negotiates a third of what is left (60-900 s, never more than the
+attempt it varies), with its router's work deadline at what is left, so
+it ends inside the layout's end. Its work counts in the ladder's
+(`work_seconds`), and when it does not run `skipped` says why. Boards
+where the step does not apply, and route mode, are unchanged.
+
 ## Via reduction
 
 Once the board is complete, the nets that have vias are renegotiated from the
