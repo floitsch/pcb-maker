@@ -195,6 +195,13 @@ pub struct KiCadBoardPlacerConfig {
     /// default.
     #[serde(default)]
     pub replicate_channels: bool,
+    /// The placement's orientation search starts from a canonical pose
+    /// (`core::orient`): every movable part that may turn at the first of
+    /// its angle options (in a fixed order), so that the placement is the
+    /// same whether the board holds 0 degrees (an import from a schematic)
+    /// or the designer's angles (a stack). On; off: the parts start at
+    /// the angles the board holds.
+    pub orientation_search: bool,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -247,6 +254,7 @@ impl Default for KiCadBoardPlacerConfig {
             supply_via_room_mm: None,
             routing_demand: 0.0,
             replicate_channels: false,
+            orientation_search: true,
         }
     }
 }
@@ -2194,6 +2202,11 @@ pub(super) fn lower_placement(
             if normalize_angle(at[2]) % 90.0 > 1.0e-6 {
                 angles.extend([0.0, 90.0, 180.0, 270.0]);
             }
+            // In a fixed order, not from the board's angle: the searches
+            // walk them in this order (`core::orient`).
+            if config.orientation_search {
+                core::orient::sort_angles(&mut angles);
+            }
             angles
         };
         // How far the copper stays inside the body: the body may come that
@@ -3503,6 +3516,7 @@ pub fn place_kicad_board(
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.routing_room = routing_room(config, &lowered);
+    placer_config.orientation_search = config.orientation_search;
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked

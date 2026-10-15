@@ -10,6 +10,7 @@ mod buckets;
 pub mod constraints;
 pub mod global;
 pub mod legal;
+pub mod orient;
 pub mod problem;
 pub mod room;
 pub mod view;
@@ -38,6 +39,13 @@ pub struct Config {
     /// around it, within the same halo area, and the placement is annealed
     /// again from there. Off (`None`) by default.
     pub routing_room: Option<room::RoutingRoom>,
+    /// The orientation search starts from a canonical pose (`orient`):
+    /// angle options in a fixed order, every movable part that may turn at
+    /// the first of them, so that the placement does not depend on the
+    /// angles the board held (0 degrees from an import, the designer's in
+    /// a stack). Off: the parts start at the angles they hold, options in
+    /// the order given (the placer before 2026-10-15).
+    pub orientation_search: bool,
 }
 
 impl Config {
@@ -50,6 +58,7 @@ impl Config {
             overlap_far_side_pads: false,
             work_limit: None,
             routing_room: None,
+            orientation_search: true,
         }
     }
 }
@@ -511,8 +520,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let requested: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();
+    let wirelength_initial = fitted.wirelength(&fitted.poses);
+    if config.orientation_search {
+        orient::canonical_start(&mut fitted);
+    }
     let problem = &fitted;
-    let wirelength_initial = problem.wirelength(&problem.poses);
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = std::time::Instant::now();
     let work_started = work();
