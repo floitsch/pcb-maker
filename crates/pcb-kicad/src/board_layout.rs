@@ -428,6 +428,34 @@ pub(crate) fn without_copper_texts(pcb: &Expr) -> Expr {
     )
 }
 
+/// The open count past which a board the narrow-signal step applies to
+/// counts as far from complete after its first route: 2 % of its
+/// terminals, at least 10 (jetson: 31 open, the limit 27; the boards
+/// the moves complete have a few open).
+pub(crate) fn far_open_limit(terminals: usize) -> usize {
+    ((terminals as f64 * 0.02) as usize).max(10)
+}
+
+/// Whether `open` connections after the first route are more than
+/// `far_open_limit` of `terminals`.
+pub(crate) fn far_from_complete(open: usize, terminals: usize) -> bool {
+    open > far_open_limit(terminals)
+}
+
+/// The negotiation and the clean-up of a narrow-signal attempt run
+/// alone, from the work left: the clean-up a tenth (30 to 120 s; it
+/// shortens tracks and saves vias but closes nothing, and its default of
+/// 180 s took a third of jetson's attempt), the negotiation three quarters
+/// of the rest (60 to 900 s), the hard repair, stitching and spokes the
+/// remainder (jetson: 302 s of negotiation left 28 nets in conflict and
+/// 23 unconnected, 408 s 21 and 18; 0.85 of the rest, 462 s, plateaued at
+/// 21 and ended at 21 unconnected).
+pub(crate) fn direct_narrow_budget(work_left: f64) -> (f64, f64) {
+    let cleanup = (0.1 * work_left).clamp(30.0, 120.0);
+    let negotiation = (0.75 * (work_left - cleanup)).clamp(60.0, 900.0);
+    (negotiation, cleanup)
+}
+
 pub fn layout_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -944,9 +972,26 @@ pub fn layout_kicad_board(
     let terminals: usize = board.nets.iter().map(|net| net.terminals.len()).sum();
     let ladder_has_rungs = connect && layers.names.len() >= 4;
     let many_open = ladder_has_rungs && best.0 > ((terminals as f64 * 0.05) as usize).max(10);
+    // Where the narrow-signal step applies, a board still far from
+    // complete after its first route skips the moves, the resume and the
+    // polish too, and the narrow-signal attempt gets the time (below): the
+    // step is what nearly completes such boards (jetson: 48 to 6 open in
+    // route mode), and the moves and the resume took 388 s of jetson's
+    // work for 31 to 25 open and left 218 s, too little for any ladder.
+    // (`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` keeps the old split.)
+    let old_split = std::env::var_os("PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET").is_some();
+    let narrow_applies = !old_split && crate::board_router::narrow_step_applies(router_config);
+    let far_open = narrow_applies && ladder_has_rungs && !many_open && far_from_complete(best.0, terminals);
     if many_open {
         eprintln!("layout: {} open after the first route: no moves, the final ladder gets the time", best.0);
+    } else if far_open {
+        eprintln!(
+            "layout: {} open after the first route (more than {}), the narrow-signal step applies: no moves, the narrow-signal attempt gets the time",
+            best.0,
+            far_open_limit(terminals)
+        );
     }
+    let many_open = many_open || far_open;
     for _ in 0..if many_open { 0 } else { config.moves } {
         arm(&mut router, work + pool_excess);
         if best.0 == 0 && since_improvement >= config.patience {
@@ -1284,8 +1329,31 @@ pub fn layout_kicad_board(
         }
         past
     };
+    // A board far from complete where the narrow-signal step applies gets
+    // only the step: one attempt with the first route's pours, signals at
+    // the project's narrowest width (and its minimum clearance where the
+    // project rates clearance findings as warnings), with most of what is
+    // left. The class-width ladder before it used to take that work and
+    // leave the step too little or nothing, and none of its attempts beat
+    // the first route on these boards (x833: module 82 unconnected, DSP
+    // 121, vaio_re 138, jetson 25 without a ladder; the step alone 17, 82,
+    // 35, 18).
+    let direct_narrow = narrow_applies && many_open && current.0 > 0;
     let fallback_config = if past_guard {
         None
+    } else if direct_narrow {
+        let ladder_left = work_deadline - work - pool_excess;
+        let mut narrow = crate::board_router::narrow_step_config(router_config);
+        narrow.pours = if connect { KiCadPourMode::Connect } else { KiCadPourMode::Tracks };
+        narrow.refine_pitches_mm = Some(Vec::new());
+        let (negotiation, cleanup) = direct_narrow_budget(ladder_left);
+        narrow.negotiation_seconds = Some(negotiation);
+        narrow.cleanup_seconds = Some(cleanup);
+        eprintln!(
+            "layout: {ladder_left:.0} s of work left: the narrow-signal attempt instead of the ladder (pours {}, negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
+            if connect { "connected" } else { "as tracks" },
+        );
+        Some(narrow)
     } else if current.0 > 0 {
         Some(router_config.clone())
     } else if current.1 > 0 && connect && router_config.pours == KiCadPourMode::Auto {
@@ -1357,4 +1425,37 @@ pub fn layout_kicad_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(layout)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn far_from_complete_is_two_percent_of_the_terminals_at_least_ten() {
+        assert_eq!(far_open_limit(100), 10);
+        assert_eq!(far_open_limit(653), 13);
+        assert!(far_from_complete(30, 653));
+        assert!(!far_from_complete(13, 653));
+        assert!(!far_from_complete(10, 100));
+        assert!(far_from_complete(11, 100));
+        assert!(!far_from_complete(0, 0));
+    }
+
+    #[test]
+    fn the_narrow_attempt_alone_negotiates_most_of_what_is_left() {
+        // Jetson: about 600 s left.
+        let close = |(a, b): (f64, f64), (c, d): (f64, f64)| (a - c).abs() < 1.0e-9 && (b - d).abs() < 1.0e-9;
+        assert!(close(direct_narrow_budget(600.0), (405.0, 60.0)));
+        // Little left: the floors.
+        assert!(close(direct_narrow_budget(200.0), (127.5, 30.0)));
+        assert_eq!(direct_narrow_budget(90.0), (60.0, 30.0));
+        // Much left: the caps.
+        assert_eq!(direct_narrow_budget(2000.0), (900.0, 120.0));
+        // Negotiation and clean-up never take more than is left.
+        for left in [240.0, 400.0, 800.0, 1200.0] {
+            let (negotiation, cleanup) = direct_narrow_budget(left);
+            assert!(negotiation + cleanup < left);
+        }
+    }
 }

@@ -392,6 +392,22 @@ it ends inside the layout's end. Its work counts in the ladder's
 (`work_seconds`), and when it does not run `skipped` says why. Boards
 where the step does not apply, and route mode, are unchanged.
 
+In a layout, a board far from complete after its first route where the
+step applies gets the step alone instead of the ladder (2026-10-15): one
+attempt with the first route's pour mode, signals narrow, refine pitches
+off, negotiating three quarters of what is left after a clean-up capped
+at a tenth of it (30-120 s; `direct_narrow_budget`), its work deadline the
+layout's end; the layout keeps it if KiCad finds it better than the first
+route. Far from complete is the old "many open" (more than 5 % of the
+terminals, four layers with pours: no moves, no resume, no polish) or,
+where the step applies, more than 2 % (at least 10): jetson's 31 open (its
+limit 27) used to send it into moves and a resume (388 s of
+work for 31 to 25 open) that left 218 s and no ladder. The ladder's
+probes, its continued rung and its reserved step took 900-1000 s on such
+boards, and none of its class-width attempts beat the first route
+(module, DSP-ADAU1452, vaio_re on x833). `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`
+restores the old split.
+
 ## Via reduction
 
 Once the board is complete, the nets that have vias are renegotiated from the

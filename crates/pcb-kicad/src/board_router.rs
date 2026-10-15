@@ -149,6 +149,11 @@ pub struct KiCadBoardRouterConfig {
     /// seeds, and so the result, does not depend on it).
     #[serde(skip)]
     pub seeds_side_by_side: Option<usize>,
+    /// A cap on the clean-up's work budget (router `cleanup_seconds`; set
+    /// by the layout for a narrow-signal attempt run alone, whose
+    /// negotiation needs the work more than its length and vias do).
+    #[serde(skip)]
+    pub cleanup_seconds: Option<f64>,
     #[serde(default)]
     pub jacobi_batch: Option<usize>,
     /// Route every attempt this many ways at once (the deterministic order
@@ -2223,6 +2228,26 @@ pub(crate) fn narrow_step_negotiation(work_left: f64, own: Option<f64>) -> f64 {
     own.map_or(share, |own| own.min(share))
 }
 
+/// `config` as the narrow-signal step routes it: signal nets at the
+/// project's narrowest predefined width when that is narrower than a
+/// class, and the board's minimum clearance when the project rates
+/// clearance findings as warnings. Neither step applies to the result
+/// again.
+pub(crate) fn narrow_step_config(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
+    let mut step = config.clone();
+    let wider = |narrow: f64| config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9);
+    if config.use_narrow_signals.is_none() {
+        step.use_narrow_signals = Some(config.narrow_signal_mm.is_some_and(wider));
+    }
+    if let Some(relaxed) = config.relaxed_clearance_mm {
+        step.relaxed_clearance_mm = None;
+        for rules in step.connection_rules.values_mut().chain(step.default_rules.iter_mut()) {
+            rules.clearance_mm = rules.clearance_mm.min(relaxed);
+        }
+    }
+    step
+}
+
 /// Routes every connection of `<source>/<board_id>.kicad_pcb` and writes the
 /// complete project to `output`.
 pub fn route_kicad_board(
@@ -3488,6 +3513,9 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         router_config.strict_via_budget = strict;
     }
     router_config.run_work = config.run_work;
+    if let Some(seconds) = config.cleanup_seconds {
+        router_config.cleanup_seconds = router_config.cleanup_seconds.min(seconds);
+    }
     if let Some(against) = config.against_direction_cost {
         router_config.against_direction = against;
     }
@@ -4428,5 +4456,27 @@ mod narrow_step_tests {
         // Never more than the attempt it varies had.
         assert_eq!(narrow_step_negotiation(450.0, Some(100.0)), 100.0);
         assert_eq!(narrow_step_negotiation(450.0, Some(200.0)), 150.0);
+    }
+
+    #[test]
+    fn the_step_config_narrows_signals_and_relaxes_clearance_once() {
+        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.2, 0.2)), ..KiCadBoardRouterConfig::default() };
+        config.connection_rules.insert("/PWR".into(), rules(0.5, 0.25));
+        config.narrow_signal_mm = Some(0.125);
+        config.relaxed_clearance_mm = Some(0.1);
+        let step = narrow_step_config(&config);
+        assert_eq!(step.use_narrow_signals, Some(true));
+        assert_eq!(step.relaxed_clearance_mm, None);
+        assert_eq!(step.default_rules.as_ref().unwrap().clearance_mm, 0.1);
+        assert_eq!(step.connection_rules["/PWR"].clearance_mm, 0.1);
+        // The widths stay the classes' (lowering narrows the signals).
+        assert_eq!(step.connection_rules["/PWR"].trace_width_mm, 0.5);
+        assert!(!narrow_step_applies(&step));
+        // Only a relaxed clearance: no narrow width to use.
+        let relaxed = KiCadBoardRouterConfig { narrow_signal_mm: None, ..config.clone() };
+        let step = narrow_step_config(&relaxed);
+        assert_eq!(step.use_narrow_signals, Some(false));
+        assert_eq!(step.default_rules.as_ref().unwrap().clearance_mm, 0.1);
+        assert!(!narrow_step_applies(&step));
     }
 }

@@ -1311,6 +1311,97 @@ tracks rung adds 11 manual spokes, not 8; the model on x833h's board had
 42 to 42, errors 6 to 6, passes 6 to 6, vias 1177 to 1176, length 22030
 to 22032 mm; OpenFC cut by the wall clock on both sides.
 
+## Committed on 2026-10-15 (first-route budget)
+
+Jetson ended layout mode at 25 unconnected with no ladder at all. Where
+its work went, x833 (four threads, `profile work:` lines, work seconds):
+
+| phase | work |
+| --- | --- |
+| placement (longest seed; the pool's 79 s count toward the end only) | 52 |
+| race: the two other placements' probes | 150 |
+| first route: kept probe 75 + negotiation 478 (cap 556) | 553 |
+| first route: hard repair 40, stitching and pour analyses 6 | 46 |
+| move C33 (rejected, 39 open): negotiation 84, repair 37, stitching 3 | 124 |
+| move C33 turned (kept, 30 open): negotiation 120, repair 31, stitching 2 | 152 |
+| resume (82 s, 30 to 25 open): negotiation 83, repair 27, stitching 2 | 112 |
+| clean-up, via reduction, spokes | 0 (polish needs 240 s, 218 left) |
+| ladder | none (needs 240 s, 218 left) |
+
+1203 s of work plus 79 s of pool: 1282 of 1500 (x832 before the pool:
+1222 plus 46 of waves, wall-cut in the polish). The first route's
+negotiation was not the problem (it stalled at 478 of 556 s); the moves
+and the resume were: jetson's 31 open sat under the "many open" limit (5 %
+of its terminals), so it was treated as nearly complete. On the boards
+over that limit (module, DSP-ADAU1452, vaio_re) the ladder ran but its
+probes and continued tracks rung took 900-1000 s, the reserved
+narrow-signal step got 135-156 s or nothing, and no class-width attempt
+beat the first route (x833: module 82, DSP 121, vaio_re 138).
+
+Changed (crates/pcb-kicad/src/board_layout.rs): where the narrow-signal
+step applies (`narrow_step_applies`), a board on four layers with pours
+counts as far from complete above 2 % of its terminals (at least 10;
+`far_open_limit`) as well as above the old 5 %; such a board skips the
+moves, the resume and the polish, and instead of the ladder gets one
+attempt of the step alone (`narrow_step_config`: signals at the narrowest
+menu width, the minimum clearance where clearance findings are warnings;
+the first route's pour mode, no finer pitches) with the work left: the
+clean-up capped at a tenth of it (30-120 s, new `cleanup_seconds` in the
+router config, not read from files), the negotiation three quarters of
+the rest (60-900 s; `direct_narrow_budget`), its work deadline the
+layout's end; the layout keeps it when KiCad finds it better.
+`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` restores the old split. Unit tests
+for the limits and the split. Boards without the step, and boards near
+completion, take the old paths.
+
+Layout runs, one per side, four threads each, unpinned, load 22-41;
+before x833, after x855 (x855 is this on x862; x833 and x862 have the same
+budget code, x862 changes hatched zones; the jetson, module, DSP and
+vaio_re rows of x855 equal those of the x851/x854 runs built on x833).
+Unconnected and errors are KiCad's (new errors against the designer's):
+
+| board | unconnected | errors | vias | before: steps | after: steps |
+| --- | --- | --- | --- | --- | --- |
+| jetson | 25 -> 18 | 1 clearance -> 8 hole_clearance | 772 -> 710 | moves, resume, no polish, no ladder | narrow attempt (408 s negotiation, router 36 open) |
+| A13 module | 82 -> 17 | 0 -> 1 track_dangling | 424 -> 490 | ladder, step skipped (154 s left of 319 kept) | narrow attempt (stalled at 103 s), a seed round |
+| DSP-ADAU1452 | 121 -> 82 | 5 starved -> 0 | 186 -> 225 | ladder, step at 156 s: 258 | narrow attempt 169, four seeds 207 |
+| vaio_re | 138 -> 35 | 0 / 0 | 551 -> 686 | ladder, step at 135 s: 530 | narrow attempt 76, one seed |
+| Castor | 0 / 0 | 0 / 0 | 249 -> 167 | first route, moves, tracks rung | same; 167 is x862's (hatched zones; x862 alone gives 167) |
+| keyboar_ | 0 / 0 | 0 / 0 | 39 / 39 | first route, moves | same |
+
+No row was cut. Jetson's 8 hole_clearance findings are one via of
+3V3_SYS 0.2438 mm from J2's PTH pad 1 hole (0.25 required; KiCad lists
+it 8 times): a router hole-clearance rounding to look at, not the narrow
+width. Two more boards with the step, on x833 against x854 with the same
+rule (`PCB_LAYOUT_DIRECT_NARROW=always`, an experiment switch not kept):
+Hub 30 -> 30, 187 -> 170 vias, 1378 -> 577 s of work; koeg 12 -> 7
+unconnected, shorting_items 2 -> 5 (15 courtyard overlaps on both, both
+runs wall-cut under load).
+
+Variants measured on the way (jetson unless said): the narrow attempt with
+half of what is left and the default 180 s clean-up (x850): 23, its
+clean-up took 186 of 604 s; three quarters after a capped clean-up
+(x851): 18, the negotiation still falling (21 nets in conflict); 0.85
+(x852): 21, a plateau at 21 and another end; the step alone only when the
+ladder could not afford probes plus two attempts of the first route's cost
+(x851): module took it (17), DSP and vaio_re took the ladder and stayed at
+121 and 138, which is why the rule now has no such threshold. A cap on the
+first route itself was not needed on jetson (its negotiation stalled
+under its cap) and would risk boards that complete in it.
+
+Short tier x855 against x862 (same tasks, v6): all 12 rows identical, 42
+unconnected, 6 errors, 1176 vias; against build/bench-short/short-x783.log
+only 1337-v4.0's vias differ (64 -> 76, the recorded router change). No
+short-tier board has the step, so none takes the new path. Logs in the
+worktree's build/ (pcb-maker-jetson: six-x833, six-x851, a-x855, b-x855,
+always-x854, extra-x833, extra-x854-always, jetson-x832, jetson-x852,
+castor-x862), short tier build/short-x855.log.
+
+Left: the narrow attempt does not use all the work on every board (Hub
+ended at 577 of 1500 s): a class-width ladder after it with what is left;
+a mode choice for the attempt (the first route's pour mode now; tracks
+probed better on module, koeg and DSP); the via hole-clearance rounding.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
