@@ -1,0 +1,7 @@
+{
+ "repository": "duckyb/urchin",
+ "commit": "aef241da7870dbae322416a00fbb269f1a24d8b1",
+ "files": "main.kicad_sch, main.kicad_pro, fp-lib-table and the seven footprints of lib/ the schematic uses",
+ "license": "MIT (LICENSE)",
+ "used_by": "tests/agent_walkthrough.rs"
+}

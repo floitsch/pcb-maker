@@ -1716,6 +1716,135 @@ timeouts, the worse rows and the panels; its section "Triage of v16"
 follows. x862 predates the first-route budget (x855), hole clearance
 (x881), router overhead (x872), pour recalibration (x817) and the second
 narrow attempt (x893); the next sweep carries them.
+## Committed on 2026-10-15 (agent walkthrough)
+
+An agent's whole flow on two real boards, using only README.md,
+docs/agents.md, docs/constraints.md and `--help`, from the KiCad project
+with its schematic to a board `drc-kicad-board` passes. The harvested
+GitHub boards carry no schematic (`benchmarks/real/external/github` holds
+the board and project only), so the schematics and project libraries were
+fetched at the boards' commits (origin.json): spell_tome_bottom (25 parts,
+18 nets, 2 layers, its libraries in the project) and urchin (a split
+keyboard, both halves on one board: 80 parts, 68 nets, KiCad 6 schematic
+and libraries, MIT).
+
+The flow (RAYON_NUM_THREADS=4):
+
+```sh
+pcb-maker import-kicad-netlist dl/spell_tome/spell_tome_bottom.kicad_sch tome spell_tome_bottom
+pcb-maker describe-kicad-board tome spell_tome_bottom > board.json
+# constraints.json: outline 70 x 100, U1 on the back, SW2 flush on the right
+# edge opening outwards, J1 at the top, the four buttons in a region,
+# L1 below U2 (relative), C2 near U2 pin 6
+pcb-maker place-kicad-board tome spell_tome_bottom place1 tome/layout.json
+pcb-maker layout-kicad-board tome spell_tome_bottom lay1 auto tome/layout.json
+pcb-maker drc-kicad-board lay1/result spell_tome_bottom drc.json
+pcb-maker export-kicad-fab lay1/result spell_tome_bottom fab
+```
+
+spell_tome: exit 0 in 41 s (73 s of work), 18/18, 9 vias, 586 mm, 8 of 8
+constraints; drc-kicad-board 0 errors, 0 unconnected. urchin with 100
+constraints (two 5 x 3 key grids as `row`s, a region per half, each of the
+34 diodes `near` its key, thumb keys `relative` below the grid, the power
+switches on the top edge, display and reset near the controller): exit 0
+in 29 s (20 s of work), 68/68, 39 vias, 1897 mm, 100 of 100. With
+`"total_seconds": 20` both finish in 12-13 s, still complete. Failure
+paths tried: a 22 x 24 mm spell_tome (exit 1, `unplaced` U1, J1, J2 and
+the hints in `next_actions`; 30 x 30 mm already routes clean), footprint
+libraries removed (exit 1, `missing`), a netlist exported outside the
+project, a file that is no netlist.
+
+Friction found, and what was done:
+
+- **Bug: a turned row was re-lowered the wrong way.** Layout mode lowers
+  its own placement again for the report and the moves; `apply_rows` built
+  the row from the leader's angle alone, so a row the placer had turned
+  half way ran the other way: urchin's right half reported `region SW18`
+  missed by 61 mm and `relative SW33 SW18` by 95 mm (exit 1 on a board
+  that was fine), and the members would have been pulled there by the
+  followers' sync. The row's frame is now the leader's angle or that angle
+  turned by a half (a quarter with `turns`) turn, whichever matches where
+  the members lie; a fresh stack matches all alike and keeps the leader's.
+- **`near` could not name a key of a row** ("SW2 is carried by its row"):
+  a keyboard's diode at its switch could not be said. `part_of` and
+  `pin_of` may now name any row member: a new placer anchor
+  `Anchor::Area(leader, member, centre, half)` is the member's body (or
+  pad, half size 0) in the leader's frame, and the report names the member.
+- **Bug: KiCad 6 library footprints kept `fp_text reference`.** KiCad
+  reads it over the Reference property the import sets, so every copy of a
+  footprint carried the library's reference (`Bat+0`): 181 schematic
+  parity issues on urchin (73 duplicate, 73 missing footprints, 35 net
+  conflicts). The import converts `fp_text reference` and `fp_text value`
+  to properties (place, layer, font, hidden kept): 6 left, the controller's
+  no-connect pins below.
+- **276 false warnings "fixed parts X and Y overlap"** on every placement
+  of a fresh import: the check ran before the constraints, when the stack
+  was fixed by the default rules (parts off the board are on the edge);
+  `move_all` frees them. It runs after the constraints now.
+- **The layout's last line said `native complete=false`** above a verdict
+  `complete` (KiCad's raw count includes the cosmetic silkscreen
+  warnings). It now prints KiCad's unconnected count and its findings of
+  any severity, "the verdict judges them"; agents.md says `routed.native`
+  is raw and the verdict decides.
+- **`describe-kicad-board` gave a fresh import a 3.8 x 0.8 mm outline**:
+  SW2's slots on Edge.Cuts. `outline.from_footprints` is true when the
+  board draws no Edge.Cuts of its own.
+- **`place-kicad-board` needed a placer.json** that agents.md told the
+  agent to cut out of layout.json; it now takes the layout config (its
+  `placer` object) as well.
+- **Missing footprints said only "not found"**: now where it was looked
+  for (no library of that name, or the library's folder without that
+  file), and the stderr line says to add the library and import again
+  into the same directory (constraints.json and layout.json are kept; the
+  help said "existing files kept", which read as "the board too").
+- **A netlist exported outside the project** missed the project's
+  libraries (9 of 25 footprints on spell_tome): the import also looks in
+  the folder of the schematic the netlist names as its source.
+- **A file that is no netlist imported as an empty board, exit 0**: now an
+  input error (exit 2) that says how to export one.
+- **`place-kicad-board` on a board without room did not end** ("checks
+  constraints in seconds"): urchin on 80 x 40 mm ran over 12 minutes on
+  two threads before it was killed; one part in a region too small for it
+  took 55 s. The placer's relaxation levels anneal and legalize again and
+  again, and the command had no work budget unless
+  `PCB_PLACER_WORK_SECONDS` was set (with 10 s it still took 60 s of work:
+  the budget is checked between levels only, and the first level's
+  legalize, legalize-first and repair passes took 11, 10 and 8 s). The
+  command now takes the layout's placement share by default (600 s of
+  work, the same budget the layout would give it), and a `region` smaller
+  than its part in every orientation it may take is an input error at
+  once (exit 2, "region for Display1 cannot hold it: the box is 3.00 x
+  3.00 mm, the part ...").
+- **Help and docs**: layout's help said the unplaced case leaves a
+  board-layout.json with only the verdict (there is none; verdict.json has
+  it); `total_seconds` was only in `--help` (now in agents.md with what it
+  does to the phases); the row rules (constraints on the first part hold
+  the whole row) and two keyboard lines in the cookbook; import's help says
+  what comes next and its exit codes; `unmatched_pins` on KiCad's
+  `unconnected-(...)` nets are harmless but show as parity `net_conflict`.
+
+Left as they are, small: every command's help repeats the agent exit-code
+table, also for `describe-kicad-board` and `import-kicad-netlist` whose
+codes differ; the import report's paths are relative where the verdict's
+are absolute; `back`, `front` and `opening_outwards` are kept but not
+listed in `constraints[]`; `drc-kicad-board` counts library findings
+(`lib_footprint_issues`) as cosmetic that the layout's DRC does not run.
+
+`tests/agent_walkthrough.rs` runs the documented flow on urchin
+(`crates/pcb-kicad/tests/fixtures/urchin`: the schematic, project, library
+table and the seven footprints used, with the MIT licence): import,
+describe, a placement with a region too small for its part (exit 2 at
+once), a placement that keeps all 100 constraints (a diode
+reported against its key), the layout at `"total_seconds": 30` with
+`PCB_ROUTER_NO_WALL_GUARD=1` (exit 0 and the verdict's fields), and
+`drc-kicad-board` (exit 0). It is in the root package:
+`cargo test --release -p pcb-maker --test agent_walkthrough` (14-28 s at a load of 20-25).
+
+The row fix changes layouts whose row the placer turns (keyboards, LED
+bars written as `row`); boards without rows place as before. The region
+check and the placement default touch only `place-kicad-board` and
+regions too small to hold their part. Snapshot: `build/bin/pcb-maker-x920`.
+No benchmark tier was run.
 
 ## Open problems, ranked
 
@@ -1778,6 +1907,59 @@ narrow attempt (x893); the next sweep carries them.
    only.
 7. jiran-ble-lite's GND (no pour, 2 layers, 20 of 40 pads unreached); d20's
    keepout pads; the 0xCB panel's zone refill timeout in kicad-cli.
+8. **The agent flow's gaps** (the 2026-10-15 walkthrough), ranked by what
+   they save an agent against what they cost:
+   1. *A fast no.* A placement without room costs a minute (one part
+      without a place on urchin) to many (a side 95 % full): every
+      relaxation level anneals and legalizes again, and the work budget is
+      checked only between levels (a 10 s budget took 60 s of work). Check
+      it inside `legalize`, `legalize_first`, `evict_for` and the repair
+      pass, and stop at once when even the tight bodies need more than a
+      side's area (`overfull` at the last level) or a hard constraint's
+      box is smaller than its part (regions do this now, in
+      `region_holds`; an `edge` with `max_mm` and a row longer than the
+      outline are the same test). Small to medium: a day, with the
+      placement-loss tasks to check that feasible boards place as before.
+   2. *Room as numbers.* A placement without room says so in words only
+      (`next_actions`: "the back side is 81 % full"). Put `room` in the
+      verdict: the outline used, utilization per side, and a suggested
+      outline (the current one scaled by the root of utilization over
+      0.7, at its aspect), so that an agent enlarges in one step. Small:
+      half a day (placement facts, verdict field, the walkthrough test).
+   3. *Report what is kept.* `back`, `front`, `rotation` and
+      `opening_outwards` are enforced but not in `constraints[]`, and the
+      verdict counts `schematic_parity_issues` without types (an agent
+      opens drc.json to learn that urchin's 6 are no-connect pins). Add
+      them as statuses and a per-type parity count, with a `next_actions`
+      line when only `unconnected-(...)` pins are involved. Small: half a
+      day.
+   4. *Starter constraints for keyboards and arrays.* The import writes
+      `move_all`, `outline: {}` and the plug-in connectors; urchin needed
+      100 hand-written entries. Recognise a key matrix from the netlist
+      (switches whose second pad meets a diode, the diodes' other side on
+      row nets, the switches' first pad on column nets): one `row` per
+      matrix with `columns` from the column nets, a `near` of 3 mm per
+      diode to its switch (row members are allowed now), split halves by
+      their controllers. Medium: one to two days with the corpus's
+      keyboards (urchin, ErgoSNM, bumwings, chiffre, ULK) as tests.
+   5. *Outlines that are not rectangles.* `outline` takes a width and a
+      height; spell_tome is book-shaped and urchin two halves joined by
+      mouse bites. Accept `"polygon": [[x, y], ...]` and `"pieces": [{...}]`
+      written as Edge.Cuts (the placer already follows any outline and
+      keeps parts on their piece). Medium: a day, mostly the outline
+      sizing loop, which scales width and height today.
+   6. *A router starter config.* A board from a netlist has the
+      project's net classes or the default 0.2 mm for every net. The
+      import could write `router.json` beside `layout.json` with a power
+      class for rails (by name and by `power_in` pin type) and, on two
+      layers, `add_pours` GND on B.Cu, listed in the report for the agent
+      to keep or drop. Small to medium: a day with the from-schematic
+      benchmark to check it does not cost routability.
+   7. *Schematics in the harvested corpus.* `harvest.py` fetches the
+      board and project only, so the from-schematic benchmark runs on the
+      KiCad demos alone. Fetch the schematic sheets and the project's
+      libraries at the same commit (the walkthrough did it by hand for
+      two boards). Small for the fetch, medium for a tier on top.
 
 ## Where things are
 

@@ -63,6 +63,11 @@ pub struct KiCadDescribedOutline {
     /// The outline itself (arcs as segments), for tests against its shape
     /// rather than its box.
     pub points: Vec<[f64; 2]>,
+    /// True when the board draws nothing on Edge.Cuts itself and this
+    /// outline comes from footprints' Edge.Cuts (a slide switch's slots on
+    /// a board fresh from a netlist): not the board's shape. Give the board
+    /// one with `outline` in constraints.json.
+    pub from_footprints: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -113,6 +118,10 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = parse(&text)?;
+    let board_edge = pcb.children().iter().any(|item| {
+        item.head().is_some_and(|head| head.starts_with("gr_"))
+            && item.child("layer").and_then(|layer| layer.children().get(1)).and_then(Expr::atom) == Some("Edge.Cuts")
+    });
     let outline = outline::board_loops(&pcb).ok().map(|loops| {
         let mut minimum = [f64::INFINITY; 2];
         let mut maximum = [f64::NEG_INFINITY; 2];
@@ -128,6 +137,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             width: maximum[0] - minimum[0],
             height: maximum[1] - minimum[1],
             points: loops.outline.clone(),
+            from_footprints: !board_edge,
         }
     });
     let layers = board_router::LayerTable::from_pcb(&pcb)?;

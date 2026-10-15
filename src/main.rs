@@ -161,7 +161,7 @@ fn print_help() {
     println!("  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then the");
     println!("                             router's own count); default unset.");
     println!("  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset.");
-    println!("  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds; default unset.\n");
+    println!("  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds of work; default 600.\n");
     println!("Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,");
     println!("4 panic):");
     for line in RESEARCH_USAGE {

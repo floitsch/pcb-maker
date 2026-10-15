@@ -45,12 +45,16 @@ pub enum Anchor {
     Body(usize),
     /// A point in a component's own frame (a pad).
     Point(usize, Point),
+    /// A box in a component's own frame: the component, the part the box
+    /// stands for (a member of a row the component carries), the box's
+    /// centre and half size. A zero half size is a point (a member's pad).
+    Area(usize, usize, Point, Point),
 }
 
 impl Anchor {
     pub fn part(&self) -> usize {
         match self {
-            Anchor::Body(index) | Anchor::Point(index, _) => *index,
+            Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
         }
     }
 }
@@ -82,7 +86,7 @@ impl Relation {
             Relation::Near { part, anchor, .. } => [
                 Some(*part),
                 Some(match anchor {
-                    Anchor::Body(index) | Anchor::Point(index, _) => *index,
+                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
                 }),
             ],
             Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
@@ -384,6 +388,15 @@ fn box_gap(a: (Point, Point), b: (Point, Point)) -> f64 {
 fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Point) {
     match anchor {
         Anchor::Body(index) => body(problem, index, poses[index]),
+        Anchor::Area(index, _, local, half) => {
+            let component = &problem.components[index];
+            let offset = component.offset(local, poses[index].angle);
+            let (sin, cos) = (-poses[index].angle).to_radians().sin_cos();
+            (
+                [poses[index].position[0] + offset[0], poses[index].position[1] + offset[1]],
+                [cos.abs() * half[0] + sin.abs() * half[1], sin.abs() * half[0] + cos.abs() * half[1]],
+            )
+        }
         Anchor::Point(index, local) => {
             let component = &problem.components[index];
             let offset = component.offset(local, poses[index].angle);
@@ -689,7 +702,7 @@ pub fn add_relation_gradient(
                 let unit = [delta[0] / length, delta[1] / length];
                 push(*part, unit);
                 let other = match anchor {
-                    Anchor::Body(index) | Anchor::Point(index, _) => *index,
+                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
                 };
                 push(other, [-unit[0], -unit[1]]);
             }
@@ -776,6 +789,11 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
     for relation in &constraints.relations[..own] {
         let violation = relation_violation(problem, poses, relation);
         let [part, other] = relation.parts();
+        // A row member's place names the member, not the row's first part.
+        let other = match relation {
+            Relation::Near { anchor: Anchor::Area(_, member, ..), .. } => Some(*member),
+            _ => other,
+        };
         statuses.push(Status {
             kind: match relation {
                 Relation::Near { .. } | Relation::NearAny { .. } => "near",

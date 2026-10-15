@@ -21,8 +21,12 @@ does what KiCad's "Update PCB from Schematic" does for a new board:
   next to the board.
 
 A KiCad netlist (`.net`, from `kicad-cli sch export netlist`) works in
-place of the schematic. All footprints sit at one point and there is no
-outline. Next to the board it writes, unless they exist:
+place of the schematic; its footprints come from the libraries of the
+netlist's folder and of the project the netlist names as its source. A
+file that is not a KiCad netlist is an input error (exit 2). Footprints
+from KiCad 6 libraries (`fp_text reference`) are brought to today's form,
+so KiCad reads the schematic's reference, not the library's. All
+footprints sit at one point and there is no outline. Next to the board it writes, unless they exist:
 - `constraints.json`: `"move_all": true`, `"outline": {}` (sized from the
   parts), and the plug-in connectors (USB, RF, audio and barrel jacks,
   D-sub, network, video, card edges, terminal blocks) on `"edge": "any"`,
@@ -33,11 +37,19 @@ outline. Next to the board it writes, unless they exist:
 
 The report lists what needs a look:
 - `missing`: footprints not found in any library (the board leaves them
-  out), or unreadable;
+  out), or unreadable, each with where it was looked for: no library of
+  that name (add it to the project's `fp-lib-table`, or put its `.pretty`
+  folder in the project), or the library without that footprint. Then
+  import again into the same directory: the board is written anew,
+  `constraints.json` and `layout.json` are kept;
 - `substituted`: footprints found in another library or under KiCad 9's
   name (`DSUB-25_Female` is now `DSUB-25_Socket`);
 - `unmatched_pins`: symbol pins on a net that the footprint has no pad
-  for (a library that changed since the schematic was drawn);
+  for (a library that changed since the schematic was drawn). A pin on
+  KiCad's own `unconnected-(...)` net (a no-connect pin, a module's pads
+  the footprint leaves out) loses nothing; KiCad's schematic parity check
+  still reports it as `net_conflict` ("No pad found for pin"), which the
+  verdict counts in `schematic_parity_issues` and does not judge;
 - `clearances`: footprints whose own pads are closer than the board's
   clearance (a solder jumper's), given their pads' gap as their own
   clearance, as designers do.
@@ -49,7 +61,10 @@ pcb-maker describe-kicad-board <project-dir> <board-id> > board.json
 ```
 
 The file lists what constraints refer to:
-- the outline's box and the copper layers;
+- the outline's box and the copper layers (`outline` is null without
+  one; `from_footprints: true` when the board draws no Edge.Cuts itself
+  and the box is only footprints' slots and cut-outs, as on a fresh
+  import: give the board its size with `outline` in `constraints.json`);
 - every footprint with reference, value, library name, position, side,
   size, whether it is through-hole or locked, and its pads with their
   nets;
@@ -84,7 +99,10 @@ Full reference: [constraints.md](constraints.md).
   courtyard.
 - **`near`, `group` and `relative`** keep parts together; **`apart`** keeps
   them away from each other; **`row`** puts parts in a line at a pitch (LED
-  bars, key rows).
+  bars, key rows). A row moves as its first part: other constraints name
+  that part (and then hold the whole row: `"below": "SW1"` is below the
+  grid), except that `near`'s `part_of` and `pin_of` may name any key of
+  it (a diode at its switch).
 - **`overhang`** lets a module's antenna reach beyond an edge.
 
 Unknown keys, parts or pads are errors, not silently ignored.
@@ -102,6 +120,8 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
 | "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |
 | "A 4 x 4 key matrix, 19.05 mm pitch" | `"row": [{"parts": ["SW*"], "pitch_mm": 19.05, "columns": 4}]` |
+| "Each key's diode right at its switch" | `"near": [{"part": "D2", "part_of": "SW2", "max_mm": 3}, ...]` (one per key; the keys may be in a row) |
+| "The thumb keys below the grid" | `"relative": [{"part": "SW16", "below": "SW1", "max_gap_mm": 10}]` (`SW1`, the row's first key, stands for the grid) |
 | "WiFi antenna over the board edge" | `"edge": [{"part": "U1", "edge": "top", "flush": true, "overhang": {"edge": "top"}}]` |
 | "Decoupling caps at their IC's supply pins" | `"near": [{"part": "C1", "pin_of": "U1:3", "max_mm": 2}]` (`REF:PAD`, the pad number; `describe-kicad-board` lists each net's pads) |
 | "Keep the temperature sensor away from the regulator" | `"apart": [{"parts": ["U4"], "from": ["U2"], "min_mm": 10}]` |
@@ -181,8 +201,13 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   the placement.
 - **Iterate quickly.** Work in three steps:
   1. Check the constraints alone, which takes seconds:
-     `pcb-maker place-kicad-board <dir> <id> <out> placer.json`, where
-     `placer.json` is the `placer` object of `layout.json`.
+     `pcb-maker place-kicad-board <dir> <id> <out> <dir>/layout.json`
+     (the `placer` object of a layout config is used; a file holding only
+     that object works too). A board without room is the slow case: the
+     placer tries looser levels before it reports parts as unplaced, up
+     to the layout's placement budget (600 s of work; a minute or more on
+     80 parts); `PCB_PLACER_WORK_SECONDS=60` gives a quicker answer. A
+     `region` smaller than its part is an error at once (exit 2).
      `<out>/board-placer.json` reports every constraint, `unplaced`,
      `hints` and `utilization`.
   2. Make a draft: `{"moves": 0, "placer": {...}}` in `layout.json` places
@@ -191,6 +216,14 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   3. Make the final run with the defaults. It makes up to 40 moves, for
      at most 600 s while connections are open and 60 s
      (`polish_seconds`) once everything is routed.
+  - **The budget.** `total_seconds` in `layout.json` (default 1500) is
+    the layout's whole budget in seconds of work (an idle machine's
+    seconds, so a run does the same on a loaded one): the placement
+    race stops at 40 % of it, the moves at 65 %, the final route gets
+    the rest. A small board needs far less: `"total_seconds": 30` lays
+    out a 68-net keyboard in about 15 s. The wall clock guards it at 1.1
+    times (exit 3, `cut`); `PCB_ROUTER_NO_WALL_GUARD=1` leaves it to the
+    work alone.
 
 ## 4. Read the verdict: exit code and `<out-dir>/verdict.json`
 
@@ -277,7 +310,7 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
 | --- | --- |
 | `routed.routed_connections` / `routable_connections` | Connections made / needed. |
 | `routed.unconnected_terminals` | Pads the router could not reach. |
-| `routed.native` | KiCad's own verdict: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. Silkscreen findings show up here too; `repair-kicad-silkscreen` fixes most of them. |
+| `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (`repair-kicad-silkscreen` fixes most of them), so `complete` is often false on a board that passes: `verdict` decides. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
 | `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. |
 | `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
@@ -288,7 +321,9 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
 ## When it does not work out
 
 - **`placement is not legal (unplaced [...]); hints`.** No position
-  satisfies the hard constraints for these parts. The hints after the
+  satisfies the hard constraints for these parts. The layout stops before
+  routing (exit 1) and writes no `board-layout.json`: `verdict.json` has
+  `unplaced`, `error` and the hints in `next_actions`. The hints after the
   semicolon say why: a side that is more than 70 % full (parts' bodies
   with spacing against the board area), or parts held by an `edge`,
   `region` or overhang constraint. Give them

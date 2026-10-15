@@ -21,7 +21,9 @@ pub struct KiCadNetlistImport {
     /// The board and the copied schematic use the new name.
     pub substituted: Vec<String>,
     /// Symbol pins on a net that the footprint has no pad for (`J1: M1
-    /// (GND)`): the footprint does not match the symbol.
+    /// (GND)`): the footprint does not match the symbol. A pin on no net
+    /// (KiCad's `unconnected-(...)`) loses no connection, but KiCad's
+    /// schematic parity check still reports it (`net_conflict`).
     pub unmatched_pins: Vec<String>,
     /// Footprints whose own pads are closer than the board's clearance (a
     /// solder jumper's) and got their pads' gap as their own clearance.
@@ -245,6 +247,53 @@ fn find_footprint(libraries: &BTreeMap<String, PathBuf>, id: &str) -> Option<(Pa
     names.iter().find_map(|name| file_in(library, name).or_else(|| libraries.keys().find_map(|other| file_in(other, name))))
 }
 
+/// Turns a KiCad 6 library footprint's `(fp_text reference ...)` and
+/// `(fp_text value ...)` into the `Reference` and `Value` properties KiCad 8
+/// and later write, keeping their place, layer and font. Left as they were,
+/// KiCad reads the library's text (`Bat+0`) as the reference over the
+/// property the import sets: every copy of the footprint got one reference,
+/// and the schematic parity check found 73 duplicate and 73 missing
+/// footprints on urchin.
+fn legacy_texts_to_properties(items: &mut [Expr], reference: &str) -> Result<(), String> {
+    for item in items.iter_mut() {
+        let Expr::List(parts) = item else { continue };
+        let name = match (parts.first().and_then(Expr::atom), parts.get(1).and_then(Expr::atom)) {
+            (Some("fp_text"), Some("reference")) => "Reference",
+            (Some("fp_text"), Some("value")) => "Value",
+            _ => continue,
+        };
+        let mut converted = vec![Expr::Atom("property".into()), Expr::Atom(requote(name))];
+        converted.extend(parts.get(2).cloned());
+        let mut hidden = false;
+        let mut unlocked = false;
+        for part in parts.iter().skip(3) {
+            match part {
+                Expr::Atom(atom) if atom == "hide" => hidden = true,
+                Expr::List(at) if part.head() == Some("at") => {
+                    // `(at x y [angle] [unlocked])`: the angle is required.
+                    let mut numbers: Vec<Expr> = at.iter().skip(1).filter(|value| value.atom() != Some("unlocked")).cloned().collect();
+                    unlocked |= at.iter().any(|value| value.atom() == Some("unlocked"));
+                    while numbers.len() < 3 {
+                        numbers.push(Expr::Atom("0".into()));
+                    }
+                    converted.push(Expr::List([vec![Expr::Atom("at".into())], numbers].concat()));
+                }
+                Expr::List(_) if part.head() == Some("tstamp") => {}
+                other => converted.push(other.clone()),
+            }
+        }
+        if unlocked {
+            converted.push(parse("(unlocked yes)")?);
+        }
+        if hidden {
+            converted.push(parse("(hide yes)")?);
+        }
+        converted.push(parse(&format!("(uuid \"{}\")", uuid_of(&format!("property {reference} {name}"))))?);
+        *item = Expr::List(converted);
+    }
+    Ok(())
+}
+
 /// Sets a footprint property's value, adding it (hidden, on the fab layer,
 /// as KiCad does) when the footprint has none of that name.
 fn set_property(items: &mut Vec<Expr>, name: &str, value: &str, reference: &str) -> Result<(), String> {
@@ -393,8 +442,29 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     } else {
         input.to_path_buf()
     };
-    let netlist = parse(&fs::read_to_string(&netlist_path).map_err(|error| format!("failed to read {}: {error}", netlist_path.display()))?)?;
-    let libraries = footprint_libraries(&project);
+    let not_a_netlist = || {
+        crate::verdict::input_error(format!(
+            "{} is not a KiCad netlist: give the schematic, or export one with kicad-cli sch export netlist --format kicadsexpr",
+            netlist_path.display()
+        ))
+    };
+    let netlist = fs::read_to_string(&netlist_path)
+        .map_err(|error| crate::verdict::input_error(format!("failed to read {}: {error}", netlist_path.display())))
+        .and_then(|text| parse(&text).map_err(|_| not_a_netlist()))?;
+    if netlist.head() != Some("export") || netlist.child("components").is_none() {
+        return Err(not_a_netlist());
+    }
+    let mut libraries = footprint_libraries(&project);
+    // A netlist exported elsewhere names its schematic: that project's
+    // libraries (its fp-lib-table, its .pretty folders) come next.
+    if !is_schematic
+        && let Some(source) = netlist.child("design").and_then(|design| text_of(design, "source"))
+        && let Some(folder) = Path::new(&source).parent().filter(|folder| folder.is_dir())
+    {
+        for (name, path) in footprint_libraries(folder) {
+            libraries.entry(name).or_insert(path);
+        }
+    }
 
     // Nets by (reference, pin): name, pin function and type.
     let mut pins: BTreeMap<(String, String), (String, Option<String>, Option<String>)> = BTreeMap::new();
@@ -443,7 +513,14 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             continue;
         }
         let Some((file, found)) = find_footprint(&libraries, &footprint_id) else {
-            missing.push(format!("{reference} ({footprint_id} not found)"));
+            // Say where it was looked for, so that the fix is plain.
+            let (library, name) = footprint_id.split_once(':').unwrap_or(("", &footprint_id));
+            missing.push(match libraries.get(library) {
+                Some(folder) => format!("{reference} ({footprint_id} not found: {} has no {name}.kicad_mod)", folder.display()),
+                None => format!(
+                    "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders or KiCad's own)"
+                ),
+            });
             continue;
         };
         if found != footprint_id {
@@ -495,6 +572,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
             .unwrap_or(items.len());
         items.splice(at..at, links);
         // The symbol's fields (datasheet, description, LCSC numbers, ...).
+        legacy_texts_to_properties(items, &reference)?;
         set_property(items, "Reference", &reference, &reference)?;
         set_property(items, "Value", &value, &reference)?;
         for field in component.child("fields").map(Expr::children).unwrap_or_default().iter().filter(|item| item.head() == Some("field")) {
@@ -847,7 +925,7 @@ mod tests {
         let report = import_kicad_netlist(&netlist, &output, "test", 4).unwrap();
         assert_eq!(report.footprints, 2);
         assert_eq!(report.nets, 2);
-        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found)".to_string()]);
+        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found: no library \"Missing\" in the fp-lib-table files, the project's .pretty folders or KiCad's own)".to_string()]);
         assert_eq!(report.substituted, vec!["R3: other:R_Test -> parts:R_Test".to_string()]);
 
         let board = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();

@@ -762,6 +762,7 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         .iter()
         .filter_map(|relation| match relation {
             Relation::Near { anchor: Anchor::Body(_), .. } => None,
+            Relation::Near { anchor: Anchor::Area(_, _, _, half), .. } if *half != [0.0, 0.0] => None,
             other => other.parts()[0],
         })
         .chain(problem.constraints.edges.iter().map(|(part, _, _)| *part))
@@ -2476,27 +2477,6 @@ pub(super) fn lower_placement(
             || config.fixed_patterns.iter().any(|pattern| glob_matches(pattern, reference))
             || (default_fixed && !config.free.contains(reference));
     }
-    // Fixed parts on top of each other place and route without a word,
-    // and the board comes back with opens: say so (fence issue E).
-    let mut stacked_warnings = Vec::new();
-    {
-        let fixed: Vec<usize> = (0..footprint_count).filter(|index| problem.components[*index].fixed && !problem.components[*index].pins.is_empty()).collect();
-        for (a, first) in fixed.iter().enumerate() {
-            for second in &fixed[a + 1..] {
-                let (ca, cb) = (&problem.components[*first], &problem.components[*second]);
-                if !ca.side.collides(cb.side) {
-                    continue;
-                }
-                let (pa, pb) = (problem.poses[*first], problem.poses[*second]);
-                let (center_a, half_a) = (ca.center(pa), ca.half_extent(pa.angle));
-                let (center_b, half_b) = (cb.center(pb), cb.half_extent(pb.angle));
-                let overlap = (0..2).all(|axis| (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05);
-                if overlap {
-                    stacked_warnings.push(format!("fixed parts {} and {} overlap", references[*first], references[*second]));
-                }
-            }
-        }
-    }
     let user_constraints = match &config.constraints {
         Some(KiCadConstraintsSource::Inline(constraints)) => Some(constraints),
         _ => None,
@@ -2528,6 +2508,29 @@ pub(super) fn lower_placement(
             return Err(format!("constraints file {} was not resolved", path.display()));
         }
     };
+    // Fixed parts on top of each other place and route without a word,
+    // and the board comes back with opens: say so (fence issue E). Checked
+    // after the constraints, which fix and free parts (move_all frees a
+    // stack fresh from a netlist that the default rules had fixed).
+    let mut stacked_warnings = Vec::new();
+    {
+        let fixed: Vec<usize> = (0..footprint_count).filter(|index| problem.components[*index].fixed && !problem.components[*index].pins.is_empty()).collect();
+        for (a, first) in fixed.iter().enumerate() {
+            for second in &fixed[a + 1..] {
+                let (ca, cb) = (&problem.components[*first], &problem.components[*second]);
+                if !ca.side.collides(cb.side) {
+                    continue;
+                }
+                let (pa, pb) = (problem.poses[*first], problem.poses[*second]);
+                let (center_a, half_a) = (ca.center(pa), ca.half_extent(pa.angle));
+                let (center_b, half_b) = (cb.center(pb), cb.half_extent(pb.angle));
+                let overlap = (0..2).all(|axis| (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05);
+                if overlap {
+                    stacked_warnings.push(format!("fixed parts {} and {} overlap", references[*first], references[*second]));
+                }
+            }
+        }
+    }
     // A fixed footprint's own rule areas (an antenna module's keepout, in
     // board coordinates) are obstacles like the board's: PixelWave's
     // ESP32 on the back keeps parts out of its antenna area on both sides,

@@ -559,8 +559,9 @@ fn apply_rows(
     footprints: usize,
     pad_boxes: &[Vec<[f64; 4]>],
     rows: &[KiCadRowConstraint],
-) -> Result<BTreeMap<usize, usize>, String> {
+) -> Result<(BTreeMap<usize, usize>, BTreeMap<usize, RowPlace>), String> {
     let mut leaders = BTreeMap::new();
+    let mut places = BTreeMap::new();
     for row in rows {
         let mut members: Vec<usize> = Vec::new();
         for pattern in &row.parts {
@@ -595,7 +596,46 @@ fn apply_rows(
         }
         let leader = members[0];
         let side = problem.components[leader].side;
-        let angle = problem.poses[leader].angle;
+        // The row's frame: the leader's angle, or that angle turned by a
+        // half turn (a quarter with `turns`) when the members lie exactly
+        // that way. A board placed before (layout mode lowers its own
+        // placement again) holds a row the placer turned: built from the
+        // leader's angle alone, it ran the other way, reported a region
+        // the row kept as missed by the row's length and moved the members.
+        // A stack fresh from a netlist matches every frame alike and keeps
+        // the leader's.
+        let place_of = |place: usize| {
+            let along = (place % columns) as f64 * row.pitch_mm;
+            let line = (place / columns) as f64 * line_pitch;
+            [axis[0] * along + across[0] * line, axis[1] * along + across[1] * line]
+        };
+        let leader_pose = problem.poses[leader];
+        let turns: &[f64] = if row.turns { &[0.0, 180.0, 90.0, 270.0] } else { &[0.0, 180.0] };
+        let mismatch = |turn: f64| -> f64 {
+            members
+                .iter()
+                .enumerate()
+                .map(|(place, member)| {
+                    let offset = core::problem::rotate(place_of(place), turn);
+                    let at = problem.poses[*member].position;
+                    (leader_pose.position[0] + offset[0] - at[0]).powi(2) + (leader_pose.position[1] + offset[1] - at[1]).powi(2)
+                })
+                .sum()
+        };
+        // Only a row that lies exactly so (members within 0.01 mm of their
+        // places) turns the frame: parts anywhere else (an automatic bus
+        // row's sockets side by side) keep the leader's.
+        let exact = 1.0e-4 * members.len() as f64;
+        let mut turn = 0.0;
+        if mismatch(0.0) > exact {
+            for candidate in &turns[1..] {
+                if mismatch(*candidate) <= exact {
+                    turn = *candidate;
+                    break;
+                }
+            }
+        }
+        let angle = leader_pose.angle + turn;
         let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
         let mut carried = problem.components[leader].clone();
         // Where a member blocks with shaped boxes (`hollow`), the row
@@ -617,12 +657,7 @@ fn apply_rows(
                 return Err(format!("row {:?}: all parts must be on one side", row.parts));
             }
             // The member's place in the leader's own frame.
-            let along = (place % columns) as f64 * row.pitch_mm;
-            let line = (place / columns) as f64 * line_pitch;
-            let offset = core::problem::rotate(
-                [axis[0] * along + across[0] * line, axis[1] * along + across[1] * line],
-                angle,
-            );
+            let offset = core::problem::rotate(place_of(place), angle);
             let shift = |boxes: &[[f64; 4]]| -> Vec<[f64; 4]> {
                 boxes
                     .iter()
@@ -656,6 +691,14 @@ fn apply_rows(
             carried.edge_inset = carried.edge_inset.min(component.edge_inset);
             if *member != leader {
                 leaders.insert(*member, leader);
+                places.insert(
+                    *member,
+                    RowPlace {
+                        offset,
+                        center,
+                        half: [component.body_size[0] / 2.0, component.body_size[1] / 2.0],
+                    },
+                );
                 problem.constraints.followers.push(core::constraints::Follower {
                     part: *member,
                     leader,
@@ -697,7 +740,54 @@ fn apply_rows(
     let mut poses = problem.poses.clone();
     problem.sync_followers(&mut poses);
     problem.poses = poses;
-    Ok(leaders)
+    Ok((leaders, places))
+}
+
+/// Where a row member sits in its leader's frame: its origin's offset, its
+/// body's centre and half size.
+struct RowPlace {
+    offset: [f64; 2],
+    center: [f64; 2],
+    half: [f64; 2],
+}
+
+/// A region smaller than the part in every orientation it may take is an
+/// input error, said at once: the placer would try every relaxation level
+/// in vain first (a minute on an 80-part keyboard) and then report the
+/// part as unplaced. The smallest body counts (the tight one, without the
+/// courtyard's margin, where the part has one).
+fn region_holds(component: &core::Component, reference: &str, region: [f64; 4]) -> Result<(), String> {
+    let mut size = component.body_size;
+    if let Some(tight) = component.tight {
+        size = [size[0].min(tight[2] - tight[0]), size[1].min(tight[3] - tight[1])];
+    }
+    let quarter = |angle: f64| {
+        let turns = angle.rem_euclid(360.0) / 90.0;
+        ((turns - turns.round()).abs() < 1.0e-6).then(|| turns.round() as i64 % 2)
+    };
+    let mut turns = Vec::new();
+    for angle in &component.angle_options {
+        match quarter(*angle) {
+            Some(turn) => turns.push(turn),
+            // A part that may turn at any angle: no quick answer.
+            None => return Ok(()),
+        }
+    }
+    if turns.is_empty() {
+        turns.push(0);
+    }
+    let (width, height) = (region[2] - region[0], region[3] - region[1]);
+    let fits = turns.iter().any(|turn| {
+        let (w, h) = if *turn == 0 { (size[0], size[1]) } else { (size[1], size[0]) };
+        w <= width + 1.0e-6 && h <= height + 1.0e-6
+    });
+    if fits {
+        return Ok(());
+    }
+    Err(format!(
+        "region for {reference} cannot hold it: the box is {width:.2} x {height:.2} mm, the part {:.2} x {:.2} mm (turned as it may be): give it a larger box",
+        size[0], size[1]
+    ))
 }
 
 /// Applies `constraints` to a lowered problem. `pads[i]` maps pad names of
@@ -715,7 +805,7 @@ pub(super) fn apply_constraints(
     weight: f64,
 ) -> Result<Vec<String>, String> {
     let footprints = pads.len();
-    let leaders = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
+    let (leaders, places) = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
     let find = |reference: &str| -> Result<usize, String> {
         let index = references[..footprints]
             .iter()
@@ -957,6 +1047,7 @@ pub(super) fn apply_constraints(
         let mut any = false;
         for pattern in &entry.parts {
             for index in matching(pattern) {
+                region_holds(&problem.components[index], &references[index], region)?;
                 problem.constraints.regions.push((index, region));
                 constrained.insert(index);
                 any = true;
@@ -968,17 +1059,36 @@ pub(super) fn apply_constraints(
     }
     for entry in &constraints.near {
         let part = find(&entry.part)?;
+        // The anchor may be a part a row carries (a keyboard's diode at its
+        // switch): its place in the row, on the row's first part.
+        let any = |reference: &str| -> Result<usize, String> {
+            references[..footprints]
+                .iter()
+                .position(|candidate| candidate == reference)
+                .ok_or_else(|| format!("constraint names unknown part {reference:?}"))
+        };
         let anchor = match (&entry.part_of, &entry.pin_of) {
-            (Some(other), None) => Anchor::Body(find(other)?),
+            (Some(other), None) => {
+                let index = any(other)?;
+                match (leaders.get(&index), places.get(&index)) {
+                    (Some(leader), Some(place)) => Anchor::Area(*leader, index, place.center, place.half),
+                    _ => Anchor::Body(index),
+                }
+            }
             (None, Some(pin)) => {
                 let (reference, pad) = pin
                     .split_once(':')
                     .ok_or_else(|| format!("pin_of {pin:?} is not REF:PAD"))?;
-                let index = find(reference)?;
+                let index = any(reference)?;
                 let offset = pads[index]
                     .get(pad)
                     .ok_or_else(|| format!("pin_of {pin:?}: {reference} has no pad {pad:?}"))?;
-                Anchor::Point(index, *offset)
+                match (leaders.get(&index), places.get(&index)) {
+                    (Some(leader), Some(place)) => {
+                        Anchor::Area(*leader, index, [offset[0] + place.offset[0], offset[1] + place.offset[1]], [0.0, 0.0])
+                    }
+                    _ => Anchor::Point(index, *offset),
+                }
             }
             _ => return Err(format!("near constraint for {} needs exactly one of part_of and pin_of", entry.part)),
         };
@@ -1473,6 +1583,71 @@ mod tests {
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }
+    }
+
+    #[test]
+    fn a_turned_row_keeps_its_members() {
+        // A board placed before: the placer turned the row (C1 at 180
+        // degrees, C2 three millimetres to its left). Lowered again, the
+        // row runs the way it lies; it used to run to the right and pull
+        // C2 there.
+        let (mut problem, references, pads) = problem();
+        problem.poses[1] = core::Pose { position: [10.0, 10.0], angle: 180.0 };
+        problem.poses[2] = core::Pose { position: [7.0, 10.0], angle: 180.0 };
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        assert_eq!(problem.poses[2].position, [7.0, 10.0]);
+        let center = problem.components[1].center(problem.poses[1]);
+        assert!((center[0] - 8.5).abs() < 1.0e-9 && (center[1] - 10.0).abs() < 1.0e-9, "{center:?}");
+    }
+
+    #[test]
+    fn near_may_name_a_row_member_as_its_anchor() {
+        // D1 near C2, which the row C1, C2 carries: the anchor is C2's
+        // place in the row (its body, or its pad), on the row's first part.
+        let (mut problem, mut references, mut pads) = problem();
+        problem.components.push(problem.components[1].clone());
+        problem.poses.push(core::Pose { position: [10.0, 10.0], angle: 0.0 });
+        references.push("D1".into());
+        pads[2].insert("1".into(), [0.5, 0.0]);
+        pads.push(BTreeMap::new());
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}],
+                "near": [{"part": "D1", "part_of": "C2", "max_mm": 1}, {"part": "D1", "pin_of": "C2:1", "max_mm": 1}]}"#,
+        )
+        .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None, None],
+            &[None, None, None, None],
+            &[false, false, false, false],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        assert_eq!(
+            problem.constraints.relations,
+            vec![
+                Relation::Near { part: 3, anchor: Anchor::Area(1, 2, [3.0, 0.0], [1.0, 0.5]), max: 1.0 },
+                Relation::Near { part: 3, anchor: Anchor::Area(1, 2, [3.5, 0.0], [0.0, 0.0]), max: 1.0 },
+            ]
+        );
+        assert!(apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "near": [{"part": "C2", "part_of": "J1", "max_mm": 1}]}"#).is_err());
     }
 
     #[test]

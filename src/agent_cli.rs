@@ -225,6 +225,10 @@ fn missed_constraints(constraints: &[pcb_kicad::KiCadConstraintStatus]) -> Vec<S
 
 const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none]";
 const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [layout-config.json] [--reference <project-dir>|none]";
+/// place-kicad-board's default work budget: the layout's placement share
+/// of its default budget.
+const PLACE_WORK_SECONDS: f64 = 600.0;
+
 const PLACE_USAGE: &str = "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json]";
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
@@ -302,12 +306,20 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
         );
     }
     println!(
-        "final: routed {}/{} connections, {} vias, {:.1} mm, native complete={}",
+        "final: routed {}/{} connections, {} vias, {:.1} mm, {}",
         result.routed.routed_connections,
         result.routed.routable_connections,
         result.routed.vias,
         result.routed.length_mm,
-        result.routed.native.as_ref().map(|native| native.complete).unwrap_or(false),
+        // KiCad's raw counts: every DRC finding of any severity, cosmetic
+        // ones included; the verdict below says which count.
+        match result.routed.native.as_ref() {
+            Some(native) => format!(
+                "KiCad: {} unconnected, {} DRC findings of any severity (the verdict judges them)",
+                native.selected_net_unconnected_items, native.drc_design_violations
+            ),
+            None => "KiCad did not check".to_string(),
+        },
     );
     let missed = missed_constraints(&result.constraints);
     println!(
@@ -478,15 +490,25 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     check_project(source, board_id)?;
     check_fresh_output(output)?;
     let mut config: pcb_kicad::KiCadBoardPlacerConfig = match positional.get(3) {
-        Some(path) => read_json(path)?,
+        // A layout config (import-kicad-netlist's layout.json) works too:
+        // its placer object is the placement's config.
+        Some(path) => match read_json::<serde_json::Value>(path)? {
+            serde_json::Value::Object(mut layout) if layout.contains_key("placer") => {
+                serde_json::from_value(layout.remove("placer").unwrap_or_default())
+                    .map_err(|error| Failure::Usage(format!("failed to parse {path}: placer: {error}")))?
+            }
+            value => serde_json::from_value(value).map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?,
+        },
         None => Default::default(),
     };
     check_constraints(source, &config)?;
-    // The layout's placement budget, for measurements of the placement
-    // alone (the layout gives it 600 s of work).
-    if let Some(seconds) = std::env::var("PCB_PLACER_WORK_SECONDS").ok().and_then(|value| value.parse().ok()) {
-        config.work_seconds = Some(seconds);
-    }
+    // The layout's placement budget by default (40 % of its 1500 s of
+    // work), so that the check places as the layout would and ends: a
+    // board without room ran the placer's relaxation levels for over 12
+    // minutes without one. PCB_PLACER_WORK_SECONDS sets another.
+    config.work_seconds = Some(
+        std::env::var("PCB_PLACER_WORK_SECONDS").ok().and_then(|value| value.parse().ok()).unwrap_or(PLACE_WORK_SECONDS),
+    );
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
@@ -607,7 +629,7 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
 /// The message `repair-kicad-silkscreen` ends with when findings remain.
 pub const SILKSCREEN_INCOMPLETE: &str = "silkscreen repair remains incomplete; retained native report and rendering";
 /// The message `import-kicad-netlist` ends with when footprints are missing.
-pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing)";
+pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project) and import again into the same directory (constraints.json and layout.json are kept)";
 
 /// Runs an agent command; `None` when `command` is not one.
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
@@ -701,8 +723,9 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
 <out-dir>/result is the finished project (with drc.json and erc.json), <out-dir>/placed the placement
 (placement.html animates it, board-placer.json reports constraints, hints and utilization), and
 <out-dir>/board-layout.json the report: moves, constraints, routed (as board-router.json), quality,
-cut, work_seconds and verdict. When parts find no legal place the layout stops before routing and
-board-layout.json holds only the verdict (exit 1, unplaced and hints).";
+cut, work_seconds and verdict; <out-dir>/verdict.json the verdict alone. When parts find no legal
+place the layout stops before routing (exit 1) and writes no board-layout.json: verdict.json holds
+unplaced, and next_actions the hints (how full each side is, which constraint holds a part).";
 
 const PLACE_HELP: &str = "\
 Places a KiCad board's movable parts (no routing): for checking constraints in seconds.
@@ -716,9 +739,15 @@ usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-co
                        defaults, no constraints. Keys: constraints (a constraints.json path relative
                        to <project-dir>, or inline; default none), placement_seeds (default 3),
                        tight_bodies (default: as the project's DRC allows). docs/constraints.md.
+                       A layout config (the layout.json import-kicad-netlist writes) works as well:
+                       its placer object is used.
 
-Environment: PCB_PLACER_WORK_SECONDS sets the placement's work budget (default: none, the
-placer's own limits).
+A board with room places in seconds. One without (a side over 90 % full, a part no place fits)
+tries looser placement levels first, up to the work budget, before it reports unplaced parts: a
+minute or more on 80 parts. A region smaller than its part is an input error at once (exit 2).
+
+Environment: PCB_PLACER_WORK_SECONDS sets the placement's work budget in seconds of work (default
+600, the layout's placement share of its default budget; 60 gives a quicker no).
 
 <out-dir> receives the placed board, placement.html and board-placer.json: every constraint kept or
 missed, unplaced, illegal, hints, utilization, and verdict.";
@@ -729,7 +758,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
     (
         "import-kicad-netlist",
         "makes a board from a schematic or netlist, with constraints.json and layout.json",
-        "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N]\n\n  <schematic|netlist>  the KiCad schematic (kicad-cli exports its netlist) or a KiCad .net netlist.\n  <out-dir>            the project directory to write; created if missing, existing files kept.\n  <board-id>           the file stem of the board to write (<out-dir>/<board-id>.kicad_pcb).\n  --layers N           copper layers, an even number of 2 or more; default 2.\n\nPrints the import report (JSON) on stdout: missing, substituted, unmatched_pins, clearances.\nExits 1 when footprints are missing (the board leaves them out).",
+        "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N]\n\n  <schematic|netlist>  the KiCad schematic (kicad-cli exports its netlist) or a KiCad .net netlist.\n  <out-dir>            the project directory to write; created if missing. The board, netlist and\n                       schematic are written anew; an existing constraints.json and layout.json are\n                       kept, so a second import (after adding a missing library) keeps your edits.\n  <board-id>           the file stem of the board to write (<out-dir>/<board-id>.kicad_pcb).\n  --layers N           copper layers, an even number of 2 or more; default 2.\n\nPrints the import report (JSON) on stdout: missing (with where the footprint was looked for),\nsubstituted, unmatched_pins, clearances, edge_connectors, and the paths of constraints.json and\nlayout.json. Next step: edit constraints.json (docs/constraints.md), then\npcb-maker layout-kicad-board <out-dir> <board-id> <layout-out-dir> auto <out-dir>/layout.json.\nExits 0 when every footprint was found, 1 when footprints are missing (the board leaves them\nout), 2 on usage or input errors (the schematic or netlist unreadable), 4 on internal errors.",
     ),
     (
         "describe-kicad-board",
