@@ -3272,6 +3272,121 @@ build/hatchwork-* (x952), build/hwtrace-*, build/tl-*, build/poly-*,
 build/vx-*, build/val-*, build/ring-batch1 (traces), build/after-*
 (x1016), build/short-x1015.log.
 
+## Committed on 2026-10-15 (import footprints from the board)
+
+Open problem 9's items 1, 2 and 4: personal footprint libraries that are
+not in the repository, library drift, board-only parts with nets.
+
+**`import-kicad-netlist --footprints-from <board.kicad_pcb>`**
+(`crates/pcb-kicad/src/board_footprints.rs`, `netlist_import.rs`):
+- A footprint no library has is taken from that board: the symbol's own
+  footprint (by symbol path, else by a reference one footprint has whose
+  path is no other symbol's), else any footprint of that name. It is
+  brought to library form as KiCad's "Export Footprints to Library" does:
+  a back footprint flipped (`flip.rs`), pad and text angles made relative
+  (a board keeps them absolute), zones moved into the footprint's frame,
+  links, nets, `locked` (also KiCad 7's `fp_text reference locked`) dropped.
+  It is written to `<out>/<library>.pretty` with an `fp-lib-table` entry
+  (an entry of that name that resolves nowhere, a designer's own folder, is
+  replaced), or to `from_board.pretty` when a library of that name exists
+  but lacks it (renamed in the copied schematic). Report:
+  `footprints_from_board`. A symbol without a footprint takes the board's.
+- Where the board has the symbol's footprint, the board's version is used
+  over the library's (`board_versions`): the board was made and checked
+  with it, the library changed since (KiCad 10's ESP32 modules with the
+  antenna clearance in the courtyard, redrawn hotswap sockets). Where the
+  board's footprint has another name than the schematic's, the board's is
+  used under its name (`substituted`, "(the board's SW0, which has another
+  footprint than the schematic's)"); the copied schematic's rename takes
+  the most common new name per old id (it names a footprint once per id:
+  bumwings' one 1.5u key on a 1u footprint stays a parity finding).
+  `drifted_footprints`: per footprint id, the library versions whose body
+  (courtyard, else pads) differs from the board's by more than a fifth on a
+  side, or whose pad count differs, with both sizes. Without the option
+  the import is unchanged.
+- Check of the inverse transform: the designer's boards with our written
+  libraries in their table, KiCad's `lib_footprint_mismatch`: 29 of 2598
+  footprints on 46 boards differ, each a footprint the designer edited on
+  the board apart from its other copies (the library is written from the
+  first one).
+
+**`add` in constraints.json** (`KiCadAddConstraint`, docs/constraints.md
+"Parts the schematic does not have"): `part`, `footprint` (a library's) or
+`from_board` (the `--footprints-from` board's `part` or `board_reference`;
+a repeated reference is chosen by `x`, `y` absolute), `nets` per pad,
+`x`/`y`/`angle`/`origin`, `side`. The import reads the existing
+`constraints.json` of the output directory and puts the parts on the board
+`board_only` (report `added`); a `from_board` part without `x`/`y` stays
+where that board has it, locked. The layout (`expand_additions` in
+`place_kicad_board`) turns an `add` with `x`/`y` into a `place` and refuses
+(exit 2) an `add` part the board lacks: "import again". Chosen over adding
+in the layout because the layout reads the source board in several places
+(outline sizing, net classes, the designer comparison); the import writes
+the board anew anyway and keeps `constraints.json`.
+
+**The schematic tier** imports with `--footprints-from` the designer's
+board and turns the designer's footprints with nets but without a symbol
+into `add` entries (`schematic.additions`: from the board, at the
+designer's spot, nets renamed to the imported board's by the matched pads,
+a repeated reference renamed `REF**_1`), then imports again. Rows have
+`from_board`, `board_versions`, `drifted`, `parts.added`.
+
+**Import of all 79 harvested schematics**
+(`experiments/schematic-import/import_all.py`, the tier's import step and
+library step without the layout; `build/schimport/x10{33,71,72}`):
+
+| | x1033 (before) | x1071 / x1072 (`--footprints-from`, `add`) |
+| --- | ---: | ---: |
+| imported | 79 | 79 |
+| complete (no footprint missing) | 34 | 77 |
+| missing footprints (boards) | 1740 (45) | 10 (2) |
+| taken from the board (`footprints_from_board`) | - | 2120 |
+| board versions used | - | 11155 |
+| drifted footprint ids (parts, boards) | - | 67 (453, 31) |
+| designer's parts with nets the import lacks (boards) | 2970 (52) | 1253 (16) |
+| added by `add` | - | 1253 |
+
+Before, the designer's parts with nets the import lacks are mostly the
+missing footprints' parts; after, 1113 of the 1253 are the two panels'
+(Batch_1 402, SmartSpin2k 711: their schematic is not the panel's, it
+imports no footprint, the panel's parts are all added) and 140 on 14
+boards are board-only parts proper (OpenESC 4in1 47 and 4in1-mini 21
+copies of parts, Quanta75's two boards 23, 0xcb-static 11, interchange 8,
+Sisu 7, bumwings core 6, USB_Keypad and WLED_Matrix 4 holes each,
+TelemetryOnboard 3, ...).
+The 10 still missing: video's 8 (U25-U27 and others, `kicad_api_lib`, not
+on the designer's board either) and bumwings core's 2 (`dao-choc-ble`, not
+on its board). `unmatched_pins` 32 to 47: the board's versions lack pads of
+no-connect pins (KiCad 10's footprints have them) and, on Quanta75's USB-C
+receptacles, pads numbered otherwise (the import says so per part). Drift,
+largest: bumwings' hotswap/solder switches (54-58 parts on six boards),
+Glasgow's SOT-363 (17), OpenESC's QFNs (pad count), vaio_re's crystals and
+SOT-23s, protoesp's horizontal sockets (12.3 x 13.7 against 1.7 x 11.9).
+
+**Schematic tier** x1071 (branch on 8a1fd2c) against `build/sch-x1033.log`,
+6 jobs x 4 threads both, under the lock: **5/12 pass both** (x1033 1568 s
+wall, x1071 1168 s). bumwings passes (81/81, the board's 12.85 x 11.6 mm
+solder footprints instead of the library's 15.9 x 12.2 mm hotswap
+sockets); slab-pcb-left fails (74/76, KiCad 2: same body sizes and pads,
+an older library drawing; the placement moved 53 of 129 parts); OpenFC
+loses its 7 new errors (clearance 3, annular_width 4) with the board's
+WSON, TF socket and USB-C, still 80/82; USB_Keypad gets its four GND
+holes (37/39 as before, 94 vias against 77); 0xcb-static keeps passing with
+its 11 alternative switch footprints added; TelemetryOnboard 3 to 2 KiCad
+unconnected with 3 test holes added. Every row in the tier README.
+Parity 31 to 40 (OpenFC 5 no-connect pins, bumwings 7 footprint names).
+
+Tests: `board_footprints` (a turned back footprint to library form and
+back, drift), `netlist_import`
+`footprints_come_from_the_board_where_no_library_has_them_and_the_board_version_wins`
+(missing from the board, library written and named in the table, the
+board's version and drift, `add` from the board and from a library, the
+layout's `expand_additions`, the input errors), `cli_exit_codes` (a
+missing `--footprints-from` board exits 2). `cargo test --release -p
+pcb-kicad`, `agent_walkthrough` and `cli_exit_codes` pass. Snapshots
+x1070 (first cut), x1071 (the measured branch on 8a1fd2c), x1072 (rebased
+on 9073633, the 79-board import identical to x1071; no tier on it).
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -3387,7 +3502,8 @@ build/vx-*, build/val-*, build/ring-batch1 (traces), build/after-*
       (schematic tier, above; its friction is item 9).
 9. **The schematic tier's friction** (2026-10-15, above), ranked by
    boards affected; each with a proposal:
-   1. *Personal footprint libraries are not in the repository*: 43 of 76
+   1. *Personal footprint libraries are not in the repository*
+      (**done 2026-10-15**, `--footprints-from`: 77 of 79 complete): 43 of 76
       imports miss footprints after the library step; in about 30 the
       library is nowhere in the repository (Castor 160, DSP-ADAU1452 371,
       jetson 121, reCamera 92, OpenMuscle 60, USB_Cable_Tester 57, ...).
@@ -3399,7 +3515,8 @@ build/vx-*, build/val-*, build/ring-batch1 (traces), build/after-*
       pads and texts, a back footprint flipped to the front). An agent
       handed an old board, or a colleague's, then imports completely.
       Medium: a day; the inverse transform is the work, the flip exists.
-   2. *Library drift*: the import takes today's footprints; 22 of the 79
+   2. *Library drift* (**done 2026-10-15**: the board's versions with
+      `--footprints-from`, `drifted_footprints`; 67 ids on 31 boards): the import takes today's footprints; 22 of the 79
       boards have parts whose body differs by more than a fifth from the
       designer's (KiCad 10's ESP32-S2-MINI-1 and ESP32-S3-WROOM-1 with
       their antenna clearance in the courtyard, 45 x 35 mm against
@@ -3421,7 +3538,8 @@ build/vx-*, build/val-*, build/ring-batch1 (traces), build/after-*
       absolute table path. Not used silently: two board revisions often
       keep libraries of one name (0xCB's rev3.0 and rev5.0). Small: half a
       day.
-   4. *Board-only parts* (the board has them, the schematic does not):
+   4. *Board-only parts* (**done 2026-10-15**: `add` in constraints.json,
+      generated by the tier) (the board has them, the schematic does not):
       mounting holes, logos and connector shells without nets are copied
       by the tier; parts with nets are lost (0xcb-static's 11 alternative
       switch footprints for other layouts, MX37_1 and the like;

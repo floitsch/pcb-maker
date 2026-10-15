@@ -3369,6 +3369,10 @@ pub fn place_kicad_board(
         .map_err(|error| crate::verdict::input_error(format!("failed to read {}: {error}", source_board.display())))?;
     let mut pcb = parse(&source).map_err(crate::verdict::input_error)?;
     let mut config = resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
+    // Parts added by the import (`add`) stay where the entry puts them.
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
+        crate::placement_constraints::expand_additions(constraints, &pcb).map_err(crate::verdict::input_error)?;
+    }
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
         || config.hole_clearance_mm.is_none()

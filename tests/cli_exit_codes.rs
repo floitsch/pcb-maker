@@ -78,6 +78,17 @@ fn usage_and_input_errors_exit_2_with_one_line() {
         vec!["route-kicad-board".into(), project.display().to_string(), "t".into(), project.display().to_string()],
         vec!["layout-kicad-board".into(), project.display().to_string(), "t".into(), root.join("out").display().to_string(), "--bogus".into()],
         vec!["describe-kicad-board".into(), project.display().to_string()],
+        // A board to take footprints from that is not there.
+        vec![
+            "import-kicad-netlist".into(),
+            project.join("t.kicad_pcb").display().to_string(),
+            root.join("import").display().to_string(),
+            "t".into(),
+            "--layers".into(),
+            "2".into(),
+            "--footprints-from".into(),
+            root.join("missing.kicad_pcb").display().to_string(),
+        ],
     ];
     for arguments in cases {
         let output = binary().args(&arguments).output().unwrap();

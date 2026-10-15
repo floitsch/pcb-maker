@@ -647,9 +647,23 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
             check_file(&arguments[0])
         }
         "import-kicad-netlist" => {
-            let positional = arguments.iter().filter(|argument| !argument.starts_with("--")).count();
-            if !(3..=4).contains(&positional) {
+            // Positional arguments, not the options' values.
+            let mut positional = 0;
+            let mut iterator = arguments.iter();
+            while let Some(argument) = iterator.next() {
+                if matches!(argument.as_str(), "--layers" | "--footprints-from") {
+                    iterator.next();
+                } else if !argument.starts_with("--") {
+                    positional += 1;
+                }
+            }
+            if positional != 3 {
                 return Err(usage());
+            }
+            if let Some(index) = arguments.iter().position(|argument| argument == "--footprints-from")
+                && let Some(board) = arguments.get(index + 1)
+            {
+                check_file(board)?;
             }
             check_file(&arguments[0])
         }
@@ -660,7 +674,7 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
 /// The message `repair-kicad-silkscreen` ends with when findings remain.
 pub const SILKSCREEN_INCOMPLETE: &str = "silkscreen repair remains incomplete; retained native report and rendering";
 /// The message `import-kicad-netlist` ends with when footprints are missing.
-pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project) and import again into the same directory (constraints.json and layout.json are kept)";
+pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from) and import again into the same directory (constraints.json and layout.json are kept)";
 
 /// Runs an agent command; `None` when `command` is not one.
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
@@ -794,7 +808,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
     (
         "import-kicad-netlist",
         "makes a board from a schematic or netlist, with constraints.json and layout.json",
-        "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N]\n\n  <schematic|netlist>  the KiCad schematic (kicad-cli exports its netlist) or a KiCad .net netlist.\n  <out-dir>            the project directory to write; created if missing. The board, netlist and\n                       schematic are written anew; an existing constraints.json and layout.json are\n                       kept, so a second import (after adding a missing library) keeps your edits.\n  <board-id>           the file stem of the board to write (<out-dir>/<board-id>.kicad_pcb).\n  --layers N           copper layers, an even number of 2 or more; default 2.\n\nPrints the import report (JSON) on stdout: missing (with where the footprint was looked for),\nsubstituted, unmatched_pins, clearances, edge_connectors, and the paths of constraints.json and\nlayout.json. Next step: edit constraints.json (docs/constraints.md), then\npcb-maker layout-kicad-board <out-dir> <board-id> <layout-out-dir> auto <out-dir>/layout.json.\nExits 0 when every footprint was found, 1 when footprints are missing (the board leaves them\nout), 2 on usage or input errors (the schematic or netlist unreadable), 4 on internal errors.",
+        "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>]\n\n  <schematic|netlist>  the KiCad schematic (kicad-cli exports its netlist) or a KiCad .net netlist.\n  <out-dir>            the project directory to write; created if missing. The board, netlist and\n                       schematic are written anew; an existing constraints.json and layout.json are\n                       kept, so a second import (after adding a missing library) keeps your edits.\n  <board-id>           the file stem of the board to write (<out-dir>/<board-id>.kicad_pcb).\n  --layers N           copper layers, an even number of 2 or more; default 2.\n  --footprints-from B  a board with these parts (the designer's, an older revision): a footprint\n                       no library has is taken from it (the symbol's own footprint, else one of\n                       that footprint name) and written to a library in <out-dir>; where B has\n                       the symbol's footprint, B's version is used over the library's. Reported\n                       in footprints_from_board, board_versions and drifted_footprints (library\n                       and board differ by more than a fifth); add entries with from_board.\n\nPrints the import report (JSON) on stdout: missing (with where the footprint was looked for),\nsubstituted, unmatched_pins, clearances, edge_connectors, added (the parts of an existing\nconstraints.json's add, docs/constraints.md), and the paths of constraints.json and layout.json. Next step: edit constraints.json (docs/constraints.md), then\npcb-maker layout-kicad-board <out-dir> <board-id> <layout-out-dir> auto <out-dir>/layout.json.\nExits 0 when every footprint was found, 1 when footprints are missing (the board leaves them\nout), 2 on usage or input errors (the schematic or netlist unreadable), 4 on internal errors.",
     ),
     (
         "describe-kicad-board",

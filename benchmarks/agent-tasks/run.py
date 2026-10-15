@@ -557,15 +557,13 @@ def schematic_admitted(task, arguments, token):
     designer_seconds = round(time.monotonic() - designer_started, 1)
     started = time.monotonic()
     load_before = os.getloadavg()[0]
+    # The designer's board gives the footprints no library has, and its
+    # versions of the others (import-kicad-netlist --footprints-from).
     report, steps, error = schematic.import_schematic(arguments.binary, record, work, board_id,
-                                                      len(description["copper_layers"]))
-    row["import"] = steps
+                                                      len(description["copper_layers"]), designer_file)
+    row["import"] = {key: value for key, value in steps.items() if key != "command"}
     if error:
         return stop("import", f"import-kicad-netlist: {error}")
-    row.update(missing=len(report["missing"]), substituted=len(report["substituted"]),
-               unmatched_pins=len(report["unmatched_pins"]))
-    if report["missing"]:
-        row["missing_parts"] = report["missing"][:12]
     project = work / "project"
     board = project / f"{board_id}.kicad_pcb"
     try:
@@ -573,14 +571,38 @@ def schematic_admitted(task, arguments, token):
         designer_text = designer_file.read_text()
         constraints, facts, copies = schematic.constraints_for_import(task_constraints, description, designer_text,
                                                                       board.read_text())
+        # The designer's parts with nets that the schematic does not have
+        # (alternative switch footprints, plated mounting holes): `add`
+        # entries, which the import puts on the board.
+        added, add_dropped = schematic.additions(designer_text, board.read_text(), facts["board_only"])
+        if added:
+            (project / "constraints.json").write_text(json.dumps({"version": 1, "add": added}, indent=1))
+            report, error = schematic.import_again(work, steps)
+            row["import"]["exit"] = steps["exit"]
+            if error:
+                return stop("import", f"import-kicad-netlist with add: {error}")
+            constraints, facts, copies = schematic.constraints_for_import(task_constraints, description,
+                                                                          designer_text, board.read_text())
+            constraints["add"] = added
+        facts["dropped"] += add_dropped
         shapes = schematic.edge_cuts(designer_text)
         if not shapes:
             raise ValueError("the designer's board draws no outline of its own on Edge.Cuts")
         schematic.append_items(board, shapes + copies)
     except Exception as error:  # noqa: BLE001
         return stop("constraints", f"{type(error).__name__}: {error}")
+    row.update(missing=len(report["missing"]), substituted=len(report["substituted"]),
+               unmatched_pins=len(report["unmatched_pins"]),
+               from_board=len(report.get("footprints_from_board") or []),
+               board_versions=report.get("board_versions") or 0,
+               drifted=len(report.get("drifted_footprints") or []))
+    if report["missing"]:
+        row["missing_parts"] = report["missing"][:12]
+    if report.get("drifted_footprints"):
+        row["drifted_footprints"] = report["drifted_footprints"][:12]
     row["parts"] = {"designer": facts["designer_parts"], "imported": facts["imported_parts"],
-                    "matched": facts["matched"], "copied": facts["copied"], "renamed": len(facts["renamed"])}
+                    "matched": facts["matched"], "copied": facts["copied"], "renamed": len(facts["renamed"]),
+                    "added": len(report.get("added") or [])}
     for key in ("board_only", "schematic_only", "dropped"):
         if facts[key]:
             row["parts"][key] = facts[key][:12] + ([f"... {len(facts[key])} in all"] if len(facts[key]) > 12 else [])

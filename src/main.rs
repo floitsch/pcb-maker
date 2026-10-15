@@ -2543,11 +2543,12 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "import-kicad-netlist" => {
-            let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N]";
+            let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>]";
             let input = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let mut layers = 2;
+            let mut footprints_from = None;
             while let Some(argument) = arguments.next() {
                 match argument.as_str() {
                     "--layers" => {
@@ -2557,10 +2558,19 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                             .filter(|value| *value >= 2 && value % 2 == 0)
                             .ok_or_else(|| usage.to_string())?;
                     }
+                    "--footprints-from" => {
+                        footprints_from = Some(std::path::PathBuf::from(arguments.next().ok_or_else(|| usage.to_string())?));
+                    }
                     _ => return Err(usage.into()),
                 }
             }
-            let report = pcb_kicad::import_kicad_netlist(Path::new(&input), Path::new(&output), &board_id, layers)?;
+            let report = pcb_kicad::import_kicad_netlist_from(
+                Path::new(&input),
+                Path::new(&output),
+                &board_id,
+                layers,
+                footprints_from.as_deref(),
+            )?;
             println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
             if !report.missing.is_empty() {
                 return Err(agent_cli::IMPORT_INCOMPLETE.into());

@@ -450,8 +450,10 @@ harvested boards from their schematics (benchmarks/github/README.md,
 measured with the layout:
 
 1. **Import.** The fetched project (`benchmarks/real/external/github-sch/<board>/repo`)
-   is copied and `import-kicad-netlist <root sheet> <project> <board-id> --layers N`
-   (the designer's layer count) imports it. When footprints are missing
+   is copied and `import-kicad-netlist <root sheet> <project> <board-id> --layers N --footprints-from <designer's board>`
+   (the designer's layer count; since x1071 the designer's board gives the
+   footprints no library has and its versions of the others, as an agent
+   handed the old board would do) imports it. When footprints are missing
    and `harvest_schematics.py` found their library elsewhere in the
    repository (a designer's absolute path, a library outside the project
    folder), the library goes into the project's `fp-lib-table` and the
@@ -470,7 +472,13 @@ measured with the layout:
    included, which `outline`'s `polygon`, since x1041, would approximate), and
    the designer's netless footprints that have no symbol (mounting holes,
    logos) are copied, fixed and marked `board_only`, as the other tiers
-   keep them.
+   keep them. The designer's footprints *with* nets that have no symbol
+   (0xcb-static's footprints for other switches, USB_Keypad's mounting
+   holes plated on GND, TelemetryOnboard's test point holes) become `add`
+   entries in `constraints.json` (`from_board`, at the designer's spot, the
+   pads on the imported board's names of their nets; a reference the
+   designer's board repeats gets a new one, `REF**_1`), and the import runs
+   again to put them on the board (since x1071).
 3. **Layout** with `layout-kicad-board <project> <board-id> <out> auto <project>/layout.json`
    at the tier's budget (a third, as the short tier), then
    **`drc-kicad-board`** on the result.
@@ -489,7 +497,8 @@ Each row has the layout row's fields and:
 | `stopped`, `why` | The first stage that fell short: `import` (an import error, or footprints missing: the layout still runs without them), `constraints` (they could not be written, or the layout called them an input error), `placement` (parts without a legal place, constraints missed), `routing` (connections open, by KiCad or the router), `drc` (new errors, or no report); null when the board passed. |
 | `import` | The import's exit code, `missing_first` (footprints missing before libraries were added) and `libraries_added`. |
 | `missing`, `missing_parts`, `substituted`, `unmatched_pins` | The import's report, after the libraries were added. |
-| `parts` | `designer` and `imported` parts, `matched` (by path or reference), `copied` (board-only netless footprints), `renamed` (references that differ between board and schematic), `board_only` and `schematic_only` (the first twelve), `dropped` (task entries for a reference the designer's board repeats without a uuid). |
+| `from_board`, `board_versions`, `drifted`, `drifted_footprints` | Footprints taken from the designer's board for want of a library, the board's versions used over the library's, and the library footprints that differ from the board's by more than a fifth on a side or in pad count (the first twelve lines). |
+| `parts` | `designer` and `imported` parts, `matched` (by path or reference), `copied` (board-only netless footprints), `added` (board-only footprints with nets, by `add`), `renamed` (references that differ between board and schematic), `board_only` and `schematic_only` (the first twelve), `dropped` (task entries for a reference the designer's board repeats without a uuid). |
 | `parity`, `parity_by_type` | KiCad's schematic parity findings on the result. |
 | `drc_line` | `drc-kicad-board`'s line. |
 
@@ -574,6 +583,29 @@ tier: 81/82, 1); 0xcb-static passed, its library now found in the project
 on the first import with 43 footprints substituted by name (parity 44 from
 the KiCad 6 schematic's per-instance footprint, rewritten since x1031:
 1).
+
+**x1071 (footprints from the designer's board, `add`), 2026-10-15**, 6 jobs
+x 4 threads as x1033 (main on 8a1fd2c, `build/sch-x1033.log`), under the
+lock, load 12-33: **5/12 pass, 1168 s wall** (x1033: 5/12, 1568 s).
+`build/sch-x1071.log`. Changed rows:
+
+| Board | x1033 | x1071 | Why |
+| --- | --- | --- | --- |
+| bumwings R64 rp2040zero | 80/81, KiCad 1 unconnected, copper_edge_clearance 1 | **81/81, 0, passed**, 11 vias (87) | The board's switch footprints: the schematic names `Kailh_PG1350_*_hotswap` (15.9 x 12.2 mm, 10 pads), the board has `*_solder` (12.85 x 11.6 mm, 6 pads) on 58 of 64 keys (4 `drifted_footprints`, 59 `substituted`). Parity 7 `footprint_symbol_mismatch`: the copied schematic names one footprint per id, and the 1.5u hotswap is a 1u solder footprint on one key. |
+| slab-pcb-left | 76/76, passed | 74/76, KiCad 2 unconnected | 125 board versions, none drifted (same body sizes and pads; an older library's drawing: courtyards as lines, text positions). The placement moved 53 of the 129 parts and the route left 2 open: a variance of the placement, not of the footprints. |
+| OpenFC | 80/82, 2 / clearance 3, annular_width 4 | 80/82, 2 / **no new error** | The board's versions of the WSON, the TF socket and the USB-C (one or two pads fewer than KiCad 10's: 4 drifted by pad count) remove the 7 errors; parity 0 to 5 `net_conflict` (no-connect pins those footprints have no pad for). |
+| USB_Keypad | 37/39, 2, 77 vias | 37/39, 2, 94 vias | Its four mounting holes plated on GND are added (`add`) and joined to GND; the crystal is the board's (6.1 x 3.4 against 6.0 x 2.4). |
+| 0xcb-static | 74/74, passed, 43 substituted, parity 1 | 74/74, passed, 0 substituted, parity 0, 1 via | The 11 footprints for other switches (MX37_1, ...) are added on their nets; the board's footprints replace the library's renamed ones. |
+| TelemetryOnboard | 106/108, KiCad 3 | 106/108, KiCad 2 | Three test point holes on TX4 and other nets added (`REF**_1` to `_3`); the route differs. |
+| le_chiffre | 11 substituted, parity 1, 78 vias | 0 substituted, parity 0, 52 vias | The board's versions; still the one copper_edge_clearance. |
+| coco2 | 614 vias, parity 1 | 661 vias, parity 0 | The board's versions (156); passed as before. |
+| MokyaLora | 395 vias | 383 vias | The board's versions (443); 261/262 as before. |
+
+spell_tome, urchin and homebrew_486 are identical (vias, routed, KiCad).
+Missing footprints 0 in both runs; parity 31 to 40. The import of all 79
+schematics (`experiments/schematic-import/import_all.py`): complete 34 to
+77, missing footprints 1740 to 10 (handover, "import footprints from the
+board").
 
 ## Route mode (`--route-from`)
 

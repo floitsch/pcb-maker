@@ -35,7 +35,9 @@ takes the constraints inline.
  "apart":    [{"parts": ["U5"], "from": ["U1", "Q*"], "min_mm": 10}],
  "device_front": "left",
  "place":    [{"part": "SW1", "at": "front"}, {"part": "D1", "at": "top-right"},
-              {"part": "J1", "x": 10, "y": 5, "angle": 90}]}
+              {"part": "J1", "x": 10, "y": 5, "angle": 90}],
+ "add":      [{"part": "H1", "footprint": "MountingHole:MountingHole_3.2mm_M3_Pad", "nets": {"1": "GND"},
+               "x": 3.5, "y": 3.5}]}
 ```
 
 Parts are named by reference. `fixed`, `back`, `front`, `hollow` and the
@@ -56,6 +58,7 @@ downwards, so `top` is the smaller y.
 | `move_all` | Every footprint is placed, unless locked or named by `fixed`; mounting holes no constraint names go to the corners, then to the middle of the edges (reported as `edge` constraints). Use it for a board fresh from a netlist. Without it, default rules keep parts that look deliberately placed: connectors at the edge, parts over the outline. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
 | `place` | Where one part goes, in words or exactly. `at`: `left`, `right`, `top`, `bottom` (on that edge, as `edge` with the default 1 mm), `top-left`, `top-right`, `bottom-left`, `bottom-right` (in that corner), `center` (the middle third both ways), `left-half`, `right-half`, `top-half`, `bottom-half`, or `front`/`rear`. Or `x`, `y` (the footprint's origin; `origin` as for `region`) and optionally `angle`: the part is put there and kept. | hard |
+| `add` | Parts the board needs and the schematic does not have: mounting holes plated on a net, a footprint for another switch, a test point. `import-kicad-netlist` puts them on the board (see [Parts the schematic does not have](#parts-the-schematic-does-not-have-add)); the layout keeps those with `x` and `y` there, as `place` does. | hard |
 | `device_front` | The board edge the device's front is at (`left`, `right`, `top`, `bottom`), so that `place` can say `front` (a button the user presses) and `rear` (the power jack). | board |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On a `polygon` outline, of the nearest side of the polygon that faces that way (below). On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
@@ -230,6 +233,36 @@ The automatic size (`"outline": {}`) and `shrink` are for rectangles: a
 polygon or pieces have the size they are given (`area_factor`, `aspect`
 and `shrink` with them are errors). `corner_radius` works with an
 automatic size; cutouts need a size.
+
+## Parts the schematic does not have (`add`)
+
+A board often carries parts its schematic lacks: mounting holes plated on
+GND, a second footprint for another switch, a test point. An agent need
+not draw them into the schematic: an `add` entry in the project's
+`constraints.json` says what to put on the board, and
+`import-kicad-netlist` (run again into the same directory, which keeps
+`constraints.json`) puts it there.
+
+```json
+"add": [{"part": "H1", "footprint": "MountingHole:MountingHole_3.2mm_M3_Pad", "nets": {"1": "GND"}, "x": 3.5, "y": 3.5},
+        {"part": "H2", "footprint": "MountingHole:MountingHole_3.2mm_M3_Pad", "nets": {"1": "GND"}},
+        {"part": "MX37_1", "from_board": true},
+        {"part": "TP_1", "from_board": true, "board_reference": "REF**", "x": -10, "y": 22.5, "origin": "absolute"}]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `part` | The new part's reference. A part of the schematic with that reference is an input error (exit 2). |
+| `footprint` | `Library:Name`, looked up in the project's libraries as the schematic's footprints are; not found, it is reported in `missing` (exit 1). |
+| `from_board` | `true`: the footprint `part` (or `board_reference`) of the board given with `--footprints-from`, in that board's version; where the reference repeats there (mounting holes all called `REF**`), the one at `x`, `y` with `"origin": "absolute"`. Without `--footprints-from` an input error. Give `footprint` or `from_board`, not both. |
+| `nets` | Pad number to net name (`{"1": "GND"}`; a mounting hole's pad may be numbered `""`). Pads not named have no net. Without `nets`, a `from_board` part keeps that board's nets and a library footprint has none. A net the schematic does not have is allowed and named in the report. A pad number the footprint does not have is an input error. |
+| `x`, `y`, `angle`, `origin` | Where it goes, as `place` says it: `origin` `board` (default, from the outline's corner; the layout puts it there) or `absolute`. Without `x` and `y` a `from_board` part stays where that board has it, on its side, locked, and a library footprint is placed by the placer (mounting holes go to the corners under `move_all`). |
+| `side` | `front` (default for a library footprint) or `back`; a `from_board` part keeps that board's side. |
+
+The parts are written `board_only` ("not in schematic"), so that KiCad's
+schematic parity check leaves them out; their pads are routed like any
+other. The import reports each in `added`. The layout refuses an `add`
+part the board does not have (an input error that says to import again).
 
 ## Not supported yet
 

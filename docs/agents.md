@@ -41,7 +41,8 @@ The report lists what needs a look:
 - `missing`: footprints not found in any library (the board leaves them
   out), or unreadable, each with where it was looked for: no library of
   that name (add it to the project's `fp-lib-table`, or put its `.pretty`
-  folder in the project), or the library without that footprint. Then
+  folder in the project), or the library without that footprint; or give
+  a board that has them (`--footprints-from`, below). Then
   import again into the same directory: the board is written anew,
   `constraints.json` and `layout.json` are kept;
 - `substituted`: footprints found in another library or under KiCad 9's
@@ -54,7 +55,51 @@ The report lists what needs a look:
   verdict counts in `schematic_parity_issues` and does not judge;
 - `clearances`: footprints whose own pads are closer than the board's
   clearance (a solder jumper's), given their pads' gap as their own
-  clearance, as designers do.
+  clearance, as designers do;
+- `added`: the parts of `constraints.json`'s `add` (below).
+
+**A board to take footprints from: `--footprints-from <board.kicad_pcb>`.**
+Designers keep footprints in personal libraries that do not travel with
+the project, and libraries change after a board is made (a courtyard that
+grew, a hotswap socket redrawn). When you have a board with these parts
+(the designer's, an older revision, a colleague's), give it:
+
+```sh
+pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-id> --footprints-from old/<name>.kicad_pcb
+```
+
+- A footprint no library has is taken from that board: the symbol's own
+  footprint (by the symbol's path, else its reference), else any footprint
+  of that name. It is brought back to library form as KiCad's "Export
+  Footprints to Library" does (flipped to the front, rotation and position
+  removed, nets dropped) and written to a library in `<project-dir>`
+  (`<library>.pretty` under the schematic's library name and named in the
+  project's `fp-lib-table`; `from_board.pretty` when a library of that
+  name exists but lacks the footprint), so the project is complete.
+  Reported in `footprints_from_board`. A symbol without a footprint takes
+  the board's footprint of it too.
+- Where the board has the symbol's footprint, **the board's version is
+  used over the library's**: the board is what was made and checked, the
+  library is what changed since. The count is `board_versions`;
+  `drifted_footprints` lists the ones whose library version differs from
+  the board's by more than a fifth on a side or in pad count, with both
+  sizes (`lib:SW (64 parts: SW1, ...): library 15.93 x 12.20 mm, 10 pads;
+  board 12.85 x 11.60 mm, 6 pads`). Where the board's footprint has another
+  name than the schematic's (the board was changed after the schematic, or
+  the schematic after the board), the board's is used under its own name
+  and listed in `substituted`; the copied schematic names it too. Want the
+  library's versions instead? Import without `--footprints-from`.
+- `missing` then says when the board lacks a part as well.
+
+**Parts the schematic does not have** (mounting holes plated on GND, a
+second footprint for another switch): an `add` entry in
+`<project-dir>/constraints.json`, then import again into the same
+directory. `{"part": "H1", "footprint": "MountingHole:MountingHole_3.2mm_M3_Pad",
+"nets": {"1": "GND"}, "x": 3.5, "y": 3.5}` adds a library footprint there;
+`{"part": "H1", "from_board": true}` takes the `--footprints-from` board's
+H1 with its nets, where that board has it. The parts are `board_only` (the
+parity check leaves them out) and are routed like the others;
+[constraints.md](constraints.md#parts-the-schematic-does-not-have-add).
 
 ## 1. Look at the board
 
@@ -126,6 +171,9 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "USB-C on the bottom edge, plug from outside" | `"edge": [{"part": "J1", "edge": "bottom", "flush": true, "opening_outwards": true}]` |
 | "The connectors on the edge, whichever suits" | `"edge": [{"part": "J1", "edge": "any", "flush": true, "opening_outwards": true}, ...]` |
 | "Mounting holes 3.5 mm in from each corner" | `"place": [{"part": "H1", "x": 3.5, "y": 3.5}, ...]` |
+| "Four M3 holes on GND" (the schematic has none) | `"add": [{"part": "H1", "footprint": "MountingHole:MountingHole_3.2mm_M3_Pad", "nets": {"1": "GND"}, "x": 3.5, "y": 3.5}, ...]`, then import again |
+| "Use the footprints of the old board" | `import-kicad-netlist ... --footprints-from old.kicad_pcb` (missing footprints from it, its versions over the libraries'; `drifted_footprints` says what differs) |
+| "Keep the old board's extra parts" | `"add": [{"part": "MX37_1", "from_board": true}, ...]` with `--footprints-from` |
 | "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
 | "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |

@@ -137,17 +137,21 @@ def add_libraries(table, libraries, project):
     table.write_text(text[:end].rstrip() + "\n" + "\n".join(lines) + "\n)\n")
 
 
-def import_schematic(binary, record, work, board_id, layers):
-    """Copies the fetched project and imports its schematic. Returns the
+def import_schematic(binary, record, work, board_id, layers, footprints_from=None):
+    """Copies the fetched project and imports its schematic (with
+    `--footprints-from` the designer's board, when given). Returns the
     import's report (or an error string), with what was done to it."""
     source = work / "sch"
     shutil.copytree(STORE / record["name"] / "repo", source)
     schematic = source / record["schematic"][len("repo/"):]
     project = work / "project"
     command = [binary, "import-kicad-netlist", schematic, project, board_id, "--layers", str(layers)]
+    if footprints_from is not None:
+        command += ["--footprints-from", footprints_from]
+    steps = {"command": command}
     code, stdout, stderr = run(command)
     (work / "import.log").write_text(stdout + stderr)
-    steps = {"exit": code}
+    steps["exit"] = code
     if code not in (0, 1) or not stdout.strip():
         return None, steps, (stderr.strip().splitlines() or ["no output"])[-1][:300]
     report = json.loads(stdout)
@@ -167,6 +171,116 @@ def import_schematic(binary, record, work, board_id, layers):
         report = json.loads(stdout)
     (work / "import.json").write_text(json.dumps(report, indent=1))
     return report, steps, None
+
+
+def import_again(work, steps):
+    """Imports into the same project again (after constraints.json got
+    `add` entries, which the import puts on the board)."""
+    code, stdout, stderr = run(steps["command"])
+    (work / "import-add.log").write_text(stdout + stderr)
+    steps["exit"] = code
+    if code not in (0, 1) or not stdout.strip():
+        return None, (stderr.strip().splitlines() or ["no output"])[-1][:300]
+    report = json.loads(stdout)
+    (work / "import.json").write_text(json.dumps(report, indent=1))
+    return report, None
+
+
+NET = re.compile(r'\(net\s+(?:\d+\s+)?"((?:[^"\\]|\\.)*)"\s*\)')
+
+
+def pad_nets(block):
+    """(number, net or None) of a footprint block's pads."""
+    pads = []
+    for match in re.finditer(r'\(pad\s+("(?:[^"\\]|\\.)*"|[^\s()]+)', block):
+        end = block_end(block, match.start())
+        net = NET.search(block[match.start():end])
+        name = net.group(1).replace('\\"', '"').replace("\\\\", "\\") if net else None
+        pads.append((match.group(1).strip('"'), name))
+    return pads
+
+
+def net_names(designer_footprints, imported_footprints, matched):
+    """The imported board's name of each designer net, by the pads of the
+    matched footprints (KiCad 6 and 10 name a net of unnamed pins
+    differently: Net-(D1-Pad2), Net-(D1-A)). A net no matched pad shows
+    keeps its name."""
+    votes = {}
+    imported = {id(f): f for f in imported_footprints}
+    for designer in designer_footprints:
+        other = matched.get(designer["uuid"])
+        if other is None or id(other) not in imported:
+            continue
+        theirs = dict(pad_nets(other["block"]))
+        for number, net in pad_nets(designer["block"]):
+            if net and theirs.get(number):
+                votes.setdefault(net, {}).setdefault(theirs[number], 0)
+                votes[net][theirs[number]] += 1
+    return {net: max(names, key=names.get) for net, names in votes.items()}
+
+
+def additions(designer_text, imported_text, board_only):
+    """`add` entries (constraints.json) for the designer's footprints with
+    nets that the schematic does not have (0xcb-static's footprints for
+    other switches, USB_Keypad's plated mounting holes): each taken from
+    the designer's board (`from_board`, given to the import with
+    `--footprints-from`) and kept where the designer put it (`x`, `y`,
+    absolute), its pads on the imported board's names of their nets. A
+    reference the designer's board repeats (`REF**`, mounting holes all
+    called `M2.5`) or the imported board has gets a new one (`M2.5_1`, the
+    board's in `board_reference`). Returns the entries and the
+    references left out."""
+    designer_footprints = footprints_of(designer_text)
+    imported = footprints_of(imported_text)
+    references = {}
+    for footprint in designer_footprints:
+        references[footprint["reference"]] = references.get(footprint["reference"], 0) + 1
+    taken = {f["reference"] for f in imported} | set(references)
+    matched = {}
+    by_path = {f["path"]: f for f in imported if f["path"]}
+    by_reference = {}
+    for footprint in imported:
+        by_reference.setdefault(footprint["reference"], []).append(footprint)
+    # By the symbol's path, then by a reference the imported board has once
+    # and no path claimed (a copy of a footprint is not its original).
+    for index, footprint in enumerate(designer_footprints):
+        if footprint["path"] and footprint["path"] in by_path:
+            matched[index] = by_path[footprint["path"]]
+    claimed = {id(other) for other in matched.values()}
+    for index, footprint in enumerate(designer_footprints):
+        candidates = by_reference.get(footprint["reference"], [])
+        if index not in matched and len(candidates) == 1 and id(candidates[0]) not in claimed:
+            matched[index] = candidates[0]
+            claimed.add(id(candidates[0]))
+    names = net_names([f for index, f in enumerate(designer_footprints)],
+                      imported, {f["uuid"]: matched[index] for index, f in enumerate(designer_footprints)
+                                 if index in matched})
+    entries, dropped, used = [], [], set()
+    wanted = set(board_only)
+    for index, footprint in enumerate(designer_footprints):
+        if footprint["reference"] not in wanted or index in matched:
+            continue
+        nets = {number: names.get(net, net) for number, net in pad_nets(footprint["block"]) if net}
+        if not nets:
+            continue
+        at = re.search(r"\(at ([-\d.eE+]+) ([-\d.eE+]+)", footprint["block"])
+        if not at:
+            dropped.append(f"add {footprint['reference']} (no position)")
+            continue
+        reference = footprint["reference"]
+        part = reference
+        if not part or references[reference] > 1 or part in by_reference or part in used:
+            base, number = reference or "X", 1
+            while f"{base}_{number}" in taken or f"{base}_{number}" in used:
+                number += 1
+            part = f"{base}_{number}"
+        used.add(part)
+        entry = {"part": part, "from_board": True, "nets": nets, "x": float(at.group(1)), "y": float(at.group(2)),
+                 "origin": "absolute"}
+        if part != reference:
+            entry["board_reference"] = reference
+        entries.append(entry)
+    return entries, dropped
 
 
 def constraints_for_import(task_constraints, description, designer_text, imported_text):

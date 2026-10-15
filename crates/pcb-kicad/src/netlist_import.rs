@@ -31,6 +31,23 @@ pub struct KiCadNetlistImport {
     /// Connectors the starter constraints put on an edge (USB, RF, audio,
     /// barrel and D-sub, network, video, card edge, terminal blocks).
     pub edge_connectors: Vec<String>,
+    /// With `--footprints-from`: footprints no library has, taken from the
+    /// board (`R1: lib:R_0402 (the board's R1)`) and written to a library
+    /// in the project (`<library>.pretty`, in its `fp-lib-table`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footprints_from_board: Option<Vec<String>>,
+    /// With `--footprints-from`: footprints the libraries have that the
+    /// board has too, in the board's version, and of those the ones whose
+    /// library version differs from the board's by more than a fifth on a
+    /// side or in pad count (`lib:SW (64 parts: SW1, ...): library 15.9 x
+    /// 12.2 mm, 4 pads; board 12.85 x 11.6 mm, 4 pads`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board_versions: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drifted_footprints: Option<Vec<String>>,
+    /// Parts `constraints.json`'s `add` put on the board.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<String>,
     /// The starter constraints and layout config, when written (never over
     /// existing files).
     pub constraints: Option<PathBuf>,
@@ -403,6 +420,25 @@ fn requote(escaped: &str) -> String {
 /// Writes `<output>/<board_id>.kicad_pcb` (and copies the schematic and
 /// project files next to it) from a `.kicad_sch` or a KiCad netlist.
 pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers: usize) -> Result<KiCadNetlistImport, String> {
+    import_kicad_netlist_from(input, output, board_id, layers, None)
+}
+
+/// The library footprints taken from the board are written to: the
+/// schematic's library when no library of that name exists here, else
+/// this one (a library that lacks the footprint stays as it is).
+const FROM_BOARD_LIBRARY: &str = "from_board";
+
+/// `import_kicad_netlist` with `--footprints-from <board>`: footprints no
+/// library has are taken from that board, and the board's version is
+/// preferred where it has the symbol's footprint (`board_footprints.rs`).
+pub fn import_kicad_netlist_from(
+    input: &Path,
+    output: &Path,
+    board_id: &str,
+    layers: usize,
+    footprints_from: Option<&Path>,
+) -> Result<KiCadNetlistImport, String> {
+    let designer = footprints_from.map(crate::board_footprints::BoardFootprints::read).transpose()?;
     let project = input.parent().unwrap_or(Path::new(".")).to_path_buf();
     fs::create_dir_all(output).map_err(|error| format!("failed to create {}: {error}", output.display()))?;
     let is_schematic = input.extension().is_some_and(|extension| extension == "kicad_sch");
@@ -537,16 +573,32 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
     let mut substituted = Vec::new();
     let mut unmatched_pins = Vec::new();
     // Footprint ids the libraries know under another name, old to new.
-    let mut renamed: BTreeMap<String, String> = BTreeMap::new();
+    // (Old, new): how many symbols; the copied schematic names a footprint
+    // id once for all its symbols, so the most common new name wins.
+    let mut renamed: BTreeMap<(String, String), usize> = BTreeMap::new();
+    // With `--footprints-from`: footprints taken from the board for want of
+    // a library (to write into the project's libraries, by id), the board's
+    // versions used, the drifted ones (id: sizes, references).
+    let mut local_footprints: BTreeMap<String, Expr> = BTreeMap::new();
+    let mut from_board = Vec::new();
+    let mut board_versions = 0;
+    let mut drift: BTreeMap<(String, String), (String, Vec<String>)> = BTreeMap::new();
     let mut footprints = 0;
     let components = netlist.child("components").map(Expr::children).unwrap_or_default();
+    // Every symbol's path, so that a board footprint linked to one symbol is
+    // not taken for another of its reference.
+    let symbol_paths: BTreeSet<String> = components
+        .iter()
+        .filter(|item| item.head() == Some("comp"))
+        .filter_map(|component| {
+            let sheet = component.child("sheetpath").and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
+            let stamp = text_of(component, "tstamps").or_else(|| text_of(component, "tstamp"))?;
+            Some(format!("{}{stamp}", if sheet.ends_with('/') { sheet } else { format!("{sheet}/") }))
+        })
+        .collect();
     for component in components.iter().filter(|item| item.head() == Some("comp")) {
         let reference = text_of(component, "ref").unwrap_or_default();
         let value = text_of(component, "value").unwrap_or_default();
-        let Some(footprint_id) = text_of(component, "footprint").filter(|id| id.contains(':')) else {
-            missing.push(format!("{reference} (no footprint)"));
-            continue;
-        };
         // Symbol properties without a value are flags.
         let flags: BTreeSet<String> = component
             .children()
@@ -557,25 +609,117 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         if flags.contains("exclude_from_board") {
             continue;
         }
-        let Some((file, found)) = find_footprint(&libraries, &footprint_id) else {
-            // Say where it was looked for, so that the fix is plain.
-            let (library, name) = footprint_id.split_once(':').unwrap_or(("", &footprint_id));
-            missing.push(match libraries.get(library) {
-                Some(folder) => format!("{reference} ({footprint_id} not found: {} has no {name}.kicad_mod)", folder.display()),
-                None => format!(
-                    "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders or KiCad's own)"
-                ),
-            });
+        // The symbol the footprint is linked to: `/<sheet uuids>/<symbol uuid>`.
+        let sheet_path = component.child("sheetpath");
+        let sheet = sheet_path.and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
+        let symbol_path = text_of(component, "tstamps")
+            .or_else(|| text_of(component, "tstamp"))
+            .map(|stamp| format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }));
+        // A symbol without a footprint takes the board's footprint of it,
+        // where a board is given and has it.
+        let named = text_of(component, "footprint").filter(|id| id.contains(':'));
+        let unnamed = named.is_none();
+        let Some(footprint_id) = named.or_else(|| {
+            let own = designer.as_ref()?.own(symbol_path.as_deref(), &reference, &symbol_paths)?;
+            Some(if own.id.contains(':') { own.id.clone() } else { format!("{FROM_BOARD_LIBRARY}:{}", own.id) })
+        }) else {
+            missing.push(format!("{reference} (no footprint)"));
             continue;
         };
-        if found != footprint_id {
-            substituted.push(format!("{reference}: {footprint_id} -> {found}"));
-            renamed.insert(footprint_id.clone(), found.clone());
-        }
-        let mut footprint = match fs::read_to_string(&file).map_err(|error| error.to_string()).and_then(|text| parse(&text)) {
-            Ok(footprint) => footprint,
-            Err(error) => {
-                missing.push(format!("{reference} ({found} unreadable: {error})"));
+        let library = find_footprint(&libraries, &footprint_id);
+        let theirs = designer
+            .as_ref()
+            .and_then(|designer| designer.for_symbol(symbol_path.as_deref(), &reference, &footprint_id, library.is_none(), &symbol_paths));
+        let (mut footprint, found) = match (library, theirs) {
+            (library, Some((theirs, how))) => {
+                // The board's footprint, under the board's name where it
+                // differs from the schematic's (the board was changed
+                // after the schematic, or the other way round).
+                let same_name = theirs.name() == crate::board_footprints::name_of(&footprint_id);
+                let wanted = if same_name { footprint_id.clone() } else { theirs.id.clone() };
+                let (wanted_library, wanted_name) = wanted.split_once(':').unwrap_or(("", &wanted));
+                let form = crate::board_footprints::library_form(&theirs.expr, wanted_name)?;
+                if let Some((file, _)) = &library {
+                    // How far the library's version, which the import would
+                    // have used, is from the board's.
+                    board_versions += 1;
+                    let ours = fs::read_to_string(file).ok().and_then(|text| parse(&text).ok());
+                    if let (Some(a), Some(b)) =
+                        (ours.as_ref().and_then(crate::board_footprints::body_size), crate::board_footprints::body_size(&form))
+                        && crate::board_footprints::drifted(a, b)
+                    {
+                        let entry = drift.entry((footprint_id.clone(), theirs.id.clone())).or_insert_with(|| {
+                            let mut line = format!(
+                                "library {:.2} x {:.2} mm, {} pads; board {:.2} x {:.2} mm, {} pads",
+                                a.0[0], a.0[1], a.1, b.0[0], b.0[1], b.1
+                            );
+                            if !same_name {
+                                line.push_str(&format!("; the board's footprint is {}", theirs.id));
+                            }
+                            (line, Vec::new())
+                        });
+                        entry.1.push(reference.clone());
+                    }
+                }
+                let resolves = find_footprint(&libraries, &wanted).is_some_and(|(_, found)| found == wanted);
+                let id = if (library.is_some() && same_name) || (!same_name && resolves) {
+                    wanted.clone()
+                } else {
+                    // Into a library of the project: under the footprint's
+                    // library name where no library of that name exists
+                    // here, else `from_board`.
+                    let id = if libraries.contains_key(wanted_library) || wanted_library.is_empty() {
+                        format!("{FROM_BOARD_LIBRARY}:{wanted_name}")
+                    } else {
+                        wanted.clone()
+                    };
+                    local_footprints.entry(id.clone()).or_insert_with(|| form.clone());
+                    id
+                };
+                if id != footprint_id {
+                    *renamed.entry((footprint_id.clone(), id.clone())).or_default() += 1;
+                }
+                let whose = match how {
+                    crate::board_footprints::Found::Own if same_name => format!("the board's {}", theirs.reference),
+                    crate::board_footprints::Found::Own => format!("the board's {}, which has another footprint than the schematic's", theirs.reference),
+                    crate::board_footprints::Found::ByName => format!("the board's {}, of that footprint name", theirs.reference),
+                };
+                if unnamed {
+                    from_board.push(format!("{reference}: {id} ({whose}; the schematic names no footprint)"));
+                } else if library.is_none() {
+                    from_board.push(format!("{reference}: {id} ({whose})"));
+                } else if id != footprint_id {
+                    substituted.push(format!("{reference}: {footprint_id} -> {id} ({whose})"));
+                }
+                (form, id)
+            }
+            (Some((file, found)), None) => {
+                if found != footprint_id {
+                    substituted.push(format!("{reference}: {footprint_id} -> {found}"));
+                    *renamed.entry((footprint_id.clone(), found.clone())).or_default() += 1;
+                }
+                match fs::read_to_string(&file).map_err(|error| error.to_string()).and_then(|text| parse(&text)) {
+                    Ok(footprint) => (footprint, found),
+                    Err(error) => {
+                        missing.push(format!("{reference} ({found} unreadable: {error})"));
+                        continue;
+                    }
+                }
+            }
+            (None, None) => {
+                // Say where it was looked for, so that the fix is plain.
+                let (library, name) = footprint_id.split_once(':').unwrap_or(("", &footprint_id));
+                let mut line = match libraries.get(library) {
+                    Some(folder) => format!("{reference} ({footprint_id} not found: {} has no {name}.kicad_mod", folder.display()),
+                    None => format!(
+                        "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders or KiCad's own"
+                    ),
+                };
+                if let Some(designer) = &designer {
+                    line.push_str(&format!("; nor has {} this part or a footprint of that name", designer.file.display()));
+                }
+                line.push(')');
+                missing.push(line);
                 continue;
             }
         };
@@ -598,10 +742,8 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         // The links to the symbol, where KiCad keeps them: before `attr`
         // and the drawings.
         let mut links = Vec::new();
-        let sheet_path = component.child("sheetpath");
-        let sheet = sheet_path.and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
-        if let Some(stamp) = text_of(component, "tstamps").or_else(|| text_of(component, "tstamp")) {
-            links.push(parse(&format!("(path {})", requote(&format!("{}{stamp}", if sheet.ends_with('/') { sheet.clone() } else { format!("{sheet}/") }))))?);
+        if let Some(symbol_path) = &symbol_path {
+            links.push(parse(&format!("(path {})", requote(symbol_path)))?);
         }
         if let Some(names) = sheet_path.and_then(|sheet| text_of(sheet, "names")) {
             links.push(parse(&format!("(sheetname {})", requote(&names)))?);
@@ -701,10 +843,24 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         }
         footprints += 1;
     }
+    // Parts the schematic does not have (`add` in an existing
+    // constraints.json).
+    let added = add_parts(&mut board, output, &libraries, designer.as_ref(), &mut missing)?;
+    if !local_footprints.is_empty() {
+        write_local_libraries(output, &local_footprints, &libraries, designer.as_ref().map(|designer| designer.file.as_path()))?;
+    }
     let board_path = output.join(format!("{board_id}.kicad_pcb"));
     fs::write(&board_path, format!("{}\n", encode(&board))).map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
     // The copied schematic links the footprints the board has, so the new
     // project checks clean (the original is left as it is).
+    let mut most: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    for ((old, new), count) in &renamed {
+        let entry = most.entry(old.clone()).or_insert((0, String::new()));
+        if *count > entry.0 {
+            *entry = (*count, new.clone());
+        }
+    }
+    let renamed: BTreeMap<String, String> = most.into_iter().map(|(old, (_, new))| (old, new)).collect();
     if is_schematic && !renamed.is_empty() {
         let mut folders = vec![output.to_path_buf()];
         while let Some(folder) = folders.pop() {
@@ -807,9 +963,278 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         unmatched_pins,
         clearances,
         edge_connectors,
+        footprints_from_board: designer.is_some().then_some(from_board),
+        board_versions: designer.is_some().then_some(board_versions),
+        drifted_footprints: designer.is_some().then(|| {
+            drift
+                .into_iter()
+                .map(|((id, _), (sizes, references))| {
+                    let shown: Vec<&str> = references.iter().take(6).map(String::as_str).collect();
+                    let more = if references.len() > shown.len() { ", ..." } else { "" };
+                    format!("{id} ({} parts: {}{more}): {sizes}", references.len(), shown.join(", "))
+                })
+                .collect()
+        }),
+        added,
         constraints,
         layout,
     })
+}
+
+/// Writes the footprints taken from the board into libraries of the
+/// project (`<out>/<library>.pretty`) and names those libraries in the
+/// project's `fp-lib-table`, so that the project finds every footprint its
+/// schematic names. An entry of that name the libraries could not resolve
+/// (a designer's own folder) is replaced.
+fn write_local_libraries(
+    output: &Path,
+    footprints: &BTreeMap<String, Expr>,
+    libraries: &BTreeMap<String, PathBuf>,
+    board: Option<&Path>,
+) -> Result<(), String> {
+    let mut nicknames = BTreeSet::new();
+    for (id, footprint) in footprints {
+        let Some((nickname, name)) = id.split_once(':') else {
+            continue;
+        };
+        nicknames.insert(nickname.to_string());
+        let folder = output.join(format!("{nickname}.pretty"));
+        fs::create_dir_all(&folder).map_err(|error| format!("failed to create {}: {error}", folder.display()))?;
+        let mut file = footprint.clone();
+        if let Expr::List(items) = &mut file {
+            items[1] = Expr::Atom(requote(name));
+            items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version")));
+            items.splice(2..2, [parse("(version 20260206)")?, parse("(generator \"pcb-maker\")")?]);
+        }
+        let path = folder.join(format!("{name}.kicad_mod"));
+        fs::write(&path, format!("{}\n", encode(&file))).map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    let table = output.join("fp-lib-table");
+    let mut parsed = fs::read_to_string(&table)
+        .ok()
+        .and_then(|text| parse(&text).ok())
+        .filter(|parsed| parsed.head() == Some("fp_lib_table"))
+        .unwrap_or_else(|| Expr::List(vec![Expr::Atom("fp_lib_table".into()), Expr::List(vec![Expr::Atom("version".into()), Expr::Atom("7".into())])]));
+    let source = board.and_then(|board| board.file_name()).map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    if let Expr::List(items) = &mut parsed {
+        for nickname in &nicknames {
+            // A library of that name that exists here keeps its entry (the
+            // footprints went to `from_board` then).
+            if nickname != FROM_BOARD_LIBRARY && libraries.contains_key(nickname) {
+                continue;
+            }
+            items.retain(|item| !(item.head() == Some("lib") && form_atom(item, "name", 1) == Some(nickname.as_str())));
+            items.push(parse(&format!(
+                "(lib (name {}) (type \"KiCad\") (uri {}) (options \"\") (descr {}))",
+                requote(nickname),
+                requote(&format!("${{KIPRJMOD}}/{nickname}.pretty")),
+                quote(&format!("footprints from the board {source}"))
+            ))?);
+        }
+    }
+    fs::write(&table, format!("{}\n", encode(&parsed))).map_err(|error| format!("failed to write {}: {error}", table.display()))
+}
+
+/// The parts of `add` in `<out>/constraints.json`, put on the board
+/// `board_only`; returns a line per part. A library footprint not found
+/// goes to `missing`; an entry that cannot be carried out is an input
+/// error.
+fn add_parts(
+    board: &mut Expr,
+    output: &Path,
+    libraries: &BTreeMap<String, PathBuf>,
+    designer: Option<&crate::board_footprints::BoardFootprints>,
+    missing: &mut Vec<String>,
+) -> Result<Vec<String>, String> {
+    let path = output.join("constraints.json");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| crate::verdict::input_error(format!("invalid constraints {}: {error}", path.display())))?;
+    let Some(entries) = value.get("add") else {
+        return Ok(Vec::new());
+    };
+    let additions: Vec<crate::placement_constraints::KiCadAddConstraint> = serde_json::from_value(entries.clone())
+        .map_err(|error| crate::verdict::input_error(format!("invalid add in {}: {error}", path.display())))?;
+    let invalid = |part: &str, why: String| crate::verdict::input_error(format!("constraints.json add {part}: {why}"));
+    let nets_on_board: BTreeSet<String> = board
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .flat_map(|footprint| footprint.children().iter().filter(|item| item.head() == Some("pad")).filter_map(|pad| form_atom(pad, "net", 1)))
+        .map(str::to_owned)
+        .collect();
+    let mut lines = Vec::new();
+    for addition in additions {
+        let part = addition.part.as_str();
+        if part.is_empty() {
+            return Err(invalid(part, "give the new part's reference in part".into()));
+        }
+        let taken = board
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .any(|footprint| footprint_reference(footprint).as_deref() == Some(part));
+        if taken {
+            return Err(invalid(part, "the board has a part of that reference already".into()));
+        }
+        let side_back = match addition.side.as_deref() {
+            None => None,
+            Some("front") => Some(false),
+            Some("back") => Some(true),
+            Some(other) => return Err(invalid(part, format!("side {other:?} is neither front nor back"))),
+        };
+        if addition.x.is_some() != addition.y.is_some() {
+            return Err(invalid(part, "give both x and y, or neither".into()));
+        }
+        let absolute = match addition.origin.as_deref() {
+            None | Some("board") => false,
+            Some("absolute") => true,
+            Some(other) => return Err(invalid(part, format!("unknown origin {other:?} (board or absolute)"))),
+        };
+        // The footprint in library form, the board's nets of its pads, its
+        // pose there and its name.
+        let (form, board_nets, board_pose, id) = match (&addition.footprint, addition.from_board) {
+            (Some(_), true) | (None, false) => {
+                return Err(invalid(part, "give footprint (a library footprint) or from_board (the --footprints-from board's), one of them".into()));
+            }
+            (None, true) => {
+                let designer =
+                    designer.ok_or_else(|| invalid(part, "from_board takes the footprint from the board given with --footprints-from".into()))?;
+                let at = match (addition.x, addition.y) {
+                    (Some(x), Some(y)) if absolute => Some([x, y]),
+                    _ => None,
+                };
+                let theirs = designer
+                    .by_reference(addition.board_reference.as_deref().unwrap_or(part), at)
+                    .map_err(|why| invalid(part, why))?;
+                let nets: BTreeMap<String, String> = theirs
+                    .expr
+                    .children()
+                    .iter()
+                    .filter(|item| item.head() == Some("pad"))
+                    .filter_map(|pad| {
+                        let number = pad.children().get(1).and_then(Expr::atom)?;
+                        let net = pad.child("net")?.children().last()?.atom()?;
+                        (!net.is_empty() && !number.is_empty()).then(|| (number.to_string(), net.to_string()))
+                    })
+                    .collect();
+                let at = form_at(&theirs.expr).unwrap_or([0.0; 3]);
+                let back = form_atom(&theirs.expr, "layer", 1) == Some("B.Cu");
+                (crate::board_footprints::library_form(&theirs.expr, crate::board_footprints::name_of(&theirs.id))?, nets, Some((at, back)), theirs.id.clone())
+            }
+            (Some(id), false) => {
+                let Some((file, found)) = find_footprint(libraries, id) else {
+                    missing.push(format!("{part} (add: {id} not found in the libraries)"));
+                    continue;
+                };
+                match fs::read_to_string(&file).map_err(|error| error.to_string()).and_then(|text| parse(&text)) {
+                    Ok(footprint) => (footprint, BTreeMap::new(), None, found),
+                    Err(error) => {
+                        missing.push(format!("{part} (add: {found} unreadable: {error})"));
+                        continue;
+                    }
+                }
+            }
+        };
+        let nets = addition.nets.clone().unwrap_or(board_nets);
+        // Where: x and y as given (at the origin when they are relative to
+        // the outline, which the layout draws: its `place` puts it there),
+        // else where the board has it (locked), else anywhere.
+        let (at, back, locked) = match (addition.x, addition.y, board_pose) {
+            (Some(x), Some(y), pose) => {
+                let angle = addition.angle.or(pose.map(|(at, _)| at[2])).unwrap_or(0.0);
+                let at = if absolute { [x, y, angle] } else { [0.0, 0.0, angle] };
+                (at, side_back.or(pose.map(|(_, back)| back)).unwrap_or(false), false)
+            }
+            (_, _, Some((at, back))) => ([at[0], at[1], addition.angle.unwrap_or(at[2])], side_back.unwrap_or(back), true),
+            _ => ([0.0, 0.0, addition.angle.unwrap_or(0.0)], side_back.unwrap_or(false), false),
+        };
+        let mut footprint = form;
+        {
+            let Expr::List(items) = &mut footprint else {
+                return Err(invalid(part, "the footprint is not a list".into()));
+            };
+            items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version" | "at" | "uuid" | "tstamp")));
+            items[0] = Expr::Atom("footprint".into());
+            items[1] = Expr::Atom(requote(&id));
+            for item in items.iter_mut() {
+                renew_uuids(item, &format!("add {part}"));
+            }
+            legacy_texts_to_properties(items, part)?;
+            legacy_arcs_to_three_points(items)?;
+            set_property(items, "Reference", part, part)?;
+            // Not in the schematic: KiCad's parity check leaves it out.
+            let attr = match items.iter().position(|item| item.head() == Some("attr")) {
+                Some(index) => index,
+                None => {
+                    let at = items
+                        .iter()
+                        .position(|item| item.head() == Some("pad") || item.head().is_some_and(|head| head.starts_with("fp_")))
+                        .unwrap_or(items.len());
+                    items.insert(at, Expr::List(vec![Expr::Atom("attr".into())]));
+                    at
+                }
+            };
+            if let Expr::List(flags) = &mut items[attr]
+                && !flags.iter().any(|flag| flag.atom() == Some("board_only"))
+            {
+                flags.push(Expr::Atom("board_only".into()));
+            }
+            let mut unused: BTreeSet<&String> = nets.keys().collect();
+            for item in items.iter_mut().filter(|item| item.head() == Some("pad")) {
+                let number = item.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+                let Expr::List(parts) = item else { continue };
+                parts.retain(|part| !matches!(part.head(), Some("net" | "pinfunction" | "pintype")));
+                if let Some(net) = nets.get(&number) {
+                    unused.remove(&number);
+                    parts.push(parse(&format!("(net {})", quote(net)))?);
+                }
+            }
+            if let Some(number) = unused.first() {
+                return Err(invalid(part, format!("{id} has no pad {number}")));
+            }
+        }
+        let uuid = uuid_of(&format!("add footprint {part}"));
+        let mut footprint = crate::board_footprints::posed(&footprint, if back { [at[0], at[1], -at[2]] } else { at })?;
+        if back {
+            crate::flip::flip_footprint(&mut footprint)?;
+        }
+        if let Expr::List(items) = &mut footprint {
+            let layer = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
+            items.insert(layer, parse(&format!("(uuid \"{uuid}\")"))?);
+            if locked {
+                items.insert(layer, parse("(locked yes)")?);
+            }
+        }
+        let mut on: Vec<String> = Vec::new();
+        let mut net_names: BTreeSet<&String> = nets.values().collect::<BTreeSet<_>>();
+        for (number, net) in &nets {
+            on.push(format!("{} {net}", if number.is_empty() { "\"\"" } else { number }));
+        }
+        net_names.retain(|net| !nets_on_board.contains(net.as_str()));
+        let mut line = format!("{part}: {id}");
+        if !on.is_empty() {
+            line.push_str(&format!(", pads on nets ({})", on.join(", ")));
+        }
+        line.push_str(&match (addition.x, locked) {
+            (Some(_), _) => format!(", at {} {} ({})", addition.x.unwrap_or(0.0), addition.y.unwrap_or(0.0), if absolute { "absolute" } else { "from the outline's corner, by the layout" }),
+            (None, true) => format!(", where the board has it ({} {}, locked)", at[0], at[1]),
+            (None, false) => ", placed by the layout".into(),
+        });
+        if back {
+            line.push_str(", on the back");
+        }
+        if !net_names.is_empty() {
+            line.push_str(&format!("; nets the schematic does not have: {}", net_names.into_iter().cloned().collect::<Vec<_>>().join(", ")));
+        }
+        lines.push(line);
+        if let Expr::List(items) = board {
+            items.push(footprint);
+        }
+    }
+    Ok(lines)
 }
 
 /// Per footprint, the smallest gap between its own pads that KiCad's DRC
@@ -1060,6 +1485,134 @@ mod tests {
         assert!(r3.child("attr").unwrap().children().iter().any(|flag| flag.atom() == Some("dnp")));
         let pads: Vec<Option<&str>> = r3.children().iter().filter(|item| item.head() == Some("pad")).map(|pad| form_atom(pad, "net", 1)).collect();
         assert_eq!(pads, vec![None, Some("GND")]);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn footprints_come_from_the_board_where_no_library_has_them_and_the_board_version_wins() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-import-board-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        // A library with an old, larger R_Test (drifted: 6 x 2 against 3 x 1).
+        let library = directory.join("parts.pretty");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("R_Test.kicad_mod"),
+            r#"(footprint "R_Test" (layer "F.Cu")
+                (fp_rect (start -3 -1) (end 3 1) (layer "F.CrtYd") (stroke (width 0.05) (type solid)))
+                (pad "1" smd rect (at -2 0) (size 1 1) (layers "F.Cu" "F.Mask"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask")))"#,
+        )
+        .unwrap();
+        // The designer's board: R1 (parts:R_Test, smaller, on the back,
+        // turned), U1 from a personal library nobody has, H1 a mounting hole
+        // the schematic lacks, plated on GND.
+        let board = directory.join("designer.kicad_pcb");
+        fs::write(
+            &board,
+            r#"(kicad_pcb (version 20221018) (generator pcbnew)
+              (footprint "parts:R_Test" (layer "B.Cu") (tstamp 11111111-0000-4000-8000-000000000001) (at 10 20 90)
+                (path "/1111")
+                (fp_text reference "R1" (at 0 1.5 90) (layer "B.SilkS") (effects (font (size 1 1) (thickness 0.15)) (justify mirror)))
+                (fp_rect (start -1.5 0.5) (end 1.5 -0.5) (layer "B.CrtYd") (stroke (width 0.05) (type solid)))
+                (pad "1" smd rect (at -1 0 90) (size 0.6 0.6) (layers "B.Cu" "B.Mask") (net 1 "/VIN"))
+                (pad "2" smd rect (at 1 0 90) (size 0.6 0.6) (layers "B.Cu" "B.Mask") (net 2 "GND")))
+              (footprint "personal:SOT_Mine" (layer "F.Cu") (tstamp 11111111-0000-4000-8000-000000000002) (at 30 20 180)
+                (path "/2222")
+                (fp_text reference "U1" (at 0 -2 180) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+                (pad "1" smd rect (at -1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 2 "GND"))
+                (pad "2" smd rect (at 1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN")))
+              (footprint "MountingHole:Hole_Pad" (layer "F.Cu") (tstamp 11111111-0000-4000-8000-000000000003) (at 3 3)
+                (fp_text reference "H1" (at 0 -3) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+                (pad "1" thru_hole circle (at 0 0) (size 5 5) (drill 3) (layers "*.Cu" "*.Mask") (net 2 "GND"))))"#,
+        )
+        .unwrap();
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "R1") (value "10k") (footprint "parts:R_Test") (sheetpath (names "/") (tstamps "/")) (tstamps "1111"))
+                (comp (ref "U1") (value "X") (footprint "personal:SOT_Mine") (sheetpath (names "/") (tstamps "/")) (tstamps "2222")))
+              (nets
+                (net (code "1") (name "/VIN") (node (ref "R1") (pin "1") (pintype "passive")) (node (ref "U1") (pin "2") (pintype "passive")))
+                (net (code "2") (name "GND") (node (ref "R1") (pin "2") (pintype "passive")) (node (ref "U1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let output = directory.join("out");
+        // Without the board, U1 is missing.
+        let report = import_kicad_netlist(&netlist, &output, "test", 2).unwrap();
+        assert_eq!(report.missing.len(), 1, "{:?}", report.missing);
+        assert!(report.footprints_from_board.is_none() && report.drifted_footprints.is_none());
+        // With it, and with an `add` for the mounting hole (kept where the
+        // board has it) and a library footprint placed by the layout.
+        fs::write(
+            output.join("constraints.json"),
+            r#"{"version": 1, "add": [{"part": "H1", "from_board": true},
+                {"part": "TP1", "footprint": "parts:R_Test", "nets": {"1": "GND"}, "x": 5, "y": 6}]}"#,
+        )
+        .unwrap();
+        let report = import_kicad_netlist_from(&netlist, &output, "test", 2, Some(&board)).unwrap();
+        assert!(report.missing.is_empty(), "{:?}", report.missing);
+        assert_eq!(report.footprints_from_board.as_deref(), Some(&["U1: personal:SOT_Mine (the board's U1)".to_string()][..]));
+        assert_eq!(report.board_versions, Some(1));
+        let drifted = report.drifted_footprints.clone().unwrap();
+        assert_eq!(drifted.len(), 1, "{drifted:?}");
+        assert!(drifted[0].starts_with("parts:R_Test (1 parts: R1): library 6.00 x 2.00 mm, 2 pads; board 3.00 x 1.00 mm"), "{drifted:?}");
+        assert_eq!(report.added.len(), 2, "{:?}", report.added);
+        assert!(report.added[0].starts_with("H1: MountingHole:Hole_Pad, pads on nets (1 GND), where the board has it (3 3, locked)"), "{:?}", report.added);
+        // The personal library is in the project now, with its table entry.
+        let written = parse(&fs::read_to_string(output.join("personal.pretty/SOT_Mine.kicad_mod")).unwrap()).unwrap();
+        assert_eq!(written.children()[1].atom(), Some("SOT_Mine"));
+        assert!(written.child("at").is_none() && written.child("path").is_none());
+        let pad = written.children().iter().find(|item| item.head() == Some("pad")).unwrap();
+        assert_eq!(form_at(pad).unwrap(), [-1.0, 1.0, 0.0]);
+        assert!(pad.child("net").is_none());
+        assert!(fs::read_to_string(output.join("fp-lib-table")).unwrap().contains("${KIPRJMOD}/personal.pretty"));
+
+        let imported = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();
+        let footprint = |reference: &str| {
+            imported
+                .children()
+                .iter()
+                .find(|item| item.head() == Some("footprint") && footprint_reference(item).as_deref() == Some(reference))
+                .unwrap()
+                .clone()
+        };
+        // R1 is the board's version, in library form on the front.
+        let r1 = footprint("R1");
+        assert_eq!(form_atom(&r1, "layer", 1), Some("F.Cu"));
+        let pads: Vec<[f64; 3]> = r1.children().iter().filter(|item| item.head() == Some("pad")).map(|pad| form_at(pad).unwrap()).collect();
+        assert_eq!(pads, vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
+        assert_eq!(form_atom(r1.children().iter().find(|item| item.head() == Some("pad")).unwrap(), "net", 1), Some("/VIN"));
+        // H1 where the board has it, locked, board only, on GND.
+        let h1 = footprint("H1");
+        assert_eq!(form_at(&h1).unwrap(), [3.0, 3.0, 0.0]);
+        assert!(h1.child("locked").is_some());
+        assert!(h1.child("attr").unwrap().children().iter().any(|flag| flag.atom() == Some("board_only")));
+        assert_eq!(form_atom(h1.child("pad").unwrap(), "net", 1), Some("GND"));
+        // TP1 from the library, its pad 1 on GND, pad 2 on none; the layout
+        // puts it at 5, 6 from the outline's corner.
+        let tp1 = footprint("TP1");
+        let nets: Vec<Option<&str>> = tp1.children().iter().filter(|item| item.head() == Some("pad")).map(|pad| form_atom(pad, "net", 1)).collect();
+        assert_eq!(nets, vec![Some("GND"), None]);
+        let mut constraints = read_placement_constraints(&output.join("constraints.json")).unwrap();
+        crate::placement_constraints::expand_additions(&mut constraints, &imported).unwrap();
+        assert!(constraints.add.is_empty());
+        assert_eq!(constraints.place.len(), 1);
+        assert_eq!((constraints.place[0].part.as_str(), constraints.place[0].x, constraints.place[0].y), ("TP1", Some(5.0), Some(6.0)));
+        // The layout refuses an added part the board does not have.
+        let mut stale = read_placement_constraints(&output.join("constraints.json")).unwrap();
+        let empty = parse("(kicad_pcb)").unwrap();
+        assert!(crate::placement_constraints::expand_additions(&mut stale, &empty).unwrap_err().contains("import again"));
+
+        // An added part may not take a schematic part's reference, and
+        // from_board needs the board.
+        fs::write(output.join("constraints.json"), r#"{"version": 1, "add": [{"part": "R1", "footprint": "parts:R_Test"}]}"#).unwrap();
+        assert!(import_kicad_netlist(&netlist, &output, "test", 2).unwrap_err().contains("has a part of that reference already"));
+        fs::write(output.join("constraints.json"), r#"{"version": 1, "add": [{"part": "H1", "from_board": true}]}"#).unwrap();
+        assert!(import_kicad_netlist(&netlist, &output, "test", 2).unwrap_err().contains("--footprints-from"));
         fs::remove_dir_all(&directory).unwrap();
     }
 }

@@ -84,6 +84,86 @@ pub struct KiCadPlacementConstraints {
     pub device_front: Option<String>,
     #[serde(default)]
     pub place: Vec<KiCadPlaceConstraint>,
+    /// Parts the schematic does not have, added to the board by
+    /// `import-kicad-netlist` (mounting holes plated on a net, a
+    /// footprint for another switch): the layout keeps those with `x` and
+    /// `y` there, as `place` does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub add: Vec<KiCadAddConstraint>,
+}
+
+/// A part the board has and the schematic does not: a library footprint
+/// (`footprint`) or the footprint of that reference on the board given
+/// with `import-kicad-netlist --footprints-from` (`from_board`). Written to
+/// the board `board_only`, so that KiCad's schematic parity check leaves it
+/// out.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadAddConstraint {
+    /// The new part's reference (no part of the schematic may have it).
+    pub part: String,
+    /// `Library:Name`, from the project's libraries as the schematic's
+    /// footprints are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footprint: Option<String>,
+    /// The footprint `part` (or `board_reference`) of the
+    /// `--footprints-from` board, the one at `x`, `y` (`origin`
+    /// `absolute`) where that reference repeats there; without `x` and `y`
+    /// it stays where that board has it, on its side, locked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub from_board: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_reference: Option<String>,
+    /// Pad number to net name. Without it a `from_board` part keeps the
+    /// board's nets and a library footprint has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nets: Option<BTreeMap<String, String>>,
+    /// Where it goes, as `place` says it (`origin` `board`, the default, or
+    /// `absolute`); without `x` and `y` the placer places it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// `front` (default for a library footprint) or `back`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+}
+
+/// The layout's side of `add`: every added part must be on the board (the
+/// import puts it there), and those given `x` and `y` are kept there, as
+/// `place` keeps a part. Empties `add`, so that a second call changes
+/// nothing.
+pub(super) fn expand_additions(constraints: &mut KiCadPlacementConstraints, pcb: &Expr) -> Result<(), String> {
+    let additions = std::mem::take(&mut constraints.add);
+    for addition in additions {
+        let on_board = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .any(|footprint| footprint_reference(footprint).as_deref() == Some(addition.part.as_str()));
+        if !on_board {
+            return Err(format!(
+                "add {}: the board has no such part; import-kicad-netlist adds the parts of add: import again into the same directory",
+                addition.part
+            ));
+        }
+        if let (Some(x), Some(y)) = (addition.x, addition.y) {
+            constraints.place.push(KiCadPlaceConstraint {
+                part: addition.part,
+                at: None,
+                x: Some(x),
+                y: Some(y),
+                angle: addition.angle,
+                origin: addition.origin,
+                uuid: None,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Parts kept away from others: every body of `parts` at least `min_mm`
