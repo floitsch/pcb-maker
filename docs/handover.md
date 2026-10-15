@@ -1938,6 +1938,140 @@ ends in the upper part) and
 runs try2-*.txt, seams.py's JSON), build/seams-x817.log,
 build/seams-x910.log, build/short-x912.log.
 
+## Committed on 2026-10-15 (cold-route regression, x900-x903)
+
+The two regressions of the Freerouting refresh, cold route (designer
+placement, no copper), route mode, 4 threads, one run each (deterministic;
+`build/cold/run.sh` and `table.py` in the worktree pcb-maker-cold).
+
+Bisect, KiCad unconnected items (b399ec85 and b3c1f81d built from 399ec85
+and 3c1f81d in a scratch worktree):
+
+| binary | x155 | 399ec85 | 3c1f81d | x325 | x510 | x644 | x738 | x881 | x902 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SNSP-CPU-01 | 55 | 55 | 178 | 178 | 178 | 178 | 178 | 178 | 5 |
+| MegaDrive | (95) | 95 | 137 | | | | 137 | 137 | 70 |
+
+Both flip at 3c1f81d (2026-10-10, a rerouted net's corridor grows a tile
+every sixth reroute, not every third). Mechanism (`PCB_ROUTER_DEBUG`, new
+`route_net ...: search failed` and `resolve ...` lines):
+
+- SNSP: GND (199 pads, four walled in at J3 and P6) failed a board-wide
+  search in iterations 0 and 1 with those four open, so it kept to its
+  corridors (`hopeless_searches` = 2, b72e61a); in iteration 2 a corridor
+  missed and route_net stopped the whole net at 48 pads, frozen as
+  blocked (21-48 pads for the rest), while the signals took the room.
+  The repair ripped it up whole and its hard reroute from one pad reached
+  21. Router and KiCad agreed all along (GND partial, 178 terminals): no
+  counting bug, the 362/363 is per net. The narrower corridors only made
+  the miss happen. Fix: pads a board-wide search did not reach are left
+  out of the net's later searches in that negotiation
+  (`unreachable_terminals`, `PCB_ROUTER_OLD_HOPELESS`).
+- MegaDrive: narrower corridors miss more, the windowed fallbacks cost
+  (open searches 228M expansions against 14M), the work budget ends
+  negotiation at iteration 15 with 145 nets in conflict instead of 19
+  with 106, and the repair ripped 77 nets up whole; 19 ended with no
+  copper at all. Not a bug in 3c1f81d (it measured well on the quick
+  tier), but the repair's whole rip-up is: it now removes only the
+  conflicted branches (ignoring the negotiation's every-eighth whole
+  rip-up) and keeps an incomplete net's tree (`resolve_keeps_partial`,
+  `PCB_ROUTER_OLD_RESOLVE`).
+
+Cold route, KiCad unconnected (x881 = main before; x900 = the pad rule
+plus keeping incomplete trees; x901 + conflicted branches kept; x902 +
+the stuck reset, = x903 before the rebase onto 670454c):
+
+| board | x881 | x900 | x901 | x902 |
+| --- | --- | --- | --- | --- |
+| SNSP-CPU-01 | 178 | 5 | | 5 |
+| MegaDrive | 137 | 137 | 147 | 70 |
+| vaio_re | 8 | 41 | 5 | 5 |
+| mackerel-30 | 0 | 0 | | 0 |
+| DSP-ADAU1452 | 0 | | 0 | 1 |
+
+vaio on x900: the tracks rung went 634 to 132 open and became the best,
+and its narrow attempt ripped +3V3E up whole (3 of 43 pads): the reason
+the repair change is part of this. DSP on x902: every rung as good or
+better, but the ladder had time for the 0.05 mm rung (50 open) and left
+the narrow-signal step 52 s of work instead of 142 (2 open against 0;
+82 to 60 vias). SNSP CPU 816 to 283 s (one attempt, no seed rounds).
+
+Short tier x903 against build/short-x817.log (tasks v6, current main):
+unconnected 42 to 35 (MIDAS 26 to 20, WLED 8 to 6, reCamera 4 to 5),
+passes 6 to 6, vias 1176 to 1129, new errors 6 to 12 (WLED_Matrix
+connection_width 3 to 9: KiCad's GND fill necks at the RGB LEDs' pad 3,
+on both sides, more of them on the new layout), work 2390 to 2677 s
+(reCamera 65 to 366: its layout took another path; WLED 358 to 469),
+CPU 4437 to 4865 s (not a pinned pair). Unit tests:
+`a_walled_in_pad_does_not_stop_the_rest_of_its_net` (shows the old net
+ending at the corridor miss), `the_hard_repair_keeps_the_branches_out_of_conflict`.
+
+Quick tier (30 boards, tasks v6, 6 jobs), x817 (main at 670454c)
+against x903 (this change on it): build/quick30-x817.log,
+build/quick30-x903.log.
+
+- x817: 24/30 pass, unconnected 27, new errors 2, vias 2913, length
+  98215 mm, CPU 13555 s, work 9313 s, cut 0, first-route open 52; load
+  median 17.9 (8.3-41.7).
+- x903: 25/30 pass, unconnected 21, new errors 2, vias 2867, length
+  99235 mm, CPU 13190 s, work 11453 s, cut 0, first-route open 47; load
+  median 10.9 (1.7-34.7).
+
+Better 3, same 27, worse 0; no row cut on either side; 23 rows
+identical. The changed rows:
+
+- OpenFC: 1 to 0 open, passes. Its first route 2 to 1 open; the ladder's
+  regular rungs ran quicker, so the 0.075 mm pitch fit the refinement
+  budget (x817: projected 296 s, over 240) and its re-seeded tracks rung
+  finished (0 open, 169 vias against 159). Work 563 to 2143 s, CPU 464 to
+  1802 s: the finer rungs really ran.
+- MIDAS-MK1.1: 9 to 8 open, vias 240 to 197, length 3391 to 4464 mm (GND
+  as tracks: the ladder's tracks rung now beat the first route, which
+  x817 kept). Work 396 to 1322 s is accounting: the layout's work counts
+  the ladder's only when its board is kept (src/agent_cli.rs), x817's
+  ladder ran as long and was dropped; CPU 1572 to 1425.
+- reCamera: 9 to 5 open, first route 10 to 8, work 891 to 610.
+- WLED_Matrix: 6 to 6 open, vias 138 to 143, first route 10 to 8; errors
+  the same (copper_edge_clearance 1; its connection_width necks are in
+  the short tier's layout, not this one).
+- USB_Keypad: 2 to 2, vias 99 to 78, work 513 to 445.
+- urchin (work 97.3 to 93.8) and framework_mobo_lefthalf (391.8 to 392.0):
+  same boards, the searches differ by a little.
+
+New errors 2 on both (WLED copper_edge_clearance, eternal-keypad's), so
+none came or went. Work +2140 s is OpenFC +1580 and MIDAS +926 (the
+accounting above), less reCamera, Keypad, WLED.
+
+The five cold boards on one binary pair, x817 against x903, KiCad
+unconnected / vias / CPU s:
+
+| board | x817 | x903 |
+| --- | --- | --- |
+| SNSP-CPU-01 | 178 / 1220 / 775 | 5 / 1456 / 302 |
+| MegaDrive | 137 / 1148 / 615 | 70 / 1324 / 506 |
+| vaio_re | 8 / 421 / 1142 | 5 / 369 / 961 |
+| mackerel-30 | 0 / 46 / 574 | 0 / 46 / 555 |
+| DSP-ADAU1452 | 0 / 81 / 1587 | 1 / 60 / 1450 |
+
+(x903 identical to x902 on all five; x817 the same counts as x881 and
+x738. x940, this change rebased onto f7addd8's zone seams: the same
+counts, vias and lengths as x903 on all five.)
+
+WLED_Matrix's connection_width findings (short tier): KiCad's own fill,
+not ours (the routed board has no filled_polygon; the tracks rung leaves
+GND's zone to KiCad's refill), necks of the GND zone on F.Cu at the
+LEDs' pad 3 where other nets' tracks pass close. Not more GND as tracks:
+GND track length 531 to 496 mm (F.Cu 409 to 423, B.Cu 122 to 73). The
+x903 result is the tracks rung at the 0.075 mm pitch (10 open, the
+regular pitch 14), x817's at the regular pitch (15; its 0.075 rung 23):
+on the finer lattice other nets' tracks hug the LED pads, 25 to 31 of
+the 64 LED GND pads with a foreign F.Cu track within 0.35 mm.
+
+Not done: the walled-in pads could still be joined among themselves (a
+forest of trees in the hard search: J3.5-J3.6, P6.5-P6.6 would save 2 of
+SNSP's 5); a hard search that fails from the first pad's tree still ends
+the net; the corridor schedule itself (3c1f81d) was not revisited.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

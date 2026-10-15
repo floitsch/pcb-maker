@@ -167,6 +167,15 @@ pub struct Config {
     /// Whether a pour net stuck in conflict is ripped up whole now and
     /// then like the other nets (`rip_up_whole`).
     pub pour_whole_rip_up: bool,
+    /// A terminal that a board-wide search of the negotiation did not
+    /// reach is left out of the net's later searches in it
+    /// (`NetState::unreachable`) rather than the net's next search that
+    /// misses its corridor ending the net (`PCB_ROUTER_OLD_HOPELESS`).
+    pub unreachable_terminals: bool,
+    /// The hard reroute after negotiation joins an incomplete net's open
+    /// pads to the tree it has rather than routing it again from nothing
+    /// (`PCB_ROUTER_OLD_RESOLVE` rips it up as before).
+    pub resolve_keeps_partial: bool,
     /// During negotiation, a pad cut off from its pour's main piece first
     /// gets a stitching via from its piece to the main piece on another
     /// layer, where one fits, before it is routed as a track. Off: Sisu's
@@ -350,6 +359,8 @@ impl Default for Config {
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
+            unreachable_terminals: std::env::var_os("PCB_ROUTER_OLD_HOPELESS").is_none(),
+            resolve_keeps_partial: std::env::var_os("PCB_ROUTER_OLD_RESOLVE").is_none(),
             stitch_in_negotiation: false,
             escape_stub_mm: 0.0,
             global_routing: false,
@@ -584,6 +595,11 @@ struct NetState {
     /// net's searches keep to their corridors: link spent a third of its
     /// search on such hopeless board-wide searches each iteration.
     hopeless_searches: u8,
+    /// Per terminal: no path reaches it from the net's tree on the whole
+    /// board in this negotiation (a board-wide search failed with it open).
+    /// Its searches leave it out, so that one pad walled in by pads does
+    /// not stop the rest of the net. Empty: none.
+    unreachable: Vec<bool>,
     /// Per layer: the rule class describing the pour there.
     plane_class: Vec<usize>,
     /// When set, only these pour nodes (the main piece) are valid targets.
@@ -3075,13 +3091,25 @@ impl Router {
             component[first_live],
         );
 
+        // Groups holding a terminal no path reaches (`unreachable`) are
+        // left out of the negotiation's searches; the hard searches try
+        // everything (a multi-target search fails only when no target is
+        // left that it reaches).
+        let mut left_out = vec![false; component.len()];
+        if !hard && self.config.unreachable_terminals {
+            for (terminal, unreachable) in net_state.unreachable.iter().enumerate() {
+                if *unreachable && terminal < terminal_count && component[terminal] != component[first_live] {
+                    left_out[component[terminal]] = true;
+                }
+            }
+        }
         let pitch = self.grid.pitch as f32;
         loop {
             let mut targets: Vec<(Node, u16)> = Vec::new();
             let mut points: Vec<(i32, i32, f32)> = Vec::new();
             let mut exact_points = true;
             for element in 0..component.len() {
-                if in_tree[element] {
+                if in_tree[element] || left_out[component[element]] {
                     continue;
                 }
                 if element < terminal_count {
@@ -3228,6 +3256,33 @@ impl Router {
             let Some(path) = path else {
                 if fallback && !hard {
                     net_state.hopeless_searches = net_state.hopeless_searches.saturating_add(1);
+                    // The board-wide search reached none of the open
+                    // terminals: only what never changes in a negotiation
+                    // stops it, so none will be reached in this one. The
+                    // net's later searches leave them out; without that,
+                    // once the net kept to its corridors (two such
+                    // failures), a corridor that missed stopped the whole
+                    // net (SNSP-CPU-01's GND with four walled-in pads: 48
+                    // of 199 terminals, then frozen as blocked; 178 open).
+                    if net_state.unreachable.len() != terminal_count {
+                        net_state.unreachable = vec![false; terminal_count];
+                    }
+                    for terminal in 0..terminal_count {
+                        if !in_tree[terminal] {
+                            net_state.unreachable[terminal] = true;
+                        }
+                    }
+                }
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                    let open: Vec<usize> = (0..terminal_count).filter(|element| !in_tree[*element]).collect();
+                    eprintln!(
+                        "route_net {}: search failed (hard {hard}, fallback {fallback}, corridor tried {corridor_tried}, hopeless {}, cleanup {}), {} of {terminal_count} terminals in the tree, open {:?}",
+                        self.board.nets[net as usize].name,
+                        net_state.hopeless_searches,
+                        self.cleanup,
+                        terminal_count - open.len(),
+                        &open[..open.len().min(12)]
+                    );
                 }
                 break;
             };
@@ -5518,6 +5573,7 @@ impl Router {
         let mut stalled = 0;
         for state in &mut self.nets {
             state.hopeless_searches = 0;
+            state.unreachable.clear();
         }
         for iteration in 0..self.config.max_iterations {
             self.iterations += 1;
@@ -9695,19 +9751,55 @@ impl Router {
                 .map(|net| (self.conflicts(*net).len(), *net))
                 .filter(|(count, _)| *count > 0)
                 .max();
-            let Some((_, net)) = worst else {
+            let Some((count, net)) = worst else {
                 break;
             };
-            self.rip_up(net);
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                let state = &self.nets[net as usize];
+                eprintln!(
+                    "resolve {}: {count} conflicts, {} of {} terminals connected, {}",
+                    self.board.nets[net as usize].name,
+                    state.connected.iter().filter(|c| **c).count(),
+                    state.connected.len(),
+                    if self.config.resolve_keeps_partial { "conflicted branches ripped up" } else { "ripped up" }
+                );
+            }
+            if self.config.resolve_keeps_partial {
+                // The negotiation's whole rip-up every eighth iteration in
+                // conflict (`rip_up_whole`) is not the repair's business.
+                self.nets[net as usize].stuck = 0;
+                self.rip_up_conflicted(net);
+            } else {
+                self.rip_up(net);
+            }
             removed.push(net);
         }
+        // Incomplete nets without conflicts keep what they have: the hard
+        // search joins the rest to it. Ripped up, a big net's hard reroute
+        // starts again from one pad among copper that no longer gives way
+        // and can end far shorter (SNSP-CPU-01's GND: 147 of 199 pads
+        // negotiated, 21 after the hard reroute).
         for net in order {
             if !removed.contains(net) && !self.nets[*net as usize].complete {
-                self.rip_up(*net);
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                    let state = &self.nets[*net as usize];
+                    eprintln!(
+                        "resolve {}: incomplete, {} of {} terminals connected, {} branches{}",
+                        self.board.nets[*net as usize].name,
+                        state.connected.iter().filter(|c| **c).count(),
+                        state.connected.len(),
+                        state.branches.len(),
+                        if self.config.resolve_keeps_partial { ", kept" } else { ", ripped up" }
+                    );
+                }
+                if !self.config.resolve_keeps_partial {
+                    self.rip_up(*net);
+                }
                 removed.push(*net);
             }
         }
         removed.sort_by_key(|net| order.iter().position(|other| other == net));
+        let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
         // The hard reroute is a repair after negotiation: on a rung judged
         // hopeless it is not worth its time (the ladder moves on), and it
         // never takes longer than the negotiation did (at least 60 s): a
@@ -9725,6 +9817,16 @@ impl Router {
             }
             self.route_net_seq(*net, 0.0, true, 4.0);
             self.stamp(*net);
+            if debug {
+                let state = &self.nets[*net as usize];
+                eprintln!(
+                    "resolve {}: rerouted hard, {} of {} terminals connected, {} branches",
+                    self.board.nets[*net as usize].name,
+                    state.connected.iter().filter(|c| **c).count(),
+                    state.connected.len(),
+                    state.branches.len()
+                );
+            }
         }
         let rerouted = started.elapsed().as_secs_f64();
         let mut forced = 0;
@@ -10075,6 +10177,176 @@ mod tests {
         };
         let config = Config { pitches: vec![0.1], ..Config::default() };
         (Router::new(&board, &config), middle)
+    }
+
+    /// One layer, net G: pads at the left, at the right top and bottom,
+    /// and one near the left pad walled in by a keepout ring, which no
+    /// track reaches.
+    fn walled_in_pad(unreachable_terminals: bool) -> Router {
+        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let pads = [[3.0, 10.0], [8.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
+        let mut obstacles: Vec<Obstacle> = pads
+            .iter()
+            .enumerate()
+            .map(|(index, at)| copper(Shape::Circle { center: *at, radius: 0.3 }, 0, &format!("G.{index}")))
+            .collect();
+        let keepout = |center: [f64; 2], half: [f64; 2]| Obstacle {
+            shape: Shape::rectangle(center, half, 0.0),
+            layers: 1,
+            kind: ObstacleKind::Keepout,
+            net: None,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "ring".into(),
+        };
+        for (center, half) in [
+            ([8.0, 8.5], [1.7, 0.2]),
+            ([8.0, 11.5], [1.7, 0.2]),
+            ([6.5, 10.0], [0.2, 1.7]),
+            ([9.5, 10.0], [0.2, 1.7]),
+        ] {
+            obstacles.push(keepout(center, half));
+        }
+        let terminals = pads
+            .iter()
+            .enumerate()
+            .map(|(index, at)| Terminal { anchor: *at, layers: 1, pad: index, contact: None, label: format!("G.{index}") })
+            .collect();
+        let board = Board {
+            layer_count: 1,
+            outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+            edge_clearance: 0.1,
+            hole_clearance: 0.25,
+            hole_to_hole: 0.25,
+            classes: vec![class],
+            neck_width: 0.25,
+            obstacles,
+            nets: vec![Net { name: "G".into(), class: 0, terminals }],
+            planes: Vec::new(),
+            solid_pads: Vec::new(),
+            isolated_pads: Vec::new(),
+            pad_spokes: Default::default(),
+            merged_pads: Vec::new(),
+        };
+        let config = Config { pitches: vec![0.1], unreachable_terminals, resolve_keeps_partial: true, ..Config::default() };
+        Router::new(&board, &config)
+    }
+
+    #[test]
+    fn a_walled_in_pad_does_not_stop_the_rest_of_its_net() {
+        // Before: once the net kept to its corridors, the corridor to the
+        // nearest target, the walled-in pad, missed and ended the net.
+        let mut router = walled_in_pad(false);
+        router.route_net_seq(0, 1.0, false, 1.0);
+        router.stamp(0);
+        assert_eq!(router.nets[0].connected, vec![true, false, true, true]);
+        router.rip_up(0);
+        router.nets[0].hopeless_searches = 2;
+        router.route_net_seq(0, 1.0, false, 1.0);
+        assert_eq!(router.nets[0].connected, vec![true, false, false, false]);
+
+        let mut router = walled_in_pad(true);
+        // The first search connects what it reaches, and the board-wide
+        // search for the walled-in pad fails.
+        router.route_net_seq(0, 1.0, false, 1.0);
+        router.stamp(0);
+        assert_eq!(router.nets[0].connected, vec![true, false, true, true]);
+        assert_eq!(router.nets[0].hopeless_searches, 1);
+        assert_eq!(router.nets[0].unreachable, vec![false, true, false, false]);
+        // After a second such failure the net keeps to its corridors; the
+        // walled-in pad is no target any more.
+        router.rip_up(0);
+        router.nets[0].hopeless_searches = 2;
+        router.route_net_seq(0, 1.0, false, 1.0);
+        router.stamp(0);
+        assert_eq!(router.nets[0].connected, vec![true, false, true, true]);
+        assert!(!router.nets[0].complete);
+        // The hard repair after negotiation keeps the incomplete net's tree
+        // and only tries to join the rest to it.
+        let nodes = |router: &Router| router.nets[0].branches.iter().map(|branch| branch.nodes.clone()).collect::<Vec<_>>();
+        let before = nodes(&router);
+        assert!(!before.is_empty());
+        router.resolve_remaining(&[0]);
+        assert_eq!(&nodes(&router)[..before.len()], &before[..]);
+        assert_eq!(router.nets[0].connected, vec![true, false, true, true]);
+    }
+
+    /// One layer: net A along y = 10 from x = 3 over 15 to 27, nets B and
+    /// C straight across its right half at x = 19 and 23.
+    fn crossed_net(resolve_keeps_partial: bool) -> Router {
+        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let nets: [(&str, Vec<[f64; 2]>); 3] = [
+            ("A", vec![[3.0, 10.0], [15.0, 10.0], [27.0, 10.0]]),
+            ("B", vec![[19.0, 3.0], [19.0, 17.0]]),
+            ("C", vec![[23.0, 3.0], [23.0, 17.0]]),
+        ];
+        let mut obstacles = Vec::new();
+        let mut board_nets = Vec::new();
+        for (id, (name, pads)) in nets.iter().enumerate() {
+            let mut terminals = Vec::new();
+            for (index, at) in pads.iter().enumerate() {
+                let label = format!("{name}.{index}");
+                obstacles.push(copper(Shape::Circle { center: *at, radius: 0.3 }, id as NetId, &label));
+                terminals.push(Terminal { anchor: *at, layers: 1, pad: obstacles.len() - 1, contact: None, label });
+            }
+            board_nets.push(Net { name: (*name).into(), class: 0, terminals });
+        }
+        let board = Board {
+            layer_count: 1,
+            outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+            edge_clearance: 0.1,
+            hole_clearance: 0.25,
+            hole_to_hole: 0.25,
+            classes: vec![class],
+            neck_width: 0.25,
+            obstacles,
+            nets: board_nets,
+            planes: Vec::new(),
+            solid_pads: Vec::new(),
+            isolated_pads: Vec::new(),
+            pad_spokes: Default::default(),
+            merged_pads: Vec::new(),
+        };
+        let config = Config { pitches: vec![0.1], resolve_keeps_partial, ..Config::default() };
+        Router::new(&board, &config)
+    }
+
+    #[test]
+    fn the_hard_repair_keeps_the_branches_out_of_conflict() {
+        let mut searches = Vec::new();
+        for keeps in [false, true] {
+            let mut router = crossed_net(keeps);
+            // Routed against each other at no price: B and C cross A.
+            for net in 0..3 {
+                router.route_net_seq(net, 0.0, false, 1.0);
+                router.stamp(net);
+            }
+            assert!(router.nets.iter().all(|state| state.complete));
+            let conflicts: Vec<usize> = (0..3).map(|net| router.conflicts(net).len()).collect();
+            assert!(conflicts[0] > conflicts[1].max(conflicts[2]), "{conflicts:?}");
+            // The left branch (3 to 15) is out of conflict. A net stuck in
+            // conflict for eight iterations is ripped up whole by the
+            // negotiation; the repair keeps what is out of conflict.
+            let left: Vec<Vec<Node>> = router.nets[0]
+                .branches
+                .iter()
+                .filter(|branch| branch.nodes.iter().all(|node| router.grid.center_of(node.cell as usize)[0] < 16.0))
+                .map(|branch| branch.nodes.clone())
+                .collect();
+            assert!(!left.is_empty());
+            router.nets[0].stuck = 8;
+            let before = router.scratch.searches;
+            router.resolve_remaining(&[0, 1, 2]);
+            searches.push(router.scratch.searches - before);
+            assert!(left.iter().all(|nodes| router.nets[0].branches.iter().any(|branch| branch.nodes == *nodes)));
+            // B and C stay as they were: only A was in the way.
+            assert!(router.nets[1].complete && router.nets[2].complete);
+        }
+        // Ripped up whole, A searched its left branch again (and found the
+        // same one on this empty left half).
+        assert!(searches[1] < searches[0], "{searches:?}");
     }
 
     #[test]

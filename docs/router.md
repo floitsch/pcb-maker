@@ -103,11 +103,48 @@ Interf-U were re-run during the audit.
    transform.
 7. **Resolution.** If negotiation stalls, the most contested nets are removed
    and reinserted with all other copper as hard obstacles; partial trees are
-   kept and reported.
+   kept and reported. Since 2026-10-15 a net in conflict loses only its
+   conflicted branches (and those left dangling by them), not the whole
+   tree, whatever the negotiation's every-eighth-iteration whole rip-up
+   would say, and an incomplete net without conflicts keeps its tree; the
+   hard search then joins the rest to what is left (`resolve_keeps_partial`;
+   `PCB_ROUTER_OLD_RESOLVE` rips them up whole as before). Ripped up whole,
+   a net searched again from one pad among copper that no longer gives
+   way often found nothing: MegaDrive's cold route left 19 signal nets
+   with no copper at all after the repair (ten VD, five VA, ZA0, ZA8,
+   ZD4, PA6; 4 now), and vaio_re's narrow-signal attempt +3V3E with 3 of
+   43 pads.
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
+
+### Pads no path reaches (2026-10-15)
+
+A net's tree grows by one multi-target search at a time and stops at the
+first search that finds nothing. In negotiation only what never changes
+(pads, rule areas, the outline, hard thermal guards) stops a search, so a
+board-wide search that fails proves its open pads unreachable for the
+whole negotiation. Since 2026-10-06 two such failures make the net keep to
+its corridors (`hopeless_searches`, link's wasted board-wide searches),
+and from then on a corridor that missed ended the net, open pads and all,
+and left it blocked. SNSP-CPU-01's GND (199 pads, four walled in at two
+connectors, J3 and P6): 195 pads in iterations 0 and 1, then 48, 30, 21
+for the rest of the negotiation while the signals took the room; the hard
+repair could not bring it back (178 unconnected in KiCad). The narrower
+corridors of 3c1f81d (a tile more every sixth reroute, not every third)
+made the miss happen there: 55 open before it, 178 since. The pads a
+board-wide search did not reach are now left out of the net's later
+searches in that negotiation (`NetState::unreachable`,
+`unreachable_terminals`; `PCB_ROUTER_OLD_HOPELESS` for A/B). Route mode,
+cold, 4 threads, with the repair's change above (x881 against x902, this
+change on main before 670454c; KiCad's unconnected items): SNSP-CPU-01 178
+to 5 (GND's 4 walled-in pads and one signal), MegaDrive 137 to 70, vaio_re
+8 to 5, mackerel-30 0 to 0, DSP-ADAU1452 0 to 1 (the ladder had time for
+the 0.05 mm rung and left the narrow-signal step 52 s of work instead of
+142). Either change alone loses somewhere: the pad rule alone took vaio_re
+to 41 (its tracks rung, 634 to 132 open, became the best and its narrow
+attempt ripped +3V3E up whole: 3 of 43 pads).
 
 ### The probe ladder (2026-10-03)
 
