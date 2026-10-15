@@ -94,6 +94,21 @@ pub(super) struct FillProbe<'a> {
     /// The probe's work: items put in the index and items its queries
     /// looked at, added to the router's pour work by `charge`.
     ops: std::cell::Cell<u64>,
+    /// Its queries (`blocker`, `slack`: a point against the index) and
+    /// the polygon vertices its shape tests went through, charged beside
+    /// the items.
+    queries: std::cell::Cell<u64>,
+    vertices: std::cell::Cell<u64>,
+}
+
+/// The polygon vertices a distance test of `shape` goes through (none for
+/// a circle or a capsule, whose test an item's cost covers).
+fn polygon_vertices(shape: &crate::geometry::Shape) -> u64 {
+    match shape {
+        crate::geometry::Shape::Polygon { points } => points.len() as u64,
+        crate::geometry::Shape::Union { parts } => parts.iter().map(polygon_vertices).sum(),
+        _ => 0,
+    }
 }
 
 
@@ -112,12 +127,14 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
-        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(FastMap::default()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0) }
+        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(FastMap::default()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0), queries: std::cell::Cell::new(0), vertices: std::cell::Cell::new(0) }
     }
 
     /// Adds the probe's work so far to its router's pour work.
     pub(super) fn charge(&self) {
         self.router.scratch.probe_ops.fetch_add(self.ops.replace(0), std::sync::atomic::Ordering::Relaxed);
+        self.router.scratch.probe_queries.fetch_add(self.queries.replace(0), std::sync::atomic::Ordering::Relaxed);
+        self.router.scratch.probe_vertices.fetch_add(self.vertices.replace(0), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// `f` with brush centres allowed `TRACK_END_TOLERANCE` closer than
@@ -127,6 +144,12 @@ impl<'a> FillProbe<'a> {
         let result = f();
         self.tolerance.set(before);
         result
+    }
+
+    /// `shape`'s distance to `point`, counting its vertices.
+    fn distance_to(&self, shape: &crate::geometry::Shape, point: Point) -> f64 {
+        self.vertices.set(self.vertices.get() + polygon_vertices(shape));
+        shape.distance_to_point(point)
     }
 
     fn half(&self, layer: usize) -> f64 {
@@ -202,7 +225,7 @@ impl<'a> FillProbe<'a> {
             if width + 1.0e-9 < 2.0 * half {
                 continue;
             }
-            let distance = shape.distance_to_point(point);
+            let distance = self.distance_to(shape, point);
             if distance < gap - 1.0e-9 || distance > gap + width + 1.0e-9 {
                 continue;
             }
@@ -210,7 +233,7 @@ impl<'a> FillProbe<'a> {
                 for step in 0..(if radius == 0.0 { 1 } else { 16 }) {
                     let angle = std::f64::consts::TAU * step as f64 / 16.0;
                     let centre = [point[0] + radius * angle.cos(), point[1] + radius * angle.sin()];
-                    let from_pad = shape.distance_to_point(centre);
+                    let from_pad = self.distance_to(shape, centre);
                     if from_pad >= gap + half - 1.0e-9 && from_pad <= gap + width - half + 1.0e-9 && self.blocker(layer, centre, None).is_none() {
                         return true;
                     }
@@ -489,6 +512,7 @@ impl<'a> FillProbe<'a> {
         let span = index.span;
         let tolerance = self.tolerance.get();
         let (x0, y0, x1, y1) = bucket_range([point[0] - span, point[1] - span], [point[0] + span, point[1] + span]);
+        self.queries.set(self.queries.get() + 1);
         let mut edges: Vec<(Point, Point)> = Vec::new();
         for by in y0..=y1 {
             for bx in x0..=x1 {
@@ -505,7 +529,7 @@ impl<'a> FillProbe<'a> {
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
-                            obstacle.shape.distance_to_point(point) < clearance + half - tolerance
+                            self.distance_to(&obstacle.shape, point) < clearance + half - tolerance
                         }
                         Item::Segment { a, b, half_width, clearance } => {
                             point_segment_distance(point, *a, *b) < half_width + clearance.max(brush.clearance) + half - tolerance
@@ -515,7 +539,7 @@ impl<'a> FillProbe<'a> {
                             edges.push((*a, *b));
                             point_segment_distance(point, *a, *b) < *margin - EPSILON
                         }
-                        Item::Ring { pad, reach } => except.is_some_and(|except| !except.contains(pad)) && board.obstacles[*pad].shape.distance_to_point(point) < *reach - EPSILON,
+                        Item::Ring { pad, reach } => except.is_some_and(|except| !except.contains(pad)) && self.distance_to(&board.obstacles[*pad].shape, point) < *reach - EPSILON,
                     };
                     if blocked {
                         return Some(match item {
@@ -548,6 +572,7 @@ impl<'a> FillProbe<'a> {
         let index = self.index();
         let span = index.span;
         let (x0, y0, x1, y1) = bucket_range([point[0] - span, point[1] - span], [point[0] + span, point[1] + span]);
+        self.queries.set(self.queries.get() + 1);
         let mut edges: Vec<(Point, Point)> = Vec::new();
         let mut least = f64::INFINITY;
         for by in y0..=y1 {
@@ -565,7 +590,7 @@ impl<'a> FillProbe<'a> {
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
-                            obstacle.shape.distance_to_point(point) - clearance - half
+                            self.distance_to(&obstacle.shape, point) - clearance - half
                         }
                         Item::Segment { a, b, half_width, clearance } => point_segment_distance(point, *a, *b) - half_width - clearance.max(brush.clearance) - half,
                         Item::Via { at, radius, clearance } => distance(point, *at) - radius - clearance.max(brush.clearance) - half,
@@ -577,7 +602,7 @@ impl<'a> FillProbe<'a> {
                             if except.contains(pad) {
                                 f64::INFINITY
                             } else {
-                                board.obstacles[*pad].shape.distance_to_point(point) - reach
+                                self.distance_to(&board.obstacles[*pad].shape, point) - reach
                             }
                         }
                     };

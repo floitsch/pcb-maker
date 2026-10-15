@@ -483,16 +483,25 @@ pub const GUARD: f64 = 4.0;
 /// The pour analysis's work (`analyze_pours`, one thread), in nanoseconds
 /// of an idle machine: per lattice node inside the net's pour (the fill
 /// mask and its labelling), per stamp of the net (its own copper, masked
-/// out) and per item a fill probe indexes or looks at (`fill::FillProbe`,
-/// the spoke tests). The budgets of the phases after negotiation count it
-/// beside the search (`budget_work`). Calibrated on seven boards at one
-/// thread (docs/router.md, "Determinism and the wall clock"), again after
-/// the router-overhead round made the analysis about twice as fast (x816:
-/// three runs pooled, per board 0.71-1.08 of the analyses' wall time by
-/// the median, the big boards 0.85-1.08).
-pub const POUR_NODE_NANOS: u64 = 18;
-pub const POUR_STAMP_NANOS: u64 = 26;
-pub const PROBE_ITEM_NANOS: u64 = 42;
+/// out), and for its fill probe (`fill::FillProbe`, the spoke tests) per
+/// item it indexes or looks at, per query (a point tested against its
+/// index: the bucket lookups and the polygon test of `inside`, whatever
+/// the items) and per polygon vertex its shape tests go through (a board
+/// cutout of 134 vertices in every query near it: Batch_1's panel). The
+/// budgets of the phases after negotiation count it beside the search
+/// (`budget_work`). Calibrated at one thread in route mode on twelve
+/// boards (docs/router.md, "Determinism and the wall clock"; 2026-10-15,
+/// x1013: Batch_1, WLED_Matrix, USB_Keypad, Qfwfq, 1337-v4.0 and the A13
+/// module hatched, Castor, Sisu, reCamera, k30-SBC, USB_Cable_Tester and
+/// spell_tome solid): per board 0.89-1.12 of the analyses' wall time but
+/// spell_tome's 1.1 s (1.41). Items alone (42 ns, x816) gave hatched
+/// boards 0.34-1.82: their probes ask many more points (hatch holes,
+/// rings), each costing far more than its items.
+pub const POUR_NODE_NANOS: u64 = 23;
+pub const POUR_STAMP_NANOS: u64 = 6;
+pub const PROBE_ITEM_NANOS: u64 = 9;
+pub const PROBE_QUERY_NANOS: u64 = 850;
+pub const PROBE_VERTEX_NANOS: u64 = 9;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -1186,6 +1195,10 @@ pub struct Scratch {
     /// Items the fill probes (`fill::FillProbe`: the pour analysis's
     /// spoke tests) put in their index and looked at.
     probe_ops: std::sync::atomic::AtomicU64,
+    /// The fill probes' queries (a brush centre tested against the index)
+    /// and the polygon vertices their shape tests went through.
+    probe_queries: std::sync::atomic::AtomicU64,
+    probe_vertices: std::sync::atomic::AtomicU64,
 }
 
 impl Scratch {
@@ -1211,6 +1224,8 @@ impl Scratch {
             pour_units: std::sync::atomic::AtomicU64::new(0),
             pour_nanos: std::sync::atomic::AtomicU64::new(0),
             probe_ops: std::sync::atomic::AtomicU64::new(0),
+            probe_queries: std::sync::atomic::AtomicU64::new(0),
+            probe_vertices: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -1264,6 +1279,8 @@ impl Clone for Scratch {
             pour_units: std::sync::atomic::AtomicU64::new(self.pour_units.load(std::sync::atomic::Ordering::Relaxed)),
             pour_nanos: std::sync::atomic::AtomicU64::new(self.pour_nanos.load(std::sync::atomic::Ordering::Relaxed)),
             probe_ops: std::sync::atomic::AtomicU64::new(self.probe_ops.load(std::sync::atomic::Ordering::Relaxed)),
+            probe_queries: std::sync::atomic::AtomicU64::new(self.probe_queries.load(std::sync::atomic::Ordering::Relaxed)),
+            probe_vertices: std::sync::atomic::AtomicU64::new(self.probe_vertices.load(std::sync::atomic::Ordering::Relaxed)),
             ..Self::default()
         }
     }
@@ -4693,11 +4710,19 @@ impl Router {
     }
 
     /// The pour analyses' work so far, in seconds of an idle machine
-    /// (`pour_analysis_nanos`, and `PROBE_ITEM_NANOS` per fill probe item).
+    /// (`pour_analysis_nanos`, and the fill probes' `probe_nanos`).
     fn pour_work_seconds(&self) -> f64 {
-        let nanos = self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed)
-            + self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) * PROBE_ITEM_NANOS;
+        let nanos = self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed) + self.probe_nanos();
         nanos as f64 / 1.0e9
+    }
+
+    /// The fill probes' work so far, in nanoseconds of an idle machine:
+    /// their items, queries and polygon vertices.
+    fn probe_nanos(&self) -> u64 {
+        let load = |counter: &std::sync::atomic::AtomicU64| counter.load(std::sync::atomic::Ordering::Relaxed);
+        load(&self.scratch.probe_ops) * PROBE_ITEM_NANOS
+            + load(&self.scratch.probe_queries) * PROBE_QUERY_NANOS
+            + load(&self.scratch.probe_vertices) * PROBE_VERTEX_NANOS
     }
 
     /// The work the phase budgets (`clock`, `spent`) count: the search's
@@ -6691,6 +6716,8 @@ impl Router {
     ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let started = std::time::Instant::now();
         let ops_before = self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed);
+        let probe_before = self.probe_nanos();
+        let counts_before = (self.scratch.probe_queries.load(std::sync::atomic::Ordering::Relaxed), self.scratch.probe_vertices.load(std::sync::atomic::Ordering::Relaxed));
         let result = self.analyze_pours_uncounted(net, skip, report);
         let units = self.pour_analysis_nanos(net);
         self.scratch.pour_units.fetch_add(units, std::sync::atomic::Ordering::Relaxed);
@@ -6700,12 +6727,16 @@ impl Router {
             // wall time.
             let state = &self.nets[net as usize];
             eprintln!(
-                "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns, layer nodes {}",
+                "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns, layer nodes {} probe queries {} probe vertices {} probe work {} ns hatched {}",
                 self.pour_inside(net),
                 state.stamped.len(),
                 self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) - ops_before,
                 started.elapsed().as_nanos(),
-                self.pour_layer_nodes(net)
+                self.pour_layer_nodes(net),
+                self.scratch.probe_queries.load(std::sync::atomic::Ordering::Relaxed) - counts_before.0,
+                self.scratch.probe_vertices.load(std::sync::atomic::Ordering::Relaxed) - counts_before.1,
+                self.probe_nanos() - probe_before,
+                self.board.planes.iter().any(|plane| plane.net == net && plane.hatch.is_some()),
             );
         }
         result
@@ -10366,7 +10397,7 @@ mod tests {
     #[test]
     fn pour_analyses_count_as_budget_work() {
         // Each analysis counts the lattice nodes inside its pour, its
-        // stamps and its fill probe's items,
+        // stamps and its fill probe's items, queries and polygon vertices,
         // in the phase budgets' work and not in the search's; the count is
         // the same on every run, and a copy of the router keeps it.
         let (mut router, _) = diagonal_channel(false);
@@ -10384,7 +10415,7 @@ mod tests {
         assert_eq!(router.pour_inside(0), inside);
         let own = inside as u64 * POUR_NODE_NANOS + router.nets[0].stamped.len() as u64 * POUR_STAMP_NANOS;
         assert_eq!(router.pour_analysis_nanos(0), own);
-        let probe = router.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) * PROBE_ITEM_NANOS;
+        let probe = router.probe_nanos();
         let expected = (2 * own + probe) as f64 / 1.0e9;
         assert!((router.budget_work() - clock.0 - expected).abs() < 1.0e-12);
         assert_eq!(router.work_seconds(), search);
@@ -11216,6 +11247,66 @@ mod tests {
         let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads: false, ..Config::default() });
         let (report, _, _) = spoke_report(&router, 0);
         assert!(report.iter().all(|record| record.pad == 0));
+    }
+
+    #[test]
+    fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
+        // The board of `thermal_vias_inside_an_exposed_pad_have_their_own_
+        // rings_in_a_hatched_zone`: a hatched pour around P.1, a 2 mm
+        // square (a polygon of 4 vertices) with two round thermal vias.
+        // A query costs the same whatever its items, and a polygon's test
+        // goes through its vertices (Batch_1's board cutouts of up to 134
+        // vertices, in every query near them): a probe charges both beside
+        // its items, and the analysis's work counts them.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
+            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
+            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
+            copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
+        ];
+        let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
+        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        let mut board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+            ],
+            planes,
+            Vec::new(),
+        );
+        for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
+            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+        }
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let rings = router.thermal_ring_pads(0);
+        let probe = fill::FillProbe::new(&router, 0, &rings);
+        // One query beside Q.1 (a polygon of 4 vertices within reach).
+        probe.fits(0, [7.0, 5.5], &[]);
+        probe.charge();
+        let load = |counter: &std::sync::atomic::AtomicU64| counter.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(load(&router.scratch.probe_queries), 1);
+        let vertices = load(&router.scratch.probe_vertices);
+        assert!(vertices >= 4 && vertices % 4 == 0, "{vertices}");
+        let items = load(&router.scratch.probe_ops);
+        assert!(items > 0);
+        assert_eq!(router.probe_nanos(), items * PROBE_ITEM_NANOS + PROBE_QUERY_NANOS + vertices * PROBE_VERTEX_NANOS);
+        // A point in P.1's ring tests the pad's polygon too.
+        let before = router.probe_nanos();
+        probe.in_ring(0, [6.2, 5.0]);
+        probe.charge();
+        assert!(load(&router.scratch.probe_vertices) > vertices);
+        assert!(router.probe_nanos() > before);
+        // The analysis charges its probe's queries and vertices as work.
+        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        router.analyze_pours(0);
+        assert!(load(&router.scratch.probe_queries) > 0);
+        assert!(load(&router.scratch.probe_vertices) > 0);
+        let own = router.pour_analysis_nanos(0);
+        assert!((router.pour_work_seconds() - (own + router.probe_nanos()) as f64 / 1.0e9).abs() < 1.0e-12);
+        assert!(router.probe_nanos() > load(&router.scratch.probe_ops) * PROBE_ITEM_NANOS);
     }
 
     #[test]
