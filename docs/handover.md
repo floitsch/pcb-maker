@@ -2840,6 +2840,104 @@ Open: OpenESC's warnings (700-1000 necks of our own 0.09 tracks) remain;
 a middle way would be the floor where it costs nothing (a last pass
 widening tracks to 0.16 where the clearances allow, as the neck repair
 does), not built.
+## Committed on 2026-10-15 (outline polygons)
+
+Gap 5 of the walkthrough (open problem 8): `outline` in constraints.json
+took only a rectangle. Snapshots: x1040 = main at 851a473 (the base),
+x1041 = this.
+
+**What an agent can write** (docs/constraints.md, "Outlines that are not
+rectangles"; agents.md's cookbook):
+- `"polygon": [[x, y], ...]` (mm, closed implicitly, its points' box
+  moved to `x`, `y`), checked: three corners, an area, no side crossing
+  another (input errors, exit 2);
+- `"corner_radius"` on the rectangle, the polygon, a piece or a cutout:
+  every corner (inner ones too) an arc, the radius cut where a side is
+  too short (a 30 x 4 mm outline with radius 5 is a slot with round ends);
+- `"cutouts"`: boxes or polygons relative to the outline's `x`, `y`
+  (`"origin": "absolute"`), inside their outline and apart from each
+  other;
+- `"pieces": [outline, ...]`, each with its own offset, radius and
+  cutouts; they may not overlap or touch. No tabs are drawn.
+A rectangle without radius or cutouts takes the old path (one gr_rect);
+the automatic size and `shrink` stay rectangles (`area_factor`, `aspect`,
+`shrink` with a polygon or pieces are errors; cutouts need a size).
+
+**Writing** (`apply_shaped_outline`, placement_constraints.rs): every
+contour as `gr_line` and `gr_arc` (start, mid, end; nanometre-rounded so
+the pieces chain), stroke 0.05 mm, replacing the board's Edge.Cuts
+graphics as before. `outline::board_loops` reads them back (the router's
+and the placer's boundary, unchanged), and now also keeps the pieces'
+own loops (`piece_loops`) and which cutouts the board's own graphics draw
+(`board_cutouts`, as opposed to a footprint's slot).
+
+**The placer.**
+- *Edges on a polygon* (`Constraints::sides`, set by the lowering when
+  the constraint's outline or one of its pieces is a polygon): each
+  segment of the pieces' loops faces the side its outward normal points
+  along most (`outline_sides`; 45 degrees counts as top or bottom). An
+  edge constraint holds the part at the nearest segment facing its edge,
+  by box-to-segment distance (`side_lines`): the line is the segment's
+  innermost coordinate over the body's stretch (a slanted side: where the
+  body's corner meets it), and a body not alongside the segment misses by
+  the gap (`hard_violation` adds it). `edge_frame` takes the body's half
+  extent for this; every caller had it. `any` measures the same way
+  (`side_distance` in `choose_any_edges`). Rectangles, rounded ones, ones
+  with cutouts and pieces that are all rectangles keep the box (or the
+  piece boxes): nothing changes for them. On urchin's L (below)
+  SW_POWER1 "top" goes to the step at y = 30; against the box it would
+  have had no place in the right half.
+- *Cutouts keep bodies off* (`Constraints::solid_cutouts`): cutouts the
+  board's own graphics draw when the constraints give an outline (the
+  outline constraint replaced all others) are tested against bodies by
+  their polygon in `clear_of` (`body_meets_solid_cutout`; touching is
+  allowed) and penalised by their box in the anneal; a footprint's slot
+  still keeps only copper off (a connector's pegs).
+- *Room*: the usable area subtracts the solid cutouts' area (the polygon's
+  own area was already used); `outline_mm` and the suggestions stay boxes.
+- With an outline from the constraints, a part whose centre lies off a
+  polygon (in an L's notch) counts as off the board (placed, not kept).
+- Pieces feed `keep_on_pieces` and the per-piece edge frames as a board
+  drawn with several pieces did.
+
+**Test boards** (urchin, the walkthrough's fixture and constraints, 30 s
+of work, four threads, `PCB_ROUTER_NO_WALL_GUARD=1`): spell_tome's
+schematic is not in the repo (its licence is NOASSERTION, and its
+artwork footprints are 4 MB), so the test uses urchin (MIT).
+- L-shaped polygon, 230 x 125 mm box less a 115 x 30 mm notch (the right
+  half 30 mm lower), each half's region in its part: exit 0 in 15 s
+  (18 s of work), 68/68, KiCad 0 unconnected, 0 new errors, every
+  constraint kept; SW_POWER1 (edge top) at y = 30.02, the step.
+- 230 x 95 mm with 5 mm round corners, a 10 x 55 mm slot between the
+  halves and a triangular window: exit 0 in 23 s (30 s of work), 68/68,
+  0 unconnected, 0 new errors, no body in the slot; four gr_arc.
+- drc-kicad-board on both: exit 0, no `invalid_outline`, no
+  `copper_edge_clearance` (only the fixture's library findings, and two
+  silk_edge_clearance warnings on the rounded board).
+- `"edge": "any"` on the L: chosen by the nearest facing side, kept.
+
+**Tests**: `outline_shapes_parse_and_mistakes_are_errors`,
+`outline_shapes_are_written_as_edge_cuts_lines_and_arcs`
+(placement_constraints), `a_shaped_outline_gives_the_placer_its_sides_pieces_and_solid_cutouts`
+(board_placer), `a_part_held_at_the_top_of_an_l_keeps_to_its_step`,
+`a_cutout_the_user_cut_keeps_bodies_off` (pcb-placer tests), and
+`the_keyboard_lays_out_on_an_l_and_on_a_board_with_round_corners_and_cutouts`
+in tests/agent_walkthrough.rs (both layouts above, about 35 s).
+
+**Identity** (rectangles: the tasks give no `outline`, so no new path
+runs). place-kicad-board with the short tier's prepared sources and
+layout.json (build/short-x1000, tasks v6, 120 s of placement work, four
+threads), x1040 against x1041: byte-identical boards on all 12 short-tier
+boards. Short tier on x1041 (tasks v6, 2 jobs x 4 threads, under the
+lock, `build/short-x1041.log`) against build/short-x1000.log: compare.py
+same 12, unconnected 35 to 35, passes 6 to 6, vias 1129, length 22253 mm,
+work 2671 s, first-route open terminals 61, every row field identical
+but WLED_Matrix's `native` (connection_width 9 to 0: new errors 12 to 3
+in all); every layout's placed board byte-identical, every result board
+too except USB_Keypad's and WLED_Matrix's, which carry the neck repair's
+added tracks (2 and 12, their layout logs' "connection width" lines).
+That is main's neck repair (70279ba, after x1000's base 9ce95b1), not
+this change: x1000 predates it, as x941 to x950 measured (12 to 3).
 
 ## Open problems, ranked
 
@@ -2940,12 +3038,11 @@ does), not built.
       diode to its switch (row members are allowed now), split halves by
       their controllers. Medium: one to two days with the corpus's
       keyboards (urchin, ErgoSNM, bumwings, chiffre, ULK) as tests.
-   5. *Outlines that are not rectangles.* `outline` takes a width and a
-      height; spell_tome is book-shaped and urchin two halves joined by
-      mouse bites. Accept `"polygon": [[x, y], ...]` and `"pieces": [{...}]`
-      written as Edge.Cuts (the placer already follows any outline and
-      keeps parts on their piece). Medium: a day, mostly the outline
-      sizing loop, which scales width and height today.
+   5. *Outlines that are not rectangles.* Done on 2026-10-15 (outline
+      polygons, above): polygon, round corners, cutouts, pieces. Left:
+      tabs or mouse bites between pieces, an automatic size for a
+      polygon (scaling it), and `room` suggesting a scale for a polygon
+      rather than a rectangle.
    6. *A router starter config.* A board from a netlist has the
       project's net classes or the default 0.2 mm for every net. The
       import could write `router.json` beside `layout.json` with a power
