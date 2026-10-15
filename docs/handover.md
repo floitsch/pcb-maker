@@ -3511,6 +3511,107 @@ fake kicad-cli.
 - ERC can take the same directory once its changed library warnings are
   shown not to count.
 
+## Committed on 2026-10-15 (solder mask bridges, x1050-x1054)
+
+The premise (our vias bridge pads of other nets) does not hold: no via-pad
+or via-via solder_mask_bridge in any of our outputs. Census
+(`experiments/pour-fidelity/mask_bridges_census.py`: findings of a run's
+drc.json by item pair against the designer's own board through
+`drc-kicad-board`, with the values KiCad's rule reads from pcbnew) over
+build/github-layout-v16, short-x1020, quick30-x903 and seams-x910: boards
+with more bridges than the designer, or a pair kind the designer has
+fewer of (build/mask-census-before.json):
+
+| run | board | ours | designer | beyond the designer, by pair | expansion | web | mask-cu | tented |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| v16 | OpenESC 4in1-mini | 52 | 33 | opening-track 13, opening-via 5, opening-zone 7, track-pad 2 | 0 | 0 | 0.005 | both |
+| v16 | OpenESC 4in1 | 8 | 0 | track-pad 7, pad-pad 1 | 0 | 0 | 0.005 | both |
+| v16 | eurorack-pmod | 1 | 2 | opening-track 1 | 0 | 0 | 0 | both |
+| v16 | SNSP-CPU-01 | 20 | 5 | opening-pad 16, opening-zone 4 | 0 | 0 | 0 | both |
+| v16 | SNSP-CPU-1CHIP | 16 | 0 | opening-pad 8, opening-track 4, opening-zone 4 | 0 | 0 | 0 | both |
+| v16 | protoesp, laptop motherboard | 199 | 199 | pad-pad same part 2, 5 (DRC limit) | | | | |
+| x910 route | OpenESC 4in1-mini | 114 | 33 | opening-pad 45, opening-track 12, opening-via 15, opening-zone 6, track-pad 6 | | | | |
+| x910 route | SNSP-CPU-01 | 18 | 5 | opening-pad 15, opening-zone 3 | | | | |
+
+No bridge beyond the designer's on the short and quick tiers. Every board
+of the corpus tents its vias but SUMEC (`viasonmask yes`, with expansion,
+web and mask-to-copper all 0: its vias would need to touch), so a
+via-to-via mask spacing binds nowhere and was not built.
+
+KiCad's rule (pcbnew/drc/drc_test_provider_solder_mask.cpp, 10.0.7): an
+item on a mask layer (pad with that layer, untented via, track on a mask
+layer, mask graphic or text) against another: shapes closer than
+`solder_mask_min_width` plus both expansions; covered copper (track,
+tented via, a pad without the mask layer) against an opening: closer than
+`solder_mask_to_copper_clearance` plus the opening's expansion; zone fill
+likewise. Same-net pairs never; a plain opening (graphic, mask-only pad)
+once it exposes two nets. Expansion: pad, footprint, else the board's
+`pad_to_mask_clearance`; vias the board's; texts none. KiCad draws an
+outline-font text from the font, a missing face in a stand-in, not from
+the render cache.
+
+Causes, by pair: opening-pad is placement (SNSP's C63, C64, C66 or T1
+and C61 placed under the fixed J2's 22 x 32 mm F.Mask polygon; 1CHIP's T1
+under RF1's; the placer's report puts them there, so its mask-as-body
+rule does not keep movable parts out of a fixed part's opening, for a
+placement agent); opening-zone follows from it (the GND fill the designer
+also has under J2 meets a second net only because the pads are there);
+1CHIP's opening-track is T1's own stubs. Router causes: (1) a pad's
+aperture kept the margin alone, without the project's
+solder_mask_to_copper_clearance (OpenESC 4in1's J1: margin 0.102, plus
+0.005; our tracks kept 0.105); the latent `solder_mask_margin` read meant
+the board's expansion never counted. (2) Mask texts: 4in1-mini's "ESC"
+in Tokyo, drawn by KiCad in a stand-in 2 mm wider than the cache we
+routed around; eurorack's "[apf.audio]" (stroke font, bottom-anchored:
+the "p" hangs 0.25 mm past the anchor, our box stopped at it), and after
+that fix its "⇒⊕⊥∃⊢≢" (symbols 0.73 mm across the line of a 1 mm text).
+
+Fix (crates/pcb-kicad/src/board_router.rs): pad apertures per mask side
+keep covered copper at max(old margin rule, mask-to-copper + expansion)
+and untented vias at web + pad expansion + via expansion; the board's
+expansion is `pad_to_mask_clearance`; only pads with the mask layer open
+it; a reach equal to the copper clearance adds no obstacle (it rerouted
+USB_Cable_Tester for nothing). `vias_tented` reads KiCad 10's, KiCad 9's
+and the old plot form. A cached text on a mask layer also opens the
+stroke box (`mask_graphic_shapes`; the box holds all nine cached mask
+texts of the corpus within 0.06 mm of KiCad's drawing); the stroke model
+hangs descenders below a bottom anchor and counts non-ASCII as tall.
+All of it only where solder_mask_bridge is an error (KiCad's default; 95
+of 109 projects): on OpenESC (warning) the exact rule took 4in1-mini's
+bridges 29 to 2 and cost 52 to 61 unconnected (4in1 104 to 106), the
+min-connection precedent (`solder_mask_bridge_severity`, project_rules).
+
+Route mode (tasks v6, jobs 1, threads 4), x978 (main) against x1054:
+
+| board (placement) | x978 unconnected, bridges | x1054 |
+| --- | --- | --- |
+| SNSP-CPU-01 (v15) | 191, 18 (13 new) | identical board |
+| SNSP-CPU-01 (v16) | 152, 20 | identical board |
+| SNSP-CPU-1CHIP (v16) | 2, 16 | identical board |
+| OpenESC 4in1-mini (v16, warning) | 52, 29 | identical board |
+| OpenESC 4in1 (v16, warning) | 104, 4 | identical board |
+| eurorack-pmod (v16) | 18, 1 | 13, 0 (136 vias against 132, 3131 mm against 3075) |
+
+SNSP's 13 cannot go by routing: all 18 findings pair J2's F.Mask polygon
+with a pad of C63, C64 or C66 or with the GND fill under it (and the fill
+is the designer's too). x1051 (exact rule everywhere) gave the table in
+the severity paragraph. Starved-thermal census (fill3 KiCad cache, 44
+boards) with x1050 and x1054: 162 / 7 / 26 / 2, unchanged. Short tier
+(flock, tasks v6, jobs 2, threads 4) x1054 against build/short-x1020.log:
+all 12 rows identical (35 unconnected, 3 new errors, 1129 vias, 22253 mm,
+first-route 61); work 2671 to 3236 s is main's accounting (x976's rows
+exactly). x1053 (before the equal-reach rule) changed only
+USB_Cable_Tester (131 to 105 vias, first route 0 to 1, pass both).
+Unit tests: `a_pads_mask_aperture_keeps_the_mask_to_copper_clearance_and_an_untented_via_the_web`,
+`at_snsps_values_a_via_by_another_nets_pad_bridges_no_mask`,
+`below_an_error_the_pad_apertures_keep_the_rule_of_before`,
+`via_tenting_is_read_as_kicad_10_reads_it`,
+`a_cached_text_on_a_mask_layer_also_opens_the_stroke_fonts_box`,
+`a_bottom_anchored_texts_descenders_hang_below_its_anchor`,
+`symbols_outside_ascii_reach_as_far_as_descenders`. Logs
+build/mask{,2,3}-*.log, build/short-x1053.log, build/short-x1054.log,
+build/mask-census-*.json, build/mask-thermal-census-x1054.txt.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
