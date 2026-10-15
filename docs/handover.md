@@ -3042,7 +3042,8 @@ gap: parity 44 (`footprint_symbol_mismatch` 43).
 
 Unit tests (pcb-kicad netlist_import, placement_constraints, describe) and
 `tests/agent_walkthrough.rs` pass. Snapshots `build/bin/pcb-maker-x1030`
-(the rerun) and `x1031` (with the schematic rewrite).
+(the rerun) and `x1031` (with the schematic rewrite); `x1032` is the
+branch rebased on 8c20715 (main's x1042).
 No layout tier was run on x1030: the import fixes change only boards with
 KiCad 5 footprints, which no layout task has (their boards come from the
 designer, written by KiCad); the side check changes the report (and so the

@@ -455,7 +455,8 @@ measured with the layout:
    entries at the designer's spot; every part goes on the designer's side
    (`back`/`front` by the footprint's layer: the other tiers' stack keeps
    each part's side). The designer's Edge.Cuts are drawn onto the board
-   (the outline is the task's, and `outline` takes only rectangles), and
+   (the outline is the task's, as the designer drew it: arcs and slots
+   included, which `outline`'s `polygon`, since x1041, would approximate), and
    the designer's netless footprints that have no symbol (mounting holes,
    logos) are copied, fixed and marked `board_only`, as the other tiers
    keep them.
