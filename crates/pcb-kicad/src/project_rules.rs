@@ -67,6 +67,10 @@ pub fn resolve_project_rules(
 
     let rules = &project["board"]["design_settings"]["rules"];
     let minimum = |key: &str| rules[key].as_f64().unwrap_or(0.0);
+    let severity = project["board"]["design_settings"]["rule_severities"]["connection_width"]
+        .as_str()
+        .map(str::to_owned);
+    let floor = connection_width_floor(minimum("min_connection"), severity.as_deref(), floor_mode());
 
     let mut widths = Vec::new();
     let mut via_sizes = Vec::new();
@@ -114,7 +118,7 @@ pub fn resolve_project_rules(
         );
     }
     for class in classes.values_mut() {
-        class.trace_width_mm = class.trace_width_mm.max(minimum("min_track_width"));
+        class.trace_width_mm = class.trace_width_mm.max(minimum("min_track_width")).max(floor.unwrap_or(0.0));
         class.clearance_mm = class.clearance_mm.max(minimum("min_clearance"));
         class.via_size_mm = class.via_size_mm.max(minimum("min_via_diameter"));
         class.via_drill_mm = class.via_drill_mm.max(minimum("min_through_hole_diameter"));
@@ -196,7 +200,7 @@ pub fn resolve_project_rules(
         .filter_map(|value| value.as_f64())
         .filter(|width| *width > 0.0 && *width >= minimum("min_track_width"))
         .fold(f64::INFINITY, f64::min);
-    Ok(KiCadBoardRouterConfig {
+    let mut config = KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal.is_finite().then_some(narrow_signal),
         relaxed_clearance_mm: match project["board"]["design_settings"]["rule_severities"]["clearance"].as_str() {
             Some("warning" | "ignore") if minimum("min_clearance") > 0.0 => Some(minimum("min_clearance")),
@@ -217,8 +221,51 @@ pub fn resolve_project_rules(
         hole_clearance_mm: rules["min_hole_clearance"].as_f64().unwrap_or(0.25),
         hole_to_hole_clearance_mm: rules["min_hole_to_hole"].as_f64().unwrap_or(0.25),
         solder_mask_to_copper_mm: rules["solder_mask_to_copper_clearance"].as_f64(),
+        min_connection_mm: floor,
+        connection_width_severity: (minimum("min_connection") > 0.0).then(|| severity.unwrap_or_else(|| "warning".into())),
         ..KiCadBoardRouterConfig::default()
-    })
+    };
+    // The narrow-signal and neck widths, too (the classes are floored
+    // above).
+    config.apply_width_floor();
+    Ok(config)
+}
+
+/// Which connection_width severities make `min_connection` a floor on the
+/// router's widths (`PCB_MIN_CONNECTION_FLOOR`: `off`, `error` for error
+/// severity only; anything else or unset: error and warning).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FloorMode {
+    Off,
+    Errors,
+    ErrorsAndWarnings,
+}
+
+fn floor_mode() -> FloorMode {
+    match std::env::var("PCB_MIN_CONNECTION_FLOOR").as_deref() {
+        Ok("off") => FloorMode::Off,
+        Ok("error") => FloorMode::Errors,
+        _ => FloorMode::ErrorsAndWarnings,
+    }
+}
+
+/// The track width floor from the board setup's minimum connection width
+/// and the project's severity of KiCad's connection_width findings. KiCad
+/// checks only with a minimum above 0; a project without the severity
+/// gets KiCad's default, a warning. A warning does not fail the pass rule
+/// but is what the agent's user sees in KiCad, so it floors the widths as
+/// an error does (`FloorMode::ErrorsAndWarnings`, the default); `ignore`
+/// never does.
+pub(crate) fn connection_width_floor(min_connection: f64, severity: Option<&str>, mode: FloorMode) -> Option<f64> {
+    if min_connection <= 0.0 {
+        return None;
+    }
+    let applies = match (mode, severity.unwrap_or("warning")) {
+        (FloorMode::Off, _) | (_, "ignore") => false,
+        (FloorMode::Errors, severity) => severity == "error",
+        (FloorMode::ErrorsAndWarnings, severity) => severity == "error" || severity == "warning",
+    };
+    applies.then_some(min_connection)
 }
 
 #[cfg(test)]
@@ -257,6 +304,66 @@ mod tests {
         assert_eq!(resolve_project_rules(&project, &pcb).unwrap().relaxed_clearance_mm, Some(0.1));
         write("error");
         assert_eq!(resolve_project_rules(&project, &pcb).unwrap().relaxed_clearance_mm, None);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn the_connection_width_severity_decides_the_floor() {
+        use FloorMode::*;
+        assert_eq!(connection_width_floor(0.16, Some("warning"), ErrorsAndWarnings), Some(0.16));
+        assert_eq!(connection_width_floor(0.127, Some("error"), ErrorsAndWarnings), Some(0.127));
+        // KiCad's default severity is a warning.
+        assert_eq!(connection_width_floor(0.1, None, ErrorsAndWarnings), Some(0.1));
+        assert_eq!(connection_width_floor(0.1, Some("ignore"), ErrorsAndWarnings), None);
+        // No minimum: KiCad does not check.
+        assert_eq!(connection_width_floor(0.0, Some("error"), ErrorsAndWarnings), None);
+        assert_eq!(connection_width_floor(0.16, Some("warning"), Errors), None);
+        assert_eq!(connection_width_floor(0.127, Some("error"), Errors), Some(0.127));
+        assert_eq!(connection_width_floor(0.127, Some("error"), Off), None);
+    }
+
+    #[test]
+    fn the_minimum_connection_floors_the_project_widths() {
+        let directory = std::env::temp_dir().join(format!("pcb-maker-min-connection-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(
+            &pcb,
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
+              (footprint "a" (at 0 0) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "PWR"))))"#,
+        )
+        .unwrap();
+        let project = directory.join("board.kicad_pro");
+        // OpenESC's setup: classes and menu at 0.09, the minimum connection
+        // 0.16 at warning severity; a power class above it.
+        let write = |severity: &str| {
+            let text = format!(
+                r#"{{"board": {{"design_settings": {{"rules": {{"min_track_width": 0.09, "min_connection": 0.16}},
+                       "rule_severities": {{"connection_width": "{severity}"}},
+                       "track_widths": [0.0, 0.09, 0.11, 0.2, 0.3]}}}},
+                   "net_settings": {{"classes": [{{"name": "Default", "clearance": 0.09, "track_width": 0.09, "via_diameter": 0.4, "via_drill": 0.2}},
+                                                {{"name": "Power", "clearance": 0.09, "track_width": 0.3, "via_diameter": 0.4, "via_drill": 0.2}}],
+                                    "netclass_assignments": {{"PWR": "Power"}}}}}}"#
+            );
+            fs::write(&project, text).unwrap();
+        };
+        write("warning");
+        let config = resolve_project_rules(&project, &pcb).unwrap();
+        assert_eq!(config.min_connection_mm, Some(0.16));
+        assert_eq!(config.connection_width_severity.as_deref(), Some("warning"));
+        assert_eq!(config.connection_rules["A"].trace_width_mm, 0.16);
+        assert_eq!(config.connection_rules["PWR"].trace_width_mm, 0.3);
+        // The menu's smallest width, raised to the floor.
+        assert_eq!(config.narrow_signal_mm, Some(0.16));
+        assert_eq!(config.neck_width_mm, Some(0.16));
+        write("ignore");
+        let config = resolve_project_rules(&project, &pcb).unwrap();
+        assert_eq!(config.min_connection_mm, None);
+        assert_eq!(config.connection_width_severity.as_deref(), Some("ignore"));
+        assert_eq!(config.connection_rules["A"].trace_width_mm, 0.09);
+        assert_eq!(config.narrow_signal_mm, Some(0.09));
+        assert_eq!(config.neck_width_mm, Some(0.1));
         fs::remove_dir_all(&directory).unwrap();
     }
 }

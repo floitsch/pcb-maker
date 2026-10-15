@@ -117,6 +117,17 @@ pub struct KiCadBoardRouterConfig {
     /// Narrowest track the board allows (neck-downs out of small pads).
     #[serde(default)]
     pub neck_width_mm: Option<f64>,
+    /// The board setup's minimum connection width (`rules.min_connection`)
+    /// as a floor on every track width the router chooses: class widths,
+    /// the narrow-signal width, neck-downs, stubs and spokes. Set from the
+    /// project when KiCad's connection_width check reports at error or
+    /// warning severity (`apply_width_floor`); `None`: no floor.
+    #[serde(default)]
+    pub min_connection_mm: Option<f64>,
+    /// The project's severity of connection_width findings (`error`,
+    /// `warning`, `ignore`), for the rules summary.
+    #[serde(default)]
+    pub connection_width_severity: Option<String>,
     #[serde(default)]
     pub cleanup_via_cost_mm: Option<f64>,
     #[serde(default)]
@@ -369,6 +380,25 @@ fn default_hole_clearance() -> f64 {
 }
 
 impl KiCadBoardRouterConfig {
+    /// The narrowest track width allowed by `min_connection_mm` (0: none).
+    pub fn width_floor(&self) -> f64 {
+        self.min_connection_mm.filter(|floor| *floor > 0.0).unwrap_or(0.0)
+    }
+
+    /// Raises every track width of the configuration to `width_floor`:
+    /// the classes, the narrow-signal width and the neck width.
+    pub fn apply_width_floor(&mut self) {
+        let floor = self.width_floor();
+        if floor <= 0.0 {
+            return;
+        }
+        for rules in self.connection_rules.values_mut().chain(self.default_rules.iter_mut()) {
+            rules.trace_width_mm = rules.trace_width_mm.max(floor);
+        }
+        self.narrow_signal_mm = self.narrow_signal_mm.map(|width| width.max(floor));
+        self.neck_width_mm = self.neck_width_mm.map(|width| width.max(floor));
+    }
+
     /// Accepts either this module's schema or an adaptive-routing config,
     /// from which only the resolved physical rules are taken.
     pub fn from_json(value: serde_json::Value) -> Result<Self, String> {
@@ -490,6 +520,42 @@ pub struct KiCadBoardRouterResult {
     /// (`necks`), when its DRC reported any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neck_repair: Option<crate::necks::NeckRepair>,
+    /// The width rules the router routed with.
+    pub rules: KiCadRulesSummary,
+}
+
+/// The track width rules of a routing, for whoever reads the report.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct KiCadRulesSummary {
+    /// The minimum connection width applied as a floor on every track
+    /// width (`KiCadBoardRouterConfig::min_connection_mm`); absent when
+    /// none was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_floor_mm: Option<f64>,
+    /// The project's severity of KiCad's connection_width findings, when
+    /// its board setup has a minimum connection width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection_width_severity: Option<String>,
+    /// The narrowest track width of the nets' classes as routed.
+    pub narrowest_track_mm: f64,
+    /// The neck-down width out of small pads.
+    pub neck_width_mm: f64,
+}
+
+impl KiCadRulesSummary {
+    fn of(board: &core::Board, config: &KiCadBoardRouterConfig) -> Self {
+        let narrowest = board
+            .nets
+            .iter()
+            .map(|net| board.classes[net.class].trace_width)
+            .fold(f64::INFINITY, f64::min);
+        Self {
+            width_floor_mm: config.min_connection_mm.filter(|floor| *floor > 0.0),
+            connection_width_severity: config.connection_width_severity.clone(),
+            narrowest_track_mm: if narrowest.is_finite() { narrowest } else { 0.0 },
+            neck_width_mm: board.neck_width,
+        }
+    }
 }
 
 /// Why a routing is not complete, for whoever has to fix the board.
@@ -906,7 +972,7 @@ fn lower_board(
             _ => None,
         };
         let class = core::RuleClass {
-            trace_width: narrow.unwrap_or(rules.trace_width_mm),
+            trace_width: narrow.unwrap_or(rules.trace_width_mm).max(config.width_floor()),
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
@@ -1566,12 +1632,15 @@ fn lower_board(
     Ok(Lowered {
         board: core::Board {
             layer_count: layers.len(),
-            neck_width: config.neck_width_mm.unwrap_or_else(|| {
-                classes
-                    .iter()
-                    .map(|class| class.trace_width)
-                    .fold(f64::INFINITY, f64::min)
-            }),
+            neck_width: config
+                .neck_width_mm
+                .unwrap_or_else(|| {
+                    classes
+                        .iter()
+                        .map(|class| class.trace_width)
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .max(config.width_floor()),
             outline: loops.outline.clone(),
             // Arcs are flattened to chords inside the true curve; the
             // chord error is added so copper stays clear of the real edge.
@@ -2339,6 +2408,17 @@ pub fn route_kicad_board(
         with_classes = crate::net_classes::with_net_classes(config, &parse(&text).map_err(crate::verdict::input_error)?)
             .map_err(crate::verdict::input_error)?;
         &with_classes
+    };
+    // The minimum connection width floors every width, also those of a
+    // configuration file or of requested net classes.
+    let floored;
+    let config = if config.width_floor() > 0.0 {
+        let mut copy = config.clone();
+        copy.apply_width_floor();
+        floored = copy;
+        &floored
+    } else {
+        config
     };
     // With interchangeable pins, the ladder routes a copy with the pins
     // assigned; every attempt copies its project from there.
@@ -3889,6 +3969,7 @@ pub(super) fn finish_routed_board(
         work_seconds: 0.0,
         skipped: Vec::new(),
         neck_repair: None,
+        rules: KiCadRulesSummary::of(board, config),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(
@@ -4762,6 +4843,64 @@ mod narrow_step_tests {
         assert_eq!(deadline_before_reserve(700.0, 300.0, 4), 100.0);
         assert_eq!(deadline_before_reserve(200.0, 300.0, 1), 0.0);
         assert_eq!(deadline_before_reserve(700.0, 300.0, 0), 400.0);
+    }
+
+    #[test]
+    fn the_minimum_connection_floors_classes_the_narrow_width_and_the_neck() {
+        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.09, 0.09)), ..KiCadBoardRouterConfig::default() };
+        config.connection_rules.insert("/PWR".into(), rules(0.5, 0.2));
+        config.narrow_signal_mm = Some(0.11);
+        config.neck_width_mm = Some(0.1);
+        assert!(narrow_step_applies(&config));
+        config.min_connection_mm = Some(0.16);
+        config.apply_width_floor();
+        assert_eq!(config.default_rules.as_ref().unwrap().trace_width_mm, 0.16);
+        assert_eq!(config.connection_rules["/PWR"].trace_width_mm, 0.5);
+        assert_eq!(config.narrow_signal_mm, Some(0.16));
+        assert_eq!(config.neck_width_mm, Some(0.16));
+        // The power class is still wider: the narrow step routes the signals
+        // at the floor.
+        assert!(narrow_step_applies(&config));
+        // No floor, nothing changes.
+        let mut plain = KiCadBoardRouterConfig { default_rules: Some(rules(0.09, 0.09)), ..KiCadBoardRouterConfig::default() };
+        plain.apply_width_floor();
+        assert_eq!(plain.default_rules.as_ref().unwrap().trace_width_mm, 0.09);
+    }
+
+    #[test]
+    fn a_routed_board_has_no_track_narrower_than_the_minimum_connection() {
+        // Two 0.25 mm pads side by side force a neck-down; class, narrow
+        // signal and neck widths are all below the floor.
+        let pcb = parse(
+            r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 12 8) (layer "Edge.Cuts"))
+              (footprint "a" (at 3 4)
+                (pad "1" smd rect (at 0 0) (size 0.25 0.8) (layers "F.Cu") (net "/A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.25 0.8) (layers "F.Cu") (net "/B")))
+              (footprint "b" (at 9 4)
+                (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "F.Cu") (net "/A"))
+                (pad "2" smd rect (at 0 2) (size 0.8 0.8) (layers "F.Cu") (net "/B"))))"#,
+        )
+        .unwrap();
+        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.3, 0.1)), ..KiCadBoardRouterConfig::default() };
+        config.narrow_signal_mm = Some(0.1);
+        config.use_narrow_signals = Some(true);
+        config.neck_width_mm = Some(0.1);
+        config.min_connection_mm = Some(0.15);
+        let board = lower(&pcb, &config, false).unwrap().board;
+        assert_eq!(board.neck_width, 0.15);
+        for net in &board.nets {
+            assert_eq!(board.classes[net.class].trace_width, 0.15, "{}", net.name);
+        }
+        let result = core::route(&board, &core_config(&config));
+        let widths: Vec<f64> = result.routes.iter().flat_map(|route| route.segments.iter().map(|segment| segment.width)).collect();
+        assert!(!widths.is_empty());
+        assert!(widths.iter().all(|width| *width >= 0.15 - 1.0e-12), "{widths:?}");
+        // Without the floor the same board routes at the narrow width.
+        config.min_connection_mm = None;
+        let board = lower(&pcb, &config, false).unwrap().board;
+        assert!(board.nets.iter().all(|net| board.classes[net.class].trace_width == 0.1));
     }
 
     #[test]

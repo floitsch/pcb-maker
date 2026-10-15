@@ -6440,6 +6440,18 @@ fn board_router_config(
                     config.relaxed_clearance_mm = project.relaxed_clearance_mm;
                 }
             }
+            // The board setup's minimum connection width holds for a file's
+            // own rules too.
+            if config.min_connection_mm.is_none() && config.connection_width_severity.is_none() {
+                if let Ok(project) = pcb_kicad::resolve_project_rules(
+                    &Path::new(source).join(format!("{board_id}.kicad_pro")),
+                    &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+                ) {
+                    config.min_connection_mm = project.min_connection_mm;
+                    config.connection_width_severity = project.connection_width_severity;
+                }
+            }
+            config.apply_width_floor();
             Ok(config)
         }
     }
