@@ -309,11 +309,21 @@ the exposed pad's (every clearance the pad keeps, it keeps), the shortest
 of sixteen directions; KiCad's DRC counts a track connected to the via that
 starts in its ring and ends in fill as a spoke. It is kept only if the
 model then finds the via no longer short, and emitted as exact copper
-(`NetState::inner_spokes`). While it runs the fill model reads the hatch
-also in the tracks rung (`Router::hatch_any_plane`), whose planes do not
-connect but which KiCad fills all the same; elsewhere the tracks rung keeps
-its model (reading it there changed 0xCB's tracks-rung routing and left
-MX3.S1 an island).
+(`NetState::inner_spokes`).
+
+The fill model reads every zone of a pour net as KiCad fills it, also in
+the tracks rung, whose pours do not connect (`tracks_rung_fill`, on;
+`PCB_ROUTER_OLD_TRACKS_FILL`; 2026-10-15): a hatched zone's hatch, its
+rings and its outline as in the connecting rungs, for the spoke verdicts,
+manual spokes, island vias and stubs and inner spokes there. The DRC's
+track rule tests the segments as the router emits them
+(`track_end_junctions`, on; `PCB_ROUTER_OLD_TRACK_RUNS`): a straight run
+from the pad ends at the first junction, where another branch of the net
+leaves it and `materialize` cuts the segment, not at its turn (0xCB's
+MX3.S1: the run passed a junction in fill and ended 12 microns inside a
+hatch hole, KiCad's segment ended at the junction; reading the hatch
+without the cut lost its track spoke, its two island spokes stood in for
+it, and no island via was added).
 
 After a layout move's reroute the pours are refreshed (pads the rerouted
 signals cut off are routed again), and a plane end whose fill the signals

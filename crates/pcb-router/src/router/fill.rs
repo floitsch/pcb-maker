@@ -18,7 +18,7 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use super::{FREE_END, NO_TERMINAL, PLANE_TERMINAL, Router};
-use crate::board::{Hatch, NetId, ObstacleKind};
+use crate::board::{Hatch, NetId, ObstacleKind, Plane};
 use crate::geometry::{Point, distance, point_in_polygon, point_segment_distance, polygon_edges, segments_intersect};
 
 /// Side of the index's buckets, in mm.
@@ -134,12 +134,22 @@ impl<'a> FillProbe<'a> {
         self.router.board.classes[self.router.nets[self.net as usize].plane_class[layer]].trace_width / 2.0
     }
 
-    /// The hatch of the net's pour on `layer`, if it is hatched (of a pour
-    /// the net is routed past as tracks too while `Router::hatch_any_plane`
-    /// is set).
+    /// The net's zones on `layer` that KiCad fills: all of them, those of
+    /// a net routed as tracks too (the tracks rung lowers its pours with
+    /// `connect` false, and KiCad fills them all the same); with
+    /// `tracks_rung_fill` off only those pads connect through (and, for
+    /// the `hatch` and its rings, any while `Router::hatch_any_plane` is
+    /// set).
+    fn filled_planes(&self, layer: usize, hatch: bool) -> impl Iterator<Item = &'a Plane> + 'a {
+        let router = self.router;
+        let net = self.net;
+        let any = router.config.tracks_rung_fill || (hatch && router.hatch_any_plane);
+        router.board.planes.iter().filter(move |plane| plane.net == net && plane.layer == layer && (plane.connect || any))
+    }
+
+    /// The hatch of the net's pour on `layer`, if it is hatched.
     pub(super) fn hatch(&self, layer: usize) -> Option<Hatch> {
-        let any = self.router.hatch_any_plane;
-        self.router.board.planes.iter().find(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || any) && plane.hatch.is_some()).and_then(|plane| plane.hatch)
+        self.filled_planes(layer, true).find_map(|plane| plane.hatch)
     }
 
     /// How far past the gap KiCad tests a spoke's end: half the minimum
@@ -178,12 +188,7 @@ impl<'a> FillProbe<'a> {
         }
         let board = &self.router.board;
         let half = self.half(layer);
-        let bridge = board
-            .planes
-            .iter()
-            .filter(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || self.router.hatch_any_plane))
-            .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
-            .fold(0.0f64, f64::max);
+        let bridge = self.filled_planes(layer, true).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
         for (pad, reach) in &self.rings[layer] {
             let gap = reach - half;
             let shape = &board.obstacles[*pad].shape;
@@ -302,12 +307,7 @@ impl<'a> FillProbe<'a> {
             let q = [point[0] * cosine - point[1] * sine, point[0] * sine + point[1] * cosine];
             (q[0] - k as f64 * grid, q[1] - m as f64 * grid)
         };
-        let bridge = board
-            .planes
-            .iter()
-            .filter(|plane| plane.net == self.net && plane.layer == layer && (plane.connect || self.router.hatch_any_plane))
-            .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
-            .fold(0.0f64, f64::max);
+        let bridge = self.filled_planes(layer, true).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
         let encloses_ring = self.rings[layer].iter().any(|(pad, reach)| {
             let outer = reach - half + bridge;
             let bounds = board.obstacles[*pad].shape.aabb().inflated(outer);
@@ -425,7 +425,7 @@ impl<'a> FillProbe<'a> {
                 }
                 let half = self.half(layer);
                 half_most = half_most.max(half);
-                for plane in board.planes.iter().filter(|plane| plane.net == self.net && plane.layer == layer && plane.connect) {
+                for plane in self.filled_planes(layer, false) {
                     for polygon in std::iter::once(&plane.polygon).chain(plane.excluded.iter()) {
                         for (a, b) in polygon_edges(polygon) {
                             insert(layer, segment_box(a, b), Item::Edge { a, b, margin: half }, &mut buckets);
@@ -460,7 +460,7 @@ impl<'a> FillProbe<'a> {
                 return true;
             }
         }
-        board.planes.iter().filter(|plane| plane.net == self.net && plane.layer == layer && plane.connect).any(|plane| {
+        self.filled_planes(layer, false).any(|plane| {
             point_in_polygon(point, &plane.polygon) && !plane.excluded.iter().any(|other| point_in_polygon(point, other))
         }) && point_in_polygon(point, &board.outline)
     }

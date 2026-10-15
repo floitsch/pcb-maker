@@ -139,6 +139,16 @@ pub struct Config {
     /// starved gets a short track from its centre into the fill over the
     /// pad (`add_inner_spokes`; `PCB_ROUTER_NO_INNER_SPOKES` for A/B).
     pub inner_spokes: bool,
+    /// The fill model reads every zone of a pour net as KiCad fills it,
+    /// also in the tracks rung, whose pours do not connect: a hatched
+    /// zone's hatch and rings, the zone's outline
+    /// (`PCB_ROUTER_OLD_TRACKS_FILL` for A/B: there the model then saw
+    /// hatched zones as solid).
+    pub tracks_rung_fill: bool,
+    /// The DRC's track rule tests the segments as emitted, a straight run
+    /// cut at junctions (`PCB_ROUTER_OLD_TRACK_RUNS` for A/B: the run
+    /// to its turn).
+    pub track_end_junctions: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -323,6 +333,8 @@ impl Default for Config {
             inner_pads: std::env::var_os("PCB_ROUTER_NO_INNER_PADS").is_none(),
             track_end_tolerance: std::env::var_os("PCB_ROUTER_OLD_TRACK_ENDS").is_none(),
             inner_spokes: std::env::var_os("PCB_ROUTER_NO_INNER_SPOKES").is_none(),
+            tracks_rung_fill: std::env::var_os("PCB_ROUTER_OLD_TRACKS_FILL").is_none(),
+            track_end_junctions: std::env::var_os("PCB_ROUTER_OLD_TRACK_RUNS").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -596,6 +608,21 @@ fn well_inside(shape: &crate::geometry::Shape, point: crate::geometry::Point) ->
         && [(DEPTH, 0.0), (-DEPTH, 0.0), (0.0, DEPTH), (0.0, -DEPTH)]
             .iter()
             .all(|(dx, dy)| shape.contains([point[0] + dx, point[1] + dy]))
+}
+
+/// The nodes where a branch ends on another (a junction): `materialize`
+/// ends a segment there, so a straight run of the lattice is cut into
+/// segments at them.
+fn junction_nodes(branches: &[Branch]) -> HashSet<Node> {
+    branches
+        .iter()
+        .filter(|branch| !branch.nodes.is_empty())
+        .flat_map(|branch| {
+            let start = (branch.start_terminal == NO_TERMINAL).then(|| branch.nodes[0]);
+            let end = (branch.end_terminal == NO_TERMINAL).then(|| *branch.nodes.last().unwrap());
+            start.into_iter().chain(end)
+        })
+        .collect()
 }
 
 /// Maps every node that can host a junction to the kept branch owning it.
@@ -1299,8 +1326,8 @@ pub struct Router {
     /// two offsets reach counts once; cleared again from the stamped list.
     stamp_mark: Vec<Vec<u64>>,
     /// While set, the fill model reads a hatched zone's hatch also when
-    /// its net is routed as tracks (`add_inner_spokes` only: KiCad fills
-    /// the zone all the same; elsewhere the tracks rung keeps its model).
+    /// its net is routed as tracks (`add_inner_spokes`), whatever
+    /// `Config::tracks_rung_fill` says (with it, always).
     hatch_any_plane: bool,
     history: Vec<Vec<f32>>,
     /// `stamps[net class][querying class]`
@@ -7599,6 +7626,11 @@ impl Router {
                             end != NO_TERMINAL && end != PLANE_TERMINAL && end != FREE_END && crate::geometry::distance(other.anchor, record.anchor) < 1.0e-6
                         })
                 };
+                // The emitted segments end at junctions (`materialize`):
+                // KiCad tests the end of the segment, not of the run
+                // (0xCB's MX3.S1: its track's run passes a junction in
+                // fill and ends in a hatch hole).
+                let junctions = if self.config.track_end_junctions { junction_nodes(&state.branches) } else { HashSet::new() };
                 for (index, branch) in state.branches.iter().enumerate() {
                     if skip(index) || branch.nodes.is_empty() {
                         continue;
@@ -7637,7 +7669,7 @@ impl Router {
                                 && let Some(direction) = step(nodes[0], nodes[1])
                             {
                                 let mut last = 1;
-                                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) {
+                                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) && !junctions.contains(&nodes[last]) {
                                     last += 1;
                                 }
                                 segments.push((first, self.grid.center_of(nodes[last].cell as usize)));
@@ -7648,9 +7680,11 @@ impl Router {
                         let counted = connected(a, b, radius) && if near_pad(a) { in_fill(parent, b) } else { near_pad(b) && in_fill(parent, a) };
                         if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() && !counted {
                             eprintln!(
-                                "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} kept {} {}",
+                                "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} hole {} {} ring {} {} kept {} {}",
                                 terminal.label, record.layer, near_pad(a), near_pad(b),
                                 probe.fill_at(record.layer, a), probe.fill_at(record.layer, b),
+                                probe.in_hatch_hole(record.layer, a), probe.in_hatch_hole(record.layer, b),
+                                probe.in_ring(record.layer, a), probe.in_ring(record.layer, b),
                                 kept_piece(parent, record.layer, a), kept_piece(parent, record.layer, b)
                             );
                         }
@@ -9503,16 +9537,7 @@ impl Router {
         let state = &self.nets[net as usize];
         let mut route = NetRoute::default();
         let mut stubs = Vec::new();
-        let junctions: HashSet<Node> = state
-            .branches
-            .iter()
-            .flat_map(|branch| {
-                let start = (branch.start_terminal == NO_TERMINAL).then(|| branch.nodes[0]);
-                let end =
-                    (branch.end_terminal == NO_TERMINAL).then(|| *branch.nodes.last().unwrap());
-                start.into_iter().chain(end)
-            })
-            .collect();
+        let junctions = junction_nodes(&state.branches);
         for branch in &state.branches {
             let first = branch.nodes[0];
             let last = *branch.nodes.last().unwrap();
@@ -10550,6 +10575,94 @@ mod tests {
         let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads: false, ..Config::default() });
         let (report, _, _) = spoke_report(&router, 0);
         assert!(report.iter().all(|record| record.pad == 0));
+    }
+
+    #[test]
+    fn the_tracks_rung_reads_a_hatched_zone_as_hatched() {
+        // The board of `thermal_vias_inside_an_exposed_pad_have_their_own_
+        // rings_in_a_hatched_zone` in the tracks rung: P's pour does not
+        // connect (the net is routed as tracks), but KiCad fills it hatched
+        // all the same, the vias' rings in it. With the masks lent as
+        // `add_manual_spokes` lends them the model reads the hatch there
+        // too: the corner via keeps its one spoke into its ring (starved),
+        // as with the pour connected. The old model read the zone solid
+        // in that rung, where the exposed pad's relief takes the vias'
+        // spokes and its own spokes cross the corner via's ring.
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
+            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
+            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
+            copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
+        ];
+        let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
+        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].connect = false;
+        let mut board = board(
+            1,
+            obstacles,
+            vec![
+                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
+                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+            ],
+            planes,
+            Vec::new(),
+        );
+        for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
+            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+        }
+        let good = |record: &SpokeRecord| record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count() + record.crossings;
+        let lent = |config: Config| {
+            let mut router = Router::new(&board, &config);
+            assert!(router.nets[0].plane.is_empty());
+            let (plane, plane_class) = router.pour_masks(0, false);
+            router.nets[0].plane = plane;
+            router.nets[0].plane_class = plane_class;
+            router
+        };
+        let router = lent(Config { pitches: vec![0.1], ..Config::default() });
+        let probe_rings = router.thermal_ring_pads(0);
+        let probe = fill::FillProbe::new(&router, 0, &probe_rings);
+        assert!(probe.hatch(0).is_some());
+        let (report, _, _) = spoke_report(&router, 0);
+        let centre = report.iter().find(|record| record.pad == 1).unwrap();
+        assert_eq!(good(centre), 4, "{:?}", centre.outcomes);
+        let corner = report.iter().find(|record| record.pad == 2).unwrap();
+        assert_eq!((good(corner), Router::spokes_short(corner)), (1, 1), "{:?}", corner.outcomes);
+        // The old model: no hatch in the tracks rung, the zone solid.
+        let old = lent(Config { pitches: vec![0.1], tracks_rung_fill: false, ..Config::default() });
+        let old_rings = old.thermal_ring_pads(0);
+        assert!(fill::FillProbe::new(&old, 0, &old_rings).hatch(0).is_none());
+        let (report, _, _) = spoke_report(&old, 0);
+        let corner = report.iter().find(|record| record.pad == 2).unwrap();
+        assert_ne!(good(corner), 1, "{:?}", corner.outcomes);
+    }
+
+    #[test]
+    fn a_track_ends_for_the_drc_at_a_junction() {
+        // P.1's track runs straight out of the pad into the fill and on
+        // into Q.4, where no fill is; another branch of P leaves it at
+        // (6.2, 6.2). The router emits the run as two segments, cut at the
+        // junction, and KiCad's DRC tests the first one's end, in fill: a
+        // spoke. Without the cut the run's end in Q.4 counts nothing.
+        let mut board = one_spoke_board();
+        board.obstacles.push(copper(rect([7.5, 7.5], [0.3, 0.3]), 1, "Q.4"));
+        let record = |config: Config| {
+            let mut router = Router::new(&board, &config);
+            let grid = router.grid().clone();
+            let node = |at: [f64; 2]| Node { layer: 0, cell: grid.nearest_node(at).unwrap() as u32 };
+            let straight: Vec<Node> = (0..=25).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
+            let side: Vec<Node> = (0..=10).map(|step| node([6.2, 6.2 + 0.1 * step as f64])).collect();
+            router.nets[0].branches = vec![
+                Branch { nodes: straight, start_terminal: 0, end_terminal: PLANE_TERMINAL },
+                Branch { nodes: side, start_terminal: NO_TERMINAL, end_terminal: PLANE_TERMINAL },
+            ];
+            spoke_report(&router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap()
+        };
+        let cut = record(Config { pitches: vec![0.1], ..Config::default() });
+        assert_eq!((cut.tracks, Router::spokes_short(&cut)), (1, 0));
+        let whole = record(Config { pitches: vec![0.1], track_end_junctions: false, ..Config::default() });
+        assert_eq!((whole.tracks, Router::spokes_short(&whole)), (0, 1));
     }
 
     #[test]
