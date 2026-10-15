@@ -131,7 +131,13 @@ Copper keeps two distances from a via: the copper clearance from its ring
 and the board's hole clearance from its drill; with a thin ring the second
 binds. Both enter the stamps (trace and via against via) and the static
 map around pads, and the exact verifier checks copper-to-hole as well as
-hole-to-hole.
+hole-to-hole. The same holds for a pad's plated hole: other nets' tracks
+and vias keep the hole clearance from its drill, which reaches past a thin
+ring (jetson's J2: 0.55 drill in 0.75 copper, clearance 0.125, hole
+clearance 0.25: a via 0.769 from the centre kept the copper rule and was
+0.244 from the hole). The pad's own net is exempt, as in KiCad, whose
+tracks end on the drill; its vias keep the pad copper's rule
+(`StaticMaps::via_owner`).
 
 ### Memory (2026-10-03)
 

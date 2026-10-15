@@ -356,7 +356,8 @@ pub struct StaticMaps {
     pub via_blocked: Vec<bool>,
     /// Where `via_blocked` holds only for other nets: inside a net's own
     /// surface pad, deep enough for the whole via (a thermal via in a
-    /// ground pad, as designers place them). `owner16`, or 0.
+    /// ground pad, as designers place them), or within only the hole
+    /// clearance of its own plated hole. `owner16`, or 0.
     pub via_owner: Vec<u16>,
     /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
     /// step reads one word instead of one per layer.
@@ -570,16 +571,28 @@ impl StaticMaps {
                 let own_vias = obstacle.net.filter(|_| {
                     obstacle.kind == ObstacleKind::Copper && obstacle.layers.count_ones() == 1
                 });
+                // A routed pad's plated hole keeps other nets' vias at the
+                // hole clearance from the drill (KiCad measures a via's
+                // copper to the hole: jetson's 0.5 via 0.244 from J2's
+                // 0.55 drill in 0.75 copper, 0.25 required). Its own net
+                // is exempt, as in KiCad (tracks end on the drill), and
+                // keeps the pad copper's rule.
+                let own_hole = obstacle.net.filter(|_| obstacle.kind == ObstacleKind::Hole);
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = grid.center(x, y);
                         if obstacle.shape.distance_to_point(center) < via_reach {
                             let index = grid.index(x, y);
                             if searched {
-                                via_owner[index] = match own_vias {
-                                    Some(net)
+                                via_owner[index] = match (own_vias, own_hole) {
+                                    (Some(net), _)
                                         if !via_blocked[index]
                                             && obstacle.shape.contains_disc(center, via_radius + SAFETY) =>
+                                    {
+                                        owner16(net)
+                                    }
+                                    (_, Some(net))
+                                        if !via_blocked[index] || via_owner[index] == owner16(net) =>
                                     {
                                         owner16(net)
                                     }

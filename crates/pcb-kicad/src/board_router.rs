@@ -1139,7 +1139,9 @@ fn lower_board(
                     // Other nets keep the hole clearance from a plated hole
                     // too, which reaches past a thin annular ring (a thermal
                     // via pad: 0.3 drill in 0.5 copper, eurorack-pmod's U1).
-                    // Vias stay with the pad's copper rule.
+                    // Their vias as well (jetson's J2: 0.55 drill in 0.75
+                    // copper, clearance 0.125, hole clearance 0.25); the
+                    // pad's own net is exempt (`StaticMaps::via_owner`).
                     if pad_type == "thru_hole"
                         && net.is_some()
                         && let Some(shape) = drill_shape(pad, lowered.center)?
@@ -1152,7 +1154,7 @@ fn lower_board(
                             clearance: 0.0,
                             clearance_override: None,
                             blocks_tracks: true,
-                            blocks_vias: false,
+                            blocks_vias: true,
                             label: format!("{label} plated hole"),
                         });
                     }
@@ -4344,6 +4346,62 @@ mod pour_request_tests {
         // The inner pad's centre is free of the ring; the ring itself is copper.
         assert!(ring.shape.distance_to_point([10.0, 5.0]) > 2.0);
         assert!(ring.shape.distance_to_point([12.75, 5.0]) < 1.0e-6);
+    }
+
+    #[test]
+    fn other_nets_vias_keep_the_hole_clearance_from_a_plated_hole() {
+        // jetson-nano-baseboard's J2 pad 1: a 0.55 drill in 0.75 copper,
+        // clearance 0.125 and hole clearance 0.25. A 0.5 via of another
+        // net 0.769 from the pad's centre keeps 0.144 from its copper but
+        // only 0.244 from its hole (KiCad: hole_clearance, 0.2438). The
+        // pad's own net is exempt.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 10 10) (layer "Edge.Cuts"))
+              (footprint "dp" (at 5 5) (property "Reference" "J2")
+                (pad "1" thru_hole circle (at 0 0) (size 0.75 0.75) (drill 0.55) (layers "*.Cu" "*.Mask") (net "GND"))
+                (pad "2" thru_hole circle (at 0 -3) (size 0.75 0.75) (drill 0.55) (layers "*.Cu" "*.Mask") (net "3V3_SYS")))
+              (footprint "c" (at 8 8) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "GND"))
+                (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "3V3_SYS"))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.1, clearance_mm: 0.125, via_size_mm: 0.5, via_drill_mm: 0.15 };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            hole_clearance_mm: 0.25,
+            hole_to_hole_clearance_mm: 0.25,
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let net = |name: &str| board.nets.iter().position(|net| net.name == name).unwrap() as core::NetId;
+        let (ground, supply) = (net("GND"), net("3V3_SYS"));
+        let hole = board.obstacles.iter().find(|obstacle| obstacle.label == "J2.1 plated hole").unwrap();
+        assert!(hole.blocks_vias && hole.net == Some(ground));
+        // The via's place on a lattice node: J2.1 at (5, 5), the via at
+        // (-0.741, +0.205) from it as on jetson.
+        let at = [5.0 - 0.741, 5.0 + 0.205];
+        let pitch = 0.1;
+        let grid = core::grid::Grid { origin: [at[0] - 42.0 * pitch, at[1] - 52.0 * pitch], pitch, nx: 99, ny: 99 };
+        let node = grid.nearest_node(at).unwrap();
+        assert!(core::geometry::distance(grid.center_of(node), at) < 1.0e-9);
+        let class = board.nets[supply as usize].class;
+        let maps = core::grid::StaticMaps::build(&board, &grid, class, true);
+        assert!(!maps.via_allowed(node, supply), "another net's via within the hole clearance");
+        assert!(maps.via_allowed(node, ground), "the pad's own net keeps the copper rule");
+        // One node further out (0.866 from the centre, 0.775 needed) is free.
+        assert!(maps.via_allowed(node - 1, supply));
+        // The exact verifier reports the via against the hole.
+        let via_at = |net: core::NetId| {
+            let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+            routes[net as usize].vias.push(core::board::Via { at, diameter: 0.5, drill: 0.15 });
+            core::verify(&board, &routes)
+        };
+        let found = via_at(supply);
+        let hole_finding = found.iter().find(|violation| violation.other == "J2.1 plated hole").expect("a hole clearance violation");
+        assert!((hole_finding.required - 0.25).abs() < 1.0e-9);
+        assert!((hole_finding.actual - 0.2439).abs() < 1.0e-3, "{}", hole_finding.actual);
+        assert!(!via_at(ground).iter().any(|violation| violation.other.starts_with("J2.1")));
     }
 
     #[test]
