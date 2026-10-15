@@ -50,6 +50,9 @@ pub struct NeckRepair {
     pub tracks: usize,
     pub kept: bool,
     pub seconds: f64,
+    /// KiCad's fills of a scratch copy (a save with the zones refilled):
+    /// each counts a check's work in a layout, as the DRC checks do.
+    pub kicad_fills: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -636,6 +639,7 @@ fn repair_with(
         }
     }
     let saved = scratch.join(format!("{board_id}.kicad_pcb"));
+    repair.kicad_fills += 1;
     let filled = native_report::run_kicad_save_board(&saved, &scratch.join("drc.json")).and_then(|()| {
         fs::read_to_string(&saved).map_err(|error| format!("failed to read {}: {error}", saved.display()))
     });

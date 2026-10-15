@@ -33,6 +33,7 @@ mod necks;
 pub use necks::{NeckRepair, repair_kicad_necks};
 mod drc_cache;
 mod kicad_config;
+mod check_work;
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 mod pad_layer_contacts;
 mod electrical_terminals;

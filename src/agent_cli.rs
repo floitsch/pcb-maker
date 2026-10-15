@@ -504,6 +504,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .and_then(|placed| serde_json::from_value(placed["room"].clone()).ok());
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
+    facts.kicad_check_work_seconds = Some(result.kicad_check_work_seconds);
     facts.outputs = existing(&outputs);
     check_reference(&mut facts, reference.as_deref(), board_id, &output.join("reference-drc.json"));
     facts.wall_seconds = started.elapsed().as_secs_f64();

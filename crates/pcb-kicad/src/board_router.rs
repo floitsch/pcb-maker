@@ -169,6 +169,13 @@ pub struct KiCadBoardRouterConfig {
     /// (`CheckGate`; set by the layout, not read from a file).
     #[serde(skip)]
     pub kicad_kept: Option<(RouterMeasure, (usize, usize))>,
+    /// The work one KiCad check of an attempt counts, in seconds of an
+    /// idle machine, modelled from the board alone (`check_work`): the
+    /// ladder adds it to its work for every check it runs, cached or
+    /// not, so that its end in work does not depend on the DRC cache.
+    /// Set by the layout, not read from a file; none in route mode.
+    #[serde(skip)]
+    pub kicad_check_work: Option<f64>,
     /// How many seeds of one attempt route at once (memory; the number of
     /// seeds, and so the result, does not depend on it).
     #[serde(skip)]
@@ -531,6 +538,12 @@ pub struct KiCadBoardRouterResult {
     /// an idle machine: what the budgets count.
     #[serde(default)]
     pub work_seconds: f64,
+    /// The part of `work_seconds` that is KiCad's checks (their modelled
+    /// work, `check_work`), and how many checks it counts.
+    #[serde(default)]
+    pub kicad_check_work_seconds: f64,
+    #[serde(default)]
+    pub kicad_checks_charged: usize,
     /// Steps of the attempt ladder that did not run while connections
     /// were still open, each with why (`narrow-signal step did not run:
     /// the ladder's budget was used`). Empty on a complete board.
@@ -2274,8 +2287,8 @@ pub(super) struct Pour {
     /// `(connect_pads yes ...)`: pads join wherever the fill touches.
     solid: bool,
     /// `(fill (mode hatch) ...)`.
-    hatch: Option<core::Hatch>,
-    polygon: Vec<[f64; 2]>,
+    pub(crate) hatch: Option<core::Hatch>,
+    pub(crate) polygon: Vec<[f64; 2]>,
 }
 
 pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
@@ -2459,6 +2472,13 @@ pub(crate) fn narrow_step_negotiation(work_left: f64, own: Option<f64>) -> f64 {
 /// budget, got less negotiation than the first attempt had.
 pub(crate) fn narrow_step_negotiation_floored(work_left: f64, own: Option<f64>, first: f64, kept: f64) -> f64 {
     narrow_step_negotiation(work_left, own).max(first.min(kept).min(0.5 * work_left))
+}
+
+/// The work kept for the narrow-signal step with its own KiCad check:
+/// `reserve` (the step's routing) and one check's work (`check`) on top
+/// when anything is kept at all.
+pub(crate) fn reserve_with_check(reserve: f64, check: f64) -> f64 {
+    if reserve > 0.0 { reserve + check } else { 0.0 }
 }
 
 /// Whether an attempt projected to take `cost` of work may start with
@@ -2831,6 +2851,11 @@ pub fn route_kicad_board(
     // KiCad's checks of the attempts: each attempt routes without one, and
     // only those that could still win are checked (`CheckGate`).
     let checking = !config.skip_native_verification;
+    // What one check counts as work (none in route mode), and the checks
+    // counted so far: every check run, whether the DRC cache answered it
+    // or not, so that a warm run ends where a cold one does.
+    let check_charge = if checking { config.kicad_check_work.unwrap_or(0.0) } else { 0.0 };
+    let checks_charged = std::cell::Cell::new(crate::check_work::CheckTally::new(check_charge));
     let gate = std::cell::RefCell::new(CheckGate {
         top: config.kicad_check_top,
         counts: config.kicad_kept.map(|(measure, _)| vec![measure]).unwrap_or_default(),
@@ -2849,9 +2874,15 @@ pub fn route_kicad_board(
     // The ladder's budget is spent in work (search expansions in seconds of
     // an idle machine), so that a busy machine routes the same way; the
     // wall clock counts only beyond `GUARD` times that.
-    let mut ladder_work = 0.0f64;
-    // `ladder_work` as the checks below read it.
+    // KiCad's checks of the attempts count in it too, at a modelled cost
+    // per check that depends only on the board (`kicad_check_work`), so
+    // that a check the DRC cache answers counts as one it does not.
     let ladder_work_now = std::cell::Cell::new(0.0f64);
+    let charge_checks = |checks: usize| {
+        let mut tally = checks_charged.get();
+        ladder_work_now.set(ladder_work_now.get() + tally.add(checks));
+        checks_charged.set(tally);
+    };
     let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
     // Without a deadline (route mode) the wall clock guards the work at
     // `GUARD` times it; with one, the deadline is the only wall guard. The
@@ -2909,6 +2940,7 @@ pub fn route_kicad_board(
             return Ok(None);
         }
         check_attempt(result, directory, board_id)?;
+        charge_checks(1);
         gate.borrow_mut().record((count, result.vias, result.length_mm));
         Ok(Some(open(result, directory)))
     };
@@ -2942,7 +2974,8 @@ pub fn route_kicad_board(
         .unwrap_or(0.75);
     let reserve_cap = config.deadline_work.map_or(0.0, |left| (0.4 * left).min(600.0));
     let mut reserve_set = false;
-    let no_time_for_another = || work_left() - reserve.get() < last_attempt_work.get().max(120.0);
+    // An attempt's check comes on top of its routing (`check_charge`).
+    let no_time_for_another = || work_left() - reserve.get() < last_attempt_work.get().max(120.0) + check_charge;
     // The reserve is a floor (2026-10-15): once kept, no rung, finer pitch
     // or seed round starts unless its projected work leaves the whole
     // reserve, and none may run into it (their work deadlines end where
@@ -3081,8 +3114,7 @@ pub fn route_kicad_board(
                     break;
                 }
                 let (connect, _, exclusive, plane_stubs) = modes[mode];
-                ladder_work += work_of(router.expansions());
-                ladder_work_now.set(ladder_work);
+                ladder_work_now.set(ladder_work_now.get() + work_of(router.expansions()));
                 eprintln!(
                     "probe pours={}{}: {unfinished} nets unfinished after {:.0} s{}",
                     if connect { "connect" } else { "tracks" },
@@ -3109,7 +3141,7 @@ pub fn route_kicad_board(
         }
         if let Some((_, mode, mut router, board, attempt)) = leader {
             let started = std::time::Instant::now();
-            let remaining = (ladder_budget - spent(ladder_work)).max(60.0);
+            let remaining = (ladder_budget - spent(ladder_work_now.get())).max(60.0);
             // Experiment hook: the open count after a short continuation
             // of a copy (no polish), another statistic a judge could use.
             if let Some(seconds) = std::env::var("PCB_LADDER_SHORT_RESUME").ok().and_then(|value| value.parse::<f64>().ok()) {
@@ -3128,17 +3160,16 @@ pub fn route_kicad_board(
             }
             let probed = router.expansions();
             // The router's own probe is in its work already.
-            router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work) + work_of(probed)));
+            router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work_now.get()) + work_of(probed)));
             // It stops where the run's work ends, not where the wall
             // clock does (the deadline stays as the guard against load).
             if config.deadline_work.is_some() {
-                router.config_mut().deadline_work = Some(work_of(probed) + work_left().max(0.0));
+                router.config_mut().deadline_work = Some(work_of(probed) + (work_left() - check_charge).max(0.0));
             }
             let resumed = (remaining / 3.0).clamp(60.0, 900.0);
             let routed = router.resume(resumed);
             let router_expansions = router.expansions();
-            ladder_work += work_of(router_expansions - probed);
-            ladder_work_now.set(ladder_work);
+            ladder_work_now.set(ladder_work_now.get() + work_of(router_expansions - probed));
             drop(router);
             if output_directory.exists() {
                 fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
@@ -3183,11 +3214,14 @@ pub fn route_kicad_board(
             if reserve_wanted && !reserve_set && opens.0 > 0 {
                 reserve_set = true;
                 first_negotiation = probe_seconds + resumed;
-                reserve.set(if reserve_floor {
-                    narrow_step_reserve_floored(work_of(router_expansions), reserve_share, reserve_cap)
-                } else {
-                    narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap)
-                });
+                reserve.set(reserve_with_check(
+                    if reserve_floor {
+                        narrow_step_reserve_floored(work_of(router_expansions), reserve_share, reserve_cap)
+                    } else {
+                        narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap)
+                    },
+                    check_charge,
+                ));
                 eprintln!(
                     "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {:.0} s)",
                     reserve.get(),
@@ -3250,10 +3284,10 @@ pub fn route_kicad_board(
         // judged in rung order as one after another, a rung the order
         // would not have reached counting for nothing.
         let pitch_negotiation = config.negotiation_seconds.is_none().then(|| {
-            let remaining = (ladder_budget - spent(ladder_work)).max(0.0);
+            let remaining = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
             (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
         });
-        let pitch_left = (ladder_budget - spent(ladder_work)).max(0.0);
+        let pitch_left = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
         let pitch_work_left = work_left().max(0.0);
         let rung_attempt = |mode: usize| -> KiCadBoardRouterConfig {
             let (_, skeleton, exclusive, plane_stubs) = modes[mode];
@@ -3271,11 +3305,12 @@ pub fn route_kicad_board(
             // Every rung of the pitch stops where the run's work ends as
             // the pitch starts (decided before they run, as the budget),
             // less the work kept for the narrow-signal step.
+            // Its check follows: the router stops where that still fits.
             attempt.router_deadline_work = config.deadline_work.map(|_| {
                 if reserve_floor && reserve.get() > 0.0 {
-                    deadline_before_reserve(pitch_work_left, reserve.get(), 1)
+                    deadline_before_reserve(pitch_work_left - check_charge, reserve.get(), 1)
                 } else {
-                    pitch_work_left
+                    (pitch_work_left - check_charge).max(0.0)
                 }
             });
             if let Some(pitch) = pitch {
@@ -3299,7 +3334,7 @@ pub fn route_kicad_board(
                 let cost = pitch.as_ref().map_or(last_attempt_work.get(), |pitch| {
                     projected_attempt_work(last_attempt_work.get(), last_attempt_pitch.get(), pitch[0])
                 });
-                !fits_before_reserve(work_left(), reserve.get(), cost)
+                !fits_before_reserve(work_left() - check_charge, reserve.get(), cost)
             } else {
                 no_time_for_another()
             };
@@ -3395,8 +3430,7 @@ pub fn route_kicad_board(
             // pitches; a seed retry does not change it.
             // In work, as the ladder's budget.
             let attempt_seconds = work_of(result.expansions);
-            ladder_work += attempt_seconds;
-            ladder_work_now.set(ladder_work);
+            ladder_work_now.set(ladder_work_now.get() + attempt_seconds);
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
@@ -3418,7 +3452,7 @@ pub fn route_kicad_board(
                 && !past_deadline()
                 // The seeds count as `retry` attempts of work: not out of
                 // the work kept for the narrow-signal step.
-                && (reserve.get() == 0.0 || work_left() - reserve.get() >= retry as f64 * attempt_seconds)
+                && (reserve.get() == 0.0 || work_left() - check_charge - reserve.get() >= retry as f64 * attempt_seconds)
             {
                 seeds_tried = true;
                 let mut seeded = attempt.clone();
@@ -3428,7 +3462,7 @@ pub fn route_kicad_board(
                 // Their work counts `retry` times: each stops at its share
                 // of what is left beyond the reserve.
                 if reserve_floor && reserve.get() > 0.0 {
-                    seeded.router_deadline_work = Some(deadline_before_reserve(work_left(), reserve.get(), retry));
+                    seeded.router_deadline_work = Some(deadline_before_reserve(work_left() - check_charge, reserve.get(), retry));
                 }
                 let retry_directory = output_directory.with_extension("seeds");
                 if retry_directory.exists() {
@@ -3438,8 +3472,7 @@ pub fn route_kicad_board(
                     route_kicad_board_once(source_directory, board_id, &retry_directory, &unchecked(&seeded), *connect)?;
                 other.pours = result.pours.clone();
                 // The seeds run side by side: about `retry` times one's work.
-                ladder_work += work_of(other.expansions) * retry as f64;
-                ladder_work_now.set(ladder_work);
+                ladder_work_now.set(ladder_work_now.get() + work_of(other.expansions) * retry as f64);
                 let other_judged = judge(&mut other, &retry_directory, quality_of(&best))?;
                 let other_opens = other_judged.unwrap_or((router_open(&other), 0));
                 eprintln!(
@@ -3489,11 +3522,14 @@ pub fn route_kicad_board(
             if reserve_wanted && !reserve_set && opens.0 > 0 {
                 reserve_set = true;
                 first_negotiation = attempt.negotiation_seconds.unwrap_or(900.0);
-                reserve.set(if reserve_floor {
-                    narrow_step_reserve_floored(attempt_seconds, reserve_share, reserve_cap)
-                } else {
-                    narrow_step_reserve(attempt_seconds, reserve_share, reserve_cap)
-                });
+                reserve.set(reserve_with_check(
+                    if reserve_floor {
+                        narrow_step_reserve_floored(attempt_seconds, reserve_share, reserve_cap)
+                    } else {
+                        narrow_step_reserve(attempt_seconds, reserve_share, reserve_cap)
+                    },
+                    check_charge,
+                ));
                 eprintln!(
                     "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {attempt_seconds:.0} s)",
                     reserve.get(),
@@ -3544,7 +3580,7 @@ pub fn route_kicad_board(
             if opens.0 == 0 || extra_rung_tried {
                 break 'ladder;
             }
-            if spent(ladder_work) > ladder_budget {
+            if spent(ladder_work_now.get()) > ladder_budget {
                 eprintln!("ladder budget of {ladder_budget:.0} s used: no further attempts");
                 skipped.push(format!(
                     "further rungs of the attempt ladder did not run: its budget of {ladder_budget:.0} s of work was used (ladder_budget_seconds)"
@@ -3574,9 +3610,10 @@ pub fn route_kicad_board(
             break;
         };
         let cost = work_of(best_result.expansions).max(1.0);
-        let mut affordable = ((ladder_budget - spent(ladder_work) - cost) / cost).floor().max(0.0) as usize;
+        // A round's seeds and its one check.
+        let mut affordable = ((ladder_budget - spent(ladder_work_now.get()) - cost - check_charge) / cost).floor().max(0.0) as usize;
         if reserve.get() > 0.0 {
-            affordable = affordable.min(((work_left() - reserve.get()) / cost).floor().max(0.0) as usize);
+            affordable = affordable.min(((work_left() - check_charge - reserve.get()) / cost).floor().max(0.0) as usize);
         }
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
         // As many at once as fit half the memory available; how many seeds
@@ -3593,7 +3630,7 @@ pub fn route_kicad_board(
         seeded.seeds_side_by_side = Some(side_by_side);
         seeded.first_seed = Some(next_seed);
         if reserve_floor && reserve.get() > 0.0 {
-            seeded.router_deadline_work = Some(deadline_before_reserve(work_left(), reserve.get(), retry));
+            seeded.router_deadline_work = Some(deadline_before_reserve(work_left() - check_charge, reserve.get(), retry));
         }
         next_seed += retry as u64;
         if scratch.exists() {
@@ -3603,8 +3640,7 @@ pub fn route_kicad_board(
         let quality = quality_of(&best);
         let mut other = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&seeded), connect)?;
         other.pours = best_result.pours.clone();
-        ladder_work += work_of(other.expansions) * retry as f64;
-        ladder_work_now.set(ladder_work);
+        ladder_work_now.set(ladder_work_now.get() + work_of(other.expansions) * retry as f64);
         let other_judged = judge(&mut other, &scratch, quality)?;
         let other_opens = other_judged.unwrap_or((router_open(&other), 0));
         eprintln!(
@@ -3637,18 +3673,22 @@ pub fn route_kicad_board(
     // load; without it, the step needs an attempt's work as before (route
     // mode: no work deadline).
     let kept = reserve.replace(0.0);
-    let step_has_time = || if kept > 0.0 { work_left() >= narrow_step_minimum(kept) } else { !no_time_for_another() };
+    // The step's own check is in what was kept: its routing has the rest
+    // (and of what is left, what its check leaves).
+    let kept_routing = (kept - check_charge).max(0.0);
+    let routing_left = || work_left() - check_charge;
+    let step_has_time = || if kept > 0.0 { routing_left() >= narrow_step_minimum(kept_routing) } else { !no_time_for_another() };
     let step_budget = |step: &mut KiCadBoardRouterConfig| {
         if kept > 0.0 {
             step.negotiation_seconds = Some(if reserve_floor {
-                narrow_step_negotiation_floored(work_left(), step.negotiation_seconds, first_negotiation, kept)
+                narrow_step_negotiation_floored(routing_left(), step.negotiation_seconds, first_negotiation, kept_routing)
             } else {
-                narrow_step_negotiation(work_left(), step.negotiation_seconds)
+                narrow_step_negotiation(routing_left(), step.negotiation_seconds)
             });
-            step.run_work = Some((ladder_budget, work_left().max(0.0)));
+            step.run_work = Some((ladder_budget, routing_left().max(0.0)));
             // The attempt it varies may carry its pitch's work deadline,
             // taken when that pitch started: the step's is what is left now.
-            step.router_deadline_work = Some(work_left().max(0.0));
+            step.router_deadline_work = Some(routing_left().max(0.0));
         }
     };
     // Why a step for a board with connections open does not run, in the
@@ -3685,7 +3725,7 @@ pub fn route_kicad_board(
         (best.as_ref(), best_attempt.as_ref(), config.narrow_signal_mm)
         && opens.0 > 0
         && config.use_narrow_signals.is_none()
-        && spent(ladder_work) < 1.5 * ladder_budget
+        && spent(ladder_work_now.get()) < 1.5 * ladder_budget
         && !past_deadline()
         && step_has_time()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
@@ -3707,8 +3747,7 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
         let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&narrowed), *connect)?;
-        ladder_work += work_of(result.expansions);
-        ladder_work_now.set(ladder_work);
+        ladder_work_now.set(ladder_work_now.get() + work_of(result.expansions));
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
         let narrow_judged = judge(&mut result, &scratch, quality_of(&best))?;
         let narrow_opens = narrow_judged.unwrap_or((router_open(&result), 0));
@@ -3751,7 +3790,7 @@ pub fn route_kicad_board(
         (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
         && opens.0 > 0
         && !narrow_step_relaxed
-        && spent(ladder_work) < 1.5 * ladder_budget
+        && spent(ladder_work_now.get()) < 1.5 * ladder_budget
         && !past_deadline()
         && step_has_time()
         && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
@@ -3766,8 +3805,7 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
         let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&relaxed_attempt), *connect)?;
-        ladder_work += work_of(result.expansions);
-        ladder_work_now.set(ladder_work);
+        ladder_work_now.set(ladder_work_now.get() + work_of(result.expansions));
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
         let relaxed_judged = judge(&mut result, &scratch, quality_of(&best))?;
         let relaxed_opens = relaxed_judged.unwrap_or((router_open(&result), 0));
@@ -3839,6 +3877,7 @@ pub fn route_kicad_board(
                 fs::write(&board_path, format!("{}\n", encode(&pcb)))
                     .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
                 result.native = Some(verify_materialized_rung(output_directory, board_id)?);
+                charge_checks(1);
                 result.diagnostics.starved_thermals = starved_thermal_diagnostics(output_directory);
                 eprintln!(
                     "{changed} starved pads connected solid: {} starved thermals left",
@@ -3850,10 +3889,13 @@ pub fn route_kicad_board(
     // The neck repair improves a checked board; past the deadline it is
     // skipped (up to six more KiCad checks, uncounted as work).
     if result.native.is_some() && !past_deadline() {
-        repair_necks(&mut result, output_directory, board_id, config)?;
+        let checks = repair_necks(&mut result, output_directory, board_id, config)?;
+        charge_checks(checks);
     }
     result.cut = core::router::wall_cuts();
-    result.work_seconds = ladder_work;
+    result.work_seconds = ladder_work_now.get();
+    result.kicad_checks_charged = checks_charged.get().checks;
+    result.kicad_check_work_seconds = checks_charged.get().work();
     // What did not run matters only to a board left incomplete.
     if final_open.0 > 0 || final_open.1 > 0 {
         result.skipped = skipped;
@@ -4303,6 +4345,8 @@ pub(super) fn finish_routed_board(
         },
         cut: Vec::new(),
         work_seconds: 0.0,
+        kicad_check_work_seconds: 0.0,
+        kicad_checks_charged: 0,
         skipped: Vec::new(),
         neck_repair: None,
         rules: KiCadRulesSummary::of(board, config),
@@ -4319,25 +4363,31 @@ pub(super) fn finish_routed_board(
 /// Lays tracks over KiCad's connection_width necks on the finished board
 /// in `directory` (`necks::repair_connection_width`) and, when the board
 /// changed, takes its new native check and starved thermals.
+/// Returns the KiCad runs it made: its DRC checks and, when it repaired
+/// anything, KiCad's fill of a scratch copy (each a check's work,
+/// `check_work`).
 pub(crate) fn repair_necks(
     result: &mut KiCadBoardRouterResult,
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     if config.skip_native_verification {
-        return Ok(());
+        return Ok(0);
     }
     let calls = crate::drc_cache_counts().calls;
+    let mut fills = 0;
     if let Some(repair) = crate::necks::repair_connection_width(directory, board_id, config)? {
+        fills = repair.kicad_fills;
         if repair.kept {
             result.native = Some(verify_materialized_rung(directory, board_id)?);
             result.diagnostics.starved_thermals = starved_thermal_diagnostics(directory);
         }
         result.neck_repair = Some(repair);
     }
-    NECK_CHECKS.fetch_add(crate::drc_cache_counts().calls.saturating_sub(calls) as usize, std::sync::atomic::Ordering::Relaxed);
-    Ok(())
+    let checks = crate::drc_cache_counts().calls.saturating_sub(calls) as usize;
+    NECK_CHECKS.fetch_add(checks, std::sync::atomic::Ordering::Relaxed);
+    Ok(checks + fills)
 }
 
 /// KiCad checks the neck repair ran in this process (`repair_necks`).
@@ -5379,6 +5429,32 @@ mod narrow_step_tests {
         assert_eq!(deadline_before_reserve(700.0, 300.0, 4), 100.0);
         assert_eq!(deadline_before_reserve(200.0, 300.0, 1), 0.0);
         assert_eq!(deadline_before_reserve(700.0, 300.0, 0), 400.0);
+    }
+
+    #[test]
+    fn the_reserve_covers_the_steps_own_check() {
+        // A layout's ladder, checks counting 9 s each: the step keeps its
+        // routing's floor and its check on top; nothing kept, no check.
+        let check = 9.0;
+        assert_eq!(reserve_with_check(0.0, check), 0.0);
+        let kept = reserve_with_check(narrow_step_reserve_floored(200.0, 0.75, 600.0), check);
+        assert_eq!(kept, NARROW_RESERVE_FLOOR + check);
+        // Every rung stops where the reserve begins, less its own check:
+        // its routing, its check and the reserve fit in what was left.
+        let left = 700.0;
+        let deadline = deadline_before_reserve(left - check, kept, 1);
+        assert!((deadline + check + kept - left).abs() < 1.0e-9);
+        // So with only the reserve left the step runs: its routing has the
+        // reserve less its check, which is its minimum.
+        let (routing_left, kept_routing) = (kept - check, kept - check);
+        assert!(routing_left >= narrow_step_minimum(kept_routing));
+        // An attempt whose routing fits but whose check does not, does not
+        // start: 130 s of a rung and a 9 s check in 135 s beyond the reserve.
+        assert!(fits_before_reserve(135.0 + kept, kept, 130.0));
+        assert!(!fits_before_reserve(135.0 + kept - check, kept, 130.0));
+        // Without a charge (route mode) the arithmetic is the old one.
+        assert_eq!(reserve_with_check(300.0, 0.0), 300.0);
+        assert_eq!(deadline_before_reserve(left - 0.0, 300.0, 1), deadline_before_reserve(left, 300.0, 1));
     }
 
     #[test]

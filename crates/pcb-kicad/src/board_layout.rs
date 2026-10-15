@@ -157,8 +157,16 @@ pub struct KiCadBoardLayoutMove {
 pub struct KiCadBoardLayoutResult {
     pub board_id: String,
     /// The work up to the final ladder (sizing, placement, routes and
-    /// moves), in seconds of an idle machine: what the budget counts.
+    /// moves, KiCad's check of the board kept), in seconds of an idle
+    /// machine: what the budget counts.
     pub work_seconds: f64,
+    /// The work one KiCad check counts (`check_work`, modelled from the
+    /// board), the checks counted (the board kept, the ladders' attempts,
+    /// the neck repairs) and their work, part of `work_seconds` and
+    /// `routed.work_seconds`.
+    pub kicad_check_seconds: f64,
+    pub kicad_checks_charged: usize,
+    pub kicad_check_work_seconds: f64,
     pub placement_seconds: f64,
     pub first_route_seconds: f64,
     pub first_unconnected_terminals: usize,
@@ -520,6 +528,13 @@ pub(crate) fn narrow_continuation(choice: NarrowContinuation, work_left: f64, fl
     }
 }
 
+/// The work of an attempt of `side_by_side` seeds from what its ladder
+/// counted (`work`: one seed's routing, and `check_work` of KiCad's
+/// checks, which run once per attempt, not once per seed).
+pub(crate) fn seeds_work(work: f64, check_work: f64, side_by_side: usize) -> f64 {
+    (work - check_work) * side_by_side as f64 + check_work
+}
+
 /// How many seeds of the narrow-signal attempt fit in `work_left` (they
 /// run side by side, each about `attempt_work`): at most four.
 pub(crate) fn continuation_seeds(work_left: f64, attempt_work: f64) -> usize {
@@ -665,6 +680,30 @@ pub fn layout_kicad_board(
         with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?).map_err(crate::verdict::input_error)?;
         &with_classes
     };
+    // KiCad's checks inside the layout (the board kept, the ladder's
+    // attempts, the neck repair) count as work at a cost modelled from the
+    // board alone (`check_work`), the same whether the DRC cache answers
+    // a check or not: 10 to 50 s of kicad-cli each when uncached, which the
+    // wall-clock guard used to see and the work did not.
+    let check_seconds = if router_config.skip_native_verification {
+        0.0
+    } else {
+        match router_config.kicad_check_work {
+            Some(seconds) => seconds,
+            None => {
+                let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+                let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+                let inputs = crate::check_work::check_inputs(&parse(&text)?);
+                let seconds = crate::check_work::check_seconds(inputs);
+                eprintln!(
+                    "layout: a KiCad check counts {seconds:.1} s of work ({} hatched zones, {:.0} hatch holes)",
+                    inputs.hatched_zones, inputs.hatch_holes
+                );
+                seconds
+            }
+        }
+    };
+    let mut checks_charged = crate::check_work::CheckTally::new(check_seconds);
     // Every route of the layout ends by a wall-clock guard past its total
     // budget: on a much busier or slower machine the work would run on
     // past what the agent waits for.
@@ -673,6 +712,7 @@ pub fn layout_kicad_board(
         deadline: router_config.deadline.or(core::router::wall_guard().then(|| {
             layout_started + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0))
         })),
+        kicad_check_work: Some(check_seconds),
         ..router_config.clone()
     };
     let router_config = &with_deadline;
@@ -1475,6 +1515,10 @@ pub fn layout_kicad_board(
         "tracks"
     }
     .into();
+    // KiCad's check of the board kept counts as work (`check_work`).
+    if routed.native.is_some() {
+        work += checks_charged.add(1);
+    }
     // If something is still open (in KiCad's eyes too), route the final
     // placement with route mode's whole ladder (pours as tracks, finer
     // pitches, more seeds) and keep the better board. If only thermals are
@@ -1570,6 +1614,8 @@ pub fn layout_kicad_board(
         fallback_config.kicad_check_top = Some(KICAD_CHECK_TOP);
         fallback_config.kicad_kept = Some(((crate::board_router::router_open(&routed), routed.vias, routed.length_mm), current));
         let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
+        // (Its checks are in its work already.)
+        checks_charged.add(fallback.kicad_checks_charged);
         // The work of the narrow-signal attempt and what follows it counts
         // whether the layout keeps them or not.
         let mut after_work = fallback.work_seconds;
@@ -1667,8 +1713,11 @@ pub fn layout_kicad_board(
                 let continuation_directory = output_directory.join("result-continuation");
                 let mut continuation =
                     route_kicad_board(&placed_directory, board_id, &continuation_directory, &continuation_config)?;
-                // The ladder counts one seed's work for an attempt of seeds.
-                continuation.work_seconds *= side_by_side as f64;
+                // The ladder counts one seed's work for an attempt of seeds
+                // (not its checks: one per attempt).
+                checks_charged.add(continuation.kicad_checks_charged);
+                continuation.work_seconds =
+                    seeds_work(continuation.work_seconds, continuation.kicad_check_work_seconds, side_by_side);
                 after_work += continuation.work_seconds;
                 let continuation_quality = quality(&continuation, &continuation_directory);
                 eprintln!(
@@ -1699,7 +1748,9 @@ pub fn layout_kicad_board(
     // route mode ladder above has repaired it already). It improves the
     // board: past the deadline it is skipped.
     if (routed.native.is_some() || router_config.skip_native_verification) && stop.allows(LayoutStep::NeckRepair) {
-        crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+        let checks = crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+        // Its checks count as work (after every decision: only the tally).
+        routed.work_seconds += checks_charged.add(checks);
     }
     if routed.neck_repair.as_ref().is_some_and(|repair| repair.kept) {
         let report_path = output_directory.join("result").join("board-router.json");
@@ -1716,9 +1767,13 @@ pub fn layout_kicad_board(
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
     }
     let routed_work = routed.work_seconds;
+    let kicad_check_work_seconds = checks_charged.work();
     let layout = KiCadBoardLayoutResult {
         board_id: board_id.into(),
         work_seconds: layout_work,
+        kicad_check_seconds: check_seconds,
+        kicad_checks_charged: checks_charged.checks,
+        kicad_check_work_seconds,
         placement_seconds: placement.seconds,
         first_route_seconds,
         first_unconnected_terminals: first.0,
@@ -1743,13 +1798,14 @@ pub fn layout_kicad_board(
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     let drc_cache = crate::drc_cache_counts();
     eprintln!(
-        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count{}",
+        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count; check work {} x {check_seconds:.1} s = {kicad_check_work_seconds:.0} s{}",
         elapsed(),
         work + routed_work,
         drc_cache.calls,
         drc_cache.hits,
         crate::board_router::neck_checks(),
         crate::board_router::checks_skipped(),
+        checks_charged.checks,
         if stop.fired() {
             format!("; past the deadline: {}", stop.skipped().iter().map(|step| format!("{step:?}")).collect::<Vec<_>>().join(", "))
         } else {
@@ -1867,5 +1923,13 @@ mod budget_tests {
         assert_eq!(continuation_seeds(410.0, 200.0), 2);
         assert_eq!(continuation_seeds(150.0, 200.0), 0);
         assert_eq!(continuation_seeds(900.0, 0.0), 0);
+    }
+
+    #[test]
+    fn seeds_multiply_their_routing_not_their_checks() {
+        // 300 s of one seed's routing and two checks of 9 s, four seeds.
+        assert_eq!(seeds_work(318.0, 18.0, 4), 1218.0);
+        assert_eq!(seeds_work(318.0, 18.0, 1), 318.0);
+        assert_eq!(seeds_work(300.0, 0.0, 3), 900.0);
     }
 }

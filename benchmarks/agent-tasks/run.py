@@ -519,6 +519,11 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
         work_seconds = result.get("work_seconds")
     if work_seconds is not None:
         row["work_seconds"] = round(work_seconds, 1)
+    # The part of it that is KiCad's checks inside the layout (a modelled
+    # cost per check, the same cached or not; binaries since x1080).
+    check_work = (verdict or {}).get("kicad_check_work_seconds")
+    if check_work is not None:
+        row["kicad_check_work_seconds"] = round(check_work, 1)
     if result.get("first_unconnected_terminals") is not None:
         row["first_unconnected_terminals"] = result["first_unconnected_terminals"]
     # A board passes on KiCad's connectivity, not on the router's own count

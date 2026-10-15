@@ -209,6 +209,8 @@ pub struct KiCadRunFacts {
     pub placement_hints: Vec<String>,
     pub cut: Vec<String>,
     pub work_seconds: Option<f64>,
+    /// The part of `work_seconds` that is KiCad's checks (a layout's).
+    pub kicad_check_work_seconds: Option<f64>,
     pub wall_seconds: f64,
     pub outputs: BTreeMap<String, String>,
     pub skipped: Vec<String>,
@@ -236,6 +238,7 @@ impl KiCadRunFacts {
             placement_hints: Vec::new(),
             cut: Vec::new(),
             work_seconds: None,
+            kicad_check_work_seconds: None,
             wall_seconds: 0.0,
             outputs: BTreeMap::new(),
             skipped: Vec::new(),
@@ -299,6 +302,11 @@ pub struct KiCadVerdict {
     /// The work done, in seconds of an idle machine (what the budgets
     /// count).
     pub work_seconds: Option<f64>,
+    /// The part of `work_seconds` that is KiCad's checks inside a layout:
+    /// each counts a cost modelled from the board, the same whether the
+    /// DRC cache answered it or not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kicad_check_work_seconds: Option<f64>,
     pub wall_seconds: f64,
     /// Where the results are: `project`, `board`, `drc`, `report`, ...
     pub outputs: BTreeMap<String, String>,
@@ -520,6 +528,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         unplaced: facts.unplaced.clone(),
         cut: facts.cut.clone(),
         work_seconds: facts.work_seconds,
+        kicad_check_work_seconds: facts.kicad_check_work_seconds,
         wall_seconds: facts.wall_seconds,
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
