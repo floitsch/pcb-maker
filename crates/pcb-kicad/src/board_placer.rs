@@ -3018,7 +3018,7 @@ fn choose_any_edges(
     let trial = place_kicad_board(source_directory, board_id, &directory, &free);
     let loops = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
         .ok()
-        .and_then(|text| parse(&text).ok())
+        .and_then(|text| crate::canonical_order::parse_board(&text).ok())
         .and_then(|pcb| outline::board_loops(&pcb).ok());
     // On a polygon, the distance to the nearest side facing each way.
     let sides = match (&loops, polygonal) {
@@ -3074,7 +3074,7 @@ fn choose_any_edges(
 /// order for repeated references); fixed parts keep their own.
 fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<core::Pose>, String> {
     let text = fs::read_to_string(designer).map_err(|error| format!("{}: {error}", designer.display()))?;
-    let pcb = parse(&text)?;
+    let pcb = crate::canonical_order::parse_board(&text)?;
     let mut at_by_reference: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
     for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
         at_by_reference.entry(footprint_reference(footprint).unwrap_or_default()).or_default().push(form_at(footprint)?);
@@ -3445,7 +3445,7 @@ pub fn place_kicad_board(
     // Errors up to the lowering are the input's (`input_error`).
     let source = fs::read_to_string(&source_board)
         .map_err(|error| crate::verdict::input_error(format!("failed to read {}: {error}", source_board.display())))?;
-    let mut pcb = parse(&source).map_err(crate::verdict::input_error)?;
+    let mut pcb = crate::canonical_order::parse_board(&source).map_err(crate::verdict::input_error)?;
     let mut config = resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
     // Parts added by the import (`add`) stay where the entry puts them.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
@@ -4881,5 +4881,106 @@ mod glob_tests {
         assert!(glob_matches("R?", "R1") && !glob_matches("R?", "R12"));
         assert!(glob_matches("REF**", "REF**_2"));
         assert!(glob_matches("REF\\*\\*", "REF**") && !glob_matches("REF\\*\\*", "REF**_2") && !glob_matches("REF\\*\\*", "REF12"));
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    /// A small board in a given order: twelve parts on an 8-pin chip's
+    /// nets, each with pads and graphics; `reversed` writes the footprints,
+    /// and each footprint's pads and graphics, the other way round.
+    fn board(reversed: bool) -> String {
+        let order = |mut items: Vec<String>| {
+            if reversed {
+                items.reverse();
+            }
+            items.concat()
+        };
+        let part = |reference: &str, uuid: &str, at: [f64; 2], pads: Vec<String>, half: [f64; 2]| {
+            let graphics = vec![
+                format!(r#"(fp_rect (start {} {}) (end {} {}) (layer "F.CrtYd") (uuid "{uuid}-c"))"#, -half[0], -half[1], half[0], half[1]),
+                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s1"))"#, -half[0], -half[1], half[0], -half[1]),
+                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s2"))"#, -half[0], half[1], half[0], half[1]),
+                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.Fab") (uuid "{uuid}-f"))"#, -half[0], 0.0, half[0], 0.0),
+            ];
+            format!(
+                r#"(footprint "Lib:{reference}" (layer "F.Cu") (uuid "{uuid}") (at {} {})
+                    (property "Reference" "{reference}") (attr smd) {} {})"#,
+                at[0],
+                at[1],
+                order(graphics),
+                order(pads)
+            )
+        };
+        let pad = |number: &str, x: f64, y: f64, net: usize| {
+            format!(r#"(pad "{number}" smd rect (at {x} {y}) (size 0.6 0.9) (layers "F.Cu") (net {net} "N{net}"))"#)
+        };
+        let mut footprints = Vec::new();
+        let chip: Vec<String> = (1..=8)
+            .map(|pin| {
+                let (x, y) = if pin <= 4 { (-2.5, pin as f64 - 2.5) } else { (2.5, 6.5 - pin as f64) };
+                pad(&pin.to_string(), x, y, pin)
+            })
+            .collect();
+        footprints.push(part("U1", "a1", [25.0, 20.0], chip, [3.5, 2.5]));
+        for index in 1..=8 {
+            let pads = vec![pad("1", -0.8, 0.0, index), pad("2", 0.8, 0.0, index % 8 + 1)];
+            footprints.push(part(&format!("R{index}"), &format!("b{index}"), [5.0 + 4.0 * index as f64, 35.0], pads, [1.5, 0.8]));
+        }
+        for index in 1..=3 {
+            let pads = vec![pad("1", -0.8, 0.0, index * 2), pad("2", 0.8, 0.0, 9)];
+            footprints.push(part(&format!("C{index}"), &format!("c{index}"), [45.0, 5.0 + 4.0 * index as f64], pads, [1.5, 0.8]));
+        }
+        format!(
+            r#"(kicad_pcb (version 20240108)
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (net 0 "") {}
+            (gr_rect (start 0 0) (end 50 40) (layer "Edge.Cuts"))
+            {})"#,
+            (1..=9).map(|net| format!(r#"(net {net} "N{net}")"#)).collect::<String>(),
+            order(footprints)
+        )
+    }
+
+    #[test]
+    fn the_lowering_does_not_depend_on_the_order_of_the_file() {
+        let (forward, backward) = (board(false), board(true));
+        assert_ne!(forward, backward);
+        let config = KiCadBoardPlacerConfig::default();
+        // As read, the parts come in the file's order.
+        let raw = |text: &str| lower_placement(&parse(text).unwrap(), &config, &[]).unwrap().references;
+        assert_ne!(raw(&forward), raw(&backward));
+        // In the canonical order the problems are the same.
+        let lowered = |text: &str| {
+            let lowered = lower_placement(&crate::canonical_order::parse_board(text).unwrap(), &config, &[]).unwrap();
+            (lowered.references.clone(), format!("{:?}", lowered.problem))
+        };
+        let (references, problem) = lowered(&forward);
+        assert_eq!(references, ["C1", "C2", "C3", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "U1"]);
+        assert_eq!((references, problem), lowered(&backward));
+    }
+
+    #[test]
+    fn a_placement_does_not_depend_on_the_order_of_the_file() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("pcb-maker-order-{}-{nonce}", std::process::id()));
+        let config = KiCadBoardPlacerConfig { placement_seeds: 2, ..KiCadBoardPlacerConfig::default() };
+        let mut placed = Vec::new();
+        for (name, reversed) in [("forward", false), ("backward", true)] {
+            let source = root.join(format!("{name}-source"));
+            fs::create_dir_all(&source).unwrap();
+            fs::write(source.join("board.kicad_pcb"), board(reversed)).unwrap();
+            let output = root.join(format!("{name}-placed"));
+            let result = place_kicad_board(&source, "board", &output, &config).unwrap();
+            assert!(result.unplaced.is_empty() && result.illegal.is_empty(), "{:?} {:?}", result.unplaced, result.illegal);
+            placed.push((result.wirelength_final_mm, fs::read_to_string(output.join("board.kicad_pcb")).unwrap()));
+        }
+        let _ = fs::remove_dir_all(&root);
+        // The same poses, and the same board written: the output is in the
+        // canonical order whatever order the input was in.
+        assert_eq!(placed[0].0, placed[1].0);
+        assert!(placed[0].1 == placed[1].1, "the placed boards differ");
     }
 }

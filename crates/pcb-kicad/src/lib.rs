@@ -86,6 +86,7 @@ pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial, KiCadSwappable, layout_kicad_board,
 };
 mod board_placer;
+mod canonical_order;
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadPlacedFootprint, place_kicad_board,
 };

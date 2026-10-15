@@ -1783,7 +1783,7 @@ pub fn dump_kicad_pour_map(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let pcb = parse(&source)?;
+    let pcb = crate::canonical_order::parse_board(&source)?;
     let Lowered { board } = lower(&pcb, config, true)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let mut router = core::router::Router::new(&board, &core_config(config));
@@ -1810,7 +1810,7 @@ pub fn bench_kicad_search(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let pcb = parse(&source)?;
+    let pcb = crate::canonical_order::parse_board(&source)?;
     let Lowered { board } = lower(&pcb, config, true)?;
     let mut router_config = core_config(config);
     router_config.max_iterations = iterations;
@@ -2673,7 +2673,7 @@ pub fn route_kicad_board(
     let planned = {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        planned_pours(&parse(&text).map_err(crate::verdict::input_error)?, config).map_err(crate::verdict::input_error)?
+        planned_pours(&crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?, config).map_err(crate::verdict::input_error)?
     };
     if config.add_pours.is_empty() && !planned.is_empty() {
         eprintln!(
@@ -2691,7 +2691,7 @@ pub fn route_kicad_board(
         copy_directory_tree(source_directory, &poured_directory)?;
         let board = poured_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        let mut pcb = parse(&text)?;
+        let mut pcb = crate::canonical_order::parse_board(&text)?;
         add_pour_zones(&mut pcb, &planned).map_err(crate::verdict::input_error)?;
         fs::write(&board, format!("{}\n", encode(&pcb))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
@@ -2727,7 +2727,7 @@ pub fn route_kicad_board(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let parsed = parse(&source)?;
+    let parsed = crate::canonical_order::parse_board(&source)?;
     let layer_table = LayerTable::from_pcb(&parsed)?;
     let pour_nets: Vec<String> = pours(&parsed, &layer_table)?
         .into_iter()
@@ -4388,7 +4388,7 @@ fn route_kicad_board_once(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let mut pcb = parse(&source)?;
+    let mut pcb = crate::canonical_order::parse_board(&source)?;
     let Lowered { board } = lower(&pcb, config, connect_pours)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();

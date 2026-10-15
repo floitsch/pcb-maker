@@ -238,7 +238,7 @@ fn size_outline(
         return Ok(Vec::new());
     };
     let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-    let start = default_area_factor(&parse(
+    let start = default_area_factor(&crate::canonical_order::parse_board(
         &fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?,
     )?);
     let mut quick = core_config(router_config);
@@ -272,7 +272,7 @@ fn size_outline(
         let legal = placement.unplaced.is_empty() && placement.illegal.is_empty();
         let open = if legal {
             let placed = directory.join(format!("{board_id}.kicad_pcb"));
-            let mut pcb = parse(
+            let mut pcb = crate::canonical_order::parse_board(
                 &fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?,
             )?;
             let planned = planned_pours(&pcb, router_config)?;
@@ -791,7 +791,7 @@ pub fn layout_kicad_board(
         None if !config.swappable.is_empty() => {
             let placed = placed_directory.join(format!("{board_id}.kicad_pcb"));
             let text = fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?;
-            let spec = swappable_spec(&parse(&text)?, &config.swappable)?;
+            let spec = swappable_spec(&crate::canonical_order::parse_board(&text)?, &config.swappable)?;
             Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
         }
         None => None,
@@ -800,7 +800,7 @@ pub fn layout_kicad_board(
     let placed_board = placed_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&placed_board)
         .map_err(|error| format!("failed to read {}: {error}", placed_board.display()))?;
-    let mut pcb = parse(&source)?;
+    let mut pcb = crate::canonical_order::parse_board(&source)?;
     // Requested pours (a ground plane) join the placed board.
     let planned = planned_pours(&pcb, router_config)?;
     if !planned.is_empty() {

@@ -115,7 +115,7 @@ pub fn score_kicad_congestion(
 ) -> Result<KiCadCongestionScore, String> {
     let board_path = source_directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
-    let pcb = parse(&text)?;
+    let pcb = crate::canonical_order::parse_board(&text)?;
     let Expr::List(items) = &pcb else {
         return Err("PCB root is not a list".into());
     };
