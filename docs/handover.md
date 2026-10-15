@@ -1932,7 +1932,8 @@ place" are the CLI exit-code commit's verdicts for the same failure.
 9. Placement seeds per budget (hackrf, reCamera, WLED_Matrix,
    4in1-mini): seed-repeated pairs of x723 and main's placer to see
    whether fewer seeds is the loss; if so, the placement budget in the
-   new work units needs raising.
+   new work units needs raising. Measured: not the loss ("Placement seeds
+   after honest work").
 
 ## Committed on 2026-10-15 (agent walkthrough)
 
@@ -2444,6 +2445,118 @@ Numbers (x950; the commit's binary x951 is the same code plus comments):
 Open: gaps (fill them along the slot, with KiCad's "same outline"
 condition); the Keypad unconnected item; the WLED neck the repair leaves
 (0.070 at a repair track, x950 short tier).
+
+## Placement seeds after honest work (2026-10-15, x934 / x980, no code changed)
+
+Question from the v16 triage (its item 9): since the placer's work is
+counted honestly (93f40bd) and the pool runs only the seeds the budget keeps
+(8435fff), the race runs fewer seeds (hackrf 16 to 10, WLED_Matrix 14 to
+11, 4in1-mini 9 to 5, MIDAS-MK1.1 12 to 5 kept). Is the placement budget too
+small? Answer: **no; noise or honest cost, nothing shipped.**
+
+No setting exists for this: the layout sets the placer's `work_seconds` to
+0.4 of `total_seconds` itself (`--placer` cannot change it) and the race's
+first batch is `min(placement_seeds, 3)`. x980 = 1223878 plus two fields used
+only for this measurement and not kept: the layout's `placement_share`
+(0.4) and the placer's `minimum_seeds` (3), and a `--layout` JSON option in
+run.py. Layout mode, tasks v6, four threads, three jobs, load 8-31, one run
+per configuration (the layout is deterministic, no row cut):
+(a) x934 as is; (b) `placement_share` 1.6 (2400 s of seed work, room for
+16 seeds on all six); (c) `minimum_seeds` 16 (all 16 seeds in one batch,
+whatever the budget); (d) as (c) with `congestion_probes` 6 (the race
+probes six placements instead of three); and the designer's placement
+(tracks stripped) in route mode on x934 as the ceiling. Logs and outputs
+`build/seeds/{a-x934,b-x980,c-x980,d-x980,designer-x934}`.
+
+KiCad unconnected (+ new errors); v15 and v16 are the sweeps' rows:
+
+| board | v15 | v16 | (a) | (b) | (c) | (d) | designer, route mode |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hackrf | 0 +1e | 2 | 2 | 2 | 2 | 0 +1e | 0 +1e |
+| reCamera | 4 | 9 | 5 | 5 | 5 | 5 | 4 |
+| WLED_Matrix | 4 +13e | 6 +1e | 6 +1e | 6 +1e | 6 +1e | 6 +1e | 1 +4e |
+| 4in1-mini | 38 | 71 | 54 | 48 | 48 | 56 | 5 |
+| Castor | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| MIDAS-MK1.1 | 11 | 9 | 8 | 8 | 8 | 8 | 8 |
+| sum | 57 | 97 | 75 | 69 | 69 | 75 | 18 |
+
+Vias 1416 / 1422 / 1422 / 1310 (a, b, c, d); CPU 7139 / 9811 / 8546 / 8251 s.
+
+The placement per configuration (seeds kept of run, the placer's kept
+seed; the clock's charge = the kept seeds' work as the reference pool of
+eight threads runs them per batch; routing work left = 1500 s less the
+charge; placement wall on four threads):
+
+| board | (a) seeds, charge, left, wall | (c) | (b) | sum of seed work (a / 16 seeds) |
+| --- | --- | --- | --- | --- |
+| hackrf | 10/10 #4, 146, 1354, 214 | 16/16 #4, 153, 1347, 191 | 16/16, 196, 1304, 225 | 646 / 1048 |
+| reCamera | 16/16 #1, 78, 1422, 60 | 54, 1446, 64 | 78, 1422, 82 | 402 |
+| WLED_Matrix | 11/11 #2, 121, 1379, 168 | 122, 1378, 176 | 171, 1329, 308 | 603 / 877 |
+| 4in1-mini | 5/5 #3, 297, 1203, 162 | 16/16 #16, 311, 1189, 400 | 443, 1057, 413 | 691 / 2100 |
+| Castor | 16/16 #1, 28, 1472, 27 | 19, 1481, 39 | 28, 1472, 38 | 145 |
+| MIDAS-MK1.1 | 5/7 #4, 309, 1191, 199 | 16/16 #11, 307, 1193, 341 | 406, 1094, 515 | 630 / 2082 |
+
+What it says, per board:
+
+- **The clock barely charges the extra seeds.** The charge is the
+  reference pool's makespan per batch; (a) runs a batch of three and then
+  one more batch, two rounds of the eight-thread pool, and (c)'s single
+  batch of 16 is also two rounds. So 16 seeds cost the routing 0-14 s of
+  its budget (less on reCamera and Castor, whose 3 + 13 batches become one),
+  but 20 % more CPU over the six boards (+1400 s, 4in1-mini and MIDAS
+  +1050 and +500) and twice the placement wall on four threads where the
+  seeds are long (4in1-mini 162 to 400 s, MIDAS 199 to 341 s). (b) runs
+  the same 16 seeds in 3 + 13 and charges up to 130 s more (4in1-mini 443,
+  MIDAS 406) for the same boards as (c): the routing did not use it.
+- **hackrf: not the seeds, the probe.** v15's final placement (RUDY 12.51,
+  the best score) is one of (a)'s ten seeds too, and the race probes it
+  first in every configuration (scores [12.51, 19.06, 19.6] in v15, v16,
+  (a) and (c): the same three placements). v15's probes left [16, 16, 23]
+  nets unfinished and it kept that placement (0 +1e); x862's and x934's
+  probes leave [36, 72, 10] and keep the third (2). The probe is a 75 s
+  route by today's router, so the router change since x723 moved the race,
+  not the placer. With six probes (d) the fourth placement (RUDY 20.15,
+  probe 0 unfinished) wins and ends 0 +1e, 603 vias against 701.
+- **MIDAS-MK1.1:** 16 seeds bring v15's best-scored placement back (RUDY
+  1.57, absent with five seeds); its probe leaves 24 unfinished against the
+  kept one's 17, so the race keeps the same placement and the board is the
+  same (8, 197 vias). v15's final placement is the placer's kept seed then
+  and now (5 parts differ).
+- **WLED_Matrix:** the extra seeds only change the third probe (4.29
+  instead of 4.89, 119 unfinished); the same placement wins, identical
+  board. v16's poses equal (a)'s; v15's (138 parts differ) are not among
+  today's seeds.
+- **reCamera, Castor:** 16 seeds already in (a); identical results in all
+  configurations. reCamera's v16 row (9) is 5 on main: the router, not
+  the placement (v16's triage counted it as placement).
+- **4in1-mini:** seed 16 (beyond (a)'s five) scores best by RUDY and is
+  kept: 54 to 48. With six probes (d) a placement whose probe left fewer
+  nets unfinished (101 against 109) wins the race and ends worse (56):
+  the probe's order does not hold for the final route when the counts are
+  this close. v15's 38 came from placements today's placer no longer makes
+  (every configuration differs from v15 in 188 of 191 parts; x792's far-side
+  courtyards changed the seeds, Castor's sixteen seeds differ from v15's in
+  162 parts too). The designer's placement routes to 5: the gap on this
+  board is the placement itself, not the number of seeds.
+
+Over the six boards: (b) and (c) 75 to 69 unconnected, all of it one board
+(4in1-mini 54 to 48), with (d) giving 6 back on the same board; the
+legaliser agent measured a placement change to flip crowded boards like
+this one by far more, so one seed's difference on one board is not a
+signal. More placement budget (b) costs routing budget (up to 130 s) and
+CPU for nothing measurable; a floor of 16 seeds (c) is nearly free in the
+clock but costs 20 % CPU and placement wall. Neither is clear enough for a
+default, and the v16 "worse" rows were not seed counts: hackrf is the
+probe race under the new router, reCamera the router, WLED_Matrix and
+MIDAS unchanged with 16 seeds, 4in1-mini a placement gap that seeds do not
+close (designer 5, ours 48-56). Short tier not run (no default changed).
+
+Worth knowing for later: the race's probes (RUDY's best three, 75 s each)
+pick the final placement by a margin smaller than their own noise on
+hackrf and 4in1-mini (probe 36 for a placement that routes to 0-1; probe
+101 for the one that ends 8 worse than the probe-109 one). The designer's
+ceiling (18 unconnected over the six against 69-75) is in 4in1-mini (5 vs
+48-56) and hackrf's vias (277 vs 603-701).
 
 ## Open problems, ranked
 
