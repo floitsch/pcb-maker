@@ -1262,15 +1262,20 @@ fn lower_board(
                             blocks_vias,
                             label: format!("{label} mask aperture"),
                         };
+                        // A reach at the copper clearance adds nothing (KiCad's
+                        // tests are strict on both); the older rule keeps
+                        // its own threshold (USB_Cable_Tester: 0.05 + 0.05
+                        // mm against classes of 0.1 rerouted for nothing).
+                        let needed = |reach: f64| reach > floor + 2.0e-9 || (reach == web_reach && reach > floor);
                         if (via_reach - covered).abs() < 1.0e-9 {
-                            if covered > floor {
+                            if needed(covered) {
                                 obstacles.push(aperture(covered, true, true));
                             }
                         } else {
-                            if covered > floor {
+                            if needed(covered) {
                                 obstacles.push(aperture(covered, true, false));
                             }
-                            if via_reach > floor {
+                            if needed(via_reach) {
                                 obstacles.push(aperture(via_reach, false, true));
                             }
                         }

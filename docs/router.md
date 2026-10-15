@@ -178,6 +178,36 @@ clearance 0.25: a via 0.769 from the centre kept the copper rule and was
 tracks end on the drill; its vias keep the pad copper's rule
 (`StaticMaps::via_owner`).
 
+### Solder mask bridges (2026-10-15)
+
+KiCad 10.0.7's `solder_mask_bridge` (DRC_TEST_PROVIDER_SOLDER_MASK): items
+of two nets bridge when an item on a mask layer (a pad with that mask
+layer, an untented via, a mask graphic or text) comes within the board's
+`solder_mask_min_width` plus both mask expansions of another such item,
+or when covered copper (a track, a tented via, zone fill) comes within
+`solder_mask_to_copper_clearance` (the project's rules) plus the
+opening's expansion. A pad's expansion is its own `solder_mask_margin`,
+else its footprint's, else the board's `pad_to_mask_clearance`; a via's
+the board's; a text has none. Pairs of one net never bridge; a plain
+opening (a graphic, a mask-only pad) bridges once it exposes two nets.
+Vias are tented unless the setup says otherwise (`(tenting ...)`, KiCad
+9's `(tenting front back)`, the old plot setting `(viasonmask yes)`).
+
+The lowering keeps it as keepouts of the opening's net: graphics, texts
+and mask-only pads (see the island and bodies sections of
+docs/handover.md), and a pad's aperture, which other nets' tracks and
+tented vias keep at the solder-mask-to-copper clearance plus the pad's
+expansion, untented vias at the web plus both expansions (a pad or
+footprint margin of its own also keeps its margin plus half the web, the
+older rule). A cached TrueType text on a mask layer also opens the stroke
+font's box: KiCad draws a face it does not have in a stand-in, not from
+the cache. Only where the project rates solder_mask_bridge an error
+(KiCad's default); at warning or ignore the router keeps the looser rules
+of before (OpenESC 4in1-mini: the exact rule took its warnings 29 to 2 and
+cost 9 unconnected). Not modelled: via-to-via mask spacing (no corpus
+board has untented vias with a web or an expansion), pads placed under
+another part's opening (placement's), zone fill under openings.
+
 ### Memory (2026-10-03)
 
 A thread's search scratch is the largest part of a big board's footprint
