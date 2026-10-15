@@ -90,7 +90,7 @@ pub struct Plane {
     /// layer. KiCad fills each zone apart and cuts these from this one's
     /// fill (zone_filler.cpp, subtractHigherPriorityZones): the fills meet
     /// at a seam, and the DRC counts a pad's spokes per zone, each in its
-    /// own part (`Router::zone_seams`).
+    /// own part (`Router::kicad_spokes`).
     pub above: Vec<Vec<Point>>,
     /// Whether pads may connect through the pour. If not, the net is routed
     /// with tracks and the pour only fills (its pads are still guarded).
@@ -278,11 +278,6 @@ impl Board {
     /// overridden to 0.15 mm in a 0.5 mm zone, keeps its diagonal spokes
     /// past the neighbouring pins).
     pub fn fill_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
-        // Read once: the fill probes ask for every item they test.
-        static OLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OLD.get_or_init(|| std::env::var_os("PCB_ROUTER_OLD_FILL_CLEARANCE").is_some()) {
-            return self.copper_clearance(class, obstacle);
-        }
         obstacle
             .clearance_override
             .unwrap_or_else(|| self.copper_clearance(class, obstacle))

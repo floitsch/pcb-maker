@@ -581,9 +581,6 @@ impl StaticMaps {
         let first_apart = ordered
             .iter()
             .position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
-        // `PCB_ROUTER_OLD_POLYGON_DISTANCES` measures every node edge by
-        // edge again (A/B: the maps are the same).
-        let polygon_fields = std::env::var_os("PCB_ROUTER_OLD_POLYGON_DISTANCES").is_none();
         let mut fill_trace: Option<FillTrace> = None;
         for (position, obstacle) in ordered.into_iter().enumerate() {
             if Some(position) == first_apart {
@@ -626,7 +623,7 @@ impl StaticMaps {
             // (`PolygonField`), not edge by edge for every node of its box
             // (ULK's 454-corner cutout: 15 s a class, 60-190 s a lattice).
             let field = match &obstacle.shape {
-                Shape::Polygon { points } if points.len() >= FIELD_CORNERS && polygon_fields => {
+                Shape::Polygon { points } if points.len() >= FIELD_CORNERS => {
                     let via_range = obstacle
                         .blocks_vias
                         .then(|| grid.node_range(bounds.inflated(via_reach)))

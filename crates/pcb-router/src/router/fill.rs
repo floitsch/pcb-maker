@@ -193,25 +193,21 @@ impl<'a> FillProbe<'a> {
 
     /// The net's zones on `layer` that KiCad fills: all of them, those of
     /// a net routed as tracks too (the tracks rung lowers its pours with
-    /// `connect` false, and KiCad fills them all the same); with
-    /// `tracks_rung_fill` off only those pads connect through (and, for
-    /// the `hatch` and its rings, any while `Router::hatch_any_plane` is
-    /// set).
-    fn filled_planes(&self, layer: usize, hatch: bool) -> impl Iterator<Item = &'a Plane> + 'a {
+    /// `connect` false, and KiCad fills them all the same: a hatched
+    /// zone's hatch and rings, the zone's outline).
+    fn filled_planes(&self, layer: usize) -> impl Iterator<Item = &'a Plane> + 'a {
         let router = self.router;
         let net = self.net;
-        let any = router.config.tracks_rung_fill || (hatch && router.hatch_any_plane);
         router
             .board
             .planes
             .iter()
-            .filter(move |plane| plane.net == net && plane.layer == layer && (plane.connect || any))
+            .filter(move |plane| plane.net == net && plane.layer == layer)
     }
 
     /// The hatch of the net's pour on `layer`, if it is hatched.
     pub(super) fn hatch(&self, layer: usize) -> Option<Hatch> {
-        self.filled_planes(layer, true)
-            .find_map(|plane| plane.hatch)
+        self.filled_planes(layer).find_map(|plane| plane.hatch)
     }
 
     /// How far past the gap KiCad tests a spoke's end: half the minimum
@@ -253,7 +249,7 @@ impl<'a> FillProbe<'a> {
         let board = &self.router.board;
         let half = self.half(layer);
         let bridge = self
-            .filled_planes(layer, true)
+            .filled_planes(layer)
             .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
             .fold(0.0f64, f64::max);
         for (pad, reach) in &self.rings[layer] {
@@ -402,7 +398,7 @@ impl<'a> FillProbe<'a> {
             (q[0] - k as f64 * grid, q[1] - m as f64 * grid)
         };
         let bridge = self
-            .filled_planes(layer, true)
+            .filled_planes(layer)
             .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
             .fold(0.0f64, f64::max);
         let encloses_ring = self.rings[layer].iter().any(|(pad, reach)| {
@@ -595,7 +591,7 @@ impl<'a> FillProbe<'a> {
                 }
                 let half = self.half(layer);
                 half_most = half_most.max(half);
-                for plane in self.filled_planes(layer, false) {
+                for plane in self.filled_planes(layer) {
                     for polygon in std::iter::once(&plane.polygon).chain(plane.excluded.iter()) {
                         for (a, b) in polygon_edges(polygon) {
                             insert(
@@ -661,7 +657,7 @@ impl<'a> FillProbe<'a> {
                 return true;
             }
         }
-        self.filled_planes(layer, false).any(|plane| {
+        self.filled_planes(layer).any(|plane| {
             point_in_polygon(point, &plane.polygon)
                 && !plane
                     .excluded

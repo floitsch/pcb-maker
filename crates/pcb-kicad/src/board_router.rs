@@ -4894,9 +4894,6 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(rounds) = config.via_reduction_rounds {
         router_config.via_reduction_rounds = rounds;
     }
-    if let Some(batch) = config.jacobi_batch {
-        router_config.jacobi_batch = batch;
-    }
     if let Some(skeleton) = config.plane_skeleton {
         router_config.plane_skeleton = skeleton;
     }

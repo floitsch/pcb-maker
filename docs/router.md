@@ -110,8 +110,8 @@ Interf-U were re-run during the audit.
    conflicted branches (and those left dangling by them), not the whole
    tree, whatever the negotiation's every-eighth-iteration whole rip-up
    would say, and an incomplete net without conflicts keeps its tree; the
-   hard search then joins the rest to what is left (`resolve_keeps_partial`;
-   `PCB_ROUTER_OLD_RESOLVE` rips them up whole as before). Ripped up whole,
+   hard search then joins the rest to what is left (the switch back,
+   `PCB_ROUTER_OLD_RESOLVE`, was removed on 2026-10-16). Ripped up whole,
    a net searched again from one pad among copper that no longer gives
    way often found nothing: MegaDrive's cold route left 19 signal nets
    with no copper at all after the repair (ten VD, five VA, ZA0, ZA8,
@@ -138,8 +138,8 @@ repair could not bring it back (178 unconnected in KiCad). The narrower
 corridors of 3c1f81d (a tile more every sixth reroute, not every third)
 made the miss happen there: 55 open before it, 178 since. The pads a
 board-wide search did not reach are now left out of the net's later
-searches in that negotiation (`NetState::unreachable`,
-`unreachable_terminals`; `PCB_ROUTER_OLD_HOPELESS` for A/B). Route mode,
+searches in that negotiation (`NetState::unreachable`; the A/B switch
+`PCB_ROUTER_OLD_HOPELESS` was removed on 2026-10-16). Route mode,
 cold, 4 threads, with the repair's change above (x881 against x902, this
 change on main before 670454c; KiCad's unconnected items): SNSP-CPU-01 178
 to 5 (GND's 4 walled-in pads and one signal), MegaDrive 137 to 70, vaio_re
@@ -198,7 +198,7 @@ Vias are tented unless the setup says otherwise (`(tenting ...)`, KiCad
 
 The lowering keeps it as keepouts of the opening's net: graphics, texts
 and mask-only pads (see the island and bodies sections of
-docs/handover.md), and a pad's aperture, which other nets' tracks and
+docs/changelog.md), and a pad's aperture, which other nets' tracks and
 tented vias keep at the solder-mask-to-copper clearance plus the pad's
 expansion, untented vias at the web plus both expansions (a pad or
 footprint margin of its own also keeps its margin plus half the web, the
@@ -343,8 +343,7 @@ to 27 false alarms, pads not modelled 14 to 12):
   spoke (a neck exactly the minimum width), and an end in a sliver the
   lattice misses joins the piece a straight run of fill reaches.
 
-Thermal vias inside an exposed pad (`inner_pads`, on;
-`PCB_ROUTER_NO_INNER_PADS`; 2026-10-14). KiCad's filler treats a pad
+Thermal vias inside an exposed pad (2026-10-14). KiCad's filler treats a pad
 inside a larger pad of its net like any thermal pad: it cuts its relief
 (inside the larger pad's, so nothing changes there), in a hatched zone adds
 its ring (pad + gap to pad + gap + spoke width, clipped only by the zone's
@@ -368,8 +367,8 @@ lie outside the ring; a merged pad's DRC tracks are those whose copper
 overlaps its own (KiCad's connectivity: the exposed pad's tracks crossing a
 via), and no fill lies in a thermal pad's plated hole (a track to a via's
 centre ends in none). The DRC's track-end test keeps other nets'
-clearances to half a micron (`TRACK_END_TOLERANCE`, `track_end_tolerance`;
-`PCB_ROUTER_OLD_TRACK_ENDS`) rather than the spokes' 3 microns: 0xCB's
+clearances to half a micron (`TRACK_END_TOLERANCE`) rather than the
+spokes' 3 microns: 0xCB's
 corner via has a track from it ending 1.5 microns outside a sliver of fill
 between two pins. Half a micron is KiCad's DRC epsilon (`GetDRCEpsilon`,
 ADVANCED_CFG `m_DRCEpsilon` 0.0005 mm), which its clearance tests subtract
@@ -379,7 +378,7 @@ Exact gives two false alarms, a micron loses those four findings. `experiments/p
 lists the pads inside pads of a board.
 
 A starved via inside an exposed pad gets a track of its own
-(`add_inner_spokes`, `inner_spokes`, on; `PCB_ROUTER_NO_INNER_SPOKES`):
+(`add_inner_spokes`):
 `manual_spokes` cannot help it (a merged pad has no lattice nodes), so a
 straight track of the net's width runs from its centre into the fill over
 the exposed pad, in a hatched zone its own ring, its copper wholly inside
@@ -390,12 +389,11 @@ model then finds the via no longer short, and emitted as exact copper
 (`NetState::inner_spokes`).
 
 The fill model reads every zone of a pour net as KiCad fills it, also in
-the tracks rung, whose pours do not connect (`tracks_rung_fill`, on;
-`PCB_ROUTER_OLD_TRACKS_FILL`; 2026-10-15): a hatched zone's hatch, its
+the tracks rung, whose pours do not connect (2026-10-15): a hatched
+zone's hatch, its
 rings and its outline as in the connecting rungs, for the spoke verdicts,
 manual spokes, island vias and stubs and inner spokes there. The DRC's
-track rule tests the segments as the router emits them
-(`track_end_junctions`, on; `PCB_ROUTER_OLD_TRACK_RUNS`): a straight run
+track rule tests the segments as the router emits them: a straight run
 from the pad ends at the first junction, where another branch of the net
 leaves it and `materialize` cuts the segment, not at its turn (0xCB's
 MX3.S1: the run passed a junction in fill and ended 12 microns inside a
@@ -403,8 +401,7 @@ hatch hole, KiCad's segment ended at the junction; reading the hatch
 without the cut lost its track spoke, its two island spokes stood in for
 it, and no island via was added).
 
-Zones of one net that meet on a layer are checked apart (`zone_seams`,
-on; `PCB_ROUTER_NO_ZONE_SEAMS`; 2026-10-15). KiCad 10 fills each zone on
+Zones of one net that meet on a layer are checked apart (2026-10-15). KiCad 10 fills each zone on
 its own: the fill is built over the zone's outline and the outlines of the
 net's zones it collides with (`ZONE::BuildSmoothedPoly`), trimmed to its
 own outline, and the outlines of the net's zones of a strictly higher
@@ -433,8 +430,7 @@ their other corners.
 
 A spoke's clearance test runs from the ring to where the fill's own brush
 centres begin, the gap and half the minimum width past the pad, rather than
-to its end 5 microns further (`spoke_clear_to_fill`, on;
-`PCB_ROUTER_OLD_SPOKE_CLEAR`): Telemetry's D12.1 has a spoke into a strip
+to its end 5 microns further: Telemetry's D12.1 has a spoke into a strip
 exactly the minimum width between its relief and D12.2's clearance, whose
 brush centres lie on one line 2 microns short of the spoke's end.
 
@@ -611,7 +607,7 @@ deadline; the layout keeps the better board as before (KiCad's open
 items, then starved thermals). vaio_re: 410 s left, the tracks attempt
 55 open against 76, KiCad 35 to 21 unconnected. A second seed round, the
 class-width ladder and probing both pour modes for the attempt itself
-were measured and lost (docs/handover.md, "after the narrow attempt");
+were measured and lost (docs/changelog.md, "after the narrow attempt");
 `PCB_LAYOUT_NARROW_CONTINUATION` (stop, tracks, seeds, ladder) and
 `PCB_LAYOUT_NARROW_CONTINUATION_FLOOR` choose them for experiments, and
 `skipped` says when the attempt did not run.
@@ -658,7 +654,7 @@ the layout too (`kicad_check_seconds`, `kicad_checks_charged`,
 `kicad_check_work_seconds` in board-layout.json; the verdict's
 `kicad_check_work_seconds`; `check work N x S s = T s` on the
 `layout: done` line). Route mode (no layout) counts none: its ladder is
-unchanged. The model, measured: docs/handover.md, "Committed on
+unchanged. The model, measured: docs/changelog.md, "Committed on
 2026-10-15 (KiCad check work)".
 
 ## Via reduction
@@ -857,6 +853,6 @@ followed them).
   single threaded. Jacobi-style parallel routing of overlapping nets (each
   against the current copper, then all re-stamped) was tried and converges
   far worse (Interf-U: 448 s and 44 vias against 81 s and 28 vias); the
-  option `jacobi_batch` is kept off.
+  option `jacobi_batch` was removed on 2026-10-16.
 - No gate swapping, no differential pairs, no length tuning. Pin swapping
   is a separate step before routing ([pin-swap.md](pin-swap.md)).
