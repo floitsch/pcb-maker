@@ -248,7 +248,9 @@ impl Board {
     /// overridden to 0.15 mm in a 0.5 mm zone, keeps its diagonal spokes
     /// past the neighbouring pins).
     pub fn fill_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
-        if std::env::var_os("PCB_ROUTER_OLD_FILL_CLEARANCE").is_some() {
+        // Read once: the fill probes ask for every item they test.
+        static OLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OLD.get_or_init(|| std::env::var_os("PCB_ROUTER_OLD_FILL_CLEARANCE").is_some()) {
             return self.copper_clearance(class, obstacle);
         }
         obstacle.clearance_override.unwrap_or_else(|| self.copper_clearance(class, obstacle))

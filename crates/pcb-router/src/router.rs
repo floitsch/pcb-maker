@@ -12,8 +12,7 @@
 
 use rayon::prelude::*;
 use std::cell::RefCell;
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
@@ -632,29 +631,40 @@ fn junction_nodes(branches: &[Branch]) -> HashSet<Node> {
 /// without hashing the net's whole stamp list each time (a ground net
 /// stamps millions of cells).
 struct OwnStamps {
-    slot: HashMap<usize, usize>,
+    /// The bitset of each map given, by map index (`NO_SLOT`: not given):
+    /// a table, not a hash map, as the pour analysis asks once per node.
+    slot: Vec<usize>,
     bits: Vec<Vec<u64>>,
 }
 
+const NO_SLOT: usize = usize::MAX;
+
 impl OwnStamps {
     fn new(stamped: &[(u32, u32)], maps: &[usize], cells: usize) -> Self {
-        let mut slot = HashMap::new();
+        let mut slot = vec![NO_SLOT; maps.iter().max().map_or(0, |map| map + 1)];
+        let mut count = 0;
         for map in maps {
-            let next = slot.len();
-            slot.entry(*map).or_insert(next);
+            if slot[*map] == NO_SLOT {
+                slot[*map] = count;
+                count += 1;
+            }
         }
-        let mut bits = vec![vec![0u64; cells.div_ceil(64)]; slot.len()];
+        let mut bits = vec![vec![0u64; cells.div_ceil(64)]; count];
         for (map, cell) in stamped {
-            if let Some(index) = slot.get(&(*map as usize)) {
-                bits[*index][*cell as usize / 64] |= 1 << (*cell % 64);
+            if let Some(&index) = slot.get(*map as usize)
+                && index != NO_SLOT
+            {
+                bits[index][*cell as usize / 64] |= 1 << (*cell % 64);
             }
         }
         Self { slot, bits }
     }
 
     /// Whether the net stamped `cell` of `map` (one of the maps given).
+    #[inline]
     fn contains(&self, map: usize, cell: usize) -> bool {
-        let index = self.slot[&map];
+        let index = self.slot[map];
+        assert!(index != NO_SLOT, "map {map} is not one of the net's own stamp maps");
         self.bits[index][cell / 64] & (1 << (cell % 64)) != 0
     }
 }
@@ -882,9 +892,11 @@ fn diagonal_extra(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     offsets
 }
 
-/// `diagonal_extra` offsets turned to the diagonal direction (dx, dy).
-fn turned(offsets: &[(i32, i32)], dx: i32, dy: i32) -> Vec<(i32, i32)> {
-    offsets.iter().map(|(i, j)| (i * dx, j * dy)).collect()
+/// `Router::class_at` for a node given by its coordinates: the neck class
+/// inside one of the net's neck zones, else the net's class.
+#[inline]
+fn zone_class(class: usize, neck: usize, zones: &[(usize, usize, usize, usize)], x: usize, y: usize) -> usize {
+    if zones.iter().any(|&(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) { neck } else { class }
 }
 
 /// The start cells, relative to a node, of the diagonal steps that pass it
@@ -1022,6 +1034,70 @@ impl std::hash::Hasher for StateHasher {
         self.0 = (value as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
 }
+
+/// A multiply-add word hasher (rustc's FxHash, second version) for hot maps
+/// of small integer keys, where SipHash cost more than the lookups: only
+/// for maps whose iteration order does not matter (SipHash's order was
+/// random per run, so no result may follow it anyway).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FastHasher(u64);
+
+impl FastHasher {
+    #[inline]
+    fn add(&mut self, word: u64) {
+        self.0 = self.0.wrapping_add(word).wrapping_mul(0xf135_7aea_2e62_a9c5);
+    }
+}
+
+impl std::hash::Hasher for FastHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0.rotate_left(26)
+    }
+
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.add(u64::from_le_bytes(word));
+        }
+        self.add(bytes.len() as u64);
+    }
+
+    #[inline]
+    fn write_u8(&mut self, value: u8) {
+        self.add(value as u64);
+    }
+
+    #[inline]
+    fn write_u16(&mut self, value: u16) {
+        self.add(value as u64);
+    }
+
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.add(value as u64);
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.add(value);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.add(value as u64);
+    }
+
+    #[inline]
+    fn write_i64(&mut self, value: i64) {
+        self.add(value as u64);
+    }
+}
+
+/// A hash map on `FastHasher`.
+pub(crate) type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FastHasher>>;
 
 /// Lattice states (`Router::state`) of a few nodes, with a terminal each.
 type StateMap = HashMap<u32, u16, std::hash::BuildHasherDefault<StateHasher>>;
@@ -2459,7 +2535,7 @@ impl Router {
         match self.neck_of[class] {
             Some(neck) if !state.neck_zones.is_empty() => {
                 let (x, y) = self.grid.xy(cell as usize);
-                if state.neck_zones.iter().any(|&(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) { neck } else { class }
+                zone_class(class, neck, &state.neck_zones, x, y)
             }
             _ => class,
         }
@@ -2570,11 +2646,15 @@ impl Router {
     }
 
     fn stamp(&mut self, net: NetId) {
-        // A full restamp: whatever was stamped before goes first.
-        self.unstamp(net);
+        // A full restamp: the new list is built first (marked, counts left
+        // alone), then only the stamps that went or came change their
+        // counts. The counts end as with the old list unstamped and the new
+        // one stamped, without touching the stamps a net keeps (most of
+        // them, when only a branch was rerouted).
+        let old = std::mem::take(&mut self.nets[net as usize].stamped);
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
-        let mut stamped = Vec::new();
+        let mut stamped = Vec::with_capacity(old.len());
         let nx = self.grid.nx as i64;
         let ny = self.grid.ny as i64;
         let branches = std::mem::take(&mut self.nets[net as usize].branches);
@@ -2586,24 +2666,21 @@ impl Router {
         let diagonal_base = self.board.classes.len() * (layers + 1);
         for querying in 0..self.board.classes.len() {
             let stamps = &self.stamps[class][querying];
-            let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)]| {
+            // Stamps the offsets around `cell`, mirrored by (`sx`, `sy`): a
+            // diagonal step's footprint is turned to the step's direction.
+            let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)], sx: i64, sy: i64| {
                 let x = cell as i64 % nx;
                 let y = cell as i64 / nx;
+                let marks = &mut self.stamp_mark[map];
                 for (dx, dy) in offsets {
-                    let tx = x + *dx as i64;
-                    let ty = y + *dy as i64;
+                    let tx = x + *dx as i64 * sx;
+                    let ty = y + *dy as i64 * sy;
                     if tx < 0 || ty < 0 || tx >= nx || ty >= ny {
                         continue;
                     }
                     let target = (ty * nx + tx) as usize;
-                    if self.stamp_mark[map][target / 64] & (1 << (target % 64)) == 0 {
-                        self.stamp_mark[map][target / 64] |= 1 << (target % 64);
-                        self.occupancy[map][target] += 1;
-                        if self.occupancy[map][target] == 1 {
-                            let tile = (target / self.grid.nx / TILE) * self.tiles_x
-                                + (target % self.grid.nx) / TILE;
-                            self.tile_claimed[map][tile] += 1;
-                        }
+                    if marks[target / 64] & (1 << (target % 64)) == 0 {
+                        marks[target / 64] |= 1 << (target % 64);
                         stamped.push((map as u32, target as u32));
                     }
                 }
@@ -2619,13 +2696,15 @@ impl Router {
                         };
                         let stub_stamps = &self.stamps[stub_class][querying];
                         for cell in cells {
-                            apply(base + end.layer as usize, *cell, &stub_stamps.stub_to_trace);
-                            apply(base + layers, *cell, &stub_stamps.stub_to_via);
+                            apply(base + end.layer as usize, *cell, &stub_stamps.stub_to_trace, 1, 1);
+                            apply(base + layers, *cell, &stub_stamps.stub_to_via, 1, 1);
                             for orientation in 0..2 {
                                 apply(
                                     diagonal_base + (querying * layers + end.layer as usize) * 2 + orientation,
                                     *cell,
                                     &stub_stamps.stub_diagonal_block[orientation],
+                                    1,
+                                    1,
                                 );
                             }
                         }
@@ -2638,13 +2717,17 @@ impl Router {
                         base + node.layer as usize,
                         node.cell,
                         &own.trace_to_trace,
+                        1,
+                        1,
                     );
-                    apply(base + layers, node.cell, &own.trace_to_via);
+                    apply(base + layers, node.cell, &own.trace_to_via, 1, 1);
                     for orientation in 0..2 {
                         apply(
                             diagonal_base + (querying * layers + node.layer as usize) * 2 + orientation,
                             node.cell,
                             &own.diagonal_block[orientation],
+                            1,
+                            1,
                         );
                     }
                     let is_via = index > 0
@@ -2652,15 +2735,17 @@ impl Router {
                         && branch.nodes[index - 1].layer != node.layer;
                     if is_via {
                         for layer in 0..layers {
-                            apply(base + layer, node.cell, &stamps.via_to_trace);
+                            apply(base + layer, node.cell, &stamps.via_to_trace, 1, 1);
                         }
-                        apply(base + layers, node.cell, &stamps.via_to_via);
+                        apply(base + layers, node.cell, &stamps.via_to_via, 1, 1);
                         for layer in 0..layers {
                             for orientation in 0..2 {
                                 apply(
                                     diagonal_base + (querying * layers + layer) * 2 + orientation,
                                     node.cell,
                                     &stamps.diagonal_block_via[orientation],
+                                    1,
+                                    1,
                                 );
                             }
                         }
@@ -2674,15 +2759,41 @@ impl Router {
                         );
                         if dx != 0 && dy != 0 {
                             let own = &self.stamps[node_classes[which][index]][querying];
-                            apply(base + node.layer as usize, previous.cell, &turned(&own.diagonal_to_trace, dx as i32, dy as i32));
-                            apply(base + layers, previous.cell, &turned(&own.diagonal_to_via, dx as i32, dy as i32));
+                            apply(base + node.layer as usize, previous.cell, &own.diagonal_to_trace, dx, dy);
+                            apply(base + layers, previous.cell, &own.diagonal_to_via, dx, dy);
                         }
                     }
                 }
             }
         }
+        // An old stamp still marked is a new one too: its count stays, and
+        // its mark goes so that the new list passes it over; the others
+        // go (the count down, the tile's claim with the last of a cell).
+        let nxu = self.grid.nx;
+        for (map, cell) in &old {
+            let (map, cell) = (*map as usize, *cell as usize);
+            let bit = 1u64 << (cell % 64);
+            if self.stamp_mark[map][cell / 64] & bit != 0 {
+                self.stamp_mark[map][cell / 64] &= !bit;
+                continue;
+            }
+            self.occupancy[map][cell] -= 1;
+            if self.occupancy[map][cell] == 0 {
+                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] -= 1;
+            }
+        }
+        // A new stamp still marked was not stamped before: it counts.
         for (map, cell) in &stamped {
-            self.stamp_mark[*map as usize][*cell as usize / 64] &= !(1 << (*cell % 64));
+            let (map, cell) = (*map as usize, *cell as usize);
+            let bit = 1u64 << (cell % 64);
+            if self.stamp_mark[map][cell / 64] & bit == 0 {
+                continue;
+            }
+            self.stamp_mark[map][cell / 64] &= !bit;
+            self.occupancy[map][cell] += 1;
+            if self.occupancy[map][cell] == 1 {
+                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] += 1;
+            }
         }
         let state = &mut self.nets[net as usize];
         state.branches = branches;
@@ -3310,13 +3421,15 @@ impl Router {
         let tile_mm = (TILE as f64 * self.grid.pitch) as f32;
         let mut cost = vec![f32::INFINITY; tiles * layers];
         let mut from = vec![u32::MAX; tiles * layers];
-        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        // Keys (cost bits, state) as one word, popped in the order of
+        // (cost, state) pairs (non-negative floats order as their bits).
+        let mut heap = KeyHeap::default();
         for node in sources {
             let state = node.layer as usize * tiles + tile_of(node.cell);
             endpoint[tile_of(node.cell)] = true;
             if cost[state] > 0.0 {
                 cost[state] = 0.0;
-                heap.push(Reverse((0, state as u32)));
+                heap.push(state as u64);
             }
         }
         // How expensive a tile is: free tiles cost their size; a full tile
@@ -3345,10 +3458,30 @@ impl Router {
                     * (1.0 + (self.layer_cut[layer] - 1.0) * covered),
             )
         };
+        // What `enter` gives each (layer, tile), computed once: a tile is
+        // entered from up to eight neighbours and the other layers.
+        const UNKNOWN: u8 = 0;
+        const WALL: u8 = 1;
+        const KNOWN: u8 = 2;
+        let mut entry_kind = vec![UNKNOWN; tiles * layers];
+        let mut entry_factor = vec![0.0f32; tiles * layers];
+        let mut enter_once = |layer: usize, tile: usize| -> Option<f32> {
+            let index = layer * tiles + tile;
+            match entry_kind[index] {
+                WALL => None,
+                KNOWN => Some(entry_factor[index]),
+                _ => {
+                    let factor = enter(layer, tile);
+                    entry_kind[index] = if factor.is_some() { KNOWN } else { WALL };
+                    entry_factor[index] = factor.unwrap_or(0.0);
+                    factor
+                }
+            }
+        };
         let mut reached = None;
-        while let Some(Reverse((bits, state))) = heap.pop() {
-            let state = state as usize;
-            let here = f32::from_bits(bits);
+        while let Some(key) = heap.pop() {
+            let state = (key & u32::MAX as u64) as usize;
+            let here = f32::from_bits((key >> 32) as u32);
             if here > cost[state] {
                 continue;
             }
@@ -3358,12 +3491,12 @@ impl Router {
             }
             let (layer, tile) = (state / tiles, state % tiles);
             let (x, y) = (tile % self.tiles_x, tile / self.tiles_x);
-            let mut relax = |next: usize, step: f32, heap: &mut BinaryHeap<Reverse<(u32, u32)>>| {
+            let mut relax = |next: usize, step: f32, heap: &mut KeyHeap| {
                 let total = here + step;
                 if total < cost[next] {
                     cost[next] = total;
                     from[next] = state as u32;
-                    heap.push(Reverse((total.to_bits(), next as u32)));
+                    heap.push(((total.to_bits() as u64) << 32) | next as u64);
                 }
             };
             for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
@@ -3372,14 +3505,14 @@ impl Router {
                     continue;
                 }
                 let next_tile = ty as usize * self.tiles_x + tx as usize;
-                let Some(factor) = enter(layer, next_tile) else {
+                let Some(factor) = enter_once(layer, next_tile) else {
                     continue;
                 };
                 let step = self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm;
                 relax(layer * tiles + next_tile, step * factor, &mut heap);
             }
             for other in (0..layers).filter(|other| *other != layer) {
-                if let Some(factor) = enter(other, tile) {
+                if let Some(factor) = enter_once(other, tile) {
                     relax(
                         other * tiles + tile,
                         self.config.via_cost as f32 * factor,
@@ -3615,6 +3748,12 @@ impl Router {
         let trace_base = class * (layers + 1);
         let via_map = trace_base + layers;
         let necks = !net_state.neck_zones.is_empty();
+        // `class_at` from the coordinates the step has at hand (no division).
+        let neck_class = self.neck_of[class];
+        let class_xy = |x: usize, y: usize| match neck_class {
+            Some(neck) => zone_class(class, neck, &net_state.neck_zones, x, y),
+            None => class,
+        };
         let mut found = None;
         while let Some(key) = heap.pop() {
             let state = (key & u32::MAX as u64) as usize;
@@ -3650,7 +3789,7 @@ impl Router {
             scratch.read.note(x, y);
             let here = scratch.nodes[state].cost;
             let arrived = scratch.nodes[state].parent;
-            let here_statics = if necks { &self.statics[self.class_at(net, net_state, cell as u32)] } else { statics };
+            let here_statics = if necks { &self.statics[class_xy(x, y)] } else { statics };
             let edge_block = here_statics.edge_block[layer][cell];
             let blocked_edges = if edge_block != 0 && here_statics.edge_owner[layer][cell] == own16 {
                 0
@@ -3690,7 +3829,7 @@ impl Router {
                 if scratch.nodes[target_state].closed == generation {
                     continue;
                 }
-                let target_class = if necks { self.class_at(net, net_state, target_cell as u32) } else { class };
+                let target_class = if necks { class_xy(tx as usize, ty as usize) } else { class };
                 let hot = if necks { self.hot[target_class * layers + layer][target_cell] } else { layer_hot[target_cell] };
                 if hot.trace != crate::grid::FREE && hot.trace != own {
                     continue;
@@ -3775,7 +3914,7 @@ impl Router {
                     }
                 }
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
-                let cell_class = if necks { self.class_at(net, net_state, cell as u32) } else { class };
+                let cell_class = if necks { class_xy(x, y) } else { class };
                 let cell_statics = &self.statics[cell_class];
                 let free_layers = cell_statics.free_layers[cell];
                 for target_layer in 0..layers {

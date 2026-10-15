@@ -47,17 +47,20 @@ impl PourMap {
         let mut pieces = 0;
         let mut stack = Vec::new();
         for layer in 0..solid.len() {
-            for start in 0..solid[layer].len() {
-                if !solid[layer][start] || label[layer][start] != 0 {
+            // This layer's maps, looked up once rather than per neighbour.
+            let solid = &solid[layer];
+            let label = &mut label[layer];
+            for start in 0..solid.len() {
+                if !solid[start] || label[start] != 0 {
                     continue;
                 }
                 pieces += 1;
-                label[layer][start] = pieces as u32;
+                label[start] = pieces as u32;
                 stack.push(start);
                 while let Some(cell) = stack.pop() {
                     for next in [cell - 1, cell + 1, cell - nx, cell + nx] {
-                        if solid[layer][next] && label[layer][next] == 0 {
-                            label[layer][next] = pieces as u32;
+                        if solid[next] && label[next] == 0 {
+                            label[next] = pieces as u32;
                             stack.push(next);
                         }
                     }
@@ -65,17 +68,17 @@ impl PourMap {
                     // orientation as the occupancy's diagonal maps name it.
                     for (dx, dy) in [(1i64, 1i64), (1, -1), (-1, 1), (-1, -1)] {
                         let next = (cell as i64 + dy * nx as i64 + dx) as usize;
-                        if !solid[layer][next] || label[layer][next] != 0 {
+                        if !solid[next] || label[next] != 0 {
                             continue;
                         }
                         let corner_x = (cell as i64 + dx) as usize;
                         let corner_y = (cell as i64 + dy * nx as i64) as usize;
-                        if solid[layer][corner_x] || solid[layer][corner_y] {
+                        if solid[corner_x] || solid[corner_y] {
                             continue;
                         }
                         let (start, orientation) = if dx > 0 { (cell, (dy < 0) as usize) } else { (next, (dy > 0) as usize) };
                         if diagonal(layer, start, orientation) {
-                            label[layer][next] = pieces as u32;
+                            label[next] = pieces as u32;
                             stack.push(next);
                         }
                     }

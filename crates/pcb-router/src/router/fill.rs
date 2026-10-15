@@ -15,9 +15,8 @@
 //! routed copper of the other nets, at their exact distances.
 
 use std::cell::OnceCell;
-use std::collections::HashMap;
 
-use super::{FREE_END, NO_TERMINAL, PLANE_TERMINAL, Router};
+use super::{FREE_END, FastMap, NO_TERMINAL, PLANE_TERMINAL, Router};
 use crate::board::{Hatch, NetId, ObstacleKind, Plane};
 use crate::geometry::{Point, distance, point_in_polygon, point_segment_distance, polygon_edges, segments_intersect};
 
@@ -73,7 +72,7 @@ enum Item {
 }
 
 struct Index {
-    buckets: HashMap<(usize, i64, i64), Vec<Item>>,
+    buckets: FastMap<(usize, i64, i64), Vec<Item>>,
     /// How far from a point an item can still matter (beyond its box).
     span: f64,
 }
@@ -87,7 +86,7 @@ pub(super) struct FillProbe<'a> {
     index: OnceCell<Index>,
     /// Per hatch hole (layer and its place in the pattern), whether KiCad
     /// keeps it (`hole_kept`).
-    holes: std::cell::RefCell<HashMap<(usize, i64, i64), bool>>,
+    holes: std::cell::RefCell<FastMap<(usize, i64, i64), bool>>,
     /// How much closer than the clearance to other nets' copper a brush
     /// centre may come (`EPSILON`, `TRACK_END_TOLERANCE` inside
     /// `for_track_end`; the board's edges and the reliefs keep `EPSILON`).
@@ -113,7 +112,7 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
-        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(HashMap::new()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0) }
+        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(FastMap::default()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0) }
     }
 
     /// Adds the probe's work so far to its router's pour work.
@@ -348,9 +347,9 @@ impl<'a> FillProbe<'a> {
             let board = &router.board;
             let layers = board.layer_count;
             let state = &router.nets[self.net as usize];
-            let mut buckets: HashMap<(usize, i64, i64), Vec<Item>> = HashMap::new();
+            let mut buckets: FastMap<(usize, i64, i64), Vec<Item>> = FastMap::default();
             let mut reach: f64 = board.edge_clearance.max(board.hole_clearance);
-            let insert = |layer: usize, (minimum, maximum): (Point, Point), item: Item, buckets: &mut HashMap<(usize, i64, i64), Vec<Item>>| {
+            let insert = |layer: usize, (minimum, maximum): (Point, Point), item: Item, buckets: &mut FastMap<(usize, i64, i64), Vec<Item>>| {
                 let (x0, y0, x1, y1) = bucket_range(minimum, maximum);
                 for by in y0..=y1 {
                     for bx in x0..=x1 {
