@@ -548,7 +548,53 @@ at -180 or 180. `to_radians().sin_cos()` rounds the two differently
 router's pad, rotation and rectangle code now take the sine and cosine
 exact for quarter turns (`pcb_router::geometry::degrees_sin_cos`).
 
-ORDER_RESULTS
+Measured (`experiments/order-independence/`: `permute.py` writes a
+project with its board's footprints, and each footprint's pads and
+graphics, as is, reversed or shuffled with seed 7; `compare.py` compares
+the outputs; `run.sh` runs them, four threads). coco2, urchin and
+homebrew_486 from the schematic tier's prepared sources
+(`build/sch-x1130/*/project`), placement alone (`place-kicad-board`, 200 s
+of work, three seeds) and layouts at a third of the budget; parts at
+another pose against the file as is, then vias, length mm, KiCad
+unconnected for the layouts:
+
+| Board | x1132 placement (reversed, shuffled) | x1132 layouts (as is / reversed / shuffled) | x1161 placement | x1161 layouts, all three orders |
+| --- | --- | --- | --- | --- |
+| urchin | 20, 22 of 122 | 41, 2683, 0 / 41, 2692, 0 / 40, 2603, 0 | identical | 43, 2636, 0, byte-identical |
+| coco2 | 148, 148 of 156 | 1144, 26,093, 0 / 593, 25,126, 0 / 852, 24,226, 3 | identical | 932, 27,715, 0, byte-identical |
+| homebrew_486 | 104, 104 of 130 | 1008, 27,273, 0 / 1033, 27,657, 0 / 1039, 27,226, 0 | identical | 971, 26,869, 0, byte-identical |
+
+coco2's 593 to 1144 vias is the order alone: the schematic tier's coco2
+row had been one draw of that. "Byte-identical" is the placed board, the
+routed board and so the copper. The orientation search's pair
+(homebrew_486 saved by pcbnew from 0 degrees and from the designer's
+angles, `build/orient-search/homebrew_486-*`), which differ in the
+angles, the graphics' order and the spelling of angles: x1132 placed
+both alike (the race then kept other seeds), x1160 (the order alone)
+placed 102 of 130 parts elsewhere (layouts 959 against 1056 vias), x1161
+(with the exact quarter turns) gives the same poses and the same copper
+(971 vias, 0 unconnected; the files written differ only where the inputs
+spell an angle differently).
+
+Tiers (`--jobs 6 --threads 4`, under the lock). Short tier x1161
+against `build/short-x1151.log` (x1152's calibration, the order's
+baseline): every placement reshuffled (the stack's file holds the
+designer's order); passes 6 to 7 (OpenFC), unconnected 30 to 19, new
+errors 3 to 2, vias 1178 to 1134, length 21,528 to 21,228 mm, work 2327
+to 2103 s, cut 0; no row worse by compare.py's rule. Schematic tier x1161
+against x1152 on the same tasks (`build/sch-x1152-order-base.log`):
+passes 8 to 10 (OpenFC, TelemetryOnboard), unconnected 6 to 4, vias 3027
+to 3184; the five boards whose import was already in reference order
+(urchin, spell_tome, USB_Keypad, 0xcb-static, bumwings) give identical
+rows and placements, the five whose order changed reshuffle (coco2 717 to
+932 vias, homebrew_486 960 to 971, OpenFC 165 to 148 and 2 to 0
+unconnected, the chiffre 62 to 112, MokyaLora 420 to 400), and on two
+the placer's seeds are the same but the router follows its new order:
+slab-pcb-left's race probes give other counts (9, 185, 4 against 8, 9, 12
+unfinished) and keep another seed (405 to 326 vias, 1 to 2 unconnected),
+TelemetryOnboard's layout moves one part elsewhere (1 to 0 unconnected).
+Three short-tier boards (Blue_Line, spell_tome, 0xCB-1337) at 1, 2 and 4
+threads: the same rows and byte-identical boards.
 
 ## What went wrong on the way (kept as lessons)
 

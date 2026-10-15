@@ -4417,6 +4417,101 @@ not measured and may prefer 16 x 1.
 
 `cargo test --release -p pcb-router -p pcb-kicad` passes.
 
+## Committed on 2026-10-16 (order independence)
+
+The defect: the placement, and through it the layout, depended on the
+order of the footprints in the `.kicad_pcb` and on the order of each
+footprint's own items, which pcbnew's save, the import and the schematic
+flow all permute; two saves of one design laid out apart. Binaries x1160
+(on aacdd28, the order alone), x1161 (on 015676c, the order and the exact
+quarter turns: the measured one). Runs in `build/order-independence/`,
+tools in `experiments/order-independence/` (`permute.py`: a project
+with its footprints, and each footprint's pads and graphics, as is,
+reversed or shuffled with seed 7; `compare.py`: poses by reference and
+uuid, placed and routed board and copper identical or not; `run.sh`).
+
+**Change 1, a canonical order as the board is read**
+(`canonical_order::parse_board` in pcb-kicad, used by `place-kicad-board`,
+the layout's outline sizing and reads of the placed board, every router
+attempt (`route_kicad_board_once`, the poured copy), the congestion score
+and the designer diagnostics): footprints by reference in natural order,
+then uuid, then their text; in each footprint the pads by number
+(natural), then position, the `fp_*` graphics by layer and content
+without uuid, the footprint's zones by content; each kind keeps the
+places it held. Nothing in `pcb-placer` changed: with one input order,
+global placement, the annealer's draws, the legaliser, refinement, rows,
+channels, net numbering, the pool's seeds and the race's probes see one
+order. The boards written are in that order, so the result file is
+byte-identical from any input order (a side effect: the placed and routed
+boards no longer keep the input's footprint order; KiCad does not mind,
+its own save sorts by uuid).
+
+**Change 2, exact quarter turns** (`pcb_router::geometry::degrees_sin_cos`,
+in the placer's pad boxes and the router's pad shapes, rotations and
+rectangles): found on the orientation search's pcbnew-saved pair
+(homebrew_486 from 0 degrees and from the designer's angles): with the
+order alone (x1160) it placed 102 of 130 parts elsewhere, since pcbnew
+writes a pad's absolute angle wrapped (relative -90 in one file, 270 in
+the other; footprints at -180 or 180) and `to_radians().sin_cos()`
+rounds them apart (1e-16 in a pad box); x1132 had been lucky in pcbnew's
+order. With both changes the pair gives the same poses and the same
+copper (971 vias, 0 unconnected).
+
+**Three orders** (schematic tier's prepared sources; placement alone with
+200 s of work and three seeds; layouts at a third, four threads; parts
+elsewhere against the file as is; vias, length mm, KiCad unconnected):
+
+| Board | x1132 placement (reversed, shuffled) | x1132 layouts (as is / reversed / shuffled) | x1161 placement | x1161 layouts, all three |
+| --- | --- | --- | --- | --- |
+| urchin | 20, 22 of 122 | 41, 2683, 0 / 41, 2692, 0 / 40, 2603, 0 | identical | 43, 2636, 0, byte-identical |
+| coco2 | 148, 148 of 156 | 1144, 26,093, 0 / 593, 25,126, 0 / 852, 24,226, 3 | identical | 932, 27,715, 0, byte-identical |
+| homebrew_486 | 104, 104 of 130 | 1008, 27,273, 0 / 1033, 27,657, 0 / 1039, 27,226, 0 | identical | 971, 26,869, 0, byte-identical |
+
+x1160 (before the calibration) was byte-identical across the orders too
+(41, 1001, 959 vias). coco2's 593-1144 vias is the order alone; the
+schematic tier's coco2 rows were draws from that spread.
+
+**Short tier** x1161 against `build/short-x1151.log` (6 x 4, the lock):
+passes 6 to 7, unconnected 30 to 19, new errors 3 to 2, vias 1178 to
+1134, length 21,528 to 21,228 mm, work 2327 to 2103 s, CPU 4143 to 2882
+s, cut 0; better 3 (OpenFC 2 to 0 unconnected, pass; reCamera 9 to 4;
+MIDAS-MK1.1 11 to 7, 246 to 212 vias), same 9, worse 0. Every placement
+changed (the stack holds the designer's order): vias per row
+eternal-keypad 56 to 65, USB_Keypad 106 to 111, OpenFC 154 to 159,
+reCamera 68 to 76, spell_tome 8 to 9, USB_Cable_Tester 90 to 128,
+Blue_Line 25 to 26, MIDAS 246 to 212, 0xCB-1337 78 to 57, urchin 40 to
+42, WLED_Matrix 216 to 157 (errors 2 to 1), framework_mobo 91 to 92; a
+reshuffle like the orientation change's, this time a good draw.
+**Schematic tier** x1161 against a fresh x1152 base on the same tasks
+(`build/sch-x1152-order-base.log`; `build/sch-x1130.log` predates the
+calibration): passes 8 to 10 (OpenFC, TelemetryOnboard), unconnected 6
+to 4, vias 3027 to 3184, length 91,198 to 92,388 mm, work 3164 to 2931 s.
+Identical rows and placements: urchin, spell_tome, USB_Keypad,
+0xcb-static, bumwings (their import was already in reference order, so
+the exact quarter turns changed nothing there either). Reshuffled
+placements: coco2 717 to 932 vias, homebrew_486 960 to 971, OpenFC 165
+to 148 (2 to 0 unconnected), stm32_chiffre 62 to 112, MokyaLora 420 to
+400. Same placer seeds, other routing: slab-pcb-left (the race's probes
+9 / 185 / 4 against 8 / 9 / 12 unfinished keep another seed: 405 to 326
+vias, 1 to 2 unconnected) and TelemetryOnboard (one part moved by the
+layout's moves, 1 to 0 unconnected).
+
+**Threads:** Blue_Line, spell_tome and 0xCB-1337 (short tier) at 1, 2 and
+4 threads: identical rows and byte-identical boards (the calibration
+agent saw the same on urchin, USB_Cable_Tester, reCamera).
+
+Tests: `canonical_order` (natural order; footprints by reference then
+uuid, other items in place, idempotent; pads and graphics from three
+orders), `board_placer::order_tests` (the lowering and a whole placement
+identical from a file and its reverse; both fail without the sort),
+`geometry::one_angle_spelled_two_ways_has_one_sine_and_cosine`.
+`cargo test --release -p pcb-kicad -p pcb-placer -p pcb-router`,
+`cli_exit_codes`, `agent_walkthrough` pass.
+
+Left: the board's top-level graphics, zones, tracks and net list stay in
+the file's order (nothing measured followed them); a save that rounds
+coordinates differently is another input.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
