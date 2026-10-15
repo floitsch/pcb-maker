@@ -82,14 +82,20 @@ fn read(path: &Path) -> Value {
 /// keys below the grid, every diode at its key, the controller's display
 /// and reset button at the controller, the power switch on the top edge.
 fn constraints(width: f64, height: f64) -> Value {
+    keyboard(json!({"width": width, "height": height}), width, [[0.0, height], [0.0, height]])
+}
+
+/// The keyboard's constraints on any `outline` `width` wide, each half's
+/// region spanning `heights` (left, right).
+fn keyboard(outline: Value, width: f64, heights: [[f64; 2]; 2]) -> Value {
     let mut rows = Vec::new();
     let mut regions = Vec::new();
     let mut near = Vec::new();
     let mut relative = Vec::new();
     let mut edge = Vec::new();
-    for (first, mcu, display, reset, power, battery, x) in [
-        (1, "U1", "Display1", "RSW0", "SW_POWER0", ["Bat+0", "BatGND0"], [0.0, width / 2.0 - 3.0]),
-        (18, "U2", "Display2", "RSW1", "SW_POWER1", ["Bat+1", "BatGND1"], [width / 2.0 + 3.0, width]),
+    for (first, mcu, display, reset, power, battery, x, y) in [
+        (1, "U1", "Display1", "RSW0", "SW_POWER0", ["Bat+0", "BatGND0"], [0.0, width / 2.0 - 3.0], heights[0]),
+        (18, "U2", "Display2", "RSW1", "SW_POWER1", ["Bat+1", "BatGND1"], [width / 2.0 + 3.0, width], heights[1]),
     ] {
         let keys: Vec<String> = (first..first + 15).map(|n| format!("SW{n}")).collect();
         rows.push(json!({"parts": keys, "pitch_mm": 18, "columns": 5, "row_pitch_mm": 17}));
@@ -97,7 +103,7 @@ fn constraints(width: f64, height: f64) -> Value {
         half.extend((first..first + 17).map(|n| format!("D{n}")));
         half.extend([mcu, display, reset, power].map(String::from));
         half.extend(battery.map(String::from));
-        regions.push(json!({"parts": half, "x": x, "y": [0, height]}));
+        regions.push(json!({"parts": half, "x": x, "y": y}));
         for n in first..first + 17 {
             // The keys of the grid are carried by the row: near may still
             // name them (docs/constraints.md, row).
@@ -113,7 +119,7 @@ fn constraints(width: f64, height: f64) -> Value {
         relative.push(json!({"part": format!("SW{}", first + 16), "right_of": format!("SW{}", first + 15), "max_gap_mm": 3}));
         edge.push(json!({"part": power, "edge": "top", "max_mm": 1}));
     }
-    json!({"version": 1, "move_all": true, "outline": {"width": width, "height": height},
+    json!({"version": 1, "move_all": true, "outline": outline,
            "row": rows, "region": regions, "near": near, "relative": relative, "edge": edge})
 }
 
@@ -278,6 +284,80 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     assert_eq!(code(&output), 0, "drc-kicad-board: {}", String::from_utf8_lossy(&output.stdout));
     assert!(String::from_utf8_lossy(&output.stdout).contains("0 unconnected items"));
 
+    fs::remove_dir_all(&root).ok();
+}
+
+/// The keyboard on outlines that are not rectangles (docs/constraints.md,
+/// outline): an L whose right half lies 30 mm lower (its power switch
+/// held at the top keeps to the step, the nearest side facing up), and a
+/// rectangle with round corners, a slot between the halves and a
+/// triangular window. Each is laid out on a short budget; the result
+/// passes, or the verdict names the parts that found no place. KiCad's
+/// DRC checks the outline (closed, no copper too close to it).
+#[test]
+fn the_keyboard_lays_out_on_an_l_and_on_a_board_with_round_corners_and_cutouts() {
+    if Command::new("kicad-cli").arg("version").output().is_err() {
+        eprintln!("kicad-cli is not on the PATH: the walkthrough needs KiCad; skipped");
+        return;
+    }
+    let root = scratch();
+    let design = root.join("design");
+    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/pcb-kicad/tests/fixtures/urchin"), &design);
+    let project = root.join("project");
+    let output = run(&[Path::new("import-kicad-netlist"), &design.join("main.kicad_sch"), &project, Path::new("main")]);
+    assert_eq!(code(&output), 0, "import");
+    fs::write(project.join("layout.json"), json!({"placer": {"constraints": "constraints.json"}, "total_seconds": 30}).to_string()).unwrap();
+    let l_shape = json!({"x": 0, "y": 0, "polygon": [[0, 0], [115, 0], [115, 30], [230, 30], [230, 125], [0, 125]]});
+    let cut = json!({"x": 0, "y": 0, "width": 230, "height": 95, "corner_radius": 5,
+                     "cutouts": [{"x": [110, 120], "y": [20, 75]}, {"polygon": [[60, 80], [70, 80], [65, 88]]}]});
+    for (name, outline, heights) in [("l-shape", l_shape, [[0.0, 125.0], [30.0, 125.0]]), ("cut", cut, [[0.0, 95.0], [0.0, 95.0]])] {
+        fs::write(project.join("constraints.json"), keyboard(outline, 230.0, heights).to_string()).unwrap();
+        let out = root.join(name);
+        let output = run(&[Path::new("layout-kicad-board"), &project, Path::new("main"), &out, Path::new("auto"), &project.join("layout.json")]);
+        let verdict = read(&out.join("verdict.json"));
+        if code(&output) != 0 {
+            // Not complete: only for parts without a place, and named.
+            assert_eq!(code(&output), 1, "{name}: {verdict}");
+            assert!(!verdict["unplaced"].as_array().unwrap().is_empty(), "{name}: {verdict}");
+            continue;
+        }
+        assert_eq!(verdict["status"], "complete", "{name}: {verdict}");
+        assert_eq!(verdict["constraints_missed"], json!([]), "{name}");
+        assert_eq!(verdict["new_findings"], json!({}), "{name}");
+        // The room counts the outline's own area: the L's 230 x 125 box
+        // less its 115 x 30 notch, the other less its holes and corners.
+        let usable = verdict["room"]["usable_mm2"][0].as_f64().unwrap();
+        let area = if name == "l-shape" { 230.0 * 125.0 - 115.0 * 30.0 } else { 230.0 * 95.0 - 10.0 * 55.0 - 40.0 };
+        assert!(usable < area && usable > 0.9 * area, "{name}: usable {usable} of {area}");
+        let board = fs::read_to_string(out.join("result/main.kicad_pcb")).unwrap();
+        let placement = read(&out.join("placed/board-placer.json"));
+        let body = |reference: &str| {
+            let footprint = placement["footprints"].as_array().unwrap().iter().find(|footprint| footprint["reference"] == reference).unwrap();
+            let (center, half) = (&footprint["body_center"], &footprint["body_half"]);
+            let at = |value: &Value, axis: usize| value[axis].as_f64().unwrap();
+            [at(center, 0) - at(half, 0), at(center, 1) - at(half, 1), at(center, 0) + at(half, 0), at(center, 1) + at(half, 1)]
+        };
+        if name == "l-shape" {
+            assert!(!board.contains("gr_rect") && !board.contains("gr_arc"));
+            // The right half's power switch at the step, the left's at the top.
+            let right = body("SW_POWER1");
+            assert!((30.0..=31.0).contains(&right[1]) && right[0] >= 115.0, "SW_POWER1 at {right:?}");
+            assert!(body("SW_POWER0")[1] <= 1.0);
+        } else {
+            assert_eq!(board.matches("(gr_arc").count(), 4);
+            // No part's body in the slot.
+            for footprint in placement["footprints"].as_array().unwrap() {
+                let reference = footprint["reference"].as_str().unwrap();
+                let b = body(reference);
+                assert!(b[2] <= 110.0 || b[0] >= 120.0 || b[3] <= 20.0 || b[1] >= 75.0, "{reference} in the slot: {b:?}");
+            }
+        }
+        let output = run(&[Path::new("drc-kicad-board"), &out.join("result"), Path::new("main"), &root.join(format!("drc-{name}.json"))]);
+        assert_eq!(code(&output), 0, "drc-kicad-board {name}: {}", String::from_utf8_lossy(&output.stdout));
+        let drc = read(&root.join(format!("drc-{name}.json")));
+        let types: Vec<&str> = drc["violations"].as_array().unwrap().iter().map(|violation| violation["type"].as_str().unwrap()).collect();
+        assert!(!types.iter().any(|kind| matches!(*kind, "invalid_outline" | "copper_edge_clearance")), "{name}: {types:?}");
+    }
     fs::remove_dir_all(&root).ok();
 }
 

@@ -410,6 +410,123 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
 }
 
 #[test]
+fn a_cutout_the_user_cut_keeps_bodies_off() {
+    use pcb_placer::legal::is_legal;
+    let mut problem = chain(1);
+    let part = |size: f64, side: Side, fixed: bool| Component {
+        name: String::new(),
+        body_center: [0.0, 0.0],
+        body_size: [size, size],
+        round: false,
+        halo: 0.0,
+        pins: Vec::new(),
+        side,
+        fixed,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    // A triangular window (its box 4 x 4 mm) and a 2 mm part.
+    let window = vec![[23.0, 23.0], [27.0, 23.0], [23.0, 27.0]];
+    let cutout = Component { copper_only: true, cutout_outline: window, ..part(4.0, Side::Both, true) };
+    problem.components = vec![cutout, part(2.0, Side::Front, false)];
+    problem.poses = vec![Pose { position: [25.0, 25.0], angle: 0.0 }; 2];
+    let legal = |problem: &Problem, at: [f64; 2]| is_legal(problem, &problem.poses, 1, Pose { position: at, angle: 0.0 }, 0..2);
+    // A designer's slot: the body may reach over it.
+    assert!(legal(&problem, [24.0, 24.0]));
+    problem.constraints.solid_cutouts = vec![0];
+    assert!(!legal(&problem, [24.0, 24.0]));
+    // Beside the window's slanted side, inside its box: on the board.
+    assert!(legal(&problem, [26.6, 26.6]));
+    // Touching it: still on the board.
+    assert!(legal(&problem, [22.0, 25.0]));
+}
+
+#[test]
+fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
+    use pcb_placer::constraints::{Edge, outline_sides, side_distance};
+    // An L: 20 mm wide and 40 tall on the left, its right block 40 x 20
+    // mm, 20 mm lower. A part held at the top, wired to a part in the
+    // right block, sits under the step (y = 20), not at the box's top
+    // (y = 0, off the board there).
+    let outline = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [60.0, 20.0], [60.0, 40.0], [0.0, 40.0]];
+    let sides = outline_sides(std::slice::from_ref(&outline));
+    let count = |edge: Edge| sides.iter().filter(|(facing, _)| *facing == edge).count();
+    assert_eq!([count(Edge::Left), count(Edge::Top), count(Edge::Right), count(Edge::Bottom)], [1, 2, 2, 1]);
+    // Either way round the loop.
+    let reversed: Vec<_> = outline.iter().rev().copied().collect();
+    let again = outline_sides(&[reversed]);
+    assert_eq!(again.iter().filter(|(facing, _)| *facing == Edge::Top).count(), 2);
+    // Under the step, 1 mm below it; in the left arm, 3 mm below its top;
+    // beside the step's end, missed by how far the body misses it.
+    assert!((side_distance(&sides, Edge::Top, [40.0, 23.0], [2.0, 2.0]).unwrap() - 1.0).abs() < 1.0e-9);
+    assert!((side_distance(&sides, Edge::Top, [10.0, 5.0], [2.0, 2.0]).unwrap() - 3.0).abs() < 1.0e-9);
+    assert!((side_distance(&sides, Edge::Right, [40.0, 30.0], [2.0, 2.0]).unwrap() - 18.0).abs() < 1.0e-9);
+    // A slanted side faces where its normal points most: a triangle.
+    let triangle = outline_sides(&[vec![[0.0, 0.0], [10.0, 0.0], [0.0, 30.0]]]);
+    assert_eq!(triangle.iter().map(|(edge, _)| *edge).collect::<Vec<_>>(), vec![Edge::Top, Edge::Right, Edge::Left]);
+
+    let part = Component {
+        name: "J1".into(),
+        body_center: [0.0, 0.0],
+        body_size: [4.0, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = Problem {
+        outline,
+        components: vec![part.clone(), Component { name: "U1".into(), fixed: true, ..part }],
+        net_weights: vec![1.0],
+        poses: vec![Pose { position: [30.0, 30.0], angle: 0.0 }, Pose { position: [45.0, 32.0], angle: 0.0 }],
+        spacing: 0.2,
+        grid: 0.1,
+        edge_margin: 0.0,
+        min_spacing: 0.2,
+        far_side_pads_only: false,
+        shared_halos: false,
+        pieces: Vec::new(),
+        constraints: Default::default(),
+    };
+    problem.constraints.edges.push((0, Edge::Top, 0.5));
+    // Against the box's top, the part has to go to the left arm (over the
+    // right block, the box's top is off the board).
+    let boxed = place(&problem, &Config::new());
+    let top = boxed.poses[0].position[1] - 2.0;
+    assert!(top < 0.6, "against the box: top at {top}");
+    problem.constraints.sides = sides;
+    let placement = place(&problem, &Config::new());
+    assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+    let [x, y] = placement.poses[0].position;
+    assert!((20.0..=20.5).contains(&(y - 2.0)) && x - 2.0 >= 20.0, "J1 at {x}, {y}");
+}
+
+#[test]
 fn apart_keeps_connected_parts_away_from_each_other() {
     use pcb_placer::constraints::Relation;
     let part = || Component {

@@ -387,7 +387,9 @@ fn clear_of(
         if side.collides(other_side) {
             let (mine, theirs) = (&problem.components[index], &problem.components[other]);
             if mine.copper_only || theirs.copper_only {
-                if copper_meets_cutout(problem, index, pose, other, poses[other], work) {
+                if copper_meets_cutout(problem, index, pose, other, poses[other], work)
+                    || body_meets_solid_cutout(problem, index, pose, other, poses[other], work)
+                {
                     return false;
                 }
                 continue;
@@ -562,6 +564,32 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
     let hole = rect(problem, hole, pose_hole);
     *work += pads.len() as u64;
     pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
+}
+
+/// Whether a part's body (without its halo) meets a cutout the user cut
+/// into the outline (`Constraints::solid_cutouts`): a window in the board
+/// holds no part, while a designer's slot may hold a connector's pegs.
+fn body_meets_solid_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+    let solid = &problem.constraints.solid_cutouts;
+    if solid.is_empty() {
+        return false;
+    }
+    let (hole, part, pose_part) = if problem.components[a].copper_only { (a, b, pose_b) } else { (b, a, pose_a) };
+    if problem.components[part].copper_only || !solid.contains(&hole) {
+        return false;
+    }
+    let body = bare(problem, part, pose_part, 0.0);
+    let outline = &problem.components[hole].cutout_outline;
+    if outline.len() < 3 {
+        return false;
+    }
+    let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    for point in outline {
+        extent = [extent[0].min(point[0]), extent[1].min(point[1]), extent[2].max(point[0]), extent[3].max(point[1])];
+    }
+    // A body touching the hole's edge is on the board.
+    let body = body.grown(-1.0e-6);
+    !box_apart(&body, extent, 0.0) && rect_meets_polygon(&body, outline, work)
 }
 
 /// The work of building a list of boxes (an allocation, and a turn of each

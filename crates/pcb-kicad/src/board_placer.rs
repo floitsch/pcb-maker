@@ -2401,7 +2401,12 @@ pub(super) fn lower_placement(
     }
 
     // Cutouts are board edge too: parts keep the edge margin from them.
-    for cutout in &loops.cutouts {
+    // Those an `outline` constraint cut (the board's own graphics, which
+    // it replaced) keep bodies off as well.
+    let outline_given =
+        matches!(&config.constraints, Some(KiCadConstraintsSource::Inline(constraints)) if constraints.outline.is_some());
+    let mut solid_cutouts = Vec::new();
+    for (number, cutout) in loops.cutouts.iter().enumerate() {
         let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
         for point in cutout {
             for axis in 0..2 {
@@ -2411,6 +2416,9 @@ pub(super) fn lower_placement(
         }
         if minimum[0] > maximum[0] {
             continue;
+        }
+        if outline_given && loops.board_cutouts.get(number).copied().unwrap_or(false) {
+            solid_cutouts.push(components.len());
         }
         // The hole itself: the copper keeps the edge margin from it in the
         // legality test, which looser levels bring down to the rules'
@@ -2493,6 +2501,7 @@ pub(super) fn lower_placement(
     // zero (hackrf's SMA connector P4, its pads flush with the outline: 5
     // copper_edge_clearance findings; 0.01 mm off it, none).
     problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.02);
+    problem.constraints.solid_cutouts = solid_cutouts;
     for index in 0..footprint_count {
         let reference = &references[index];
         let component = &problem.components[index];
@@ -2546,6 +2555,11 @@ pub(super) fn lower_placement(
             return Err(format!("constraints file {} was not resolved", path.display()));
         }
     };
+    // A polygon outline: parts held at an edge keep to the nearest side of
+    // the polygon that faces it.
+    if user_constraints.and_then(|constraints| constraints.outline.as_ref()).is_some_and(|outline| outline.polygonal()) {
+        problem.constraints.sides = core::constraints::outline_sides(&loops.piece_loops);
+    }
     // Fixed parts on top of each other place and route without a word,
     // and the board comes back with opens: say so (fence issue E). Checked
     // after the constraints, which fix and free parts (move_all frees a
@@ -2923,16 +2937,22 @@ fn choose_any_edges(
         std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0)
     ));
+    let polygonal = constraints.outline.as_ref().is_some_and(|outline| outline.polygonal());
     let trial = place_kicad_board(source_directory, board_id, &directory, &free);
-    let bounds = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
+    let loops = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
         .ok()
         .and_then(|text| parse(&text).ok())
-        .and_then(|pcb| outline::board_loops(&pcb).ok())
-        .map(|loops| {
-            loops.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
-                [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
-            })
-        });
+        .and_then(|pcb| outline::board_loops(&pcb).ok());
+    // On a polygon, the distance to the nearest side facing each way.
+    let sides = match (&loops, polygonal) {
+        (Some(loops), true) => core::constraints::outline_sides(&loops.piece_loops),
+        _ => Vec::new(),
+    };
+    let bounds = loops.map(|loops| {
+        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
+            [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+        })
+    });
     let _ = fs::remove_dir_all(&directory);
     let trial = trial?;
     let bounds = bounds.ok_or("\"edge\": \"any\" needs a board outline (or an `outline` constraint)")?;
@@ -2946,11 +2966,20 @@ fn choose_any_edges(
                 .ok_or_else(|| format!("constraint names unknown part {:?}", entry.part))?;
             let ([x, y], [half_x, half_y]) = (placed.body_center, placed.body_half);
             let along_x = half_x >= half_y;
+            let box_distances = [x - half_x - bounds[0], y - half_y - bounds[1], bounds[2] - x - half_x, bounds[3] - y - half_y];
+            let distance = |slot: usize, edge: core::constraints::Edge| {
+                if sides.is_empty() {
+                    box_distances[slot]
+                } else {
+                    core::constraints::side_distance(&sides, edge, [x, y], [half_x, half_y]).unwrap_or(f64::INFINITY)
+                }
+            };
+            use core::constraints::Edge;
             let edges = [
-                ("left", x - half_x - bounds[0], !along_x),
-                ("top", y - half_y - bounds[1], along_x),
-                ("right", bounds[2] - x - half_x, !along_x),
-                ("bottom", bounds[3] - y - half_y, along_x),
+                ("left", distance(0, Edge::Left), !along_x),
+                ("top", distance(1, Edge::Top), along_x),
+                ("right", distance(2, Edge::Right), !along_x),
+                ("bottom", distance(3, Edge::Bottom), along_x),
             ];
             let cost = |(_, distance, along): &(&str, f64, bool)| distance - if *along { 1.0 } else { 0.0 };
             let (name, _, _) = edges.iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).expect("four edges");
@@ -4008,6 +4037,69 @@ mod tests {
         // On by default; `keep_on_pieces: false` switches it off.
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig { keep_on_pieces: false, ..KiCadBoardPlacerConfig::default() }, &[]).unwrap();
         assert!(lowered.problem.constraints.regions.is_empty());
+    }
+
+    #[test]
+    fn a_shaped_outline_gives_the_placer_its_sides_pieces_and_solid_cutouts() {
+        // Two pieces from the constraints: an L (its step at y = 10) and a
+        // 20 mm square with a window. J1 is locked on the square; R1 joins
+        // it by its net and stays on that piece (keep_on_pieces). J2 brings
+        // a slot of its own (Edge.Cuts in the footprint): copper keeps off
+        // it, bodies may reach over it, unlike the window.
+        let mut pcb = parse(
+            r#"(kicad_pcb
+            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (footprint "J" (layer "F.Cu") (at 80 15) (locked yes)
+                (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+                (property "Reference" "J1")
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+            (footprint "J" (layer "F.Cu") (at 30 20) (locked yes)
+                (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+                (fp_rect (start -0.5 -1) (end 0.5 1) (layer "Edge.Cuts"))
+                (property "Reference" "J2")
+                (pad "1" smd rect (at 1.5 0) (size 0.5 0.5) (layers "F.Cu") (net 3 "C")))
+            (footprint "R" (layer "F.Cu") (at 10 10)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+                (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "A"))
+                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
+        )
+        .unwrap();
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "edge": [{"part": "R1", "edge": "top"}],
+                "outline": {"x": 0, "y": 0, "pieces": [
+                    {"polygon": [[0, 0], [20, 0], [20, 10], [60, 10], [60, 30], [0, 30]]},
+                    {"width": 20, "height": 20, "x": 70, "y": 0, "cutouts": [{"x": [2, 6], "y": [2, 6]}]}]}}"#,
+        )
+        .unwrap();
+        apply_outline(&mut pcb, constraints.outline.as_ref().unwrap(), 0.0).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(constraints.clone())),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let problem = &lowered.problem;
+        assert_eq!(problem.pieces, vec![[0.0, 0.0, 60.0, 30.0], [70.0, 0.0, 90.0, 20.0]]);
+        // Two pieces' sides: six and four.
+        assert_eq!(problem.constraints.sides.len(), 10);
+        // The window keeps bodies off, J2's slot copper only.
+        let holes: Vec<usize> = (0..problem.components.len()).filter(|index| problem.components[*index].copper_only).collect();
+        assert_eq!(holes.len(), 2);
+        assert_eq!(problem.constraints.solid_cutouts.len(), 1);
+        let window = &problem.components[problem.constraints.solid_cutouts[0]];
+        assert_eq!(window.body_size, [4.0, 4.0]);
+        assert_eq!(problem.poses[problem.constraints.solid_cutouts[0]].position, [74.0, 4.0]);
+        // R1 is on J1's piece.
+        let r1 = lowered.references.iter().position(|reference| reference == "R1").unwrap();
+        assert!(problem.constraints.regions.contains(&(r1, [70.0, 0.0, 90.0, 20.0])), "{:?}", problem.constraints.regions);
+        // A rectangle keeps the box's sides and has no solid cutouts.
+        let rectangle: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "outline": {"width": 60, "height": 30, "x": 0, "y": 0, "corner_radius": 2}}"#).unwrap();
+        apply_outline(&mut pcb, rectangle.outline.as_ref().unwrap(), 0.0).unwrap();
+        let config = KiCadBoardPlacerConfig { constraints: Some(KiCadConstraintsSource::Inline(rectangle)), ..KiCadBoardPlacerConfig::default() };
+        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        assert!(lowered.problem.constraints.sides.is_empty());
+        assert!(lowered.problem.constraints.solid_cutouts.is_empty());
     }
 
     #[test]

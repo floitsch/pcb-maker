@@ -340,7 +340,7 @@ fn automatic_outline(config: &mut KiCadBoardPlacerConfig) -> Option<&mut crate::
         Some(KiCadConstraintsSource::Inline(constraints)) => constraints
             .outline
             .as_mut()
-            .filter(|outline| outline.width.is_none() && outline.height.is_none() && outline.area_factor.is_none()),
+            .filter(|outline| outline.automatic() && outline.area_factor.is_none()),
         _ => None,
     }
 }

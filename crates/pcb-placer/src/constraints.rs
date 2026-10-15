@@ -157,6 +157,16 @@ pub struct Constraints {
     /// regions' near borders, piled up there, and 57 of SmartSpin2k's found
     /// no legal place.
     pub starts: Vec<(usize, Point)>,
+    /// The outline's sides on a board whose outline is a polygon the user
+    /// gave (`outline_sides`): each segment of its pieces' loops with the
+    /// side it faces. When set, a part held at an edge is held at the
+    /// nearest segment facing that side, not at the side of the board's
+    /// box (an L-shaped board's step is a top edge).
+    pub sides: Vec<(Edge, [Point; 2])>,
+    /// Cutouts (components with `copper_only`) the user cut into the
+    /// outline: bodies keep off them too, not only copper (a window in the
+    /// board; a designer's slot may hold a connector's pegs).
+    pub solid_cutouts: Vec<usize>,
 }
 
 /// A constraint kept by construction: `side`, the side the part (or the
@@ -314,10 +324,15 @@ pub fn overhang_box(problem: &Problem, index: usize, pose: Pose, local: [f64; 4]
 /// The part of an overhanging body that must lie on the board: its body box
 /// cut at the edge line, as [min x, min y, max x, max y]. `None` for parts
 /// without overhang.
-/// The box whose sides are the board edges for a part centred at `at`: the
-/// board's, or on a board of several pieces the piece's that holds `at`
-/// (or lies nearest).
-fn edge_frame(problem: &Problem, at: Point) -> [f64; 4] {
+/// The box whose sides are the board edges for a body centred at `at`
+/// with half extent `half`: the board's, or on a board of several pieces
+/// the piece's that holds `at` (or lies nearest), or on a polygon the
+/// user gave the lines of the nearest segments facing each side
+/// (`side_lines`).
+fn edge_frame(problem: &Problem, at: Point, half: Point) -> [f64; 4] {
+    if !problem.constraints.sides.is_empty() {
+        return side_lines(&problem.constraints.sides, at, half, problem.bounds()).0;
+    }
     if problem.pieces.len() < 2 {
         return problem.bounds();
     }
@@ -333,6 +348,171 @@ fn edge_frame(problem: &Problem, at: Point) -> [f64; 4] {
         .expect("pieces")
 }
 
+/// The side a segment of a loop faces: the axis its outward normal points
+/// along most (a side at 45 degrees faces top or bottom). `positive_area`:
+/// the loop's signed area (the sum of a.x b.y - b.x a.y over its segments,
+/// in KiCad's coordinates, y down) is positive: it runs clockwise on
+/// screen.
+fn facing(a: Point, b: Point, positive_area: bool) -> Option<Edge> {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    if dx.hypot(dy) < 1.0e-9 {
+        return None;
+    }
+    // Outward normal: (dy, -dx) for a loop with positive signed area, the
+    // opposite otherwise.
+    let (nx, ny) = if positive_area { (dy, -dx) } else { (-dy, dx) };
+    Some(if nx.abs() > ny.abs() {
+        if nx < 0.0 { Edge::Left } else { Edge::Right }
+    } else if ny < 0.0 {
+        Edge::Top
+    } else {
+        Edge::Bottom
+    })
+}
+
+/// The sides of an outline given as loops (one per piece, without the
+/// closing point repeated): every segment with the side it faces
+/// (`facing`). Cutouts are not sides.
+pub fn outline_sides(loops: &[Vec<Point>]) -> Vec<(Edge, [Point; 2])> {
+    let mut sides = Vec::new();
+    for points in loops {
+        if points.len() < 3 {
+            continue;
+        }
+        let signed: f64 = (0..points.len())
+            .map(|index| {
+                let (a, b) = (points[index], points[(index + 1) % points.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum();
+        for index in 0..points.len() {
+            let (a, b) = (points[index], points[(index + 1) % points.len()]);
+            if let Some(edge) = facing(a, b, signed > 0.0) {
+                sides.push((edge, [a, b]));
+            }
+        }
+    }
+    sides
+}
+
+fn point_segment_distance(p: Point, a: Point, b: Point) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx * dx + dy * dy;
+    let t = if length > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0) } else { 0.0 };
+    (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
+}
+
+/// Distance between a box (`low`, `high` corners) and a segment: zero
+/// when they meet.
+fn box_segment_distance(low: Point, high: Point, a: Point, b: Point) -> f64 {
+    // Clip the segment to the box (Liang-Barsky): any part inside meets.
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    let mut inside = true;
+    for (p, q) in [(-dx, a[0] - low[0]), (dx, high[0] - a[0]), (-dy, a[1] - low[1]), (dy, high[1] - a[1])] {
+        if p.abs() < 1.0e-15 {
+            if q < 0.0 {
+                inside = false;
+                break;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+        }
+    }
+    if inside && t0 <= t1 {
+        return 0.0;
+    }
+    let to_box = |p: Point| {
+        let ex = (low[0] - p[0]).max(p[0] - high[0]).max(0.0);
+        let ey = (low[1] - p[1]).max(p[1] - high[1]).max(0.0);
+        ex.hypot(ey)
+    };
+    let corners = [low, [high[0], low[1]], high, [low[0], high[1]]];
+    corners
+        .iter()
+        .map(|corner| point_segment_distance(*corner, a, b))
+        .fold(to_box(a).min(to_box(b)), f64::min)
+}
+
+/// On a polygon outline (`Constraints::sides`): for a body centred at
+/// `at` with half extent `half`, per side (left, top, right, bottom) the
+/// line of the nearest segment facing that side, and how far the body's
+/// extent along that segment misses the segment's (0 when it lies
+/// alongside it). The line is the segment's innermost coordinate over the
+/// stretch alongside the body (a slanted side: where the body's corner
+/// meets it), or its nearer end's beyond it. A side no segment faces keeps
+/// the box's (`fallback`), missed by nothing.
+pub fn side_lines(sides: &[(Edge, [Point; 2])], at: Point, half: Point, fallback: [f64; 4]) -> ([f64; 4], [f64; 4]) {
+    let low = [at[0] - half[0], at[1] - half[1]];
+    let high = [at[0] + half[0], at[1] + half[1]];
+    let mut lines = fallback;
+    let mut misses = [0.0; 4];
+    let mut best = [f64::INFINITY; 4];
+    for (edge, [a, b]) in sides {
+        let slot = side_index(*edge);
+        let distance = box_segment_distance(low, high, *a, *b);
+        if distance >= best[slot] {
+            continue;
+        }
+        best[slot] = distance;
+        // Along: x for the top and bottom, y for the sides.
+        let along = match edge {
+            Edge::Top | Edge::Bottom => 0,
+            Edge::Left | Edge::Right => 1,
+        };
+        let across = 1 - along;
+        let (start, end) = if a[along] <= b[along] { (*a, *b) } else { (*b, *a) };
+        let at_along = |value: f64| {
+            let span = end[along] - start[along];
+            if span <= 0.0 {
+                start[across].max(end[across])
+            } else {
+                let t = ((value - start[along]) / span).clamp(0.0, 1.0);
+                start[across] + t * (end[across] - start[across])
+            }
+        };
+        let (from, to) = (low[along].max(start[along]), high[along].min(end[along]));
+        let (values, miss) = if from <= to {
+            ([at_along(from), at_along(to)], 0.0)
+        } else if high[along] < start[along] {
+            ([start[across]; 2], start[along] - high[along])
+        } else {
+            ([end[across]; 2], low[along] - end[along])
+        };
+        // Inward: the board lies below a top side, left of a right side.
+        lines[slot] = match edge {
+            Edge::Top | Edge::Left => values[0].max(values[1]),
+            Edge::Bottom | Edge::Right => values[0].min(values[1]),
+        };
+        misses[slot] = miss;
+    }
+    (lines, misses)
+}
+
+/// How far a body (centre, half extent) lies from the nearest segment of
+/// a polygon outline facing `edge` (`side_lines`): the gap between the
+/// body's side and that segment's line, plus how far the body's extent
+/// misses the segment's. `None` when no segment faces that side.
+pub fn side_distance(sides: &[(Edge, [Point; 2])], edge: Edge, at: Point, half: Point) -> Option<f64> {
+    if !sides.iter().any(|(facing, _)| *facing == edge) {
+        return None;
+    }
+    let (lines, misses) = side_lines(sides, at, half, [0.0; 4]);
+    let slot = side_index(edge);
+    let gap = match edge {
+        Edge::Left => at[0] - half[0] - lines[0],
+        Edge::Top => at[1] - half[1] - lines[1],
+        Edge::Right => lines[2] - at[0] - half[0],
+        Edge::Bottom => lines[3] - at[1] - half[1],
+    };
+    Some(gap.max(0.0) + misses[slot])
+}
+
 pub fn inner_box(problem: &Problem, index: usize, pose: Pose) -> Option<[f64; 4]> {
     let (edge, _) = problem.constraints.overhang(index)?;
     let (center, half) = body(problem, index, pose);
@@ -342,7 +522,7 @@ pub fn inner_box(problem: &Problem, index: usize, pose: Pose) -> Option<[f64; 4]
         center[0] + half[0],
         center[1] + half[1],
     ];
-    let bounds = edge_frame(problem, center);
+    let bounds = edge_frame(problem, center, half);
     match edge {
         Edge::Left => inner[0] = inner[0].max(bounds[0]),
         Edge::Top => inner[1] = inner[1].max(bounds[1]),
@@ -358,7 +538,8 @@ fn overhang_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         return 0.0;
     };
     let outside = overhang_box(problem, index, pose, local);
-    let bounds = edge_frame(problem, body(problem, index, pose).0);
+    let (center, half) = body(problem, index, pose);
+    let bounds = edge_frame(problem, center, half);
     // Distance of the box's inner side from the edge line: positive when
     // the box reaches onto the board.
     let reach = match edge {
@@ -380,7 +561,8 @@ fn pad_edge_deficit(problem: &Problem, index: usize, pose: Pose, edge: Edge) -> 
         return 0.0;
     }
     let component = &problem.components[index];
-    let bounds = edge_frame(problem, body(problem, index, pose).0);
+    let (center, half) = body(problem, index, pose);
+    let bounds = edge_frame(problem, center, half);
     let mut distance = f64::INFINITY;
     for (center, half) in component.pad_boxes(pose) {
         let near = match edge {
@@ -436,7 +618,7 @@ fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Po
 /// The band or box a body must stay in, from the edge and region
 /// constraints on `index`, as limits for its body box: [min x, min y, max x,
 /// max y] of the body's extent.
-fn limits(problem: &Problem, index: usize, at: Point) -> Option<[f64; 4]> {
+fn limits(problem: &Problem, index: usize, at: Point, half: Point) -> Option<[f64; 4]> {
     let constraints = &problem.constraints;
     let mut limits = [
         f64::NEG_INFINITY,
@@ -445,7 +627,7 @@ fn limits(problem: &Problem, index: usize, at: Point) -> Option<[f64; 4]> {
         f64::INFINITY,
     ];
     let mut any = false;
-    let bounds = edge_frame(problem, at);
+    let bounds = edge_frame(problem, at, half);
     for (part, edge, _) in &constraints.edges {
         if *part != index {
             continue;
@@ -491,9 +673,16 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     // The board's box and the pads' offsets only for a part an edge holds.
     let held = constraints.edges.iter().any(|(part, _, _)| *part == index);
     let (bounds, offsets) = if held {
-        (edge_frame(problem, center), copper_edge_offsets(problem, index, pose.angle))
+        (edge_frame(problem, center, half), copper_edge_offsets(problem, index, pose.angle))
     } else {
         ([0.0; 4], [0.0; 4])
+    };
+    // On a polygon outline, a body beside the nearest segment facing its
+    // side, not beyond its ends.
+    let misses = if held && !constraints.sides.is_empty() {
+        side_lines(&constraints.sides, center, half, problem.bounds()).1
+    } else {
+        [0.0; 4]
     };
     for (part, edge, reach) in &constraints.edges {
         if *part != index {
@@ -507,7 +696,7 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         };
         // Beyond the edge is the outline check's business; the reach counts
         // from where the copper keeps its clearance.
-        violation = violation.max(distance - reach - offsets[side_index(*edge)]);
+        violation = violation.max(distance - reach - offsets[side_index(*edge)]).max(misses[side_index(*edge)]);
     }
     for (part, region) in &constraints.regions {
         if *part != index {
@@ -531,7 +720,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
         let component = &problem.components[index];
         let position = component.position_for_center(*center, angle);
         let outside = overhang_box(problem, index, Pose { position, angle }, local);
-        let bounds = edge_frame(problem, *center);
+        let bounds = edge_frame(problem, *center, half);
         match edge {
             Edge::Left => center[0] += bounds[0] - outside[2],
             Edge::Top => center[1] += bounds[1] - outside[3],
@@ -549,7 +738,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
             Edge::Bottom => center[1] += deficit,
         }
     }
-    let Some(limits) = limits(problem, index, *center) else {
+    let Some(limits) = limits(problem, index, *center, half) else {
         return;
     };
     for axis in 0..2 {
@@ -567,7 +756,7 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
     }
     // An edge with a reach: keep the near side within reach of the edge
     // (counted from where the copper keeps its clearance).
-    let bounds = edge_frame(problem, *center);
+    let bounds = edge_frame(problem, *center, half);
     let offsets = copper_edge_offsets(problem, index, angle);
     for (part, edge, reach) in &problem.constraints.edges {
         if *part != index {
@@ -888,7 +1077,7 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
     let grid = problem.grid;
     let component = &problem.components[index];
     let half = component.half_extent(angle);
-    let bounds = edge_frame(problem, at);
+    let bounds = edge_frame(problem, at, half);
     let offsets = if held { copper_edge_offsets(problem, index, angle) } else { [0.0; 4] };
     for (part, edge, _) in &constraints.edges {
         if *part != index {

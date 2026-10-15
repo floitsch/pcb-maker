@@ -52,13 +52,13 @@ downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |
 | --- | --- | --- |
-| `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. Leave out `width` and `height` and the board is sized from its parts: `area_factor` times their total body area, at `aspect` width/height (default 1.5), with both sides kept within 100 mm when the area allows (the cheap fabs' flat price, see [cost.md](cost.md)). Without `area_factor`, `layout-kicad-board` starts where designers do (2 on two layers, 1.5 on more: the medians of 616 open-source boards are 1.9 and 1.4) and grows the board by a quarter, up to three times, while the parts do not fit or a quick route leaves connections open; with `"shrink": true` it instead shrinks a board that routes by a fifth while it still routes (the smallest board). The sizes tried are in `board-layout.json` as `outline_sizing`; the size used is reported as `outline_mm`. | board |
+| `outline` | The board becomes a `width` × `height` rectangle, replacing the board's Edge.Cuts. `x`/`y` place its top-left corner (default: the old outline's corner; without one, centred on the footprints). Parts lying entirely off the new board are placed, not kept. A `polygon`, round corners (`corner_radius`), holes (`cutouts`) and several `pieces`: see [Outlines that are not rectangles](#outlines-that-are-not-rectangles). Leave out `width` and `height` and the board is sized from its parts: `area_factor` times their total body area, at `aspect` width/height (default 1.5), with both sides kept within 100 mm when the area allows (the cheap fabs' flat price, see [cost.md](cost.md)). Without `area_factor`, `layout-kicad-board` starts where designers do (2 on two layers, 1.5 on more: the medians of 616 open-source boards are 1.9 and 1.4) and grows the board by a quarter, up to three times, while the parts do not fit or a quick route leaves connections open; with `"shrink": true` it instead shrinks a board that routes by a fifth while it still routes (the smallest board). The sizes tried are in `board-layout.json` as `outline_sizing`; the size used is reported as `outline_mm`. | board |
 | `move_all` | Every footprint is placed, unless locked or named by `fixed`; mounting holes no constraint names go to the corners, then to the middle of the edges (reported as `edge` constraints). Use it for a board fresh from a netlist. Without it, default rules keep parts that look deliberately placed: connectors at the edge, parts over the outline. | board |
 | `fixed` | These parts keep the pose they have in the board file. | hard |
 | `place` | Where one part goes, in words or exactly. `at`: `left`, `right`, `top`, `bottom` (on that edge, as `edge` with the default 1 mm), `top-left`, `top-right`, `bottom-left`, `bottom-right` (in that corner), `center` (the middle third both ways), `left-half`, `right-half`, `top-half`, `bottom-half`, or `front`/`rear`. Or `x`, `y` (the footprint's origin; `origin` as for `region`) and optionally `angle`: the part is put there and kept. | hard |
 | `device_front` | The board edge the device's front is at (`left`, `right`, `top`, `bottom`), so that `place` can say `front` (a button the user presses) and `rear` (the power jack). | board |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
-| `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
+| `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On a `polygon` outline, of the nearest side of the polygon that faces that way (below). On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
 | `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
 | `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. | hard |
@@ -151,10 +151,88 @@ side's pads out where the part is; a board rule area on inner layers only
 that forbids pads keeps pads out on both sides (a through-hole pad
 crosses the inner layers).
 
+## Outlines that are not rectangles
+
+`outline` also takes a polygon, round corners, holes and several pieces.
+They are written to Edge.Cuts as lines and arcs (KiCad's DRC reads them
+as a closed outline), the placer keeps parts on the shape itself (not its
+box), and the router routes within it.
+
+```json
+"outline": {"polygon": [[0, 0], [115, 0], [115, 30], [230, 30], [230, 125], [0, 125]],
+            "x": 0, "y": 0, "corner_radius": 2}
+```
+
+- **`polygon`**: the corners in millimetres, closed implicitly (a last
+  point repeating the first is dropped). The points are moved so that
+  their bounding box's top-left corner lies at `x`, `y` (default as for
+  the rectangle). Three corners at least, an area, no side crossing
+  another: otherwise an input error (exit 2).
+- **`corner_radius`**: every corner of the rectangle or polygon rounded
+  with this radius, as an arc (inner corners too). A side too short for
+  two full radii gives each of its corners half its length: a 30 x 4 mm
+  outline with radius 5 becomes a slot with round ends.
+- **`cutouts`**: holes, each a box (`"x": [10, 20], "y": [5, 10]`) or a
+  `polygon`, optionally with its own `corner_radius`, relative to the
+  outline's `x`, `y` (a piece's own corner; `"origin": "absolute"`:
+  board coordinates).
+  Each must lie inside its outline and apart from the others. No part's
+  body enters a cutout and copper keeps the edge clearance from it (a
+  cutout a footprint brings, a connector's slot, keeps only copper off).
+  The room's usable area leaves them out.
+
+  ```json
+  "outline": {"width": 230, "height": 95, "corner_radius": 5,
+              "cutouts": [{"x": [110, 120], "y": [20, 75]},
+                          {"polygon": [[60, 80], [70, 80], [65, 88]]}]}
+  ```
+- **`pieces`**: several outlines in one board (a board with a breakaway
+  part, two boards made as one): each piece a rectangle or polygon with its
+  own `corner_radius` and `cutouts`, and its own `x`, `y`: where its
+  top-left corner lies within the set (default 0, 0). The outline's `x`,
+  `y` place the set's top-left corner. Pieces may not overlap or touch.
+  No tabs or mouse bites are drawn. On a board of several pieces the
+  parts a net joins to fixed parts on one piece stay on that piece
+  (`keep_on_pieces` in the placer config, on by default), and a part held
+  at an edge is held at its own piece's edge.
+
+  ```json
+  "outline": {"x": 0, "y": 0,
+              "pieces": [{"width": 60, "height": 40, "corner_radius": 3},
+                         {"polygon": [[0, 0], [30, 0], [30, 40], [0, 20]], "x": 65}]}
+  ```
+
+**Edges on a polygon.** Each side of the polygon faces left, right, top
+or bottom: the way its outward normal points most (a side at exactly 45
+degrees faces top or bottom; the segments of a rounded corner face
+whichever way they point). An `edge` constraint holds the part at the
+nearest side facing its edge, measured from the part's body: on an L
+whose right half lies lower, `"edge": "top"` puts a part in the right
+half against the step, not against the box's top (which is off the board
+there). The body must lie alongside that side (not beyond its ends); on
+a slanted side the distance counts from where the body's corner meets
+it. `any` picks among the four the same way. On a rectangle with round
+corners or cutouts, or on pieces that are all rectangles, edges are the
+bounding box's (each piece's) as before. Cutouts are never edges.
+
+**What stays the box's.** `region`, `keepout` and `place` with `x`, `y`
+count from the top-left corner of the outline's bounding box (the same
+as the polygon's `x`, `y` unless an extreme corner of it is rounded:
+then the rounded shape's box). `place`'s `center` and halves are cut
+from that box; its edge and corner words are `edge` constraints (a
+corner is two: `top-left`, the nearest side facing up and the nearest
+facing left), so on a polygon they mean its sides and corners, and so do
+the corners `move_all` sends mounting holes to. `room` reports the box as
+`outline_mm` and suggests rectangles; its usable area is the polygon's
+area less the cutouts.
+
+The automatic size (`"outline": {}`) and `shrink` are for rectangles: a
+polygon or pieces have the size they are given (`area_factor`, `aspect`
+and `shrink` with them are errors). `corner_radius` works with an
+automatic size; cutouts need a size.
+
 ## Not supported yet
 
-- A non-rectangular `outline` (draw it in KiCad instead: the placer
-  follows any outline the board has).
 - Choosing sides automatically: parts stay on their side unless `back` or
   `front` names them.
 - Routing intent: differential pairs, length matching. Track widths and

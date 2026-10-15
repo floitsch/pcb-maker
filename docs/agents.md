@@ -91,7 +91,11 @@ Full reference: [constraints.md](constraints.md).
 - **`place`** says where a part goes in words (`"at": "top-left"`,
   `"center"`, `"front"` with `device_front`) or exactly (`x`, `y`,
   `angle`, for a part that must match an enclosure).
-- **`outline`** sets the board size.
+- **`outline`** sets the board size, or its shape: a `polygon`, round
+  corners (`corner_radius`), holes (`cutouts`) or several `pieces`
+  ([constraints.md](constraints.md#outlines-that-are-not-rectangles)).
+  On a polygon, `edge` means the nearest side of the polygon facing that
+  way.
 - **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be;
   **`back`/`front`** on which side.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
@@ -132,6 +136,10 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "Battery holder on the back" | `"back": ["BT1"]` |
 | "A HAT: the Pi's outline is fixed, parts go inside it" | `"fixed": ["J5"]`, `"hollow": ["J5"]` |
 | "As small as possible" | `"outline": {"shrink": true}`: the smallest board a quick route completes (each size tried costs a placement and a route) |
+| "100 x 60 mm with 3 mm round corners" | `"outline": {"width": 100, "height": 60, "corner_radius": 3}` |
+| "It must fit the enclosure: an L, the right part 30 mm lower" | `"outline": {"polygon": [[0, 0], [115, 0], [115, 30], [230, 30], [230, 125], [0, 125]]}`; `"edge": "top"` for a part in the right part puts it against the step |
+| "A window for the display, nothing in it" | `"outline": {"width": 80, "height": 50, "cutouts": [{"x": [20, 60], "y": [10, 35]}]}` (relative to the outline's corner; a `polygon` works too) |
+| "The sensor board breaks off the main board" | `"outline": {"pieces": [{"width": 60, "height": 40}, {"width": 15, "height": 40, "x": 65}]}`; parts wired to a fixed part on a piece stay on it |
 
 Router side (the file passed in place of `auto`):
 
@@ -299,7 +307,7 @@ that an agent enlarges it in one step:
 | Field | Meaning |
 | --- | --- |
 | `outline_mm` | The outline's box, width and height. |
-| `usable_mm2` | Per side (front, back): the outline's area less the band along the edge bodies keep free and less the fixed parts' bodies. |
+| `usable_mm2` | Per side (front, back): the outline's area (a polygon's own, less its cutouts) less the band along the edge bodies keep free and less the fixed parts' bodies. |
 | `parts_mm2` | Per side: the movable parts' bodies (courtyards, or the body box) with the spacing around them; a row is one body. |
 | `utilization` | `parts_mm2` over `usable_mm2`, per side. |
 | `target_utilization` | 0.7: above it a side is called full and placement gets hard. |

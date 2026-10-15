@@ -225,7 +225,14 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
     let bounds = problem.bounds();
     let outline = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
     let margin = problem.edge_margin.max(0.0);
-    let inner = (polygon_area(&problem.outline) - polygon_perimeter(&problem.outline) * margin).max(0.0);
+    // Holes the user cut into the outline hold no part.
+    let holes: f64 = problem
+        .constraints
+        .solid_cutouts
+        .iter()
+        .map(|index| polygon_area(&problem.components[*index].cutout_outline))
+        .sum();
+    let inner = (polygon_area(&problem.outline) - polygon_perimeter(&problem.outline) * margin - holes).max(0.0);
     let mut fixed = [0.0f64; 2];
     let mut parts = [0.0f64; 2];
     let sides = |side: core::Side| -> &'static [usize] {

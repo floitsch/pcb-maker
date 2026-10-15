@@ -12,6 +12,12 @@ pub(super) struct BoardLoops {
     /// Bounding boxes ([min x, min y, max x, max y]) of the board's pieces,
     /// the largest first: one for an ordinary board.
     pub pieces: Vec<[f64; 4]>,
+    /// The pieces' own loops, the largest first (`outline` joins them by
+    /// zero-width bridges).
+    pub piece_loops: Vec<Vec<[f64; 2]>>,
+    /// Per cutout: drawn by the board's own graphics, not a footprint's (a
+    /// slot a connector brings): the cutouts an `outline` constraint cut.
+    pub board_cutouts: Vec<bool>,
 }
 
 /// Longest chord error accepted when flattening arcs.
@@ -144,6 +150,9 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
+    // Whether each loop and open piece is the board's own graphics.
+    let mut loop_on_board: Vec<bool> = Vec::new();
+    let mut open_on_board: Vec<bool> = Vec::new();
     // Footprints may carry part of the outline (card-edge notches); their
     // graphics are in the footprint frame.
     let identity = [0.0, 0.0, 0.0];
@@ -163,6 +172,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         if form_atom(item, "layer", 1) != Some("Edge.Cuts") {
             continue;
         }
+        let on_board = matches!(item.head(), Some(head) if head.starts_with("gr_"));
         let place = |local: [f64; 2]| -> [f64; 2] {
             let offset = rotate_vector(local, -frame[2]);
             [frame[0] + offset[0], frame[1] + offset[1]]
@@ -243,6 +253,8 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             }
             _ => {}
         }
+        loop_on_board.resize(loops.len(), on_board);
+        open_on_board.resize(open.len(), on_board);
     }
 
     // End points closer than this belong together: drawings exported by
@@ -255,9 +267,14 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     const CHAIN_TOLERANCE: f64 = 0.02;
     // A piece shorter than that (a 3 um sliver some drawings carry) is
     // no edge: dropped, its neighbours' ends then chain to each other.
-    open.retain(|piece| {
-        piece.windows(2).map(|pair| distance_squared(pair[0], pair[1]).sqrt()).sum::<f64>() > CHAIN_TOLERANCE
-    });
+    let long: Vec<bool> = open
+        .iter()
+        .map(|piece| piece.windows(2).map(|pair| distance_squared(pair[0], pair[1]).sqrt()).sum::<f64>() > CHAIN_TOLERANCE)
+        .collect();
+    let mut keep = long.iter();
+    open.retain(|_| *keep.next().unwrap());
+    let mut keep = long.iter();
+    open_on_board.retain(|_| *keep.next().unwrap());
     let mut anchors: Vec<[f64; 2]> = Vec::new();
     for piece in &mut open {
         let mut own: Option<usize> = None;
@@ -296,6 +313,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         }
         used[first] = true;
         let mut chain = open[first].clone();
+        let mut chain_on_board = open_on_board[first];
         loop {
             let tail = key(*chain.last().unwrap());
             if tail == key(chain[0]) && chain.len() > 2 {
@@ -326,6 +344,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 break;
             };
             used[next] = true;
+            chain_on_board &= open_on_board[next];
             let mut piece = open[next].clone();
             if key(piece[0]) != tail {
                 piece.reverse();
@@ -333,6 +352,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             chain.extend_from_slice(&piece[1..]);
         }
         loops.push(chain);
+        loop_on_board.push(chain_on_board);
     }
     if loops.is_empty() {
         return Err("the board has no Edge.Cuts outline".into());
@@ -343,10 +363,12 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     // zero-width bridge between their closest vertices, so that one
     // polygon is their union (as the even-odd test and the edge distances
     // read it).
-    loops.sort_by(|a, b| polygon_area(b).abs().total_cmp(&polygon_area(a).abs()));
+    let mut loops: Vec<(Vec<[f64; 2]>, bool)> = loops.into_iter().zip(loop_on_board).collect();
+    loops.sort_by(|a, b| polygon_area(&b.0).abs().total_cmp(&polygon_area(&a.0).abs()));
     let mut pieces: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
-    for candidate in loops {
+    let mut board_cutouts = Vec::new();
+    for (candidate, on_board) in loops {
         // Inside a piece when most of its vertices are: a cutout touching
         // the board's edge has vertices on that edge, which the even-odd
         // test may count either way.
@@ -356,6 +378,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         };
         if pieces.iter().any(inside) {
             cutouts.push(candidate);
+            board_cutouts.push(on_board);
         } else {
             pieces.push(candidate);
         }
@@ -369,6 +392,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             )
         })
         .collect();
+    let piece_loops = pieces.clone();
     let mut pieces = pieces.into_iter();
     let mut outline = pieces.next().expect("at least one loop");
     for piece in pieces {
@@ -390,7 +414,9 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     Ok(BoardLoops {
         outline,
         pieces: piece_boxes,
+        piece_loops,
         cutouts: loops,
+        board_cutouts,
     })
 }
 

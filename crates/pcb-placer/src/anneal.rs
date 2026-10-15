@@ -180,6 +180,12 @@ impl State<'_> {
                         for (center, half) in built(part.pad_boxes(part_pose)) {
                             total += area((center, [half[0] + margin, half[1] + margin]), hole);
                         }
+                        // A cutout the user cut keeps bodies off too (by
+                        // its box here; legality tests its outline).
+                        let solid = &self.problem.constraints.solid_cutouts;
+                        if !solid.is_empty() && solid.contains(&if component.copper_only { index } else { other }) {
+                            total += area((part.center(part_pose), part.half_extent(part_pose.angle)), hole);
+                        }
                     }
                 } else if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
                     if self.problem.constraints.linked(index, other) {
