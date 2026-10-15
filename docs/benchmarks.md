@@ -883,6 +883,14 @@ To measure a change (short tier, route mode from fixed placements, spliced
 reruns, the objectives line), see benchmarks/agent-tasks/README.md, "How to
 measure".
 
+From the schematic (2026-10-15): `harvest_schematics.py` fetched the
+schematics and project libraries of 79 of the 109 boards; the schematic
+tier (`run.py --tier schematic`, benchmarks/agent-tasks/README.md, "The
+schematic tier") imports 12 of them with `import-kicad-netlist` and lays
+them out at a third of the budget: 4/12 pass on x1002, 5/12 with the
+branch's import fixes (x1030); where the import and the libraries agree
+with the designer's board they do as the layout tier does.
+
 What the first boards found, before any full run finished (fixed the same
 day): chamfered roundrect pads were refused (4 boards), a rule area's holes
 were read as more keepouts (Glasgow's rim keepout covered the whole board,

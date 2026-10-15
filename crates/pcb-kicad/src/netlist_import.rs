@@ -716,6 +716,10 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
                     let mut changed = text.clone();
                     for (old, new) in &renamed {
                         changed = changed.replace(&format!("(property \"Footprint\" \"{old}\""), &format!("(property \"Footprint\" \"{new}\""));
+                        // KiCad 6 schematics repeat it per instance
+                        // (`symbol_instances`), and that one wins: the
+                        // parity check found 43 mismatches on 0xcb-static.
+                        changed = changed.replace(&format!("(footprint \"{old}\")"), &format!("(footprint \"{new}\")"));
                     }
                     if changed != text {
                         fs::write(&path, changed).map_err(|error| format!("failed to write {}: {error}", path.display()))?;

@@ -429,6 +429,140 @@ carry the report's, which stops before that ladder.)
   short-tier runs with short-tier runs: the budget changes the boards
   whose final ladder runs.
 
+## The schematic tier (`--tier schematic`)
+
+The other tiers start from the designer's board with its parts stacked.
+An agent starts from the KiCad project: the schematic and the project's
+libraries. This tier runs the documented flow (docs/agents.md) on 12
+harvested boards from their schematics (benchmarks/github/README.md,
+"Schematics"), so that the import, the libraries and the constraints are
+measured with the layout:
+
+1. **Import.** The fetched project (`benchmarks/real/external/github-sch/<board>/repo`)
+   is copied and `import-kicad-netlist <root sheet> <project> <board-id> --layers N`
+   (the designer's layer count) imports it. When footprints are missing
+   and `harvest_schematics.py` found their library elsewhere in the
+   repository (a designer's absolute path, a library outside the project
+   folder), the library goes into the project's `fp-lib-table` and the
+   import runs again into the same directory, which is what agents.md tells
+   an agent to do.
+2. **Constraints.** The task list's constraints for the board
+   (`from_pcbench.py`, tasks v7) are moved onto the new footprints
+   (`schematic.py`): footprints are matched by the symbol they come from
+   (`path`), else by a unique reference, and entries name the new
+   reference (with `uuid` where it repeats). The parts the task keeps
+   where they are (`fixed`, netless and locked parts) become `place`
+   entries at the designer's spot; every part goes on the designer's side
+   (`back`/`front` by the footprint's layer: the other tiers' stack keeps
+   each part's side). The designer's Edge.Cuts are drawn onto the board
+   (the outline is the task's, and `outline` takes only rectangles), and
+   the designer's netless footprints that have no symbol (mounting holes,
+   logos) are copied, fixed and marked `board_only`, as the other tiers
+   keep them.
+3. **Layout** with `layout-kicad-board <project> <board-id> <out> auto <project>/layout.json`
+   at the tier's budget (a third, as the short tier), then
+   **`drc-kicad-board`** on the result.
+
+**Pass rule:** the layout's (every constraint kept, KiCad's DRC with no
+unconnected item and no error beyond the designer's board's), and the
+import found every footprint. KiCad's schematic parity count (`parity`,
+`parity_by_type`, from the layout's verdict) is recorded, not judged:
+no-connect pins without a pad are `net_conflict`s the verdict says need
+nothing.
+
+Each row has the layout row's fields and:
+
+| Field | Meaning |
+| --- | --- |
+| `stopped`, `why` | The first stage that fell short: `import` (an import error, or footprints missing: the layout still runs without them), `constraints` (they could not be written, or the layout called them an input error), `placement` (parts without a legal place, constraints missed), `routing` (connections open, by KiCad or the router), `drc` (new errors, or no report); null when the board passed. |
+| `import` | The import's exit code, `missing_first` (footprints missing before libraries were added) and `libraries_added`. |
+| `missing`, `missing_parts`, `substituted`, `unmatched_pins` | The import's report, after the libraries were added. |
+| `parts` | `designer` and `imported` parts, `matched` (by path or reference), `copied` (board-only netless footprints), `renamed` (references that differ between board and schematic), `board_only` and `schematic_only` (the first twelve), `dropped` (task entries for a reference the designer's board repeats without a uuid). |
+| `parity`, `parity_by_type` | KiCad's schematic parity findings on the result. |
+| `drc_line` | `drc-kicad-board`'s line. |
+
+The run ends with the stages' counts (`stopped at: ...`) and the summed
+missing footprints and parity findings, also in summary.json.
+
+```sh
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/sch-x1002 --tier schematic --jobs 6 \
+  --binary build/bin/pcb-maker-x1002 > build/sch-x1002.log
+```
+
+**Selection** (`schematic.json`, each board's `why`): 12 of the 79 boards
+with a usable schematic whose import is complete (after the library step),
+mixed in size and in what the import has to do: 8 two-layer boards
+(spell_tome 25 parts, urchin, USB_Keypad, 0xcb-static, le_chiffre,
+bumwings R64, slab-pcb-left, coco2), 2 four-layer (homebrew_486,
+TelemetryOnboard), 2 six-layer (OpenFC, MokyaLora, 443 parts). Small boards
+first: the expected board time at a third of the budget is about 2,500 s,
+under 15 minutes at 6 jobs. Each exercises something: a KiCad 6 project
+(urchin), board-only holes and logos copied (urchin 42, USB_Keypad 13),
+a library outside the project added by the agent's step (0xcb-static, 43
+footprints), substituted footprints (le_chiffre 11), references the board
+renamed after the schematic (bumwings, 12: matched by symbol path), a
+KiCad 5 library (coco2, OpenFC; fixed in x1030). laptop power was taken out: KiCad 10's
+ESP32-S2-MINI-1 is 45.4 x 35.25 mm (its antenna clearance in the
+courtyard) against 15.9 x 21 mm on the designer's board, and the
+64 x 45 mm board has no room for it (a library drift no layout fixes; open
+problem 9). Four boards are in the short tier too (spell_tome, urchin,
+USB_Keypad, OpenFC).
+
+**First run, x1002 (main), 2026-10-15**, 4 jobs x 2 threads (the machine
+was shared; the tier is meant for 6 jobs), load 9-21, under the lock:
+**4/12 pass, 1034 s wall** (board time 2,710 s; the memory gate held it to
+two or three boards at a time). `build/sch-x1002.log`.
+
+| Board | Layers | Parts (designer / imported / copied) | Import | Routed | KiCad unconnected / new errors | Vias | Parity | Stopped | s | Work s | Layout tier (v16, full budget) |
+| --- | ---: | --- | --- | --- | --- | ---: | --- | --- | ---: | ---: | --- |
+| spell_tome_bottom | 2 | 25 / 25 / 0 | complete | 18/18 | 0 | 10 | 0 | passed | 33 | 29 | 18/18, pass |
+| urchin main | 2 | 122 / 80 / 42 | complete | 68/68 | 0 / copper_edge_clearance 3 | 41 | 6 net_conflict | drc | 51 | 53 | 68/68, pass |
+| USB_Keypad | 2 | 98 / 81 / 13 | complete | 37/39 | 2 | 77 | 0 | routing | 180 | 26 | 37/39, 2 |
+| 0xcb-static | 2 | 129 / 112 / 6 | 43 missing, then complete | 74/74 | 0 | 0 | 1 net_conflict | passed | 88 | 39 | 74/74, pass |
+| le_chiffre 36keys | 2 | 118 / 117 / 1 | 11 substituted | 76/76 | 0 / copper_edge_clearance 1 | 78 | 1 net_conflict | drc | 275 | 368 | 76/76, pass |
+| bumwings R64 rp2040zero | 2 | 130 / 129 / 1 | 12 renamed | 80/81 | 1 / copper_edge_clearance 1 | 87 | 0 | routing | 323 | 40 | 81/81, pass |
+| slab-pcb-left | 2 | 128 / 126 / 3 | complete | 76/76 | 0 | 261 | 6 net_conflict | passed | 183 | 315 | 76/76, pass |
+| coco2 | 2 | 156 / 140 / 1 | 16 KiCad 5 footprints unseen | 159/159 | 87 / 199 shorting_items, 199 solder_mask_bridge, ... | 254 | 1 | routing | 244 | 308 | 173/173, pass |
+| homebrew_486 | 4 | 130 / 127 / 3 | complete | 191/191 | 0 | 907 | 0 | passed | 279 | 471 | 190/190, pass |
+| TelemetryOnboard | 4 | 143 / 140 / 0 | complete | 106/108 | 3 | 136 | 16 footprint_filters_mismatch | routing | 273 | 179 | 107/108, 1 |
+| OpenFC | 6 | 164 / 162 / 0 | 2 KiCad 5 footprints unseen | 76/78 | 17 / clearance 3, annular_width 4 | 155 | 0 | routing | 199 | 56 | 81/82, 1 |
+| MokyaLora | 6 | 443 / 443 / 0 | complete | 261/262 | 1 / courtyards_overlap 1 | 395 | 0 | routing | 385 | 166 | 261/262, pass (KiCad 0) |
+
+(Parity: KiCad's schematic parity findings on the result, not judged.
+Layout tier: the same board's row in the v16 sweep, `build/github-layout-v16.log`,
+the designer's board stacked at the full budget.)
+
+What the rows say:
+- **coco2 and OpenFC lose parts silently on x1002**: their KiCad 5 library
+  footprints (`(module ...`) were imported under that head, which pcb-maker
+  does not read as a footprint: they stayed at the import's point, unplaced
+  and unrouted (coco2: 87 unconnected and 199 shorts at the stack; OpenFC's
+  SD socket and a sensor: 17 unconnected). Fixed in x1030 (below).
+- **Library drift costs the boards that passed as layout tasks**: the
+  import takes today's library footprints, the designer's board the ones of
+  its day. bumwings' hotswap sockets are 15.9 x 12.2 mm in the repository's
+  library now against 12.85 x 11.6 mm on the board (64 of them: 80/81
+  routed against 81/81), urchin's and le_chiffre's edge errors are pads of
+  library footprints that differ from the board's at the designer's fixed
+  spots.
+- **Board-only parts** (mounting holes, logos, mouse bites drawn as
+  footprints) are copied when they have no net; those with nets are lost
+  (0xcb-static's 11 alternative switch footprints, USB_Keypad's four
+  mounting holes plated on GND).
+- Where import and library agree (spell_tome, slab, homebrew_486,
+  0xcb-static after the library step), the schematic row matches the
+  layout tier's.
+
+**x1030 on the three boards the branch's import fixes touch**
+(`--only ... --splice-from build/sch-x1002.log`, `build/sch-x1030-three.log`,
+after a harvest refresh): **5/12 pass**. coco2 173/173, KiCad 0
+unconnected, no new error, 614 vias: passed (as the layout tier's 173/173);
+OpenFC 80/82, KiCad 2 unconnected, clearance 3, annular_width 4 (the layout
+tier: 81/82, 1); 0xcb-static passed, its library now found in the project
+on the first import with 43 footprints substituted by name (parity 44 from
+the KiCad 6 schematic's per-instance footprint, rewritten since x1031:
+1).
+
 ## Route mode (`--route-from`)
 
 For router experiments: `--route-from <earlier output directory>` routes

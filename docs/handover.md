@@ -2939,6 +2939,116 @@ added tracks (2 and 12, their layout logs' "connection width" lines).
 That is main's neck repair (70279ba, after x1000's base 9ce95b1), not
 this change: x1000 predates it, as x941 to x950 measured (12 to 3).
 
+## Committed on 2026-10-15 (schematic tier)
+
+The agent's real use case as a benchmark (open problem 8, item 7): the
+harvested boards' schematics, and a tier that starts from them.
+
+**Harvest.** `benchmarks/github/harvest_schematics.py` fetches, at each
+board's origin commit, the root sheet and every sheet it names, the
+project file and `.kicad_dru`, the library tables, the symbol libraries the
+tables keep in the repository and the footprints the symbols name from the
+repository's footprint libraries (Git submodules followed: 19 boards keep
+their libraries in one). Libraries a table names by a designer's absolute
+path (`/home/seb/dev/...`), or that lie outside the project folder, are
+found in the repository by path suffix, folder or file name and recorded as
+`library_fixes` (22 boards). Files go to
+`benchmarks/real/external/github-sch/<board>/repo/` (gitignored), the
+per-board record to `schematic.json` there and to the committed
+`benchmarks/github/schematics.json`. Licences: GitHub's SPDX id where it
+has one; `NOASSERTION` and none are decided by reading the licence files
+at the root and along the board's folder (CERN OHL, AGPL and Hippocratic
+texts GitHub does not name were allowed; no licence file at all means all
+rights reserved and the board is skipped). **79 of the 109 boards have a
+usable schematic** (241 sheets, 1171 files, 95 MB). Skipped: 17 without a
+licence file (ISS-PCB's six, seven OnBoard boards, MegaDrive, Neotron-Pico,
+SUMEC, ATAT1800, vd-rd's module), 10 without a schematic of the board's
+name (PolyKybd's five molecules, the OpenESC, OpenRX and two 0xCB panels,
+krishveercard, whose sheet is misspelt), 2 with a sheet missing at the
+commit (the Hub, poly_corne_split42_right), 1 KiCad 5 schematic (Qfwfq).
+50 of the 79 have every named footprint in KiCad's libraries or the
+repository.
+
+**Imports of all 79** (x1002, import and constraints only): 76 imported,
+3 failed (osprey, hackrf, rosco_m68k: KiCad 5 arcs, below); 33 complete
+after the library step (2 of them only through it), 43 with footprints
+missing: personal libraries that are not in the repository (Castor's
+`winterbloom` 160, DSP-ADAU1452 371, jetson's `antmicro-footprints` 121,
+reCamera's `Capacitor`/`Resistor` 92, OpenMuscle's `FlexSensorFootprint`
+60, ligra's `otter` 33, ...), hackrf's KiCad 5 `.mod` library (395),
+footprints a KiCad library no longer has (OpenESC's `C_0402_WIDE`,
+Blue_Line's `CONN3_S3B-PH_JST`), symbols without a footprint (framework
+mobo's RN1). Two panels (Batch_1, SmartSpin2k) import empty: their
+schematic is not the panel's.
+
+**The tier** (`run.py --tier schematic`, `benchmarks/agent-tasks/schematic.py`,
+`schematic.json`; README.md, "The schematic tier"): per board, import the
+copied project with the designer's layer count, add the found libraries and
+import again when footprints are missing, move tasks v7's constraints onto
+the new footprints (matched by symbol path, else by reference; `fixed`,
+netless and locked parts as `place` at the designer's spot; every part on
+the designer's footprint layer with `back`/`front`), draw the designer's
+Edge.Cuts, copy the netless board-only footprints (fixed, `board_only`),
+`layout-kicad-board` at a third of the budget, `drc-kicad-board`. Pass:
+the layout rule and no footprint missing; parity counted. Rows have
+`stopped` (import, constraints, placement, routing, drc) and `why`.
+
+First run on x1002 (4 jobs x 2 threads, load 9-21, `build/sch-x1002.log`):
+4/12 pass in 1034 s wall; stopped at routing 6, drc 2. Passed:
+spell_tome, 0xcb-static (after the library step), slab-pcb-left,
+homebrew_486, each as in the layout tier. The other rows are in the README.
+
+**Fixed in the branch** (x1030 = this branch's binary):
+- *KiCad 5 library footprints*: `(module ...)` files were imported under
+  that head; pcb-maker reads only `footprint`, so the parts stayed at the
+  import's point, unplaced and unrouted, without a word (coco2's 16
+  footprints: 87 unconnected and 199 shorts; OpenFC's SD socket and a
+  sensor: 17 unconnected). The import writes `footprint`. Arcs given by
+  centre and angle (`fp_arc (start c) (end s) (angle a)`) became a board
+  KiCad 10 cannot load (kicad-cli exit 3, no message; the import's pad check
+  failed with exit 4 on osprey, hackrf and rosco_m68k); they are converted
+  to start, mid and end. Tests `kicad_5_arcs_become_three_points`,
+  `kicad_5_library_footprints_become_footprints_of_today`.
+- *Libraries outside the project were copied outside the output*: a
+  `${KIPRJMOD}/../lib` entry was copied to `<out>/../lib` (the survey
+  found four library folders written beside its output directories). Only
+  libraries inside the project are copied now.
+- *`back` reported missed on a board that kept it*: urchin's key sockets
+  are front footprints with their pads on B.Cu; `back` flips them to B.Cu
+  as asked, but the kept check compared the part's side by its pads
+  (front) with "back": all 34 were reported missed (exit 1). The side to
+  keep is now the one the flipped footprint's pads give, as lowered.
+  `describe-kicad-board` lists `layer` (the footprint's own) beside `side`
+  (where its pads are), so an agent sees which one `back` sets. Test in
+  `constraints_kept_by_construction_are_reported`.
+
+Rerun on x1030 of the boards the fixes touch (coco2, OpenFC, 0xcb-static,
+spliced into the x1002 log, `build/sch-x1030-three.log`, after a
+harvest refresh): **5/12 pass**. coco2 173/173 routed, KiCad 0 unconnected,
+no new error, 614 vias, passed (x1002: 87 unconnected, 199 shorts; the
+layout tier's v16 row 173/173 pass); OpenFC 80/82, KiCad 2 unconnected,
+clearance 3 and annular_width 4 (x1002: 17 unconnected; layout tier 81/82,
+1); 0xcb-static passed again, now with its library found in the project
+folder on the first import (the refreshed harvest fetched the copy nearest
+the project), 43 footprints substituted by name, which showed one more
+gap: parity 44 (`footprint_symbol_mismatch` 43).
+- *A substituted footprint kept its old name in KiCad 6 schematics*: the
+  import rewrote the symbol's `Footprint` property in the copied
+  schematic, but a KiCad 6 file repeats it per instance
+  (`symbol_instances`, `(footprint "MX_Only:...")`), and that one wins.
+  Both are rewritten now (x1031): the imported 0xcb-static's parity check
+  (kicad-cli `--schematic-parity`) goes from 44 findings to the 1
+  no-connect pin.
+
+Unit tests (pcb-kicad netlist_import, placement_constraints, describe) and
+`tests/agent_walkthrough.rs` pass. Snapshots `build/bin/pcb-maker-x1030`
+(the rerun) and `x1031` (with the schematic rewrite).
+No layout tier was run on x1030: the import fixes change only boards with
+KiCad 5 footprints, which no layout task has (their boards come from the
+designer, written by KiCad); the side check changes the report (and so the
+exit code and the pass rule) only where `back`/`front` name a footprint
+whose pads are on the other side, which no task does.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -3050,11 +3160,66 @@ this change: x1000 predates it, as x941 to x950 measured (12 to 3).
       layers, `add_pours` GND on B.Cu, listed in the report for the agent
       to keep or drop. Small to medium: a day with the from-schematic
       benchmark to check it does not cost routability.
-   7. *Schematics in the harvested corpus.* `harvest.py` fetches the
-      board and project only, so the from-schematic benchmark runs on the
-      KiCad demos alone. Fetch the schematic sheets and the project's
-      libraries at the same commit (the walkthrough did it by hand for
-      two boards). Small for the fetch, medium for a tier on top.
+   7. *Schematics in the harvested corpus.* Done on 2026-10-15
+      (schematic tier, above; its friction is item 9).
+9. **The schematic tier's friction** (2026-10-15, above), ranked by
+   boards affected; each with a proposal:
+   1. *Personal footprint libraries are not in the repository*: 43 of 76
+      imports miss footprints after the library step; in about 30 the
+      library is nowhere in the repository (Castor 160, DSP-ADAU1452 371,
+      jetson 121, reCamera 92, OpenMuscle 60, USB_Cable_Tester 57, ...).
+      The designer's board has every one of them. Proposal:
+      `import-kicad-netlist --footprints-from <board.kicad_pcb>`: a missing
+      footprint is taken from that board (by the symbol's path, else by
+      footprint id), brought back to library form as KiCad's "Export
+      footprints to library" does (position and rotation removed from
+      pads and texts, a back footprint flipped to the front). An agent
+      handed an old board, or a colleague's, then imports completely.
+      Medium: a day; the inverse transform is the work, the flip exists.
+   2. *Library drift*: the import takes today's footprints; 22 of the 79
+      boards have parts whose body differs by more than a fifth from the
+      designer's (KiCad 10's ESP32-S2-MINI-1 and ESP32-S3-WROOM-1 with
+      their antenna clearance in the courtyard, 45 x 35 mm against
+      16 x 21; SOT-323, SOT-23 and crystal courtyards; bumwings' updated
+      hotswap sockets on 54-64 keys). laptop power cannot be placed
+      (left out of the tier), bumwings and urchin lose a pass. Proposal:
+      the same option with "prefer the board's footprint" for footprints
+      whose library version differs, and a `drifted` list in the import
+      report (library body against the board's) so the agent knows.
+      Small on top of item 1.
+   3. *Libraries outside the project or named by absolute paths* (22
+      boards): the import says "no library X", an agent has to find the
+      folder. The tier does what an agent would (adds `library_fixes` to
+      the fp-lib-table and imports again: 0xcb-static 43 missing to 0,
+      Glasgow 24 to 2, WLED_Matrix 135 to 1). Proposal: the import's
+      `missing` line names candidates: a folder `<library>.pretty`, or one
+      holding the footprint's file, under the project's ancestors up to
+      the repository root (`.git`), and the longest existing suffix of an
+      absolute table path. Not used silently: two board revisions often
+      keep libraries of one name (0xCB's rev3.0 and rev5.0). Small: half a
+      day.
+   4. *Board-only parts* (the board has them, the schematic does not):
+      mounting holes, logos and connector shells without nets are copied
+      by the tier; parts with nets are lost (0xcb-static's 11 alternative
+      switch footprints for other layouts, MX37_1 and the like;
+      USB_Keypad's four mounting holes plated on GND). An agent needs
+      mounting holes without drawing them into the schematic. Proposal: an
+      `add` entry in constraints.json, `{"add": [{"footprint":
+      "MountingHole:MountingHole_3.2mm_M3", "x": 3.5, "y": 3.5}]}`, written
+      to the board `board_only` and fixed. Small to medium: a day.
+   5. *KiCad 5 libraries*: `module` files and centre-angle arcs fixed
+      (above); a legacy `.mod` library (hackrf's 395 footprints) is still
+      unread. Proposal: a table entry of type `Legacy` is converted with
+      `kicad-cli fp upgrade` into a temporary `.pretty` before the
+      lookup. Small.
+   6. *A board KiCad cannot load says nothing*: kicad-cli exits 3 with
+      only Debug lines; the import and the layout report "kicad-cli failed
+      with exit status: 3: <a Debug line>" (an Edge.Cuts circle written end
+      before centre, a KiCad 5 arc). Proposal: on exit 3 say "KiCad could
+      not load the board" and name the first item pcb-maker's own reader
+      finds out of KiCad 10's order or form, where it can. Small.
+   7. *Panels and boards without a schematic of their own* (10 boards,
+      plus two panels whose schematic is a single copy): not targets.
 
 ## Where things are
 
@@ -3064,7 +3229,7 @@ this change: x1000 predates it, as x941 to x950 measured (12 to 3).
 | Snapshot binaries | `build/bin/pcb-maker-xNN` (x155 = HEAD); `cargo build --release` first, `cargo test` leaves `target/release` stale |
 | Sweep chain | `build/chain-v11.sh` (layout sweep, then the route sweep) |
 | Tasks | `build/github-tasks-v5/` (from `benchmarks/agent-tasks/from_pcbench.py --corpus benchmarks/github/boards.json`) |
-| Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence) |
+| Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence); their schematics in `benchmarks/real/external/github-sch/` (`benchmarks/github/schematics.json`) |
 | Agent memory | `~/.claude/projects/-home-flo-programming-pcb-maker/memory/` |
 | Untracked in the repo root | `pcb_pr_agent_brief.md`, `target-bisect/` (not from these sessions) |
 
