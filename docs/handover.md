@@ -1716,6 +1716,224 @@ timeouts, the worse rows and the panels; its section "Triage of v16"
 follows. x862 predates the first-route budget (x855), hole clearance
 (x881), router overhead (x872), pour recalibration (x817) and the second
 narrow attempt (x893); the next sweep carries them.
+
+## Triage of v16 (2026-10-15, x931 / x932)
+
+The v16 sweep (x862, tasks v6, five jobs of four threads beside other
+agents, load 16-35) against v15 (x723). The fix is on branch
+v16-triage: x931 = x862's tree (068de8b) + fix, so that x931 against the
+v16 rows changes only the fix; x932 = main f7addd8 + fix (tests, short
+tier). Outputs were in the triage agent's scratchpad (not kept).
+
+**1. The 17 cut rows.** Per row from the layout logs (seconds; "search"
+and "pour" sum every phase's `profile work:` line, probes side by side
+included, so they are thread sums, not wall; the KiCad column sums the
+`board check` lines; lattice builds are the last `so far N lattices` count,
+also summed over routers built side by side; the placement charge is its
+work plus the pool's excess, `layout: placed`):
+
+| board | wall | work | placement wall / charge | KiCad DRC (calls, hits, s) | lattice builds (n, s) | search wall / work | pour wall / work | cut |
+|---|---|---|---|---|---|---|---|---|
+| motherboard | 1702.5 | 909.5 | 262 / 122 | 2, 1, 16 | 7, 9.1 | 4159 / 2662 | 258 / 262 | deadline |
+| link | 1709.0 | 1108.7 | 389 / 368 | 1, 1, 3 | 3, 22.3 | 3545 / 2353 | 280 / 304 | deadline |
+| poly_kybd_split72_right | 1722.9 | 1232.9 | 131 / 192 | 1, 1, 2 | 3, 4.0 | 4120 / 2686 | 178 / 92 | deadline |
+| poly_kybd_split72_left | 1800.7 | - | 194 / 210 | 0, 0, 0 | -, - | 3298 / 2084 | 146 / 80 | timeout |
+| poly_corne_split42_right | 1784.9 | 1149.7 | 179 / 208 | 1, 0, 28 | 3, 5.9 | 3539 / 2193 | 191 / 103 | deadline,layout |
+| poly_corne_split42_left | 1669.6 | 1168.4 | 96 / 125 | 1, 1, 1 | 3, 3.1 | 4182 / 2840 | 182 / 102 | deadline,layout |
+| koeg-board-pcb | 1699.0 | 409.7 | 139 / 183 | 6, 5, 37 | 11, 40.1 | 1964 / 1050 | 42 / 54 | deadline |
+| katia | 1671.9 | 585.6 | 200 / 323 | 1, 0, 17 | 3, 704.6 | 507 / 221 | 62 / 31 | layout |
+| capybully | 1696.1 | 710.9 | 85 / 64 | 2, 0, 73 | 7, 179.1 | 1210 / 918 | 172 / 131 | deadline |
+| Batch_1 | 1680.2 | 1325.7 | 370 / 387 | 4, 0, 225 | 6, 74.1 | 3432 / 3901 | 755 / 200 | deadline |
+| Quanta75_BareRP2040_JLCPCBAo | 1721.3 | 1045.2 | 194 / 124 | 1, 0, 28 | 3, 42.8 | 2918 / 2175 | 243 / 243 | deadline,layout |
+| woagboard | 1759.1 | 1201.7 | 89 / 76 | 11, 0, 115 | 19, 39.0 | 1833 / 1363 | 579 / 566 | deadline |
+| panel | 1710.7 | 507.8 | 219 / 167 | 7, 0, 306 | 12, 567.3 | 1127 / 1765 | 640 / 293 | deadline |
+| MegaDrive | 1800.7 | - | 130 / 253 | 0, 0, 0 | -, - | 4690 / 3537 | 89 / 85 | timeout |
+| ghoul | 1700.7 | 1162.9 | 260 / 410 | 8, 0, 321 | 13, 44.9 | 1048 / 937 | 511 / 524 | deadline |
+| ULK_sl_PG1316s | 1758.4 | 92.1 | 3 / 4 | 7, 0, 196 | 12, 1099.6 | 310 / 390 | 276 / 66 | deadline |
+| ULK | 1800.6 | ~95 (at routed) | 1 / 2 | 8, 0, 201 | 13, 1201.4 | 335 / 406 | 313 / 63 | timeout |
+
+No single phase explains them; four holes, by size:
+
+- **Lattice builds of boards with a large cutout** (ULK, ULK_sl, katia,
+  the 0xCB panel; 570-1200 s of the run). Not work, and not
+  interruptible. Profiled (gdb samples, a per-obstacle trace): all of it in
+  `StaticMaps::build`, `Shape::distance_to_point` of one board cutout
+  measured for every node of its box edge by edge: ULK's 454-corner
+  cutout over 16867 mm2, 15 s a class, four classes, 60-190 s a lattice
+  (0.075 mm rungs the most); katia's 228-corner cutout 15 s a class; the
+  panel's slots 0.7-2.7 s each. **Fixed** (`PolygonField` in grid.rs, a
+  polygon of 16 corners or more): each edge updates only the nodes within
+  reach of its box, the inside comes from each row's sorted crossings with
+  `point_in_polygon`'s test; the distances are bit for bit
+  `distance_to_point`'s below the reach (unit test against it on concave
+  polygons with lattice-aligned corners), so the maps and the routes do
+  not change. ULK's lattice 72 s to 1.2 s; route mode on v16's ULK
+  placement, both measures in one binary (`PCB_ROUTER_OLD_POLYGON_DISTANCES`
+  for the old): the 32 fingerprints the old side reached are all in the new
+  side's (rungs side by side print in another order).
+  Layouts on x931, one run each, four threads, load 6-21 (v16: 13-27):
+
+  | board | v16 (x862) | x931 |
+  | --- | --- | --- |
+  | ULK | timeout at 1800 s, no row (v15: 66/70, 4 unconnected, 1 starved) | 1480 s, no cut, 66/70, 4 unconnected, no new error, 64 vias |
+  | katia | 1672 s, cut (no final ladder), 139/162, 104 | 1382 s, no cut, the same board (139/162, 104, 401 vias); the final ladder ran and lost |
+  | 0xCB panel | 1711 s, cut (deadline), 152/188, 86, +5 starved | 957 s, no cut, the same board (283 vias, 4594 mm); one more ladder rung ran and lost |
+  | ULK_sl_PG1316s | 1758 s, cut, 68/70, 2 | 1710 s, still cut, the same board: its ladder now ran nine rungs (1200 s budget used) and seven uncached KiCad checks (22 s each), the last rung's seed retry was cut |
+
+  The DRC cache hit the first route's and the early rungs' checks on
+  ULK, ULK_sl and the panel: the boards were byte-identical to v16's.
+
+- **KiCad DRC inside the layout is not work** (ghoul 8 calls 321 s, the
+  panel 7 / 306 s, Batch_1 4 / 225 s, ULK 200 s, woagboard 11 / 115 s,
+  capybully 73 s; an uncached check 10-50 s). A deterministic charge needs
+  a model, and the obvious ones fail: over 57 v16 boards the median
+  uncached check time does not follow the board's pads, tracks and vias
+  or its file size (correlation 0.02 each); hatched zones (the panel,
+  Batch_1, WLED_Matrix, capybully) and the load dominate. Counting the
+  measured wall would make the layout follow the load. Not changed;
+  options below.
+- **The search's work rate under the sweep's load.** On the boards that
+  spend the whole budget (the four PolyKybd halves, link, motherboard,
+  MegaDrive, Quanta75 Bare) negotiation and repair run 1.3-1.6 times
+  their counted work in wall time: `EXPANSIONS_PER_SECOND` is an idle
+  machine's, and five jobs of four threads already exceed the 5950X's 16
+  physical cores, so with other agents (load 16-35 on 32 logical CPUs)
+  most search threads share a core. The 10 % margin cannot hold there;
+  this is the sweep's configuration as much as the accounting.
+- **Pour analyses on hatched and big pour boards** run 2-4 times their
+  modelled work (Batch_1 755 s of wall for 200 s of work, the panel 640 /
+  293, PolyKybd 180 / 95; x862 still has the 41 ns constants, main
+  recalibrated to 18 ns after the overhead round, so recheck on main).
+- Smaller: the placement pool's charge (kept seeds at the reference eight
+  threads) below the four-thread wall on motherboard (262 s of wall, 122
+  charged) and Quanta75 Bare (194 / 124); above it on most boards. A
+  layout's `work_seconds` in the row leaves out a final ladder it did not
+  keep (koeg: 410 s reported, its unkept ladder ran 1100 s more of wall),
+  so the rows understate the work that ran.
+
+After the wall guard fires, the layout still runs what it does not
+interrupt (lattice builds, repairs and stitching of the current attempt,
+KiCad checks, labels and the final DRC), and the harness kills at 1.2x
+(1800 s): that is how three of the cut rows became timeouts (ULK,
+poly_kybd_split72_left, MegaDrive).
+
+**2. New timeouts.** ULK: the lattice builds above (13 builds, 1201 s;
+the first route needed 95 s of work); v15 finished in 1688 s because its
+deadline was then the wall clock, which stopped the ladder; fixed by the
+polygon field (row above). poly_kybd_split72_left: the first route's
+negotiation ran 1046 s of wall for 677 s of search work (the load), the
+wall guard cut it at 862 s of its work, and the two repair passes after
+the cut (each about 60 s of negotiation, 300 s of hard repair and
+stitching in all) ran past 1800 s; v15 (x723, wall-clock deadline) ended
+at 396/420. Same class as the cut rows, no lattice or DRC share. 0xCB
+pcb-panel: not a layout problem; the placement (306 s) and the first route
+ran, then kicad-cli's zone refill timed out at 900 s (open problem 7,
+`internal error: kicad-cli timed out`); v15 timed out at 1800 s before
+getting there.
+
+**3. The 13 worse rows** (compare.py counts unconnected only; PixelWave's
+lost pass, one new error, is not among them). Placement against v15's
+(poses of every footprint compared; v15's rows have no
+`first_unconnected_terminals`), then the mechanism:
+
+| board | v15 -> v16 (KiCad unconnected) | placement | route mode on v16's placement, x723 / x862 | x862 on v15's placement | verdict |
+| --- | --- | --- | --- | --- | --- |
+| Telemetry | 0 pass -> 1 | identical | 0 / 0 (88 vias both) | - | layout flow: the ladder kept 120 s for the narrow step, the step needs 180 s (`narrow_step_minimum`), 153 s were left, so it did not run (v15 won with it: 0 open; route mode's step: 0 open). Constants of 18a9a77: the reserve's floor (120 s) is below the step's minimum (180 s). Regression, on main too (not a far-open board) |
+| ATAT1800 | 53 -> 54 | identical | - | - | noise: first route 67 -> 68 open, one attempt each, new errors 7 -> 4 |
+| Explorer | 1 -> 2 | 2 parts moved | 3 / 3 | - | noise: first route 9 -> 3 open, the narrow attempt 8 open both |
+| eurorack-pmod | 20 -> 21 | 3 parts moved | 22 / 17 | - | noise: router not worse; first route 19 -> 26, the polish kept the unpolished routes |
+| protoesp | 83 -> 92 | 1 part moved, identical first route (88 open, 319 vias) | - | - | layout work: the first route and its resume booked 1246 s of work in 881 s of wall (parallel batches count each thread's expansions), so no ladder ran (v15, wall-clock deadline: four attempts). 30b14fb (x747) |
+| module | 81 -> 82 | different | - | - | narrow-step reserve too small (154 s left of 319 kept); fixed on main by 1c8f17f / 974fa2b (x892: 17) |
+| DSP-ADAU1452 | 105 -> 121 (+59e -> 0) | different | - | - | same; main x892: 82 |
+| vaio_re | 101 -> 138 | different | - | - | same; main x892: 21 |
+| BAGEL-MK1.1 | 0 pass -> 1 | different | 2 / 2 (identical) | 2 | noise in the layout path: router and placement give the same count in route mode |
+| hackrf | 0 +1e -> 2 | different (205 of 421 moved, 0.635 mm steps) | 13 / 13 | 1 | placement |
+| reCamera | 4 -> 9 | different | 9 / 9 | 4 | placement |
+| WLED_Matrix | 4 +13e -> 6 +1e | different | 6 / 6 | 4 | placement (and errors 13 -> 1) |
+| 4in1-mini | 38 -> 71 | different | 74 / 79 | 53 | placement (router 74 / 79 is noise) |
+
+The router is not the cause on any of the eight boards routed in pairs
+(x723 and x862 on v16's placement, route mode, four threads, one run
+each: identical counts and vias but for eurorack and 4in1-mini, which
+differ by 5 either way). Where the placement is the cause, the race ran
+fewer seeds: hackrf 16 to 10, WLED_Matrix 14 to 11, 4in1-mini 9 to 5,
+BAGEL-MK1.1 9 to 6. The placer's work now counts what the legaliser and
+annealer do (93f40bd, x792) and the pool runs only the seeds the budget
+keeps (8435fff), so the same placement budget holds fewer seeds; the
+kept seed's wirelength is the same on these boards, the poses are not.
+Suspects: 93f40bd and 8435fff; seed-repeated pairs would settle it (one
+seed's result is not a placement's quality). Not regressions of the
+code paths, but the budget now buys fewer seeds.
+
+**4. Panels.** The rows changed wording more than behaviour: v15's
+"placement is not legal" and v16's "incomplete: N parts without a legal
+place" are the CLI exit-code commit's verdicts for the same failure.
+
+- PolyKybd molecules (4x4, 4x5, 5x2_shifted, 7x5_wave_left; 5x4_wave
+  places since x792's in-turn naming and routes 2/28): the parts named are the back connectors
+  J5 and J6 (J9 on 7x5). The designer stacks them on the front J3 and J4
+  (same spot, other side, SMD pads only, no courtyard) and KiCad finds
+  no courtyard or other overlap there (DRC of the designer's 4x4: only
+  starved thermals and cosmetic findings). What refuses them is the edge
+  constraints of repeated references, named in turn since x792 (the k-th
+  entry for J5 binds the k-th J5 in board order). The task's entries are
+  not in board order, and a corner part's two edges are two entries that
+  now bind two parts: placing the 4x4 with every part except J5 and J6
+  fixed where the designer put them (`move_all` off) misses 17 edge
+  constraints on the designer's own fixed J1, J3 and J4 (18.5, 37.6 and
+  56.6 mm off: whole tile pitches) and leaves J5, J6, J2 and SW1
+  without a legal place. So the rule is wrong for these tasks, not the
+  geometry: a repeated reference's edge entries should be matched to the
+  instances that can keep them (per entry, any instance; or the task
+  generator writes them in board order with a corner's edges in one
+  entry).
+- SmartSpin2k_Panelized: `keep_copies` confines each KiKit copy's
+  movable parts to its region (no edge constraints in the task, so the
+  "region" of the hint is the copy's). The rule agrees with the designer:
+  placing from the designer's poses (`move_all` off, x862) ends complete,
+  every part placed and every constraint kept. From the prepared stack
+  (every movable part at one point, inside one copy's region) 57 parts
+  find no legal place: the search, not the rule. Start each confined part
+  inside its own copy's region (its copy's fixed parts' centre) instead
+  of at the common stack.
+- OpenESC 4in1-panel: one net group (no copies), the front side 101 %
+  full by the placer's bodies: crowding, as in v15 ("not legal" then).
+
+**Ranked, what to assign next:**
+
+1. Merge the polygon field (this branch; byte-identical maps, ULK no
+   longer times out, katia and the panel no longer cut). Short tier x932
+   against build/short-x912.log (main f7addd8 without the fix): all 12
+   rows identical (42 unconnected, 6 errors, 1176 vias, 22032 mm, 2384 s
+   of work); build/short-x932.log. Tests of pcb-router and pcb-kicad pass.
+2. The sweep's configuration against the 1.1 margin: at most 16 search
+   threads in all on this machine (four jobs of four, or three while
+   other agents run), or a harness timeout and wall guard that scale
+   with the measured load; otherwise every board that spends its budget
+   is cut (8 of the 17).
+3. Stop after the wall guard: once it fires, skip the remaining repairs,
+   stitching passes and ladder rungs and go to the final check (three
+   timeouts came from work after the guard).
+4. KiCad checks in the layout: judge ladder rungs by the router's count
+   and check only the candidates that could win, or charge a check from
+   a per-board model of zone fill (hatched zones dominate; pads and tracks
+   do not predict it), or store the check's seconds in the DRC cache and
+   charge them on a hit as on a miss once known.
+5. Repeated-reference edge constraints (molecules): match entries to
+   instances; then the four molecule panels can place.
+6. Keep_copies start positions (SmartSpin2k).
+7. Recheck the pour work model on hatched boards on main (2-4x under).
+8. The narrow-step reserve's floor (18a9a77): `narrow_step_reserve`
+   keeps at least 120 s, `narrow_step_minimum` wants at least 180 s, so
+   a board whose first attempt is short keeps a reserve the step can
+   never use (Telemetry lost its pass to this; route mode's step
+   completes it). Raise the floor to 180 s, or let the step run on what
+   was kept.
+9. Placement seeds per budget (hackrf, reCamera, WLED_Matrix,
+   4in1-mini): seed-repeated pairs of x723 and main's placer to see
+   whether fewer seeds is the loss; if so, the placement budget in the
+   new work units needs raising.
+
 ## Committed on 2026-10-15 (agent walkthrough)
 
 An agent's whole flow on two real boards, using only README.md,
