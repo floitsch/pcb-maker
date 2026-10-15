@@ -661,7 +661,7 @@ neck and spoke-overlap joins fixed 3. Remaining disagreements by cause:
 0xCB U3.45 thermal vias inside the exposed pad (10 misses, modelled since in
 "exposed-pad thermal vias"; modelling them
 made 15 false alarms); seams between overlapping same-net zones of
-different priority (Telemetry, 5); marginal fine-pitch clearance within a
+different priority (Telemetry, 5; modelled since in "zone seams"); marginal fine-pitch clearance within a
 few microns; hatched fill lying over thermal pads without relief (not
 understood); per-track DRC subtleties with islands.
 
@@ -1845,6 +1845,98 @@ bars written as `row`); boards without rows place as before. The region
 check and the placement default touch only `place-kicad-board` and
 regions too small to hold their part. Snapshot: `build/bin/pcb-maker-x920`.
 No benchmark tier was run.
+
+## Committed on 2026-10-15 (zone seams)
+
+The census's five TelemetryOnboard misses (J1/J2 SH3/SH4, D12.1, all on
+F.Cu): its GND has four zones, a whole-board one of priority 0 (F, B), one
+of priority 1 (F, B, In1, also the whole board) and two 4 mm bands along
+the round edge, priority 10 (left, top) and 11 (right, bottom), drawn with
+arcs. What KiCad 10.0.7 does (zone_filler.cpp, zone.cpp
+BuildSmoothedPoly, drc_test_provider_zone_connections.cpp; the 10.0.7 tag,
+not the master checkout in benchmarks/real/external/_downloads): each zone
+is filled on its own over its outline and those of the same-net zones it
+collides with (so reliefs and spokes are the same up to the seam), trimmed
+to its own outline, and the outlines of the net's zones of a strictly
+higher priority are cut out of it last (`subtractHigherPriorityZones`;
+equal priorities overlap). The fills meet at the higher zone's outline
+with no clearance between them. The DRC runs per zone and layer: a pad's
+spokes are the crossings of its ring with that zone's fill, islands are
+that zone's, tracks count where they end in that zone's fill, and a zone
+whose fill does not cross the ring is no connection. The USB shield pads
+(1.55 x 1.5 mm, 1 mm from the band's inner edge at y = 45.5) have their
+ring 0.015 mm inside the band: three spokes in the priority-1 zone, one
+(+y) in the band, "actual 1" for zone 11 (10 for J2.SH3). D12.1 sits in
+the left band with its +x spoke crossing into the priority-1 zone: one.
+
+Modelled (`zone_seams`, on, `PCB_ROUTER_NO_ZONE_SEAMS`): `Plane::above`
+holds the outlines of the net's higher-priority zones on the layer; where
+a net has two or more zones on a layer, `kicad_spokes` counts per zone the
+pad's spokes whose ring crossing lies in the zone's part (sampled across
+the spoke: a spoke the seam splits counts in both), its island spokes,
+other pads' crossings and its tracks ending there, by the DRC's rule; the
+worst zone's shortfall (`SpokeRecord::seam_short`, `seam_zone`) joins
+`spokes_short`, the dump (`seam_short`) and spokes.py; a manual spoke for
+it must end in that zone's part. Two fixes it needed: zone outlines drawn
+with arcs are followed (`rule_area_polygon_points` dropped `arc`, so the
+bands were polygons through their other corners; `PCB_KICAD_OLD_ZONE_ARCS`;
+in the corpus only Telemetry's zones and a keepout of oro-os link have
+arcs), and D12.1's +x spoke, which the model blocked: it ends in a strip
+exactly the minimum width (0.2 mm) between its relief and D12.2's 0.2 mm
+clearance, whose brush centres lie on one line 2 microns short of the
+spoke's end (KiCad's end test is 5 microns past gap and half width); the
+clearance test now runs from the ring to gap plus half width
+(`spoke_clear_to_fill`, on, `PCB_ROUTER_OLD_SPOKE_CLEAR`). Not modelled:
+per-zone fill settings (the layer's fill takes the last zone's clearance
+and minimum width: Telemetry's bands keep 0.25, the priority-1 zone the
+class's 0.2) and islands the seam alone makes (island verdicts stay the
+net's one fill's).
+
+Census (44 boards, KiCad side from the fill3 cache), x817 against x912
+(x910 before the rebase, identical), and each change switched off:
+
+| | x817 | x912 | no zone_seams | old spoke clear | old zone arcs |
+|---|---|---|---|---|---|
+| DRC starved predicted | 157 | 162 | 157 | 161 | 157 |
+| missed | 12 | 7 | 12 | 8 | 12 |
+| false alarms | 27 | 26 | 26 | 27 | 26 |
+| starved pads not modelled | 2 | 2 | 2 | 2 | 2 |
+
+Telemetry 7 found / 5 missed to 12 / 0 (D12.1 now as an island sliver in
+zone 1, the strip the lattice misses: right verdict, KiCad counts it as a
+plain spoke). The false alarm gone is Quanta75's FB2.1 (B.Cu, the same
+end-of-spoke case); capybully's U1.8 changes one spoke from blocked to
+none, verdict unchanged. Hub (several equal-priority GND zones per layer)
+gets `seam` rows only on pads already short. No new false alarm.
+Overlapping same-net zones of different priority (`experiments/
+pour-fidelity/seams.py`, every census board and every v15 source and
+result): only Telemetry in the census; in the corpus also OpenESC-20x20
+4in1-mini (GND In2, priority 0 under 30) and SNSP-CPU-01 (GND B.Cu, 2
+under 4), neither with a thermal pad near the seam.
+
+Route mode on the v15 placements (tasks v6, `--jobs 1 --threads 4`, one
+run per side), x817 against x910, `build/seams-x8{17,10}.log`:
+Telemetry 108/108, 0 unconnected, 88 vias both, KiCad starved_thermal 5
+(J1.SH3, J2.SH3/SH4, J1.SH4, D12.1, each "actual 1" in a band or the
+priority-1 zone) to 0, length 3549.8 to 3559.4 mm (the manual spokes into
+the short zones), other findings identical (the designer's 50 clearance,
+22 solder_mask_bridge); 4in1-mini and SNSP-CPU-01 identical (53 and 259
+unconnected, SNSP's 13 solder_mask_bridge and 2 starved on both).
+
+Short tier x912 (rebased on 140d0bf) against build/short-x880.log (tasks
+v6): all 12 boards byte-identical (no short-tier board has two zones of a
+net on a layer, so only `spoke_clear_to_fill` could move them), 42
+unconnected, 6 errors, 1176 vias, 22032 mm both; work 2390 to 2384 s
+(framework_mobo 225.5 to 220.3 s, the same board: the shorter clearance
+test asks the fill probe less). Tests:
+`each_zone_counts_the_spokes_in_its_own_part` (router: a pad with three
+spokes in the lower zone and one in the upper is short 1 in the upper, by
+priority or overlapping at equal priority, 0 as one fill; the manual spoke
+ends in the upper part) and
+`a_zone_of_a_higher_priority_is_cut_from_the_nets_lower_zone_and_arcs_are_followed`
+(lowering). Logs: build/census-seams (census x817.txt, x912.txt, the switched-off
+runs try2-*.txt, seams.py's JSON), build/seams-x817.log,
+build/seams-x910.log, build/short-x912.log.
 
 ## Open problems, ranked
 
