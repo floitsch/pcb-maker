@@ -40,7 +40,8 @@ less copper); on PIC and the hierarchy board the automatic one is.
 1. **Lowering.** Footprints become bodies (courtyard plus pad bounding box,
    rectangular or round) with pins at their true offsets. Locked footprints,
    footprints without nets, and footprints on the board edge (connectors) stay
-   fixed; everything else may move and turn in 90° steps. Large nets get a
+   fixed; everything else may move and turn in 90° steps, from a
+   canonical start (`orientation_search`, below). Large nets get a
    smaller weight so power does not collapse the layout. Pad boxes cover
    the drill. A through-hole part blocks the other side only with its
    holes and pads, and a part with a courtyard on both sides with that
@@ -412,6 +413,105 @@ against 114, and it ended with 45 more unconnected items. One run a side
 cannot tell a reshuffle of a crowded board from a cost of the rule; the
 v16 layout (x862, the parts under J2) had 152.
 
+## Orientation search from a canonical start (2026-10-15)
+
+The placer turns parts at every stage: global placement picks each part's
+angle by the HPWL of its nets (nets up to 24 pins) every 15 iterations
+once the overflow is under 0.75 (`choose_rotations`), the annealer
+proposes quarter turns (15 % of its moves, judged on wire, constraints
+and overlap like any move), the legaliser tries every angle at each spot,
+and refinement every angle at each target. What made the result depend on
+the angles the board held: every part started at its angle, and its
+options were listed from that angle on (`at + 90 k`), so the annealer's
+random turn drew another absolute angle and ties broke the other way. An
+import from a schematic holds every part at 0 degrees, the layout tier's
+stack the designer's angles; the two placed differently.
+
+Now (`orientation_search`, on; `core::orient`): every part's options are
+sorted (0, 90, 180, 270; a part at an odd angle keeps its extra ones, so
+it alone still differs), and every movable part that may turn starts at
+the first, turned about its body centre. Fixed parts, parts with one
+option (`rotation`, `opening_outwards`, an overhang) and a row's leader
+(the row's body is built in the leader's frame at its angle) keep their
+poses. The placement no longer depends on the angles it starts from:
+coco2, urchin and homebrew_486 imported from their schematics and placed
+from 0 degrees and from the designer's angles (the same file but for the
+angles, `experiments/orientation-search/set_angles.py`) give the same
+poses. Since an import holds 0 degrees, the schematic flow places as
+before; the layout tier now places as if from an import.
+
+What the measurements say (`experiments/orientation-search/`):
+
+- **The layout tier does not keep the designer's angles.** From the
+  designer's angles x1112 left 25-40 % of the moved parts at them, from 0
+  degrees 22-35 % (four seeds, ten short-tier boards; a quarter by
+  chance). coco2's 549 against 1144 vias (handover, schematic tier
+  failures) was the placement's chaos, not inheritance: on x1112 the same
+  board from 0 degrees gave 663 vias, from the designer's angles 1060.
+- **HPWL over seeds** (`seeds.py`: `place-kicad-board`, one seed a run,
+  seeds 1-4; median weighted HPWL in mm), x1112 from the designer's angles
+  against the canonical start: OpenFC 897 / 1043, spell_tome 191 / 155,
+  homebrew_486 14831 / 13408, WLED_Matrix 1289 / 1345, 0xCB-1337 1047 /
+  1067, urchin 1732 / 1760, coco2 14393 / 14527, USB_Keypad 885 / 886,
+  USB_Cable_Tester 1296 / 1304, eternal-keypad 550 / 543, reCamera 201 /
+  199, Blue_Line 108 / 110. Geometric mean about 1 %; the seeds of one
+  board spread 10-20 %. OpenFC is the one board where the designer's
+  angles carry more than chance: its global placement is already 20 %
+  shorter from them (786-897 against 950-1066).
+- **The order of the footprints decides as much**: pcbnew's save sorts
+  them, and homebrew_486 with the same angles in another order placed
+  103 of 130 parts elsewhere (both orders are deterministic).
+- **Stronger searches, measured and not kept** (eight boards, four
+  seeds, against the canonical start): the annealer's turn proposing the
+  cheapest other angle (wire, constraints and overlap) instead of a random
+  one: coco2 -4 %, homebrew_486 +3 %, OpenFC +4 %, the rest within 2 %,
+  15 % more placement work; the global rotation choice every 5 iterations
+  instead of 15: geometric mean -0.5 % (OpenFC -7 %, WLED_Matrix +3 %);
+  a random start angle per part instead of the first: +1 % (spell_tome
+  +27 %, OpenFC -6 to -8 %); the rotation choice from the first iteration:
+  no change.
+
+Layouts (a third of the budget, four threads, one run a side; before
+x1112, after x1130), each board imported from its schematic and laid out
+from 0 degrees and from the designer's angles (vias, length mm, KiCad
+unconnected, weighted HPWL after placement):
+
+| Board | x1112 from 0 | x1112 from the designer's | x1130 from 0 | x1130 from the designer's | Placements |
+| --- | --- | --- | --- | --- | --- |
+| coco2 | 663, 23,233, 0, 12,414 | 1060, 26,155, 0, 13,556 | 663, 23,233, 0, 12,414 | the same | x1112: 148 of 156 elsewhere; x1130: identical, and identical to x1112 from 0 |
+| urchin | 41, 2724, 0, 1669 | 40, 2544, 0, 1692 | 41, 2724, 0, 1669 | the same | x1112: 22 of 122 elsewhere; x1130: identical |
+| homebrew_486 | 981, 26,013, 0, 11,959 | 1196, 29,169, 0, 13,494 | 981, 26,013, 0, 11,959 | 1040, 25,260, 1, 11,959 | x1112: 104 of 130 elsewhere; x1130: the placer's poses identical |
+
+homebrew_486 from the designer's angles: the placer's 11 seeds are
+identical, but the race's router probes differ (seed 2 left 213
+unfinished nets from 0 degrees, 183 from the designer's), so the race
+keeps another seed: the two input files differ in more than the angles
+(pcbnew's save turns a footprint's graphics into another order and writes
+-180 for 180), and the router follows the order of the graphics.
+
+Short tier (`--jobs 6 --threads 4`, under the lock) x1130 against
+`build/short-x976.log` (x1111's rows are x976's; HPWL from x1111's
+placements): every
+placement changed (the stack's designer angles no longer count); passes
+6 to 6, unconnected 35 to 32, vias 1129 to 1130, length 22,253 to 20,777
+mm, work 3236 to 2840 s, cut 0. Per row (vias, HPWL, KiCad unconnected):
+USB_Cable_Tester 131 to 90 (HPWL 1270 to 1279, passes), OpenFC 178 to
+154 (756 to 937, 2 both), framework_mobo 108 to 91 (921 to 850, passes),
+MIDAS-MK1.1 207 to 198 (2523 to 2137, 20 to 13), Blue_Line 26 to 25 (105
+to 101), urchin 40 both (1686 to 1675), spell_tome 8 both (149 to 143),
+eternal-keypad 56 both (541 to 525, its one error both), 0xCB-1337 76 to
+78 (994 to 992), reCamera 56 to 68 (199 to 190, 5 to 9), USB_Keypad 78 to
+106 (822 to 804, 2 both), WLED_Matrix 165 to 216 (1079 to 1193, 6 both).
+A reshuffle in the noise of a placement change (OpenFC's HPWL +24 %
+with 24 fewer vias), not a cost.
+
+Schematic tier (the same) x1130 against `build/sch-x1100.log`: 8/12 both,
+unconnected 8, new errors 0, vias 3577 to 3578; ten rows identical
+(placements and results); OpenFC (166 to 165 vias) and 0xcb-static (2 to
+4) differ in one part each, after the layout's moves: the placements are
+x1112's, the moves after routing walk the options in the canonical order
+now (C3 at 90 rather than 270, D4 one key pitch over).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
@@ -426,7 +526,11 @@ v16 layout (x862, the parts under J2) had 152.
 
 - Bodies are rectangles or discs; rotations are quarter turns; the placer
   never changes a footprint's side by itself (`back`/`front` constraints
-  do, see [constraints.md](constraints.md)).
+  do, see [constraints.md](constraints.md)), so the orientation search
+  has no mirror to try.
+- The placement depends on the order of the footprints in the file (as
+  chaotically as it did on the start angles); the router on the order of
+  a footprint's graphics.
 - Constraints: see [constraints.md](constraints.md). No alignment
   constraints yet.
 - Congestion drives nudges of individual parts, but does not yet feed the

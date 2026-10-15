@@ -4226,6 +4226,93 @@ connector's are left to the agent; keys wired to their own pins get no
 rows (their positions are not in the netlist); a key's LED (slab's
 SK6812 per key) is not tied to its key.
 
+## Committed on 2026-10-15 (orientation search)
+
+The premise was open problem 9 item 8: the import puts every part at 0
+degrees, the layout tier's stack keeps the designer's angles, and "the
+placement follows the orientations it starts from" (coco2: 549 vias from
+the designer's angles, 1144 from 0). Measured, it does not follow them:
+the placer turns parts at every stage already (global placement's
+`choose_rotations`, the annealer's quarter turns, the legaliser and
+refinement try every angle), and from the designer's angles x1112 left
+only 25-40 % of the moved parts at them (22-35 % from 0 degrees, a quarter
+by chance; ten short-tier boards, four seeds). What the start decided was
+the trajectory: every part started at its angle and its options were
+listed from it, so the annealer drew other turns and ties broke the other
+way. coco2's gap was that chaos: on x1112 the same imported board (only
+the angles changed, `experiments/orientation-search/set_angles.py`) gave
+663 vias from 0 degrees and 1060 from the designer's angles, the reverse
+of x1100's 1144 and 549.
+
+**Change** (`orientation_search`, placer option, on; `core::orient`):
+angle options in one order (0, 90, 180, 270; an odd-angled part keeps its
+extra ones), every movable part that may turn starts at the first, turned
+about its body centre; fixed parts, parts with one option (`rotation`,
+`opening_outwards`, overhangs) and row leaders keep theirs. The lowering
+sorts the options too, so the layout's moves walk them in that order. No
+mirror: the placer never changes a part's side (no constraint lets it).
+Tests `crates/pcb-placer/tests/orientation.rs`: the order, the canonical
+start (movable parts only), the placement identical from two sets of
+starting angles and from the same start twice (and different with the
+option off), a part between two connectors ends turned by a half from
+each of four starting angles.
+
+**Stronger searches measured and dropped** (`seeds.py`, placement only,
+one seed a run, four seeds, eight boards, against the canonical start):
+the annealer's turn proposing the cheapest other angle by wire,
+constraints and overlap (coco2 -4 %, homebrew_486 +3 %, OpenFC +4 %, the
+rest within 2 %; 15 % more placement work), the global rotation choice
+every 5 iterations instead of 15 (geometric mean -0.5 %), a random start
+angle per part (+1 %; spell_tome +27 %), rotations from the first
+iteration (no change). HPWL from the designer's angles against the
+canonical start over 12 boards: geometric mean about 1 %, per board -19 %
+(spell_tome) to +16 % (OpenFC, the one board whose designer angles beat
+chance: its global placement is 20 % shorter from them); the seeds of
+one board spread 10-20 %. The order of the footprints in the file
+decides as much as the angles (homebrew_486 sorted by pcbnew's save: 103
+of 130 parts elsewhere), and the router follows the order of a
+footprint's graphics.
+
+**Per board** (layouts at a third, four threads, one run a side; vias,
+KiCad unconnected, weighted HPWL after placement; x1112 / x1130):
+
+| Board | from 0 degrees | from the designer's angles | Placements |
+| --- | --- | --- | --- |
+| coco2 | 663, 0, 12,414 / the same | 1060, 0, 13,556 / 663, 0, 12,414 | x1130 identical from either start |
+| urchin | 41, 0, 1669 / the same | 40, 0, 1692 / 41, 0, 1669 | x1130 identical |
+| homebrew_486 | 981, 0, 11,959 / the same | 1196, 0, 13,494 / 1040, 1, 11,959 | x1130 placer poses identical; the race's router probes differ on the input files' graphics order (213 against 183 unfinished for seed 2), so another seed is kept |
+
+**Short tier** x1130 against `build/short-x976.log` (`--jobs 6 --threads
+4`, under the lock): every placement changed (the stack's angles no
+longer count), passes 6 to 6, unconnected 35 to 32, vias 1129 to 1130,
+length 22,253 to 20,777 mm, work 3236 to 2840 s, cut 0. Vias (HPWL from
+x1111's placements, whose rows are x976's): USB_Cable_Tester 131 to 90
+(1270 to 1279), OpenFC 178 to 154 (756 to 937), framework_mobo 108 to 91
+(921 to 850), MIDAS-MK1.1 207 to 198 (2523 to 2137; unconnected 20 to
+13), Blue_Line 26 to 25, 0xCB-1337 76 to 78, reCamera 56 to 68 (199 to
+190; unconnected 5 to 9), USB_Keypad 78 to 106 (822 to 804), WLED_Matrix
+165 to 216 (1079 to 1193); urchin, spell_tome, eternal-keypad the same
+vias, other placements. A reshuffle, no cost to the layout tier.
+**Schematic tier** x1130 against `build/sch-x1100.log`: 8/12 both, vias
+3577 to 3578, ten rows identical; OpenFC (166 to 165) and 0xcb-static (2
+to 4) move one part each in the layout's moves (x1112 places them
+identically; the moves walk the options in the canonical order).
+
+**Recommendation:** keep it on: one placement whatever the stack holds,
+no cost on either tier. It does not make the import's placements better;
+nothing measured here beats the seeds' noise, and OpenFC shows designer
+angles can carry information the HPWL search does not find. Next, if
+anyone takes it up: seed the race's starts with orientations of its own
+(half the seeds canonical, half a seeded per-part choice) and judge on
+seed-repeated layouts, not single runs; make the placement independent
+of the footprints' order too.
+
+Binaries x1130 (the branch on 8216bc9, measured), x1131 (rebased on
+8e8b4ba). `cargo test --release -p pcb-kicad -p pcb-placer`,
+`agent_walkthrough` and `cli_exit_codes` pass. Logs build/short-x1130.log,
+build/sch-x1130.log; runs in build/orient-search/ (`out-*` layouts,
+`seeds1`-`seeds3` placements and their tables `seeds*.txt`).
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -4413,7 +4500,11 @@ SK6812 per key) is not tied to its key.
       part, the angle that shortens its nets to the parts already placed,
       or the angles of the part's neighbours of one footprint), measured
       on the schematic tier and on the layout tier with the stack's
-      angles zeroed. Medium.
+      angles zeroed. Medium. **Measured 2026-10-15** (orientation
+      search, above): the placement does not follow the starting angles,
+      it is chaotic in them (x1112: coco2 663 vias from 0 degrees, 1060
+      from the designer's); now it starts from a canonical pose and is
+      the same from either. Left: seeded orientation starts in the race.
    9. *The schematic tier's remaining failures are the layout tier's*
       (x1100): OpenFC's U10 on the back, TelemetryOnboard's USB-C pair,
       USB_Keypad's capacitor at -1.9, 12.7, slab-pcb-left's budget (passes

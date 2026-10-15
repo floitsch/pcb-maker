@@ -23,7 +23,7 @@ def poses(directory):
     text = boards[0].read_text()
     result = {}
     for block in re.split(r'\n\s*\(footprint "', text)[1:]:
-        reference = re.search(r'\(property "Reference" "([^"]*)"', block)
+        reference = re.search(r'\((?:property "Reference"|fp_text reference) "([^"]*)"', block)
         layer = re.search(r'\(layer "([^"]+)"\)', block)
         at = re.search(r'\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)', block)
         if reference and at:
