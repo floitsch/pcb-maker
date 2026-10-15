@@ -699,6 +699,9 @@ pub fn layout_kicad_board(
     if placer_config.hole_clearance_mm.is_none() {
         placer_config.hole_clearance_mm = Some(router_config.hole_clearance_mm);
     }
+    if placer_config.solder_mask_to_copper_mm.is_none() {
+        placer_config.solder_mask_to_copper_mm = router_config.solder_mask_to_copper_mm;
+    }
     placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);

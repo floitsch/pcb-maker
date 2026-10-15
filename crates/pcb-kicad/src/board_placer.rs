@@ -124,6 +124,20 @@ pub struct KiCadBoardPlacerConfig {
     /// alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's
     /// pad ring, homebrew_486's second ISA slot between the first's rows.
     pub solid_pin_rows: bool,
+    /// A footprint's solder-mask openings on its own side (graphics on
+    /// F.Mask or B.Mask) keep other footprints' pads and bodies off also
+    /// where the footprint blocks with its courtyard's shape rather than
+    /// its whole body (the body's box holds them; a courtyard-less part
+    /// blocks with them already): SNSP-CPU-01's J2 (a 12 x 5 courtyard
+    /// around four pins, a 22 x 32 mm F.Mask polygon beside it) held T1
+    /// and C61, and KiCad reported solder_mask_bridge for each of their
+    /// pads. They keep the bodies' spacing (at least the copper clearance)
+    /// or KiCad's mask margin where that is larger (`mask_opening_growth`).
+    /// On.
+    pub mask_openings: bool,
+    /// The project's `solder_mask_to_copper_clearance`: covered copper
+    /// keeps it from a mask opening. Read from the project when not given.
+    pub solder_mask_to_copper_mm: Option<f64>,
     /// Neighbours keep the larger of their routing halos between them,
     /// not the sum (`core::Problem::shared_halos`).
     pub shared_halos: bool,
@@ -217,6 +231,8 @@ impl Default for KiCadBoardPlacerConfig {
             keep_on_pieces: true,
             keep_copies: true,
             solid_pin_rows: true,
+            mask_openings: true,
+            solder_mask_to_copper_mm: None,
             shared_halos: false,
             anneal_far_side_gaps: false,
             routing_room: false,
@@ -439,6 +455,25 @@ pub(super) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
         .chain(config.default_rules.iter())
         .map(|rules| rules.clearance_mm)
         .fold(0.0, f64::max)
+}
+
+/// How far a footprint's mask opening keeps other parts beyond the bodies'
+/// spacing (at least the copper clearance): KiCad's solder_mask_bridge
+/// flags another footprint's pad on the mask layer within the minimum web
+/// plus the pad's expansion (the board's `pad_to_mask_clearance`; a
+/// graphic opening has none), and covered copper within the project's
+/// `solder_mask_to_copper_clearance`. Zero where the copper clearance is
+/// the larger (most boards).
+fn mask_opening_growth(pcb: &Expr, config: &KiCadBoardPlacerConfig) -> f64 {
+    let setup = |key: &str| {
+        pcb.child("setup")
+            .and_then(|setup| form_f64(setup, key, 1).ok())
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    let margin = (setup("solder_mask_min_width") + setup("pad_to_mask_clearance"))
+        .max(config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0));
+    (margin - config.copper_clearance_mm.unwrap_or(0.2)).max(0.0)
 }
 
 /// Bounding box, in the footprint's own frame, of its courtyard and pads.
@@ -1866,6 +1901,7 @@ pub(super) fn lower_placement(
         _ => (copper_layers - 2) as f64,
     };
     let via_room = if config.supply_via_room { config.supply_via_room_mm.unwrap_or(0.8) } else { 0.0 };
+    let mask_growth = mask_opening_growth(pcb, config);
     for footprint in pcb
         .children()
         .iter()
@@ -2093,6 +2129,9 @@ pub(super) fn lower_placement(
         let other_mask = if other_copper == "F.Cu" { "F.Mask" } else { "B.Mask" };
         let mut own_graphics = false;
         let mut own_graphic_boxes = Vec::new();
+        // The mask openings on the part's side, grown to KiCad's mask
+        // margin beyond the bodies' spacing.
+        let mut own_mask_boxes: Vec<[f64; 4]> = Vec::new();
         let mut far_graphics = Vec::new();
         for child in footprint.children() {
             let Some(layer) = form_atom(child, "layer", 1) else {
@@ -2109,6 +2148,14 @@ pub(super) fn lower_placement(
             } else if matches!(layer, "F.Cu" | "B.Cu" | "F.Mask" | "B.Mask") {
                 own_graphics = true;
                 own_graphic_boxes.push(graphic);
+                if layer.ends_with(".Mask") {
+                    own_mask_boxes.push([
+                        graphic[0] - mask_growth,
+                        graphic[1] - mask_growth,
+                        graphic[2] + mask_growth,
+                        graphic[3] + mask_growth,
+                    ]);
+                }
             }
         }
         // Artwork (a logo) has neither pads nor a courtyard: it occupies the
@@ -2222,6 +2269,23 @@ pub(super) fn lower_placement(
                 }
                 shaped = slabs;
                 shaped.extend(own_pads.iter().copied());
+                // Its mask openings beside the courtyard block too: they
+                // are in the body's box, which this shape stands in for,
+                // and another part's pads there bridge the mask
+                // (`mask_openings`). Held to the body's box (grown as they
+                // are): a stroke's half width past it would widen every
+                // neighbour search (`far_reach`).
+                if config.mask_openings {
+                    let body = [
+                        body_center[0] - body_size[0] / 2.0 - mask_growth,
+                        body_center[1] - body_size[1] / 2.0 - mask_growth,
+                        body_center[0] + body_size[0] / 2.0 + mask_growth,
+                        body_center[1] + body_size[1] / 2.0 + mask_growth,
+                    ];
+                    shaped.extend(own_mask_boxes.iter().map(|opening| {
+                        [opening[0].max(body[0]), opening[1].max(body[1]), opening[2].min(body[2]), opening[3].min(body[3])]
+                    }));
+                }
             }
         }
         connector.push(through && pins.len() >= 4);
@@ -3376,6 +3440,7 @@ pub fn place_kicad_board(
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
         || config.hole_clearance_mm.is_none()
+        || (config.mask_openings && config.solder_mask_to_copper_mm.is_none())
         || (config.supply_via_room && config.supply_via_room_mm.is_none())
     {
         let rules = project_rules::resolve_project_rules(&source_directory.join(format!("{board_id}.kicad_pro")), &source_board).ok();
@@ -3390,6 +3455,9 @@ pub fn place_kicad_board(
         }
         if config.supply_via_room && config.supply_via_room_mm.is_none() {
             config.supply_via_room_mm = rules.as_ref().map(via_room).filter(|room| *room > 0.0);
+        }
+        if config.solder_mask_to_copper_mm.is_none() {
+            config.solder_mask_to_copper_mm = rules.as_ref().and_then(|rules| rules.solder_mask_to_copper_mm);
         }
     }
     if config.tight_bodies.is_none() {
@@ -4337,6 +4405,90 @@ mod tests {
         assert!(legal(&poses));
         poses[1].position = [20.0 - 3.0, 15.0 - 2.5];
         assert!(!legal(&poses));
+    }
+
+    #[test]
+    fn a_fixed_parts_mask_opening_keeps_other_parts_pads_out() {
+        // SNSP-CPU-01's J2 (SNES_Library:RFModulator, at its angle): a
+        // 12 x 5 courtyard around four pins, a filled F.Mask polygon of
+        // 22 x 32 mm beside it and a smaller F.Mask rectangle. The courtyard
+        // is far smaller than the body's box, so the part blocks with the
+        // courtyard's shape and its pads, and the layout placed T1, C61,
+        // C63, C64 and C66 under the polygon (KiCad: solder_mask_bridge for
+        // every pad there). And an 0805 capacitor.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 120 80) (layer "Edge.Cuts"))
+            (footprint "SNES_Library:RFModulator" (layer "F.Cu") (at 60 40 -90) (property "Reference" "J2")
+                (fp_rect (start -3.429 -1.27) (end 3.81 6.9596) (stroke (width 0.1) (type solid)) (fill yes) (layer "F.Mask"))
+                (fp_poly (pts (xy -10.922 38.862) (xy -10.922 6.604) (xy -3.429 6.6) (xy -3.429 6.9596) (xy -6.096 6.9596)
+                    (xy -6.096 10.668) (xy 6.096 10.668) (xy 6.096 6.9596) (xy 3.81 6.9596) (xy 3.81 6.604) (xy 11.43 6.604) (xy 11.43 38.862))
+                    (stroke (width 0.1) (type solid)) (fill yes) (layer "F.Mask"))
+                (fp_rect (start -6 6.5) (end 6 11.5) (stroke (width 0.05) (type default)) (fill no) (layer "F.CrtYd"))
+                (pad "1" thru_hole rect (at -3.81 8.89 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net 1 "VCC"))
+                (pad "2" thru_hole rect (at -1.27 8.89 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net 2 "VIDEO"))
+                (pad "3" thru_hole rect (at 1.27 8.89 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net 3 "AUDIO"))
+                (pad "4" thru_hole rect (at 3.81 8.89 270) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net 4 "GND")))
+            (footprint "C_0805" (layer "F.Cu") (at 100 60) (property "Reference" "C61")
+                (fp_rect (start -1.7 -0.95) (end 1.7 0.95) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -0.95 0) (size 1 1.45) (layers "F.Cu" "F.Paste" "F.Mask") (net 2 "VIDEO"))
+                (pad "2" smd rect (at 0.95 0) (size 1 1.45) (layers "F.Cu" "F.Paste" "F.Mask") (net 4 "GND"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardPlacerConfig { fixed: vec!["J2".into()], ..KiCadBoardPlacerConfig::default() };
+        let mut placement = lower_placement(&pcb, &config, &[]).unwrap();
+        let (j2, c) = (0, 1);
+        assert_eq!(placement.references[..2], ["J2".to_string(), "C61".to_string()]);
+        assert!(placement.problem.components[j2].fixed);
+        assert!(!placement.problem.components[j2].hollow.is_empty(), "J2 blocks with its courtyard's shape");
+        // A point of J2's own frame on the board.
+        let at = |problem: &core::Problem, local: [f64; 2]| {
+            let pose = problem.poses[j2];
+            let offset = problem.components[j2].offset(local, pose.angle);
+            [pose.position[0] + offset[0], pose.position[1] + offset[1]]
+        };
+        for fixed in [true, false] {
+            placement.problem.components[j2].fixed = fixed;
+            let problem = &placement.problem;
+            let mut poses = problem.poses.clone();
+            let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&c);
+            let seen = |poses: &[core::Pose]| core::anneal::overlaps(problem, poses, &core::anneal::AnnealConfig::default())[c];
+            // Where C61 was: deep inside the polygon, 13 mm from the
+            // courtyard; and under the small rectangle beside the pins.
+            for local in [[0.0, 25.0], [8.0, 15.0], [0.0, 2.0]] {
+                poses[c].position = at(problem, local);
+                assert!(!legal(&poses), "fixed {fixed}: under the opening at {local:?}");
+                assert!(seen(&poses) > 0.0, "fixed {fixed}: the annealer sees the opening at {local:?}");
+            }
+            // Beside the polygon (its edge at local x 11.43): legal.
+            poses[c].position = at(problem, [16.0, 25.0]);
+            assert!(legal(&poses), "fixed {fixed}: beside the opening");
+            assert_eq!(seen(&poses), 0.0);
+        }
+        // Off, the shape is the courtyard and the pads alone, as before.
+        let off = lower_placement(&pcb, &KiCadBoardPlacerConfig { mask_openings: false, ..config.clone() }, &[]).unwrap();
+        let mut poses = off.problem.poses.clone();
+        poses[c].position = at(&off.problem, [0.0, 25.0]);
+        assert!(!core::legal::illegal_components(&off.problem, &poses).contains(&c));
+    }
+
+    #[test]
+    fn a_mask_opening_keeps_kicads_mask_margin_beyond_the_copper_clearance() {
+        let board = |setup: &str| parse(&format!(r#"(kicad_pcb (setup {setup}))"#)).unwrap();
+        let config = |clearance: f64, to_copper: Option<f64>| KiCadBoardPlacerConfig {
+            copper_clearance_mm: Some(clearance),
+            solder_mask_to_copper_mm: to_copper,
+            ..KiCadBoardPlacerConfig::default()
+        };
+        // SNSP: everything 0, the clearance decides.
+        assert_eq!(mask_opening_growth(&board("(pad_to_mask_clearance 0)"), &config(0.2, Some(0.0))), 0.0);
+        // eternal-keypad: a web of 0.25 and an expansion of 0.051 against
+        // a clearance of 0.1995.
+        let keypad = mask_opening_growth(&board("(pad_to_mask_clearance 0.051) (solder_mask_min_width 0.25)"), &config(0.1995, None));
+        assert!((keypad - 0.1015).abs() < 1.0e-9, "{keypad}");
+        // A mask-to-copper clearance larger than the web and expansion.
+        let covered = mask_opening_growth(&board("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1)"), &config(0.2, Some(0.3)));
+        assert!((covered - 0.1).abs() < 1.0e-9, "{covered}");
     }
 
     #[test]
