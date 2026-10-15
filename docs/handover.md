@@ -2751,6 +2751,96 @@ Unit tests: `a_repeated_reference_entry_with_a_uuid_names_that_footprint`
 Logs: build/panels-x1000.log, build/panels-ss-x990.log,
 build/panels-ss-x1000.log. Snapshots x1000, x1001.
 
+## Committed on 2026-10-15 (minimum connection width)
+
+KiCad's board setup has `min_connection` (minimum connection width) and
+the project a severity for connection_width findings; the router chose
+widths from the classes, the narrow-signal step's menu width and the neck
+width without regard to it. Now `project_rules.rs` reads both
+(`min_connection_mm`, `connection_width_severity` in the router config;
+KiCad's default severity is a warning, board_design_settings.cpp) and,
+where it applies, floors every track width: the class widths, the
+narrow-signal width (the menu's smallest width raised to the floor), the
+neck width; `route_kicad_board` and the lowering raise them again
+(`apply_width_floor`, `width_floor`), so a configuration file's rules and
+requested net classes keep it; stubs, escapes, manual and inner spokes
+take their net's class or neck width; the neck repair's tracks already
+were the minimum rounded up to a micron. main.rs's file merge copies the
+floor from the project. `board-router.json` has a new `rules` object:
+`width_floor_mm`, `connection_width_severity`, `narrowest_track_mm`,
+`neck_width_mm` (WLED: 0.127 / error / 0.127 / 0.127).
+
+The choice: the floor applies at error severity only, by default
+(`PCB_MIN_CONNECTION_FLOOR=warning` adds warnings, `off` none). Measured
+with warnings floored too (x1020), it cost routing on the only boards
+where it matters (below). Census of the 109 v6 tasks
+(`experiments/min-connection/census.py`, mirroring project_rules as of
+x952; `emitted.py` counts the routed tracks below the minimum in a run):
+18 have a `min_connection`, all with an explicit severity (3 error, 15
+warning); a router width below the minimum only on two, both warnings:
+
+| board | min_connection | severity | narrowest class | narrow step | neck | below the minimum |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| OpenESC-20x20 4in1-mini | 0.16 | warning | 0.09 | - | 0.1 | Default 0.09 (every track); neck 0.1 |
+| OpenESC-30x30 4in1 | 0.16 | warning | 0.09 | - | 0.1 | Default 0.09 (every track); neck 0.1 |
+| OpenESC-30x30 4in1-panel | 0.16 | warning | 0.16 | - | 0.16 | - (no v16 result) |
+| USB_Keypad, WLED_Matrix | 0.127 | error | 0.127 | - | 0.127 | - |
+| USB_Cable_Tester | 0.1 | error | 0.1 | - | 0.1 | - |
+| MokyaLora | 0.1 | warning | 0.1199 | 0.1199 | 0.1 | - |
+| Sisu_SSE-9 | 0.1 | warning | 0.1 | 0.1 | 0.1 | - |
+| reCamera | 0.1016 | warning | 0.1016 | - | 0.1016 | - |
+| OpenFC, OpenRX panel | 0.09 | warning | 0.09 | - | 0.1 | - |
+| 0xCB-1337 pcb, pcb-panel | 0.09 | warning | 0.1 | 0.2 | 0.1 | - |
+| BAGEL-MK1, MK1.1-Avocado | 0.1 | warning | 0.127 | - | 0.1 | - |
+| OpenAirScope | 0.1 | warning | 0.2 | - | 0.14 | - |
+| MegaDrive | 0.1 | warning | 0.25 | - | 0.1 | - |
+| SUMEC_MK_IV | 0.01 | warning | 0.25 | 0.25 | 0.1 | - |
+
+On the v16 layouts only the two OpenESC boards have tracks below the
+minimum (all 2530 and 2483 of them at 0.09; the designer's are 0.16 and
+up, mostly 0.2). Route mode on the v16 placements, tasks v6, one run per
+side, 2 jobs x 2 threads (build/minconn-route-x952, -x1020, -x1021;
+connection_width counted apart, KiCad's report caps it at 199, necks.py
+counts all; no other errors on any side):
+
+| board | side | unconnected | connection_width | vias | length | work |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| 4in1-mini | x952 (no floor) | 52 | 199 warnings (1007 by necks.py) | 157 | 1770 | 835 |
+| 4in1-mini | x1020 (floor 0.16) | 89 | 0 | 126 | 1508 | 1172 |
+| 4in1 | x952 (no floor) | 104 | 199 warnings (709) | 123 | 2073 | 903 |
+| 4in1 | x1020 (floor 0.16) | 121 | 0 | 124 | 2003 | 1111 |
+
+0.16 tracks at the class's 0.09 clearance need a lattice pitch of 0.25
+against 0.18: 37 and 17 more open items for the warnings gone, so the
+floor is not shipped there. x1021 (the commit, rebased on 851a473, error
+severity only) gives x952's rows exactly on both. The error-severity
+boards (WLED, Keypad, Cable_Tester) already route at or above their
+minimum, so the floor changes nothing in their routing today; it guards
+other class or narrow-step widths (a requested net class, the narrow step,
+a neck) from going below.
+
+Short tier (flock, tasks v6) x1020 (on 6099e13) against
+build/short-x941.log: unconnected 35 to 35, new errors 12 to 3, vias 1129
+to 1129, length 22253 mm both, passes 6 to 6, work 2671 s both, cut 0.
+The changed rows are x950's neck repair, not this: WLED_Matrix
+connection_width 13 to 1 (+11 to +2 new errors), USB_Keypad 4 to 2;
+against build/short-x950.log all 12 rows are identical (routed, vias,
+length, KiCad's counts, work, first-route open terminals). No short-tier
+board has a width below its minimum (reCamera's and OpenFC's classes are
+at it), so the warning choice does not move them either. Logs
+build/short-x1020.log, build/minconn-route-x{952,1020,1021}.log.
+
+Unit tests: `the_connection_width_severity_decides_the_floor`,
+`the_minimum_connection_floors_the_project_widths` (project_rules),
+`the_minimum_connection_floors_classes_the_narrow_width_and_the_neck`,
+`a_routed_board_has_no_track_narrower_than_the_minimum_connection`
+(board_router; lowers and routes a board with a forced neck-down).
+
+Open: OpenESC's warnings (700-1000 necks of our own 0.09 tracks) remain;
+a middle way would be the floor where it costs nothing (a last pass
+widening tracks to 0.16 where the clearances allow, as the neck repair
+does), not built.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
