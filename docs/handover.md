@@ -1423,8 +1423,8 @@ Fix (crates/pcb-kicad/src/board_router.rs, crates/pcb-router/src/grid.rs):
 the plated hole blocks vias; the static via map exempts the pad's own net
 through `via_owner` where only the hole reaches (its copper still blocks
 the own net as before). KiCad does not test a net's own copper against its
-holes (every track to a THT pad ends on its drill; none of the 700-odd
-hole_clearance findings in the recent drc.json files under build/ pairs
+holes (every track to a THT pad ends on its drill; none of the 735
+hole_clearance findings with a via or track in recent drc.json files pairs
 items of one net). The verifier now checks other nets' vias against these
 holes. Unit test `other_nets_vias_keep_the_hole_clearance_from_a_plated_hole`
 (J2's geometry: lowering, static map for both nets, verifier 0.2439
