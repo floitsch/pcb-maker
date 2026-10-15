@@ -1923,6 +1923,7 @@ place" are the CLI exit-code commit's verdicts for the same failure.
    instances; then the four molecule panels can place.
 6. Keep_copies start positions (SmartSpin2k).
 7. Recheck the pour work model on hatched boards on main (2-4x under).
+   Done: "Committed on 2026-10-15 (hatched pour work)".
 8. The narrow-step reserve's floor (18a9a77): `narrow_step_reserve`
    keeps at least 120 s, `narrow_step_minimum` wants at least 180 s, so
    a board whose first attempt is short keeps a reserve the step can
@@ -3161,6 +3162,115 @@ Not done: the uncached KiCad check's time is still not work (the gate cuts
 the number of checks, not their charge); the ladder's first board is always
 checked (it is the ladder's measure), even where it cannot beat the
 layout's board.
+
+## Committed on 2026-10-15 (hatched pour work)
+
+Question: on main's constants (18 / 26 / 42 ns), do pour analyses on
+hatched boards still run far from their modelled work? Route mode on the
+v16 placements, tasks v6, one thread, `PCB_ROUTER_POUR_TRACE`, x952 (main
+6099e13), all eight boards at once (load 12-24); "model / wall" is the
+traced analyses' modelled work over their wall time, the profile column
+sums the `profile work:` lines' pour wall and work:
+
+| board | zones | analyses | wall s | model s | model / wall | profile pour wall / work s |
+|---|---|---|---|---|---|---|
+| Batch_1 | hatched | 442 | 282.5 | 105.4 | 0.37 | 167.3 / 71.0 |
+| WLED_Matrix | hatched | 723 | 44.3 | 61.5 | 1.39 | 38.7 / 53.5 |
+| USB_Keypad | hatched | 571 | 38.2 | 53.5 | 1.40 | 33.7 / 46.8 |
+| Qfwfq | hatched | 309 | 20.9 | 19.2 | 0.92 | 20.5 / 19.0 |
+| 1337-v4.0 | hatched | 452 | 14.4 | 10.2 | 0.71 | 14.1 / 10.0 |
+| A13 module | hatched | 2250 | 31.2 | 41.1 | 1.32 | 26.1 / 34.8 |
+| Castor | solid | 499 | 34.6 | 33.7 | 0.97 | 29.1 / 28.1 |
+| Sisu | solid | 1154 | 50.2 | 51.1 | 1.02 | 40.3 / 43.3 |
+
+The controls sit inside 0.8-1.2, the hatched boards outside on both sides
+(a repeat with the trace build, x1011, load 13-32: Batch_1 0.34, WLED
+1.60, Keypad 1.83, A13 1.76, 1337 0.81, Castor 0.99, Sisu 1.05). Batch_1
+is still about 3 times under on main (the v16 triage's 755 / 200 s was a
+four-thread layout on x862's constants). What the items-only model
+misses, from trace counters per analysis (thread-local: route mode runs
+two ladder rungs side by side even at one search thread, so process-wide
+counters mixed them, as x1010's did):
+
+- The probe's queries (a point tested against its index, `blocker` and
+  `slack`). A query costs about a microsecond whatever its items (the 9-25
+  bucket lookups, the `edges` vector, `inside`'s nearest-node and polygon
+  test); a hatched probe asks many more of them, with few items each in
+  open fill: a hatch hole judged (`hole_kept`, memoised per probe; 1.8-2.0
+  k on WLED and Keypad) samples 64 points with `fill_at` and `near_edge`,
+  up to some 2000 queries, and the ring test (`in_ring`) up to 33 per pad
+  of the net (WLED 24 M queries, 400 k ring tests). Per
+  item the probe's wall time was 21-34 ns on WLED and Keypad (many items
+  per query) and 51-81 ns on 1337, Qfwfq and Castor; with a query term
+  it is one model.
+- Polygon vertices. Batch_1's queries cost 5.5 microseconds and its items
+  220 ns: its board cutouts are `Hole` obstacles of up to 134 vertices
+  (x1012 dump), and every shape test near them walks the polygon twice;
+  15.9 G vertices in 442 analyses. Not the hatch itself, but the hatch
+  multiplies the queries near them. The ring test's own pads are 0.8 G of
+  those (x1014), `inside`'s polygon fallback 0.1 G: not it.
+- So the hole grid and the rings cost through their queries, not as a
+  term of their own; the per-zone seam counting (`in_zone_part` on
+  4-point outlines) is small. The
+  lattice part (fill mask, labelling, stamps) was over-counted instead:
+  A13's analyses spend 17.6 s outside `kicad_spokes` for 41.1 s of node
+  and stamp work (486 k stamps at 26 ns), Sisu 38.2 for 51.1, which the
+  items-only fit balanced against `kicad_spokes`' uncounted rest.
+
+Change (`fill::FillProbe` counts `queries` and the `vertices` its shape
+tests go through, `Router::probe_nanos`): `PROBE_QUERY_NANOS` 850,
+`PROBE_VERTEX_NANOS` 9, `PROBE_ITEM_NANOS` 42 to 9, `POUR_NODE_NANOS` 18
+to 23, `POUR_STAMP_NANOS` 26 to 6. Fitted (least squares of the log
+ratio, every board one weight) on the eight boards and the four other
+boards of the x816 calibration (reCamera, k30-SBC, USB_Cable_Tester,
+spell_tome; x1013, route mode at budget scale 0.3, load 10-17): per board
+model / wall Batch_1 1.03, WLED 0.97, Keypad 0.97, Qfwfq 1.01, 1337 0.91,
+A13 1.01, Castor 1.02, Sisu 0.89, reCamera 1.12, k30 1.05,
+USB_Cable_Tester 1.00, spell_tome 1.41 (1.1 s of analyses; it was 1.11
+with the old constants). The pour trace now prints `probe queries`,
+`probe vertices`, `probe work` and whether the net has a hatched zone.
+Test: `a_fill_probe_counts_its_queries_and_polygon_vertices`;
+`pour_analyses_count_as_budget_work` takes the probe's whole work.
+
+Judge, route mode, the same eight boards one run per side, x952 against
+x1016 (6099e13 with this commit), one thread; the after side at load
+22-24:
+
+| board | result (both sides) | model / wall before, after | clean-ups: work (pour) of budget in wall s, before; after |
+|---|---|---|---|
+| Batch_1 | cut (budget guard), 499 open, 345 vias, 5180.1 mm | 0.37, 0.87 | 57.2 (19.5) of 293 in 71.5; 73.3 (35.6) of 293 in 58.7 |
+| WLED_Matrix | 6 open, 143 vias, 2139.8 mm | 1.39, 0.86 | 55.1 (27.3) of 240 in 37.5; 47.9 (20.1) of 240 in 46.0 |
+| USB_Keypad | 2 open, 79 vias, 1555.7 mm | 1.40, 0.86 | 93.7 (30.6) of 360 in 61.9; 83.1 (19.9) of 360 in 66.7 |
+| Qfwfq | 0 open, 62 vias, 3787.2 mm | 0.92, 0.81 | 83.9 (10.8) of 240 in 72.3; 85.1 (11.8) of 240 in 87.7 |
+| 1337-v4.0 | 0 open, 66 vias, 1578.7 mm | 0.71, 0.83 | 41.9 (5.4) of 240 in 35.7; 43.9 (7.5) of 240 in 43.9 |
+| A13 module | 14 open, 411 vias, 6015.1 mm | 1.32, 0.96 | 99.0 (27.9) of 196 in 68.9; 86.1 (15.3) of 196 in 50.3 |
+| Castor | 0 open, 262 vias, 5593.9 mm | 0.97, 0.86 | 156.8 (21.0) of 209 in 132.5; 157.8 (21.9) of 209 in 146.1 |
+| Sisu | 6 open, 388 vias, 5897.0 mm | 1.02, 0.90 | 170.1 (36.1) of 189 in 131.3; 165.9 (27.8) of 189 in 107.4 |
+
+Every board's result is identical; the analyses' counts too but Sisu's
+(1154 to 1156, its work 1455.3 to 1459.5 s): the clean-ups here end on
+their passes, not on their budgets, so the counted work moves (Batch_1's
+pour share 19.5 to 35.6 s, the hatched 1.3-1.4 boards' down by a quarter to a half)
+without moving a decision. The after side's ratios sit 0.81-0.96 at the
+higher load (the spread, 0.15, is what matters: before 0.37-1.40).
+Batch_1's cut is the same on both sides and not the pour work: "budget
+guard: 0 s of wall clock for a budget of 0 s of work", a phase with a
+budget under half a second whose first analysis runs past four times it
+before the work notices (one Batch_1 analysis is about a second of wall).
+Its route-mode result (107/204 routed, 499 open) is that board's v16
+placement, not this change.
+
+Short tier (tasks v6, `--jobs 2 --threads 4`, under the lock, load 15-17)
+x1015 (8c20715 with this commit) against build/short-x1041.log (main's
+code): 12 of 12 rows identical (vias, length, work, KiCad; unconnected 35
+to 35, errors 3 to 3, passes 6 to 6, work 2671 s on both). No clean-up
+budget on the tier's hatched boards (1337-v4.0, USB_Keypad, WLED_Matrix)
+ends by work. Against build/short-x941.log the rows differ by main's own
+changes since (neck repair, placement work), not this one.
+`cargo test --release -p pcb-router -p pcb-kicad` passes. Logs:
+build/hatchwork-* (x952), build/hwtrace-*, build/tl-*, build/poly-*,
+build/vx-*, build/val-*, build/ring-batch1 (traces), build/after-*
+(x1016), build/short-x1015.log.
 
 ## Open problems, ranked
 

@@ -674,16 +674,25 @@ the search (`budget_work`): a clean-up on a pour board spends much of its
 time checking that a batch strands no pour pad (Sisu: 21-47 s of pour
 checks in a 61-66 s budget, uncounted until 2026-10-14, so its budget ran
 on in wall clock with the load and the route-mode guard once stopped it).
-An analysis costs `POUR_NODE_NANOS` (18) per lattice node inside the net's
-pour, `POUR_STAMP_NANOS` (26) per stamp of the net and `PROBE_ITEM_NANOS`
-(42) per item its fill probe indexes or looks at (`fill::FillProbe`
-counts them; the spoke tests). Calibrated on seven boards (Castor, Sisu,
-reCamera, USB_Cable_Tester, spell_tome, 1337-v4.0, k30-SBC; route mode, one
-thread, load 15-31), recalibrated after the router-overhead round (x872)
-made the analysis about twice as fast: three runs pooled, the model gives
-0.71-1.08 of the analyses' wall time per board by the median (the big
-boards 0.85-1.08; the same constants on one board vary 0.6-1.2 from run to
-run with the load, the small boards most). `PCB_ROUTER_POUR_TRACE` prints each analysis's counts,
+An analysis costs `POUR_NODE_NANOS` (23) per lattice node inside the net's
+pour, `POUR_STAMP_NANOS` (6) per stamp of the net, and for its fill probe
+(`fill::FillProbe`, the spoke tests) `PROBE_ITEM_NANOS` (9) per item it
+indexes or looks at, `PROBE_QUERY_NANOS` (850) per query (a point tested
+against its index: the bucket lookups and the polygon test, whatever the
+items) and `PROBE_VERTEX_NANOS` (9) per polygon vertex its shape tests go
+through. Recalibrated 2026-10-15 (x1013, route mode, one thread, v16
+placements) on twelve boards, six of them hatched (Batch_1, WLED_Matrix,
+USB_Keypad, Qfwfq, 1337-v4.0, the A13 module; Castor, Sisu, reCamera,
+k30-SBC, USB_Cable_Tester, spell_tome solid): per board 0.89-1.12 of the
+analyses' wall time (spell_tome, 1.1 s of analyses, 1.41). The items-only
+model (18 / 26 / 42 ns, calibrated on seven boards with few or no hatched
+zones) gave the hatched boards 0.34 (Batch_1) to 1.82 (A13): a hatched
+zone's probe asks many more points (hatch holes, rings, each brush centre
+a query of about a microsecond whatever its items), and Batch_1's board
+cutouts (polygons of up to 134 vertices) are measured in every query near
+them, so its probes ran 220 ns per item instead of 20-80.
+The same constants on one board vary 0.8-1.2 from run to run with the
+load. `PCB_ROUTER_POUR_TRACE` prints each analysis's counts,
 modelled work and wall time for recalibrating; the verbose `profile work:`
 line splits wall time, search work and pour work by phase, and the
 clean-up's last line says how much of its budget it used and how much of
