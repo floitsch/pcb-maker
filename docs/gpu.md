@@ -1,5 +1,11 @@
 # GPU execution contract
 
+> **Historical (marked 2026-10-16).** A design contract from September
+> 2026. The router and placer of today run on the CPU; the one GPU
+> experiment since, the neural congestion predictor, is closed
+> ([congestion-model.md](congestion-model.md)). Current state:
+> [handover.md](handover.md).
+
 GPU work is a first-order design constraint rather than a later port.
 
 ## Hot representation

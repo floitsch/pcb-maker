@@ -111,6 +111,16 @@ benchmark, not the machine, was the bottleneck (a quick tier about an hour
 at 6 jobs, a full sweep five hours, tiers serialised, pairs doubling every
 measurement). The discipline:
 
+- **Binaries and worktrees.** Work in a worktree of your own
+  (`bash scripts/worktree.sh <name> <branch>`: `../pcb-maker-<name>` from
+  main, with the main checkout's `build`, `artifacts` and harvested boards
+  linked in; it prints the snapshot numbering rule), run
+  `bash scripts/check.sh` before a commit (the test set, then a release
+  build), and benchmark a copied binary: `bash scripts/snapshot.sh <n>`
+  builds and copies it to `build/bin/pcb-maker-x<n>` and refuses a number
+  that is taken. Never benchmark `target/release`, which the next build
+  replaces. The current references are listed in docs/handover.md,
+  "Benchmarks that count".
 - **Iterate on the short tier** (`--tier short`, 12 boards at a third of
   the budget, about seven minutes at the tier default of 8 x 2; section below). It holds the
   boards whose results flip; a change that moves nothing there will
@@ -146,7 +156,7 @@ measurement). The discipline:
   `cpu_seconds`, or the shell's `time`: user plus sys), never wall seconds.
   A placement default change still needs several placer seeds per side
   (`--placer '{"seed": N}'`): it reshuffles crowded boards at random
-  (docs/handover.md, the legaliser agent).
+  ([docs/changelog.md](../../docs/changelog.md#committed-on-2026-10-14-the-legaliser-agent-x701--x711-the-premise-was-wrong)).
 - **Lesson: one task list per comparison.** Pass `--tasks` on both sides
   or rely on the tier's default on both, never mix: v5 and v6 differ in
   the constraints of 12 of the 30 quick-tier boards (v6 fixes more parts),
@@ -246,7 +256,7 @@ the old 37, 8 jobs, load about 45, and the v13 sweep):
   bumwings_v001_core and bumwings_v001_xiao_s (4-6 GB; bumwings_v001 and
   bumwings_v001R64_nano_sd take their places in the family).
 - **Left out:** the five PolyKybd molecule panels, the OpenESC and OpenRX
-  panels, krishveercard and SUMEC (not targets, see docs/handover.md);
+  panels, krishveercard and SUMEC (not targets, see [docs/handover.md](../../docs/handover.md#not-targets));
   more than three boards of one family (the other bumwings, the second
   chiffre, OM-FlexGrid); jiran-ble-lite (7 GB a router at its fine pitch);
   every board slower than the limits above (Sisu, k30-SBC, the jetson,
@@ -350,9 +360,9 @@ work budget, about ten minutes at 6 jobs. Use the quick tier at the full
 budget as the merge gate ("How to measure").
 
 ```sh
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x791 --tier short \
-  --binary build/bin/pcb-maker-x791 > build/short-x791.log
-benchmarks/agent-tasks/compare.py build/bench-short/short-x791.log build/short-x791.log
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x1180 --tier short \
+  --binary build/bin/pcb-maker-x1180 > build/short-x1180.log
+benchmarks/agent-tasks/compare.py build/short-x1170.log build/short-x1180.log
 ```
 
 **Selection, by flip history.** `flippers.py` reads the quick-tier logs of
@@ -645,8 +655,7 @@ lock, load 12-33: **5/12 pass, 1168 s wall** (x1033: 5/12, 1568 s).
 spell_tome, urchin and homebrew_486 are identical (vias, routed, KiCad).
 Missing footprints 0 in both runs; parity 31 to 40. The import of all 79
 schematics (`experiments/schematic-import/import_all.py`): complete 34 to
-77, missing footprints 1740 to 10 (handover, "import footprints from the
-board").
+77, missing footprints 1740 to 10 ([changelog](../../docs/changelog.md#committed-on-2026-10-15-import-footprints-from-the-board)).
 
 **x1100 (the designer's DRC exclusions and zones), 2026-10-15**, 6 jobs x 4
 threads as x1071, under the lock, load 12-32: **8/12 pass, 684 s wall**

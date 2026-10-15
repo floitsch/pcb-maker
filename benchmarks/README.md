@@ -1,5 +1,14 @@
 # Benchmark ladder
 
+> **The benchmarks that count today** are the harvested GitHub boards as
+> agent tasks ([agent-tasks](agent-tasks/README.md): the 109-board layout
+> sweep and its quick, short and schematic tiers), the Freerouting
+> comparison on the same boards ([github](github/README.md)) and PCBench
+> ([pcbench](pcbench/README.md)); their current numbers are in
+> [docs/handover.md](../docs/handover.md#benchmarks-that-count). The
+> ladders below date from September 2026; their numbers have not been
+> updated since (noted 2026-10-16).
+
 Cross-tool cold-input manifests and their execution contract are documented in
 [`competitive/README.md`](competitive/README.md).
 

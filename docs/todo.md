@@ -4,8 +4,14 @@ Open items that are not yet scheduled. Remove an entry when it is done or
 turns out to be moot; record the outcome in the relevant doc.
 
 The ranked list of what is wrong today is in
-[handover.md](handover.md#open-problems-ranked); this file keeps the
-longer-lived items with their reasoning.
+[handover.md](handover.md#open-problems-ranked) (start there); this file
+keeps the longer-lived items with their reasoning. What each round
+measured is in [changelog.md](changelog.md). Removed on 2026-10-16 as
+done: the Freerouting and cold-route sweeps on the harvested boards (the
+x738 round, [benchmarks.md](benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)),
+the seeded portfolio (`PCB_ROUTER_SEEDS`) and the neural congestion
+predictor (a closed negative: it ranks no better than RUDY,
+[congestion-model.md](congestion-model.md)).
 
 ## Stretch goal: Allegro-class features (Florian, 2026-10-09)
 
@@ -18,21 +24,8 @@ constraint manager expresses and which of it the harvested boards use
 (KiCad's net classes, differential-pair names, tuning patterns), then the
 schema in `constraints.json` / the router config before any algorithm.
 
-## Congestion predictor (started 2026-10-09)
-
-A neural congestion predictor on the router's 16-cell tile grid (RUDY and
-density channels in, per-tile overflow and open count out; PyTorch on the
-GPU, `tract` in Rust) to let the placement race judge hundreds of
-candidates and to give the global placer a routability term. Ship only if
-it ranks candidates better than RUDY alone on held-out boards. Design and
-status in docs/congestion-model.md.
-
 ## Benchmarks
 
-- **Finish the Freerouting and cold-route sweeps on the harvested boards**
-  (`benchmarks/github/freerouting.py`; 40 of 109 boards compared so far,
-  see [benchmarks.md](benchmarks.md#freerouting-against-our-cold-route-on-the-harvested-boards-2026-10-09)),
-  then put the comparison in the README in place of the 2026-09-22 table.
 - **Breadboard fence: what is still open** (re-run 2026-10-07,
   [benchmarks/fence/README.md](../benchmarks/fence/README.md#what-is-not-working-for-us-2026-10-07)):
   the 31 mm board does not route on 2 layers (96-97/101, 99-100/108; 8 mm
@@ -52,9 +45,6 @@ status in docs/congestion-model.md.
   and the ladder stops, while the pour-nets-as-tracks rung gives 24–31 vias
   whenever it runs. Continue to the next rung when a clean result has far
   more vias than the best unclean one, or rank clean rungs by vias.
-- **Seeded portfolio.** Best of 7–15 seeds (`PCB_ROUTER_SEED`) saved vias on
-  every board tried (PIC 2 → 0, Multichannel 18 → 14, Interf-U 28 → 24).
-  Idle cores could run seeds in parallel and keep the best board.
 
 - **Fan-out phase for dense parts (Tiny Tapeout's QFN-56, ColdFire's
   LQFP-100, BGAs).** Exact clearance (done, [router.md](router.md)) made
@@ -146,11 +136,13 @@ status in docs/congestion-model.md.
 
 - **The pour model against KiCad's fill.** Our pour map is 10-40x more
   fragmented than KiCad's fill (k30-SBC: GND 1100-1500 pieces against 63 +
-  33 + 29 outlines; see [handover.md](handover.md)). Measure the free mask
-  against `GetFilledPolysList` where they differ; then test the brush at
-  sub-cell offsets for necks near the minimum width, or take KiCad's fill as
-  the pour map. Open from the spoke model too: per-pad zone_connect
-  overrides, the spoke angle from thermal_bridge_angle.
+  33 + 29 outlines; see
+  [changelog.md](changelog.md#what-was-learned-this-week-condensed)).
+  Measure the free mask against `GetFilledPolysList` where they differ;
+  then test the brush at sub-cell offsets for necks near the minimum
+  width, or take KiCad's fill as the pour map. Open from the spoke model
+  too: per-pad zone_connect overrides, the spoke angle from
+  thermal_bridge_angle.
 - **One-spoke pads on fine-pitch rows** (k30's U10 pad 8): the neighbours'
   exit tracks take the two open corridors. A hard block of the corridors
   failed (left the pads, cost other boards routes); the exit direction of a

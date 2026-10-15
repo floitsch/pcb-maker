@@ -1227,6 +1227,6 @@ now time out, the 0xCB pcb-panel ends on kicad-cli's 900 s zone refill,
 SmartSpin2k_Panelized and OpenESC 4in1-panel stop with parts the placer
 refuses, Quanta75 Bare 123 to 132 open (errors 73 to 6), split42_right 46
 to 61 (cut). The 17 cut rows at modest load say some phase's wall runs
-well ahead of its counted work; triage assigned (docs/handover.md
-"Triage of v16"). Compare with
+well ahead of its counted work; triage in
+[changelog.md](changelog.md#triage-of-v16-2026-10-15-x931--x932). Compare with
 `python3 benchmarks/agent-tasks/compare.py build/github-layout-v15.log build/github-layout-v16.log`.

@@ -83,8 +83,24 @@ Layout mode as agent tasks (parts unplaced, connectors the designer put at an
 edge constrained to that edge, overhanging and shield-like parts fixed):
 
 ```sh
-benchmarks/agent-tasks/from_pcbench.py build/github-tasks --corpus benchmarks/github/boards.json
-benchmarks/agent-tasks/run.py build/github-layout --tasks build/github-tasks/tasks.json
+benchmarks/agent-tasks/from_pcbench.py build/github-tasks-v7 --corpus benchmarks/github/boards.json
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/github-layout-v17 \
+  --tasks build/github-tasks-v7/tasks.json --binary build/bin/pcb-maker-xNNN --jobs 8 --threads 2
 ```
 
-Results go to [docs/benchmarks.md](../../docs/benchmarks.md).
+The current task list is v7 (`build/github-tasks-v7`: v6 with uuids on
+the entries of repeated references, six panels); the quick and short
+tiers still default to v6, and a comparison needs one list on both
+sides. One benchmark at a time on the machine, under the lock
+(benchmarks/agent-tasks/README.md, "How to measure").
+
+Freerouting against our cold route, headless (never start the jar without
+`-de`/`-do`: it opens its GUI):
+
+```sh
+benchmarks/github/freerouting.py build/freerouting --ours
+```
+
+Results go to [docs/benchmarks.md](../../docs/benchmarks.md); the
+current ones are summarised in
+[docs/handover.md](../../docs/handover.md#benchmarks-that-count).

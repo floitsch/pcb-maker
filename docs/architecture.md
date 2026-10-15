@@ -1,5 +1,11 @@
 # Architecture
 
+> **Historical (marked 2026-10-16).** The architecture as planned in
+> September 2026, around crates (`pcb-engine`, `pcb-coordinator`,
+> `pcb-pipeline`, ...) that are earlier approaches scheduled for removal.
+> The flow today is in [handover.md](handover.md#the-flow-in-one-paragraph),
+> [router.md](router.md) and [placer.md](placer.md).
+
 The product is an autonomous constrained PCB placer and router. Placement,
 routing, repair selection, and acceptance must run in the program without an
 agent choosing individual board edits at runtime.

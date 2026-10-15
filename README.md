@@ -23,7 +23,8 @@ Not finished, but already useful.
   placement gone, a `constraints.json` of fixed connectors and edges -
   pcb-maker places and routes **44 of 109** to a clean KiCad verdict
   (0 unconnected, no copper error beyond the designer's own board) within
-  30 minutes each, every board placed from stacked parts; over all 109
+  30 minutes each, every board placed from stacked parts (sweep v16,
+  2026-10-15; v17, with the work since, is running); over all 109
   boards the open connections fell from 3868 to 3527 and the new DRC
   errors from 289 to 82 against the previous sweep. Most of the
   rest are complete but for a few connections or a few starved thermal
@@ -45,8 +46,9 @@ Not finished, but already useful.
     starved thermal reliefs on dense boards and as pads routed by tracks
     that KiCad would have joined through the fill.
   - Placement: crowded boards (ESC-class four-in-one controllers, a dense
-    SNES motherboard) stay 30-80 connections short; the legaliser gives
-    back a large part of the global placement's quality.
+    SNES motherboard) stay 30-80 connections short where the designer's
+    own placement routes nearly clean; the gap is the placement, not the
+    number of seeds tried or the legaliser.
   - Features: no differential pairs or length matching; the placer does
     not choose sides by itself (constraints put parts on the back); pin
     swapping is opt-in.
@@ -205,13 +207,25 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1800 s | 109 | 34 clean (v14), 3065 connections open in all | - |
-| Routing the designer's placement cold, 1500 s | 109 | 50 clean, 206 connections open in all | 8 clean, 70 finished, 34 timed out, 913 open where finished |
+| Layout from stacked parts and constraints, 1800 s (v16, 2026-10-15; v17 running) | 109 | 44 clean, 3527 connections open in all | - |
+| Routing the designer's placement cold, 1500 s (x738, 2026-10-15) | 109 | 62 clean; where both finish (67 boards) 51 clean, 184 open | 67 finished, 36 timed out, 6 failed; where both finish 8 clean, 873 open |
+
+Smaller tiers of the same boards judge a change in minutes
+([benchmarks/agent-tasks](benchmarks/agent-tasks/README.md)): the short
+tier (12 boards that flip, a third of the budget) for iterating, the
+quick tier (30 boards, full budget) as the merge gate, and the schematic
+tier (12 boards laid out from the designer's schematic, as an agent
+would). The tiers run 2 search threads a board and physical cores / 2
+boards at once (8 x 2 on a 16-core machine); one benchmark at a time, so
+they take a lock:
 
 ```sh
 python3 benchmarks/github/harvest.py fetch                      # the harvested boards
-python3 benchmarks/agent-tasks/run.py build/layout --tasks build/github-tasks-v5/tasks.json
-python3 benchmarks/github/freerouting.py build/freerouting --ours   # both routers, headless
+benchmarks/agent-tasks/from_pcbench.py build/github-tasks-v7 --corpus benchmarks/github/boards.json
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/layout \
+  --tasks build/github-tasks-v7/tasks.json --jobs 8 --threads 2  # the full sweep, a night
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short --tier short
+benchmarks/github/freerouting.py build/freerouting --ours      # both routers, headless
 ```
 
 ## Repository
@@ -226,10 +240,14 @@ python3 benchmarks/github/freerouting.py build/freerouting --ours   # both route
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
 | `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
-| `docs/` | design notes, results, the hand-over with the open problems |
+| `crates/pcb-congestion` | congestion features (RUDY) the placement race ranks its candidates by |
+| `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the changelog](docs/changelog.md) |
+| `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `check_links.py` |
 
-The other crates (`pcb-engine`, `pcb-grid-router`, `layout-trace-*`, …) are
-earlier approaches kept for their tests and experiments; the
+The other crates (`pcb-engine`, `pcb-grid-router`, `layout-trace-*`,
+`pcb-core`, `pcb-topo`, `pcb-coordinator`, `pcb-pipeline`, ...) are
+earlier approaches, scheduled for removal; some are still linked by
+`pcb-kicad` until then. The
 [trust audit](docs/reviews/2026-09-21-trust-audit.md) explains what was
 kept and why.
 
