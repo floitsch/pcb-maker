@@ -333,6 +333,41 @@ hatch hole, KiCad's segment ended at the junction; reading the hatch
 without the cut lost its track spoke, its two island spokes stood in for
 it, and no island via was added).
 
+Zones of one net that meet on a layer are checked apart (`zone_seams`,
+on; `PCB_ROUTER_NO_ZONE_SEAMS`; 2026-10-15). KiCad 10 fills each zone on
+its own: the fill is built over the zone's outline and the outlines of the
+net's zones it collides with (`ZONE::BuildSmoothedPoly`), trimmed to its
+own outline, and the outlines of the net's zones of a strictly higher
+priority are cut out of it last (`subtractHigherPriorityZones`); equal
+priorities overlap. The fills meet at the higher zone's outline, the seam,
+with no clearance between them. The DRC tests every zone and layer apart
+(`testZoneLayer`): a pad's spokes are the crossings of its ring with that
+zone's fill, the isolated islands are that zone's, the tracks those ending
+in that zone's fill, and a zone whose fill does not cross the ring is no
+connection. So a pad whose ring the seam crosses is checked against each
+zone with the spokes on its side (Telemetry's USB shield pads: three
+spokes in the whole-board zone of priority 1, one into the edge zone of
+priority 11, starved there). The model keeps one fill per net and layer
+and counts, per zone of the layer (`Plane::above`, the outlines cut from
+it; `Router::in_zone_part`), the spokes whose crossing of the ring lies in
+the zone's part (a spoke the seam splits lengthwise counts in both), the
+island spokes, other pads' crossings and the tracks ending there, by the
+DRC's rule; the worst zone's shortfall (`SpokeRecord::seam_short`,
+`seam_zone`) adds to the pad's, and a manual spoke for it must end in that
+zone's part. Not modelled: per-zone fill settings (the layer's fill uses
+one zone's clearance and minimum width, Telemetry's band zones keep 0.25
+mm, the whole-board zone the class's 0.2) and islands the seam alone
+makes. Zone outlines drawn with arcs are followed (they were dropped,
+`PCB_KICAD_OLD_ZONE_ARCS`): Telemetry's band zones were polygons through
+their other corners.
+
+A spoke's clearance test runs from the ring to where the fill's own brush
+centres begin, the gap and half the minimum width past the pad, rather than
+to its end 5 microns further (`spoke_clear_to_fill`, on;
+`PCB_ROUTER_OLD_SPOKE_CLEAR`): Telemetry's D12.1 has a spoke into a strip
+exactly the minimum width between its relief and D12.2's clearance, whose
+brush centres lie on one line 2 microns short of the spoke's end.
+
 After a layout move's reroute the pours are refreshed (pads the rerouted
 signals cut off are routed again), and a plane end whose fill the signals
 took is trimmed back to its junction (`trim_dangling_plane_ends`;

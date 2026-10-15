@@ -234,6 +234,10 @@ def our_starved(row):
     """The model's verdict, by the DRC's rule on its counts."""
     if "ours" not in row:
         return False
+    # Short in one of the zones that meet at the pad (the model's per-zone
+    # rule, KiCad's DRC checking each zone apart).
+    if row.get("ours_seam_short", 0) > 0:
+        return True
     spokes, ignored = row["ours"], row.get("ours_island", 0)
     if spokes == 0 and ignored == 0:
         return False
@@ -256,7 +260,7 @@ def ours(dump):
             island = sum(1 for spoke in row["spokes"] if spoke.startswith("island"))
             # Other pads' spokes across the pad's ring count as its own.
             crossings = row.get("crossings", 0)
-            result[key] = {"ours": good + crossings, "ours_island": island, "ours_tracks": row.get("tracks", 0), "ours_crossings": crossings, "our_spokes": row["spokes"], "round": row["round"]}
+            result[key] = {"ours": good + crossings, "ours_island": island, "ours_tracks": row.get("tracks", 0), "ours_crossings": crossings, "ours_seam_short": row.get("seam_short", 0), "our_spokes": row["spokes"], "round": row["round"]}
     return result
 
 

@@ -1523,6 +1523,13 @@ fn lower_board(
                             .map(|(_, polygon)| polygon.clone()),
                     )
                     .collect(),
+                // KiCad cuts a same-net zone of a strictly higher priority
+                // out of this one's fill (an equal one overlaps it).
+                above: pours
+                    .iter()
+                    .filter(|other| other.net == pour.net && other.layers & (1 << layer) != 0 && other.priority > pour.priority)
+                    .map(|other| other.polygon.clone())
+                    .collect(),
                 connect: connect_pours,
                 thermal_reach: pour.thermal_reach,
                 thermal_gap: pour.thermal_gap,
@@ -4025,6 +4032,37 @@ mod pour_request_tests {
         assert_eq!(exclusive(&two), vec![1, 4]);
         let one = KiCadBoardRouterConfig { exclusive_layers: Some(1), ..all.clone() };
         assert_eq!(exclusive(&one), vec![1]);
+    }
+
+    #[test]
+    fn a_zone_of_a_higher_priority_is_cut_from_the_nets_lower_zone_and_arcs_are_followed() {
+        // Telemetry: GND zones along the round board's edge (priority 10,
+        // drawn with arcs) over a whole-board GND zone (priority 1). KiCad
+        // fills the lower zone less the higher one's outline; the arc side
+        // is followed (it was left out, the outline a polygon through the
+        // other corners).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")))
+              (footprint "b" (at 15 15) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")))
+              (zone (net "GND") (layers "F.Cu") (priority 1) (polygon (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 0 20))))
+              (zone (net "GND") (layers "F.Cu") (priority 10)
+                (polygon (pts (xy 20 0) (xy 10 0) (arc (start 10 0) (mid 17.071068 2.928932) (end 20 10))))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
+        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        assert_eq!(board.planes.len(), 2);
+        let (low, high) = (&board.planes[0], &board.planes[1]);
+        assert_eq!(low.above.len(), 1);
+        assert!(high.above.is_empty());
+        // The corner between the arc and the board's corner is the higher
+        // zone's; a point between the arc and its chord is not.
+        assert!(core::geometry::point_in_polygon([19.0, 1.0], &low.above[0]));
+        assert!(!core::geometry::point_in_polygon([16.0, 4.0], &low.above[0]));
+        assert!(high.polygon.len() > 10);
     }
 
     #[test]

@@ -148,6 +148,17 @@ pub struct Config {
     /// cut at junctions (`PCB_ROUTER_OLD_TRACK_RUNS` for A/B: the run
     /// to its turn).
     pub track_end_junctions: bool,
+    /// KiCad's DRC counts a pad's spokes per zone: where zones of the net
+    /// meet on a layer (a zone of a higher priority cut out of a lower
+    /// one's fill, or zones side by side), each zone counts only the
+    /// spokes, crossings and tracks in its own part (`zone_seams`;
+    /// `PCB_ROUTER_NO_ZONE_SEAMS` for A/B: the net's zones as one fill).
+    pub zone_seams: bool,
+    /// A spoke's clearance test (`spoke_clear`) ends where the fill's brush
+    /// centres begin, the gap and half the minimum width past the pad,
+    /// rather than at the spoke's end (`PCB_ROUTER_OLD_SPOKE_CLEAR` for
+    /// A/B).
+    pub spoke_clear_to_fill: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -334,6 +345,8 @@ impl Default for Config {
             inner_spokes: std::env::var_os("PCB_ROUTER_NO_INNER_SPOKES").is_none(),
             tracks_rung_fill: std::env::var_os("PCB_ROUTER_OLD_TRACKS_FILL").is_none(),
             track_end_junctions: std::env::var_os("PCB_ROUTER_OLD_TRACK_RUNS").is_none(),
+            zone_seams: std::env::var_os("PCB_ROUTER_NO_ZONE_SEAMS").is_none(),
+            spoke_clear_to_fill: std::env::var_os("PCB_ROUTER_OLD_SPOKE_CLEAR").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
@@ -519,6 +532,12 @@ pub struct SpokeRecord {
     /// leaving the pad and ending in fill), counted when the spokes alone
     /// are short of two (`kicad_spokes`).
     pub tracks: usize,
+    /// With `zone_seams`, where several zones of the net fill the layer:
+    /// how many spokes the worst of them is short (KiCad's DRC checks the
+    /// pad against each zone apart, with what lies in that zone's part),
+    /// and that zone (an index into the board's planes).
+    pub seam_short: usize,
+    pub seam_zone: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -6911,7 +6930,7 @@ impl Router {
                         }
                     }
                     if let Some(report) = report.as_deref_mut() {
-                        report.push(SpokeRecord { terminal, pad: description.terminals[terminal].pad, anchor, crossings: 0, layer, round, outcomes, tracks: 0 });
+                        report.push(SpokeRecord { terminal, pad: description.terminals[terminal].pad, anchor, crossings: 0, layer, round, outcomes, tracks: 0, seam_short: 0, seam_zone: None });
                     }
                     if good < 2 {
                         for piece in islands {
@@ -7031,6 +7050,31 @@ impl Router {
             }
         }
         let probe = fill::FillProbe::new(self, net, rings);
+        // Per layer, the net's zones KiCad fills there when there are
+        // several (`zone_seams`): its DRC checks a pad against each zone
+        // apart (DRC_TEST_PROVIDER_ZONE_CONNECTIONS::testZoneLayer), with
+        // the crossings of that zone's fill alone, and each zone's fill is
+        // its own outline less those of the net's zones of a higher
+        // priority (zone_filler.cpp, subtractHigherPriorityZones; the fill
+        // up to the seam is the same, built over the neighbours' outlines
+        // and then cut).
+        let zones_on: Vec<Vec<usize>> = (0..layers)
+            .map(|layer| {
+                if !self.config.zone_seams {
+                    return Vec::new();
+                }
+                let zones: Vec<usize> = self
+                    .board
+                    .planes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, plane)| plane.net == net && plane.layer == layer && (plane.connect || self.config.tracks_rung_fill))
+                    .map(|(index, _)| index)
+                    .collect();
+                if zones.len() >= 2 { zones } else { Vec::new() }
+            })
+            .collect();
+        let in_zone = |zone: usize, point: crate::geometry::Point| self.in_zone_part(zone, point);
         // Pass one: the spokes' geometry, then where each lands (Good holds
         // the piece until the items are counted).
         struct Spoke {
@@ -7108,7 +7152,7 @@ impl Router {
                         });
                     }
                 }
-                records.push(SpokeRecord { terminal, pad: pad_index, anchor: pad_anchor, crossings: 0, layer, round, outcomes: [SpokeOutcome::NoFill; 4], tracks: 0 });
+                records.push(SpokeRecord { terminal, pad: pad_index, anchor: pad_anchor, crossings: 0, layer, round, outcomes: [SpokeOutcome::NoFill; 4], tracks: 0, seam_short: 0, seam_zone: None });
                 record_inner.push(inner.contains(&layer));
             }
         }
@@ -7177,7 +7221,15 @@ impl Router {
             // What is left of it after the clearances, from the middle of
             // the gap to its end, keeps the brush's width (k30's U2.7: a neighbour's clearance cuts it on
             // a fine-pitch row).
-            if self.config.spoke_clearance && !probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, spoke.tip, spoke.side) {
+            // The brush must fit from the ring to where the fill's own
+            // brush centres begin, the gap and half the minimum width past
+            // the pad (they keep that from its relief), not to the end,
+            // which KiCad tests 5 microns further for lying in fill
+            // (`spoke_clear_to_fill`; Telemetry's D12.1: its spoke ends in
+            // a strip exactly the minimum width between its relief and
+            // D12.2's clearance, whose brush centres lie on one line).
+            let clear_to = if self.config.spoke_clear_to_fill { (spoke.tip - fill::KICAD_MAX_ERROR).max(from) } else { spoke.tip };
+            if self.config.spoke_clearance && !probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, clear_to, spoke.side) {
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     let steps = 8;
                     for step in 0..=steps {
@@ -7620,6 +7672,8 @@ impl Router {
         let records_pads: Vec<(usize, usize, crate::geometry::Point)> = records.iter().map(|record| (record.terminal, record.pad, record.anchor)).collect();
         let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
         for (record_index, (record, (good, islands))) in records.iter_mut().zip(tallies).enumerate() {
+            // Where other pads' spokes cross this pad's ring (`zone_seams`).
+            let mut crossing_points: Vec<crate::geometry::Point> = Vec::new();
             // Other pads' spokes across this pad's ring half a gap out: the
             // DRC counts every crossing of the fill with the ring, and KiCad
             // adds spokes after cutting the reliefs (Castor's U6.11 between
@@ -7655,9 +7709,9 @@ impl Router {
                     // (spokes start at their pad's centre).
                     let start = if record_inner[record_index] { 0.0 } else { other.edge };
                     let steps = (((other.tip - start) / (minimum / 4.0)).ceil() as usize).max(1);
-                    let crosses = (0..=steps).any(|step| {
+                    let crossing = (0..=steps).find_map(|step| {
                         let along = start + (other.tip - start) * step as f64 / steps as f64;
-                        [-other.width / 2.0, -other.side, 0.0, other.side, other.width / 2.0].iter().any(|offset| {
+                        ([-other.width / 2.0, -other.side, 0.0, other.side, other.width / 2.0].iter().any(|offset| {
                             let at = [
                                 other.anchor[0] + other.direction[0] * along - other.direction[1] * offset,
                                 other.anchor[1] + other.direction[1] * along + other.direction[0] * offset,
@@ -7669,9 +7723,10 @@ impl Router {
                                 other.anchor[1] + other.direction[1] * along + other.direction[0] * offset,
                             ];
                             pad.shape.distance_to_point(at) < gap / 2.0 + minimum / 2.0 && probe.blocker(record.layer, at, None).is_none()
-                        })
+                        }))
+                        .then(|| [other.anchor[0] + other.direction[0] * along, other.anchor[1] + other.direction[1] * along])
                     });
-                    if crosses {
+                    if let Some(point) = crossing {
                         // Inside its terminal's pad a strip may run right
                         // through the pad's ring (the pad's own spokes from
                         // its centre across a thermal via): KiCad counts the
@@ -7680,6 +7735,7 @@ impl Router {
                             && pad.shape.distance_to_point(other.anchor) > gap / 2.0 + other.width / 2.0
                             && pad.shape.distance_to_point(end_of(other)) > gap / 2.0 + other.width / 2.0;
                         record.crossings += if through { 2 } else { 1 };
+                        crossing_points.extend(std::iter::repeat_n(point, if through { 2 } else { 1 }));
                         // A strip over the pad's copper joins the two pads.
                         if pad.shape.distance_to_segment(other.anchor, end_of(other)) <= other.width / 2.0 {
                             union(parent, terminal_base + record.terminal, terminal_base + other_terminal);
@@ -7688,7 +7744,48 @@ impl Router {
                 }
             }
             let good = good + record.crossings;
-            if good < 2 {
+            // Per zone of the layer (`zone_seams`): the pad's spokes whose
+            // crossing of its ring half a gap out lies in the zone's part
+            // (a spoke the seam splits lengthwise crosses in both), the
+            // island spokes so, the other pads' spokes crossing there and,
+            // below, the tracks ending in its fill.
+            let zones = &zones_on[record.layer];
+            let mut zone_tallies: Vec<[usize; 4]> = vec![[0; 4]; zones.len()];
+            if !zones.is_empty() {
+                for spoke in spokes.iter().filter(|spoke| spoke.record == record_index) {
+                    let kind = match record.outcomes[spoke.index] {
+                        SpokeOutcome::Good(_) | SpokeOutcome::Pad(_) => 0,
+                        SpokeOutcome::Island(_) => 1,
+                        _ => continue,
+                    };
+                    let along = spoke.edge + spoke.gap / 2.0;
+                    let half = (spoke.width / 2.0 - 1.0e-3).max(0.0);
+                    let samples: Vec<crate::geometry::Point> = (0..=8)
+                        .map(|step| {
+                            let offset = -half + half * step as f64 / 4.0;
+                            [
+                                spoke.anchor[0] + spoke.direction[0] * along - spoke.direction[1] * offset,
+                                spoke.anchor[1] + spoke.direction[1] * along + spoke.direction[0] * offset,
+                            ]
+                        })
+                        .collect();
+                    for (position, zone) in zones.iter().enumerate() {
+                        if samples.iter().any(|point| in_zone(*zone, *point)) {
+                            zone_tallies[position][kind] += 1;
+                        }
+                    }
+                }
+                for point in &crossing_points {
+                    for (position, zone) in zones.iter().enumerate() {
+                        if in_zone(*zone, *point) {
+                            zone_tallies[position][2] += 1;
+                        }
+                    }
+                }
+            }
+            let zone_needs_tracks = zone_tallies.iter().any(|[spokes, islands, crossings, _]| spokes + islands + crossings > 0 && spokes + crossings < 2);
+            let mut track_ends: Vec<crate::geometry::Point> = Vec::new();
+            if good < 2 || zone_needs_tracks {
                 // The pad's own tracks (KiCad's DRC: each track segment
                 // connected to the pad that starts within half a gap of it
                 // and ends in this layer's fill, on any layer; else, one
@@ -7838,6 +7935,7 @@ impl Router {
                         }
                         if counted {
                             record.tracks += 1;
+                            track_ends.push(if near_pad(a) { b } else { a });
                             if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                                 eprintln!("track spoke {} layer {}: branch {index} {a:?}..{b:?}", terminal.label, record.layer);
                             }
@@ -7852,6 +7950,42 @@ impl Router {
                         && if near_pad(*a) { in_fill(parent, *b) } else { near_pad(*b) && in_fill(parent, *a) }
                     {
                         record.tracks += 1;
+                        track_ends.push(if near_pad(*a) { *b } else { *a });
+                    }
+                }
+            }
+            if !zones.is_empty() {
+                for end in &track_ends {
+                    for (position, zone) in zones.iter().enumerate() {
+                        if in_zone(*zone, *end) {
+                            zone_tallies[position][3] += 1;
+                        }
+                    }
+                }
+                if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                    eprintln!(
+                        "zones {} layer {}: {:?} tallies (spokes, islands, crossings, tracks) {:?}",
+                        description.terminals[record.terminal].label,
+                        record.layer,
+                        zones,
+                        zone_tallies
+                    );
+                }
+                // KiCad's rule per zone: none of its fill across the ring
+                // is no connection to it; tracks count with the spokes, and
+                // its island spokes only when nothing else does.
+                for (position, [spokes, islands, crossings, tracks]) in zone_tallies.iter().copied().enumerate() {
+                    if spokes + islands + crossings == 0 {
+                        continue;
+                    }
+                    let mut counted = spokes + crossings + tracks;
+                    if counted == 0 {
+                        counted = islands;
+                    }
+                    let short = 2usize.saturating_sub(counted);
+                    if short > record.seam_short {
+                        record.seam_short = short;
+                        record.seam_zone = Some(zones[position]);
                     }
                 }
             }
@@ -8067,9 +8201,17 @@ impl Router {
         }
         let counted = good + record.crossings + record.tracks;
         if counted == 0 && islands >= 2 {
-            return 0;
+            return record.seam_short;
         }
-        2usize.saturating_sub(counted)
+        2usize.saturating_sub(counted).max(record.seam_short)
+    }
+
+    /// Whether `point` lies in the part of zone `zone` (an index into the
+    /// board's planes) KiCad fills: its outline less those of the net's
+    /// zones of a higher priority there (`zone_seams`).
+    fn in_zone_part(&self, zone: usize, point: crate::geometry::Point) -> bool {
+        let plane = &self.board.planes[zone];
+        crate::geometry::point_in_polygon(point, &plane.polygon) && !plane.above.iter().any(|above| crate::geometry::point_in_polygon(point, above))
     }
 
     /// For each pad the spoke model finds a starved thermal (fewer than
@@ -8240,6 +8382,11 @@ impl Router {
                 };
                 *tried.entry((record.terminal, record.layer)).or_default() += 1;
                 let layer = record.layer;
+                // Short in one zone where zones meet (`zone_seams`): the
+                // track must end in that zone's part, which the DRC checks
+                // apart (Telemetry's USB shield pads, whose one spoke into
+                // the edge zone of priority 11 left it short).
+                let seam_zone = record.seam_zone.filter(|_| record.seam_short > 0);
                 // The pieces only this pad's spokes reach (KiCad's isolated
                 // islands).
                 let islands: Vec<u32> = record
@@ -8318,7 +8465,11 @@ impl Router {
                             }
                             path.push(Node { layer: layer as u8, cell: cell as u32 });
                             let piece = pours.label[layer][cell];
-                            if piece != 0 && kept.contains(&find(&mut parent, piece as usize)) && probe.fill_at(layer, self.grid.center_of(cell)) {
+                            if piece != 0
+                                && kept.contains(&find(&mut parent, piece as usize))
+                                && seam_zone.is_none_or(|zone| self.in_zone_part(zone, self.grid.center_of(cell)))
+                                && probe.fill_at(layer, self.grid.center_of(cell))
+                            {
                                 if best.as_ref().is_none_or(|best| path.len() < best.len()) {
                                     best = Some(path.clone());
                                 }
@@ -8610,7 +8761,7 @@ impl Router {
                         .collect();
                     writeln!(
                         file,
-                        "{{\"net\": \"{}\", \"pad\": \"{}\", \"layer\": {}, \"anchor\": [{}, {}], \"round\": {}, \"spokes\": [{}], \"tracks\": {}, \"crossings\": {}}}",
+                        "{{\"net\": \"{}\", \"pad\": \"{}\", \"layer\": {}, \"anchor\": [{}, {}], \"round\": {}, \"spokes\": [{}], \"tracks\": {}, \"crossings\": {}, \"seam_short\": {}}}",
                         name.replace('\\', "\\\\").replace('"', "\\\""),
                         terminal.label.replace('\\', "\\\\").replace('"', "\\\""),
                         record.layer,
@@ -8620,6 +8771,7 @@ impl Router {
                         outcomes.join(", "),
                         record.tracks,
                         record.crossings,
+                        record.seam_short,
                     )?;
                 }
             }
@@ -9908,6 +10060,7 @@ mod tests {
                 layer: 0,
                 polygon: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 8.0], [0.0, 8.0]],
                 excluded: Vec::new(),
+                above: Vec::new(),
                 connect: true,
                 thermal_reach: 0.0,
                 thermal_gap: 0.0,
@@ -10018,6 +10171,7 @@ mod tests {
             layer,
             polygon: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
             excluded: Vec::new(),
+            above: Vec::new(),
             connect: true,
             thermal_reach: thermal.map_or(0.0, |(gap, bridge)| gap + bridge),
             thermal_gap: thermal.map_or(0.0, |(gap, _)| gap),
@@ -10322,6 +10476,59 @@ mod tests {
         bent.extend((1..=9).map(|step| node([5.3 + 0.1 * step as f64, 5.3 + 0.1 * (step / 2) as f64])));
         router.nets[0].branches = vec![Branch { nodes: bent, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
         assert_eq!(record(&router).tracks, 0);
+    }
+
+    #[test]
+    fn each_zone_counts_the_spokes_in_its_own_part() {
+        // P.1 at (5, 5) with four spokes into one fill, but two zones of P
+        // meet just past its +y edge: a whole-board zone and, above it in
+        // priority, a zone from y = 5.4 up. KiCad fills the lower zone
+        // less the upper one's outline and checks the pad against each
+        // zone apart: three spokes cross its ring in the lower zone, one
+        // (+y, the ring at 5.45) in the upper zone, starved there
+        // (Telemetry's USB shield pads against the edge zone of priority
+        // 11). Equal priorities overlap: the lower zone then has all four,
+        // the upper one still one. Manual spokes add a track that ends in
+        // the upper zone's part.
+        let obstacles = vec![copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"), copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2")];
+        let high: Vec<crate::geometry::Point> = vec![[0.0, 5.4], [10.0, 5.4], [10.0, 10.0], [0.0, 10.0]];
+        let seamed = |above: bool| {
+            let mut low = plane(0, 0, Some((0.3, 0.4)));
+            if above {
+                low.above = vec![high.clone()];
+            }
+            let mut upper = plane(0, 0, Some((0.3, 0.4)));
+            upper.polygon = high.clone();
+            board(
+                1,
+                obstacles.clone(),
+                vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] }],
+                vec![low, upper],
+                vec!["P.2".into()],
+            )
+        };
+        let record = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        for above in [true, false] {
+            let board = seamed(above);
+            let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+            let before = record(&router);
+            assert_eq!(before.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_))).count(), 4, "{before:?}");
+            assert_eq!((before.seam_short, before.seam_zone, Router::spokes_short(&before)), (1, Some(1), 1), "{before:?}");
+            // The net's zones as one fill: four spokes.
+            let union = Router::new(&board, &Config { pitches: vec![0.1], zone_seams: false, ..Config::default() });
+            assert_eq!(Router::spokes_short(&record(&union)), 0);
+        }
+        // Only the upper zone: the pad lies outside it but for its +y
+        // spoke, which crosses the ring there.
+        let mut router = Router::new(&seamed(true), &Config { pitches: vec![0.1], ..Config::default() });
+        assert_eq!(router.add_manual_spokes(), 1);
+        let after = record(&router);
+        // The track (its stub to the pad's edge ends in the -x spoke, in
+        // the lower zone; its diagonal run in the upper zone's fill).
+        assert_eq!((after.seam_short, Router::spokes_short(&after)), (0, 0), "{after:?}");
+        let track = router.nets[0].branches.last().unwrap();
+        let end = router.grid().center_of(track.nodes.last().unwrap().cell as usize);
+        assert!(end[1] > 5.4, "{end:?}");
     }
 
     #[test]

@@ -96,7 +96,7 @@ def main():
                 counts["false_alarm"] += 1
             if drc or mine:
                 verdict = "both" if drc and mine else "MISSED" if drc else "false alarm"
-                details.append(f"  {name[:40]:40} {row['pad']:10} {row['layer']:7} kicad {row.get('kicad')}+{row.get('kicad_single')}s+{row.get('kicad_tracks')}t {row.get('directions')} ours {row.get('our_spokes')} +{row.get('ours_tracks')}t -> {verdict}")
+                details.append(f"  {name[:40]:40} {row['pad']:10} {row['layer']:7} kicad {row.get('kicad')}+{row.get('kicad_single')}s+{row.get('kicad_tracks')}t {row.get('directions')} ours {row.get('our_spokes')} +{row.get('ours_tracks')}t{' seam ' + str(row.get('ours_seam_short')) if row.get('ours_seam_short') else ''} -> {verdict}")
         print(name, json.dumps(counts))
         for key in totals:
             totals[key] += counts[key]

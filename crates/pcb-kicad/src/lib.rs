@@ -11901,6 +11901,18 @@ fn rule_area_layer_mask(zone: &Expr) -> Result<[bool; 2], String> {
 fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let mut polygons: Vec<Vec<[f64; 2]>> = Vec::new();
     for polygon in zone.children().iter().filter(|item| item.head() == Some("polygon")) {
+        // Sides drawn as arcs (Telemetry's GND zones along its round
+        // edge), flattened as KiCad's filler does (ClearArcs); they were
+        // left out, the zone then a polygon through the other corners
+        // (`PCB_KICAD_OLD_ZONE_ARCS` for A/B).
+        let arcs = polygon.child("pts").is_some_and(|pts| pts.children().iter().any(|item| item.head() == Some("arc")));
+        if arcs && std::env::var_os("PCB_KICAD_OLD_ZONE_ARCS").is_none() {
+            let points = outline::pts_points(polygon)?;
+            if points.len() >= 3 {
+                polygons.push(points);
+            }
+            continue;
+        }
         let points = polygon
             .child("pts")
             .ok_or_else(|| "rule area has no polygon points".to_string())?

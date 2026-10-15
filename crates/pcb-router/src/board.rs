@@ -86,6 +86,12 @@ pub struct Plane {
     pub polygon: Vec<Point>,
     /// Regions filled by other pours with a higher priority.
     pub excluded: Vec<Vec<Point>>,
+    /// The outlines of the net's own zones of a higher priority on the
+    /// layer. KiCad fills each zone apart and cuts these from this one's
+    /// fill (zone_filler.cpp, subtractHigherPriorityZones): the fills meet
+    /// at a seam, and the DRC counts a pad's spokes per zone, each in its
+    /// own part (`Router::zone_seams`).
+    pub above: Vec<Vec<Point>>,
     /// Whether pads may connect through the pour. If not, the net is routed
     /// with tracks and the pour only fills (its pads are still guarded).
     pub connect: bool,
