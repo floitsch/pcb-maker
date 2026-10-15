@@ -7,6 +7,7 @@
     benchmarks/agent-tasks/run.py <output> --tier short --jobs 6 --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier quick --route-from build/quick30-x782 --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier quick --only A B --splice-from build/quick30-x782.log
+    benchmarks/agent-tasks/run.py <output> --tier schematic --jobs 6 --binary PATH
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -26,7 +27,9 @@ KiCad's checks stays). `--route-from <sweep>` routes each board's placement
 from an earlier sweep (`<sweep>/<task>/layout/placed`) with
 `route-kicad-board` instead of laying it out. `--splice-from <log>` copies
 the rows of the boards not run (outside `--only`) from an earlier log,
-marked `spliced`. Every row has `mode` (layout or route); the run ends with
+marked `spliced`. `--tier schematic` starts each board from its schematic
+instead (`import-kicad-netlist`, schematic.py; rows say where the flow
+stopped). Every row has `mode` (layout, route or schematic); the run ends with
 the pass line and a line of continuous objectives (README.md, "How to
 measure"), also written to summary.json."""
 
@@ -45,9 +48,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from compare import by_name, constraints_digest, objectives, objectives_line, rows_of  # noqa: E402
+import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
-TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json"}
+TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json"}
 # The harness's timeout less this is scaled with the budget: KiCad's checks
 # and the file work do not shrink with it.
 FIXED_TIMEOUT_SECONDS = 300
@@ -371,6 +375,8 @@ def scaled_timeout(arguments):
 
 
 def run_admitted(task, arguments, token):
+    if arguments.schematic:
+        return schematic_admitted(task, arguments, token)
     if arguments.route_from:
         return route_admitted(task, arguments, token)
     name = task["name"]
@@ -445,6 +451,13 @@ def run_admitted(task, arguments, token):
         # on the machine's load.
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
+    return layout_result(row, task, work, code, output, allowed, designer_seconds)
+
+
+def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=None):
+    """The row of a layout that ended (not by the harness's timeout): the
+    binary's verdict, the report's numbers and the pass rule. KiCad's
+    findings come from `drc_directory`/drc.json (default: the result's)."""
     report = work / "layout/board-layout.json"
     # The binary's own verdict (docs/agents.md, "Exit codes"): its status
     # and exit code go into the row; the pass rule below stays the
@@ -470,7 +483,7 @@ def run_admitted(task, arguments, token):
     expected = {tuple(miss) for miss in task.get("expected_misses", [])}
     missed = [(c["kind"], c["part"], c.get("other")) for c in result["constraints"] if not c["satisfied"]]
     unexpected = [miss for miss in missed if miss not in expected]
-    copper = native(work / "layout/result", allowed)
+    copper = native(drc_directory or work / "layout/result", allowed)
     if allowed:
         row["designer_findings"] = allowed
     if task.get("designer_budget"):
@@ -504,6 +517,134 @@ def run_admitted(task, arguments, token):
     # the router, routing pours as tracks, does not credit (MokyaLora's
     # one open pad, 261/262 with KiCad at 0 unconnected).
     row["pass"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    return row
+
+
+def schematic_admitted(task, arguments, token):
+    """The schematic tier (`--tier schematic`, schematic.py): the board
+    imported from its schematic with `import-kicad-netlist`, the task's
+    constraints moved onto it, laid out and checked with `drc-kicad-board`.
+    The pass rule is the layout's, and every footprint must have been
+    found; the row says where the flow stopped and why."""
+    name = task["name"]
+    directory = Path(task["directory"])
+    if not directory.is_absolute():
+        directory = ROOT / directory
+    board_id = task["board_id"]
+    work = arguments.output / name
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    row = {"name": name, "mode": "schematic"}
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
+
+    def stop(stage, why):
+        row.update(stopped=stage, why=why, **{"pass": False})
+        return row
+
+    record_file = schematic.STORE / name / "schematic.json"
+    if not record_file.exists():
+        return stop("import", "no schematic fetched (benchmarks/github/harvest_schematics.py)")
+    record = json.loads(record_file.read_text())
+    designer_file = directory / f"{board_id}.kicad_pcb"
+    code, stdout, stderr = schematic.run([arguments.binary, "describe-kicad-board", directory, board_id])
+    if code != 0:
+        return stop("constraints", f"describe-kicad-board on the designer's board: {stderr.strip()[-200:]}")
+    description = json.loads(stdout)
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
+    started = time.monotonic()
+    load_before = os.getloadavg()[0]
+    report, steps, error = schematic.import_schematic(arguments.binary, record, work, board_id,
+                                                      len(description["copper_layers"]))
+    row["import"] = steps
+    if error:
+        return stop("import", f"import-kicad-netlist: {error}")
+    row.update(missing=len(report["missing"]), substituted=len(report["substituted"]),
+               unmatched_pins=len(report["unmatched_pins"]))
+    if report["missing"]:
+        row["missing_parts"] = report["missing"][:12]
+    project = work / "project"
+    board = project / f"{board_id}.kicad_pcb"
+    try:
+        task_constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
+        designer_text = designer_file.read_text()
+        constraints, facts, copies = schematic.constraints_for_import(task_constraints, description, designer_text,
+                                                                      board.read_text())
+        shapes = schematic.edge_cuts(designer_text)
+        if not shapes:
+            raise ValueError("the designer's board draws no outline of its own on Edge.Cuts")
+        schematic.append_items(board, shapes + copies)
+    except Exception as error:  # noqa: BLE001
+        return stop("constraints", f"{type(error).__name__}: {error}")
+    row["parts"] = {"designer": facts["designer_parts"], "imported": facts["imported_parts"],
+                    "matched": facts["matched"], "copied": facts["copied"], "renamed": len(facts["renamed"])}
+    for key in ("board_only", "schematic_only", "dropped"):
+        if facts[key]:
+            row["parts"][key] = facts[key][:12] + ([f"... {len(facts[key])} in all"] if len(facts[key]) > 12 else [])
+    (project / "constraints.json").write_text(json.dumps(constraints, indent=1))
+    row["constraints_sha256"] = constraints_digest(constraints)
+    layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
+              **task.get("layout", {})}
+    if arguments.budget_scale != 1:
+        for key, default in LAYOUT_BUDGETS.items():
+            layout[key] = round(layout.get(key, default) * arguments.budget_scale)
+    (project / "layout.json").write_text(json.dumps(layout))
+    router = task.get("router") or {}
+    router_argument = "auto"
+    if router:
+        (work / "router.json").write_text(json.dumps(router))
+        router_argument = str(work / "router.json")
+    env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else None
+    command = [str(arguments.binary), "layout-kicad-board", str(project), board_id, str(work / "layout"),
+               router_argument, str(project / "layout.json")]
+    timeout = scaled_timeout(arguments)
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
+    (work / "layout.log").write_text(output)
+    row.update(seconds=round(time.monotonic() - started, 1), cpu_seconds=cpu_seconds,
+               load=[round(load_before, 1), round(os.getloadavg()[0], 1)], peak_rss_mb=peak_mb,
+               layout_rss_mb=own_mb)
+    if code == "timeout":
+        row.update(error=f"timed out after {timeout} s", cut=["timeout"])
+        placed = (work / "layout/placed" / f"{board_id}.kicad_pcb").exists()
+        return stop("routing" if placed else "placement", f"the harness's timeout ({timeout} s)")
+    # The documented check of the result: drc-kicad-board (KiCad's DRC
+    # through its cache; the layout's own DRC ran on the same board).
+    result = work / "layout/result"
+    if (result / f"{board_id}.kicad_pcb").exists():
+        (work / "drc").mkdir()
+        drc_code, drc_out, drc_err = schematic.run([arguments.binary, "drc-kicad-board", result, board_id,
+                                                    work / "drc/drc.json"])
+        row["drc_line"] = (drc_out.strip().splitlines() or [""])[-1][:200]
+    layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=work / "drc")
+    verdict_file = work / "layout/verdict.json"
+    verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else {}
+    if verdict.get("schematic_parity_issues") is not None:
+        row["parity"] = verdict["schematic_parity_issues"]
+        row["parity_by_type"] = verdict.get("schematic_parity_by_type")
+    row["pass"] = bool(row.get("pass")) and not report["missing"]
+    # Where the flow stopped: the first stage that fell short.
+    if report["missing"]:
+        row.update(stopped="import", why=f"{len(report['missing'])} footprints missing: "
+                   + "; ".join(report["missing"][:3])[:300])
+    elif code == 2:
+        row.update(stopped="constraints", why=verdict.get("reason", row.get("error", ""))[:300])
+    elif "routed" not in row:
+        row.update(stopped="placement", why=row.get("error", "no layout report")[:300])
+    elif row.get("unexpected_misses"):
+        row.update(stopped="placement", why="constraints missed: " + ", ".join(
+            " ".join(str(part) for part in miss if part) for miss in row["unexpected_misses"][:5]))
+    elif row.get("native") is None:
+        row.update(stopped="drc", why="drc-kicad-board wrote no report: " + row.get("drc_line", ""))
+    elif row["native"]["unconnected"] or row["routed"].split("/")[0] != row["routed"].split("/")[1]:
+        row.update(stopped="routing", why=f"routed {row['routed']}, KiCad {row['native']['unconnected']} unconnected")
+    elif row["native"]["errors"]:
+        row.update(stopped="drc", why="new errors: " + ", ".join(f"{k} {v}" for k, v in row["native"]["errors"].items()))
+    else:
+        row["stopped"] = None
     return row
 
 
@@ -645,6 +786,9 @@ def main():
         arguments.budget_scale = (tier or {}).get("budget_scale", 1.0)
     if arguments.budget_scale <= 0:
         parser.error("--budget-scale must be positive")
+    arguments.schematic = arguments.tier == "schematic"
+    if arguments.schematic and arguments.route_from is not None:
+        parser.error("--route-from does not go with --tier schematic (it lays out from the schematic)")
     if arguments.route_from is not None and not arguments.route_from.is_dir():
         parser.error(f"--route-from: {arguments.route_from} is not a directory")
     if arguments.splice_from is not None and not arguments.splice_from.exists():
@@ -706,7 +850,9 @@ def main():
                 rows[name] = spliced[name]
                 print(json.dumps(spliced[name]), flush=True)
     if arguments.route_from is not None or arguments.budget_scale != 1:
-        print(f"mode {'route from ' + str(arguments.route_from) if arguments.route_from else 'layout'}, "
+        mode = "schematic" if arguments.schematic else "route from " + str(arguments.route_from) if arguments.route_from \
+            else "layout"
+        print(f"mode {mode}, "
               f"budget scale {arguments.budget_scale:g}, timeout {scaled_timeout(arguments)} s", file=sys.stderr)
     started = time.monotonic()
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -717,7 +863,7 @@ def main():
                 return run_task(task, arguments)
             except Exception as error:
                 return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
-                        "mode": "route" if arguments.route_from else "layout"}
+                        "mode": "schematic" if arguments.schematic else "route" if arguments.route_from else "layout"}
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
@@ -737,8 +883,20 @@ def main():
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
-                   mode="route" if arguments.route_from else "layout", spliced=spliced_count,
+                   mode="schematic" if arguments.schematic else "route" if arguments.route_from else "layout",
+                   spliced=spliced_count,
                    tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256)
+    if arguments.schematic:
+        # Where the flow stopped, by stage (schematic tier).
+        stages = {}
+        for row in ordered:
+            stage = row.get("stopped", "runner" if row.get("error", "").startswith("runner") else None) or "passed"
+            stages[stage] = stages.get(stage, 0) + 1
+        summary["stopped"] = stages
+        summary["missing_footprints"] = sum(row.get("missing", 0) for row in ordered)
+        summary["parity"] = sum(row.get("parity") or 0 for row in ordered)
+        print("stopped at: " + ", ".join(f"{stage} {count}" for stage, count in sorted(stages.items()))
+              + f"; missing footprints {summary['missing_footprints']}, parity issues {summary['parity']}")
     print(objectives_line(summary) + f"; tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})")
     (arguments.output / "summary.json").write_text(json.dumps(summary, indent=1))
 

@@ -294,6 +294,44 @@ fn legacy_texts_to_properties(items: &mut [Expr], reference: &str) -> Result<(),
     Ok(())
 }
 
+/// Turns KiCad 5 arcs (`start` the centre, `end` where the arc starts,
+/// `angle` in degrees), which KiCad 6 library files still carry, into the
+/// three points KiCad 7 and later write (start, mid, end on the arc). KiCad
+/// reads the old form only in a file of that age: a board of today with one
+/// does not load (osprey's Tag-Connect footprint: kicad-cli exit 3, the
+/// import failed in its pad check).
+fn legacy_arcs_to_three_points(items: &mut [Expr]) -> Result<(), String> {
+    for item in items.iter_mut() {
+        if item.head() != Some("fp_arc") || item.child("mid").is_some() {
+            continue;
+        }
+        let Some(angle) = form_atom(item, "angle", 1).and_then(|angle| angle.parse::<f64>().ok()) else {
+            continue;
+        };
+        let (Ok(cx), Ok(cy), Ok(sx), Ok(sy)) = (form_f64(item, "start", 1), form_f64(item, "start", 2), form_f64(item, "end", 1), form_f64(item, "end", 2)) else {
+            continue;
+        };
+        let radius = (sx - cx).hypot(sy - cy);
+        let first = (sy - cy).atan2(sx - cx);
+        // KiCad's angle turns from the start towards +y (down) for a
+        // positive value: the same sense as atan2 in board coordinates.
+        let point = |name: &str, turn: f64| {
+            let at = first + turn.to_radians();
+            parse(&format!("({name} {} {})", round_mm(cx + radius * at.cos()), round_mm(cy + radius * at.sin())))
+        };
+        let replacement = [parse(&format!("(start {sx} {sy})"))?, point("mid", angle / 2.0)?, point("end", angle)?];
+        let Expr::List(parts) = item else { continue };
+        parts.retain(|part| !matches!(part.head(), Some("start" | "end" | "angle")));
+        parts.splice(1..1, replacement);
+    }
+    Ok(())
+}
+
+fn round_mm(value: f64) -> f64 {
+    let rounded = (value * 1e6).round() / 1e6;
+    if rounded == 0.0 { 0.0 } else { rounded }
+}
+
 /// Sets a footprint property's value, adding it (hidden, on the fab layer,
 /// as KiCad does) when the footprint has none of that name.
 fn set_property(items: &mut Vec<Expr>, name: &str, value: &str, reference: &str) -> Result<(), String> {
@@ -435,6 +473,13 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
                 let Some(relative) = uri.strip_prefix("${KIPRJMOD}/").or_else(|| uri.strip_prefix("$(KIPRJMOD)/")) else {
                     continue;
                 };
+                // Only libraries inside the project: `${KIPRJMOD}/../lib`
+                // would be copied beside the output directory, not into it
+                // (glasgow's footprints two folders up). The board does not
+                // need them: its footprints are in it.
+                if Path::new(relative).components().any(|part| !matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir)) {
+                    continue;
+                }
                 copy_tree(&project.join(relative), &output.join(relative))?;
             }
         }
@@ -541,6 +586,10 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         for item in items.iter_mut() {
             renew_uuids(item, &reference);
         }
+        // KiCad 5 library files say `module`; KiCad renames it on loading,
+        // pcb-maker reads only `footprint` (coco2's 16 footprints from its
+        // KiCad 5 library were not placed or routed).
+        items[0] = Expr::Atom("footprint".into());
         items[1] = Expr::Atom(requote(&found));
         // Placement fields after the layer.
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
@@ -573,6 +622,7 @@ pub fn import_kicad_netlist(input: &Path, output: &Path, board_id: &str, layers:
         items.splice(at..at, links);
         // The symbol's fields (datasheet, description, LCSC numbers, ...).
         legacy_texts_to_properties(items, &reference)?;
+        legacy_arcs_to_three_points(items)?;
         set_property(items, "Reference", &reference, &reference)?;
         set_property(items, "Value", &value, &reference)?;
         for field in component.child("fields").map(Expr::children).unwrap_or_default().iter().filter(|item| item.head() == Some("field")) {
@@ -877,6 +927,56 @@ mod tests {
         ] {
             assert!(!edge_connector(name), "{name}");
         }
+    }
+
+    #[test]
+    fn kicad_5_arcs_become_three_points() {
+        // A quarter circle around (2, 0) from (2, 1) to (3, 0), as the
+        // Tag-Connect footprint of osprey's library draws its corners.
+        let mut footprint = parse(r#"(footprint "x" (fp_arc (start 2 0) (end 2 1) (angle -90) (layer "F.SilkS") (width 0.2)) (fp_arc (start 0 0) (mid 1 1) (end 2 0) (layer "F.SilkS")))"#).unwrap();
+        let Expr::List(items) = &mut footprint else { unreachable!() };
+        legacy_arcs_to_three_points(items).unwrap();
+        let arc = &footprint.children()[2];
+        assert_eq!(encode(arc), encode(&parse(r#"(fp_arc (start 2 1) (mid 2.707107 0.707107) (end 3 0) (layer "F.SilkS") (width 0.2))"#).unwrap()));
+        // A KiCad 7 arc stays as it is.
+        assert_eq!(encode(&footprint.children()[3]), encode(&parse(r#"(fp_arc (start 0 0) (mid 1 1) (end 2 0) (layer "F.SilkS"))"#).unwrap()));
+    }
+
+    #[test]
+    fn kicad_5_library_footprints_become_footprints_of_today() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-import-k5-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let library = directory.join("old.pretty");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("FB.kicad_mod"),
+            r#"(module FB (layer F.Cu) (tedit 5A0F774F)
+                (fp_text reference REF** (at 0 -2) (layer F.SilkS) (effects (font (size 1 1) (thickness 0.15))))
+                (fp_text value FB (at 0 2) (layer F.Fab) (effects (font (size 1 1) (thickness 0.15))))
+                (fp_arc (start 0 0) (end 0 1) (angle -90) (layer F.SilkS) (width 0.12))
+                (pad 1 thru_hole circle (at -2 0) (size 1.6 1.6) (drill 0.8) (layers *.Cu *.Mask))
+                (pad 2 thru_hole circle (at 2 0) (size 1.6 1.6) (drill 0.8) (layers *.Cu *.Mask)))"#,
+        )
+        .unwrap();
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components (comp (ref "FB1") (value "FB") (footprint "old:FB") (sheetpath (names "/") (tstamps "/")) (tstamps "1111")))
+              (nets (net (code "1") (name "VCC") (node (ref "FB1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let report = import_kicad_netlist(&netlist, &directory.join("out"), "test", 2).unwrap();
+        assert!(report.missing.is_empty(), "{:?}", report.missing);
+        let board = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();
+        let footprint = board.children().iter().find(|item| item.head() == Some("footprint")).expect("a footprint, not a module");
+        let arc = footprint.child("fp_arc").unwrap();
+        assert!(arc.child("mid").is_some() && arc.child("angle").is_none());
+        assert_eq!(form_atom(footprint.child("pad").unwrap(), "net", 1), Some("VCC"));
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

@@ -22,7 +22,9 @@ and make layout tasks with
 `benchmarks/agent-tasks/from_pcbench.py <out> --corpus benchmarks/github/boards.json`.
 
 Files are downloaded for benchmarking only and are not redistributed; the
-manifest records each repository's licence."""
+manifest records each repository's licence. The boards' schematics and
+project libraries, at the same commits, come from harvest_schematics.py
+(benchmarks/real/external/github-sch, schematics.json)."""
 
 import argparse
 import base64

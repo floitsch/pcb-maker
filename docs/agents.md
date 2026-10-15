@@ -24,8 +24,10 @@ A KiCad netlist (`.net`, from `kicad-cli sch export netlist`) works in
 place of the schematic; its footprints come from the libraries of the
 netlist's folder and of the project the netlist names as its source. A
 file that is not a KiCad netlist is an input error (exit 2). Footprints
-from KiCad 6 libraries (`fp_text reference`) are brought to today's form,
-so KiCad reads the schematic's reference, not the library's. All
+from KiCad 5 and 6 libraries (`module`, `fp_text reference`, arcs given by
+centre and angle) are brought to today's form, so KiCad loads the board
+and reads the schematic's reference, not the library's. Libraries outside
+the project folder (`${KIPRJMOD}/../lib`) are used but not copied. All
 footprints sit at one point and there is no outline. Next to the board it writes, unless they exist:
 - `constraints.json`: `"move_all": true`, `"outline": {}` (sized from the
   parts), and the plug-in connectors (USB, RF, audio and barrel jacks,
@@ -65,8 +67,11 @@ The file lists what constraints refer to:
   one; `from_footprints: true` when the board draws no Edge.Cuts itself
   and the box is only footprints' slots and cut-outs, as on a fresh
   import: give the board its size with `outline` in `constraints.json`);
-- every footprint with reference, value, library name, position, side,
-  size, whether it is through-hole or locked, its `uuid` (which footprint
+- every footprint with reference, value, library name, position, side
+  (where its pads put it), `layer` (the footprint's own, `F.Cu` or `B.Cu`:
+  what `back` and `front` set; a key socket under its switch is a front
+  footprint with its pads on the back), size, whether it is through-hole
+  or locked, its `uuid` (which footprint
   an entry for a repeated reference means, [constraints.md](constraints.md)),
   and its pads with their nets;
 - every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track

@@ -1,0 +1,4136 @@
+{
+ "boards": {
+  "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "name": "0xCB-dev__0xCB-1337__1337-v4.0",
+   "repository": "0xCB-dev/0xCB-1337",
+   "commit": "57ba92df4066021aaa12e2c691135becd04037e7",
+   "board_id": "1337-v4.0",
+   "project_dir": "rev4.0",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ]
+   },
+   "sheets": [
+    "rev4.0/1337-v4.0.kicad_sch"
+   ],
+   "footprint_ids": 17,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "art": "rev4.0/art.pretty"
+   },
+   "library_fixes": {
+    "0xcb": "rev3.0/0xcb-lib/0xcb.pretty"
+   },
+   "footprints": {
+    "named": 17,
+    "fetched": 6,
+    "kicad": 7,
+    "relocated": 6,
+    "not_in_their_library": [],
+    "no_library": [
+     "0xcb:EC11",
+     "0xcb:MX_SK6812MINI-E",
+     "0xcb:SW_Cherry_MX_PCB_1.00u",
+     "0xcb:molex2169900001"
+    ]
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 246433,
+   "schematic": "repo/rev4.0/1337-v4.0.kicad_sch"
+  },
+  "0xCB-dev__0xCB-1337__panel": {
+   "name": "0xCB-dev__0xCB-1337__panel",
+   "repository": "0xCB-dev/0xCB-1337",
+   "commit": "57ba92df4066021aaa12e2c691135becd04037e7",
+   "board_id": "panel",
+   "project_dir": "rev4.0/panel",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ]
+   },
+   "status": "skipped",
+   "reason": "no panel.kicad_sch at the commit"
+  },
+  "0xCB-dev__0xCB-1337__pcb": {
+   "name": "0xCB-dev__0xCB-1337__pcb",
+   "repository": "0xCB-dev/0xCB-1337",
+   "commit": "57ba92df4066021aaa12e2c691135becd04037e7",
+   "board_id": "pcb",
+   "project_dir": "rev5.0",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ]
+   },
+   "sheets": [
+    "rev5.0/pcb.kicad_sch"
+   ],
+   "footprint_ids": 20,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "art": "rev5.0/art.pretty",
+    "Library": "rev5.0/flex-cable/rev1.0/Library.pretty"
+   },
+   "library_fixes": {
+    "0xcb": "rev5.0/flex-cable/rev1.0/Library.pretty"
+   },
+   "footprints": {
+    "named": 20,
+    "fetched": 1,
+    "kicad": 11,
+    "relocated": 1,
+    "not_in_their_library": [
+     "0xcb:EC11",
+     "0xcb:GT-USB-7014C",
+     "0xcb:J-LINK_6-PIN_NEEDLE_ADAPTER_SMALL",
+     "0xcb:MX_SK6812MINI-E",
+     "0xcb:RP2040-QFN-56",
+     "0xcb:SOT95P280X145-6N",
+     "0xcb:SW_Hotswap_Kailh_1.00u",
+     "0xcb:W25Q32JVUUIQ"
+    ],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 4,
+   "size": 409201,
+   "schematic": "repo/rev5.0/pcb.kicad_sch"
+  },
+  "0xCB-dev__0xCB-1337__pcb-panel": {
+   "name": "0xCB-dev__0xCB-1337__pcb-panel",
+   "repository": "0xCB-dev/0xCB-1337",
+   "commit": "57ba92df4066021aaa12e2c691135becd04037e7",
+   "board_id": "pcb-panel",
+   "project_dir": "rev5.0/kikit/panel",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ]
+   },
+   "status": "skipped",
+   "reason": "no pcb-panel.kicad_sch at the commit"
+  },
+  "0xCB-dev__0xCB-Static__0xcb-static": {
+   "name": "0xCB-dev__0xCB-Static__0xcb-static",
+   "repository": "0xCB-dev/0xCB-Static",
+   "commit": "4cad7a89158e4dab07329f690d119aa4f8853a4f",
+   "board_id": "0xcb-static",
+   "project_dir": "rev1.0",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ]
+   },
+   "sheets": [
+    "rev1.0/0xcb-static.kicad_sch"
+   ],
+   "footprint_ids": 18,
+   "symbol_libraries": [
+    "rev1.0/static-lib/static.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "static": "rev1.0/static-lib/static.pretty"
+   },
+   "library_fixes": {
+    "MX_Only": "afterdark-rev1.0/static-lib/static.pretty"
+   },
+   "footprints": {
+    "named": 18,
+    "fetched": 5,
+    "kicad": 13,
+    "relocated": 5,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 265999,
+   "schematic": "repo/rev1.0/0xcb-static.kicad_sch"
+  },
+  "ASH-ART__Qfwfq__qfwfq": {
+   "name": "ASH-ART__Qfwfq__qfwfq",
+   "repository": "ASH-ART/Qfwfq",
+   "commit": "664c586c0928e228da5f0963018609752ba71f47",
+   "board_id": "qfwfq",
+   "project_dir": "PCB Files",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "only a KiCad 5 schematic (.sch)"
+  },
+  "CDFER__Business-Cards__Batch_1": {
+   "name": "CDFER__Business-Cards__Batch_1",
+   "repository": "CDFER/Business-Cards",
+   "commit": "1f6432d7b65871354a7358242df49a5025cb8e3c",
+   "board_id": "Batch 1",
+   "project_dir": "Batch 1",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ]
+   },
+   "sheets": [
+    "Batch 1/Batch 1.kicad_sch"
+   ],
+   "footprint_ids": 0,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 0,
+    "fetched": 0,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 8050,
+   "schematic": "repo/Batch 1/Batch 1.kicad_sch"
+  },
+  "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "name": "CDFER__Business-Cards__USB_Cable_Tester__PCB",
+   "repository": "CDFER/Business-Cards",
+   "commit": "1f6432d7b65871354a7358242df49a5025cb8e3c",
+   "board_id": "USB Cable Tester",
+   "project_dir": "USB_Cable_Tester_MK2/PCB",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ]
+   },
+   "sheets": [
+    "USB_Cable_Tester_MK2/PCB/USB Cable Tester.kicad_sch"
+   ],
+   "footprint_ids": 13,
+   "symbol_libraries": [
+    "USB_Cable_Tester_MK2/PCB/JLC2KiCad_lib/symbol/JLC2KiCadLib.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "JLC2KiCadLib": "USB_Cable_Tester_MK2/PCB/JLC2KiCad_lib/JLC2KiCadLib"
+   },
+   "footprints": {
+    "named": 13,
+    "fetched": 5,
+    "kicad": 2,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "JLCPCB-Kicad-Footprints:C_0402",
+     "JLCPCB-Kicad-Footprints:D_0805",
+     "JLCPCB-Kicad-Footprints:Hole, 3mm",
+     "JLCPCB-Kicad-Footprints:Hole_Tooling_JLCPCB",
+     "JLCPCB-Kicad-Footprints:Part_Num_JLCPCB",
+     "JLCPCB-Kicad-Footprints:R_0402"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library JLCPCB-Kicad-Footprints: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Footprints not in the repository",
+    "symbol library JLCPCB-Capacitors: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Capacitors.kicad_sym not in the repository",
+    "symbol library JLCPCB-Connectors_Buttons: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Connectors_Buttons.kicad_sym not in the repository",
+    "symbol library JLCPCB-Diodes: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Diodes.kicad_sym not in the repository",
+    "symbol library JLCPCB-Inductors: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Inductors.kicad_sym not in the repository",
+    "symbol library JLCPCB-MCUs: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-MCUs.kicad_sym not in the repository",
+    "symbol library JLCPCB-Manufacturing: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Manufacturing.kicad_sym not in the repository",
+    "symbol library JLCPCB-Power: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Power.kicad_sym not in the repository",
+    "symbol library JLCPCB-Resistors: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Resistors.kicad_sym not in the repository",
+    "symbol library JLCPCB-Transistors: ${KIPRJMOD}/JLCPCB-Kicad-Library/JLCPCB-Kicad-Symbols/JLCPCB-Transistors.kicad_sym not in the repository"
+   ],
+   "status": "ok",
+   "files": 11,
+   "size": 360514,
+   "schematic": "repo/USB_Cable_Tester_MK2/PCB/USB Cable Tester.kicad_sch"
+  },
+  "CDFER__Business-Cards__USB_Keypad": {
+   "name": "CDFER__Business-Cards__USB_Keypad",
+   "repository": "CDFER/Business-Cards",
+   "commit": "1f6432d7b65871354a7358242df49a5025cb8e3c",
+   "board_id": "USB Keypad",
+   "project_dir": "USB_Keypad/PCB",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ]
+   },
+   "sheets": [
+    "USB_Keypad/PCB/USB Keypad.kicad_sch"
+   ],
+   "footprint_ids": 14,
+   "symbol_libraries": [
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-analog.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-basic-capacitor.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-basic-resistor.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-basic-resistor-network-0603.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-chips-crystals.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-diodes.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-extended.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-inductors-ferrite-beads.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-power.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-switches.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-tantalum-capacitors.kicad_sym",
+    "USB_Keypad/PCB/JLCPCB-Kicad-Library/jlcpcb-transistors.kicad_sym",
+    "USB_Keypad/PCB/extended_parts/symbol/HC-USB3_0-C225-P.kicad_sym",
+    "USB_Keypad/PCB/extended_parts/symbol/TYPE-C_24P_QT_143.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "footprint": "USB_Keypad/PCB/JLCPCB-Kicad-Library/footprint",
+    "extended_parts": "USB_Keypad/PCB/extended_parts/extended_parts"
+   },
+   "footprints": {
+    "named": 14,
+    "fetched": 10,
+    "kicad": 4,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "symbol library CMFD473F4050HANT: ${KIPRJMOD}/NTC-Thermistor/symbol/CMFD473F4050HANT.kicad_sym not in the repository",
+    "symbol library RVT22UF35V67RV0104: ${KIPRJMOD}/22uF-35V-Electrolytic/symbol/RVT22UF35V67RV0104.kicad_sym not in the repository",
+    "symbol library XL-1615RGBC-WS2812B: ${KIPRJMOD}/XL-1615RGBC-WS2812B/symbol/XL-1615RGBC-WS2812B.kicad_sym not in the repository"
+   ],
+   "status": "ok",
+   "files": 29,
+   "size": 1814137,
+   "schematic": "repo/USB_Keypad/PCB/USB Keypad.kicad_sch"
+  },
+  "CDFER__Business-Cards__WLED_Matrix": {
+   "name": "CDFER__Business-Cards__WLED_Matrix",
+   "repository": "CDFER/Business-Cards",
+   "commit": "1f6432d7b65871354a7358242df49a5025cb8e3c",
+   "board_id": "WLED Matrix",
+   "project_dir": "WLED_Matrix/PCB",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ]
+   },
+   "sheets": [
+    "WLED_Matrix/PCB/WLED Matrix.kicad_sch"
+   ],
+   "footprint_ids": 17,
+   "symbol_libraries": [
+    "WLED_Matrix/PCB/ESP32-C3FH4/symbol/ESP32-C3FH4.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "ESP32-C3FH4": "WLED_Matrix/PCB/ESP32-C3FH4/ESP32-C3FH4"
+   },
+   "library_fixes": {
+    "extended_parts": "Tea_Cozy_Hotplate/PCB/extended_parts/extended_parts",
+    "footprint": "Tea_Cozy_Hotplate/PCB/JLCPCB-Kicad-Library/footprint"
+   },
+   "footprints": {
+    "named": 17,
+    "fetched": 14,
+    "kicad": 2,
+    "relocated": 13,
+    "not_in_their_library": [],
+    "no_library": [
+     "Inverted_F_Antenna_2.4Ghz_1.0mmPCB_TI_CC2430DB:Inverted_F_Antenna_2.4Ghz_1.0mmPCB_TI_CC2430DB.pretty"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library Inverted_F_Antenna_2.4Ghz_1.0mmPCB_TI_CC2430DB: ${KIPRJMOD}/Inverted_F_Antenna_2.4Ghz_1.0mmPCB_TI_CC2430DB.pretty not in the repository",
+    "footprint library extended_parts: ${KIPRJMOD}/extended_parts/extended_parts not in the repository",
+    "footprint library footprint: ${KIPRJMOD}/JLCPCB-Kicad-Library/footprint not in the repository",
+    "symbol library TYPE-C_24P_QT_143: ${KIPRJMOD}/extended_parts/symbol/TYPE-C_24P_QT_143.kicad_sym not in the repository",
+    "symbol library XL-1615RGBC-WS2812B: ${KIPRJMOD}/XL-1615RGBC-WS2812B/symbol/XL-1615RGBC-WS2812B.kicad_sym not in the repository",
+    "symbol library jlcpcb-analog: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-analog.kicad_sym not in the repository",
+    "symbol library jlcpcb-basic-capacitor: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-basic-capacitor.kicad_sym not in the repository",
+    "symbol library jlcpcb-basic-resistor-network-0603: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-basic-resistor-network-0603.kicad_sym not in the repository",
+    "symbol library jlcpcb-basic-resistor: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-basic-resistor.kicad_sym not in the repository",
+    "symbol library jlcpcb-chips-crystals: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-chips-crystals.kicad_sym not in the repository",
+    "symbol library jlcpcb-diodes: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-diodes.kicad_sym not in the repository",
+    "symbol library jlcpcb-extended: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-extended.kicad_sym not in the repository",
+    "symbol library jlcpcb-inductors-ferrite-beads: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-inductors-ferrite-beads.kicad_sym not in the repository",
+    "symbol library jlcpcb-power: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-power.kicad_sym not in the repository",
+    "symbol library jlcpcb-switches: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-switches.kicad_sym not in the repository",
+    "symbol library jlcpcb-tantalum-capacitors: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-tantalum-capacitors.kicad_sym not in the repository",
+    "symbol library jlcpcb-transistors: ${KIPRJMOD}/JLCPCB-Kicad-Library/jlcpcb-transistors.kicad_sym not in the repository"
+   ],
+   "status": "ok",
+   "files": 20,
+   "size": 719688,
+   "schematic": "repo/WLED_Matrix/PCB/WLED Matrix.kicad_sch"
+  },
+  "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "name": "CRImier__MyKiCad__framework_mobo_lefthalf",
+   "repository": "CRImier/MyKiCad",
+   "commit": "4f01eaa6b3b0a269570c711e58ba4bf0f8446d11",
+   "board_id": "framework_mobo_lefthalf",
+   "project_dir": "Laptop mods/framework_mobo_lefthalf",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "Laptop mods/framework_mobo_lefthalf/framework_mobo_lefthalf.kicad_sch"
+   ],
+   "footprint_ids": 12,
+   "symbol_libraries": [
+    "Laptop mods/framework_mobo_lefthalf/vl170.kicad_sym",
+    "Laptop mods/framework_mobo_lefthalf/altmode_friend.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "framework_mobo_lefthalf": "Laptop mods/framework_mobo_lefthalf"
+   },
+   "footprints": {
+    "named": 12,
+    "fetched": 4,
+    "kicad": 8,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 309737,
+   "schematic": "repo/Laptop mods/framework_mobo_lefthalf/framework_mobo_lefthalf.kicad_sch"
+  },
+  "CRImier__MyKiCad__protoesp": {
+   "name": "CRImier__MyKiCad__protoesp",
+   "repository": "CRImier/MyKiCad",
+   "commit": "4f01eaa6b3b0a269570c711e58ba4bf0f8446d11",
+   "board_id": "protoesp",
+   "project_dir": "ESP8266/protoesp",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "ESP8266/protoesp/protoesp.kicad_sch"
+   ],
+   "footprint_ids": 37,
+   "symbol_libraries": [
+    "ESP8266/protoesp/ch341.lib",
+    "ESP8266/protoesp/LTH7R.lib",
+    "ESP8266/protoesp/proto_space.lib",
+    "ESP8266/protoesp/esp32_physlayout.lib",
+    "ESP8266/protoesp/protoesp-rescue.lib"
+   ],
+   "footprint_libraries": {
+    "protoesp": "ESP8266/protoesp"
+   },
+   "footprints": {
+    "named": 37,
+    "fetched": 5,
+    "kicad": 32,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 14,
+   "size": 545041,
+   "schematic": "repo/ESP8266/protoesp/protoesp.kicad_sch"
+  },
+  "CRImier__MyKiCad__vaio_re": {
+   "name": "CRImier__MyKiCad__vaio_re",
+   "repository": "CRImier/MyKiCad",
+   "commit": "4f01eaa6b3b0a269570c711e58ba4bf0f8446d11",
+   "board_id": "vaio_re",
+   "project_dir": "Reverse-engineering/sony_vaio_p_re",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "Reverse-engineering/sony_vaio_p_re/vaio_re.kicad_sch"
+   ],
+   "footprint_ids": 47,
+   "symbol_libraries": [
+    "Reverse-engineering/sony_vaio_p_re/lib/AXK760347G.kicad_sym",
+    "Reverse-engineering/sony_vaio_p_re/lib/LP8551.kicad_sym",
+    "Reverse-engineering/sony_vaio_p_re/lib/CAT4106.kicad_sym",
+    "Reverse-engineering/sony_vaio_p_re/lib/esd_small.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "sony_vaio_p_re": "Reverse-engineering/sony_vaio_p_re",
+    "lib": "Reverse-engineering/sony_vaio_p_re/lib"
+   },
+   "footprints": {
+    "named": 47,
+    "fetched": 5,
+    "kicad": 42,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 13,
+   "size": 1404497,
+   "schematic": "repo/Reverse-engineering/sony_vaio_p_re/vaio_re.kicad_sch"
+  },
+  "CRImier__MyKiCad__zpn_devboard": {
+   "name": "CRImier__MyKiCad__zpn_devboard",
+   "repository": "CRImier/MyKiCad",
+   "commit": "4f01eaa6b3b0a269570c711e58ba4bf0f8446d11",
+   "board_id": "zpn_devboard",
+   "project_dir": "Raspberry Pi stuff/zpn_devboard",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "Raspberry Pi stuff/zpn_devboard/zpn_devboard.kicad_sch"
+   ],
+   "footprint_ids": 41,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "zpn_devboard": "Raspberry Pi stuff/zpn_devboard",
+    "4GMODEM": "Raspberry Pi stuff/zpn_devboard/4G MODEM/4GMODEM.pretty"
+   },
+   "footprints": {
+    "named": 41,
+    "fetched": 7,
+    "kicad": 32,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "PCM_Espressif:ESP32-C6-WROOM-1",
+     "beepy:R_0603_1608Metric_Jumper_PWR"
+    ]
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 853177,
+   "schematic": "repo/Raspberry Pi stuff/zpn_devboard/zpn_devboard.kicad_sch"
+  },
+  "GlasgowEmbedded__glasgow__glasgow__revC3": {
+   "name": "GlasgowEmbedded__glasgow__glasgow__revC3",
+   "repository": "GlasgowEmbedded/glasgow",
+   "commit": "6e9bd3a18004b9273b83d4063f80bd4fe1171e71",
+   "board_id": "glasgow",
+   "project_dir": "hardware/boards/glasgow/revC3",
+   "spdx": "0BSD",
+   "submodules": {
+    "docs/archive": "GlasgowEmbedded/archive@5defddd37c66795f960c0436033714e77c475d37",
+    "vendor/libfx2": "https://codeberg.org/GlasgowEmbedded/libfx2: not on GitHub, not fetched"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "0BSD",
+    "files": []
+   },
+   "sheets": [
+    "hardware/boards/glasgow/revC3/glasgow.kicad_sch",
+    "hardware/boards/glasgow/revC3/io_banks.kicad_sch",
+    "hardware/boards/glasgow/revC3/io_buffer.kicad_sch"
+   ],
+   "footprint_ids": 34,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "Glasgow": "hardware/footprints/Glasgow.pretty"
+   },
+   "footprints": {
+    "named": 34,
+    "fetched": 19,
+    "kicad": 14,
+    "relocated": 19,
+    "not_in_their_library": [],
+    "no_library": [
+     "Glasgow:VSSOP-10_3x3mm_P0.5mm"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library Glasgow: $(KIPRJMOD)/../../footprints/Glasgow.pretty not in the repository",
+    "symbol library Glasgow: ${KIPRJMOD}/../../symbols/Glasgow.kicad_sym not in the repository"
+   ],
+   "status": "ok",
+   "files": 25,
+   "size": 1050835,
+   "schematic": "repo/hardware/boards/glasgow/revC3/glasgow.kicad_sch"
+  },
+  "Goga64__ULK__ULK": {
+   "name": "Goga64__ULK__ULK",
+   "repository": "Goga64/ULK",
+   "commit": "32fccf4621cc56d1907aa7889cb8d95d5e8625b5",
+   "board_id": "ULK",
+   "project_dir": "KiCad/ULK_pg1316s_Original_Silkscreen",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "KiCad/ULK_pg1316s_Original_Silkscreen/ULK.kicad_sch"
+   ],
+   "footprint_ids": 6,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "PCM12SMTR": "Footprints/PCM12SMTR",
+    "PG1316": "Footprints/PG1316"
+   },
+   "footprints": {
+    "named": 6,
+    "fetched": 2,
+    "kicad": 1,
+    "relocated": 2,
+    "not_in_their_library": [],
+    "no_library": [
+     "kbd:D3_SMD_v2",
+     "kbd:ProMicro_v3",
+     "kbd:ResetSW_1side"
+    ]
+   },
+   "status": "ok",
+   "files": 4,
+   "size": 283141,
+   "schematic": "repo/KiCad/ULK_pg1316s_Original_Silkscreen/ULK.kicad_sch"
+  },
+  "Goga64__ULK__ULK_sl_PG1316s": {
+   "name": "Goga64__ULK__ULK_sl_PG1316s",
+   "repository": "Goga64/ULK",
+   "commit": "32fccf4621cc56d1907aa7889cb8d95d5e8625b5",
+   "board_id": "ULK_sl_PG1316s",
+   "project_dir": "KiCad/ULK_sl_PG1316s/ULK_sl_PG1316s",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "KiCad/ULK_sl_PG1316s/ULK_sl_PG1316s/ULK_sl_PG1316s.kicad_sch"
+   ],
+   "footprint_ids": 6,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "PCM12SMTR": "Footprints/PCM12SMTR",
+    "ULK_sw": "Footprints/Cherry_MX_ULP/Cherry_ULP.pretty"
+   },
+   "footprints": {
+    "named": 6,
+    "fetched": 2,
+    "kicad": 1,
+    "relocated": 2,
+    "not_in_their_library": [],
+    "no_library": [
+     "kbd:D3_SMD_v2",
+     "kbd:ProMicro_v3",
+     "kbd:ResetSW_1side"
+    ]
+   },
+   "status": "ok",
+   "files": 4,
+   "size": 277453,
+   "schematic": "repo/KiCad/ULK_sl_PG1316s/ULK_sl_PG1316s/ULK_sl_PG1316s.kicad_sch"
+  },
+  "Huaqiu-Electronics__ecad-viewer__video": {
+   "name": "Huaqiu-Electronics__ecad-viewer__video",
+   "repository": "Huaqiu-Electronics/ecad-viewer",
+   "commit": "a2679a117f7074df761e8de45c393f63cdb9884a",
+   "board_id": "video",
+   "project_dir": "packages/kicad-parser/tests/demos/video",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "packages/kicad-parser/tests/demos/video/video.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/esvideo.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/bus_pci.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/rams.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/graphic.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/pal-ntsc.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/modul.kicad_sch",
+    "packages/kicad-parser/tests/demos/video/muxdata.kicad_sch"
+   ],
+   "footprint_ids": 33,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 33,
+    "fetched": 0,
+    "kicad": 21,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "footprints:BUSPCI",
+     "footprints:CV3-30PF",
+     "footprints:D_DO-34_SOD68_P7.62mm_Horizontal",
+     "footprints:LED_D3.0mm",
+     "footprints:LRTDK",
+     "footprints:PLCC68",
+     "footprints:PLCC84",
+     "footprints:SOT23EBC",
+     "footprints:SolderJumper-2_P1.3mm_Open_Pad1.0x1.5mm",
+     "footprints:sim72",
+     "footprints:subclick",
+     "kicad_api_lib:TS1871IDT"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library footprints: ${KIPRJMOD}/libs/footprints.pretty not in the repository",
+    "footprint library kicad_api_lib: ${KIPRJMOD}/kicad_api_libs/kicad_api_lib.pretty not in the repository",
+    "symbol library TS1871IDT: ${KIPRJMOD}/kicad_api_libs/TS1871IDT.kicad_sym not in the repository",
+    "symbol library video_schlib: ${KIPRJMOD}/libs/video_schlib.kicad_sym not in the repository"
+   ],
+   "status": "ok",
+   "files": 11,
+   "size": 1901772,
+   "schematic": "repo/packages/kicad-parser/tests/demos/video/video.kicad_sch"
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1": {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "BAGEL-MK1",
+   "project_dir": "boards/BAGEL-MK1/BAGEL-MK1-revA",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado": {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "BAGEL-MK1.1-Avocado",
+   "project_dir": "boards/BAGEL-MK1/BAGEL-MK1.1-Avocado",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA": {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "MIDAS-MK1.1",
+   "project_dir": "boards/MIDAS-MK1/MIDAS-MK1.1-revA",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA": {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "MIDAS-MK1",
+   "project_dir": "boards/MIDAS-MK1/MIDAS-MK1-revA",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2": {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "MIDAS-MK2",
+   "project_dir": "boards/MIDAS-MK2/MIDAS-MK2-revA",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA": {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA",
+   "repository": "ISSUIUC/ISS-PCB",
+   "commit": "a78651e37c68105ee789ed0fb882fb9c7a50f54c",
+   "board_id": "MIDAS-MK2.1",
+   "project_dir": "boards/MIDAS-MK2/MIDAS-MK2.1-revA",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "Jana-Marie__ligra__ligra_back": {
+   "name": "Jana-Marie__ligra__ligra_back",
+   "repository": "Jana-Marie/ligra",
+   "commit": "8a98f3938c20fe3ed07bfb34e7d43f243e21f519",
+   "board_id": "ligra_back",
+   "project_dir": "ligra_back",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "ligra_back/ligra_back.kicad_sch"
+   ],
+   "footprint_ids": 24,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 24,
+    "fetched": 0,
+    "kicad": 14,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "otter:C_0603",
+     "otter:C_0805",
+     "otter:JMP_2_1",
+     "otter:LED_0603_1608Metric",
+     "otter:R_0603",
+     "otter:R_0805",
+     "otter:SW_3S",
+     "otter:TC2030",
+     "otter:USB-C-vertical_footprint",
+     "otter:USB-C_Power"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 273260,
+   "schematic": "repo/ligra_back/ligra_back.kicad_sch"
+  },
+  "Ladniy__jiran-ble-lite__jiran-ble-lite": {
+   "name": "Ladniy__jiran-ble-lite__jiran-ble-lite",
+   "repository": "Ladniy/jiran-ble-lite",
+   "commit": "c2a5ef422c265f0d4e3d38f81c557ca802eab125",
+   "board_id": "jiran-ble-lite",
+   "project_dir": "pcb/jiran-ble-lite",
+   "spdx": "CERN-OHL-P-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": []
+   },
+   "sheets": [
+    "pcb/jiran-ble-lite/jiran-ble-lite.kicad_sch",
+    "pcb/jiran-ble-lite/jiran-ble-lite-right.kicad_sch"
+   ],
+   "footprint_ids": 14,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "jiran-ble-lite": "pcb/jiran-ble-lite/jiran-ble-lite.pretty"
+   },
+   "footprints": {
+    "named": 14,
+    "fetched": 14,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 18,
+   "size": 875002,
+   "schematic": "repo/pcb/jiran-ble-lite/jiran-ble-lite.kicad_sch"
+  },
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub": {
+   "name": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "repository": "MbFredys/PCB-Modular-Multi-Protocol-Hub",
+   "commit": "0413cb486cf7337f2891debc043cde41bea61b4f",
+   "board_id": "Hub",
+   "project_dir": "Kicad Files",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "COPYING: CERN OHL",
+    "files": [
+     "COPYING",
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "Kicad Files/Hub.kicad_sch",
+    "Kicad Files/main.kicad_sch",
+    "Kicad Files/mainb_ctrl.kicad_sch",
+    "Kicad Files/ethernet.kicad_sch",
+    "Kicad Files/mainb_pwr.kicad_sch",
+    "Kicad Files/propietary.kicad_sch"
+   ],
+   "missing_sheets": [
+    "Kicad Files/zigbee/thread.kicad_sch"
+   ],
+   "footprint_ids": 48,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 48,
+    "fetched": 0,
+    "kicad": 22,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "0_Smart_Switch:ABRACON_ARJM11D7-009-AB-EW2",
+     "0_Smart_Switch:ANT_2450AT42A100E_JOT",
+     "0_Smart_Switch:CAPPM7343X310N",
+     "0_Smart_Switch:CAP_EEVFK1E102Q",
+     "0_Smart_Switch:FUSE_1812L05060_LTF",
+     "0_Smart_Switch:LAN8720A",
+     "0_Smart_Switch:LINX_CONMHF1-SMD-G-T",
+     "0_Smart_Switch:QFN50P400X400X95-21N",
+     "0_Smart_Switch:SOIC127P600X175-8N",
+     "0_Smart_Switch:SON50P200X300X60-9N",
+     "0_Smart_Switch:THRMC1005X55N",
+     "Global_Footprint:CAP_EEEFNE181XUV",
+     "Global_Footprint:IND_XAL6060-223MEB",
+     "Global_Footprint:MPD_EJ503A",
+     "Global_Footprint:TO127P1041X469X2199-7N",
+     "PCM_4ms_Resistor:R_0603",
+     "PCM_Diode_SMD_AKL:D_SMB",
+     "PCM_Diode_SMD_AKL:D_SMB_TVS",
+     "PCM_Diode_SMD_AKL:D_SMC",
+     "PCM_Package_SON_AKL:Texas_X2SON-4_1x1mm_P0.65mm",
+     "PCM_Package_TO_SOT_SMD_AKL:SOT-23",
+     "PCM_Package_TO_SOT_SMD_AKL:TO-263-2_TabPin1",
+     "PCM_SparkFun-Clock:Crystal_SMD_2.0x1.6mm",
+     "PCM_SparkFun-Connector:TestPoint-0.5mm",
+     "PCM_SparkFun-LED:LED_0603_1608Metric",
+     "PCM_SparkFun-RF:ESP32-MINI"
+    ]
+   },
+   "status": "skipped",
+   "reason": "sheets missing: Kicad Files/zigbee/thread.kicad_sch",
+   "files": 7,
+   "size": 901979
+  },
+  "Neotron-Compute__Neotron-Pico__neotron-pico": {
+   "name": "Neotron-Compute__Neotron-Pico__neotron-pico",
+   "repository": "Neotron-Compute/Neotron-Pico",
+   "commit": "f078d9977104968c83bb603bdcde0fd8731324a7",
+   "board_id": "neotron-pico",
+   "project_dir": "Kicad",
+   "spdx": null,
+   "submodules": {
+    "Kicad/Neotron-Common-Hardware": "Neotron-Compute/Neotron-Common-Hardware@19667678c0f476f2174832e5ba754a12978743b0"
+   },
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex": {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex",
+   "repository": "Open-Muscle/OpenMuscle-FlexGrid",
+   "commit": "912e6e615c1f123141933a465c620f1a636692f0",
+   "board_id": "OM-60-Flex",
+   "project_dir": "KiCad/OM-FlexGrid V0/OM-60-Flex",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "KiCad/OM-FlexGrid V0/OM-60-Flex/OM-60-Flex.kicad_sch"
+   ],
+   "footprint_ids": 2,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 2,
+    "fetched": 0,
+    "kicad": 1,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "FlexSensorFootprint:10mmPad"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 166647,
+   "schematic": "repo/KiCad/OM-FlexGrid V0/OM-60-Flex/OM-60-Flex.kicad_sch"
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex": {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex",
+   "repository": "Open-Muscle/OpenMuscle-FlexGrid",
+   "commit": "912e6e615c1f123141933a465c620f1a636692f0",
+   "board_id": "OM-FlexGrid-Flex",
+   "project_dir": "KiCad/OM-FlexGrid V2/OM-FlexGrid-Flex",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "KiCad/OM-FlexGrid V2/OM-FlexGrid-Flex/OM-FlexGrid-Flex.kicad_sch"
+   ],
+   "footprint_ids": 2,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 2,
+    "fetched": 0,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "FlexSensorFootprint:10mmPad",
+     "OpenMuscleDevKit:Male-FFC-FPCHirose_FH12-19S-0.5SH_1x19-1MP_P0.50mm"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 147540,
+   "schematic": "repo/KiCad/OM-FlexGrid V2/OM-FlexGrid-Flex/OM-FlexGrid-Flex.kicad_sch"
+  },
+  "OpenDrone-hw__OpenESC-20x20__4in1-mini": {
+   "name": "OpenDrone-hw__OpenESC-20x20__4in1-mini",
+   "repository": "OpenDrone-hw/OpenESC-20x20",
+   "commit": "104ea51edfd88c2c381f30bb108f886acb7d6bab",
+   "board_id": "4in1-mini",
+   "project_dir": "hardware",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "hardware/KiCad-Library": "OpenDrone-hw/KiCad-Library@fdf8319b3512925a7566532ae4b38a298cf54c24"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "hardware/4in1-mini.kicad_sch",
+    "hardware/ESC.kicad_sch"
+   ],
+   "footprint_ids": 19,
+   "symbol_libraries": [
+    "hardware/components.kicad_sym",
+    "hardware/KiCad-Library/symbol/OpenDrone.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "4in1ESC": "hardware/4in1ESC.pretty",
+    "OpenDrone": "hardware/KiCad-Library/footprint/OpenDrone.pretty"
+   },
+   "library_fixes": {
+    "4in1ESC-30x30": "hardware/4in1ESC.pretty"
+   },
+   "footprints": {
+    "named": 19,
+    "fetched": 10,
+    "kicad": 9,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 18,
+   "size": 898890,
+   "schematic": "repo/hardware/4in1-mini.kicad_sch"
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1": {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1",
+   "repository": "OpenDrone-hw/OpenESC-30x30",
+   "commit": "683f175987b964f1cab83f3b54ac2a938042afcc",
+   "board_id": "4in1",
+   "project_dir": "hardware",
+   "spdx": "CERN-OHL-S-2.0",
+   "submodules": {
+    "hardware/KiCad-Library": "OpenDrone-hw/KiCad-Library@fdf8319b3512925a7566532ae4b38a298cf54c24"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/4in1.kicad_sch",
+    "hardware/ESC.kicad_sch"
+   ],
+   "footprint_ids": 19,
+   "symbol_libraries": [
+    "hardware/components.kicad_sym",
+    "hardware/KiCad-Library/symbol/OpenDrone.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "4in1ESC-30x30": "hardware/4in1ESC-30x30.pretty",
+    "OpenDrone": "hardware/KiCad-Library/footprint/OpenDrone.pretty"
+   },
+   "library_fixes": {
+    "4in1ESC": "hardware/KiCad-Library/footprint/OpenDrone.pretty"
+   },
+   "footprints": {
+    "named": 19,
+    "fetched": 11,
+    "kicad": 8,
+    "relocated": 6,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 19,
+   "size": 908470,
+   "schematic": "repo/hardware/4in1.kicad_sch"
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1-panel": {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1-panel",
+   "repository": "OpenDrone-hw/OpenESC-30x30",
+   "commit": "683f175987b964f1cab83f3b54ac2a938042afcc",
+   "board_id": "4in1-panel",
+   "project_dir": "hardware",
+   "spdx": "CERN-OHL-S-2.0",
+   "submodules": {
+    "hardware/KiCad-Library": "OpenDrone-hw/KiCad-Library@fdf8319b3512925a7566532ae4b38a298cf54c24"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no 4in1-panel.kicad_sch at the commit (the folder has 4in1.kicad_sch, ESC.kicad_sch)"
+  },
+  "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "name": "OpenDrone-hw__OpenFC-Lite__OpenFC",
+   "repository": "OpenDrone-hw/OpenFC-Lite",
+   "commit": "b529440564d5c369fd5dddddfc8ef44456965129",
+   "board_id": "OpenFC",
+   "project_dir": "hardware",
+   "spdx": "CERN-OHL-S-2.0",
+   "submodules": {
+    "hardware/KiCad-Library": "OpenDrone-hw/KiCad-Library@fdf8319b3512925a7566532ae4b38a298cf54c24"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/OpenFC.kicad_sch",
+    "hardware/power.kicad_sch",
+    "hardware/pads.kicad_sch",
+    "hardware/rp2350a.kicad_sch",
+    "hardware/osd.kicad_sch",
+    "hardware/imu.kicad_sch",
+    "hardware/blackbox.kicad_sch"
+   ],
+   "footprint_ids": 29,
+   "symbol_libraries": [
+    "hardware/lib.kicad_sym",
+    "hardware/KiCad-Library/symbol/OpenDrone.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "lib": "hardware/lib.pretty",
+    "OpenDrone": "hardware/KiCad-Library/footprint/OpenDrone.pretty"
+   },
+   "footprints": {
+    "named": 29,
+    "fetched": 21,
+    "kicad": 8,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 34,
+   "size": 1922852,
+   "schematic": "repo/hardware/OpenFC.kicad_sch"
+  },
+  "OpenDrone-hw__OpenRX__OpenRX-panel-rev2": {
+   "name": "OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+   "repository": "OpenDrone-hw/OpenRX",
+   "commit": "cb257a34295f2d9cd1f7574f86a570b5feaf33d1",
+   "board_id": "OpenRX-panel-rev2",
+   "project_dir": "panel",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no OpenRX-panel-rev2.kicad_sch at the commit"
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "name": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "repository": "Seeed-Studio/OSHW-reCamera-Series",
+   "commit": "f5fcf0abce794806ffbd7a274686f022bb0acd4b",
+   "board_id": "reCamera S101 v1.1",
+   "project_dir": "hardware/recamera-2002/sensors/s101-ov5647/PCB/V1.1",
+   "spdx": "Apache-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "Apache-2.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/recamera-2002/sensors/s101-ov5647/PCB/V1.1/reCamera S101 v1.1.kicad_sch"
+   ],
+   "footprint_ids": 17,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 17,
+    "fetched": 0,
+    "kicad": 5,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "Capacitor:C0201",
+     "Capacitor:C0402",
+     "Capacitor:C0603",
+     "Diode:LED-0402",
+     "Ic:MSOP8-0.65-3X3X1MM",
+     "Ic:X2SON4-0.625-1x1x0.6mm",
+     "Misc:MIC-5P-SMD-4X4MM",
+     "Misc:TP-D35MIL",
+     "Mosfet:SOT-323",
+     "Resistor:R0201",
+     "Resistor:R0402",
+     "Resistor:R0603"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 573682,
+   "schematic": "repo/hardware/recamera-2002/sensors/s101-ov5647/PCB/V1.1/reCamera S101 v1.1.kicad_sch"
+  },
+  "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard": {
+   "name": "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+   "repository": "Spaceflight-Rocketry-Giessen-e-V/Telemetry",
+   "commit": "ee4886d161d5449adb68fcab5ca6824ca0b450bf",
+   "board_id": "TelemetryOnboard",
+   "project_dir": "onboard/pcb",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "onboard/pcb/TelemetryOnboard.kicad_sch"
+   ],
+   "footprint_ids": 27,
+   "symbol_libraries": [
+    "onboard/pcb/Symbols.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "Footprints": "onboard/pcb/Footprints.pretty"
+   },
+   "footprints": {
+    "named": 27,
+    "fetched": 18,
+    "kicad": 9,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 23,
+   "size": 958394,
+   "schematic": "repo/onboard/pcb/TelemetryOnboard.kicad_sch"
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base": {
+   "name": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "repository": "Twisted-Fields/rp2040-motor-controller",
+   "commit": "d51dc5441ad7371df24abd6f7f8783ccf11461ff",
+   "board_id": "RP2040_base",
+   "project_dir": "RP2040_base",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "RP2040_base/RP2040_base.kicad_sch"
+   ],
+   "footprint_ids": 57,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "RP2040_minimal": "debugger/RP2040_minimal.pretty",
+    "driver_module": "parts/driver_module.pretty",
+    "parts": "parts"
+   },
+   "footprints": {
+    "named": 57,
+    "fetched": 14,
+    "kicad": 43,
+    "relocated": 14,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library RP2040_minimal: /home/taylor/pcb/rp2040-motor-controller/RP2040_minimal.pretty",
+    "footprint library driver_module: /home/taylor/pcb/rp2040-motor-controller/parts/driver_module.pretty",
+    "footprint library parts: /home/taylor/pcb/rp2040-motor-controller/parts"
+   ],
+   "status": "ok",
+   "files": 18,
+   "size": 1349053,
+   "schematic": "repo/RP2040_base/RP2040_base.kicad_sch"
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard": {
+   "name": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "repository": "antmicro/jetson-nano-baseboard",
+   "commit": "d8d0b2d71ab4cc4bcdb204a09f78be40d4c8cda3",
+   "board_id": "jetson-nano-baseboard",
+   "project_dir": "",
+   "spdx": "Apache-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "Apache-2.0",
+    "files": []
+   },
+   "sheets": [
+    "jetson-nano-baseboard.kicad_sch",
+    "som.kicad_sch",
+    "csi.kicad_sch",
+    "id-serial.kicad_sch",
+    "display.kicad_sch",
+    "interfaces.kicad_sch",
+    "usb-debug.kicad_sch",
+    "supply.kicad_sch"
+   ],
+   "footprint_ids": 56,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 56,
+    "fetched": 0,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "antmicro-footprints:BarrelJack_Pin2mm_MJ-179PH",
+     "antmicro-footprints:Bus_M.2_Socket_Key_M_Amphenol_MDT580M01001",
+     "antmicro-footprints:CRC_logo_15mm",
+     "antmicro-footprints:C_0402_1005Metric",
+     "antmicro-footprints:C_0603_1608Metric",
+     "antmicro-footprints:C_0805_2012Metric",
+     "antmicro-footprints:C_1206_3216Metric",
+     "antmicro-footprints:C_Pol_EIA-B",
+     "antmicro-footprints:Conn_FFC_Molex_5051101097",
+     "antmicro-footprints:Conn_FFC_WE_68715014x22",
+     "antmicro-footprints:Conn_JST_SH_1x4_SM04B-SRSS-TB-LF-SN",
+     "antmicro-footprints:Conn_Molex_PicoBlade_1x4_0533980471",
+     "antmicro-footprints:D_SMB",
+     "antmicro-footprints:D_SOD-323F",
+     "antmicro-footprints:DisplayPort-Mini_Receptacle_TE_2129320-3",
+     "antmicro-footprints:FB_0603_1608Metric",
+     "antmicro-footprints:FB_0805_2012Metric",
+     "antmicro-footprints:FB_1206_3216Metric",
+     "antmicro-footprints:F_0603_1608Metric",
+     "antmicro-footprints:F_1206_3216Metric",
+     "antmicro-footprints:HDMI-Micro-D_Receptacle_Molex_467651001",
+     "antmicro-footprints:LED_0603_1608Metric_G",
+     "antmicro-footprints:L_1210_3225Metric",
+     "antmicro-footprints:L_Coilcraft-XFL4020",
+     "antmicro-footprints:L_Vishay-IHLP3232DZ",
+     "antmicro-footprints:MS621FE-FL11E",
+     "antmicro-footprints:Module_Jetson-Nano",
+     "antmicro-footprints:QFN-32-1EP_5x5mm",
+     "antmicro-footprints:R-PDSO-N15",
+     "antmicro-footprints:RJ45_Bel_SI-51005-F",
+     "antmicro-footprints:R_0402_1005Metric",
+     "antmicro-footprints:SC-70-5",
+     "antmicro-footprints:SC70-3",
+     "antmicro-footprints:SIC47XED-T1-GE3",
+     "antmicro-footprints:SOD-523_NP",
+     "antmicro-footprints:SOT-23-3",
+     "antmicro-footprints:SOT-23-5",
+     "antmicro-footprints:SOT-23-6",
+     "antmicro-footprints:SOT-23-8",
+     "antmicro-footprints:SOT-753",
+     "antmicro-footprints:SW_TL3340AF160QG_SMD",
+     "antmicro-footprints:Spacer_Drill3.7mm_H4mm_9774040151R",
+     "antmicro-footprints:Spacer_Drill3.7mm_H6mm_9774060151R",
+     "antmicro-footprints:TE_2309413",
+     "antmicro-footprints:TP_SMD_1.5mm",
+     "antmicro-footprints:TSSOP-14_4.4x5mm_P0.65mm",
+     "antmicro-footprints:TSSOP-8_3x3mm_P0.65mm",
+     "antmicro-footprints:Tag-Connect_TC2030-IDC-NL_2x3_P1.27mm",
+     "antmicro-footprints:USB-C_Receptacle_WE_632723300011",
+     "antmicro-footprints:USB-Micro-B_Receptacle_Molex_473460001",
+     "antmicro-footprints:USON-10_2.5x1mm_P0.5mm",
+     "antmicro-footprints:VQFN-24-1EP_3.8x3.8x1.0mm_P0.5mm",
+     "antmicro-footprints:VQFN-HR-14_3.5x4mm",
+     "antmicro-footprints:WQFN-30-1EP_4.6x2.6mm_P0.4mm",
+     "antmicro-footprints:antmicro-logo",
+     "antmicro-footprints:oshw-logo"
+    ]
+   },
+   "status": "ok",
+   "files": 9,
+   "size": 3982815,
+   "schematic": "repo/jetson-nano-baseboard.kicad_sch"
+  },
+  "anyshake__explorer__Explorer": {
+   "name": "anyshake__explorer__Explorer",
+   "repository": "anyshake/explorer",
+   "commit": "0404bea927f25ca75e0c832fd0a33bcd1ed13b22",
+   "board_id": "Explorer",
+   "project_dir": "hardware",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: AGPL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "hardware/Explorer.kicad_sch",
+    "hardware/sensors.kicad_sch",
+    "hardware/mcu.kicad_sch",
+    "hardware/power.kicad_sch"
+   ],
+   "footprint_ids": 42,
+   "symbol_libraries": [
+    "hardware/library/Explorer.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "Explorer": "hardware/library/Explorer.pretty"
+   },
+   "footprints": {
+    "named": 42,
+    "fetched": 1,
+    "kicad": 41,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 9,
+   "size": 1127850,
+   "schematic": "repo/hardware/Explorer.kicad_sch"
+  },
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb": {
+   "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "repository": "apfaudio/eurorack-pmod",
+   "commit": "ddb9aa92fab7f74783f7ed3bf248eec56a6ceb00",
+   "board_id": "eurorack-pmod-pcb",
+   "project_dir": "hardware/eurorack-pmod-r3.5",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "gateware/external/no2misc": "no2fpga/no2misc@59350da954e78424117ed01c55b5c7a12e524397",
+    "hardware/libs/AudioJacks": "clacktronics/AudioJacks@14a88866e93b8ce4a31ad376b0c6eb85cd4d2cf3"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "hardware/eurorack-pmod-r3.5/eurorack-pmod-pcb.kicad_sch",
+    "hardware/eurorack-pmod-r3.5/dual_mono_inputs.kicad_sch",
+    "hardware/eurorack-pmod-r3.5/dual_mono_outputs.kicad_sch",
+    "hardware/eurorack-pmod-r3.5/led_driver.kicad_sch",
+    "hardware/eurorack-pmod-r3.5/power_conn.kicad_sch",
+    "hardware/eurorack-pmod-r3.5/vref.kicad_sch"
+   ],
+   "footprint_ids": 26,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "AudioJacks": "hardware/libs/AudioJacks/AudioJacks.pretty"
+   },
+   "library_fixes": {
+    "AudioJacksFixed": "hardware/libs/custom/AudioJacksFixed.pretty",
+    "ffc-ctxj": "hardware/libs/ffc-ctxj.pretty"
+   },
+   "footprints": {
+    "named": 26,
+    "fetched": 2,
+    "kicad": 23,
+    "relocated": 2,
+    "not_in_their_library": [],
+    "no_library": [
+     "LLP1006-2M:VISHAY-LLP1006-2M"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library AudioJacksFixed: /home/seb/dev/eurorack-pmod/hardware/libs/custom/AudioJacksFixed.pretty",
+    "footprint library BournsEncoders: /home/seb/dev/eurorack-pmod/hardware/libs/custom/BournsEncoders.pretty",
+    "footprint library LLP1006-2M: /home/seb/dev/eurorack-pmod/hardware/libs/custom/LLP1006-2M.pretty",
+    "footprint library ffc-ctxj: /home/seb/dev/eurorack-pmod/hardware/libs/ffc-ctxj.pretty"
+   ],
+   "status": "ok",
+   "files": 11,
+   "size": 775696,
+   "schematic": "repo/hardware/eurorack-pmod-r3.5/eurorack-pmod-pcb.kicad_sch"
+  },
+  "baldengineer__bit-preserve__coco2": {
+   "name": "baldengineer__bit-preserve__coco2",
+   "repository": "baldengineer/bit-preserve",
+   "commit": "8de51fb1d5b7ba18965777c2096aafac23071e10",
+   "board_id": "coco2",
+   "project_dir": "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "Apple/Apple II/Apple_II_Rev0": "https://git.alfter.us/salfter/Apple_II_Rev0: not on GitHub, not fetched",
+    "Tandy-RS/Model 100": "hzeller/trs80-100-schematic@b0950a775f76e6d70d48e391a3d07f2d41e703c8"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Creative Commons",
+    "files": [
+     "LICENSE.md"
+    ]
+   },
+   "sheets": [
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/coco2.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/dram.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/one_bit_64k_dram.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/video.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/sam.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/peripherals.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/roms.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/power.kicad_sch",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/cpu.kicad_sch"
+   ],
+   "footprint_ids": 48,
+   "symbol_libraries": [
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/coco2.kicad_sym",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/Memory_ROM_Tandy.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/Memory_Controller_Motorola.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/Memory_RAM_Motorola.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/Video_Motorola.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/custom_dac.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/symbol-libs/RF_Module_Tandy.lib",
+    "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/coco2-rescue.lib"
+   ],
+   "footprint_libraries": {
+    "Crystal_coco2": "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/Crystal_coco2.pretty",
+    "coco2": "Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/footprint-libs/coco2.pretty"
+   },
+   "footprints": {
+    "named": 48,
+    "fetched": 18,
+    "kicad": 30,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 38,
+   "size": 12372748,
+   "schematic": "repo/Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/coco2.kicad_sch"
+  },
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV": {
+   "name": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "repository": "bismarx-v1/Sumec-MiniSumo",
+   "commit": "70f835fcbfb7d3ec441d76a422681104db715e6e",
+   "board_id": "SUMEC_MK_IV",
+   "project_dir": "-PCB-/SUMEC_MK_IV",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "bitshiftcrazy__d20_pcb__d20_pcb": {
+   "name": "bitshiftcrazy__d20_pcb__d20_pcb",
+   "repository": "bitshiftcrazy/d20_pcb",
+   "commit": "220807c99caede139dd4e102ad59b6b185d05d6a",
+   "board_id": "d20_pcb",
+   "project_dir": "hardware",
+   "spdx": null,
+   "licence": {
+    "allowed": true,
+    "why": "hardware/LICENSE: CERN OHL",
+    "files": [
+     "hardware/LICENSE"
+    ]
+   },
+   "sheets": [
+    "hardware/d20_pcb.kicad_sch"
+   ],
+   "footprint_ids": 9,
+   "symbol_libraries": [
+    "hardware/libraries/symbols/d20_pcb.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "d20_pcb": "hardware/libraries/footprints/d20_pcb.pretty"
+   },
+   "footprints": {
+    "named": 9,
+    "fetched": 3,
+    "kicad": 6,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 8,
+   "size": 231966,
+   "schematic": "repo/hardware/d20_pcb.kicad_sch"
+  },
+  "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "name": "bitshiftcrazy__spell_tome__spell_tome_bottom",
+   "repository": "bitshiftcrazy/spell_tome",
+   "commit": "0eefa7cf28431ff06d34432ab4b0037bbbee0e97",
+   "board_id": "spell_tome_bottom",
+   "project_dir": "",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "spell_tome_bottom.kicad_sch"
+   ],
+   "footprint_ids": 11,
+   "symbol_libraries": [
+    "libraries/symbols/seeed_xiao.kicad_sym",
+    "libraries/symbols/tome.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "seeed_xiao": "libraries/footprints/seeed_xiao.pretty",
+    "tome": "libraries/footprints/tome.pretty"
+   },
+   "footprints": {
+    "named": 11,
+    "fetched": 6,
+    "kicad": 5,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 12,
+   "size": 210742,
+   "schematic": "repo/spell_tome_bottom.kicad_sch"
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9": {
+   "name": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "repository": "briskspirit/Sisu_SSE-9",
+   "commit": "ca6867498d6f45a20581c37e4d33b79bcfcff7cb",
+   "board_id": "Sisu_SSE-9",
+   "project_dir": "",
+   "spdx": "Unlicense",
+   "licence": {
+    "allowed": true,
+    "why": "Unlicense",
+    "files": []
+   },
+   "sheets": [
+    "Sisu_SSE-9.kicad_sch",
+    "rp2354b.kicad_sch",
+    "4g_lte.kicad_sch",
+    "power.kicad_sch",
+    "keypad_backlight.kicad_sch",
+    "rf.kicad_sch",
+    "audio.kicad_sch"
+   ],
+   "footprint_ids": 47,
+   "symbol_libraries": [
+    "lib_10/Sisu_Symbols.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "3210": "lib_10/3210.pretty"
+   },
+   "footprints": {
+    "named": 47,
+    "fetched": 26,
+    "kicad": 21,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 38,
+   "size": 1856797,
+   "schematic": "repo/Sisu_SSE-9.kicad_sch"
+  },
+  "byrantech__laptop__keyboard": {
+   "name": "byrantech__laptop__keyboard",
+   "repository": "byrantech/laptop",
+   "commit": "007e853d2f83b203596a4d7961429e91b77840d3",
+   "board_id": "keyboard",
+   "project_dir": "keyboard",
+   "spdx": "MIT",
+   "submodules": {
+    "Adafruit_nRF52_Bootloader": "Hello9999901/Adafruit_nRF52_Bootloader@d29cefe297d14bd12c30a244620b84e49f08a4e2"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "keyboard/keyboard.kicad_sch",
+    "keyboard/nRF52840.kicad_sch",
+    "keyboard/key_matrix.kicad_sch"
+   ],
+   "footprint_ids": 21,
+   "symbol_libraries": [
+    "keyboard/lib/BQ21040DBVR/BQ21040DBVR.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "Cherry_ULP": "keyboard/Cherry_ULP.pretty",
+    "Mikoto-Footprints": "keyboard/mikoto-footprints.pretty",
+    "BQ21040": "keyboard/lib/BQ21040DBVR/BQ21040.pretty",
+    "Library": "keyboard/Library.pretty",
+    "mikoto-footprints": "keyboard/mikoto-footprints.pretty"
+   },
+   "footprints": {
+    "named": 21,
+    "fetched": 6,
+    "kicad": 15,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 13,
+   "size": 782306,
+   "schematic": "repo/keyboard/keyboard.kicad_sch"
+  },
+  "byrantech__laptop__motherboard": {
+   "name": "byrantech__laptop__motherboard",
+   "repository": "byrantech/laptop",
+   "commit": "007e853d2f83b203596a4d7961429e91b77840d3",
+   "board_id": "motherboard",
+   "project_dir": "motherboard",
+   "spdx": "MIT",
+   "submodules": {
+    "Adafruit_nRF52_Bootloader": "Hello9999901/Adafruit_nRF52_Bootloader@d29cefe297d14bd12c30a244620b84e49f08a4e2"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "motherboard/motherboard.kicad_sch",
+    "motherboard/system.kicad_sch",
+    "motherboard/audio.kicad_sch",
+    "motherboard/ext_usb2.0.kicad_sch",
+    "motherboard/pcie30-mkey.kicad_sch",
+    "motherboard/USBC0.kicad_sch",
+    "motherboard/USBC1.kicad_sch",
+    "motherboard/pcie20-ekey.kicad_sch",
+    "motherboard/eDP.kicad_sch",
+    "motherboard/sdcard.kicad_sch",
+    "motherboard/usb20.kicad_sch"
+   ],
+   "footprint_ids": 40,
+   "symbol_libraries": [
+    "motherboard/library.kicad_sym",
+    "motherboard/library/TPS54331DR/TPS54331DR.kicad_sym",
+    "motherboard/library/PI6C557-05BLE/PI6C557-05BLE.kicad_sym",
+    "motherboard/library/eDP_Connector/20455-040E-76.kicad_sym",
+    "motherboard/library/Audio_Amp_TPA2028D1YZFT/TPA2028D1YZFT.kicad_sym",
+    "motherboard/library/Headphone_Jack.kicad_sym",
+    "motherboard/library/L829-1J1T-JM/L829-1J1T-JM.kicad_sym",
+    "motherboard/library/TPA2016D2RTJR-2/TPA2016D2RTJR.kicad_sym",
+    "motherboard/library/TPS564257DRLR/TPS564257DRLR.kicad_sym",
+    "motherboard/library/RT9193-18GB/RT9193-18GB.kicad_sym",
+    "motherboard/library/LIB_TPS92360DCKR/TPS92360DCKR/KiCad/TPS92360DCKR.kicad_sym",
+    "motherboard/library/USB_A/USB_A.kicad_sym",
+    "motherboard/library/FUSB302BUCX/2024-10-24_03-39-43.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "ACM2012": "motherboard/library/ACM2012.pretty",
+    "TPS54331DR": "motherboard/library/TPS54331DR/TPS54331DR.pretty",
+    "SOP65P640X120-20N": "motherboard/library/PI6C557-05BLE/SOP65P640X120-20N.pretty",
+    "Library": "motherboard/library/Library.pretty",
+    "USB-C": "motherboard/library/USBC_24P_LCSC.pretty",
+    "eDP_Connector": "motherboard/library/eDP_Connector/IPEX_20455-040E-76.pretty",
+    "6P_05mm_FPC": "motherboard/library/6P_05mm_FPC.pretty",
+    "NVME_M_KEY": "motherboard/library/NVME_M_KEY.pretty",
+    "WIRELESS_E_KEY": "motherboard/library/WIRELESS_E_KEY.pretty",
+    "microSD_Card": "motherboard/library/microSD_Card.pretty",
+    "Audio_Amp": "motherboard/library/Audio_Amp_TPA2028D1YZFT/BGA9C50P3X3_162X162X63.pretty",
+    "Headphone_Jack": "motherboard/library/Headphone_Jack.pretty",
+    "Ethernet": "motherboard/library/L829-1J1T-JM/L829-1J1T-JM.pretty",
+    "TPA2016": "motherboard/library/TPA2016D2RTJR-2/TPA2016.pretty",
+    "TPS564257": "motherboard/library/TPS564257DRLR/TPS564257.pretty",
+    "RT9193-18GB": "motherboard/library/RT9193-18GB/RT9193-18GB.pretty",
+    "USB_A": "motherboard/library/USB_A/USB_A.pretty",
+    "FUSB302BUCX": "motherboard/library/FUSB302BUCX/footprints.pretty",
+    "HDMI_MALE_HORIZONTAL": "motherboard/display_eval_short/HDMI_MALE_HORIZONTAL/HDMI_MALE_HORIZONTAL.pretty",
+    "BGA9C50P3X3_162X162X63": "motherboard/library/Audio_Amp_TPA2028D1YZFT/BGA9C50P3X3_162X162X63.pretty",
+    "DP_Conn_JLC": "motherboard/library/DP_Conn_JLC/DP_Conn_JLC.pretty",
+    "MOLEX_0472720024": "motherboard/library/DP_Connector/MOLEX_0472720024.pretty",
+    "footprints": "motherboard/library/FUSB302BUCX/footprints.pretty",
+    "HDMI_MALE_VERTICAL": "motherboard/library/HDMI_MALE_VERTICAL/HDMI_MALE_VERTICAL.pretty",
+    "L829-1J1T-JM": "motherboard/library/L829-1J1T-JM/L829-1J1T-JM.pretty",
+    "USBC_24P_LCSC": "motherboard/library/USBC_24P_LCSC.pretty",
+    "eDP_Conn_JLC": "motherboard/library/eDP_Conn_JLC/eDP_Conn_JLC.pretty",
+    "IPEX_20455-040E-76": "motherboard/library/eDP_Connector/IPEX_20455-040E-76.pretty",
+    "midmountusbA": "motherboard/library/midmountusbA/midmountusbA.pretty"
+   },
+   "library_fixes": {
+    "TPA2016D2RTJR": "motherboard/library/TPA2016D2RTJR-2/TPA2016.pretty"
+   },
+   "footprints": {
+    "named": 40,
+    "fetched": 14,
+    "kicad": 26,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 42,
+   "size": 2924574,
+   "schematic": "repo/motherboard/motherboard.kicad_sch"
+  },
+  "byrantech__laptop__power": {
+   "name": "byrantech__laptop__power",
+   "repository": "byrantech/laptop",
+   "commit": "007e853d2f83b203596a4d7961429e91b77840d3",
+   "board_id": "power",
+   "project_dir": "power",
+   "spdx": "MIT",
+   "submodules": {
+    "Adafruit_nRF52_Bootloader": "Hello9999901/Adafruit_nRF52_Bootloader@d29cefe297d14bd12c30a244620b84e49f08a4e2"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "power/power.kicad_sch"
+   ],
+   "footprint_ids": 28,
+   "symbol_libraries": [
+    "power/library/HUSB238/husb238.kicad_sym",
+    "power/library/BQ7791501PWR/BQ7791501PWR.kicad_sym",
+    "power/library/ul_BQ25713RSNR/KiCADv6/2024-09-08_03-50-33.kicad_sym",
+    "power/library/ul_LTC2943IDD-PBF/KiCADv6/2024-09-08_03-51-34.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "HUSB238": "power/library/HUSB238/husb238.pretty",
+    "BQ77915": "power/library/BQ7791501PWR/BQ7791501.pretty",
+    "LTC2943": "power/library/ul_LTC2943IDD-PBF/KiCADv6/footprints.pretty",
+    "BQ25713": "power/library/ul_BQ25713RSNR/KiCADv6/footprints.pretty",
+    "FPC": "power/library/6P_05mm_FPC.pretty",
+    "TPS564257": "power/library/TPS564257DRLR/TPS564257.pretty",
+    "6P_05mm_FPC": "power/library/6P_05mm_FPC.pretty",
+    "BQ7791501": "power/library/BQ7791501PWR/BQ7791501.pretty",
+    "husb238": "power/library/HUSB238/husb238.pretty"
+   },
+   "footprints": {
+    "named": 28,
+    "fetched": 6,
+    "kicad": 22,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 15,
+   "size": 666596,
+   "schematic": "repo/power/power.kicad_sch"
+  },
+  "crmaykish__mackerel-68k__mackerel-08-v1": {
+   "name": "crmaykish__mackerel-68k__mackerel-08-v1",
+   "repository": "crmaykish/mackerel-68k",
+   "commit": "50786ed64897e037c57989c3322f02ea375584b7",
+   "board_id": "mackerel-08-v1",
+   "project_dir": "hardware/mackerel-08-v1",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "hardware/mackerel-08-v1/mackerel-08-v1.kicad_sch",
+    "hardware/mackerel-08-v1/mackerel-08-power-reset.kicad_sch",
+    "hardware/mackerel-08-v1/mackerel-08-expansion.kicad_sch",
+    "hardware/mackerel-08-v1/mackerel-08-memory.kicad_sch",
+    "hardware/mackerel-08-v1/mackerel-08-duart.kicad_sch"
+   ],
+   "footprint_ids": 27,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 27,
+    "fetched": 0,
+    "kicad": 27,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 8,
+   "size": 650535,
+   "schematic": "repo/hardware/mackerel-08-v1/mackerel-08-v1.kicad_sch"
+  },
+  "crmaykish__mackerel-68k__mackerel-10-v1": {
+   "name": "crmaykish__mackerel-68k__mackerel-10-v1",
+   "repository": "crmaykish/mackerel-68k",
+   "commit": "50786ed64897e037c57989c3322f02ea375584b7",
+   "board_id": "mackerel-10-v1",
+   "project_dir": "hardware/mackerel-10-v1",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "hardware/mackerel-10-v1/mackerel-10-v1.kicad_sch",
+    "hardware/mackerel-10-v1/glue_cpld.kicad_sch",
+    "hardware/mackerel-10-v1/expansion.kicad_sch",
+    "hardware/mackerel-10-v1/dram.kicad_sch",
+    "hardware/mackerel-10-v1/duart.kicad_sch",
+    "hardware/mackerel-10-v1/low_mem.kicad_sch",
+    "hardware/mackerel-10-v1/power_reset.kicad_sch",
+    "hardware/mackerel-10-v1/ide.kicad_sch"
+   ],
+   "footprint_ids": 30,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "mackerel": "hardware/mackerel.pretty"
+   },
+   "footprints": {
+    "named": 30,
+    "fetched": 1,
+    "kicad": 29,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library mackerel: /home/colin/Workspace/mackerel-68k/hardware/mackerel.pretty"
+   ],
+   "status": "ok",
+   "files": 12,
+   "size": 914611,
+   "schematic": "repo/hardware/mackerel-10-v1/mackerel-10-v1.kicad_sch"
+  },
+  "crmaykish__mackerel-68k__mackerel-30-proto": {
+   "name": "crmaykish__mackerel-68k__mackerel-30-proto",
+   "repository": "crmaykish/mackerel-68k",
+   "commit": "50786ed64897e037c57989c3322f02ea375584b7",
+   "board_id": "mackerel-30-proto",
+   "project_dir": "hardware/mackerel-30-proto",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "hardware/mackerel-30-proto/mackerel-30-proto.kicad_sch",
+    "hardware/mackerel-30-proto/uart.kicad_sch",
+    "hardware/mackerel-30-proto/ide.kicad_sch",
+    "hardware/mackerel-30-proto/fpu.kicad_sch",
+    "hardware/mackerel-30-proto/power.kicad_sch",
+    "hardware/mackerel-30-proto/expansion.kicad_sch",
+    "hardware/mackerel-30-proto/dram.kicad_sch",
+    "hardware/mackerel-30-proto/low_mem.kicad_sch"
+   ],
+   "footprint_ids": 34,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "mackerel": "hardware/mackerel.pretty"
+   },
+   "footprints": {
+    "named": 34,
+    "fetched": 2,
+    "kicad": 32,
+    "relocated": 2,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library mackerel: /home/colin/Workspace/mackerel-68k/hardware/mackerel.pretty"
+   ],
+   "status": "ok",
+   "files": 13,
+   "size": 1105611,
+   "schematic": "repo/hardware/mackerel-30-proto/mackerel-30-proto.kicad_sch"
+  },
+  "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
+   "name": "doudar__SmartSpin2k__SmartSpin2k_Panelized",
+   "repository": "doudar/SmartSpin2k",
+   "commit": "8e861fbbf9e162497647318e3ddb8823926fcce9",
+   "board_id": "SmartSpin2k_Panelized",
+   "project_dir": "Hardware/V3 - Integrated PCB/PCB/SS2K_KiCad_Files/SmartSpin2k_Panelized",
+   "spdx": "GPL-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-2.0",
+    "files": []
+   },
+   "sheets": [
+    "Hardware/V3 - Integrated PCB/PCB/SS2K_KiCad_Files/SmartSpin2k_Panelized/SmartSpin2k_Panelized.kicad_sch"
+   ],
+   "footprint_ids": 0,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 0,
+    "fetched": 0,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 5342,
+   "schematic": "repo/Hardware/V3 - Integrated PCB/PCB/SS2K_KiCad_Files/SmartSpin2k_Panelized/SmartSpin2k_Panelized.kicad_sch"
+  },
+  "duckyb__eternal-keypad__eternal-keypad": {
+   "name": "duckyb__eternal-keypad__eternal-keypad",
+   "repository": "duckyb/eternal-keypad",
+   "commit": "bf11c1d50ead127c25401d262d73834e8438f3ca",
+   "board_id": "eternal-keypad",
+   "project_dir": "pcb-kicad",
+   "spdx": "MIT",
+   "submodules": {
+    "MX_Alps_Hybrid": "ai03-2725/MX_Alps_Hybrid@fa75e94983863ed39cafa81da5bd67dd52659a5a",
+    "ProMicroKiCad": "Biacco42/ProMicroKiCad@96404fc297aa4b3009f8e2e2b69e1c1abed35538",
+    "random-keyboard-parts.pretty": "ai03-2725/random-keyboard-parts.pretty@b0bedf4c33a4efd241614130dea3c80140f6f2e7"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "pcb-kicad/eternal-keypad.kicad_sch"
+   ],
+   "footprint_ids": 10,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "promicro": "ProMicroKiCad/promicro.pretty"
+   },
+   "footprints": {
+    "named": 10,
+    "fetched": 1,
+    "kicad": 2,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": [
+     "* duckyb-collection:1pin_conn",
+     "* duckyb-collection:LED_WS2812B_PLCC4_5.0x5.0mm_P3.2mm",
+     "* duckyb-collection:SPDT_C128955",
+     "* duckyb-collection:Tactile-Switch_SMT",
+     "MX_Only:MXOnly-1.25U-Reversible-NoLED",
+     "MX_Only:MXOnly-1U-Reversible-NoLED",
+     "MX_Only:MXOnly-3U-Reversible-ReversedStabilizers-NoLED"
+    ]
+   },
+   "status": "ok",
+   "files": 3,
+   "size": 172618,
+   "schematic": "repo/pcb-kicad/eternal-keypad.kicad_sch"
+  },
+  "duckyb__urchin__main": {
+   "name": "duckyb__urchin__main",
+   "repository": "duckyb/urchin",
+   "commit": "aef241da7870dbae322416a00fbb269f1a24d8b1",
+   "board_id": "main",
+   "project_dir": "",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "main.kicad_sch"
+   ],
+   "footprint_ids": 7,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "urchin-footprints": "lib"
+   },
+   "footprints": {
+    "named": 7,
+    "fetched": 7,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 198363,
+   "schematic": "repo/main.kicad_sch"
+  },
+  "earth75__atat-1800__ATAT1800": {
+   "name": "earth75__atat-1800__ATAT1800",
+   "repository": "earth75/atat-1800",
+   "commit": "5aa435a751ebd5d2ee0cae4f35f4bc59dbe5316d",
+   "board_id": "ATAT1800",
+   "project_dir": "",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "ebastler__osprey__osprey_rev_a": {
+   "name": "ebastler__osprey__osprey_rev_a",
+   "repository": "ebastler/osprey",
+   "commit": "0765a0c27566816c6b0becd4da4c2e720eed36f9",
+   "board_id": "osprey_rev_a",
+   "project_dir": "osprey_rev_a",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "logo-branding.pretty": "ebastler/logo-branding.pretty@9fc1a6eff571d786d2251ab823bdd2cebc34c9b0",
+    "marbastlib": "ebastler/marbastlib@9da9bdf1afb0bd76ec984863ee3ae551b156aa99"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ]
+   },
+   "sheets": [
+    "osprey_rev_a/osprey_rev_a.kicad_sch",
+    "osprey_rev_a/sheet_bmgmt.kicad_sch",
+    "osprey_rev_a/sheet_usb.kicad_sch",
+    "osprey_rev_a/sheet_matrix.kicad_sch"
+   ],
+   "footprint_ids": 28,
+   "symbol_libraries": [
+    "marbastlib/marbastlib-various.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "marbastlib-various": "marbastlib/marbastlib-various.pretty",
+    "marbastlib-choc": "marbastlib/marbastlib-choc.pretty",
+    "logo-branding": "logo-branding.pretty"
+   },
+   "footprints": {
+    "named": 28,
+    "fetched": 10,
+    "kicad": 17,
+    "relocated": 0,
+    "not_in_their_library": [
+     "marbastlib-various:PNT_RKJXU1210006"
+    ],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 18,
+   "size": 618695,
+   "schematic": "repo/osprey_rev_a/osprey_rev_a.kicad_sch"
+  },
+  "emertcakir__OpenAirScope__OpenAirScope": {
+   "name": "emertcakir__OpenAirScope__OpenAirScope",
+   "repository": "emertcakir/OpenAirScope",
+   "commit": "239d0f50c7cb3898508fa8b7cbb4014613393653",
+   "board_id": "OpenAirScope",
+   "project_dir": "hardware/OpenAirStation-V0-Draft",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "hardware/OpenAirStation-V0-Draft/OpenAirScope.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/untitled.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/OpenAirScope_N.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/Display-RTC.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/AirSensors.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/Conn.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/Power.kicad_sch",
+    "hardware/OpenAirStation-V0-Draft/MCU.kicad_sch"
+   ],
+   "footprint_ids": 47,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "RAK3172": "hardware/Lib/RAK3172",
+    "RFPC-SMA27-F": "hardware/Lib/RFPC-SMA27-F",
+    "S2B-PH-K-S_LF__SN_": "hardware/Lib/S2B-PH-K-S_LF__SN_",
+    "S5B-ZR_LF__SN_": "hardware/Lib/S5B-ZR_LF__SN_",
+    "SGP41-D-R4": "hardware/Lib/SGP41-D-R4",
+    "TPS61023DRLT (1)": "hardware/Lib/TPS61023DRLT (1)",
+    "WE-SL2": "hardware/Lib/WE-SL2",
+    "XEL4030-102MEC": "hardware/Lib/XEL4030-102MEC"
+   },
+   "footprints": {
+    "named": 47,
+    "fetched": 8,
+    "kicad": 35,
+    "relocated": 8,
+    "not_in_their_library": [],
+    "no_library": [
+     "digikey-footprints:SMD-2_3.2x1.5mm",
+     "digikey-footprints:SOD-123",
+     "digikey-footprints:SOT-23-3",
+     "digikey-footprints:Switch_Tactile_THT_6x6mm"
+    ]
+   },
+   "status": "ok",
+   "files": 17,
+   "size": 3525355,
+   "schematic": "repo/hardware/OpenAirStation-V0-Draft/OpenAirScope.kicad_sch"
+  },
+  "greatscottgadgets__hackrf__hackrf-one": {
+   "name": "greatscottgadgets__hackrf__hackrf-one",
+   "repository": "greatscottgadgets/hackrf",
+   "commit": "7f96cc8e3fa625c4263a71ba8dd44d1f6110e4fa",
+   "board_id": "hackrf-one",
+   "project_dir": "hardware/hackrf-one",
+   "spdx": "GPL-2.0",
+   "submodules": {
+    "firmware/libopencm3": "mossmann/libopencm3@a0bb997968bf57c87f2aa4e389a63219580bb5c3",
+    "hardware/gsg-kicad-lib": "greatscottgadgets/gsg-kicad-lib@41173d673f9dec5f73c0cb88ea69e9b167b001b3"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "GPL-2.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/hackrf-one/hackrf-one.kicad_sch",
+    "hardware/hackrf-one/frontend.kicad_sch",
+    "hardware/hackrf-one/baseband.kicad_sch",
+    "hardware/hackrf-one/mcu.kicad_sch"
+   ],
+   "footprint_ids": 43,
+   "symbol_libraries": [
+    "hardware/kicad/hackrf.lib",
+    "hardware/gsg-kicad-lib/gsg-symbols.lib",
+    "hardware/hackrf-one/74AUP2G58GU.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "gsg-modules": "hardware/gsg-kicad-lib/gsg-modules.pretty"
+   },
+   "footprints": {
+    "named": 43,
+    "fetched": 6,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "hackrf:GSG-0402",
+     "hackrf:GSG-0603",
+     "hackrf:GSG-0805",
+     "hackrf:GSG-2500BL14M100",
+     "hackrf:GSG-50MIL-HEADER-2x5-TH",
+     "hackrf:GSG-B0310J50100AHF",
+     "hackrf:GSG-HEADER-1x2",
+     "hackrf:GSG-HEADER-1x6",
+     "hackrf:GSG-HEADER-2x10",
+     "hackrf:GSG-HEADER-2x11",
+     "hackrf:GSG-HEADER-2x13",
+     "hackrf:GSG-HEADER-2x3",
+     "hackrf:GSG-HEADER-2x8",
+     "hackrf:GSG-HEADER-NOMARK-1x2",
+     "hackrf:GSG-HOLE126MIL-COPPER",
+     "hackrf:GSG-HP-DEA",
+     "hackrf:GSG-LP0603",
+     "hackrf:GSG-LQFP144",
+     "hackrf:GSG-LXES1TBCC2-004",
+     "hackrf:GSG-NRG4026",
+     "hackrf:GSG-QFN20-4",
+     "hackrf:GSG-QFN32",
+     "hackrf:GSG-QFN48-6",
+     "hackrf:GSG-QFN48-7",
+     "hackrf:GSG-S-PVSON-N10",
+     "hackrf:GSG-SHIELD-BMI-S-230",
+     "hackrf:GSG-SKY13317-373LF",
+     "hackrf:GSG-SMA-73251-2120",
+     "hackrf:GSG-SOIC8-208",
+     "hackrf:GSG-SOT363",
+     "hackrf:GSG-SWITCH-FSMRA",
+     "hackrf:GSG-TEST-POINT-S1751-46R",
+     "hackrf:GSG-TESTPOINT-50MIL",
+     "hackrf:GSG-USB-MICROB-FCI-10103592-EXT",
+     "hackrf:GSG-VQ100",
+     "hackrf:GSG-XTAL-AB26TRQ",
+     "hackrf:GSG-XTAL3.2x2.5mm"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library hackrf: ${KIPRJMOD}/../kicad/hackrf.mod not in the repository"
+   ],
+   "problems": [
+    "footprint library hackrf is of type Legacy"
+   ],
+   "status": "ok",
+   "files": 16,
+   "size": 1613560,
+   "schematic": "repo/hardware/hackrf-one/hackrf-one.kicad_sch"
+  },
+  "hackclub__OnBoard__E-Fidget-Lite": {
+   "name": "hackclub__OnBoard__E-Fidget-Lite",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "E-Fidget-Lite",
+   "project_dir": "projects/E-Fidget Lite V3/E-Fidget-Lite",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "hackclub__OnBoard__MotionCubeViewAllForces": {
+   "name": "hackclub__OnBoard__MotionCubeViewAllForces",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "MotionCubeViewAllForces",
+   "project_dir": "projects/MotionCube/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "hackclub__OnBoard__PixelWave": {
+   "name": "hackclub__OnBoard__PixelWave",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "PixelWave",
+   "project_dir": "projects/PixelWave/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "hackclub__OnBoard__keyboar_": {
+   "name": "hackclub__OnBoard__keyboar_",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "keyboar!",
+   "project_dir": "projects/Hugo's Keyboard/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "hackclub__OnBoard__koeg-board-pcb": {
+   "name": "hackclub__OnBoard__koeg-board-pcb",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "koeg-board-pcb",
+   "project_dir": "projects/Koeg-Board/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "hackclub__OnBoard__krishveercard": {
+   "name": "hackclub__OnBoard__krishveercard",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "krishveercard",
+   "project_dir": "projects/KrishveerCard/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no krishveercard.kicad_sch at the commit (the folder has krishveeracrd.kicad_sch)"
+  },
+  "hackclub__OnBoard__woagboard": {
+   "name": "hackclub__OnBoard__woagboard",
+   "repository": "hackclub/OnBoard",
+   "commit": "4d3caeeabe216cbb1b9f37267483476abf75c608",
+   "board_id": "woagboard",
+   "project_dir": "projects/onboard-live-Woagboard/src",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "headblockhead__slab-pcb__interchange-pcb-right": {
+   "name": "headblockhead__slab-pcb__interchange-pcb-right",
+   "repository": "headblockhead/slab-pcb",
+   "commit": "c71d1f6a1f07661351185173c98aee3c5ce4b81d",
+   "board_id": "interchange-pcb-right",
+   "project_dir": "interchange-pcb-right",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "interchange-pcb-right/interchange-pcb-right.kicad_sch",
+    "interchange-pcb-right/RGBLEDArray.kicad_sch"
+   ],
+   "footprint_ids": 20,
+   "symbol_libraries": [
+    "shared/CustomSymbols.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "CustomFootprints": "shared/CustomFootprints.pretty"
+   },
+   "footprints": {
+    "named": 20,
+    "fetched": 11,
+    "kicad": 9,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 17,
+   "size": 620984,
+   "schematic": "repo/interchange-pcb-right/interchange-pcb-right.kicad_sch"
+  },
+  "headblockhead__slab-pcb__slab-pcb-left": {
+   "name": "headblockhead__slab-pcb__slab-pcb-left",
+   "repository": "headblockhead/slab-pcb",
+   "commit": "c71d1f6a1f07661351185173c98aee3c5ce4b81d",
+   "board_id": "slab-pcb-left",
+   "project_dir": "slab-pcb-left",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "slab-pcb-left/slab-pcb-left.kicad_sch"
+   ],
+   "footprint_ids": 19,
+   "symbol_libraries": [
+    "shared/CustomSymbols.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "CustomFootprints": "shared/CustomFootprints.pretty"
+   },
+   "footprints": {
+    "named": 19,
+    "fetched": 10,
+    "kicad": 9,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 15,
+   "size": 496984,
+   "schematic": "repo/slab-pcb-left/slab-pcb-left.kicad_sch"
+  },
+  "iandchasse__silkscreen-pcb__silkscreen_pcb": {
+   "name": "iandchasse__silkscreen-pcb__silkscreen_pcb",
+   "repository": "iandchasse/silkscreen-pcb",
+   "commit": "b916ffa7892b3df79d3102c74e5fc66be45f6940",
+   "board_id": "silkscreen_pcb",
+   "project_dir": "",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "silkscreen_pcb.kicad_sch"
+   ],
+   "footprint_ids": 34,
+   "symbol_libraries": [
+    "KiCad/9.0/3rdparty/FH34SRJ_24pin/FH34SRJ-24S-0.5SH_50_.kicad_sym",
+    "KiCad/9.0/3rdparty/FH34SRJ_6pin/FH34SRJ-6S-0.5SH_50_.kicad_sym",
+    "KiCad/9.0/3rdparty/ul_FS8205A/2026-01-17_21-43-04.kicad_sym",
+    "KiCad/9.0/3rdparty/PPPC062LJBN_RC/2026-05-25_00-23-42.kicad_sym",
+    "KiCad/9.0/3rdparty/TPD4E1U06DBVR/TPD4E1U06DBVR.kicad_sym",
+    "KiCad/9.0/3rdparty/TSD05CDYFR/KiCADv6/2025-12-14_19-02-00.kicad_sym",
+    "KiCad/9.0/3rdparty/TPS923610DRLR/KiCADv6/2026-09-06_02-10-40.kicad_sym",
+    "KiCad/9.0/3rdparty/RV-8263-C7/RV-8263-C7.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "FH34SRJ-24S-0.5SH(50)": "KiCad/9.0/3rdparty/FH34SRJ_24pin",
+    "FH34SRJ-6S-0.5SH(50)": "KiCad/9.0/3rdparty/FH34SRJ_6pin",
+    "PPPC_12": "KiCad/9.0/3rdparty/PPPC062LJBN_RC",
+    "mjtp1117": "KiCad/9.0/3rdparty/Mjtp1117",
+    "TPS923610DRLR": "KiCad/9.0/3rdparty/TPS923610DRLR/KiCADv6/footprints.pretty",
+    "microSD_dualsource": "KiCad/9.0/3rdparty/microSD_dualsource.pretty"
+   },
+   "footprints": {
+    "named": 34,
+    "fetched": 6,
+    "kicad": 28,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 18,
+   "size": 880648,
+   "schematic": "repo/silkscreen_pcb.kicad_sch"
+  },
+  "ikajdan__katia__katia": {
+   "name": "ikajdan__katia__katia",
+   "repository": "ikajdan/katia",
+   "commit": "bb9ef0334de3d4ef5a090dc711b4e3d06c8da1b7",
+   "board_id": "katia",
+   "project_dir": "hardware",
+   "spdx": "CERN-OHL-P-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/katia.kicad_sch",
+    "hardware/right_board.kicad_sch",
+    "hardware/flash.kicad_sch",
+    "hardware/leds.kicad_sch",
+    "hardware/usb.kicad_sch",
+    "hardware/left_board.kicad_sch"
+   ],
+   "footprint_ids": 21,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "local": "hardware/footprints"
+   },
+   "footprints": {
+    "named": 21,
+    "fetched": 7,
+    "kicad": 14,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 15,
+   "size": 841672,
+   "schematic": "repo/hardware/katia.kicad_sch"
+  },
+  "little-red-rover__little-red-rover__little_red_rover": {
+   "name": "little-red-rover__little-red-rover__little_red_rover",
+   "repository": "little-red-rover/little-red-rover",
+   "commit": "1509a7a94df51ac4be854c543c8866e2a85803f4",
+   "board_id": "little_red_rover",
+   "project_dir": "HARDWARE/little_red_rover",
+   "spdx": null,
+   "licence": {
+    "allowed": true,
+    "why": "HARDWARE/LICENSE: CERN OHL",
+    "files": [
+     "HARDWARE/LICENSE"
+    ]
+   },
+   "sheets": [
+    "HARDWARE/little_red_rover/little_red_rover.kicad_sch"
+   ],
+   "footprint_ids": 19,
+   "symbol_libraries": [
+    "HARDWARE/little_red_rover/digikey_imports.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "digikey_imports": "HARDWARE/little_red_rover/digikey_imports.pretty"
+   },
+   "footprints": {
+    "named": 19,
+    "fetched": 3,
+    "kicad": 15,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "Espressif:ESP32-S3-MINI-1"
+    ]
+   },
+   "status": "ok",
+   "files": 8,
+   "size": 332377,
+   "schematic": "repo/HARDWARE/little_red_rover/little_red_rover.kicad_sch"
+  },
+  "maniekx86__M8SBC-486__homebrew_486": {
+   "name": "maniekx86__M8SBC-486__homebrew_486",
+   "repository": "maniekx86/M8SBC-486",
+   "commit": "8dc20b49faa7f3df84c27179b002312127ba5fea",
+   "board_id": "homebrew_486",
+   "project_dir": "pcb",
+   "spdx": null,
+   "licence": {
+    "allowed": true,
+    "why": "pcb/LICENSE: GPL (non-commercial)",
+    "files": [
+     "pcb/LICENSE"
+    ]
+   },
+   "sheets": [
+    "pcb/homebrew_486.kicad_sch",
+    "pcb/power.kicad_sch",
+    "pcb/ramrom.kicad_sch",
+    "pcb/pic_pit.kicad_sch",
+    "pcb/cpu.kicad_sch",
+    "pcb/isa.kicad_sch",
+    "pcb/bus_tr.kicad_sch",
+    "pcb/fpga.kicad_sch",
+    "pcb/avr.kicad_sch"
+   ],
+   "footprint_ids": 28,
+   "symbol_libraries": [
+    "pcb/Kicad-486-CPU-socket-main/486_Socket.kicad_sym",
+    "pcb/Kicad-486-CPU-socket-main/sbc486_additional.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "486_Socket": "pcb/Kicad-486-CPU-socket-main/486_Socket.pretty",
+    "ultimateretro": "pcb/ultimateretro",
+    "img": "pcb/img.pretty",
+    "486custom": "pcb/486custom.pretty"
+   },
+   "footprints": {
+    "named": 28,
+    "fetched": 3,
+    "kicad": 25,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 17,
+   "size": 1615326,
+   "schematic": "repo/pcb/homebrew_486.kicad_sch"
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized": {
+   "name": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "repository": "obsilab/Quanta75",
+   "commit": "fe45630787dce4ec154e6826bf268d4de40ce11b",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "project_dir": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "spdx": "CERN-OHL-P-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": []
+   },
+   "sheets": [
+    "Quanta75_BareRP2040_JLCPCBAoptimized/Quanta75_BareRP2040_JLCPCBAoptimized.kicad_sch"
+   ],
+   "footprint_ids": 31,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 31,
+    "fetched": 0,
+    "kicad": 24,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "LucasLibrary:RotaryEncoder_both_AlpsEC11E-S_BournsPEC12R-3-S",
+     "PCM_Ferrite_SMD_Handsoldering_AKL:Ferrite_0805_2012Metric",
+     "PCM_Ferrite_SMD_Handsoldering_AKL:Ferrite_0805_2012Metric_Pad1.05x1.20mm_BigPads",
+     "PCM_Switch_Keyboard_Cherry_MX:SW_Cherry_MX_PCB_6.25u",
+     "SL2.1a:SOP-16_L10.0-W3.9-P1.27-LS6.0-BL",
+     "USB_A_vertical_KH-AF180ZJ-13.7:USB-A-TH_KH-AF180ZJ-13.7",
+     "USB_C_socket_GT-USB-7010H:USB-C-SMD_G-SWITCH_GT-USB-7010EN"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 559976,
+   "schematic": "repo/Quanta75_BareRP2040_JLCPCBAoptimized/Quanta75_BareRP2040_JLCPCBAoptimized.kicad_sch"
+  },
+  "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized": {
+   "name": "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "repository": "obsilab/Quanta75",
+   "commit": "fe45630787dce4ec154e6826bf268d4de40ce11b",
+   "board_id": "Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "project_dir": "Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "spdx": "CERN-OHL-P-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": []
+   },
+   "sheets": [
+    "Quanta75_RP2040Stamp_JLCPCBAoptimized/Quanta75_RP2040Stamp_JLCPCBAoptimized.kicad_sch"
+   ],
+   "footprint_ids": 25,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 25,
+    "fetched": 0,
+    "kicad": 17,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "PCM_Ferrite_SMD_Handsoldering_AKL:Ferrite_0805_2012Metric",
+     "PCM_Ferrite_SMD_Handsoldering_AKL:Ferrite_0805_2012Metric_Pad1.05x1.20mm_BigPads",
+     "PCM_Switch_Keyboard_Cherry_MX:SW_Cherry_MX_PCB_6.25u",
+     "PEC12R-4120F-S0012:SW-TH_PEC12R-4120F-S0012",
+     "RP2040 Stamp:RP2040_Stamp_THT",
+     "SL2.1a:SOP-16_L10.0-W3.9-P1.27-LS6.0-BL",
+     "USB_A_vertical_KH-AF180ZJ-13.7:USB-A-TH_KH-AF180ZJ-13.7",
+     "USB_C_socket_GT-USB-7010H:USB-C-SMD_G-SWITCH_GT-USB-7010EN"
+    ]
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 481329,
+   "schematic": "repo/Quanta75_RP2040Stamp_JLCPCBAoptimized/Quanta75_RP2040Stamp_JLCPCBAoptimized.kicad_sch"
+  },
+  "ohdsp__DSP-ADAU1452__DSP-ADAU1452": {
+   "name": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "repository": "ohdsp/DSP-ADAU1452",
+   "commit": "f9dd8f794ef30c4f2f248ef84d311dd9712dbfd5",
+   "board_id": "DSP-ADAU1452",
+   "project_dir": "KiCad",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.TXT: GPL",
+    "files": [
+     "LICENSE.TXT"
+    ]
+   },
+   "sheets": [
+    "KiCad/DSP-ADAU1452.kicad_sch",
+    "KiCad/Connectors.kicad_sch",
+    "KiCad/SPDIF.kicad_sch",
+    "KiCad/ADAU1452 PSU.kicad_sch",
+    "KiCad/ADAU1452.kicad_sch"
+   ],
+   "footprint_ids": 28,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 28,
+    "fetched": 0,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "MyKiCadLibs-Footprints:CAP-TH-D6.3mmP2.5mm",
+     "MyKiCadLibs-Footprints:CONN-2WAY-2.54mm-3.81mm-SPACING",
+     "MyKiCadLibs-Footprints:CONN_DIL_2X5_BOX_1MM",
+     "MyKiCadLibs-Footprints:CONN_DIL_2X6_1MM",
+     "MyKiCadLibs-Footprints:CONN_DIL_2X6_BOX_1MM",
+     "MyKiCadLibs-Footprints:CONN_SIL_2_1MM",
+     "MyKiCadLibs-Footprints:CONN_SIL_3_1MM",
+     "MyKiCadLibs-Footprints:DIODE-SMA",
+     "MyKiCadLibs-Footprints:DIODE-SOD-123",
+     "MyKiCadLibs-Footprints:FID-1MM-3MM",
+     "MyKiCadLibs-Footprints:IC-LFCSP72-HANDFIT",
+     "MyKiCadLibs-Footprints:IC-SC70-6",
+     "MyKiCadLibs-Footprints:IC-SOT-223",
+     "MyKiCadLibs-Footprints:IC-SOT23-6",
+     "MyKiCadLibs-Footprints:IC_DIP_8",
+     "MyKiCadLibs-Footprints:IC_SOIC_14",
+     "MyKiCadLibs-Footprints:IC_SOIC_8",
+     "MyKiCadLibs-Footprints:IC_SPDIF_OPTO",
+     "MyKiCadLibs-Footprints:IND-TYS5040-HS",
+     "MyKiCadLibs-Footprints:MNT_HOLE_3.2mm",
+     "MyKiCadLibs-Footprints:SMD-0603",
+     "MyKiCadLibs-Footprints:SMD-0805",
+     "MyKiCadLibs-Footprints:SMD-1206",
+     "MyKiCadLibs-Footprints:SW_TACT_SMD",
+     "MyKiCadLibs-Footprints:TP-1mm",
+     "MyKiCadLibs-Footprints:TP-2mm",
+     "MyKiCadLibs-Footprints:TP-TH-1mm",
+     "MyKiCadLibs-Footprints:XTAL_HC49_TH"
+    ]
+   },
+   "status": "ok",
+   "files": 7,
+   "size": 1268397,
+   "schematic": "repo/KiCad/DSP-ADAU1452.kicad_sch"
+  },
+  "oro-os__link__link": {
+   "name": "oro-os__link__link",
+   "repository": "oro-os/link",
+   "commit": "00edd4dc726b20ee7e62a2c01bab99a86eab4441",
+   "board_id": "link",
+   "project_dir": "pcb/link",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "pcb/link/link.kicad_sch",
+    "pcb/link/power.kicad_sch",
+    "pcb/link/w5500-ethernet.kicad_sch",
+    "pcb/link/usb.kicad_sch",
+    "pcb/link/indicator-lights.kicad_sch",
+    "pcb/link/microsd.kicad_sch",
+    "pcb/link/oled.kicad_sch"
+   ],
+   "footprint_ids": 65,
+   "symbol_libraries": [
+    "pcb/link/lib/OroLink.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "OroLink": "pcb/link/lib/OroLink.pretty"
+   },
+   "footprints": {
+    "named": 65,
+    "fetched": 62,
+    "kicad": 3,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 74,
+   "size": 3823480,
+   "schematic": "repo/pcb/link/link.kicad_sch"
+  },
+  "rosco-m68k__rosco_m68k__rosco_m68k__kicad": {
+   "name": "rosco-m68k__rosco_m68k__rosco_m68k__kicad",
+   "repository": "rosco-m68k/rosco_m68k",
+   "commit": "ec229f9e64b4f0c1ea988ff9d26bd230c544f4a8",
+   "board_id": "rosco_m68k",
+   "project_dir": "design/r2/kicad",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "code/firmware/rosco_m68k_firmware/romfs/micropython/core": "micropython/micropython@a61c446c0b34e82aeb54b9770250d267656f2b7f",
+    "code/firmware/rosco_m68k_firmware/romfs/mklittlefs": "earlephilhower/mklittlefs@2f7654fe808a64ffaae2776344c2d8483e84b7a2"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "COPYING.NEWLIB: LGPL",
+    "files": [
+     "COPYING.NEWLIB",
+     "LICENCE.adventure",
+     "LICENCE.hardware.txt",
+     "LICENSE",
+     "LICENSE.docs",
+     "LICENSE.kermit",
+     "LICENSE.littlefs",
+     "LICENSE.mklittlefs",
+     "LICENSE.musashi",
+     "LICENSE.shmall"
+    ]
+   },
+   "sheets": [
+    "design/r2/kicad/rosco_m68k.kicad_sch",
+    "design/r2/kicad/FTDI.kicad_sch",
+    "design/r2/kicad/GALs.kicad_sch",
+    "design/r2/kicad/Memory.kicad_sch",
+    "design/r2/kicad/Reset.kicad_sch",
+    "design/r2/kicad/DUART.kicad_sch",
+    "design/r2/kicad/Expansion.kicad_sch",
+    "design/r2/kicad/CPU.kicad_sch"
+   ],
+   "footprint_ids": 32,
+   "symbol_libraries": [
+    "design/r2/kicad/rosco_m68k-eagle-import.lib",
+    "design/r2/kicad/rosco_m68k-rescue.lib",
+    "design/r2/kicad/rosco_m68k.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "rosco_m68k": "design/r2/kicad/rosco_m68k.pretty"
+   },
+   "footprints": {
+    "named": 32,
+    "fetched": 7,
+    "kicad": 25,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 21,
+   "size": 1049907,
+   "schematic": "repo/design/r2/kicad/rosco_m68k.kicad_sch"
+  },
+  "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard": {
+   "name": "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard",
+   "repository": "siderakb/ergo-snm-keyboard",
+   "commit": "20e9e51e9f52749140369968b2bf5e741bf063b0",
+   "board_id": "ErgoSNM_keyboard",
+   "project_dir": "ErgoSNM_Keyboard/rev1",
+   "spdx": "CERN-OHL-P-2.0",
+   "submodules": {
+    "key-switches.pretty": "siderakb/key-switches.pretty@be2b6a1c8f33895a7a5a2e926bf08a7a257ad31c"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": []
+   },
+   "sheets": [
+    "ErgoSNM_Keyboard/rev1/ErgoSNM_keyboard.kicad_sch"
+   ],
+   "footprint_ids": 11,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "ErgoSNM_Keybaord": "ErgoSNM_Keyboard.pretty",
+    "ErgoSNM_Keyboard": "ErgoSNM_Keyboard.pretty"
+   },
+   "footprints": {
+    "named": 11,
+    "fetched": 2,
+    "kicad": 8,
+    "relocated": 2,
+    "not_in_their_library": [],
+    "no_library": [
+     "key-switches:MX_switch_THT_hotswap_double_sided_A"
+    ]
+   },
+   "status": "ok",
+   "files": 5,
+   "size": 218483,
+   "schematic": "repo/ErgoSNM_Keyboard/rev1/ErgoSNM_keyboard.kicad_sch"
+  },
+  "sporkus__capybully_keyboard__capybully": {
+   "name": "sporkus__capybully_keyboard__capybully",
+   "repository": "sporkus/capybully_keyboard",
+   "commit": "32ee7add3627612e6b2d21f650f6e8341f1105e9",
+   "board_id": "capybully",
+   "project_dir": "kicad/pcb",
+   "spdx": "CERN-OHL-W-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "kicad/pcb/capybully.kicad_sch",
+    "kicad/pcb/mounting_holes.kicad_sch",
+    "kicad/pcb/analog.kicad_sch",
+    "kicad/pcb/key_matrix.kicad_sch"
+   ],
+   "footprint_ids": 14,
+   "symbol_libraries": [
+    "kicad/pcb/Libraries/capacitive_sensors.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "capacitive_sensors": "kicad/pcb/Libraries/capacitive_sensors.pretty",
+    "modified_footprints": "kicad/pcb/Libraries/modified_footprints.pretty"
+   },
+   "footprints": {
+    "named": 14,
+    "fetched": 4,
+    "kicad": 9,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "random-keyboard-parts:JST-SR-4"
+    ]
+   },
+   "unresolved_libraries": [
+    "footprint library random-keyboard-parts: ${KIPRJMOD}/Libraries/random-keyboard-parts.pretty not in the repository"
+   ],
+   "status": "ok",
+   "files": 12,
+   "size": 512913,
+   "schematic": "repo/kicad/pcb/capybully.kicad_sch"
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys",
+   "repository": "sporkus/le_chiffre_keyboard_stm32",
+   "commit": "57f64495c4b6dca1566b8ddbd464849c4023a56f",
+   "board_id": "stm32_chiffre_36keys",
+   "project_dir": "kicad/pcb_36key",
+   "spdx": "CERN-OHL-W-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "kicad/pcb_36key/stm32_chiffre_36keys.kicad_sch",
+    "kicad/pcb_36key/rgb.kicad_sch",
+    "kicad/pcb_36key/key_matrix.kicad_sch"
+   ],
+   "footprint_ids": 20,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "MX_hotswap_alps": "kicad/pcb_36key/library/MX_hotswap_alps",
+    "modified_footprints": "kicad/pcb_36key/library/modified_footprints.pretty",
+    "MX_Alps_Hybrid": "kicad/pcb_36key/library/MX_Alps_Hybrid.pretty"
+   },
+   "library_fixes": {
+    "modified_footrprints": "kicad/pcb/library/modified_footprints.pretty"
+   },
+   "footprints": {
+    "named": 20,
+    "fetched": 7,
+    "kicad": 13,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 12,
+   "size": 402535,
+   "schematic": "repo/kicad/pcb_36key/stm32_chiffre_36keys.kicad_sch"
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre": {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre",
+   "repository": "sporkus/le_chiffre_keyboard_stm32",
+   "commit": "57f64495c4b6dca1566b8ddbd464849c4023a56f",
+   "board_id": "stm32_hotswap_chiffre",
+   "project_dir": "kicad/pcb",
+   "spdx": "CERN-OHL-W-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "kicad/pcb/stm32_hotswap_chiffre.kicad_sch",
+    "kicad/pcb/rgb.kicad_sch",
+    "kicad/pcb/key_matrix.kicad_sch"
+   ],
+   "footprint_ids": 20,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "MX_hotswap_alps": "kicad/pcb/library/MX_hotswap_alps",
+    "modified_footprints": "kicad/pcb/library/modified_footprints.pretty",
+    "MX_Alps_Hybrid": "kicad/pcb/library/MX_Alps_Hybrid.pretty"
+   },
+   "library_fixes": {
+    "modified_footrprints": "kicad/pcb/library/modified_footprints.pretty"
+   },
+   "footprints": {
+    "named": 20,
+    "fetched": 7,
+    "kicad": 13,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 12,
+   "size": 379721,
+   "schematic": "repo/kicad/pcb/stm32_hotswap_chiffre.kicad_sch"
+  },
+  "stonedDiscord__MegaDrive__MegaDrive": {
+   "name": "stonedDiscord__MegaDrive__MegaDrive",
+   "repository": "stonedDiscord/MegaDrive",
+   "commit": "937baed38afead19407dc8f1615980fc572b6962",
+   "board_id": "MegaDrive",
+   "project_dir": "",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-01": {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-01",
+   "repository": "stonedDiscord/nonSNES",
+   "commit": "cf2e70b35b141b551b1683b0fac1c4b29f9ed0d6",
+   "board_id": "SNSP-CPU-01",
+   "project_dir": "SNSP-CPU-01",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "SNSP-CPU-01/SNSP-CPU-01.kicad_sch"
+   ],
+   "footprint_ids": 46,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "SNES_Library": "SNES_Library.pretty",
+    "Trimmer_THT": "Trimmer_THT.pretty"
+   },
+   "footprints": {
+    "named": 46,
+    "fetched": 18,
+    "kicad": 28,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "symbol library SNES_Library: ${KIPRJMOD}/../SNES_Library.kicad_symdir/ not in the repository"
+   ],
+   "status": "ok",
+   "files": 22,
+   "size": 1830439,
+   "schematic": "repo/SNSP-CPU-01/SNSP-CPU-01.kicad_sch"
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-1CHIP": {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-1CHIP",
+   "repository": "stonedDiscord/nonSNES",
+   "commit": "cf2e70b35b141b551b1683b0fac1c4b29f9ed0d6",
+   "board_id": "SNSP-CPU-1CHIP",
+   "project_dir": "SNSP-CPU-1CHIP",
+   "spdx": "GPL-3.0",
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "SNSP-CPU-1CHIP/SNSP-CPU-1CHIP.kicad_sch"
+   ],
+   "footprint_ids": 38,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "SNES_Library": "SNES_Library.pretty"
+   },
+   "footprints": {
+    "named": 38,
+    "fetched": 12,
+    "kicad": 26,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "symbol library SNES_Library: ${KIPRJMOD}/../SNES_Library.kicad_symdir/ not in the repository"
+   ],
+   "status": "ok",
+   "files": 16,
+   "size": 1227931,
+   "schematic": "repo/SNSP-CPU-1CHIP/SNSP-CPU-1CHIP.kicad_sch"
+  },
+  "tengigabytes__MokyaLora__MokyaLora": {
+   "name": "tengigabytes__MokyaLora__MokyaLora",
+   "repository": "tengigabytes/MokyaLora",
+   "commit": "0783a3b35bac10aaf543a4bca7461335d860629f",
+   "board_id": "MokyaLora",
+   "project_dir": "hardware/kicad",
+   "spdx": "NOASSERTION",
+   "submodules": {
+    "firmware/core0/meshtastic": "tengigabytes/firmware@fd51032173a9b1b104e2f1300d01025d52bf34a8",
+    "firmware/core1/freertos-kernel": "FreeRTOS/FreeRTOS-Kernel@9b777ae5c5b8e9e456065a00294d1e5f5f9facf5",
+    "firmware/core1/lvgl": "lvgl/lvgl@7f07a129e8d77f4984fff8e623fd5be18ff42e74"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE: Creative Commons",
+    "files": [
+     "LICENSE",
+     "LICENSE-CC-BY-SA-4.0.txt",
+     "LICENSE-CERN-OHL-S-2.0.txt"
+    ]
+   },
+   "sheets": [
+    "hardware/kicad/MokyaLora.kicad_sch",
+    "hardware/kicad/KeyBoard.kicad_sch",
+    "hardware/kicad/IMU.kicad_sch",
+    "hardware/kicad/VibMotor.kicad_sch",
+    "hardware/kicad/LORA.kicad_sch",
+    "hardware/kicad/GNSS.kicad_sch",
+    "hardware/kicad/MCU_RP2350B.kicad_sch",
+    "hardware/kicad/Power.kicad_sch",
+    "hardware/kicad/SpkrAmp.kicad_sch",
+    "hardware/kicad/Microphone.kicad_sch",
+    "hardware/kicad/Display.kicad_sch"
+   ],
+   "footprint_ids": 51,
+   "symbol_libraries": [
+    "hardware/kicad/MokyaLora.kicad_sym",
+    "hardware/kicad/R0402.kicad_dbl",
+    "hardware/kicad/C0402.kicad_dbl",
+    "hardware/kicad/C0603.kicad_dbl",
+    "hardware/kicad/C0805.kicad_dbl",
+    "hardware/kicad/B0402.kicad_dbl",
+    "hardware/kicad/RF_IND.kicad_sym",
+    "hardware/kicad/IND_Pwr.kicad_sym",
+    "hardware/kicad/C1206.kicad_dbl"
+   ],
+   "footprint_libraries": {
+    "MokyaLora": "hardware/kicad/MokyaLora.pretty"
+   },
+   "footprints": {
+    "named": 51,
+    "fetched": 51,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 75,
+   "size": 2608696,
+   "schematic": "repo/hardware/kicad/MokyaLora.kicad_sch"
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_left": {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_left",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_corne_split42_left",
+   "project_dir": "poly_kybd/variations/poly_corne",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "poly_kybd/variations/poly_corne/poly_corne_split42_left.kicad_sch",
+    "poly_kybd/ni_buffer2.kicad_sch",
+    "poly_kybd/SSD1306_TO_SPI_NO_LED.kicad_sch",
+    "poly_kybd/variations/poly_corne/shift_registers.kicad_sch",
+    "poly_kybd/rp_pico.kicad_sch"
+   ],
+   "footprint_ids": 28,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "keebio": "poly_kybd/poly_kb.pretty",
+    "poly_kb": "poly_kybd/poly_kb.pretty"
+   },
+   "footprints": {
+    "named": 28,
+    "fetched": 10,
+    "kicad": 18,
+    "relocated": 10,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library poly_kb: /home/thpoll/Repos/PolyKybd/poly_kybd/poly_kb.pretty"
+   ],
+   "status": "ok",
+   "files": 17,
+   "size": 863144,
+   "schematic": "repo/poly_kybd/variations/poly_corne/poly_corne_split42_left.kicad_sch"
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right": {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_corne_split42_right",
+   "project_dir": "poly_kybd/variations/poly_corne",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "poly_kybd/variations/poly_corne/poly_corne_split42_right.kicad_sch",
+    "poly_kybd/variations/poly_corne/SSD1306_TO_SPI.kicad_sch",
+    "poly_kybd/variations/poly_corne/ni_buffer2.kicad_sch",
+    "poly_kybd/variations/poly_corne/shift_registers.kicad_sch"
+   ],
+   "missing_sheets": [
+    "poly_kybd/variations/poly_corne/rp_pico.kicad_sch"
+   ],
+   "footprint_ids": 22,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "poly_kb": "poly_kybd/poly_kb.pretty"
+   },
+   "footprints": {
+    "named": 22,
+    "fetched": 7,
+    "kicad": 15,
+    "relocated": 7,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library poly_kb: /home/thpoll/Repos/PolyKybd/poly_kybd/poly_kb.pretty"
+   ],
+   "status": "skipped",
+   "reason": "sheets missing: poly_kybd/variations/poly_corne/rp_pico.kicad_sch",
+   "files": 13,
+   "size": 764110
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x4": {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x4",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kb_molecule_4x4",
+   "project_dir": "poly_kybd/backup",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no poly_kb_molecule_4x4.kicad_sch at the commit"
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x5": {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x5",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kb_molecule_4x5",
+   "project_dir": "poly_kybd/backup",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no poly_kb_molecule_4x5.kicad_sch at the commit"
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted": {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kb_molecule_5x2_shifted",
+   "project_dir": "poly_kybd/backup",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no poly_kb_molecule_5x2_shifted.kicad_sch at the commit"
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave": {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kb_molecule_5x4_wave",
+   "project_dir": "poly_kybd/backup",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no poly_kb_molecule_5x4_wave.kicad_sch at the commit"
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left": {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kb_molecule_7x5_wave_left",
+   "project_dir": "poly_kybd/backup",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "no poly_kb_molecule_7x5_wave_left.kicad_sch at the commit"
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_left": {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_left",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kybd_split72_left",
+   "project_dir": "poly_kybd",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "poly_kybd/poly_kybd_split72_left.kicad_sch",
+    "poly_kybd/SSD1306_TO_SPI.kicad_sch",
+    "poly_kybd/ni_buffer2.kicad_sch",
+    "poly_kybd/shift_registers.kicad_sch",
+    "poly_kybd/rp_pico.kicad_sch"
+   ],
+   "footprint_ids": 31,
+   "symbol_libraries": [
+    "poly_kybd/poly_kb.kicad_sym",
+    "poly_kybd/poly_kb-rescue.lib",
+    "poly_kybd/thirdparty/keebio-components/keebio.lib",
+    "poly_kybd/thirdparty/EnvOpenPico/RP2040/EnvOpenPico2040/EnvOpenPico.lib"
+   ],
+   "footprint_libraries": {
+    "poly_kb": "poly_kybd/poly_kb.pretty",
+    "keebio": "poly_kybd/thirdparty/keebio",
+    "EnvUSB": "poly_kybd/thirdparty/EnvOpenPico/RP2040/EnvOpenPico2040/Resources/HRO-TYPE-C31-M-12.pretty"
+   },
+   "footprints": {
+    "named": 31,
+    "fetched": 13,
+    "kicad": 18,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library FH34SRJ-14S-0: ${KIPRJMOD}/ThirdParty/FH34SRJ-14S-0.5SH_50 not in the repository",
+    "footprint library KUSO: ${KIPRJMOD}/ThirdParty/KUSOboard.pretty not in the repository",
+    "footprint library Nexperia595: ${KIPRJMOD}/ThirdParty/74HC595BQ/KiCAD/2023-02-16_21-13-29/footprints.pretty not in the repository",
+    "footprint library Pico: ${KIPRJMOD}/ThirdParty/KiCad-RP-Pico-main/RP-Pico Libraries/MCU_RaspberryPi_and_Boards.pretty not in the repository",
+    "footprint library SOT: ${KIPRJMOD}/ThirdParty/savenlid/footprints/SOT not in the repository",
+    "footprint library Winbond flash: ${KIPRJMOD}/ThirdParty/W25Q64JVXGIQ/KiCad not in the repository",
+    "footprint library daprice: ${KIPRJMOD}/ThirdParty/keyswitches.pretty-master not in the repository",
+    "footprint library perigoso_Kailh: ${KICAD7_3RD_PARTY}/footprints/com_github_perigoso_keyswitch-kicad-library/Switch_Keyboard_Kailh.pretty",
+    "symbol library 74HC595: ${KIPRJMOD}/ThirdParty/74HC595BQ/KiCAD/2023-02-16_21-13-29/2023-02-16_21-13-29.lib not in the repository",
+    "symbol library FH34SRJ-14S-0.5SH_50_: ${KIPRJMOD}/ThirdParty/FH34SRJ-14S-0.5SH_50/FH34SRJ-14S-0.5SH_50_.lib not in the repository",
+    "symbol library MCU_RaspberryPi_and_Boards: ${KIPRJMOD}/ThirdParty/KiCad-RP-Pico-main/RP-Pico Libraries/MCU_RaspberryPi_and_Boards.kicad_sym not in the repository",
+    "symbol library Nexperia: ${KIPRJMOD}/ThirdParty/savenlid/lib/Nexperia.lib not in the repository",
+    "symbol library Winbond Flash: ${KIPRJMOD}/ThirdParty/W25Q64JVXGIQ/KiCad/W25Q64JVXGIQ.lib not in the repository",
+    "symbol library mp2307: ${KIPRJMOD}/ThirdParty/ildus-kicad-library-custom-master/mp2307.lib not in the repository",
+    "symbol library tm-kicad-lib: ${KIPRJMOD}/ThirdParty/tm-kicad-library-master/tm-kicad-lib.lib not in the repository"
+   ],
+   "status": "ok",
+   "files": 25,
+   "size": 1217539,
+   "schematic": "repo/poly_kybd/poly_kybd_split72_left.kicad_sch"
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_right": {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_right",
+   "repository": "thpoll83/PolyKybd",
+   "commit": "77e3f50804fb922613c4c4b3b7116030e14c1891",
+   "board_id": "poly_kybd_split72_right",
+   "project_dir": "poly_kybd",
+   "spdx": "CERN-OHL-W-2.0",
+   "submodules": {
+    "poly_kybd/thirdparty/EnvOpenPico": "Envious-Data/EnvOpenPico@a88e551b400957efdab86bd4c97ebabbf63c78fd",
+    "poly_kybd/thirdparty/keebio": "keebio/Keebio-Parts.pretty@063565dcba9a8ee807d49772de0ed75ecaedcc26",
+    "poly_kybd/thirdparty/keebio-components": "keebio/keebio-components@f4530381e415e10941960bc9d64e0844de96c47b"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": []
+   },
+   "sheets": [
+    "poly_kybd/poly_kybd_split72_right.kicad_sch",
+    "poly_kybd/SSD1306_TO_SPI.kicad_sch",
+    "poly_kybd/ni_buffer2.kicad_sch",
+    "poly_kybd/shift_registers.kicad_sch",
+    "poly_kybd/rp_pico.kicad_sch"
+   ],
+   "footprint_ids": 31,
+   "symbol_libraries": [
+    "poly_kybd/poly_kb.kicad_sym",
+    "poly_kybd/poly_kb-rescue.lib",
+    "poly_kybd/thirdparty/keebio-components/keebio.lib",
+    "poly_kybd/thirdparty/EnvOpenPico/RP2040/EnvOpenPico2040/EnvOpenPico.lib"
+   ],
+   "footprint_libraries": {
+    "poly_kb": "poly_kybd/poly_kb.pretty",
+    "keebio": "poly_kybd/thirdparty/keebio",
+    "EnvUSB": "poly_kybd/thirdparty/EnvOpenPico/RP2040/EnvOpenPico2040/Resources/HRO-TYPE-C31-M-12.pretty"
+   },
+   "footprints": {
+    "named": 31,
+    "fetched": 13,
+    "kicad": 18,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library FH34SRJ-14S-0: ${KIPRJMOD}/ThirdParty/FH34SRJ-14S-0.5SH_50 not in the repository",
+    "footprint library KUSO: ${KIPRJMOD}/ThirdParty/KUSOboard.pretty not in the repository",
+    "footprint library Nexperia595: ${KIPRJMOD}/ThirdParty/74HC595BQ/KiCAD/2023-02-16_21-13-29/footprints.pretty not in the repository",
+    "footprint library Pico: ${KIPRJMOD}/ThirdParty/KiCad-RP-Pico-main/RP-Pico Libraries/MCU_RaspberryPi_and_Boards.pretty not in the repository",
+    "footprint library SOT: ${KIPRJMOD}/ThirdParty/savenlid/footprints/SOT not in the repository",
+    "footprint library Winbond flash: ${KIPRJMOD}/ThirdParty/W25Q64JVXGIQ/KiCad not in the repository",
+    "footprint library daprice: ${KIPRJMOD}/ThirdParty/keyswitches.pretty-master not in the repository",
+    "footprint library perigoso_Kailh: ${KICAD7_3RD_PARTY}/footprints/com_github_perigoso_keyswitch-kicad-library/Switch_Keyboard_Kailh.pretty",
+    "symbol library 74HC595: ${KIPRJMOD}/ThirdParty/74HC595BQ/KiCAD/2023-02-16_21-13-29/2023-02-16_21-13-29.lib not in the repository",
+    "symbol library FH34SRJ-14S-0.5SH_50_: ${KIPRJMOD}/ThirdParty/FH34SRJ-14S-0.5SH_50/FH34SRJ-14S-0.5SH_50_.lib not in the repository",
+    "symbol library MCU_RaspberryPi_and_Boards: ${KIPRJMOD}/ThirdParty/KiCad-RP-Pico-main/RP-Pico Libraries/MCU_RaspberryPi_and_Boards.kicad_sym not in the repository",
+    "symbol library Nexperia: ${KIPRJMOD}/ThirdParty/savenlid/lib/Nexperia.lib not in the repository",
+    "symbol library Winbond Flash: ${KIPRJMOD}/ThirdParty/W25Q64JVXGIQ/KiCad/W25Q64JVXGIQ.lib not in the repository",
+    "symbol library mp2307: ${KIPRJMOD}/ThirdParty/ildus-kicad-library-custom-master/mp2307.lib not in the repository",
+    "symbol library tm-kicad-lib: ${KIPRJMOD}/ThirdParty/tm-kicad-library-master/tm-kicad-lib.lib not in the repository"
+   ],
+   "status": "ok",
+   "files": 25,
+   "size": 1215357,
+   "schematic": "repo/poly_kybd/poly_kybd_split72_right.kicad_sch"
+  },
+  "tomunderwood99__CharlieBoard__Blue_Line": {
+   "name": "tomunderwood99__CharlieBoard__Blue_Line",
+   "repository": "tomunderwood99/CharlieBoard",
+   "commit": "9e019f0ef05f0886db63229a04ec421aec839a82",
+   "board_id": "Blue Line",
+   "project_dir": "hardware/PCB Production/KICAD Files/Blue Line",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "hardware/PCB Production/KICAD Files/Blue Line/Blue Line.kicad_sch"
+   ],
+   "footprint_ids": 2,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "footprints": {
+    "named": 2,
+    "fetched": 0,
+    "kicad": 2,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 2,
+   "size": 157797,
+   "schematic": "repo/hardware/PCB Production/KICAD Files/Blue Line/Blue Line.kicad_sch"
+  },
+  "transistorfet__computie__k30-SBC": {
+   "name": "transistorfet__computie__k30-SBC",
+   "repository": "transistorfet/computie",
+   "commit": "760e1b8046cc8e6e2dc9e471a0c6300c68ef26fe",
+   "board_id": "k30-SBC",
+   "project_dir": "hardware/k30-SBC",
+   "spdx": "GPL-3.0",
+   "submodules": {
+    "hardware/kicad-libraries/computie-kicad-library": "transistorfet/computie-kicad-library@7b59b1f890f18a78406c97bea2cc75b844d6dd58",
+    "software/gloworm": "transistorfet/gloworm@45eb1c547040edb4665cb1a44f2f1659f595510a"
+   },
+   "licence": {
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": []
+   },
+   "sheets": [
+    "hardware/k30-SBC/k30-SBC.kicad_sch",
+    "hardware/k30-SBC/Bus.kicad_sch",
+    "hardware/k30-SBC/Memory.kicad_sch",
+    "hardware/k30-SBC/IO.kicad_sch",
+    "hardware/k30-SBC/Logic.kicad_sch"
+   ],
+   "footprint_ids": 25,
+   "symbol_libraries": [],
+   "footprint_libraries": {},
+   "library_fixes": {
+    "Computie_Connectors": "hardware/kicad-libraries/computie-kicad-library/footprints/Computie_Connectors.pretty"
+   },
+   "footprints": {
+    "named": 25,
+    "fetched": 1,
+    "kicad": 24,
+    "relocated": 1,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "unresolved_libraries": [
+    "footprint library Computie_Connectors: /media/work/computie/hardware/kicad-libraries/footprints/Computie_Connectors.pretty"
+   ],
+   "status": "ok",
+   "files": 9,
+   "size": 905824,
+   "schematic": "repo/hardware/k30-SBC/k30-SBC.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001",
+   "project_dir": "v001/pcb_rp2040zero",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001/pcb_rp2040zero/bumwings_v001.kicad_sch"
+   ],
+   "footprint_ids": 4,
+   "symbol_libraries": [
+    "v001/pcb_rp2040zero/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001/pcb_rp2040zero/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 4,
+    "fetched": 4,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 9,
+   "size": 190247,
+   "schematic": "repo/v001/pcb_rp2040zero/bumwings_v001.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001R55_rp2040zero_sd",
+   "project_dir": "v001R/pcb_R55_rp2040zero_sd",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001R/pcb_R55_rp2040zero_sd/bumwings_v001R55_rp2040zero_sd.kicad_sch"
+   ],
+   "footprint_ids": 5,
+   "symbol_libraries": [
+    "v001R/pcb_R55_rp2040zero_sd/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001R/pcb_R55_rp2040zero_sd/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 5,
+    "fetched": 5,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 198761,
+   "schematic": "repo/v001R/pcb_R55_rp2040zero_sd/bumwings_v001R55_rp2040zero_sd.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001R55_xiao_sd",
+   "project_dir": "v001R/pcb_R55_xiao_sd",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001R/pcb_R55_xiao_sd/bumwings_v001R55_xiao_sd.kicad_sch"
+   ],
+   "footprint_ids": 6,
+   "symbol_libraries": [
+    "v001R/pcb_R55_xiao_sd/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001R/pcb_R55_xiao_sd/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 6,
+    "fetched": 5,
+    "kicad": 1,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 5250607,
+   "schematic": "repo/v001R/pcb_R55_xiao_sd/bumwings_v001R55_xiao_sd.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001R64_nano_sd",
+   "project_dir": "v001R/pcb_R64_nano_sd",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001R/pcb_R64_nano_sd/bumwings_v001R64_nano_sd.kicad_sch"
+   ],
+   "footprint_ids": 8,
+   "symbol_libraries": [
+    "v001R/pcb_R64_nano_sd/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001R/pcb_R64_nano_sd/BumWings_Library.pretty"
+   },
+   "library_fixes": {
+    "footprints": "v001R/pcb_R64_nano_sd/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 8,
+    "fetched": 5,
+    "kicad": 0,
+    "relocated": 1,
+    "not_in_their_library": [
+     "footprints:JST-ZH-2p-1.5",
+     "footprints:b3u1000p",
+     "footprints:pwr-sw-smd-pcm12"
+    ],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 247574,
+   "schematic": "repo/v001R/pcb_R64_nano_sd/bumwings_v001R64_nano_sd.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001R64_rp2040zero_sd",
+   "project_dir": "v001R/pcb_R64_rp2040zero_sd",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001R/pcb_R64_rp2040zero_sd/bumwings_v001R64_rp2040zero_sd.kicad_sch"
+   ],
+   "footprint_ids": 5,
+   "symbol_libraries": [
+    "v001R/pcb_R64_rp2040zero_sd/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001R/pcb_R64_rp2040zero_sd/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 5,
+    "fetched": 5,
+    "kicad": 0,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 220927,
+   "schematic": "repo/v001R/pcb_R64_rp2040zero_sd/bumwings_v001R64_rp2040zero_sd.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001R64_xiao_sd",
+   "project_dir": "v001R/pcb_R64_xiao_sd",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001R/pcb_R64_xiao_sd/bumwings_v001R64_xiao_sd.kicad_sch"
+   ],
+   "footprint_ids": 6,
+   "symbol_libraries": [
+    "v001R/pcb_R64_xiao_sd/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001R/pcb_R64_xiao_sd/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 6,
+    "fetched": 5,
+    "kicad": 1,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 5278195,
+   "schematic": "repo/v001R/pcb_R64_xiao_sd/bumwings_v001R64_xiao_sd.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_core": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_core",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001_core",
+   "project_dir": "v001/pcb_core52840",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001/pcb_core52840/bumwings_v001_core.kicad_sch"
+   ],
+   "footprint_ids": 17,
+   "symbol_libraries": [
+    "v001/pcb_core52840/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001/pcb_core52840/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 17,
+    "fetched": 4,
+    "kicad": 8,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "dao-choc-ble:Battery",
+     "dao-choc-ble:MSK-12C02",
+     "dao-choc-ble:PROG",
+     "dao-choc-ble:TS-1086E",
+     "dao-choc-ble:USB-C_C168688"
+    ]
+   },
+   "status": "ok",
+   "files": 9,
+   "size": 324909,
+   "schematic": "repo/v001/pcb_core52840/bumwings_v001_core.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001_xiao",
+   "project_dir": "v001/pcb_xiao",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001/pcb_xiao/bumwings_v001_xiao.kicad_sch"
+   ],
+   "footprint_ids": 9,
+   "symbol_libraries": [
+    "v001/pcb_xiao/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001/pcb_xiao/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 9,
+    "fetched": 4,
+    "kicad": 3,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "revxlp:cell_pads",
+     "zaphod:Seeeduino XIAO-MOUDLE14P-2.54-21X17.8MM"
+    ]
+   },
+   "status": "ok",
+   "files": 9,
+   "size": 214903,
+   "schematic": "repo/v001/pcb_xiao/bumwings_v001_xiao.kicad_sch"
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s": {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s",
+   "repository": "tubbytwins/bumwings-kbd",
+   "commit": "70c0a9d570859d5c001919110b52947c4fd33151",
+   "board_id": "bumwings_v001_xiao_s",
+   "project_dir": "v001/pcb_xiao_s",
+   "spdx": "MIT",
+   "licence": {
+    "allowed": true,
+    "why": "MIT",
+    "files": []
+   },
+   "sheets": [
+    "v001/pcb_xiao_s/bumwings_v001_xiao_s.kicad_sch"
+   ],
+   "footprint_ids": 6,
+   "symbol_libraries": [
+    "v001/pcb_xiao_s/BumWings_SymLibrary.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "BumWings_Library": "v001/pcb_xiao_s/BumWings_Library.pretty"
+   },
+   "footprints": {
+    "named": 6,
+    "fetched": 5,
+    "kicad": 1,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 10,
+   "size": 5253793,
+   "schematic": "repo/v001/pcb_xiao_s/bumwings_v001_xiao_s.kicad_sch"
+  },
+  "tzarc__keyboards__ghoul": {
+   "name": "tzarc__keyboards__ghoul",
+   "repository": "tzarc/keyboards",
+   "commit": "21dd586153f70b0247c3c38f8a8070891e49041d",
+   "board_id": "ghoul",
+   "project_dir": "Ghoul/v1.0",
+   "spdx": "CERN-OHL-S-2.0",
+   "licence": {
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": []
+   },
+   "sheets": [
+    "Ghoul/v1.0/ghoul.kicad_sch"
+   ],
+   "footprint_ids": 29,
+   "symbol_libraries": [
+    "Ghoul/v1.0/Ghoul.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "Ghoul": "Ghoul/v1.0/Ghoul.pretty"
+   },
+   "footprints": {
+    "named": 29,
+    "fetched": 9,
+    "kicad": 20,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 14,
+   "size": 719496,
+   "schematic": "repo/Ghoul/v1.0/ghoul.kicad_sch"
+  },
+  "vd-rd__sbc_allwinner_a13__module": {
+   "name": "vd-rd__sbc_allwinner_a13__module",
+   "repository": "vd-rd/sbc_allwinner_a13",
+   "commit": "8973c32c64349515da64e268cc03ea8c0789ca2a",
+   "board_id": "module",
+   "project_dir": "hardware",
+   "spdx": null,
+   "licence": {
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": []
+   },
+   "status": "skipped",
+   "reason": "licence: no licence file (all rights reserved)"
+  },
+  "wntrblm__Castor_and_Pollux__mainboard": {
+   "name": "wntrblm__Castor_and_Pollux__mainboard",
+   "repository": "wntrblm/Castor_and_Pollux",
+   "commit": "652b28c950ed04ca41f0d8aa98d9b1be2f310f76",
+   "board_id": "mainboard",
+   "project_dir": "hardware/mainboard",
+   "spdx": "NOASSERTION",
+   "licence": {
+    "allowed": true,
+    "why": "LICENSE.md: Creative Commons",
+    "files": [
+     "LICENSE.md",
+     "hardware/mainboard/LICENSE"
+    ]
+   },
+   "sheets": [
+    "hardware/mainboard/mainboard.kicad_sch",
+    "hardware/mainboard/potentiometers.kicad_sch",
+    "hardware/mainboard/leds.kicad_sch",
+    "hardware/mainboard/analogins.kicad_sch",
+    "hardware/mainboard/castor.kicad_sch",
+    "hardware/mainboard/outputmixer.kicad_sch",
+    "hardware/mainboard/mcu.kicad_sch",
+    "hardware/mainboard/power.kicad_sch"
+   ],
+   "footprint_ids": 25,
+   "symbol_libraries": [],
+   "footprint_libraries": {
+    "mainboard": "hardware/mainboard/mainboard.pretty"
+   },
+   "footprints": {
+    "named": 25,
+    "fetched": 0,
+    "kicad": 8,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": [
+     "winterbloom:AudioJack_WQP518MA",
+     "winterbloom:C_0402_HandSolder",
+     "winterbloom:C_0603_HandSolder",
+     "winterbloom:C_0805_HandSolder",
+     "winterbloom:Connector_Cortex_Debug_IDC_2x05_P1.27mm_Vertical_Shrouded_SMD",
+     "winterbloom:D_SOD-123",
+     "winterbloom:Eurorack_Power_2x5_Shrouded",
+     "winterbloom:LED_APA102_Dotstar_5050",
+     "winterbloom:L_0603_HandSolder",
+     "winterbloom:Potentiometer_Alpha_R0904N",
+     "winterbloom:R_0402_HandSolder",
+     "winterbloom:R_0603_HandSolder",
+     "winterbloom:SolderWirePad_1x04_SMD_2x5mm",
+     "winterbloom:TQFP-48_7x7mm_P0.5mm",
+     "winterbloom:Tactile_Switch_4.2mm",
+     "winterbloom:Tactile_Switch_6mm",
+     "winterbloom:USB_B_Micro_Receptacle"
+    ]
+   },
+   "status": "ok",
+   "files": 11,
+   "size": 727826,
+   "schematic": "repo/hardware/mainboard/mainboard.kicad_sch"
+  },
+  "zli117__CyberKeeb2040__MainBoard": {
+   "name": "zli117__CyberKeeb2040__MainBoard",
+   "repository": "zli117/CyberKeeb2040",
+   "commit": "519856dd8bc7d6d5aef5e1f756823d69aac54325",
+   "board_id": "MainBoard",
+   "project_dir": "PCB/MainBoard",
+   "spdx": "CC-BY-SA-4.0",
+   "licence": {
+    "allowed": true,
+    "why": "CC-BY-SA-4.0",
+    "files": []
+   },
+   "sheets": [
+    "PCB/MainBoard/MainBoard.kicad_sch",
+    "PCB/MainBoard/switch_matrix.kicad_sch"
+   ],
+   "footprint_ids": 19,
+   "symbol_libraries": [
+    "PCB/MainBoard/Library/Pico/MCU_RaspberryPi_and_Boards.kicad_sym"
+   ],
+   "footprint_libraries": {
+    "JMD0.96C": "PCB/MainBoard/Library/JMD0.96C.pretty",
+    "MCU_RaspberryPi_and_Boards": "PCB/MainBoard/Library/Pico/MCU_RaspberryPi_and_Boards.pretty",
+    "PJ320A": "PCB/MainBoard/Library/PJ320A.pretty",
+    "RotaryEncoder": "PCB/MainBoard/Library/RotaryEncoder",
+    "PiZero": "PCB/MainBoard/Library/PiZero",
+    "Diode_THT_Custom": "PCB/MainBoard/Library/Diode_THT_Custom",
+    "HotswapFix": "PCB/MainBoard/Library/HotswapFix",
+    "CustomCapacitor": "PCB/MainBoard/Library/Capacitors",
+    "CustomResitor": "PCB/MainBoard/Library/Resistors"
+   },
+   "footprints": {
+    "named": 19,
+    "fetched": 16,
+    "kicad": 3,
+    "relocated": 0,
+    "not_in_their_library": [],
+    "no_library": []
+   },
+   "status": "ok",
+   "files": 22,
+   "size": 515483,
+   "schematic": "repo/PCB/MainBoard/MainBoard.kicad_sch"
+  }
+ },
+ "comment": "Schematics of the harvested boards (harvest_schematics.py): per board what was fetched into benchmarks/real/external/github-sch (gitignored), or why it was skipped.",
+ "usable": 79,
+ "skipped": 30
+}

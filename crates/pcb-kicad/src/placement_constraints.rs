@@ -1792,9 +1792,15 @@ pub(super) fn apply_constraints(
         return Err(cannot.join("; "));
     }
     // The sides `apply_sides` flipped the parts to, row members included
-    // (they lie on their row's side), reported as kept constraints.
-    for (kind, patterns, side) in [("back", &constraints.back, core::Side::Back), ("front", &constraints.front, core::Side::Front)] {
+    // (they lie on their row's side), reported as kept constraints. The
+    // side to keep is where the flipped footprint's pads put the part, not
+    // the constraint's name for it: urchin's key sockets are front
+    // footprints with their pads on B.Cu, so on B.Cu (as `back` asks) the
+    // part lies on the front, and every `back` entry for them was reported
+    // missed on a board that kept them all.
+    for (kind, patterns) in [("back", &constraints.back), ("front", &constraints.front)] {
         for index in (0..footprints).filter(|index| patterns.iter().any(|pattern| glob_matches(pattern, &references[*index]))) {
+            let side = problem.components[index].side;
             problem.constraints.kept.push(core::constraints::Kept { kind, part: index, side: Some(side), angles: Vec::new() });
         }
     }
@@ -2331,6 +2337,28 @@ mod tests {
         poses[1].angle = 180.0;
         poses[2].angle = 0.0;
         assert_eq!(kept(&poses), vec![row("rotation", "C2", false), row("opening_outwards", "C1", false), row("front", "C1", true)]);
+
+        // A footprint `back` put on B.Cu whose pads are on the front (a key
+        // socket under its switch) lies on the front: kept all the same.
+        let (mut socket, references, pads) = self::problem();
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(r#"{"version": 1, "back": ["C1"]}"#).unwrap();
+        assert_eq!(socket.components[1].side, core::Side::Front);
+        apply_constraints(
+            &mut socket,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &[None, None, None],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        let statuses: Vec<(String, bool)> =
+            constraint_report(&socket, &socket.poses, &references).into_iter().map(|status| (status.kind, status.satisfied)).collect();
+        assert_eq!(statuses, vec![("back".to_string(), true)]);
     }
 
     #[test]

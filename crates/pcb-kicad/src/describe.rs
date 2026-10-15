@@ -81,7 +81,14 @@ pub struct KiCadDescribedFootprint {
     pub footprint: String,
     /// Origin and orientation, as KiCad stores them.
     pub at: [f64; 3],
+    /// The side the part occupies: where its SMD pads are (else its
+    /// footprint's layer).
     pub side: String,
+    /// The footprint's own layer, `F.Cu` or `B.Cu`: what `back` and
+    /// `front` in constraints.json set. It differs from `side` for a
+    /// footprint whose pads are on the other side (urchin's key sockets:
+    /// front footprints with their pads on B.Cu).
+    pub layer: String,
     /// Courtyard (or pad) box in the footprint's own frame, before rotation.
     pub size_mm: [f64; 2],
     /// The body's box on the board: [min x, min y, max x, max y].
@@ -190,6 +197,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             footprint: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
             at,
             side: if crate::board_placer::on_back(footprint) { "back" } else { "front" }.into(),
+            layer: if form_atom(footprint, "layer", 1) == Some("B.Cu") { "B.Cu" } else { "F.Cu" }.into(),
             size_mm: [round(size[0]), round(size[1])],
             body_corners: [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
                 .iter()
