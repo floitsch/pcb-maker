@@ -416,6 +416,19 @@ boards, and none of its class-width attempts beat the first route
 (module, DSP-ADAU1452, vaio_re on x833). `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`
 restores the old split.
 
+When that attempt leaves at least 240 s of the layout's work and
+connections open, the attempt runs once more in the other pour mode (pour
+nets as tracks after pours connected, and the other way round), with the
+same split of what is left (`direct_narrow_budget`) and that work as its
+deadline; the layout keeps the better board as before (KiCad's open
+items, then starved thermals). vaio_re: 410 s left, the tracks attempt
+55 open against 76, KiCad 35 to 21 unconnected. A second seed round, the
+class-width ladder and probing both pour modes for the attempt itself
+were measured and lost (docs/handover.md, "after the narrow attempt");
+`PCB_LAYOUT_NARROW_CONTINUATION` (stop, tracks, seeds, ladder) and
+`PCB_LAYOUT_NARROW_CONTINUATION_FLOOR` choose them for experiments, and
+`skipped` says when the attempt did not run.
+
 ## Via reduction
 
 Once the board is complete, the nets that have vias are renegotiated from the

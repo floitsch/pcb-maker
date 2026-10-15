@@ -1610,6 +1610,98 @@ items left are the restamp's list building (the marks pass over every
 branch on every reroute) and the clean-up's pour analyses (pour labelling
 and the fill probe's distance tests).
 
+## Committed on 2026-10-15 (after the narrow attempt)
+
+The narrow-signal attempt run alone (first-route budget, above) did not
+use the layout's work on every board: Hub ended at 577 of 1500 s, vaio_re
+at 1005. What was left after it, in work (1500 less the layout's work and
+the placement pool's excess), and what to run with it:
+
+| board | left after the attempt (x855) |
+| --- | --- |
+| jetson (x881) | 114 s |
+| A13 module | 40 s |
+| DSP-ADAU1452 | 228 s |
+| vaio_re | 410 s |
+| Hub | 916 s |
+| koeg | 53 s |
+
+Changed (crates/pcb-kicad/src/board_layout.rs): after that attempt, with
+at least 240 s left (`NARROW_CONTINUATION_FLOOR`), connections open and
+the wall clock inside the layout's guard (`narrow_continuation`), the
+attempt runs once more in the other pour mode (as tracks after connected,
+and the other way round), negotiation and clean-up split from what is left
+as for the attempt (`direct_narrow_budget`), that work its deadline; the
+layout keeps the better board as before (open items, then starved
+thermals). The work of the attempt and of this one now counts in the
+layout's `work_seconds` whether kept or not (it used to count only a kept
+board's; on the ordinary ladder fallback it still does). `skipped` says
+when it did not run (with too little work: jetson, module, DSP, koeg).
+`PCB_LAYOUT_NARROW_CONTINUATION` (stop, tracks, seeds, ladder) and
+`PCB_LAYOUT_NARROW_CONTINUATION_FLOOR` are experiment switches; stop is
+x855's behaviour. Unit tests for the decision and the seed count.
+
+Candidates, one layout run each, four threads, unpinned, load 13-34, no
+row cut. Unconnected and errors are KiCad's (new errors against the
+designer's), then vias and the layout's work; in brackets the router's
+open count of the extra attempt, kept or not. Before: x855 (jetson x881,
+the hole-clearance fix; module, DSP and vaio_re rows from the first-route
+agent's x855 runs, deterministic, same tasks file); candidates on x890
+(this code on 1c8f17f, switches by environment); after: x892 (this code
+with the default on 2b3b787, routes identical to x855 there).
+
+| board | before (stop) | P: probe both pour modes for the attempt | T: other pour mode | S: fresh seeds | L: class-width ladder |
+| --- | --- | --- | --- | --- | --- |
+| jetson | 17 / 1 starved / 670 / 1307 | - | not run (114 s left); x892 identical | - | - |
+| A13 module | 17 / 1 track_dangling / 490 / 1330 | 21 / 1 items_not_allowed / 409 / 1127 | not run (40 s); x892 identical | - | - |
+| DSP-ADAU1452 | 82 / 0 / 225 / 1210 | 126 / 0 / 189 / 864 | not run (228 s); x892 identical; floor 180: 82 / 0 / 225 / 1441 (223, not kept) | floor 180: 82 / 0 / 225 / 1347 (one seed, 229) | floor 180: 82 / 0 / 225 / 1380 (339) |
+| vaio_re | 35 / 0 / 686 / 1005 | not run | **21** / 0 / 637 / 1338 (55, kept); x892 the same | 35 / 0 / 686 / 1210 (one seed, 121) | 35 / 0 / 686 / 1310 (551) |
+| Hub | 30 / 0 / 170 / 577 | 39 / 11 starved / 179 / 875 | 30 / 0 / 170 / 818 (244, not kept); x892 the same | 28 / 0 / 172 / 891 (4 seeds, 111, kept) | 30 / 0 / 187 / 1404 (114, kept: KiCad the same, 17 more vias) |
+| koeg | 7 / 20 (15 courtyards, 5 shorting) / 427 / 1335 | not run | not run (53 s); x892 identical | - | - |
+
+Steps (x892): jetson the attempt alone; module the attempt and a round of
+3 seeds; DSP the attempt and 4 seeds; vaio_re the attempt, one seed, then
+the tracks attempt; Hub the attempt with its 4 seed retries, then the
+tracks attempt with its 4; koeg the attempt and 3 seeds.
+
+What was learned:
+
+- The other pour mode is the only continuation that gained: vaio_re 35 to
+  21 unconnected with 49 fewer vias. On Hub it spent 240 s for a board it
+  did not keep (Hub's leftover would otherwise go unused: CPU, not
+  quality), on DSP (floor lowered to 180) 230 s for nothing.
+- Fresh seeds: Hub 30 to 28 (two vias more, 314 s); on vaio_re one seed
+  fit (255 s an attempt) and lost by 45 open; on DSP one seed lost too.
+  One perturbed seed with less negotiation is a worse attempt, not a
+  variation of the same one.
+- The class-width ladder with 230 to 900 s: never better in KiCad's
+  count (vaio_re: four probes and the continued rung in 306 s of the 410,
+  551 open; Hub: 826 s for the same 30 and 17 more vias). The ladder needs the budget the first-route
+  agent took from it, which is why the attempt beats it.
+- Probing both pour modes (75 s each side by side, the better continued
+  with the attempt's negotiation less the probes): tracks led every probe
+  (module 60 against 123 unfinished nets, DSP 104 against 247, Hub 17
+  against 78) and the continued tracks attempt then lost on all three
+  (module 21 against 17 unconnected, DSP 126 against 82, Hub 39 and 11
+  starved thermals against 30). A probe's unfinished count does not
+  compare the modes: in connect mode it counts pour pads the pour does not
+  reach yet, in tracks mode the pour nets are ordinary nets that finish
+  late. The probe code was removed again; tracks as the second attempt,
+  judged by KiCad, is the safe form of the mode choice.
+
+Short tier x893 (this on 670454c) against build/short-x855.log: all 12
+rows identical (42 unconnected, 6 errors, 1176 vias, 22032 mm, 2390 s of
+work; CPU 5064 to 3924 s is main's router-overhead round). No short-tier
+board has the narrow-signal step, so none takes this path.
+Logs in the worktree's build/ (pcb-maker-narrow2: <board>-x855, -P,
+-T, -S, -L, -T180, -S180, -L180, -x892, jetson-x881; rows2.py prints the
+rows with the steps), short tier build/short-x893.log.
+
+Left: on boards with little left (module 40 s, koeg 53 s, jetson 114 s,
+DSP 228 s) nothing runs; a tracks attempt first instead of connect where
+tracks wins (vaio_re) needs a predictor the probe is not. The ordinary
+ladder fallback's work is still counted only when kept.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
