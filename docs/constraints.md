@@ -40,6 +40,10 @@ takes the constraints inline.
                "x": 3.5, "y": 3.5}]}
 ```
 
+A `comment` (a text or a list of texts) is for the reader and is not
+read: `import-kicad-netlist`'s `constraints.starter.json` says there what
+it inferred ([agents.md](agents.md#0-from-a-schematic)).
+
 Parts are named by reference. `fixed`, `back`, `front`, `hollow` and the
 `parts` of `region`, `group` and `row` also take glob patterns (`*`, `?`).
 A reference several footprints share (a panel's copies) names all of them
@@ -64,7 +68,7 @@ downwards, so `top` is the smaller y.
 | `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On a `polygon` outline, of the nearest side of the polygon that faces that way (below). On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
 | `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
-| `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. | hard |
+| `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. In place of `x` and `y`, `at` names a part of the outline's box in words: `left-half`, `right-half`, `top-half`, `bottom-half` or `center` (the middle third both ways), whatever size the outline gets (a keyboard half on an outline sized from the parts). | hard |
 | `keepout` | No part's body enters the box (`x`, `y` and `origin` as for `region`) on `side` `front`, `back` or `both` (default). With `"copper": true` no track, via or pour enters it either (under an antenna, for a label or a mechanical part). The box is written to the board as a KiCad rule area named `constraint keepout N`, so KiCad's DRC checks it too; placing again with the same constraints replaces it. | hard |
 | `back`, `front` | These parts go on the bottom (top) side. A part on the other side is flipped as KiCad flips it (mirrored, layers swapped) before placement; it is then placed like any other. A part named in both is an error. | hard |
 | `hollow` | Only these parts' pads (and holes) block other parts; the rest of their courtyard may hold parts: a shield's outline around its headers, a module mounted above parts. Parts with holes (through-hole parts, mounting holes) still stay out of the courtyard, as KiCad's DRC forbids holes inside one; where the courtyard is drawn as several separate shapes (a Raspberry Pi outline marking only its connectors), only those shapes. KiCad's DRC will report the courtyard overlap it allows. Usually fixed as well. | hard |

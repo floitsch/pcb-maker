@@ -109,6 +109,8 @@ pub use labels::KiCadLabelReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
 mod board_footprints;
+mod key_matrix;
+pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
 pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from};
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};

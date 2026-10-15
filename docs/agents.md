@@ -37,6 +37,43 @@ footprints sit at one point and there is no outline. Next to the board it writes
   `pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto <project-dir>/layout.json`
   lays the board out.
 
+**A keyboard: `constraints.starter.json`.** When the netlist holds a key
+matrix, the import also writes `constraints.starter.json` beside
+`constraints.json` (rewritten on every import; `constraints.json` never
+is). From the netlist alone it finds the switches (footprint or symbol
+named `SW`, `KEY`, `MX`, `Choc`, `hotswap`, or a two-pin part on a row and
+a column), each key's diode (a two-pin `D` part on a net with that switch
+alone), the rows and columns (a switch's two nets, directly or through its
+diode: rows by their names, `ROW0`, `r2`, `col_3`, else the side with
+fewer nets) and the halves of a split keyboard (two matrices no switch
+joins, or columns named for a hand, `col_L1` and `col_R1`). The file is
+the import's starter constraints plus:
+- a `row` per matrix row, its keys in column order at the key pitch
+  (Choc 18 x 17 mm, else 19.05 mm, or the switch body where it is wider);
+  rows over the same columns, one after the other, are one grid
+  (`columns`, `row_pitch_mm`); keys larger than the pitch (1.5u, 2u, an
+  ISO enter) stay out of the rows, `near` their neighbour, the keys after
+  them `relative` right of the keys before; a row whose columns have a gap
+  (thumb keys of both hands on one row) is a row per piece;
+- each row `relative` below the one before (short rows, the thumb keys,
+  up to 10 mm below);
+- each diode `near` its key (3 mm);
+- per half, a `region` in words (`"at": "left-half"`) with its rows and its
+  controller (the part with the most pins on the half's lines);
+- `comment`: what was inferred and what needs your decision (key pitch and
+  stagger, thumb clusters, the controller's edge, the outline, the switches
+  outside the matrix).
+
+Copy it to `constraints.json` and edit it there. The report's `starter`
+says what was found: `matrix` (row and column nets), `switches`,
+`diodes`, `halves` (each with its rows, columns, switches, controller),
+`unassigned` (switch-like parts outside the matrix: reset and power
+switches), `wide`, `alternates` (a second footprint on the same key), or
+`why` no file was written (keys wired each to its own pin: no matrix).
+Urchin (two 4 x 5 halves) from the starter alone plus the walkthrough's
+230 x 95 mm outline: 42 of 42 constraints kept, 68/68 routed, KiCad 0
+unconnected, exit 0 (`"total_seconds": 30`).
+
 The report lists what needs a look:
 - `missing`: footprints not found in any library (the board leaves them
   out), or unreadable, each with where it was looked for: no library of
@@ -184,6 +221,8 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
 | "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |
+| "It's a keyboard" (a key matrix in the schematic) | copy `constraints.starter.json` to `constraints.json`, give it an `outline`, then decide what its `comment` asks (pitch, stagger, thumbs, the controller's edge) |
+| "This half on the left of the board" | `"region": [{"parts": ["SW1", "U1"], "at": "left-half"}]` (`right-half`, `top-half`, `bottom-half`, `center`: on any outline) |
 | "A 4 x 4 key matrix, 19.05 mm pitch" | `"row": [{"parts": ["SW*"], "pitch_mm": 19.05, "columns": 4}]` |
 | "Each key's diode right at its switch" | `"near": [{"part": "D2", "part_of": "SW2", "max_mm": 3}, ...]` (one per key; the keys may be in a row) |
 | "The thumb keys below the grid" | `"relative": [{"part": "SW16", "below": "SW1", "max_gap_mm": 10}]` (`SW1`, the row's first key, stands for the grid) |

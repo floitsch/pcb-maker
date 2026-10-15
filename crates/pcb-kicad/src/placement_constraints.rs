@@ -35,6 +35,11 @@ use pcb_placer::constraints::{Anchor, Edge, Relation};
 #[serde(deny_unknown_fields)]
 pub struct KiCadPlacementConstraints {
     pub version: u32,
+    /// Notes for the reader, not read by the placer: a text or a list of
+    /// texts (the import's `constraints.starter.json` says there what it
+    /// inferred).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<serde_json::Value>,
     /// A board outline replacing the board's own (or giving a board
     /// without one its shape): a rectangle, a polygon, round corners,
     /// cutouts, several pieces.
@@ -389,8 +394,17 @@ pub struct KiCadEdgeConstraint {
 pub struct KiCadRegionConstraint {
     /// References or glob patterns.
     pub parts: Vec<String>,
-    pub x: [f64; 2],
-    pub y: [f64; 2],
+    /// The box, in millimetres; or `at` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<[f64; 2]>,
+    /// A part of the outline's box in words, whatever its size: `left-half`,
+    /// `right-half`, `top-half`, `bottom-half` or `center` (the middle third
+    /// both ways), as `place` says them (a keyboard half's keys on an
+    /// outline still to be sized).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
     /// `board` (default): relative to the top-left corner of the outline's
     /// bounding box; `absolute`: KiCad board coordinates.
     #[serde(default)]
@@ -1618,12 +1632,29 @@ pub(super) fn apply_constraints(
             Some("absolute") => [0.0, 0.0],
             Some(other) => return Err(format!("unknown region origin {other:?} (board or absolute)")),
         };
-        let region = [
-            offset[0] + entry.x[0].min(entry.x[1]),
-            offset[1] + entry.y[0].min(entry.y[1]),
-            offset[0] + entry.x[0].max(entry.x[1]),
-            offset[1] + entry.y[0].max(entry.y[1]),
-        ];
+        let region = match (&entry.at, entry.x, entry.y) {
+            (None, Some(x), Some(y)) => {
+                [offset[0] + x[0].min(x[1]), offset[1] + y[0].min(y[1]), offset[0] + x[0].max(x[1]), offset[1] + y[0].max(y[1])]
+            }
+            (Some(at), None, None) => {
+                let [x0, y0, x1, y1] = match at.as_str() {
+                    "left-half" => [0.0, 0.0, 0.5, 1.0],
+                    "right-half" => [0.5, 0.0, 1.0, 1.0],
+                    "top-half" => [0.0, 0.0, 1.0, 0.5],
+                    "bottom-half" => [0.0, 0.5, 1.0, 1.0],
+                    "center" => [1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0],
+                    other => {
+                        return Err(format!(
+                            "region {:?}: unknown at {other:?} (left-half, right-half, top-half, bottom-half or center)",
+                            entry.parts
+                        ))
+                    }
+                };
+                let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
+                [bounds[0] + x0 * width, bounds[1] + y0 * height, bounds[0] + x1 * width, bounds[1] + y1 * height]
+            }
+            _ => return Err(format!("region {:?}: give both x and y, or at", entry.parts)),
+        };
         let mut any = false;
         for pattern in &entry.parts {
             for index in matching(pattern) {
@@ -2127,6 +2158,27 @@ mod tests {
         ));
         assert_eq!(problem.components[2].angle_options, vec![90.0, 270.0]);
         assert_eq!(problem.poses[2].angle, 90.0);
+    }
+
+    #[test]
+    fn a_region_in_words_is_that_part_of_the_outline_and_a_comment_is_read_past() {
+        // The board is 30 x 20 mm: the left half is x 0-15, the centre the
+        // middle third both ways.
+        let (problem, _) = apply(
+            r#"{"version": 1, "comment": ["inferred", "decide the pitch"],
+                "region": [{"parts": ["C1"], "at": "left-half"}, {"parts": ["C2"], "at": "center"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(problem.constraints.regions[0], (1, [0.0, 0.0, 15.0, 20.0]));
+        let (_, centre) = problem.constraints.regions[1];
+        assert!((centre[0] - 10.0).abs() < 1e-9 && (centre[3] - 40.0 / 3.0).abs() < 1e-9, "{centre:?}");
+        for wrong in [
+            r#"{"version": 1, "region": [{"parts": ["C1"], "at": "left"}]}"#,
+            r#"{"version": 1, "region": [{"parts": ["C1"], "at": "left-half", "x": [0, 1], "y": [0, 1]}]}"#,
+            r#"{"version": 1, "region": [{"parts": ["C1"], "x": [0, 1]}]}"#,
+        ] {
+            assert!(apply(wrong).is_err(), "{wrong}");
+        }
     }
 
     #[test]

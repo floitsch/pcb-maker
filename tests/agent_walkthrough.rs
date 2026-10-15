@@ -367,3 +367,46 @@ fn stdout_has_no_overlap_warnings(output: &Output) -> bool {
     let all = [output.stdout.as_slice(), output.stderr.as_slice()].concat();
     !String::from_utf8_lossy(&all).contains("overlap")
 }
+
+/// The import recognises urchin's key matrices from the netlist and
+/// writes `constraints.starter.json` (docs/agents.md, section 0): two
+/// halves of 4 rows x 5 columns, every key's diode, a grid per half, the
+/// thumb keys below it. With an outline added, the layout from it alone
+/// passes (the walkthrough's 100 hand-written constraints did as well).
+#[test]
+fn the_starter_constraints_of_the_key_matrix_lay_out_the_keyboard() {
+    if Command::new("kicad-cli").arg("version").output().is_err() {
+        eprintln!("kicad-cli is not on the PATH: the walkthrough needs KiCad; skipped");
+        return;
+    }
+    let root = scratch();
+    let design = root.join("design");
+    copy_tree(&Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/pcb-kicad/tests/fixtures/urchin"), &design);
+    let project = root.join("project");
+    let output = run(&[Path::new("import-kicad-netlist"), &design.join("main.kicad_sch"), &project, Path::new("main")]);
+    assert_eq!(code(&output), 0, "import");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let starter = &report["starter"];
+    assert_eq!(starter["matrix"], json!([8, 10]), "{starter}");
+    assert_eq!((starter["switches"].as_u64(), starter["diodes"].as_u64()), (Some(34), Some(34)), "{starter}");
+    assert_eq!(starter["halves_by"], "separate matrices");
+    let halves = starter["halves"].as_array().unwrap();
+    assert_eq!(halves.iter().map(|half| half["controller"].as_str().unwrap()).collect::<Vec<_>>(), ["U1", "U2"]);
+    assert_eq!(starter["unassigned"], json!(["RSW0", "RSW1", "SW_POWER0", "SW_POWER1"]));
+    // The agent's file is the import's usual one; the starter beside it.
+    assert!(read(&project.join("constraints.json")).get("row").is_none());
+    let mut constraints = read(&project.join("constraints.starter.json"));
+    assert_eq!(constraints["row"][0]["columns"], 5);
+    assert_eq!(constraints["near"].as_array().unwrap().len(), 34);
+    assert!(constraints["comment"].as_array().unwrap().iter().any(|line| line.as_str().unwrap().contains("Needs your decision")));
+    constraints["outline"] = json!({"width": 230, "height": 95});
+    fs::write(project.join("constraints.json"), constraints.to_string()).unwrap();
+    fs::write(project.join("layout.json"), json!({"placer": {"constraints": "constraints.json"}, "total_seconds": 30}).to_string()).unwrap();
+    let out = root.join("layout");
+    let output = run(&[Path::new("layout-kicad-board"), &project, Path::new("main"), &out, Path::new("auto"), &project.join("layout.json")]);
+    let verdict = read(&out.join("verdict.json"));
+    assert_eq!(code(&output), 0, "layout: {verdict}");
+    assert_eq!(verdict["constraints_missed"], json!([]));
+    assert_eq!(verdict["kicad_unconnected_items"], 0);
+    fs::remove_dir_all(&root).ok();
+}

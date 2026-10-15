@@ -48,6 +48,11 @@ pub struct KiCadNetlistImport {
     /// Parts `constraints.json`'s `add` put on the board.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub added: Vec<String>,
+    /// The key matrix found in the netlist and the starter constraints
+    /// written for it (`constraints.starter.json`); absent when no part
+    /// looks like a key switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub starter: Option<crate::key_matrix::KiCadStarterReport>,
     /// The starter constraints and layout config, when written (never over
     /// existing files).
     pub constraints: Option<PathBuf>,
@@ -601,6 +606,8 @@ pub fn import_kicad_netlist_from(
     // The board footprints whose ids the import keeps (`kept_uuid`).
     let mut kept_ids: BTreeSet<String> = BTreeSet::new();
     let components = netlist.child("components").map(Expr::children).unwrap_or_default();
+    // The parts as the key matrix inference sees them.
+    let mut matrix_parts = Vec::new();
     // Every symbol's path, so that a board footprint linked to one symbol is
     // not taken for another of its reference.
     let symbol_paths: BTreeSet<String> = components
@@ -625,6 +632,17 @@ pub fn import_kicad_netlist_from(
         if flags.contains("exclude_from_board") {
             continue;
         }
+        matrix_parts.push(crate::key_matrix::MatrixPart {
+            reference: reference.clone(),
+            footprint: text_of(component, "footprint").unwrap_or_default(),
+            symbol: component.child("libsource").and_then(|source| text_of(source, "part")).unwrap_or_default(),
+            value: value.clone(),
+            pins: pins
+                .range((reference.clone(), String::new())..)
+                .take_while(|((owner, _), _)| *owner == reference)
+                .map(|((_, pin), (net, _, kind))| (pin.clone(), net.clone(), kind.clone()))
+                .collect(),
+        });
         // The symbol the footprint is linked to: `/<sheet uuids>/<symbol uuid>`.
         let sheet_path = component.child("sheetpath");
         let sheet = sheet_path.and_then(|sheet| text_of(sheet, "tstamps")).unwrap_or_else(|| "/".into());
@@ -975,6 +993,35 @@ pub fn import_kicad_netlist_from(
     if !edges.is_empty() {
         starter["edge"] = edges.into();
     }
+    // A key matrix: the starter constraints for it, beside the agent's
+    // file (rewritten on every import; constraints.json never is).
+    let starter_report = match crate::key_matrix::infer_key_matrix(&matrix_parts) {
+        None => None,
+        Some(matrix) => {
+            let mut bodies = BTreeMap::new();
+            for footprint in board.children().iter().filter(|item| item.head() == Some("footprint")) {
+                let Some(reference) = footprint_reference(footprint) else {
+                    continue;
+                };
+                let id = footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+                let size = crate::board_footprints::body_size(footprint).map_or([0.0, 0.0], |(size, _)| size);
+                bodies.insert(reference, (id, size));
+            }
+            let (keys, mut report) = crate::key_matrix::starter_constraints(&matrix, &bodies, starter.clone());
+            if matrix.groups.is_empty() || report.switches == 0 {
+                report.why = Some(format!(
+                    "{} switch-like parts, but no two share a row and a column net: no key matrix (keys wired directly to pins, or no keyboard)",
+                    matrix.unassigned.len()
+                ));
+            } else {
+                let path = output.join("constraints.starter.json");
+                fs::write(&path, crate::key_matrix::constraints_text(&keys))
+                    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+                report.file = Some(path);
+            }
+            Some(report)
+        }
+    };
     let constraints = write_new("constraints.json", starter)?;
     let layout = write_new("layout.json", serde_json::json!({"placer": {"constraints": "constraints.json"}}))?;
     Ok(KiCadNetlistImport {
@@ -999,6 +1046,7 @@ pub fn import_kicad_netlist_from(
                 .collect()
         }),
         added,
+        starter: starter_report,
         constraints,
         layout,
     })

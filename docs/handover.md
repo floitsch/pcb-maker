@@ -4084,6 +4084,148 @@ offsets of consecutive nodes are already marked), and the mispredicted
 data-dependent tests that remain (closed neighbour, seen-or-cheaper,
 occupancy zero), which no layout change removes.
 
+## Committed on 2026-10-15 (starter constraints for key matrices)
+
+Open problem 8, item 4: the import recognises a key matrix from the
+netlist alone and writes starter constraints, so that an agent does not
+write a keyboard's hundred entries by hand.
+
+**Inference** (`crates/pcb-kicad/src/key_matrix.rs`, `infer_key_matrix`):
+- switches: footprint or symbol named `SW`, `KEY`, `MX`, `Choc`,
+  `hotswap`, not of a reference class that is never a key (`D`, `LED`, `J`,
+  `U`, ...: a USB receptacle `G-SWITCH`, slab's `LED_MX` key LEDs); then
+  two-pin parts of any name on a row and a column (capacitive pads);
+- a switch's terminals: each of its nets that is no supply (`GND`, `+5V`,
+  a `power_in` pin), followed through a diode when the net between holds
+  only that switch and one two-pin `D` part (not an LED): the key's own
+  diode. A diode net several switches share is followed only when their
+  other lines are the same (alternate footprints of one key: le_chiffre's
+  1.25u and 2u on one diode), not for a column diode five keys share
+  (CyberKeeb2040);
+- lines: terminals two switches or more reach; a key alone on its column
+  counts when the controller (a part with pins on two lines) has its other
+  net (bumwings' mod key);
+- rows and columns: the lines two-coloured by the switches between them,
+  per connected component; rows by name (`row`, `r2` against `col`,
+  `c3`), else the side with fewer nets (jiran-ble-lite's `/P0.07` pins);
+  order by the number in the name where every line is named as a row or
+  column and has its own number, else by the first switch's reference
+  (bumwings' `col_Lp2`, `col_Lp1`, ...; a controller's pin numbers are no
+  order);
+- halves: two components (urchin, ULK, jiran: separate controllers), or
+  one matrix whose column names say the hand (`col_L*`, `col_R*`:
+  bumwings); right by name (`R_`, `_r`, `right`); a controller per half
+  (most pins on its lines; one shared by both halves is neither's).
+
+**The file** (`starter_constraints`, `constraints.starter.json`, rewritten
+on every import, never `constraints.json`): the import's own starter plus
+a `row` per matrix row in column order at the key pitch (Choc/PG1350 18 x
+17, else 19.05, raised to a unit key's body), consecutive whole rows over
+the same columns merged into a grid (`columns`, `row_pitch_mm`: the first
+cut with one `row` per matrix row and a `relative` chain missed `relative
+SW6 below SW1` by 16 mm on urchin, the rows stacked out of order; the grid
+keeps every one), keys larger than the pitch out of the rows and `near`
+their neighbour (the keys after them `relative` right of the keys
+before), a row with a gap in its columns in pieces (le_chiffre's thumbs
+on both hands), each row block `relative` below the one before (thumb
+rows, half the longest row or less, up to 10 mm), each diode `near` its
+key at 3 mm, and per half a `region` with its rows' first keys and its
+controller. `comment` says what was inferred and what needs a decision
+(pitch and stagger, thumbs, the controller's edge, the outline, the
+switches outside). The import report's `starter`: `matrix` (row and
+column nets), `switches`, `diodes`, `halves`, `halves_by`, `rows_by`,
+`pitch_mm`, `unassigned`, `wide`, `alternates`, or `why` no file.
+
+Format additions (docs/constraints.md): `region` takes `at` (`left-half`,
+`right-half`, `top-half`, `bottom-half`, `center`) in place of `x`/`y`,
+cut from the outline's box whatever its size (the starter's outline is
+`{}`); a top-level `comment` is accepted and not read.
+
+**Judge** (`experiments/key-matrix/judge.py`, x1121, imports as the
+schematic tier does with `--footprints-from` the designer's board, then
+checks the starter against the designer's board: a row's switch centres
+within one key pitch of their best-fit line, in the row's order, each
+`relative` below holding, each diode within its 3 mm):
+
+| board | matrix | switches | diodes | halves | unassigned | rows on a line | in order | below | diodes within 3 mm |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| urchin | 8 x 10 | 34 | 34 | 2 (separate) | 4 | 8/8 | 8/8 | 2/2 | 33/34 |
+| le_chiffre 36keys | 5 x 10 | 41 | 35 | 1 | 2 | 5/5 | 5/5 | 2/3 | 35/35 |
+| le_chiffre hotswap | 5 x 10 | 36 | 34 | 1 | 1 | 3/3 | 3/3 | 1/2 | 34/34 |
+| bumwings v001 | 7 x 14 | 54 | 52 | 2 (column names) | 0 | 11/11 | 11/11 | 6/7 | 52/52 |
+| slab-pcb-left | - | - | - | - | 31 | | | | |
+| interchange-pcb-right | - | - | - | - | 31 | | | | |
+| keyboard (byrantech) | 6 x 14 | 78 | 78 | 1 | 1 | 6/6 | 6/6 | 3/3 | 78/78 |
+| ErgoSNM | 5 x 7 | 35 | 35 | 1 | 6 | 2/5 | 4/5 | 0/0 | 11/35 |
+| CyberKeeb2040 | 5 x 14 | 67 | 67 | 1 | 2 | 6/8 | 7/8 | 3/3 | 0/67 |
+| eternal-keypad | 5 x 8 | 36 | 36 | 1 | 2 | 5/5 | 5/5 | 2/2 | 35/36 |
+| ULK | 8 x 12 | 42 | 42 | 2 (separate) | 4 | 8/8 | 8/8 | 2/2 | 42/42 |
+| jiran-ble-lite | 10 x 12 | 56 | 56 | 2 (separate) | 4 | 10/10 | 10/10 | 2/2 | 56/56 |
+| capybully (capacitive, no diodes) | 4 x 12 | 48 | 0 | 1 | 1 | 5/6 | 6/6 | 1/1 | - |
+| Quanta75 | 6 x 15 | 82 | 82 | 1 | 3 | 7/7 | 7/7 | 5/5 | 82/82 |
+| poly_corne left | 4 x 6 | 21 | 21 | 1 | 2 | 4/4 | 4/4 | 1/1 | 21/21 |
+| osprey | 7 x 6 | 42 | 42 | 1 | 2 | 7/7 | 7/7 | - | 42/42 |
+| ghoul, USB_Keypad | - | - | - | - | 43, 9 | | | | |
+
+The matrices are right wherever the board has one; what misses is
+geometry the netlist cannot say. slab-pcb (both halves), ghoul and
+USB_Keypad wire every key to its own pin (slab and ghoul through an IO
+expander or shift register): no matrix, `why` says so, no file. ErgoSNM's
+rows curve (up to 29 mm off a line) and its diodes sit 3.3-4.2 mm from
+the key; CyberKeeb's diodes are gathered away from the keys (62 mm median)
+and two of its rows are bent; capybully's thumb row is bent. Over all
+boards but CyberKeeb, 521 of 547 diodes are within 3 mm of their key and
+546 within 5 (3 kept, as the walkthrough had). In all, 14 of the 18
+keyboards have a matrix; 87 of 93 row lines lie within a key pitch of a
+line and 91 come in the row's order. urchin's left matrix is
+the designer's right half (`left_is_left` false: the halves are mirrored
+on the panel); the regions are a suggestion. Unassigned are the reset,
+boot and power switches, an encoder, the TRRS jacks ErgoSNM names `SW`.
+
+**Layout** (urchin, the walkthrough's fixture, the starter alone plus the
+walkthrough's 230 x 95 mm outline, `"total_seconds": 30`, four threads,
+load 22-31; x1121): exit 0, 42 of 42 constraints kept (2 grids, 2 thumb
+rows, 34 `near`, 2 `relative`, 2 `region`), 68/68 routed, KiCad 0
+unconnected and no new error, 38 vias, 1960 mm, 19.7 s of work. The
+walkthrough's 100 hand-written constraints on the same binary: exit 0,
+100/100, 68/68, 53 vias, 1903 mm, 7.2 s of work. The starter as written
+(automatic outline): exit 0, 186 x 124 mm, 36 vias, 1902 mm.
+
+**Schematic tier** (`--jobs 6 --threads 4`, under the lock, x1120 = the
+branch on cc9c4df; the tier does not read the starter file):
+`build/sch-x1120.log` against `build/sch-x1100.log`: **8/12 pass both**,
+every row's fields identical (routed, vias, length, constraints, parity,
+DRC errors and unconnected, `work_seconds` to the last digit) but
+timing and memory (651 s wall against 684; CPU 5702 s against 5208) and
+the cosmetic count in `drc_line`: KiCad's `lib_footprint_issues` and
+`lib_footprint_mismatch` (spell_tome 9 + 2 against 25 + 0; never judged),
+which a tier of another branch at the same time (`build/sch-x1095.log`)
+shows alike: the library check's environment, not this change. No tier
+with the starter applied: the tier's constraints are the designer's
+placement moved onto the import (fixed parts at the designer's spot),
+which the starter's rows would contradict rather than add to.
+
+Tests: `key_matrix` (8: rows and columns in order with each key's diode,
+rows as the fewer lines with pin-named nets, two matrices as halves named
+right, one matrix split by column names, keys wired to their own pins,
+alternate footprints and a column diode, a two-pin pad and a ground pin,
+the starter's grids, thumbs, wide key, regions and its text parsing as
+constraints), `placement_constraints`
+`a_region_in_words_is_that_part_of_the_outline_and_a_comment_is_read_past`,
+`agent_walkthrough` `the_starter_constraints_of_the_key_matrix_lay_out_the_keyboard`
+(import report, file, layout from it at 230 x 95: exit 0, 15 s).
+`cargo test --release -p pcb-kicad` (351), `agent_walkthrough` and
+`cli_exit_codes` pass. Snapshots `build/bin/pcb-maker-x1120` (on cc9c4df,
+the tier), `x1121` (rebased on 8216bc9, the judge and the urchin numbers), `x1122`
+(rebased on c9fe4de: key_matrix and the starter walkthrough test pass).
+
+Not done: thumb clusters are a straight `row` below the grid (urchin's
+are turned 15 degrees on the designer's board); column stagger is not
+inferred (a `row` is a straight line); the controller's edge and the USB
+connector's are left to the agent; keys wired to their own pins get no
+rows (their positions are not in the netlist); a key's LED (slab's
+SK6812 per key) is not tied to its key.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -4174,7 +4316,9 @@ occupancy zero), which no layout change removes.
       them as statuses and a per-type parity count, with a `next_actions`
       line when only `unconnected-(...)` pins are involved. Small: half a
       day.
-   4. *Starter constraints for keyboards and arrays.* The import writes
+   4. *Starter constraints for keyboards and arrays.* **Done for key
+      matrices on 2026-10-15** (above: `constraints.starter.json`; left:
+      LED bars and other arrays, thumb cluster angles, stagger). The import writes
       `move_all`, `outline: {}` and the plug-in connectors; urchin needed
       100 hand-written entries. Recognise a key matrix from the netlist
       (switches whose second pad meets a diode, the diodes' other side on
