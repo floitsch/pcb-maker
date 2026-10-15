@@ -4512,6 +4512,135 @@ Left: the board's top-level graphics, zones, tracks and net list stay in
 the file's order (nothing measured followed them); a save that rounds
 coordinates differently is another input.
 
+## Committed on 2026-10-16 (stamp)
+
+`Router::stamp` made cheaper with routes and occupancy maps byte-identical
+(the next target the search-core round named). Binaries: x1140 (the change
+on aacdd28), x1141 (the same without a no-op, see below), x1142 (on
+015676c, for the last pairs), x1143 (the commit's code on 28b9bf8, for
+the short tier). Scripts and logs in the worktree
+`pcb-maker-stamp` (`build/prof`, `build/bench`, `build/check`,
+`build/fpall`, `build/pairs`).
+
+**Line profile, before** (x1123's code with line tables, gperftools at
+200 Hz, route mode on the v16 placements, one search thread, share of the
+process's samples; kicad-cli did not run under the profiler). `stamp` is
+10.5 % of Castor, 6.0 % of k30-SBC and 9.8 % of Sisu; `unstamp`,
+`mask_own` and `OwnStamps::new` together 0.1-0.3 % (`route_jacobi`'s
+unstamp is rare: few parallel batches). Its two phases, Castor / k30 /
+Sisu:
+
+| what | Castor | k30 | Sisu |
+|---|---|---|---|
+| list building: per node and querying class, every offset of four footprints (trace, via, two diagonal-block maps) tested against the mark bitset | 4.2 | 2.5 | 3.5 |
+| of it: the mark test / bounds tests / loop / push | 2.5 / 0.7 / 0.4 / 0.4 | 1.6 / 0.4 / 0.3 / 0.3 | 2.1 / 0.5 / 0.4 / 0.3 |
+| diff (the two rows below) | 6.2 | 3.4 | 6.2 |
+| diff: old list (mark test, count down, tile claim) | 0.6 / 2.0 / 0.2 | 0.4 / 1.0 / 0.1 | 0.7 / 2.0 / 0.2 |
+| diff: new list (mark test, count up, tile claim) | 0.6 / 2.2 / 0.3 | 0.4 / 1.2 / 0.2 | 0.6 / 2.2 / 0.2 |
+
+What the lists hold (Castor, a counting build, one route): 18 000 calls,
+775 M old stamps, 818 M new, 565 M of them added and about 522 M removed:
+two thirds of every list changes, because the negotiation calls `stamp`
+twice per reroute (`rip_up_conflicted` takes the conflicted branches'
+stamps away, the stamp after the search puts the new ones in), so the
+restamp diff saves little there and the count changes themselves are the
+cost. The count lines are memory: Castor's 42 occupancy maps are 1 MB
+each (568 x 865 cells of u16), beyond the core's 512 KB L2.
+
+**Changed** (crates/pcb-router/src/router.rs, `Fresh`, `mark_footprint`,
+`prefetch`, `Router::stamp`). Measured with bench-search as two processes
+on the two hyperthreads of one core, sides swapped each repetition
+(build/bench/sib.sh: user seconds, the bench lines must agree), Castor,
+12 iterations, 6 repetitions; null test of x1123 against itself 1.000
+(0.998-1.001):
+
+- Leading edges (0.964 against x1123): a node one step from the node
+  before (8-neighbour or the same cell), in the same class and, for the
+  trace and diagonal-block maps, on the same layer, marks only the
+  offsets of its footprint that the node before did not cover: `Fresh`,
+  per footprint and step, the offsets `o` with `o + step` not in the
+  footprint, in the footprint's order. Every skipped cell was marked by
+  the node before, which applied the same footprint to the same map, so
+  the list gets the same cells in the same order. A disc of radius r
+  goes from about 3r^2 offsets to 2r+1 on a straight run. With it: no
+  bounds test when the node is at least the footprints' reach from the
+  edges, the node classes in one flat list (was a vector per branch), and
+  a via through several layers at one cell stamps its via footprints
+  once. (The diagonal bisectors cannot use it: the bisectors of a
+  diagonal run are parallel lines that share no cell; x1140 carried that
+  case, x1141 dropped it, 1.003 against x1140, identical lists.)
+- Prefetch in the diff (0.982 against the step before, 16 entries
+  ahead; 32 ahead against 16: 0.998): the count of the stamp 32 entries
+  on is asked for early (`_mm_prefetch`; nothing off x86_64).
+- One flat mark bitset for all maps instead of a vector per map: 0.998.
+- Tried and dropped: tile claims without a branch and without a division
+  (multiply-high by a reciprocal): 1.005; division-free with the branch:
+  1.002; prefetching the mark word too: 1.004.
+
+All three against x1123 (bench-search, the whole process including the
+lattice build): Castor 0.947 (12 iterations), Sisu 0.958 (4), k30-SBC
+0.975 (4), jetson 0.985 (2). bench-search spends more of its time
+stamping than route mode (15.8 % of the Castor bench before, 7.6 % after).
+
+**Line profile, after** (the change on x1123's code, same settings; a
+quieter machine: load about 10 against 15-25 before, so the seconds are
+not a claim): `stamp` 3.6 % of Castor (list 1.4, diff 2.2), 2.3 % of k30
+(0.9, 1.4), 3.0 % of Sisu (1.6, 1.4); fingerprints identical to the
+before-runs. Remaining lines: the mark test of the leading edge (0.6 on
+Castor), the count tests (0.4 each way), the push (0.2).
+
+**Byte-identical.** A check build ran the original list building beside
+the new one on every call and asserted equal lists (content and order):
+route mode, two threads, urchin, spell_tome, Castor, k30-SBC, Sisu and
+jetson, about 185 000 calls, all equal. `PCB_ROUTER_FINGERPRINT_ALL`
+(every occupancy map hashed into each fingerprint) at a quarter of the
+budget, two threads, x1132 against x1141: urchin, spell_tome, Castor,
+k30-SBC, Sisu and jetson identical (fingerprints and board md5,
+`build/fpall/fpall.out`). Unit test `fresh_footprints_mark_as_whole_ones`
+(random walks near the edges: the same list and marks with leading
+edges; bisectors share no cell).
+
+**CPU, pinned simultaneous pairs** (route mode, `--jobs 1 --threads 4`,
+`PCB_MAKER_NO_CACHE=1`, `cpu_seconds`; route mode on fixed placements is
+untouched by the placer and calibration commits in between, so both
+bases hold for the ratio). r1, r3: the base on 0-7,16-23; r2, r4
+swapped:
+
+| board | r1 x1132 / x1141 | r2 swapped | r3 x1152 / x1142 | r4 swapped | all four |
+|---|---|---|---|---|---|
+| Castor | 0.946 (257.9 / 244.0) | 0.966 (277.2 / 267.9) | 0.923 (336.3 / 310.5) | 1.011 (319.6 / 323.1) | 0.961 |
+| k30-SBC | 0.934 (401.8 / 375.2) | 1.007 (306.0 / 308.1) | 0.950 (536.1 / 509.5) | 1.023 (489.3 / 500.7) | 0.978 |
+| Sisu | 0.969 (1185.0 / 1148.4) | 1.004 (876.7 / 880.3) | 0.925 (1151.3 / 1064.5) | 1.016 (1092.7 / 1109.8) | 0.978 |
+| jetson | 0.944 (1451.5 / 1369.7) | 1.050 (1095.1 / 1150.2) | 0.911 (1452.7 / 1323.4) | 1.024 (1382.9 / 1415.8) | 0.981 |
+| geomean | 0.948 | 1.006 | 0.927 | 1.018 | 0.974 |
+
+Ratios new / old. The halves differed by about 8 points this time (the
+new binary on 8-15 gained 5-7 %, on 0-7 it lost 1-2 %), more than the 3-5
+of earlier rounds, so only the four together say anything: about 2.5 %
+of route mode's CPU, the stamping's share falling by two thirds. Every
+pair: the same board file (md5), vias, length, work seconds, verdict and
+fingerprints (`PCB_ROUTER_FINGERPRINT=1`).
+
+Short tier (tasks v6, tier default 8 x 2, under the lock) x1143 against
+`build/short-x1161.log`: all 12 rows identical apart from CPU, wall,
+load, memory and the designer DRC's seconds (routed, KiCad's findings,
+vias, length, work seconds, first-route open terminals; the tasks path
+spelled relative, the same sha256); compare.py same 12, unconnected 19
+to 19, passes 7 to 7, cut 0. Its CPU (2882 to 2784 s) is not a claim:
+unpaired.
+
+`cargo test --release -p pcb-router -p pcb-kicad` passes.
+
+Next on this path: the counts. The negotiation takes a rerouted branch's
+stamps out (`rip_up_conflicted`) and puts the new route's in after the
+search; two thirds of the stamps change on every call, and a branch that
+comes back on the same cells pays both. Leaving the ripped stamps in
+place and masking them in the search like the kept branches (`mask_own`
+and `own_claimed` already do this for the kept ones) would let one diff
+cancel them, but every reader of the occupancy during the search (the
+tile planner, the conflict and history bookkeeping, pour checks) must see
+the same values, a semantic change not attempted here.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

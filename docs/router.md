@@ -59,7 +59,10 @@ Interf-U were re-run during the audit.
    zone where another net's centreline or via may not be. Stamps are reference
    counted per net, so rip-up is an exact decrement; a restamp builds the
    net's new list first and changes only the counts of the stamps that
-   came or went (a rerouted branch, not the branches kept). They are exact: a node's
+   came or went (a rerouted branch, not the branches kept); a node one step
+   from the node before on its layer and in its class marks only its
+   footprints' leading edge (`Fresh`: the offsets the node before did not
+   cover), which lists the same cells in the same order. They are exact: a node's
    disc covers the cells closer than the clearance (in whole nanometres), so
    two tracks at exactly their clearance are legal, as KiCad has it (0.4 mm
    pad pitch with 0.2 mm tracks and clearance). On a lattice no node lies

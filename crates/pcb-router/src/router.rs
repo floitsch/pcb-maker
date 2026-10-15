@@ -650,6 +650,125 @@ struct Stamps {
     diagonal_block: [Vec<(i32, i32)>; 2],
     diagonal_block_via: [Vec<(i32, i32)>; 2],
     stub_diagonal_block: [Vec<(i32, i32)>; 2],
+    /// What the node footprints add to the same footprint stamped at the
+    /// node before (see `Fresh`).
+    fresh: Fresh,
+}
+
+/// The offsets of a footprint that the same footprint, stamped one step
+/// earlier, does not already cover: `o` with `o + step` not in it, in the
+/// footprint's order. A routed path is mostly straight runs on one layer,
+/// so a node of a run marks only its footprint's leading edge; the rest
+/// of its cells were marked by the node before (`Router::stamp`).
+#[derive(Clone, Default)]
+struct Fresh {
+    /// Per step from the node before, at `(dx + 1) * 3 + (dy + 1)`.
+    trace_to_trace: [Vec<(i32, i32)>; 9],
+    trace_to_via: [Vec<(i32, i32)>; 9],
+    diagonal_block: [[Vec<(i32, i32)>; 9]; 2],
+    /// The largest coordinate of any offset of the footprints: a node at
+    /// least this far from the lattice's edges needs no bounds test.
+    reach: i64,
+}
+
+impl Fresh {
+    fn of(stamps: &Stamps) -> Self {
+        fn ahead(offsets: &[(i32, i32)], (sx, sy): (i32, i32)) -> Vec<(i32, i32)> {
+            let all: HashSet<(i32, i32)> = offsets.iter().copied().collect();
+            offsets.iter().copied().filter(|(dx, dy)| !all.contains(&(dx + sx, dy + sy))).collect()
+        }
+        fn steps(offsets: &[(i32, i32)]) -> [Vec<(i32, i32)>; 9] {
+            std::array::from_fn(|index| ahead(offsets, (index as i32 / 3 - 1, index as i32 % 3 - 1)))
+        }
+        let lists = [
+            &stamps.stub_to_trace,
+            &stamps.stub_to_via,
+            &stamps.trace_to_trace,
+            &stamps.trace_to_via,
+            &stamps.via_to_trace,
+            &stamps.via_to_via,
+            &stamps.diagonal_to_trace,
+            &stamps.diagonal_to_via,
+            &stamps.diagonal_block[0],
+            &stamps.diagonal_block[1],
+            &stamps.diagonal_block_via[0],
+            &stamps.diagonal_block_via[1],
+            &stamps.stub_diagonal_block[0],
+            &stamps.stub_diagonal_block[1],
+        ];
+        let reach = lists
+            .iter()
+            .flat_map(|list| list.iter())
+            .map(|(dx, dy)| dx.abs().max(dy.abs()) as i64)
+            .max()
+            .unwrap_or(0);
+        Self {
+            trace_to_trace: steps(&stamps.trace_to_trace),
+            trace_to_via: steps(&stamps.trace_to_via),
+            diagonal_block: [steps(&stamps.diagonal_block[0]), steps(&stamps.diagonal_block[1])],
+            reach,
+        }
+    }
+}
+
+/// Asks the cache for the line holding `value` (a hint; nothing on other
+/// architectures).
+#[inline(always)]
+fn prefetch<T>(value: &T) {
+    // SAFETY: a prefetch reads nothing and faults on no address; SSE is
+    // part of every x86_64 target.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(value as *const T as *const i8)
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = value;
+}
+
+/// Marks the offsets around `cell`, mirrored by (`sx`, `sy`), in `map`'s
+/// bitset of `marks` (`words` a map) and lists the newly marked cells of
+/// `map` in `stamped`.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn mark_footprint(
+    marks: &mut [u64],
+    words: usize,
+    stamped: &mut Vec<(u32, u32)>,
+    map: usize,
+    cell: u32,
+    offsets: &[(i32, i32)],
+    (sx, sy): (i64, i64),
+    (nx, ny): (i64, i64),
+    reach: i64,
+) {
+    let marks = &mut marks[map * words..(map + 1) * words];
+    let x = cell as i64 % nx;
+    let y = cell as i64 / nx;
+    if x >= reach && y >= reach && x + reach < nx && y + reach < ny && sx.abs() == 1 && sy.abs() == 1 {
+        let (row, column) = (sy * nx, sx);
+        for (dx, dy) in offsets {
+            let target = (cell as i64 + *dy as i64 * row + *dx as i64 * column) as usize;
+            let bit = 1u64 << (target % 64);
+            let word = &mut marks[target / 64];
+            if *word & bit == 0 {
+                *word |= bit;
+                stamped.push((map as u32, target as u32));
+            }
+        }
+        return;
+    }
+    for (dx, dy) in offsets {
+        let tx = x + *dx as i64 * sx;
+        let ty = y + *dy as i64 * sy;
+        if tx < 0 || ty < 0 || tx >= nx || ty >= ny {
+            continue;
+        }
+        let target = (ty * nx + tx) as usize;
+        if marks[target / 64] & (1 << (target % 64)) == 0 {
+            marks[target / 64] |= 1 << (target % 64);
+            stamped.push((map as u32, target as u32));
+        }
+    }
 }
 
 /// KiCad connects a track to a pad when the track ends inside the pad's
@@ -1525,7 +1644,7 @@ pub struct Router {
     occupancy: Vec<Vec<u16>>,
     /// Bits per (map, cell): set while one net is stamped, so that a cell
     /// two offsets reach counts once; cleared again from the stamped list.
-    stamp_mark: Vec<Vec<u64>>,
+    stamp_mark: Vec<u64>,
     /// While set, the fill model reads a hatched zone's hatch also when
     /// its net is routed as tracks (`add_inner_spokes`), whatever
     /// `Config::tracks_rung_fill` says (with it, always).
@@ -1724,7 +1843,12 @@ impl Router {
                                     .max(own.via_diameter / 2.0 + other.via_drill / 2.0 + hole),
                                 grid.pitch,
                             ),
+                            fresh: Fresh::default(),
                         }
+                    })
+                    .map(|mut stamps| {
+                        stamps.fresh = Fresh::of(&stamps);
+                        stamps
                     })
                     .collect()
             })
@@ -1768,7 +1892,7 @@ impl Router {
             config: config.clone(),
             statics: Arc::new(statics),
             occupancy: vec![vec![0; cells]; maps],
-            stamp_mark: vec![vec![0; cells.div_ceil(64)]; maps],
+            stamp_mark: vec![0; cells.div_ceil(64) * maps],
             hatch_any_plane: false,
             history: vec![vec![0.0; cells]; layers + 1],
             stamps,
@@ -1838,7 +1962,7 @@ impl Router {
         let cells = self.grid.cells().max(1);
         let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
         let occupancy = bytes(&self.occupancy);
-        let stamp_mark = bytes(&self.stamp_mark);
+        let stamp_mark = self.stamp_mark.capacity() * 8;
         let hot = bytes(&self.hot);
         let pour = bytes(&self.history) + bytes(&self.guard) + bytes(&self.covered) + self.via_marks.capacity() + 4 * self.via_cover.capacity();
         let planes: usize = self.nets.iter().map(|state| bytes(&state.plane) + bytes(&state.plane_target)).sum();
@@ -2808,34 +2932,23 @@ impl Router {
         let ny = self.grid.ny as i64;
         let branches = std::mem::take(&mut self.nets[net as usize].branches);
         let escapes = std::mem::take(&mut self.nets[net as usize].escapes);
-        let node_classes: Vec<Vec<usize>> = branches
-            .iter()
-            .map(|branch| branch.nodes.iter().map(|node| self.node_class(net, node.cell)).collect())
-            .collect();
+        // Each node's class (narrower in a neck zone), all branches in one
+        // list.
+        let mut node_classes: Vec<usize> = Vec::with_capacity(branches.iter().map(|branch| branch.nodes.len()).sum());
+        for branch in &branches {
+            node_classes.extend(branch.nodes.iter().map(|node| self.node_class(net, node.cell)));
+        }
         let diagonal_base = self.board.classes.len() * (layers + 1);
+        let size = (nx, ny);
+        let words = self.grid.cells().div_ceil(64);
         for querying in 0..self.board.classes.len() {
             let stamps = &self.stamps[class][querying];
-            // Stamps the offsets around `cell`, mirrored by (`sx`, `sy`): a
-            // diagonal step's footprint is turned to the step's direction.
-            let mut apply = |map: usize, cell: u32, offsets: &[(i32, i32)], sx: i64, sy: i64| {
-                let x = cell as i64 % nx;
-                let y = cell as i64 / nx;
-                let marks = &mut self.stamp_mark[map];
-                for (dx, dy) in offsets {
-                    let tx = x + *dx as i64 * sx;
-                    let ty = y + *dy as i64 * sy;
-                    if tx < 0 || ty < 0 || tx >= nx || ty >= ny {
-                        continue;
-                    }
-                    let target = (ty * nx + tx) as usize;
-                    if marks[target / 64] & (1 << (target % 64)) == 0 {
-                        marks[target / 64] |= 1 << (target % 64);
-                        stamped.push((map as u32, target as u32));
-                    }
-                }
-            };
+            let marks = &mut self.stamp_mark;
             let base = querying * (layers + 1);
-            for (which, branch) in branches.iter().enumerate() {
+            let mut first = 0;
+            for branch in &branches {
+                let classes = &node_classes[first..first + branch.nodes.len()];
+                first += branch.nodes.len();
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
                     if let Some((cells, width, _)) = escapes.get(&end) {
                         // A stub at the neck width stamps the neck's footprint.
@@ -2844,16 +2957,24 @@ impl Router {
                             _ => class,
                         };
                         let stub_stamps = &self.stamps[stub_class][querying];
+                        let reach = stub_stamps.fresh.reach;
                         for cell in cells {
-                            apply(base + end.layer as usize, *cell, &stub_stamps.stub_to_trace, 1, 1);
-                            apply(base + layers, *cell, &stub_stamps.stub_to_via, 1, 1);
+                            let map = base + end.layer as usize;
+                            mark_footprint(marks, words, &mut stamped, map, *cell, &stub_stamps.stub_to_trace, (1, 1), size, reach);
+                            let map = base + layers;
+                            mark_footprint(marks, words, &mut stamped, map, *cell, &stub_stamps.stub_to_via, (1, 1), size, reach);
                             for orientation in 0..2 {
-                                apply(
-                                    diagonal_base + (querying * layers + end.layer as usize) * 2 + orientation,
+                                let map = diagonal_base + (querying * layers + end.layer as usize) * 2 + orientation;
+                                mark_footprint(
+                                    marks,
+                                    words,
+                                    &mut stamped,
+                                    map,
                                     *cell,
                                     &stub_stamps.stub_diagonal_block[orientation],
-                                    1,
-                                    1,
+                                    (1, 1),
+                                    size,
+                                    reach,
                                 );
                             }
                         }
@@ -2861,56 +2982,89 @@ impl Router {
                 }
                 for (index, node) in branch.nodes.iter().enumerate() {
                     // A node in a neck zone stamps its narrower footprint.
-                    let own = &self.stamps[node_classes[which][index]][querying];
-                    apply(
-                        base + node.layer as usize,
-                        node.cell,
-                        &own.trace_to_trace,
-                        1,
-                        1,
-                    );
-                    apply(base + layers, node.cell, &own.trace_to_via, 1, 1);
-                    for orientation in 0..2 {
-                        apply(
-                            diagonal_base + (querying * layers + node.layer as usize) * 2 + orientation,
-                            node.cell,
-                            &own.diagonal_block[orientation],
-                            1,
-                            1,
-                        );
-                    }
-                    let is_via = index > 0
-                        && branch.nodes[index - 1].cell == node.cell
-                        && branch.nodes[index - 1].layer != node.layer;
-                    if is_via {
-                        for layer in 0..layers {
-                            apply(base + layer, node.cell, &stamps.via_to_trace, 1, 1);
+                    let node_class = classes[index];
+                    let own = &self.stamps[node_class][querying];
+                    let reach = own.fresh.reach;
+                    let x = node.cell as i64 % nx;
+                    let y = node.cell as i64 / nx;
+                    // The step from the node before, when that node stamped
+                    // the same footprints: only their leading edge is new.
+                    let mut step = None;
+                    let mut diagonal = None;
+                    let mut is_via = false;
+                    let mut via_before = false;
+                    if index > 0 {
+                        let previous = branch.nodes[index - 1];
+                        let (dx, dy) = (x - previous.cell as i64 % nx, y - previous.cell as i64 / nx);
+                        is_via = previous.cell == node.cell && previous.layer != node.layer;
+                        if classes[index - 1] == node_class && dx.abs() <= 1 && dy.abs() <= 1 {
+                            step = Some(((dx + 1) * 3 + dy + 1) as usize);
                         }
-                        apply(base + layers, node.cell, &stamps.via_to_via, 1, 1);
+                        if !is_via && dx != 0 && dy != 0 {
+                            diagonal = Some((dx, dy));
+                        }
+                        via_before = index > 1
+                            && previous.cell == node.cell
+                            && branch.nodes[index - 2].cell == previous.cell
+                            && branch.nodes[index - 2].layer != previous.layer;
+                    }
+                    let same_layer = index > 0 && branch.nodes[index - 1].layer == node.layer;
+                    let map = base + node.layer as usize;
+                    let offsets = match step {
+                        Some(step) if same_layer => &own.fresh.trace_to_trace[step],
+                        _ => &own.trace_to_trace,
+                    };
+                    mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                    let map = base + layers;
+                    let offsets = match step {
+                        Some(step) => &own.fresh.trace_to_via[step],
+                        None => &own.trace_to_via,
+                    };
+                    mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                    for orientation in 0..2 {
+                        let map = diagonal_base + (querying * layers + node.layer as usize) * 2 + orientation;
+                        let offsets = match step {
+                            Some(step) if same_layer => &own.fresh.diagonal_block[orientation][step],
+                            _ => &own.diagonal_block[orientation],
+                        };
+                        mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                    }
+                    // A via through several layers at one cell: the via
+                    // before stamped the same footprints at the same cell.
+                    if is_via && !via_before {
+                        let reach = stamps.fresh.reach;
+                        for layer in 0..layers {
+                            let map = base + layer;
+                            mark_footprint(marks, words, &mut stamped, map, node.cell, &stamps.via_to_trace, (1, 1), size, reach);
+                        }
+                        let map = base + layers;
+                        mark_footprint(marks, words, &mut stamped, map, node.cell, &stamps.via_to_via, (1, 1), size, reach);
                         for layer in 0..layers {
                             for orientation in 0..2 {
-                                apply(
-                                    diagonal_base + (querying * layers + layer) * 2 + orientation,
+                                let map = diagonal_base + (querying * layers + layer) * 2 + orientation;
+                                mark_footprint(
+                                    marks,
+                                    words,
+                                    &mut stamped,
+                                    map,
                                     node.cell,
                                     &stamps.diagonal_block_via[orientation],
-                                    1,
-                                    1,
+                                    (1, 1),
+                                    size,
+                                    reach,
                                 );
                             }
                         }
                     }
-                    // A diagonal step covers the nodes on its bisector too.
-                    if index > 0 && !is_via {
+                    // A diagonal step covers the nodes on its bisector too
+                    // (the bisectors of a diagonal run are parallel lines
+                    // that share no cell: no leading edge to take).
+                    if let Some(step) = diagonal {
                         let previous = branch.nodes[index - 1];
-                        let (dx, dy) = (
-                            node.cell as i64 % nx - previous.cell as i64 % nx,
-                            node.cell as i64 / nx - previous.cell as i64 / nx,
-                        );
-                        if dx != 0 && dy != 0 {
-                            let own = &self.stamps[node_classes[which][index]][querying];
-                            apply(base + node.layer as usize, previous.cell, &own.diagonal_to_trace, dx, dy);
-                            apply(base + layers, previous.cell, &own.diagonal_to_via, dx, dy);
-                        }
+                        let map = base + node.layer as usize;
+                        mark_footprint(marks, words, &mut stamped, map, previous.cell, &own.diagonal_to_trace, step, size, reach);
+                        let map = base + layers;
+                        mark_footprint(marks, words, &mut stamped, map, previous.cell, &own.diagonal_to_via, step, size, reach);
                     }
                 }
             }
@@ -2918,12 +3072,18 @@ impl Router {
         // An old stamp still marked is a new one too: its count stays, and
         // its mark goes so that the new list passes it over; the others
         // go (the count down, the tile's claim with the last of a cell).
+        // The count a stamp AHEAD entries on is asked for early: the maps
+        // are larger than the core's cache and a list visits dozens of them.
         let nxu = self.grid.nx;
-        for (map, cell) in &old {
+        const AHEAD: usize = 32;
+        for (index, (map, cell)) in old.iter().enumerate() {
+            if let Some((map, cell)) = old.get(index + AHEAD) {
+                prefetch(&self.occupancy[*map as usize][*cell as usize]);
+            }
             let (map, cell) = (*map as usize, *cell as usize);
             let bit = 1u64 << (cell % 64);
-            if self.stamp_mark[map][cell / 64] & bit != 0 {
-                self.stamp_mark[map][cell / 64] &= !bit;
+            if self.stamp_mark[map * words + cell / 64] & bit != 0 {
+                self.stamp_mark[map * words + cell / 64] &= !bit;
                 continue;
             }
             self.occupancy[map][cell] -= 1;
@@ -2932,13 +3092,16 @@ impl Router {
             }
         }
         // A new stamp still marked was not stamped before: it counts.
-        for (map, cell) in &stamped {
+        for (index, (map, cell)) in stamped.iter().enumerate() {
+            if let Some((map, cell)) = stamped.get(index + AHEAD) {
+                prefetch(&self.occupancy[*map as usize][*cell as usize]);
+            }
             let (map, cell) = (*map as usize, *cell as usize);
             let bit = 1u64 << (cell % 64);
-            if self.stamp_mark[map][cell / 64] & bit == 0 {
+            if self.stamp_mark[map * words + cell / 64] & bit == 0 {
                 continue;
             }
-            self.stamp_mark[map][cell / 64] &= !bit;
+            self.stamp_mark[map * words + cell / 64] &= !bit;
             self.occupancy[map][cell] += 1;
             if self.occupancy[map][cell] == 1 {
                 self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] += 1;
@@ -10275,6 +10438,66 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A walk stamped with each footprint's leading edge after the first
+    /// node lists the same cells in the same order as with whole footprints,
+    /// near the lattice's edges too.
+    #[test]
+    fn fresh_footprints_mark_as_whole_ones() {
+        let (nx, ny) = (23i64, 17i64);
+        let words = ((nx * ny) as usize).div_ceil(64);
+        let disc_offsets = disc(0.33, 0.1);
+        let stamps = Stamps {
+            stub_to_trace: Vec::new(),
+            stub_to_via: Vec::new(),
+            trace_to_trace: disc_offsets.clone(),
+            trace_to_via: disc(0.21, 0.1),
+            via_to_trace: Vec::new(),
+            via_to_via: Vec::new(),
+            diagonal_to_trace: diagonal_extra(0.33, 0.1),
+            diagonal_to_via: Vec::new(),
+            diagonal_block: diagonal_block(0.33, 0.1),
+            diagonal_block_via: [Vec::new(), Vec::new()],
+            stub_diagonal_block: [Vec::new(), Vec::new()],
+            fresh: Fresh::default(),
+        };
+        let fresh = Fresh::of(&stamps);
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200 {
+            let (mut x, mut y) = (0i64, 0i64);
+            let mut cells = vec![0u32];
+            for _ in 0..60 {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let (dx, dy) = DIRECTIONS[(state >> 61) as usize];
+                let (tx, ty) = (x + dx as i64, y + dy as i64);
+                if tx >= 0 && ty >= 0 && tx < nx && ty < ny {
+                    (x, y) = (tx, ty);
+                    cells.push((y * nx + x) as u32);
+                }
+            }
+            let (mut whole_marks, mut fresh_marks) = (vec![0u64; words], vec![0u64; words]);
+            let (mut whole, mut ahead) = (Vec::new(), Vec::new());
+            for (index, cell) in cells.iter().enumerate() {
+                mark_footprint(&mut whole_marks, words, &mut whole, 0, *cell, &disc_offsets, (1, 1), (nx, ny), fresh.reach);
+                let offsets = if index == 0 {
+                    &disc_offsets
+                } else {
+                    let previous = cells[index - 1] as i64;
+                    let (dx, dy) = (*cell as i64 % nx - previous % nx, *cell as i64 / nx - previous / nx);
+                    &fresh.trace_to_trace[((dx + 1) * 3 + dy + 1) as usize]
+                };
+                mark_footprint(&mut fresh_marks, words, &mut ahead, 0, *cell, offsets, (1, 1), (nx, ny), fresh.reach);
+            }
+            assert_eq!(whole, ahead);
+            assert_eq!(whole_marks, fresh_marks);
+        }
+        // The bisectors of a diagonal run share no cell (`Router::stamp`
+        // stamps each whole).
+        for radius in [0.1, 0.25, 0.33, 0.6, 1.4] {
+            let bisector = diagonal_extra(radius, 0.1);
+            assert!(bisector.iter().all(|(i, j)| !bisector.contains(&(i + 1, j + 1))));
+        }
+    }
 
     #[test]
     fn key_heap_pops_in_order() {
