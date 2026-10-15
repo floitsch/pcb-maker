@@ -391,12 +391,12 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 
 /// Gives every UUID inside a footprint instance its own value (library
 /// files carry one set for all instances; KiCad makes new ones when it
-/// adds a footprint).
+/// adds a footprint). KiCad 6 and 7 files call them `tstamp`.
 fn renew_uuids(item: &mut Expr, owner: &str) {
     let Expr::List(items) = item else {
         return;
     };
-    if items.first().and_then(Expr::atom) == Some("uuid")
+    if matches!(items.first().and_then(Expr::atom), Some("uuid" | "tstamp"))
         && let Some(old) = items.get(1).and_then(Expr::atom).map(str::to_owned)
     {
         items[1] = Expr::Atom(format!("\"{}\"", uuid_of(&format!("{owner} {old}"))));
@@ -405,6 +405,20 @@ fn renew_uuids(item: &mut Expr, owner: &str) {
     for child in items.iter_mut() {
         renew_uuids(child, owner);
     }
+}
+
+/// The ids a footprint taken from the `--footprints-from` board keeps: the
+/// board footprint's own uuid, the first time that footprint is used (a
+/// footprint used again, as a template for another part, gets new ones).
+/// Its pads and drawings keep theirs too, as KiCad's "Update PCB from
+/// Schematic" keeps a footprint's: the project's DRC exclusions name
+/// items by these ids (`courtyards_overlap|x|y|<footprint>|<footprint>`,
+/// `copper_edge_clearance|x|y|<edge>|<pad>`), and with new ids the
+/// designer's excluded findings come back as errors (MokyaLora's
+/// R34/R35, urchin's key sockets over the edge).
+fn kept_uuid(theirs: &crate::board_footprints::BoardFootprint, kept: &mut BTreeSet<String>) -> Option<String> {
+    let uuid = theirs.uuid.as_deref()?.trim_matches('"').to_string();
+    (!uuid.is_empty() && kept.insert(uuid.clone())).then_some(uuid)
 }
 
 /// A string from the netlist, still escaped as KiCad writes strings.
@@ -584,6 +598,8 @@ pub fn import_kicad_netlist_from(
     let mut board_versions = 0;
     let mut drift: BTreeMap<(String, String), (String, Vec<String>)> = BTreeMap::new();
     let mut footprints = 0;
+    // The board footprints whose ids the import keeps (`kept_uuid`).
+    let mut kept_ids: BTreeSet<String> = BTreeSet::new();
     let components = netlist.child("components").map(Expr::children).unwrap_or_default();
     // Every symbol's path, so that a board footprint linked to one symbol is
     // not taken for another of its reference.
@@ -630,6 +646,7 @@ pub fn import_kicad_netlist_from(
         let theirs = designer
             .as_ref()
             .and_then(|designer| designer.for_symbol(symbol_path.as_deref(), &reference, &footprint_id, library.is_none(), &symbol_paths));
+        let mut kept = None;
         let (mut footprint, found) = match (library, theirs) {
             (library, Some((theirs, how))) => {
                 // The board's footprint, under the board's name where it
@@ -691,6 +708,9 @@ pub fn import_kicad_netlist_from(
                 } else if id != footprint_id {
                     substituted.push(format!("{reference}: {footprint_id} -> {id} ({whose})"));
                 }
+                if how == crate::board_footprints::Found::Own {
+                    kept = kept_uuid(theirs, &mut kept_ids);
+                }
                 (form, id)
             }
             (Some((file, found)), None) => {
@@ -727,8 +747,10 @@ pub fn import_kicad_netlist_from(
             continue;
         };
         items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version")));
-        for item in items.iter_mut() {
-            renew_uuids(item, &reference);
+        if kept.is_none() {
+            for item in items.iter_mut() {
+                renew_uuids(item, &reference);
+            }
         }
         // KiCad 5 library files say `module`; KiCad renames it on loading,
         // pcb-maker reads only `footprint` (coco2's 16 footprints from its
@@ -737,7 +759,8 @@ pub fn import_kicad_netlist_from(
         items[1] = Expr::Atom(requote(&found));
         // Placement fields after the layer.
         let layer_index = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
-        items.insert(layer_index, parse(&format!("(uuid \"{}\")", uuid_of(&format!("footprint {reference}"))))?);
+        let uuid = kept.unwrap_or_else(|| uuid_of(&format!("footprint {reference}")));
+        items.insert(layer_index, parse(&format!("(uuid \"{uuid}\")"))?);
         items.insert(layer_index + 1, parse("(at 0 0)")?);
         // The links to the symbol, where KiCad keeps them: before `attr`
         // and the drawings.
@@ -845,7 +868,7 @@ pub fn import_kicad_netlist_from(
     }
     // Parts the schematic does not have (`add` in an existing
     // constraints.json).
-    let added = add_parts(&mut board, output, &libraries, designer.as_ref(), &mut missing)?;
+    let added = add_parts(&mut board, output, &libraries, designer.as_ref(), &mut missing, &mut kept_ids)?;
     if !local_footprints.is_empty() {
         write_local_libraries(output, &local_footprints, &libraries, designer.as_ref().map(|designer| designer.file.as_path()))?;
     }
@@ -1045,6 +1068,7 @@ fn add_parts(
     libraries: &BTreeMap<String, PathBuf>,
     designer: Option<&crate::board_footprints::BoardFootprints>,
     missing: &mut Vec<String>,
+    kept_ids: &mut BTreeSet<String>,
 ) -> Result<Vec<String>, String> {
     let path = output.join("constraints.json");
     let Ok(text) = fs::read_to_string(&path) else {
@@ -1079,6 +1103,7 @@ fn add_parts(
         if taken {
             return Err(invalid(part, "the board has a part of that reference already".into()));
         }
+        let mut kept = None;
         let side_back = match addition.side.as_deref() {
             None => None,
             Some("front") => Some(false),
@@ -1122,6 +1147,7 @@ fn add_parts(
                     .collect();
                 let at = form_at(&theirs.expr).unwrap_or([0.0; 3]);
                 let back = form_atom(&theirs.expr, "layer", 1) == Some("B.Cu");
+                kept = kept_uuid(theirs, kept_ids);
                 (crate::board_footprints::library_form(&theirs.expr, crate::board_footprints::name_of(&theirs.id))?, nets, Some((at, back)), theirs.id.clone())
             }
             (Some(id), false) => {
@@ -1159,8 +1185,10 @@ fn add_parts(
             items.retain(|item| !matches!(item.head(), Some("version" | "generator" | "generator_version" | "at" | "uuid" | "tstamp")));
             items[0] = Expr::Atom("footprint".into());
             items[1] = Expr::Atom(requote(&id));
-            for item in items.iter_mut() {
-                renew_uuids(item, &format!("add {part}"));
+            if kept.is_none() {
+                for item in items.iter_mut() {
+                    renew_uuids(item, &format!("add {part}"));
+                }
             }
             legacy_texts_to_properties(items, part)?;
             legacy_arcs_to_three_points(items)?;
@@ -1196,7 +1224,7 @@ fn add_parts(
                 return Err(invalid(part, format!("{id} has no pad {number}")));
             }
         }
-        let uuid = uuid_of(&format!("add footprint {part}"));
+        let uuid = kept.unwrap_or_else(|| uuid_of(&format!("add footprint {part}")));
         let mut footprint = crate::board_footprints::posed(&footprint, if back { [at[0], at[1], -at[2]] } else { at })?;
         if back {
             crate::flip::flip_footprint(&mut footprint)?;
@@ -1613,6 +1641,102 @@ mod tests {
         assert!(import_kicad_netlist(&netlist, &output, "test", 2).unwrap_err().contains("has a part of that reference already"));
         fs::write(output.join("constraints.json"), r#"{"version": 1, "add": [{"part": "H1", "from_board": true}]}"#).unwrap();
         assert!(import_kicad_netlist(&netlist, &output, "test", 2).unwrap_err().contains("--footprints-from"));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    #[test]
+    fn footprints_from_the_board_keep_their_ids_for_the_drc_exclusions() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-import-ids-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        // A KiCad 6 library footprint: its ids are `tstamp`s, one set for
+        // every instance.
+        let library = directory.join("parts.pretty");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            library.join("C_Old.kicad_mod"),
+            r#"(footprint "C_Old" (layer "F.Cu") (tstamp 22222222-0000-4000-8000-000000000000)
+                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd") (width 0.05) (tstamp 22222222-0000-4000-8000-000000000001))
+                (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (tstamp 22222222-0000-4000-8000-000000000002))
+                (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (tstamp 22222222-0000-4000-8000-000000000003)))"#,
+        )
+        .unwrap();
+        // The designer's board: U1 (its own footprint, from a library
+        // nobody has), H1 (a mounting hole on GND the schematic lacks).
+        let board = directory.join("designer.kicad_pcb");
+        fs::write(
+            &board,
+            r#"(kicad_pcb (version 20240108) (generator pcbnew)
+              (footprint "personal:SOT_Mine" (layer "F.Cu") (uuid "11111111-0000-4000-8000-000000000002") (at 30 20 180)
+                (path "/2222")
+                (property "Reference" "U1" (at 0 -2 180) (layer "F.SilkS") (uuid "11111111-0000-4000-8000-0000000000a0") (effects (font (size 1 1) (thickness 0.15))))
+                (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd") (stroke (width 0.05) (type solid)) (uuid "11111111-0000-4000-8000-0000000000a1"))
+                (pad "1" smd rect (at -1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 2 "GND") (uuid "11111111-0000-4000-8000-0000000000a2"))
+                (pad "2" smd rect (at 1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN") (uuid "11111111-0000-4000-8000-0000000000a3")))
+              (footprint "MountingHole:Hole_Pad" (layer "F.Cu") (uuid "11111111-0000-4000-8000-000000000003") (at 3 3)
+                (property "Reference" "H1" (at 0 -3 0) (layer "F.SilkS") (uuid "11111111-0000-4000-8000-0000000000b0") (effects (font (size 1 1) (thickness 0.15))))
+                (pad "1" thru_hole circle (at 0 0) (size 5 5) (drill 3) (layers "*.Cu" "*.Mask") (net 2 "GND") (uuid "11111111-0000-4000-8000-0000000000b1"))))"#,
+        )
+        .unwrap();
+        // U2 has U1's footprint, which the board has only as U1's: a copy.
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "U1") (value "X") (footprint "personal:SOT_Mine") (sheetpath (names "/") (tstamps "/")) (tstamps "2222"))
+                (comp (ref "U2") (value "X") (footprint "personal:SOT_Mine") (sheetpath (names "/") (tstamps "/")) (tstamps "3333"))
+                (comp (ref "C1") (value "1u") (footprint "parts:C_Old") (sheetpath (names "/") (tstamps "/")) (tstamps "4444"))
+                (comp (ref "C2") (value "1u") (footprint "parts:C_Old") (sheetpath (names "/") (tstamps "/")) (tstamps "5555")))
+              (nets
+                (net (code "1") (name "/VIN") (node (ref "U1") (pin "2") (pintype "passive")) (node (ref "U2") (pin "2") (pintype "passive")))
+                (net (code "2") (name "GND") (node (ref "U1") (pin "1") (pintype "passive")) (node (ref "C1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let output = directory.join("out");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("constraints.json"), r#"{"version": 1, "add": [{"part": "H1", "from_board": true}]}"#).unwrap();
+        let report = import_kicad_netlist_from(&netlist, &output, "test", 2, Some(&board)).unwrap();
+        assert!(report.missing.is_empty(), "{:?}", report.missing);
+        let imported = parse(&fs::read_to_string(&report.board).unwrap()).unwrap();
+        let ids = |reference: &str| -> Vec<String> {
+            fn collect(item: &Expr, into: &mut Vec<String>) {
+                if matches!(item.head(), Some("uuid" | "tstamp")) {
+                    into.push(item.children()[1].atom().unwrap().trim_matches('"').to_string());
+                }
+                for child in item.children() {
+                    collect(child, into);
+                }
+            }
+            let footprint = imported
+                .children()
+                .iter()
+                .find(|item| item.head() == Some("footprint") && footprint_reference(item).as_deref() == Some(reference))
+                .unwrap();
+            let mut ids = Vec::new();
+            collect(footprint, &mut ids);
+            ids
+        };
+        // U1 and H1 keep the board's ids: the footprint's, its pads' and
+        // drawings' (the project's DRC exclusions name them).
+        let u1 = ids("U1");
+        assert_eq!(u1[0], "11111111-0000-4000-8000-000000000002", "{u1:?}");
+        for own in ["11111111-0000-4000-8000-0000000000a1", "11111111-0000-4000-8000-0000000000a2", "11111111-0000-4000-8000-0000000000a3"] {
+            assert!(u1.iter().any(|id| id == own), "{own} not in {u1:?}");
+        }
+        let h1 = ids("H1");
+        assert!(h1.iter().any(|id| id == "11111111-0000-4000-8000-000000000003"), "{h1:?}");
+        assert!(h1.iter().any(|id| id == "11111111-0000-4000-8000-0000000000b1"), "{h1:?}");
+        // U2, a copy of U1's footprint, and the library's C1 and C2 get ids
+        // of their own (the KiCad 6 library's tstamps too): no id twice.
+        let mut all: Vec<String> = ["U1", "U2", "C1", "C2", "H1"].iter().flat_map(|reference| ids(reference)).collect();
+        assert!(ids("U2").iter().all(|id| !id.starts_with("11111111")), "{:?}", ids("U2"));
+        assert!(ids("C1").iter().all(|id| !id.starts_with("22222222")), "{:?}", ids("C1"));
+        let count = all.len();
+        all.sort();
+        all.dedup();
+        assert_eq!(all.len(), count, "an id twice: {all:?}");
         fs::remove_dir_all(&directory).unwrap();
     }
 }

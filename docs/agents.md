@@ -89,6 +89,13 @@ pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-i
   the schematic after the board), the board's is used under its own name
   and listed in `substituted`; the copied schematic names it too. Want the
   library's versions instead? Import without `--footprints-from`.
+- A symbol's own footprint (and a `from_board` part's) **keeps the board's
+  ids** (the footprint's, its pads' and drawings'), as KiCad's "Update PCB
+  from Schematic" does: the project's DRC exclusions name items by them,
+  so a finding the designer excluded (two courtyards that overlap by
+  design, a key socket over the edge) stays excluded on the new board
+  where the part stays where the designer put it. A copy of a footprint
+  (another part of that name) gets ids of its own.
 - `missing` then says when the board lacks a part as well.
 
 **Parts the schematic does not have** (mounting holes plated on GND, a

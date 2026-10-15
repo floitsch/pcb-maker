@@ -588,7 +588,15 @@ def schematic_admitted(task, arguments, token):
         shapes = schematic.edge_cuts(designer_text)
         if not shapes:
             raise ValueError("the designer's board draws no outline of its own on Edge.Cuts")
-        schematic.append_items(board, shapes + copies)
+        # The designer's pours and rule areas, as the layout tier keeps
+        # them (strip-kicad-tracks: the large pours and every rule area,
+        # unfilled).
+        stripped = work / "designer-stripped.kicad_pcb"
+        strip_code, _, strip_err = schematic.run([arguments.binary, "strip-kicad-tracks", designer_file, stripped])
+        if strip_code != 0:
+            raise ValueError(f"strip-kicad-tracks on the designer's board: {strip_err.strip()[-200:]}")
+        pours = schematic.zones(stripped.read_text(), designer_text, board.read_text())
+        schematic.append_items(board, shapes + pours + copies)
     except Exception as error:  # noqa: BLE001
         return stop("constraints", f"{type(error).__name__}: {error}")
     row.update(missing=len(report["missing"]), substituted=len(report["substituted"]),
@@ -600,6 +608,7 @@ def schematic_admitted(task, arguments, token):
         row["missing_parts"] = report["missing"][:12]
     if report.get("drifted_footprints"):
         row["drifted_footprints"] = report["drifted_footprints"][:12]
+    row["zones"] = len(pours)
     row["parts"] = {"designer": facts["designer_parts"], "imported": facts["imported_parts"],
                     "matched": facts["matched"], "copied": facts["copied"], "renamed": len(facts["renamed"]),
                     "added": len(report.get("added") or [])}
@@ -661,7 +670,10 @@ def schematic_admitted(task, arguments, token):
             " ".join(str(part) for part in miss if part) for miss in row["unexpected_misses"][:5]))
     elif row.get("native") is None:
         row.update(stopped="drc", why="drc-kicad-board wrote no report: " + row.get("drc_line", ""))
-    elif row["native"]["unconnected"] or row["routed"].split("/")[0] != row["routed"].split("/")[1]:
+    elif row["native"]["unconnected"]:
+        # KiCad's connectivity, as the pass rule: a pad the router leaves
+        # open that a pour joins is connected (MokyaLora's motor shield,
+        # 261/262 with KiCad at 0, passed but said stopped at routing).
         row.update(stopped="routing", why=f"routed {row['routed']}, KiCad {row['native']['unconnected']} unconnected")
     elif row["native"]["errors"]:
         row.update(stopped="drc", why="new errors: " + ", ".join(f"{k} {v}" for k, v in row["native"]["errors"].items()))

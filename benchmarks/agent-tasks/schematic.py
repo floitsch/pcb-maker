@@ -90,7 +90,9 @@ def footprints_of(text):
 def edge_cuts(text):
     """The board's own Edge.Cuts shapes in KiCad 10's syntax (the import
     writes a KiCad 10 board; KiCad 6 files give a shape's width as
-    `(width w)` and its id as `tstamp`)."""
+    `(width w)` and its id as `tstamp`). Each shape keeps the designer's
+    id: the project's DRC exclusions name the edge by it (urchin's and
+    le_chiffre's pads over the edge, `copper_edge_clearance|x|y|<edge>|<pad>`)."""
     shapes = []
     for index, (head, block) in enumerate(top_level_items(text, SHAPES)):
         if not re.search(r'\(layer "?Edge\.Cuts"?\)', block):
@@ -109,7 +111,9 @@ def edge_cuts(text):
         fields.append(f"(stroke (width {width.group(1) if width else '0.1'}) (type solid))")
         if head in ("gr_circle", "gr_rect", "gr_poly"):
             fields.append("(fill no)")
-        shapes.append(f"\t({head} {' '.join(fields)} (layer \"Edge.Cuts\") (uuid \"5c4e0000-0000-4000-8000-{index:012d}\"))")
+        own = re.search(r'\((?:uuid|tstamp) "?([0-9a-fA-F-]{36})"?\)', block)
+        uuid = own.group(1) if own else f"5c4e0000-0000-4000-8000-{index:012d}"
+        shapes.append(f"\t({head} {' '.join(fields)} (layer \"Edge.Cuts\") (uuid \"{uuid}\"))")
     return shapes
 
 
@@ -219,6 +223,60 @@ def net_names(designer_footprints, imported_footprints, matched):
     return {net: max(names, key=names.get) for net, names in votes.items()}
 
 
+def designer_matches(designer_footprints, imported):
+    """The imported footprint of each designer footprint (by index) and the
+    imported board's name of each designer net: footprints matched by the
+    symbol's path, then by a reference the imported board has once and no
+    path claimed (a copy of a footprint is not its original)."""
+    matched = {}
+    by_path = {f["path"]: f for f in imported if f["path"]}
+    by_reference = {}
+    for footprint in imported:
+        by_reference.setdefault(footprint["reference"], []).append(footprint)
+    for index, footprint in enumerate(designer_footprints):
+        if footprint["path"] and footprint["path"] in by_path:
+            matched[index] = by_path[footprint["path"]]
+    claimed = {id(other) for other in matched.values()}
+    for index, footprint in enumerate(designer_footprints):
+        candidates = by_reference.get(footprint["reference"], [])
+        if index not in matched and len(candidates) == 1 and id(candidates[0]) not in claimed:
+            matched[index] = candidates[0]
+            claimed.add(id(candidates[0]))
+    names = net_names(designer_footprints, imported,
+                      {f["uuid"]: matched[index] for index, f in enumerate(designer_footprints) if index in matched})
+    return matched, names
+
+
+ZONE_NET = re.compile(r'\(net\s+(?:\d+|"((?:[^"\\]|\\.)*)")\s*\)\s*')
+ZONE_NET_NAME = re.compile(r'\(net_name\s+"((?:[^"\\]|\\.)*)"\s*\)\s*')
+
+
+def zones(stripped_text, designer_text, imported_text):
+    """The designer's zones as the layout tier keeps them (`stripped_text`:
+    the designer's board through `strip-kicad-tracks`, which keeps rule
+    areas and the pours that cover a good part of the board, without their
+    fill), in KiCad 10's syntax (`(net "GND")`, `uuid`), each pour on the
+    imported board's name of its net (a net no matched pad shows keeps its
+    name). Without them a 2-layer board was routed without its ground
+    pours and a 4-layer one with the router's automatic planes, and the
+    designer's keepouts were gone (MokyaLora's GND pour on six layers
+    joined the motor's shield pad in the layout tier)."""
+    _, names = designer_matches(footprints_of(designer_text), footprints_of(imported_text))
+    result = []
+    for _, block in top_level_items(stripped_text, ["zone"]):
+        # KiCad 6 to 9: `(net 1) (net_name "GND")`; KiCad 10: `(net "GND")`.
+        net, name = ZONE_NET.search(block), ZONE_NET_NAME.search(block)
+        value = name.group(1) if name else net.group(1) if net and net.group(1) is not None else ""
+        body = ZONE_NET_NAME.sub("", ZONE_NET.sub("", block, count=1), count=1)
+        body = re.sub(r'\(tstamp\s+"?([0-9a-fA-F-]{36})"?\)', r'(uuid "\1")', body)
+        if value:
+            mapped = names.get(value.replace('\\"', '"').replace("\\\\", "\\"), None)
+            quoted = value if mapped is None else mapped.replace("\\", "\\\\").replace('"', '\\"')
+            body = "(zone (net \"" + quoted + "\") " + body[len("(zone"):].lstrip()
+        result.append("\t" + body)
+    return result
+
+
 def additions(designer_text, imported_text, board_only):
     """`add` entries (constraints.json) for the designer's footprints with
     nets that the schematic does not have (0xcb-static's footprints for
@@ -236,25 +294,10 @@ def additions(designer_text, imported_text, board_only):
     for footprint in designer_footprints:
         references[footprint["reference"]] = references.get(footprint["reference"], 0) + 1
     taken = {f["reference"] for f in imported} | set(references)
-    matched = {}
-    by_path = {f["path"]: f for f in imported if f["path"]}
     by_reference = {}
     for footprint in imported:
         by_reference.setdefault(footprint["reference"], []).append(footprint)
-    # By the symbol's path, then by a reference the imported board has once
-    # and no path claimed (a copy of a footprint is not its original).
-    for index, footprint in enumerate(designer_footprints):
-        if footprint["path"] and footprint["path"] in by_path:
-            matched[index] = by_path[footprint["path"]]
-    claimed = {id(other) for other in matched.values()}
-    for index, footprint in enumerate(designer_footprints):
-        candidates = by_reference.get(footprint["reference"], [])
-        if index not in matched and len(candidates) == 1 and id(candidates[0]) not in claimed:
-            matched[index] = candidates[0]
-            claimed.add(id(candidates[0]))
-    names = net_names([f for index, f in enumerate(designer_footprints)],
-                      imported, {f["uuid"]: matched[index] for index, f in enumerate(designer_footprints)
-                                 if index in matched})
+    matched, names = designer_matches(designer_footprints, imported)
     entries, dropped, used = [], [], set()
     wanted = set(board_only)
     for index, footprint in enumerate(designer_footprints):
