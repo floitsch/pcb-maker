@@ -3386,6 +3386,130 @@ missing `--footprints-from` board exits 2). `cargo test --release -p
 pcb-kicad`, `agent_walkthrough` and `cli_exit_codes` pass. Snapshots
 x1070 (first cut), x1071 (the measured branch on 8a1fd2c), x1072 (rebased
 on 9073633, the 79-board import identical to x1071; no tier on it).
+## KiCad check cost (2026-10-15)
+
+The question: how much of an uncached KiCad check (`kicad-cli pcb drc
+--format json --severity-all [--schematic-parity] --refill-zones`, 5-35 s,
+about 2.2 GB) is fixed cost that a persistent checker would remove, and
+can we build one? Measured, not integrated; scripts and logs in
+`experiments/kicad-daemon/` (KiCad 10.0.7, four pinned CPUs, load 8-33
+from other agents: walls are +-2 s, CPU seconds are steadier).
+
+**Where the fixed cost is.** `kicad-cli version` takes 0.17 s. A DRC of an
+empty board takes 3.0 s wall, 9.1 s CPU and 2.1 GB, and the same DRC with
+`KICAD_CONFIG_HOME` pointing at empty `fp-lib-table`/`sym-lib-table` takes
+0.4 s, 0.4 s CPU and 110 MB. The 2 GB is KiCad 10 loading every footprint
+library of the global table (155 libraries, 181 MB of `.kicad_mod`):
+`PCBNEW_JOBS_HANDLER::JobExportDrc` calls `FootprintLibAdapter(...)->
+AsyncLoad()` and `BlockUntilLoaded()` before anything else, for the library
+parity test, whose `lib_footprint_*` warnings pcb-maker never counts
+(`is_library_metadata_warning`, `is_cosmetic`). The board size plays no
+part. The empty `sym-lib-table` makes no difference to the DRC.
+
+v16 layout results (`measure_cli.py`, board-only projects, so no parity;
+best of two runs). The process+init column is the empty-library empty-board
+run. The library column is the default call minus the empty-library call.
+Refill is the empty-library call minus a run on the board KiCad filled and
+saved, without `--refill-zones`. The DRC column is what is left, board load
+included (0.07-0.5 s through pcbnew, see below). Writing the report takes
+1-100 ms (the time between kicad-cli's `Found` and `Saved` lines):
+
+| board | wall s | CPU s | RSS MB | process+init | library preload | refill | DRC + load | wall / RSS without libraries |
+|---|---|---|---|---|---|---|---|---|
+| spell_tome | 5.8 | 10.5 | 2155 | 0.4 (7%) | 1.2 (21%) | 0.8 (13%) | 3.4 (59%) | 4.6 s / 245 MB |
+| Castor | 5.4 | 13.1 | 2187 | 0.4 (7%) | 3.5 (66%) | 0.7 (12%) | 0.8 (15%) | 1.8 s / 356 MB |
+| WLED_Matrix | 18.3 | 29.6 | 2294 | 0.4 (2%) | 2.5 (13%) | 9.8 (54%) | 5.6 (31%) | 15.8 s / 560 MB |
+| ghoul | 21.4 | 27.7 | 2228 | 0.4 (2%) | 1.4 (7%) | 3.6 (17%) | 16.0 (74%) | 20.0 s / 413 MB |
+| 0xCB panel | 31.9 | 75.0 | 3003 | 0.4 (1%) | -0.5 (noise) | 28.4 (89%) | 3.6 (11%) | 32.4 s / 1695 MB |
+| jetson | 8.6 | 15.3 | 2256 | 0.4 (5%) | 3.5 (41%) | 1.3 (15%) | 3.4 (40%) | 5.1 s / 510 MB |
+| sum | 91.4 | 171.2 | | 2.4 (3%) | 11.7 (13%) | 44.6 (49%) | 32.8 (36%) | 79.7 s, 134.6 s CPU |
+
+The fixed cost (process, init, library preload) is 15% of the wall over the
+six boards and 21% of the CPU (36.6 of 171 s). It is above a third only on
+quick checks (Castor 73%, jetson 46%). The rest is per board: the refill
+(the panel's 28 s, WLED's 10 s with its teardrops) and the DRC proper
+(ghoul's 16 s). A persistent process cannot cache either, because every
+check is on a new board. Peak memory falls from 2.2-3.0 GB to 0.25-1.7 GB.
+With the empty tables the findings are the same per type and severity on
+all six boards, except `lib_footprint_issues` (more: every footprint's
+library is now "not in the table") and `lib_footprint_mismatch` (gone),
+both warnings. Castor's designer schematic with `--schematic-parity`: 4.5 s
+/ 2.3 GB to 2.1-3.5 s / 0.46 GB, the 205 parity entries identical; parity
+itself costs 0.5-0.9 s. ERC (`sch erc`, Castor) is 2.7-3.4 s / 1.3 GB
+against 1.0 s / 0.3 GB, but its library warnings change
+(`lib_symbol_issues` 47 to 248, `lib_symbol_mismatch` 134 to 0,
+`footprint_link_issues` 124 to 158); check how ERC warnings are used before
+applying the change there.
+
+**Persistent checker options.**
+- KiCad IPC API (kipy 0.8.0, API 10.0.6, read from its protobufs): only a
+  running GUI KiCad with the API server enabled serves it, and Xvfb is not
+  installed. Its board commands have no way to open a board file (only
+  Save/Revert of the open document), `RefillZones`, `InjectDrcError` and
+  `RunBoardJobExport*` (no DRC job). It cannot run a DRC or return
+  findings. Not feasible.
+- A pool of warm kicad-cli processes: each invocation checks one board and
+  exits; there is no server mode (10.0.7: fp, jobset, pcb, sch, sym,
+  version). Not feasible.
+- The pcbnew Python module (SWIG): `LoadBoard`, `ZONE_FILLER(board).Fill`,
+  `WriteDRCReport`. Standalone, `WriteDRCReport` segfaults in 10.0.7
+  (`assert "process" failed in Pgm()`): the library parity test reaches
+  `Pgm().GetLibraryManager()`, and standalone Python has no PGM.
+  `ClearProject()` gets past that and crashes later. It works once
+  `daemon_drc.py` builds what kicad-cli has, through ctypes on exported
+  symbols: `wxInitialize` (a console wxApp), the `PGM_BASE` constructor,
+  `SetPgm`, `PGM_BASE::InitPgm(headless)`. That is mangled C++ names in a
+  1 MB buffer, tied to libkicommon 10.0.7.
+
+**Prototype numbers** (`daemon_drc.py`, all six boards in one process,
+`results/daemon-2026-10-15.log`). Imports and bootstrap take 0.3 s. Board
+load is 0.06-0.47 s. A second DRC on the loaded board costs the same as the
+first (Castor 0.91 s against 0.97 s, ghoul 18.4 s against 18.3 s), so the
+engine keeps nothing worth having across runs. Per type and severity the
+findings equal kicad-cli's (empty libraries) on five of six boards. WLED
+differs (`connection_width` 4 against 57, `copper_sliver` 0 against 24):
+kicad-cli's refill is `ZONE_FILLER_TOOL::FillAllZones`, which first
+rebuilds the teardrops (`TEARDROP_MANAGER`, not in the SWIG API). On WLED's
+board as KiCad saved it, teardrops included, refill and DRC match exactly.
+Paired with kicad-cli under empty tables on the same CPUs (`pair.sh`,
+`results/pair-2026-10-15.log`, two alternations each), a warm daemon call
+against a cold process is: spell 4.5-5.0 against 6.1-7.0 s, Castor
+2.2-2.3 against 2.6-2.8, jetson 5.8-8.7 against 5.5-7.9, ghoul 17.0-19.2
+against 18.0-21.1, panel 27.0-27.1 against 27.2-27.4. Summed: 59.4 against
+62.7 s (5%). Also:
+- WriteDRCReport has no schematic parity (it passes `false`).
+- Its output is a text report without item UUIDs (pcb-maker reads `uuid`
+  for silk_overlap labels and pad positions from `unconnected_items`); the
+  DRC items are not exposed and it adds no markers.
+- RSS grows from 0.3 to 3.2 GB over the six boards and is not returned.
+- The SWIG bindings have been deprecated in favour of the IPC API since KiCad 9.
+
+**Recommendation: no daemon.** After the library fix it would save about
+0.4 s per call (5%), lose parity and teardrops, and need a JSON writer that
+SWIG cannot feed. Its only robust form is a C++ host built against KiCad's
+own source, which is out of proportion. What a persistent process would
+have removed is the library preload, and an environment variable removes
+it today: run kicad-cli with `KICAD_CONFIG_HOME` set to a pcb-maker-owned
+directory (for example `<cache root>/kicad-config/10.0/` with empty
+`fp-lib-table` and `sym-lib-table`, created on first use), in
+`run_report_command_cached` and `run_kicad_save_board`. This saves 13% of
+the wall and 21% of the CPU per uncached check (8.7 CPU s on an empty board),
+and 1.5-2 GB of peak memory, which lets more checks and jobs run side by
+side. Size: about 60-100 lines in native_report.rs plus a test with the
+fake kicad-cli.
+- The DRC cache key already hashes `$KICAD_CONFIG_HOME`'s tables. It must
+  take the override's, so every entry misses once.
+- A project whose `.kicad_pro` sets `lib_footprint_issues` or
+  `lib_footprint_mismatch` to `error` would then count one error per
+  footprint. None of the 109 v16 projects does (75 warning, 6 ignore for
+  issues; 69 and 12 for mismatch). Fall back to the user's configuration
+  for such a project.
+- A project-local `fp-lib-table` still loads its own libraries. That is the
+  designer's choice and usually small.
+- `kicad_common.json` is created fresh in the override directory. kicad-cli
+  rewrites it anyway, and the cache leaves it out.
+- ERC can take the same directory once its changed library warnings are
+  shown not to count.
 
 ## Open problems, ranked
 
