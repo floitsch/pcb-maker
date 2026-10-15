@@ -2290,6 +2290,74 @@ forest of trees in the hard search: J3.5-J3.6, P6.5-P6.6 would save 2 of
 SNSP's 5); a hard search that fails from the first pad's tree still ends
 the net; the corridor schedule itself (3c1f81d) was not revisited.
 
+## Committed on 2026-10-15 (placement room)
+
+The first three of the walkthrough's automation gaps (open problem 8):
+
+- **A fast no.** Before placement (after the constraints are applied),
+  a user's `row` that fits the outline's box in no orientation it may take
+  and the parts held at one edge on one side that need more length than it
+  has (single file: only parts too deep to stand two behind each other
+  within their reach, each by its shortest tight body, the two that may
+  overhang the ends by their copper) are input errors (exit 2), said
+  together with the region errors (`placement_room::outline_holds`; not
+  for an automatic outline, which the layout grows). In the placer,
+  `hopeless` (computed on the last, loosest level before the levels run):
+  the movable tight bodies need more area than a side's outline, or they
+  cannot lie side by side in strips (`strips_hold`: bodies at least `t`
+  across meet a line at most `floor(height / t)` times, so their least
+  extents along it sum to at most that times the width). Both are exact,
+  so a board that can be placed never takes this way; a hopeless one skips
+  every level: one hurried legalisation from the global placement,
+  `overfull` in board-placer.json and a hint. The work budget is checked
+  inside the passes (`out_of_work`, a thread-local stop the running
+  `place` sets): past it a part without a spot in `legalize` searches 31
+  rings (15 mm of a 0.5 mm grid) instead of the board, `evict_for`,
+  `refine`, `repair_relations` and `align_orientations` stop, the
+  stuck-first retry is skipped.
+  Urchin (walkthrough fixture) on 80 x 40 mm, four threads, load 20-35:
+  with the walkthrough's constraints (rows, regions) x921 exit 1 after
+  742 s (the "over 12 minutes"), now exit 2 in 0.04 s; move_all only on
+  60 x 40 mm exit 1 in 3 s. Move_all only on 80 x 40 mm is not hopeless
+  by either test (the KiCad 6 switches have no courtyard: their pads alone
+  block, and pads could interleave), so it still takes the levels: x921
+  398 s, x948 353 s (loads differ; the seeds' work 756 s against the
+  600 s budget before, 604 s now: the passes stop at the budget).
+- **Room as numbers** (`placement_room::room`, `room` in board-placer.json
+  and in the verdict of place, layout and of an input error a constraint
+  of the outline raised): per side the usable area (outline less the edge
+  band and fixed bodies), the movable bodies with spacing, utilization,
+  the area missing at a target of 0.7, the smallest outline at the target
+  (area at the current aspect, then large parts side by side in strips as
+  full as the target, choosing among sizes within a tenth of the least
+  area the one nearest the current aspect; every part and row; edge sets)
+  and, when parts did not fit, `suggested_outline_mm` with a next action.
+  The urchin example (agents.md) suggests 118 x 107.5 mm; placed there,
+  every part finds room (two near/relative entries written for halves
+  side by side miss). An error verdict with room is written into a fresh
+  output directory, and a directory holding only such a verdict is taken
+  again by the retry.
+- **What is kept.** `back`, `front`, `rotation` and `opening_outwards` are
+  in `constraints[]` (`Constraints::kept`, `report_kept`; not in the
+  placer's ranking, which sees only `report`). The verdict has
+  `schematic_parity_by_type`, and a next action that says there is
+  nothing to do when every finding is "No pad found for pin" (urchin's
+  6 net_conflict, the controller's no-connect pins).
+
+Identity (x948 = this on 140d0bf, against x921): place-kicad-board with
+the short tier's layout.json and constraints (tasks v6) writes
+byte-identical boards on spell_tome_bottom, USB_Cable_Tester, urchin,
+eternal-keypad, OpenFC and Blue_Line; the short tier (tasks v6, 2 jobs x 2
+threads, `build/short-x948.log`) against build/short-x921.log: every
+layout's placement (placed/board-placer.json poses) and result board
+byte-identical, all rows identical (compare.py same 12, unconnected 42
+to 42, passes 6 to 6, vias, length, work, first-route open terminals)
+except the `constraints` count on MIDAS-MK1.1 (3 to 6), OpenFC (25 to
+50) and reCamera (1 to 2): their tasks' `rotation` entries are listed
+now; nothing missed changed.
+Snapshot `build/bin/pcb-maker-x948` (x940 was taken by another agent);
+after the rebase on ad4362f, x949.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -2353,6 +2421,9 @@ the net; the corridor schedule itself (3c1f81d) was not revisited.
    keepout pads; the 0xCB panel's zone refill timeout in kicad-cli.
 8. **The agent flow's gaps** (the 2026-10-15 walkthrough), ranked by what
    they save an agent against what they cost:
+   Items 1-3 were done on 2026-10-15 (placement room, above); left of
+   item 1: a crowded side (90-99 %) that no exact test calls hopeless
+   still runs the levels up to the budget.
    1. *A fast no.* A placement without room costs a minute (one part
       without a place on urchin) to many (a side 95 % full): every
       relaxation level anneals and legalizes again, and the work budget is
