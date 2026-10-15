@@ -57,7 +57,9 @@ Interf-U were re-run during the audit.
    eating narrow channels.
 4. **Occupancy.** Routed copper is stamped into per-class occupancy maps as the
    zone where another net's centreline or via may not be. Stamps are reference
-   counted per net, so rip-up is an exact decrement. They are exact: a node's
+   counted per net, so rip-up is an exact decrement; a restamp builds the
+   net's new list first and changes only the counts of the stamps that
+   came or went (a rerouted branch, not the branches kept). They are exact: a node's
    disc covers the cells closer than the clearance (in whole nanometres), so
    two tracks at exactly their clearance are legal, as KiCad has it (0.4 mm
    pad pitch with 0.2 mm tracks and clearance). On a lattice no node lies

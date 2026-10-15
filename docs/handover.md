@@ -1473,6 +1473,122 @@ above load 45 rerun, eight boards rerun Freerouting-only, 4 GB heap shown
 harmless by A/B, keyboar_ is a parser hang (backtick in a part number), not
 a timeout.
 
+## Committed on 2026-10-15 (router overhead, x870 / x871 / x872)
+
+Speed round four, unlike the three before it, changed no search: it looked
+for CPU that buys no search and removed it with routes byte-identical.
+Profiled route mode on the v15 placements of Castor, jetson-nano-baseboard
+and k30-SBC (x862's code with debug symbols, four threads as the pairs run
+them; `perf` is not installed and samply needs `perf_event_paranoid` 1, so
+gperftools' `libprofiler.so` by `LD_PRELOAD` with `CPUPROFILE_USE_PID`,
+200 Hz, libunwind stacks; tools and profiles in the worktree
+`pcb-maker-speed`, `build/prof`). Share of the run's CPU (kicad-cli's DRC
+included), Castor / jetson / k30:
+
+| group | Castor | jetson | k30 |
+|---|---|---|---|
+| A* search proper (expansions, key heap, occupancy reads, heuristic) | 69.8 | 80.5 | 77.6 |
+| the search's neck class lookup (`class_at` per step) | 2.2 | 1.2 | 0.0 |
+| tile planner (`plan_corridor`: Dijkstra, `BinaryHeap`) | 3.0 | 5.9 | 8.8 |
+| stamping and conflict bookkeeping | 6.8 | 3.0 | 4.1 |
+| pour refresh and fill probes, negotiation | 3.3 | 0.5 | 3.5 |
+| pour checks in clean-up and via reduction | 5.9 | 1.5 | 0.0 |
+| lowering and lattices | 0.6 | 0.5 | 0.1 |
+| KiCad (kicad-cli DRC) | 3.1 | 3.9 | 2.8 |
+| allocation, memset, memcpy | 2.2 | 1.4 | 1.4 |
+| SipHash | 1.8 | 0.4 | 0.8 |
+| other | 1.3 | 1.1 | 0.8 |
+
+Top symbols by self time (inlined callees included), Castor / jetson /
+k30: `Router::search` 65.8 / 77.2 / 72.7 (its own lines: `KeyHeap::pop`
+9.7 / 12.5 / 10.6, `occupancy_seen` 8.1 / 10.7 / 9.9), the search's
+heuristic closure 4.6 / 3.6 / 5.6, `stamp`'s apply closure 4.9 / 1.8 /
+2.9, `plan_corridor`'s entry-cost closure 1.4 / 2.8 / 3.9, `route_net`
+(the planner inlined) 1.0 / 1.9 / 2.8, `PourMap::build` 2.6 / 0.6 / 1.0,
+the planner's `BinaryHeap::pop` 0.7 / 1.4 / 2.2, `class_at` 2.6 / 1.4 /
+0.0, `RandomState::hash_one` 1.9 / 0.4 / 0.8, `unstamp` 1.5 / 0.8 / 0.8,
+`OwnStamps::contains` 1.8 / 0.4 / 0.9, SipHash `write` 1.1 / 0.3 / 0.4,
+`Shape::distance_to_point` 1.1 / 0.0 / 0.2, `FillProbe::blocker` 0.6 /
+0.0 / 0.1. The search proper was left alone (cheaper expansions were
+exhausted in round two); the rest, with the share of the code each change
+touched (Castor / jetson / k30):
+
+- The pour analysis's own-stamp bitsets (`OwnStamps`) are found by a
+  table indexed by map, not a SipHash map, asked once per node of the
+  pour (4.0 / 0.9 / 1.7, most of it hashing).
+- The search's neck class comes from the step's coordinates
+  (`zone_class`), not `class_at` with a division per neighbour (1.4 /
+  0.7 / 0).
+- The tile planner computes each (layer, tile)'s entry cost once per plan
+  (it was computed for each of up to eleven relaxations) and pops from
+  the four-way `KeyHeap` with (cost bits, state) as one word, the order
+  of the `(u32, u32)` pairs it popped before (3.0 / 5.9 / 8.7).
+- A restamp builds the new list first (marks only) and then changes the
+  counts only of stamps that went or came; the kept branches' stamps were
+  decremented and incremented again on every reroute. The list, its
+  order and the final counts and tile claims are as before (6.7 / 2.8 /
+  4.0; `PCB_ROUTER_FINGERPRINT_ALL`, which hashes every occupancy map,
+  identical). The diagonal footprint is mirrored in place (`turned`
+  allocated a vector per diagonal node).
+- `Board::fill_clearance` read `PCB_ROUTER_OLD_FILL_CLEARANCE` from the
+  environment for every item a fill probe tests; now once (0.6 on
+  Castor).
+- The fill probe's index and hatch-hole memo hash with `FastHasher`
+  (rustc's FxHash; iteration order unused) (0.4 / 0.1 / 0.2).
+- `PourMap::build` looks its layer's maps up once, not per neighbour
+  (2.1 / 0.5 / 0.8 touched).
+
+After (a profile of all changes but the restamp, scaled to the same
+search samples): Castor's run 11 % less CPU (own stamps and SipHash 3.5
+points, planner 1.8, `class_at` 1.4, pour labelling and probes 1.5), k30's
+9 % (planner 5.5, pour 1.8). Nothing in
+the work accounting changed: the negotiation's limit is expansions and the
+pour analyses count by their model (41 ns a node, 38 ns a stamp, 47 ns a
+probe item). The model now overstates the analyses' wall time (Castor's
+clean-up: 9.8 s of pour work in 6.7 s of wall, was 10.9 s wall), so the
+budgets buy less pour checking than they could; recalibrating would move
+results and wants its own measurement.
+
+CPU, pinned simultaneous pairs in route mode (`--jobs 1 --threads 4`,
+`PCB_MAKER_NO_CACHE=1` both sides, `cpu_seconds` of the rows; the base is
+always main's code without this change; scripts `build/pairs/pair.sh`,
+`run-pairs.sh`, `rows.py` in the worktree, rows under `build/pairs/r1`
+to `r4`). The first side named ran on 0-7,16-23 except in r2:
+
+| board | r1 x862 / x870 | r2 x870 / x862 (swapped) | r3 x855 / x871 | r4 x881 / x872 |
+|---|---|---|---|---|
+| Castor | 0.864 (511.0 / 441.3) | 0.915 (507.7 / 464.6) | 0.858 (561.8 / 482.2) | 0.862 (552.6 / 476.3) |
+| k30-SBC | 0.888 (612.1 / 543.5) | 0.940 (524.8 / 493.4) | 0.939 (494.8 / 464.6) | 0.894 (644.0 / 576.0) |
+| jetson | 0.895 (2462.6 / 2205.0) | 0.919 (1938.6 / 1780.7) | 0.878 (2236.4 / 1963.6) | 0.840 (2151.0 / 1807.3) |
+| spell_tome | 0.960 (22.4 / 21.5) | | 0.995 (18.8 / 18.7) | 0.967 (18.0 / 17.4) |
+| urchin | 0.958 (43.1 / 41.3) | | 0.891 (43.2 / 38.5) | 0.941 (37.6 / 35.4) |
+| geomean | 0.912 | 0.925 (three boards) | 0.911 | 0.900 |
+
+Ratios are new / old CPU. Over the four rounds (geomeans): Castor 0.87, k30 0.92,
+jetson 0.88, the small boards 0.95 (KiCad's DRC more than routing:
+spell_tome is 1.2 s of work in 18-22 s of CPU); the spread between rounds
+is the machine's load (19-37 beside other agents). Every pair: the same
+board file (md5), vias, length, work seconds and verdict; with
+`PCB_ROUTER_FINGERPRINT=1` (r2, r4) the same fingerprints on every board
+(jetson in r2 the same multiset: its side-by-side probes print in the
+order they finish). During the work, `PCB_ROUTER_FINGERPRINT_ALL` (every
+occupancy map hashed) at a fifth of the budget, two threads: Castor and
+k30 identical.
+
+Short tier (tasks v6) x871 against `build/short-x855.log`: all 12 rows
+identical apart from CPU, wall, load and memory (vias, length, work,
+unconnected, errors, first-route open terminals; compare.py: same 12,
+unconnected 42 to 42, passes 6 to 6, cut 0 on both). The tier's CPU (5064
+to 3185 s) is not a claim: unpaired, and the two runs saw different
+loads. Rebased on the hole-clearance fix, x872 against
+`build/short-x880.log`: again all 12 rows identical (compare.py same 12;
+CPU 5216 to 4982 s, unpaired).
+
+Next: the search proper is 70-80 % of route mode; outside it the largest
+items left are the restamp's list building (the marks pass over every
+branch on every reroute) and the clean-up's pour analyses (pour labelling
+and the fill probe's distance tests).
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
