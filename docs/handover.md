@@ -1131,6 +1131,27 @@ ran three (71 to 69 vias); the second polish starts from that board. Tests:
 build/cleanup-x814 (route mode), build/short-x814.log, calibration
 build/cleanup-cal3-x813 and build/cleanup-val-x814.
 
+Recalibrated 2026-10-15 (x817) after the router-overhead round (x872)
+made the pour analysis about twice as fast (the old constants booked
+Castor's clean-up 9.7 s of pour work for 5.2 s of pour checks, Sisu's
+25.6 for 16.3): `POUR_NODE_NANOS` 41 to 18, `POUR_STAMP_NANOS` 38 to 26,
+`PROBE_ITEM_NANOS` 47 to 42, fitted over three calibration runs at one
+thread (load 15-31; build/cleanup-cal-x816, -x816b; the trace now also
+prints the pour layers' nodes, which did not help the fit). Per board
+0.71-1.08 of the analyses' wall time by the median, the big boards
+(Castor, Sisu, reCamera, k30) 0.85-1.08; one board's ratio moves 0.6-1.2
+between runs with the load, so 0.9-1.1 per board is beyond what one
+calibration run can show. Route mode, x872 against x817 side by side (two
+jobs, load 15-18): Sisu identical (7 unconnected, 408 vias, 5924.8 mm);
+Castor back to its pre-accounting board (0 unconnected, 3 starved, pass,
+225 vias, 5185.8 mm against x872's 209 vias, 5157.5 mm, also a pass now).
+The clean-ups' pour work against their pour checks' wall time (four
+threads): Castor 5.8 / 5.5 / 5.9 s for 5.1 / 4.3 / 4.9 s (x872: 9.7 / 9.0 /
+9.6), Sisu 12.5 / 10.4 / 10.8 for 16.4 / 12.1 / 8.8 (x872: 25.6 / 20.1 /
+19.0); each clean-up ends by work, no wall guard. Short tier x817 (load 17
+to 10) against build/short-x880.log (tasks v6): all 12 rows identical
+(vias, length, work, KiCad), 1337-v4.0 included.
+
 Next: the ladder's and the layout's work tallies still count search
 expansions only; counting the pour work there too (a `work()` in
 `RoutingResult` instead of `expansions`) would make `deadline_work` and the

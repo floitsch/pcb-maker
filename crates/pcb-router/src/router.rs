@@ -462,11 +462,13 @@ pub const GUARD: f64 = 4.0;
 /// out) and per item a fill probe indexes or looks at (`fill::FillProbe`,
 /// the spoke tests). The budgets of the phases after negotiation count it
 /// beside the search (`budget_work`). Calibrated on seven boards at one
-/// thread (docs/router.md, "Determinism and the wall clock"): the model
-/// gives 0.89-1.07 of the analyses' wall time.
-pub const POUR_NODE_NANOS: u64 = 41;
-pub const POUR_STAMP_NANOS: u64 = 38;
-pub const PROBE_ITEM_NANOS: u64 = 47;
+/// thread (docs/router.md, "Determinism and the wall clock"), again after
+/// the router-overhead round made the analysis about twice as fast (x816:
+/// three runs pooled, per board 0.71-1.08 of the analyses' wall time by
+/// the median, the big boards 0.85-1.08).
+pub const POUR_NODE_NANOS: u64 = 18;
+pub const POUR_STAMP_NANOS: u64 = 26;
+pub const PROBE_ITEM_NANOS: u64 = 42;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -6612,11 +6614,12 @@ impl Router {
             // wall time.
             let state = &self.nets[net as usize];
             eprintln!(
-                "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns",
+                "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns, layer nodes {}",
                 self.pour_inside(net),
                 state.stamped.len(),
                 self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) - ops_before,
-                started.elapsed().as_nanos()
+                started.elapsed().as_nanos(),
+                self.pour_layer_nodes(net)
             );
         }
         result
@@ -6627,6 +6630,12 @@ impl Router {
     /// (the fill mask and its labelling) and its stamps.
     fn pour_analysis_nanos(&self, net: NetId) -> u64 {
         self.pour_inside(net) as u64 * POUR_NODE_NANOS + self.nets[net as usize].stamped.len() as u64 * POUR_STAMP_NANOS
+    }
+
+    /// Lattice nodes of the layers `net` pours on (the fill mask and the
+    /// labelling scan every node of such a layer).
+    fn pour_layer_nodes(&self, net: NetId) -> usize {
+        self.nets[net as usize].plane.iter().filter(|mask| !mask.is_empty()).count() * self.grid.cells()
     }
 
     /// Lattice nodes inside the pour of `net`, over its layers.

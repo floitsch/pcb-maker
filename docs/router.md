@@ -487,14 +487,16 @@ the search (`budget_work`): a clean-up on a pour board spends much of its
 time checking that a batch strands no pour pad (Sisu: 21-47 s of pour
 checks in a 61-66 s budget, uncounted until 2026-10-14, so its budget ran
 on in wall clock with the load and the route-mode guard once stopped it).
-An analysis costs `POUR_NODE_NANOS` (41) per lattice node inside the net's
-pour, `POUR_STAMP_NANOS` (38) per stamp of the net and `PROBE_ITEM_NANOS`
-(47) per item its fill probe indexes or looks at (`fill::FillProbe`
+An analysis costs `POUR_NODE_NANOS` (18) per lattice node inside the net's
+pour, `POUR_STAMP_NANOS` (26) per stamp of the net and `PROBE_ITEM_NANOS`
+(42) per item its fill probe indexes or looks at (`fill::FillProbe`
 counts them; the spoke tests). Calibrated on seven boards (Castor, Sisu,
 reCamera, USB_Cable_Tester, spell_tome, 1337-v4.0, k30-SBC; route mode, one
-thread, load 17-22): the model gives 0.89-1.07 of the analyses' wall time
-per board; at load 21-25 0.70-1.10 (the wall time grows with the load, the
-work does not). `PCB_ROUTER_POUR_TRACE` prints each analysis's counts,
+thread, load 15-31), recalibrated after the router-overhead round (x872)
+made the analysis about twice as fast: three runs pooled, the model gives
+0.71-1.08 of the analyses' wall time per board by the median (the big
+boards 0.85-1.08; the same constants on one board vary 0.6-1.2 from run to
+run with the load, the small boards most). `PCB_ROUTER_POUR_TRACE` prints each analysis's counts,
 modelled work and wall time for recalibrating; the verbose `profile work:`
 line splits wall time, search work and pour work by phase, and the
 clean-up's last line says how much of its budget it used and how much of
