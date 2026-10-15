@@ -3050,6 +3050,118 @@ designer, written by KiCad); the side check changes the report (and so the
 exit code and the pass rule) only where `back`/`front` name a footprint
 whose pads are on the other side, which no task does.
 
+## Committed on 2026-10-15 (wall guard stop, fewer layout checks)
+
+Three items of the v16 triage ("Ranked": 2, 3, 4) and the work of an
+unkept ladder (smaller hole 4). Binaries: x972 (the change on 9ce95b1, for
+the layout pairs against x934), x976 (rebased on bd0babc: neck repair,
+reserve floor; short tier), x977 (rebased on 8a1fd2c, the commit's code).
+
+**Stop after the wall guard** (`WallStop`, `LayoutStep` in board_layout.rs).
+Once the layout's wall-clock deadline passes, only the steps that make the
+result run: labels, KiCad's check of the board kept, the report. Skipped,
+each noted as a `layout` cut and logged once (`layout: past the deadline,
+... skipped`): the placement race, move trials (checked before every
+trial, not only every move: v16's poly_kybd_split72_left ran three trials
+of 60-200 s past the guard and was killed), the resume, the polish, the
+final ladder, the attempt after the narrow-signal attempt and the neck
+repair (up to six KiCad checks; also skipped in the ladder past its
+deadline, and its checks are counted apart in the log). In the router, a
+negotiation that resumes an earlier one (resume, trial, via reduction)
+starts no iteration past the deadline, and the pour stitching leaves
+stranded pads instead of their hard reroute; a fresh router still
+negotiates once. Without a cut nothing changes (every skip needs the wall
+clock past the deadline). Checked on poly_kybd_split72_left, tasks v6,
+4 threads pinned to two cores (`taskset`, beside other agents, load 14-27):
+full budget x970 ended at 1719 s (harness 1800 s) with a result, 29
+unconnected, 981 vias, cut deadline+layout: the guard fired in the
+narrow-signal attempt's forced repair, the attempt finished and was
+checked (it could win and won), the continuation was skipped, `layout:
+done` at 1688 s. At `--budget-scale 0.3` (timeout 750 s, deadline 495 s)
+x970 and x934 both ended at 520-525 s (cut in the first route, 368 and
+483 open after it, so no moves or ladder to skip). Unit tests: a fake step
+list (`past_the_wall_guard_only_the_finishing_steps_run`,
+`once_fired_the_guard_stays_fired`).
+
+**Fewer KiCad checks in the ladder** (`CheckGate` in board_router.rs;
+docs/router.md "The attempt ladder"). Attempts route without KiCad's check
+and are checked only when they could still win. The ladder's open count is
+the router's (unconnected terminals and internal violations) plus KiCad's
+unconnected items, so the router's count is a lower bound with no slack:
+an attempt whose router count is above the best checked open count (or
+equal, with no starved thermal on the best and no fewer vias and copper)
+cannot win. The ladder's first board and any board the router finishes
+are always checked; a seed retry against an unchecked rung prefers the
+checked board (exact otherwise). Route mode uses this rule alone (no
+decision of the ladder changes). The layout's final ladder (and the
+narrow-signal attempt and its continuation) also checks only attempts
+among the two best by the router's measures (open count, vias, copper),
+the layout's own board counted first (`KICAD_CHECK_TOP`); a first version
+ranked by the open count alone and lost MokyaLora's 333-via narrow step
+(339 kept), fixed by the vias tie-break. Past the deadline an attempt is
+checked only if it could beat both the ladder's best and the layout's
+board (`kicad_kept`), and an unchecked ladder board is never kept. Log:
+`board check: KiCad skipped, ...` per attempt, `layout: done (...); KiCad
+checks N (from the DRC cache, of the neck repair), M skipped`. Unit tests
+`check_gate_tests` (5).
+
+**Unkept ladder work counts**: the layout's `routed.work_seconds` is the
+ladder's work (and the continuation's) whether its board is kept or not,
+as the narrow path did since 974fa2b (koeg in v16 reported 410 s with
+1100 s more run). Rows' `work_seconds` rise where a ladder ran and lost;
+results do not change.
+
+**run.py threads**: the default with several jobs is the physical cores
+(from /sys, else lscpu) over the jobs, at most 4, at least 1 (was the
+logical CPUs: 5 jobs got 4 threads on 16 cores, now 3; 6 jobs got 4, now
+2). An explicit `--threads` is kept; jobs x threads above the physical
+cores is warned about. `summary.json` records `jobs`, `threads`,
+`physical_cores`. A layout is deterministic per thread count: compare at
+the same `--threads` (give `--threads 4` against older short and quick
+tier logs).
+
+Layout pairs, tasks v6, 4 threads, one run per side, PCB_MAKER_NO_CACHE=1,
+x934 against x972 side by side, load 9-39 (rows in build/guard-ab-x934.log
+and build/guard-ab-x972.log; the poly_kybd runs in build/guard-poly-*.log). KiCad checks are the DRC calls
+of the layout (seconds of kicad-cli in brackets):
+
+| board | unconnected | errors | vias | work s | wall s | cut | KiCad checks |
+|---|---|---|---|---|---|---|---|
+| ghoul | 6 / 6 | 0 / 0 | 385 / 385 | 1208 / 1208 | 1088 / 1079 | no / no | 7 (188 s) / 4 (88 s) |
+| 0xCB panel | 109 / 109 | 0 / 0 | 231 / 231 | 362 / 362 | 1298 / 1052 | no / no | 10 (331 s) / 4 (163 s) |
+| Batch_1 | 491 / 491 | 0 / 0 | 384 / 384 | 1156 / 1156 | 1262 / 1377 | no / no | 5 (203 s) / 2 (108 s) |
+| ULK | 4 / 4 | 0 / 0 | 130 / 130 | 98 / 98 | 1679 / 1572 | deadline / no | 13 (370 s) / 7 (205 s) |
+| woagboard | 5 / 5 | 1 / 1 | 185 / 185 | 1131 / 1540 | 1665 / 1641 | deadline / no | 12 (127 s) / 8 (70 s) |
+| MokyaLora (pass) | 0 / 0 | 0 / 0 | 333 / 333 | 1365 / 1365 | 944 / 812 | no / no | 7 (61 s) / 3 (22 s) |
+| zpn_devboard (pass) | 0 / 0 | 0 / 0 | 417 / 417 | 522 / 522 | 595 / 466 | no / no | 1 / 1 |
+| Castor mainboard (pass) | 0 / 0 | 0 / 0 | 167 / 167 | 924 / 924 | 829 / 721 | no / no | 2 / 2 |
+
+All eight boards identical (unconnected 615, 1 new error, 2232 vias,
+47510 mm both); KiCad checks 57 to 31, kicad-cli 1297 to 676 s; CPU 14495
+to 12643 s. Cut 2 to 0: on x934 the wall clock cut woagboard's and ULK's
+last rung (both boards unchanged; woagboard's counted work 1131 against
+1540 s is where the cut stopped that rung, ULK's 98 s leaves out its
+unkept ladder, the accounting fixed above came later). Wall clock follows
+the load (Batch_1 ran beside load 22-26 on x972, 9-23 on x934); the
+checks saved are 100-170 s a board on the big ones.
+
+Short tier (flock, tasks v6, `--threads 4 --jobs 1`, DRC cache warm), x976
+against build/short-x1020.log (x1020 = x950's rows; x1022 changes none):
+all 12 rows identical (unconnected 35, new errors 3, 1129 vias, 22253 mm,
+passes 6, cut 0). Work 2671 to 3236 s: framework_mobo 220 to 292 and OpenFC
+140 to 634, their unkept ladders now counted; every other row's work the
+same. KiCad checks 62 to 41 (rung checks 53 to 32; the neck repair's 7 on
+USB_Keypad and 2 on WLED_Matrix both sides): USB_Keypad 20 to 14,
+reCamera 14 to 4, WLED_Matrix 11 to 9, OpenFC 6 to 3, the rest unchanged.
+Wall 1702 to 1946 s summed over the rows (the cache made the checks
+0.5 s each, so the saving is nil there; jobs 1 beside other agents' tiers
+against x1020's run). build/short-x976.log.
+
+Not done: the uncached KiCad check's time is still not work (the gate cuts
+the number of checks, not their charge); the ladder's first board is always
+checked (it is the ladder's measure), even where it cannot beat the
+layout's board.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

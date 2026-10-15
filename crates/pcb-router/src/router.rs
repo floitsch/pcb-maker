@@ -5575,7 +5575,18 @@ impl Router {
             state.hopeless_searches = 0;
             state.unreachable.clear();
         }
-        for iteration in 0..self.config.max_iterations {
+        // Past the caller's wall-clock deadline a router that has negotiated
+        // before (a resume, a move's trial, the via reduction) keeps its
+        // routes as they are and goes on to finish: an iteration of a big
+        // board takes a minute or more under load, and after the deadline
+        // only the result is wanted (PolyKybd left in v16: three trials of
+        // 60-200 s each after the deadline, killed at 1800 s). A fresh
+        // router still negotiates once: without it there is no board.
+        let finishing = self.iterations > 0 && self.past_wall_deadline();
+        if finishing && self.config.verbose {
+            eprintln!("negotiation skipped: past the deadline, the routes stay as they are");
+        }
+        for iteration in 0..if finishing { 0 } else { self.config.max_iterations } {
             self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
             let batches = self.batches(&pending, growth);
@@ -9224,8 +9235,11 @@ impl Router {
                 stitches += chosen.len();
                 continue;
             }
-            // Spoke islands without room for a via stay as they are.
-            if rerouted || islands.is_empty() {
+            // Spoke islands without room for a via stay as they are. Past
+            // the caller's wall-clock deadline the stranded pads stay too:
+            // their hard reroute and forced connection are a repair (PolyKybd
+            // left: about 10 s a finish under load).
+            if rerouted || islands.is_empty() || self.past_wall_deadline() {
                 break;
             }
             // No via fits: route the stranded terminals to the main piece.

@@ -500,6 +500,10 @@ pub(crate) const NARROW_CONTINUATION: NarrowContinuation = NarrowContinuation::O
 /// a few minutes, its repair and KiCad's check.
 pub(crate) const NARROW_CONTINUATION_FLOOR: f64 = 240.0;
 
+/// How many of the final ladder's attempts, by the router's measures with
+/// the layout's own board among them, KiCad checks (`CheckGate`).
+pub(crate) const KICAD_CHECK_TOP: usize = 2;
+
 /// The first seed of the continuation's seeds, past any the narrow-signal
 /// attempt's own seed rounds used.
 const CONTINUATION_FIRST_SEED: u64 = 101;
@@ -523,6 +527,102 @@ pub(crate) fn continuation_seeds(work_left: f64, attempt_work: f64) -> usize {
         return 0;
     }
     ((work_left / attempt_work).floor().max(0.0) as usize).min(4)
+}
+
+/// The steps of a layout after placement, in their order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayoutStep {
+    /// The other seeds' placements probed against the kept one.
+    Race,
+    /// A move trial.
+    Move,
+    /// The first route resumed at the full patience.
+    Resume,
+    /// The clean-up, via reduction and spokes of the kept routes.
+    Polish,
+    /// Reference labels and copper texts.
+    Labels,
+    /// KiCad's check of the board kept.
+    Check,
+    /// The final ladder (or the narrow-signal attempt run alone).
+    Ladder,
+    /// The attempt after the narrow-signal attempt.
+    Continuation,
+    /// The repair of KiCad's connection_width necks on the board kept.
+    NeckRepair,
+    /// The report and the verdict.
+    Report,
+}
+
+impl LayoutStep {
+    /// Whether the step makes the result rather than improving it: these
+    /// run after the wall guard fired too.
+    pub(crate) fn finishes(self) -> bool {
+        matches!(self, Self::Labels | Self::Check | Self::Report)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Race => "the placement race",
+            Self::Move => "the move trials",
+            Self::Resume => "the resume of the first route",
+            Self::Polish => "the polish",
+            Self::Labels => "the labels",
+            Self::Check => "KiCad's check",
+            Self::Ladder => "the final ladder",
+            Self::Continuation => "the attempt after the narrow-signal attempt",
+            Self::NeckRepair => "the neck repair",
+            Self::Report => "the report",
+        }
+    }
+}
+
+/// Once the wall clock passes the layout's deadline (`passed`), the layout
+/// goes straight to finishing: the board kept so far, its labels, KiCad's
+/// check and the report; every step that would improve the board is
+/// skipped (`allows`). What ran after the guard used to take the harness's
+/// margin and more: poly_kybd_split72_left in v16 ran three move trials of
+/// 60-200 s past it and was killed at 1800 s without a result. The skip is
+/// a wall-clock decision, noted as a `layout` cut; without the guard the
+/// layout is as before.
+pub(crate) struct WallStop<F: Fn() -> bool> {
+    passed: F,
+    fired: std::cell::Cell<bool>,
+    skipped: std::cell::RefCell<Vec<LayoutStep>>,
+}
+
+impl<F: Fn() -> bool> WallStop<F> {
+    pub(crate) fn new(passed: F) -> Self {
+        Self { passed, fired: std::cell::Cell::new(false), skipped: std::cell::RefCell::new(Vec::new()) }
+    }
+
+    /// Whether `step` runs: always until the wall clock has passed the
+    /// deadline, afterwards only the steps that finish the result.
+    pub(crate) fn allows(&self, step: LayoutStep) -> bool {
+        if !self.fired.get() && (self.passed)() {
+            self.fired.set(true);
+        }
+        if !self.fired.get() || step.finishes() {
+            return true;
+        }
+        let mut skipped = self.skipped.borrow_mut();
+        if !skipped.contains(&step) {
+            skipped.push(step);
+            eprintln!("layout: past the deadline, {} skipped: finishing with the board kept so far", step.name());
+            core::router::note_wall_cut("layout", format_args!("{} skipped past the deadline", step.name()));
+        }
+        false
+    }
+
+    /// Whether the wall clock has passed the deadline (as `allows` last saw it).
+    pub(crate) fn fired(&self) -> bool {
+        self.fired.get()
+    }
+
+    /// The steps skipped, in the order they were first skipped.
+    pub(crate) fn skipped(&self) -> Vec<LayoutStep> {
+        self.skipped.borrow().clone()
+    }
 }
 
 pub fn layout_kicad_board(
@@ -590,6 +690,7 @@ pub fn layout_kicad_board(
         router.config_mut().deadline_work = Some(own + (work_deadline - work).max(0.0));
     };
     let wall_passed = || router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    let stop = WallStop::new(wall_passed);
     let mut placer_config = resolve_constraints(&config.placer, source_directory).map_err(crate::verdict::input_error)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
@@ -882,7 +983,7 @@ pub fn layout_kicad_board(
         congestion = Some(KiCadCongestionRanking { scores: ranked.scores, probed: keep });
     }
     let mut race = Vec::new();
-    let (mut router, mut result) = if seeds == 1 && pin_swaps.is_none() && !others.is_empty() {
+    let (mut router, mut result) = if seeds == 1 && pin_swaps.is_none() && !others.is_empty() && stop.allows(LayoutStep::Race) {
         // Wirelength is not routability: each placement is probed with the
         // same search, as route mode probes its rungs, and only the one
         // with the fewest nets unfinished routes on (routing the others in
@@ -1062,6 +1163,9 @@ pub fn layout_kicad_board(
     }
     let many_open = many_open || far_open;
     for _ in 0..if many_open { 0 } else { config.moves } {
+        if !stop.allows(LayoutStep::Move) {
+            break;
+        }
         arm(&mut router, work + pool_excess);
         if best.0 == 0 && since_improvement >= config.patience {
             break;
@@ -1166,6 +1270,11 @@ pub fn layout_kicad_board(
 
         let mut improved = false;
         for (_, pose) in candidates {
+            // A trial is a reroute and a finish (60-200 s on a big board
+            // under load): none starts past the deadline.
+            if !stop.allows(LayoutStep::Move) {
+                break;
+            }
             let trial_started = std::time::Instant::now();
             let saved_router = router.clone();
             let saved_pcb = pcb.clone();
@@ -1251,7 +1360,7 @@ pub fn layout_kicad_board(
     // ladder, which had completed that board to 2 unconnected, ran out of
     // time. With many open the pour mode is in question: the ladder's.
     arm(&mut router, work + pool_excess);
-    if best.0 > 0 && !many_open && !router.past_deadline() {
+    if best.0 > 0 && !many_open && !router.past_deadline() && stop.allows(LayoutStep::Resume) {
         let left = (config.total_seconds - work).max(0.0);
         let share = (0.2 * left).min(240.0);
         if share >= 60.0 {
@@ -1305,7 +1414,7 @@ pub fn layout_kicad_board(
         eprintln!("layout: polished by a move trial, {:.0} s of {:.0} s of work left: polishing again", config.total_seconds - work, config.total_seconds);
     }
     arm(&mut router, work + pool_excess);
-    if (!polished || polish_again) && !many_open && !router.past_deadline() && polish_left >= 240.0 {
+    if (!polished || polish_again) && !many_open && !router.past_deadline() && polish_left >= 240.0 && stop.allows(LayoutStep::Polish) {
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {
@@ -1380,6 +1489,8 @@ pub fn layout_kicad_board(
         (open(result), crate::board_router::starved_thermals(directory))
     };
     let current = quality(&routed, &result_directory);
+    // Whether KiCad checked a ladder's board (or no check runs at all).
+    let checked = |result: &KiCadBoardRouterResult| result.native.is_some() || router_config.skip_native_verification;
     let layout_work = work;
     // The ladder below builds routers of its own (probes side by side,
     // seeds side by side): this one would only hold its memory meanwhile.
@@ -1391,13 +1502,7 @@ pub fn layout_kicad_board(
     // A ladder needs a few minutes of wall clock for a probe, the board
     // and KiCad's check; started with less it runs past the harness's
     // limit (the laptop motherboard: killed at 1800 s without a board).
-    let past_guard = work_deadline - work - pool_excess < 240.0 || {
-        let past = wall_passed();
-        if past {
-            core::router::note_wall_cut("layout", format_args!("no final ladder, {work:.0} s of work done"));
-        }
-        past
-    };
+    let past_guard = work_deadline - work - pool_excess < 240.0 || !stop.allows(LayoutStep::Ladder);
     // A board far from complete where the narrow-signal step applies gets
     // only the step: one attempt with the first route's pours, signals at
     // the project's narrowest width (and its minimum clearance where the
@@ -1456,6 +1561,11 @@ pub fn layout_kicad_board(
         // The ladder decides whether another attempt fits in work, up to
         // the layout's nominal end.
         fallback_config.deadline_work = Some((work_deadline - work - pool_excess).max(0.0));
+        // KiCad checks only the ladder's attempts that could beat the board
+        // kept, at most the two best by the router's count, the board kept
+        // among them (`CheckGate`).
+        fallback_config.kicad_check_top = Some(KICAD_CHECK_TOP);
+        fallback_config.kicad_kept = Some(((crate::board_router::router_open(&routed), routed.vias, routed.length_mm), current));
         let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
         // The work of the narrow-signal attempt and what follows it counts
         // whether the layout keeps them or not.
@@ -1464,7 +1574,9 @@ pub fn layout_kicad_board(
         let fallback_pours = fallback.pours.clone();
         let mut best_quality = current;
         let fallback_quality = quality(&fallback, &fallback_directory);
-        if fallback_quality < current {
+        // A ladder board KiCad did not check (past the deadline, it could
+        // not beat the board kept) is never kept.
+        if checked(&fallback) && fallback_quality < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
             fs::rename(&fallback_directory, &result_directory).map_err(|error| error.to_string())?;
             routed = fallback;
@@ -1477,7 +1589,7 @@ pub fn layout_kicad_board(
         // enough of it.
         if direct_narrow {
             let left = work_deadline - work - pool_excess - after_work;
-            let wall = wall_passed();
+            let wall = !stop.allows(LayoutStep::Continuation);
             // Experiment switch: another floor.
             let floor = std::env::var("PCB_LAYOUT_NARROW_CONTINUATION_FLOOR")
                 .ok()
@@ -1547,6 +1659,8 @@ pub fn layout_kicad_board(
                 let share = left / side_by_side as f64;
                 continuation_config.ladder_budget_seconds = Some(share.min(1200.0));
                 continuation_config.deadline_work = Some(share.max(0.0));
+                continuation_config.kicad_check_top = Some(KICAD_CHECK_TOP);
+                continuation_config.kicad_kept = Some(((crate::board_router::router_open(&routed), routed.vias, routed.length_mm), best_quality));
                 let continuation_directory = output_directory.join("result-continuation");
                 let mut continuation =
                     route_kicad_board(&placed_directory, board_id, &continuation_directory, &continuation_config)?;
@@ -1563,7 +1677,7 @@ pub fn layout_kicad_board(
                     best_quality.0,
                     best_quality.1
                 );
-                if continuation_quality < best_quality {
+                if checked(&continuation) && continuation_quality < best_quality {
                     fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
                     fs::rename(&continuation_directory, &result_directory).map_err(|error| error.to_string())?;
                     routed = continuation;
@@ -1572,13 +1686,18 @@ pub fn layout_kicad_board(
                 }
             }
         }
-        if direct_narrow {
-            routed.work_seconds = after_work;
-        }
+        // Work spent is work spent: the ladder's (and the attempts after
+        // the narrow-signal attempt) count whether the layout keeps their
+        // board or not (koeg in v16: 410 s reported, its unkept ladder ran
+        // 1100 s more of wall clock).
+        routed.work_seconds = after_work;
     }
     // KiCad's connection_width necks on the board kept (a no-op when the
-    // route mode ladder above has repaired it already).
-    crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+    // route mode ladder above has repaired it already). It improves the
+    // board: past the deadline it is skipped.
+    if (routed.native.is_some() || router_config.skip_native_verification) && stop.allows(LayoutStep::NeckRepair) {
+        crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+    }
     if routed.neck_repair.as_ref().is_some_and(|repair| repair.kept) {
         let report_path = output_directory.join("result").join("board-router.json");
         fs::write(&report_path, serde_json::to_string_pretty(&routed).map_err(|error| error.to_string())?)
@@ -1593,6 +1712,7 @@ pub fn layout_kicad_board(
         fs::write(&placed_board, format!("{}\n", encode(&placed_pcb)))
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
     }
+    let routed_work = routed.work_seconds;
     let layout = KiCadBoardLayoutResult {
         board_id: board_id.into(),
         work_seconds: layout_work,
@@ -1618,12 +1738,74 @@ pub fn layout_kicad_board(
         serde_json::to_string_pretty(&layout).map_err(|error| error.to_string())?,
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+    let drc_cache = crate::drc_cache_counts();
+    eprintln!(
+        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count{}",
+        elapsed(),
+        work + routed_work,
+        drc_cache.calls,
+        drc_cache.hits,
+        crate::board_router::neck_checks(),
+        crate::board_router::checks_skipped(),
+        if stop.fired() {
+            format!("; past the deadline: {}", stop.skipped().iter().map(|step| format!("{step:?}")).collect::<Vec<_>>().join(", "))
+        } else {
+            String::new()
+        }
+    );
     Ok(layout)
 }
 
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    /// Runs a fake layout's steps in order with a guard that fires after
+    /// `fires_after` looks at the clock; returns the steps that ran.
+    fn run_steps(steps: &[LayoutStep], fires_after: usize) -> (Vec<LayoutStep>, Vec<LayoutStep>) {
+        let looks = std::cell::Cell::new(0);
+        let stop = WallStop::new(|| {
+            looks.set(looks.get() + 1);
+            looks.get() > fires_after
+        });
+        let ran = steps.iter().copied().filter(|step| stop.allows(*step)).collect();
+        (ran, stop.skipped())
+    }
+
+    #[test]
+    fn past_the_wall_guard_only_the_finishing_steps_run() {
+        use LayoutStep::*;
+        let steps = [Race, Move, Move, Move, Resume, Polish, Labels, Check, Ladder, Continuation, NeckRepair, Report];
+        // The guard never fires: everything runs.
+        let (ran, skipped) = run_steps(&steps, usize::MAX);
+        assert_eq!(ran, steps.to_vec());
+        assert!(skipped.is_empty());
+        // It fires during the second move trial: the third trial, the
+        // resume, the polish, the ladder and the continuation are skipped;
+        // the labels, the check of the board kept and the report run.
+        let (ran, skipped) = run_steps(&steps, 2);
+        assert_eq!(ran, vec![Race, Move, Labels, Check, Report]);
+        assert_eq!(skipped, vec![Move, Resume, Polish, Ladder, Continuation, NeckRepair]);
+        // Fired already in placement: no race either.
+        let (ran, _) = run_steps(&steps, 0);
+        assert_eq!(ran, vec![Labels, Check, Report]);
+    }
+
+    #[test]
+    fn once_fired_the_guard_stays_fired() {
+        use LayoutStep::*;
+        let looks = std::cell::Cell::new(0);
+        // A clock that would say "not passed" again after firing.
+        let stop = WallStop::new(|| {
+            looks.set(looks.get() + 1);
+            looks.get() == 2
+        });
+        assert!(stop.allows(Move));
+        assert!(!stop.allows(Move));
+        assert!(!stop.allows(Ladder));
+        assert!(stop.fired());
+        assert!(stop.allows(Check));
+    }
 
     #[test]
     fn far_from_complete_is_two_percent_of_the_terminals_at_least_ten() {

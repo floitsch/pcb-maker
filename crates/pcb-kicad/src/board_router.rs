@@ -158,6 +158,17 @@ pub struct KiCadBoardRouterConfig {
     /// set by the ladder from `deadline_work`, not read from a file).
     #[serde(skip)]
     pub router_deadline_work: Option<f64>,
+    /// KiCad checks only the attempts among this many best by the
+    /// router's count (`CheckGate`; set by the layout for its final
+    /// ladder, not read from a file).
+    #[serde(skip)]
+    pub kicad_check_top: Option<usize>,
+    /// The caller's kept board: the router's measures (open count, vias,
+    /// copper) and its checked (open count, starved thermals); the
+    /// ladder's attempts are ranked against it for KiCad's checks
+    /// (`CheckGate`; set by the layout, not read from a file).
+    #[serde(skip)]
+    pub kicad_kept: Option<(RouterMeasure, (usize, usize))>,
     /// How many seeds of one attempt route at once (memory; the number of
     /// seeds, and so the result, does not depend on it).
     #[serde(skip)]
@@ -2361,6 +2372,128 @@ pub(crate) fn deadline_before_reserve(work_left: f64, reserve: f64, routers: usi
     ((work_left - reserve) / routers.max(1) as f64).max(0.0)
 }
 
+/// Which attempts of a ladder KiCad checks. An attempt's quality is the
+/// router's open count (unconnected terminals and internal violations)
+/// plus KiCad's unconnected items, then KiCad's starved thermals, then
+/// vias and copper (`open` in `route_kicad_board`); the router's count
+/// alone is a lower bound of the first, with no slack (KiCad's part only
+/// adds). An attempt whose router count already loses to the kept board's
+/// checked quality cannot win, and its check (10 to 50 s of kicad-cli on a
+/// big or hatched board, not counted as work) is skipped. In the layout's
+/// final ladder (`top`), only the attempts among the best `top` by the
+/// router's measures (its open count, then vias, then copper), the
+/// layout's own board counted, are checked at all; KiCad decides between
+/// the attempts checked. Once the wall clock passes the deadline,
+/// nothing after an attempt depends on it but whether it beats the kept
+/// board and the caller's (`kept`).
+#[derive(Debug, Default)]
+pub(crate) struct CheckGate {
+    /// At most this many attempts by the router's measures are checked
+    /// (None: any that could win).
+    pub top: Option<usize>,
+    /// The router's measures of the boards checked (the caller's first).
+    pub counts: Vec<RouterMeasure>,
+    /// The caller's kept board as it compares a ladder's result (KiCad's
+    /// open count with the router's, starved thermals).
+    pub kept: Option<(usize, usize)>,
+    pub checked: usize,
+    pub skipped: usize,
+}
+
+/// A board as the router alone measures it: its open count (unconnected
+/// terminals and internal violations), vias, copper length.
+pub(crate) type RouterMeasure = (usize, usize, f64);
+
+/// A checked board's quality as the ladder compares boards: (open, starved
+/// thermals), vias, copper length.
+pub(crate) type CheckedQuality = ((usize, usize), usize, f64);
+
+/// Whether an attempt with router open count `count`, `vias` and `length_mm`
+/// can still beat `best` (an attempt's full open count is at least
+/// `count`). A tie on the open count leaves starved thermals and then
+/// vias and copper to decide.
+pub(crate) fn could_win(count: usize, vias: usize, length_mm: f64, best: CheckedQuality) -> bool {
+    let ((open, starved), best_vias, best_length) = best;
+    count < open
+        || (count == open
+            && (starved > 0 || (vias, length_mm).partial_cmp(&(best_vias, best_length)).is_some_and(|order| order.is_lt())))
+}
+
+/// Whether an attempt with router open count `count` can beat the caller's
+/// kept board `(open, starved)` as the layout compares them.
+pub(crate) fn could_beat_kept(count: usize, kept: (usize, usize)) -> bool {
+    count < kept.0 || (count == kept.0 && kept.1 > 0)
+}
+
+impl CheckGate {
+    /// Whether KiCad should check an attempt (router count `count`) given
+    /// the ladder's `best` so far; `finishing` once the wall clock passed
+    /// the deadline (no further attempt follows).
+    pub(crate) fn wants(&self, count: usize, vias: usize, length_mm: f64, best: Option<CheckedQuality>, finishing: bool) -> bool {
+        if finishing {
+            return best.is_none_or(|best| could_win(count, vias, length_mm, best))
+                && self.kept.is_none_or(|kept| could_beat_kept(count, kept));
+        }
+        let Some(best) = best else {
+            // The ladder's first board is its measure.
+            return true;
+        };
+        // A board the router finishes is always checked: whether KiCad
+        // agrees decides whether the ladder stops.
+        let measure = (count, vias, length_mm);
+        count == 0
+            || (could_win(count, vias, length_mm, best)
+                && self.top.is_none_or(|top| {
+                    self.counts
+                        .iter()
+                        .filter(|other| other.partial_cmp(&&measure).is_some_and(|order| order.is_le()))
+                        .count()
+                        < top
+                }))
+    }
+
+    /// Notes a board checked with the router's measures `measure`.
+    pub(crate) fn record(&mut self, measure: RouterMeasure) {
+        self.counts.push(measure);
+        self.checked += 1;
+    }
+}
+
+/// Attempts whose KiCad check this process skipped (`CheckGate`).
+static CHECKS_SKIPPED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many attempts' KiCad checks this process skipped (`CheckGate`).
+pub(crate) fn checks_skipped() -> usize {
+    CHECKS_SKIPPED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The router's own open count of an attempt: unconnected terminals and
+/// internal violations, a lower bound of its full open count.
+pub(crate) fn router_open(result: &KiCadBoardRouterResult) -> usize {
+    result.unconnected_terminals + result.internal_violations.len()
+}
+
+/// KiCad's check of an attempt routed without it
+/// (`skip_native_verification`), as `finish_routed_board` runs it: the
+/// native report, the starved thermals, the report file again.
+pub(crate) fn check_attempt(result: &mut KiCadBoardRouterResult, directory: &Path, board_id: &str) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    result.native = Some(verify_materialized_rung(directory, board_id)?);
+    result.native_verification_seconds = started.elapsed().as_secs_f64();
+    result.diagnostics.starved_thermals = starved_thermal_diagnostics(directory);
+    let drc_cache = crate::drc_cache_counts();
+    eprintln!(
+        "board check: KiCad {:.1}s (router count {}); drc_cache: {{calls {}, hits {}}}",
+        result.native_verification_seconds,
+        router_open(result),
+        drc_cache.calls,
+        drc_cache.hits
+    );
+    let report_path = directory.join("board-router.json");
+    fs::write(&report_path, serde_json::to_string_pretty(&*result).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("failed to write {}: {error}", report_path.display()))
+}
+
 /// `config` as the narrow-signal step routes it: signal nets at the
 /// project's narrowest predefined width when that is narrower than a
 /// class, and the board's minimum clearance when the project rates
@@ -2585,6 +2718,22 @@ pub fn route_kicad_board(
     // Steps that did not run, with why: the report's `skipped` when the
     // board stays incomplete.
     let mut skipped: Vec<String> = Vec::new();
+    // KiCad's checks of the attempts: each attempt routes without one, and
+    // only those that could still win are checked (`CheckGate`).
+    let checking = !config.skip_native_verification;
+    let gate = std::cell::RefCell::new(CheckGate {
+        top: config.kicad_check_top,
+        counts: config.kicad_kept.map(|(measure, _)| vec![measure]).unwrap_or_default(),
+        kept: config.kicad_kept.map(|(_, quality)| quality),
+        ..CheckGate::default()
+    });
+    // An attempt's configuration as it routes: without KiCad's check, which
+    // `judge` runs when it matters.
+    let unchecked = |attempt: &KiCadBoardRouterConfig| -> KiCadBoardRouterConfig {
+        let mut attempt = attempt.clone();
+        attempt.skip_native_verification = attempt.skip_native_verification || checking;
+        attempt
+    };
     let ladder_budget = config.ladder_budget_seconds.unwrap_or(1200.0);
     let ladder_started = std::time::Instant::now();
     // The ladder's budget is spent in work (search expansions in seconds of
@@ -2625,6 +2774,39 @@ pub fn route_kicad_board(
         }
         past
     };
+    // An attempt's (open, starved) as KiCad checked it, or None when its
+    // check was skipped because it cannot win (`CheckGate`; its router
+    // count, a lower bound of its open count, is then what it is ranked by).
+    let judge = |result: &mut KiCadBoardRouterResult, directory: &Path, best: Option<CheckedQuality>| -> Result<Option<(usize, usize)>, String> {
+        if !checking {
+            return Ok(Some(open(result, directory)));
+        }
+        let count = router_open(result);
+        // Past the deadline no further attempt starts: only whether this
+        // one beats the kept boards matters.
+        let finishing = past_deadline();
+        if !gate.borrow().wants(count, result.vias, result.length_mm, best, finishing) {
+            gate.borrow_mut().skipped += 1;
+            CHECKS_SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let winnable = best.is_none_or(|best| could_win(count, result.vias, result.length_mm, best));
+            eprintln!(
+                "board check: KiCad skipped, the attempt {} (router count {count}, {} vias; best {}{})",
+                if winnable && !finishing { "is not among the best by the router's measures" } else { "cannot win" },
+                result.vias,
+                best.map_or("none".to_string(), |((open, starved), vias, _)| format!("{open} open, {starved} starved, {vias} vias")),
+                if finishing { ", past the deadline" } else { "" }
+            );
+            return Ok(None);
+        }
+        check_attempt(result, directory, board_id)?;
+        gate.borrow_mut().record((count, result.vias, result.length_mm));
+        Ok(Some(open(result, directory)))
+    };
+    let quality_of = |best: &Option<((usize, usize), KiCadBoardRouterResult)>| -> Option<CheckedQuality> {
+        best.as_ref().map(|(opens, result)| (*opens, result.vias, result.length_mm))
+    };
+    // How an attempt's line names an open count KiCad did not check.
+    let by_router = |judged: &Option<(usize, usize)>| if judged.is_none() { " (router's count, not checked)" } else { "" };
     // What the last attempt took, in work: no attempt starts with less
     // than that left before the run's nominal end (an attempt checks the
     // deadline only in its negotiation; MokyaLora's last rung started at
@@ -2860,7 +3042,7 @@ pub fn route_kicad_board(
                 source_directory,
                 board_id,
                 output_directory,
-                &attempt,
+                &unchecked(&attempt),
                 [0.0, started.elapsed().as_secs_f64()],
             )?;
             result.pours = if !has_pours {
@@ -2873,12 +3055,14 @@ pub fn route_kicad_board(
                 "tracks"
             }
             .into();
-            let opens = open(&result, output_directory);
+            let judged = judge(&mut result, output_directory, None)?;
+            let opens = judged.unwrap_or((router_open(&result), 0));
             eprintln!(
-                "attempt pours={}{} pitch=regular (probed, continued): {} open, {} starved, {} vias, {:.1} s",
+                "attempt pours={}{} pitch=regular (probed, continued): {} open{}, {} starved, {} vias, {:.1} s",
                 result.pours,
                 if exclusive { " (exclusive planes)" } else if plane_stubs { " (plane stubs)" } else { "" },
                 opens.0,
+                by_router(&judged),
                 opens.1,
                 result.vias,
                 ladder_started.elapsed().as_secs_f64()
@@ -3053,7 +3237,7 @@ pub fn route_kicad_board(
                     let handles: Vec<_> = wave
                         .iter()
                         .map(|&other| {
-                            let attempt = rung_attempt(other);
+                            let attempt = unchecked(&rung_attempt(other));
                             let directory = rung_directory(other);
                             let connect = modes[other].0;
                             scope.spawn(move || {
@@ -3082,7 +3266,8 @@ pub fn route_kicad_board(
                 "tracks"
             }
             .into();
-            let mut opens = open(&result, &directory);
+            let mut judged = judge(&mut result, &directory, quality_of(&best))?;
+            let mut opens = judged.unwrap_or((router_open(&result), 0));
             if router_mb.is_none() {
                 router_mb = memory_mb().map(|(peak, _)| (peak, result.grid_pitch_mm));
             }
@@ -3140,37 +3325,51 @@ pub fn route_kicad_board(
                     fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
                 }
                 let mut other =
-                    route_kicad_board_once(source_directory, board_id, &retry_directory, &seeded, *connect)?;
+                    route_kicad_board_once(source_directory, board_id, &retry_directory, &unchecked(&seeded), *connect)?;
                 other.pours = result.pours.clone();
                 // The seeds run side by side: about `retry` times one's work.
                 ladder_work += work_of(other.expansions) * retry as f64;
                 ladder_work_now.set(ladder_work);
-                let other_opens = open(&other, &retry_directory);
+                let other_judged = judge(&mut other, &retry_directory, quality_of(&best))?;
+                let other_opens = other_judged.unwrap_or((router_open(&other), 0));
                 eprintln!(
-                    "attempt again with {retry} seeds: {} open, {} vias, {:.1} s",
-                    other_opens.0, other.vias, other.routing_seconds
+                    "attempt again with {retry} seeds: {} open{}, {} vias, {:.1} s",
+                    other_opens.0,
+                    by_router(&other_judged),
+                    other.vias,
+                    other.routing_seconds
                 );
-                if (other_opens, other.vias, other.length_mm)
-                    .partial_cmp(&(opens, result.vias, result.length_mm))
-                    .is_some_and(|order| order.is_lt())
-                {
+                // Boards KiCad checked compare as before; one it did not
+                // check cannot beat the best so far, so it never displaces
+                // one it did (and which of two unchecked ones stays does
+                // not matter: neither beats the best).
+                let other_better = match (judged.is_some(), other_judged.is_some()) {
+                    (true, true) => (other_opens, other.vias, other.length_mm)
+                        .partial_cmp(&(opens, result.vias, result.length_mm))
+                        .is_some_and(|order| order.is_lt()),
+                    (false, true) => true,
+                    (_, false) => false,
+                };
+                if other_better {
                     fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
                     fs::rename(&retry_directory, &directory).map_err(|error| error.to_string())?;
                     other.routing_seconds += result.routing_seconds;
                     result = other;
                     opens = other_opens;
+                    judged = other_judged;
                 } else {
                     fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
                 }
             }
             eprintln!(
-                "attempt pours={}{} pitch={}: {} open, {} starved, {} vias, {:.1} s",
+                "attempt pours={}{} pitch={}: {} open{}, {} starved, {} vias, {:.1} s",
                 result.pours,
                 if *exclusive { " (exclusive planes)" } else if *plane_stubs { " (plane stubs)" } else { "" },
                 pitch
                     .as_ref()
                     .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
                 opens.0,
+                by_router(&judged),
                 opens.1,
                 result.vias,
                 result.routing_seconds
@@ -3196,11 +3395,13 @@ pub fn route_kicad_board(
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
                 slowest = Some(used);
             }
-            // Equally open boards: fewer vias, then less copper.
+            // Equally open boards: fewer vias, then less copper. A board
+            // KiCad did not check cannot beat the best (`CheckGate`).
             let better = best.as_ref().is_none_or(|(best_opens, best_result)| {
-                (opens, result.vias, result.length_mm)
-                    .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
-                    .is_some_and(|order| order.is_lt())
+                judged.is_some()
+                    && (opens, result.vias, result.length_mm)
+                        .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                        .is_some_and(|order| order.is_lt())
             });
             if better {
                 if output_directory.exists() {
@@ -3289,18 +3490,25 @@ pub fn route_kicad_board(
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
         let connect = *connect;
-        let mut other = route_kicad_board_once(source_directory, board_id, &scratch, &seeded, connect)?;
+        let quality = quality_of(&best);
+        let mut other = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&seeded), connect)?;
         other.pours = best_result.pours.clone();
         ladder_work += work_of(other.expansions) * retry as f64;
         ladder_work_now.set(ladder_work);
-        let other_opens = open(&other, &scratch);
+        let other_judged = judge(&mut other, &scratch, quality)?;
+        let other_opens = other_judged.unwrap_or((router_open(&other), 0));
         eprintln!(
-            "best rung again with {retry} seeds: {} open, {} starved, {} vias, {:.1} s",
-            other_opens.0, other_opens.1, other.vias, other.routing_seconds
+            "best rung again with {retry} seeds: {} open{}, {} starved, {} vias, {:.1} s",
+            other_opens.0,
+            by_router(&other_judged),
+            other_opens.1,
+            other.vias,
+            other.routing_seconds
         );
-        let better = (other_opens, other.vias, other.length_mm)
-            .partial_cmp(&(*opens, best_result.vias, best_result.length_mm))
-            .is_some_and(|order| order.is_lt());
+        let better = other_judged.is_some()
+            && (other_opens, other.vias, other.length_mm)
+                .partial_cmp(&(*opens, best_result.vias, best_result.length_mm))
+                .is_some_and(|order| order.is_lt());
         if better {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
             fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
@@ -3388,17 +3596,23 @@ pub fn route_kicad_board(
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
-        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &narrowed, *connect)?;
+        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&narrowed), *connect)?;
         ladder_work += work_of(result.expansions);
         ladder_work_now.set(ladder_work);
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
-        let narrow_opens = open(&result, &scratch);
+        let narrow_judged = judge(&mut result, &scratch, quality_of(&best))?;
+        let narrow_opens = narrow_judged.unwrap_or((router_open(&result), 0));
         eprintln!(
-            "attempt with signals at {narrow} mm{}: {} open, {} starved, {} vias, {:.1} s, work {:.0} s",
+            "attempt with signals at {narrow} mm{}: {} open{}, {} starved, {} vias, {:.1} s, work {:.0} s",
             config.relaxed_clearance_mm.map(|relaxed| format!(" and clearance {relaxed} mm")).unwrap_or_default(),
-            narrow_opens.0, narrow_opens.1, result.vias, result.routing_seconds, work_of(result.expansions)
+            narrow_opens.0,
+            by_router(&narrow_judged),
+            narrow_opens.1,
+            result.vias,
+            result.routing_seconds,
+            work_of(result.expansions)
         );
-        let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
+        let better = narrow_judged.is_some() && best.as_ref().is_some_and(|(best_opens, best_result)| {
             (narrow_opens, result.vias, result.length_mm)
                 .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
                 .is_some_and(|order| order.is_lt())
@@ -3441,16 +3655,21 @@ pub fn route_kicad_board(
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
-        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &relaxed_attempt, *connect)?;
+        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&relaxed_attempt), *connect)?;
         ladder_work += work_of(result.expansions);
         ladder_work_now.set(ladder_work);
         result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
-        let relaxed_opens = open(&result, &scratch);
+        let relaxed_judged = judge(&mut result, &scratch, quality_of(&best))?;
+        let relaxed_opens = relaxed_judged.unwrap_or((router_open(&result), 0));
         eprintln!(
-            "attempt at the minimum clearance {relaxed} mm: {} open, {} starved, {} vias, {:.1} s",
-            relaxed_opens.0, relaxed_opens.1, result.vias, result.routing_seconds
+            "attempt at the minimum clearance {relaxed} mm: {} open{}, {} starved, {} vias, {:.1} s",
+            relaxed_opens.0,
+            by_router(&relaxed_judged),
+            relaxed_opens.1,
+            result.vias,
+            result.routing_seconds
         );
-        let better = best.as_ref().is_some_and(|(best_opens, best_result)| {
+        let better = relaxed_judged.is_some() && best.as_ref().is_some_and(|(best_opens, best_result)| {
             (relaxed_opens, result.vias, result.length_mm)
                 .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
                 .is_some_and(|order| order.is_lt())
@@ -3518,7 +3737,11 @@ pub fn route_kicad_board(
             }
         }
     }
-    repair_necks(&mut result, output_directory, board_id, config)?;
+    // The neck repair improves a checked board; past the deadline it is
+    // skipped (up to six more KiCad checks, uncounted as work).
+    if result.native.is_some() && !past_deadline() {
+        repair_necks(&mut result, output_directory, board_id, config)?;
+    }
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder_work;
     // What did not run matters only to a board left incomplete.
@@ -3926,7 +4149,8 @@ pub(super) fn finish_routed_board(
     let (lowerings, lowering_total) = lowering_totals();
     let (builds, build_total) = core::router::build_totals();
     eprintln!(
-        "board check: internal verification {verify_seconds:.1}s, KiCad {native_verification_seconds:.1}s (lowering {:.1}s, routing {:.1}s); drc_cache: {{calls {}, hits {}}}; so far {lowerings} lowerings {lowering_total:.1}s, {builds} lattices {build_total:.1}s",
+        "board check: internal verification {verify_seconds:.1}s, KiCad {} (lowering {:.1}s, routing {:.1}s); drc_cache: {{calls {}, hits {}}}; so far {lowerings} lowerings {lowering_total:.1}s, {builds} lattices {build_total:.1}s",
+        if native.is_some() { format!("{native_verification_seconds:.1}s") } else { "not run".to_string() },
         timings[0], timings[1], drc_cache.calls, drc_cache.hits
     );
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
@@ -3994,6 +4218,7 @@ pub(crate) fn repair_necks(
     if config.skip_native_verification {
         return Ok(());
     }
+    let calls = crate::drc_cache_counts().calls;
     if let Some(repair) = crate::necks::repair_connection_width(directory, board_id, config)? {
         if repair.kept {
             result.native = Some(verify_materialized_rung(directory, board_id)?);
@@ -4001,7 +4226,16 @@ pub(crate) fn repair_necks(
         }
         result.neck_repair = Some(repair);
     }
+    NECK_CHECKS.fetch_add(crate::drc_cache_counts().calls.saturating_sub(calls) as usize, std::sync::atomic::Ordering::Relaxed);
     Ok(())
+}
+
+/// KiCad checks the neck repair ran in this process (`repair_necks`).
+static NECK_CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many KiCad checks the neck repair ran in this process.
+pub(crate) fn neck_checks() -> usize {
+    NECK_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Number of `starved_thermal` findings in the directory's native DRC report.
@@ -4927,3 +5161,82 @@ mod narrow_step_tests {
         assert!(!narrow_step_applies(&step));
     }
 }
+
+#[cfg(test)]
+mod check_gate_tests {
+    use super::*;
+
+    #[test]
+    fn a_router_count_above_the_best_open_count_cannot_win() {
+        // The full open count is the router's plus KiCad's: no slack.
+        let best = ((10, 0), 100, 500.0);
+        assert!(could_win(9, 200, 900.0, best));
+        assert!(!could_win(11, 10, 100.0, best));
+        // A tie on the count: starved thermals, then vias and copper decide.
+        assert!(could_win(10, 99, 900.0, best));
+        assert!(could_win(10, 100, 499.0, best));
+        assert!(!could_win(10, 100, 500.0, best));
+        assert!(!could_win(10, 101, 100.0, best));
+        assert!(could_win(10, 101, 100.0, ((10, 2), 100, 500.0)));
+    }
+
+    #[test]
+    fn the_first_attempt_and_router_clean_ones_are_always_checked() {
+        let gate = CheckGate { top: Some(2), counts: vec![(3, 10, 1.0), (4, 10, 1.0)], ..CheckGate::default() };
+        assert!(gate.wants(50, 0, 0.0, None, false));
+        assert!(gate.wants(0, 500, 9000.0, Some(((0, 1), 10, 10.0)), false));
+    }
+
+    #[test]
+    fn route_mode_checks_every_attempt_that_could_win() {
+        let mut gate = CheckGate::default();
+        let best = Some(((20, 0), 100, 500.0));
+        for count in [5, 6, 7, 19] {
+            assert!(gate.wants(count, 0, 0.0, best, false));
+            gate.record((count, 0, 0.0));
+        }
+        assert!(!gate.wants(21, 0, 0.0, best, false));
+        assert_eq!(gate.checked, 4);
+    }
+
+    #[test]
+    fn the_final_ladder_checks_only_the_two_best_by_the_routers_measures() {
+        // The layout's board (router count 12) is the first measure.
+        let mut gate = CheckGate { top: Some(2), counts: vec![(12, 100, 500.0)], kept: Some((20, 0)), ..CheckGate::default() };
+        let best = Some(((30, 1), 100, 500.0));
+        // The ladder's first attempt: checked whatever its count.
+        assert!(gate.wants(25, 100, 500.0, None, false));
+        gate.record((25, 100, 500.0));
+        // Better than one of the two: checked.
+        assert!(gate.wants(14, 100, 500.0, best, false));
+        gate.record((14, 100, 500.0));
+        // Now 12 and 14 lead: 15 is third, 13 second.
+        assert!(!gate.wants(15, 100, 500.0, best, false));
+        assert!(gate.wants(13, 100, 500.0, best, false));
+        gate.record((13, 100, 500.0));
+        // An equal measure does not displace the two best; fewer vias at
+        // the same count do (MokyaLora: the narrow step's 333 vias against
+        // the ladder's 339 at one open each).
+        assert!(!gate.wants(13, 100, 500.0, best, false));
+        assert!(gate.wants(13, 90, 600.0, best, false));
+        assert!(gate.wants(11, 100, 500.0, best, false));
+    }
+
+    #[test]
+    fn past_the_deadline_only_a_board_that_beats_both_is_checked() {
+        let gate = CheckGate { top: Some(2), counts: vec![(12, 100, 500.0)], kept: Some((20, 0)), ..CheckGate::default() };
+        // No best yet: the layout's kept board alone decides.
+        assert!(gate.wants(19, 0, 0.0, None, true));
+        assert!(!gate.wants(20, 0, 0.0, None, true));
+        assert!(!gate.wants(25, 0, 0.0, None, true));
+        // With a best, both: the top-two rule no longer applies (nothing
+        // follows), the could-win rules do.
+        let best = Some(((18, 0), 100, 500.0));
+        assert!(gate.wants(17, 0, 0.0, best, true));
+        assert!(!gate.wants(19, 0, 0.0, best, true));
+        // A kept board with starved thermals loses a tie to a clean one.
+        let starved = CheckGate { kept: Some((20, 3)), ..CheckGate::default() };
+        assert!(starved.wants(20, 0, 0.0, None, true));
+    }
+}
+

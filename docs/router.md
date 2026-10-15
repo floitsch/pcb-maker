@@ -583,6 +583,26 @@ were measured and lost (docs/handover.md, "after the narrow attempt");
 `PCB_LAYOUT_NARROW_CONTINUATION_FLOOR` choose them for experiments, and
 `skipped` says when the attempt did not run.
 
+**KiCad's checks in the ladder** (2026-10-15). Every attempt routes
+without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board,
+not counted as work); the ladder then checks only the attempts that could
+still win (`CheckGate` in board_router.rs). An attempt's open count is the
+router's (unconnected terminals and internal violations) plus KiCad's
+unconnected items, so the router's count is a lower bound with no slack:
+an attempt whose router count is above the best checked board's open
+count, or equal to it with no starved thermal on the best and no fewer
+vias and copper, cannot win and is not checked. The ladder's first board
+is always checked (it is the measure), and so is any board the router
+finishes (KiCad's agreement decides whether the ladder stops). Route mode
+uses this rule alone, which keeps every decision of the ladder. The
+layout's final ladder (`kicad_check_top`, 2) checks only attempts among the
+two best by the router's measures (open count, then vias, then copper),
+the layout's own board counted first; KiCad decides between the attempts
+checked. Past the wall-clock deadline no
+further attempt starts, so an attempt is checked only if it could beat
+both the ladder's best and the layout's board (`kicad_kept`); a ladder
+board left unchecked is never kept by the layout.
+
 ## Via reduction
 
 Once the board is complete, the nets that have vias are renegotiated from the
@@ -673,6 +693,21 @@ wall time runs 10-40 % ahead of search and pour work), the pour analyses
 in the ladder's and the layout's work tallies and in `deadline_work`
 (those still count search expansions), and the manual spokes' fill
 probe.
+
+**After the guard** (2026-10-15): once the layout's wall-clock deadline
+has passed, the layout goes straight to finishing (`WallStop`,
+`LayoutStep` in board_layout.rs): the board kept so far, its labels,
+KiCad's check and the report run; the placement race, the move trials
+(checked before each trial, not only each move), the resume, the polish,
+the final ladder and the attempt after the narrow-signal attempt do not
+(each skip noted as a `layout` cut). Inside a router, a negotiation that
+resumes from an earlier one (a resume, a move's trial, the via reduction)
+does not start an iteration past the deadline, and the pour stitching
+leaves stranded pads stranded instead of their hard reroute; a fresh
+router still negotiates once (without it there is no board). In the
+ladder only an attempt that could beat the kept boards is checked
+(above). v16's poly_kybd_split72_left ran three move trials of 60-200 s
+after the deadline and was killed at 1800 s with no result.
 
 What remains load-dependent: a
 run that reaches the wall clock first (a

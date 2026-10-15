@@ -733,6 +733,38 @@ def route_admitted(task, arguments, token):
     return row
 
 
+def physical_cores():
+    """The machine's physical cores (logical CPUs that share a core count
+    once), from /sys, else lscpu, else the logical count."""
+    cores = set()
+    for topology in Path("/sys/devices/system/cpu").glob("cpu[0-9]*/topology"):
+        try:
+            package = (topology / "physical_package_id").read_text().strip()
+            core = (topology / "core_id").read_text().strip()
+        except OSError:
+            continue
+        cores.add((package, core))
+    if cores:
+        return len(cores)
+    try:
+        listing = subprocess.run(["lscpu", "-p=core,socket"], capture_output=True, text=True, check=True).stdout
+        cores = {line for line in listing.splitlines() if line and not line.startswith("#")}
+        if cores:
+            return len(cores)
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return os.cpu_count() or 1
+
+
+def default_threads(jobs, cores):
+    """Search threads per board when --threads is not given: the physical
+    cores shared among the jobs (jobs x threads <= cores), at most 4, at
+    least 1; None with one job (all CPUs)."""
+    if jobs <= 1:
+        return None
+    return max(1, min(4, cores // jobs))
+
+
 def spliced_rows(path, names):
     """The rows of `names` in an earlier log (compare.rows_of: a log or an
     output directory), the last of each board, marked spliced."""
@@ -756,7 +788,7 @@ def main():
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--threads", type=int, default=None,
                         help="search threads per board (RAYON_NUM_THREADS; default with several jobs: "
-                             "the cores shared among them, at most 4; with one job: all)")
+                             "the physical cores shared among them, at most 4; with one job: all)")
     parser.add_argument("--min-free-gb", type=float, default=12.0,
                         help="start a board only when this much memory stays available after the "
                              "expected peaks of it and the boards running (0: always)")
@@ -793,11 +825,25 @@ def main():
         parser.error(f"--route-from: {arguments.route_from} is not a directory")
     if arguments.splice_from is not None and not arguments.splice_from.exists():
         parser.error(f"--splice-from: {arguments.splice_from} not found")
-    if arguments.threads is None and arguments.jobs > 1:
+    # Physical cores, not logical CPUs: the work budgets are calibrated on
+    # one search thread a core, and v16's five jobs of four threads on the
+    # 16 cores of a 5950X (beside other agents) ran the search 1.3-1.6 times
+    # slower than its work counted, so that 8 of its 17 cut rows were load.
+    arguments.physical_cores = physical_cores()
+    if arguments.threads is None:
         # Beyond a few threads a board routes hardly faster (k30-SBC: 34.2,
         # 32.4 and 31.3 s of search on 1, 2 and 4) but every thread holds a
         # search scratch of the board's size.
-        arguments.threads = max(1, min(4, (os.cpu_count() or 1) // arguments.jobs))
+        arguments.threads = default_threads(arguments.jobs, arguments.physical_cores)
+    elif arguments.jobs * arguments.threads > arguments.physical_cores:
+        print(f"warning: {arguments.jobs} jobs x {arguments.threads} threads exceed the "
+              f"{arguments.physical_cores} physical cores: the search runs slower than its work counts "
+              f"and the wall clock may cut rows (cut)", file=sys.stderr)
+    if arguments.threads is None and arguments.jobs > arguments.physical_cores:
+        print(f"warning: {arguments.jobs} jobs exceed the {arguments.physical_cores} physical cores",
+              file=sys.stderr)
+    print(f"{arguments.jobs} jobs, {arguments.threads or 'all'} search threads each, "
+          f"{arguments.physical_cores} physical cores", file=sys.stderr)
     # Every row and the summary name the task list (compare.py checks that
     # two runs used the same: quick30-x768 on v5 against x776 on v6 looked
     # like a routing change).
@@ -885,7 +931,10 @@ def main():
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
                    mode="schematic" if arguments.schematic else "route" if arguments.route_from else "layout",
                    spliced=spliced_count,
-                   tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256)
+                   tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
+                   # Search threads per board (None: all CPUs, one job) and
+                   # the cores they share.
+                   jobs=arguments.jobs, threads=arguments.threads, physical_cores=arguments.physical_cores)
     if arguments.schematic:
         # Where the flow stopped, by stage (schematic tier).
         stages = {}

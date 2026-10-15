@@ -222,12 +222,23 @@ the old 37, 8 jobs, load about 45, and the v13 sweep):
 
 How the runner shares the machine:
 
-- `--threads` (default with several jobs: 32 cores / jobs, at most 4)
+- `--threads` (default with several jobs: the physical cores / jobs, at
+  most 4, at least 1; since 2026-10-15, before the logical CPUs / jobs)
   sets the router's search threads (`RAYON_NUM_THREADS`). Threads hardly
   speed a board up (k30-SBC's negotiation: 34.2, 32.4 and 31.3 s of search
   on 1, 2 and 4 threads) but each holds a search scratch of the board's
   size: k30 in route mode takes 907 MB with 32 threads, 539 MB with 2, in
-  the same time. Jobs, not threads, use the cores.
+  the same time. Jobs, not threads, use the cores. The work budgets are
+  calibrated at one search thread a physical core: v16's five jobs of four
+  threads on the 16 cores of the 5950X (beside other agents) ran the
+  search 1.3-1.6 times slower than its counted work, and 8 of its 17 cut
+  rows were that load. The physical cores come from /sys (else `lscpu`);
+  an explicit `--jobs` x `--threads` above them is kept but warned about,
+  and `summary.json` records `jobs`, `threads` and `physical_cores`. The
+  thread count is part of a layout's input (a layout is deterministic per
+  thread count): compare runs at the same `--threads`, so give it
+  explicitly against logs made before this default (the short tier at 6
+  jobs ran 4 threads, the default now gives 2).
 - `--min-free-gb` is kept free after the expected peaks of the boards
   running: a board is admitted when the memory available, less what the
   running boards are still expected to grow by (their `peak_rss_mb` in
