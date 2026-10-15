@@ -41,7 +41,9 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
         let mut start = 0;
         let bytes = text.as_bytes();
         for index in 1..=bytes.len() {
-            if index == bytes.len() || bytes[index].is_ascii_digit() != bytes[start].is_ascii_digit() {
+            if index == bytes.len()
+                || bytes[index].is_ascii_digit() != bytes[start].is_ascii_digit()
+            {
                 runs.push(&text[start..index]);
                 start = index;
             }
@@ -50,7 +52,10 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
     }
     let (first, second) = (runs(a), runs(b));
     for (x, y) in first.iter().zip(&second) {
-        let (x_digits, y_digits) = (x.as_bytes()[0].is_ascii_digit(), y.as_bytes()[0].is_ascii_digit());
+        let (x_digits, y_digits) = (
+            x.as_bytes()[0].is_ascii_digit(),
+            y.as_bytes()[0].is_ascii_digit(),
+        );
         let order = match (x_digits, y_digits) {
             (true, true) => {
                 let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
@@ -72,20 +77,41 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
 fn content_text(item: &Expr) -> String {
     match item {
         Expr::List(items) => encode(&Expr::List(
-            items.iter().filter(|child| !matches!(child.head(), Some("uuid" | "tstamp"))).cloned().collect(),
+            items
+                .iter()
+                .filter(|child| !matches!(child.head(), Some("uuid" | "tstamp")))
+                .cloned()
+                .collect(),
         )),
         Expr::Atom(_) => encode(item),
     }
 }
 
 fn graphic(head: &str) -> bool {
-    matches!(head, "fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly" | "fp_curve" | "fp_text" | "fp_text_box")
+    matches!(
+        head,
+        "fp_line"
+            | "fp_rect"
+            | "fp_arc"
+            | "fp_circle"
+            | "fp_poly"
+            | "fp_curve"
+            | "fp_text"
+            | "fp_text_box"
+    )
 }
 
 /// Sorts the items of `items` for which `kind` is true among the places
 /// they hold, by `compare` on a key computed once per item.
-fn sort_in_place<K>(items: &mut [Expr], kind: impl Fn(&Expr) -> bool, key: impl Fn(&Expr) -> K, compare: impl Fn(&K, &K) -> Ordering) {
-    let places: Vec<usize> = (0..items.len()).filter(|&index| kind(&items[index])).collect();
+fn sort_in_place<K>(
+    items: &mut [Expr],
+    kind: impl Fn(&Expr) -> bool,
+    key: impl Fn(&Expr) -> K,
+    compare: impl Fn(&K, &K) -> Ordering,
+) {
+    let places: Vec<usize> = (0..items.len())
+        .filter(|&index| kind(&items[index]))
+        .collect();
     if places.len() < 2 {
         return;
     }
@@ -112,8 +138,17 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
         items,
         |item| item.head() == Some("pad"),
         |pad| {
-            let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
-            let at = |index: usize| form_atom(pad, "at", index).and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.0);
+            let number = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
+            let at = |index: usize| {
+                form_atom(pad, "at", index)
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .unwrap_or(0.0)
+            };
             (number, at(1), at(2), content_text(pad), encode(pad))
         },
         |a, b| {
@@ -127,10 +162,21 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
     sort_in_place(
         items,
         |item| item.head().is_some_and(graphic),
-        |item| (form_atom(item, "layer", 1).unwrap_or("").to_string(), content_text(item), encode(item)),
+        |item| {
+            (
+                form_atom(item, "layer", 1).unwrap_or("").to_string(),
+                content_text(item),
+                encode(item),
+            )
+        },
         |a, b| a.cmp(b),
     );
-    sort_in_place(items, |item| item.head() == Some("zone"), |zone| (content_text(zone), encode(zone)), |a, b| a.cmp(b));
+    sort_in_place(
+        items,
+        |item| item.head() == Some("zone"),
+        |zone| (content_text(zone), encode(zone)),
+        |a, b| a.cmp(b),
+    );
 }
 
 /// Sorts a board's footprints, and each footprint's own items (see the
@@ -139,7 +185,10 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
     let Expr::List(items) = pcb else {
         return;
     };
-    for item in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+    for item in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
         canonical_footprint(item);
     }
     sort_in_place(
@@ -152,7 +201,11 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
                 encode(footprint),
             )
         },
-        |a, b| natural_cmp(&a.0, &b.0).then_with(|| a.1.cmp(&b.1)).then_with(|| a.2.cmp(&b.2)),
+        |a, b| {
+            natural_cmp(&a.0, &b.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+        },
     );
 }
 
@@ -170,9 +223,16 @@ mod tests {
 
     #[test]
     fn natural_order_compares_digit_runs_by_value() {
-        let mut names = vec!["R10", "R2", "C1", "R1", "U1A", "U1", "R02", "", "10", "9", "A1", "A10", "A2B"];
+        let mut names = vec![
+            "R10", "R2", "C1", "R1", "U1A", "U1", "R02", "", "10", "9", "A1", "A10", "A2B",
+        ];
         names.sort_by(|a, b| natural_cmp(a, b));
-        assert_eq!(names, ["", "9", "10", "A1", "A2B", "A10", "C1", "R1", "R02", "R2", "R10", "U1", "U1A"]);
+        assert_eq!(
+            names,
+            [
+                "", "9", "10", "A1", "A2B", "A10", "C1", "R1", "R02", "R2", "R10", "U1", "U1A"
+            ]
+        );
         // Total: equal by value, the bytes decide.
         assert_eq!(natural_cmp("R02", "R2"), Ordering::Less);
         assert_eq!(natural_cmp("R2", "R2"), Ordering::Equal);
@@ -201,7 +261,11 @@ mod tests {
         let first = pcb(&[0, 1, 2, 3, 4]);
         assert_eq!(references(&first), ["C1", "H", "H", "R2", "R10"]);
         // The second H by its tstamp "a", the first by its uuid "b".
-        let footprints: Vec<&Expr> = first.children().iter().filter(|item| item.head() == Some("footprint")).collect();
+        let footprints: Vec<&Expr> = first
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .collect();
         assert_eq!(footprint_uuid(footprints[1]).as_deref(), Some("a"));
         // The board's other items keep their places.
         assert_eq!(first.children()[3].head(), Some("footprint"));
@@ -229,7 +293,9 @@ mod tests {
             r#"(fp_line (start 0 0) (end 1 0) (layer "F.SilkS") (uuid "g0"))"#,
         ];
         let footprint = |order: &[usize]| {
-            let mut text = String::from(r#"(footprint "x" (layer "F.Cu") (property "Reference" "U1") (at 3 4)"#);
+            let mut text = String::from(
+                r#"(footprint "x" (layer "F.Cu") (property "Reference" "U1") (at 3 4)"#,
+            );
             for &index in order {
                 text.push_str(items[index]);
             }
@@ -242,20 +308,40 @@ mod tests {
         let ids: Vec<&str> = first
             .children()
             .iter()
-            .filter_map(|item| item.child("uuid").and_then(|uuid| uuid.children().get(1)).and_then(Expr::atom))
+            .filter_map(|item| {
+                item.child("uuid")
+                    .and_then(|uuid| uuid.children().get(1))
+                    .and_then(Expr::atom)
+            })
             .collect();
         assert_eq!(ids, ["p5", "p2", "p1", "p4", "p3", "g2", "g3", "g0", "g1"]);
         for order in [[8, 7, 6, 5, 4, 3, 2, 1, 0], [5, 0, 8, 1, 6, 2, 7, 3, 4]] {
             let other = footprint(&order);
-            let pads = |footprint: &Expr| -> Vec<Expr> { footprint.children().iter().filter(|item| item.head() == Some("pad")).cloned().collect() };
+            let pads = |footprint: &Expr| -> Vec<Expr> {
+                footprint
+                    .children()
+                    .iter()
+                    .filter(|item| item.head() == Some("pad"))
+                    .cloned()
+                    .collect()
+            };
             assert_eq!(pads(&other), pads(&first), "order {order:?}");
             let graphics = |footprint: &Expr| -> Vec<Expr> {
-                footprint.children().iter().filter(|item| item.head().is_some_and(graphic)).cloned().collect()
+                footprint
+                    .children()
+                    .iter()
+                    .filter(|item| item.head().is_some_and(graphic))
+                    .cloned()
+                    .collect()
             };
             assert_eq!(graphics(&other), graphics(&first), "order {order:?}");
         }
         // The pads keep the places the pads had: a footprint written pads
         // first stays so.
-        assert!(first.children()[5..10].iter().all(|item| item.head() == Some("pad")));
+        assert!(
+            first.children()[5..10]
+                .iter()
+                .all(|item| item.head() == Some("pad"))
+        );
     }
 }

@@ -53,7 +53,11 @@ impl CongestionModel {
             .model_for_path(path)
             .map_err(|error| format!("congestion model {}: {error}", path.display()))?;
         let channels = crate::features::channel_count();
-        Ok(Self { model, channels, plans: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            model,
+            channels,
+            plans: Mutex::new(HashMap::new()),
+        })
     }
 
     fn plan(&self, height: usize, width: usize) -> Result<Arc<Plan>, String> {
@@ -67,12 +71,18 @@ impl CongestionModel {
             .and_then(|model| model.into_optimized())
             .and_then(|model| model.into_runnable())
             .map_err(|error| format!("congestion model for {width} x {height} tiles: {error}"))?;
-        self.plans.lock().unwrap().insert((height, width), plan.clone());
+        self.plans
+            .lock()
+            .unwrap()
+            .insert((height, width), plan.clone());
         Ok(plan)
     }
 
     pub fn predict(&self, maps: &FeatureMaps) -> Result<Prediction, String> {
-        let (width, height) = (maps.tiles_x.div_ceil(PAD) * PAD, maps.tiles_y.div_ceil(PAD) * PAD);
+        let (width, height) = (
+            maps.tiles_x.div_ceil(PAD) * PAD,
+            maps.tiles_y.div_ceil(PAD) * PAD,
+        );
         let size = maps.tiles_x * maps.tiles_y;
         let mut input = vec![0.0f32; self.channels * width * height];
         for channel in 0..self.channels {
@@ -83,9 +93,14 @@ impl CongestionModel {
             }
         }
         let plan = self.plan(height, width)?;
-        let tensor = Tensor::from_shape(&[1, self.channels, height, width], &input).map_err(|error| error.to_string())?;
-        let outputs = plan.run(tvec!(tensor.into())).map_err(|error| format!("congestion model: {error}"))?;
-        let overflow = outputs[0].to_plain_array_view::<f32>().map_err(|error| error.to_string())?;
+        let tensor = Tensor::from_shape(&[1, self.channels, height, width], &input)
+            .map_err(|error| error.to_string())?;
+        let outputs = plan
+            .run(tvec!(tensor.into()))
+            .map_err(|error| format!("congestion model: {error}"))?;
+        let overflow = outputs[0]
+            .to_plain_array_view::<f32>()
+            .map_err(|error| error.to_string())?;
         let shape = overflow.shape().to_vec();
         let planes = shape[1];
         let mut cropped = Vec::with_capacity(planes * size);
@@ -98,9 +113,20 @@ impl CongestionModel {
         }
         let open = outputs
             .get(1)
-            .and_then(|tensor| tensor.to_plain_array_view::<f32>().ok().and_then(|view| view.iter().next().copied()))
+            .and_then(|tensor| {
+                tensor
+                    .to_plain_array_view::<f32>()
+                    .ok()
+                    .and_then(|view| view.iter().next().copied())
+            })
             .map_or(0.0, |log| log.exp_m1());
-        Ok(Prediction { tiles_x: maps.tiles_x, tiles_y: maps.tiles_y, overflow: cropped, planes, open })
+        Ok(Prediction {
+            tiles_x: maps.tiles_x,
+            tiles_y: maps.tiles_y,
+            overflow: cropped,
+            planes,
+            open,
+        })
     }
 }
 
@@ -120,17 +146,39 @@ mod tests {
         for c in 0..channels {
             for y in 0..tiles_y {
                 for x in 0..tiles_x {
-                    data[(c * tiles_y + y) * tiles_x + x] = ((7 * c + 3 * y + 5 * x) % 11) as f32 / 10.0;
+                    data[(c * tiles_y + y) * tiles_x + x] =
+                        ((7 * c + 3 * y + 5 * x) % 11) as f32 / 10.0;
                 }
             }
         }
-        let prediction = model.predict(&FeatureMaps { tiles_x, tiles_y, data }).unwrap();
+        let prediction = model
+            .predict(&FeatureMaps {
+                tiles_x,
+                tiles_y,
+                data,
+            })
+            .unwrap();
         assert_eq!(prediction.planes, 5);
-        let close = |value: f32, expected: f32| (value - expected).abs() <= 1.0e-3 * expected.abs().max(1.0);
-        assert!(close(prediction.open, 83.306961), "open {}", prediction.open);
+        let close = |value: f32, expected: f32| {
+            (value - expected).abs() <= 1.0e-3 * expected.abs().max(1.0)
+        };
+        assert!(
+            close(prediction.open, 83.306961),
+            "open {}",
+            prediction.open
+        );
         let size = tiles_x * tiles_y;
-        let sums: Vec<f32> = (0..5).map(|plane| prediction.overflow[plane * size..(plane + 1) * size].iter().sum()).collect();
-        for (sum, expected) in sums.iter().zip([0.557891, 3.312456, 1.670501, 97.009605, 27.844288]) {
+        let sums: Vec<f32> = (0..5)
+            .map(|plane| {
+                prediction.overflow[plane * size..(plane + 1) * size]
+                    .iter()
+                    .sum()
+            })
+            .collect();
+        for (sum, expected) in sums
+            .iter()
+            .zip([0.557891, 3.312456, 1.670501, 97.009605, 27.844288])
+        {
             assert!(close(*sum, expected), "plane sums {sums:?}");
         }
         let largest = prediction.overflow[(3 * tiles_y + 8) * tiles_x + 1];

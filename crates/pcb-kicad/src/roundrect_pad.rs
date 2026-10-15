@@ -13,22 +13,39 @@ pub(super) fn geometry(
 }
 
 /// One layer's entry of a padstack, in board coordinates.
-fn padstack_entry_geometry(entry: &Expr, center: [f64; 2], angle_degrees: f64) -> Result<ObstacleGeometry, String> {
+fn padstack_entry_geometry(
+    entry: &Expr,
+    center: [f64; 2],
+    angle_degrees: f64,
+) -> Result<ObstacleGeometry, String> {
     let size = form_xy(entry, "size")?;
-    let shape = entry.child("shape").and_then(|shape| shape.children().get(1)).and_then(Expr::atom);
+    let shape = entry
+        .child("shape")
+        .and_then(|shape| shape.children().get(1))
+        .and_then(Expr::atom);
     match shape {
-        Some("roundrect") if entry.child("chamfer").is_none() => geometry_with(entry, center, size, angle_degrees, false),
-        Some("circle") => Ok(ObstacleGeometry::Circle { center, radius: size[0] / 2.0 }),
+        Some("roundrect") if entry.child("chamfer").is_none() => {
+            geometry_with(entry, center, size, angle_degrees, false)
+        }
+        Some("circle") => Ok(ObstacleGeometry::Circle {
+            center,
+            radius: size[0] / 2.0,
+        }),
         // Rectangles, and conservatively anything else: the bounding
         // rectangle.
         _ => {
             let half = [size[0] / 2.0, size[1] / 2.0];
-            let points = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]]
-                .map(|point| {
-                    let rotated = rotate_vector(point, angle_degrees);
-                    [center[0] + rotated[0], center[1] + rotated[1]]
-                })
-                .to_vec();
+            let points = [
+                [-half[0], -half[1]],
+                [half[0], -half[1]],
+                [half[0], half[1]],
+                [-half[0], half[1]],
+            ]
+            .map(|point| {
+                let rotated = rotate_vector(point, angle_degrees);
+                [center[0] + rotated[0], center[1] + rotated[1]]
+            })
+            .to_vec();
             Ok(ObstacleGeometry::Polygon { points })
         }
     }
@@ -47,7 +64,13 @@ fn geometry_with(
     // rounding. KiCad's corner names are in the pad's own frame, y down.
     let chamfered: Vec<&str> = pad
         .child("chamfer")
-        .map(|list| list.children().iter().skip(1).filter_map(|item| item.atom()).collect())
+        .map(|list| {
+            list.children()
+                .iter()
+                .skip(1)
+                .filter_map(|item| item.atom())
+                .collect()
+        })
         .unwrap_or_default();
     if !chamfered.is_empty() {
         // KiCad's default when the file does not say.
@@ -70,16 +93,29 @@ fn geometry_with(
         let copper: Vec<&str> = pad
             .child("layers")
             .map(|layers| {
-                layers.children().iter().skip(1).filter_map(Expr::atom).filter(|name| name.ends_with(".Cu")).collect()
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .filter(|name| name.ends_with(".Cu"))
+                    .collect()
             })
             .unwrap_or_default();
-        let back = padstack
-            .children()
-            .iter()
-            .find(|item| item.head() == Some("layer") && item.children().get(1).and_then(Expr::atom) == Some("B.Cu"));
+        let back = padstack.children().iter().find(|item| {
+            item.head() == Some("layer")
+                && item.children().get(1).and_then(Expr::atom) == Some("B.Cu")
+        });
         match (copper.as_slice(), back) {
             (["F.Cu"], _) => {}
-            (["B.Cu"], Some(entry)) if entry.child("shape").and_then(|shape| shape.children().get(1)).and_then(Expr::atom) == Some("roundrect") && entry.child("chamfer").is_none() => {
+            (["B.Cu"], Some(entry))
+                if entry
+                    .child("shape")
+                    .and_then(|shape| shape.children().get(1))
+                    .and_then(Expr::atom)
+                    == Some("roundrect")
+                    && entry.child("chamfer").is_none() =>
+            {
                 size = form_xy(entry, "size")?;
                 ratio_of = entry;
             }
@@ -88,7 +124,11 @@ fn geometry_with(
             // largest layer and cautious on the others.
             _ => {
                 let mut parts = vec![geometry_with(pad, center, size, angle_degrees, false)?];
-                for entry in padstack.children().iter().filter(|item| item.head() == Some("layer")) {
+                for entry in padstack
+                    .children()
+                    .iter()
+                    .filter(|item| item.head() == Some("layer"))
+                {
                     parts.push(padstack_entry_geometry(entry, center, angle_degrees)?);
                 }
                 return Ok(ObstacleGeometry::Union { parts });
@@ -214,7 +254,11 @@ fn chamfered_geometry(
         // previous edge, leaving along the next.
         let along_x = [corner[0] - sign[0] * cut, corner[1]];
         let along_y = [corner[0], corner[1] - sign[1] * cut];
-        let (first, second) = if index % 2 == 0 { (along_x, along_y) } else { (along_y, along_x) };
+        let (first, second) = if index % 2 == 0 {
+            (along_x, along_y)
+        } else {
+            (along_y, along_x)
+        };
         points.push(place(first));
         points.push(place(second));
         if !chamfered.contains(name) {
@@ -247,12 +291,29 @@ mod tests {
         };
         // Top left is cut 0.2 mm in from the corner (-1, -0.5), the others
         // 0.25 mm (the radius).
-        assert!(points.contains(&[-0.8, -0.5]) && points.contains(&[-1.0, -0.3]), "{points:?}");
-        assert!(points.contains(&[-1.0, 0.25]) && points.contains(&[-0.75, 0.5]), "{points:?}");
-        assert!(matches!(parts[1], ObstacleGeometry::Circle { center: [-0.75, 0.25], radius } if (radius - 0.25).abs() < 1e-9));
-        assert!(geometry_contains(&parts, [-0.95, -0.45]) == false, "the chamfer cuts the corner");
-        assert!(geometry_contains(&parts, [0.97, 0.47]) == false, "a rounded corner is round");
-        assert!(geometry_contains(&parts, [0.9, 0.4]), "inside the rounded corner's disc");
+        assert!(
+            points.contains(&[-0.8, -0.5]) && points.contains(&[-1.0, -0.3]),
+            "{points:?}"
+        );
+        assert!(
+            points.contains(&[-1.0, 0.25]) && points.contains(&[-0.75, 0.5]),
+            "{points:?}"
+        );
+        assert!(
+            matches!(parts[1], ObstacleGeometry::Circle { center: [-0.75, 0.25], radius } if (radius - 0.25).abs() < 1e-9)
+        );
+        assert!(
+            geometry_contains(&parts, [-0.95, -0.45]) == false,
+            "the chamfer cuts the corner"
+        );
+        assert!(
+            geometry_contains(&parts, [0.97, 0.47]) == false,
+            "a rounded corner is round"
+        );
+        assert!(
+            geometry_contains(&parts, [0.9, 0.4]),
+            "inside the rounded corner's disc"
+        );
     }
 
     use super::*;
@@ -355,10 +416,13 @@ mod tests {
                (padstack (mode front_inner_back) (layer \"B.Cu\" (shape circle) (size 3 3))))",
         )
         .unwrap();
-        let ObstacleGeometry::Union { parts } = geometry(&p, [0.0; 2], [2.0; 2], 0.0).unwrap() else {
+        let ObstacleGeometry::Union { parts } = geometry(&p, [0.0; 2], [2.0; 2], 0.0).unwrap()
+        else {
             panic!("expected a union");
         };
         assert_eq!(parts.len(), 2);
-        assert!(matches!(parts[1], ObstacleGeometry::Circle { radius, .. } if (radius - 1.5).abs() < 1e-12));
+        assert!(
+            matches!(parts[1], ObstacleGeometry::Circle { radius, .. } if (radius - 1.5).abs() < 1e-12)
+        );
     }
 }

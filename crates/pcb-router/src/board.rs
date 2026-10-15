@@ -205,23 +205,47 @@ impl PadSpokes {
         // KiCad's RotatePoint: x' = x cos + y sin, y' = -x sin + y cos.
         let turn = |vector: Point, degrees: f64| {
             let (sine, cosine) = degrees.to_radians().sin_cos();
-            [vector[0] * cosine + vector[1] * sine, -vector[0] * sine + vector[1] * cosine]
+            [
+                vector[0] * cosine + vector[1] * sine,
+                -vector[0] * sine + vector[1] * cosine,
+            ]
         };
         let mut result = [([0.0, 0.0], 0.0, 0.0); 4];
         for (index, slot) in result.iter_mut().enumerate() {
             if self.circular {
                 let radius = self.half[0].max(self.half[1]);
                 let axis = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]][index];
-                *slot = (turn(turn(axis, self.spoke_angle), self.orientation), radius, radius + reach);
+                *slot = (
+                    turn(turn(axis, self.spoke_angle), self.orientation),
+                    radius,
+                    radius + reach,
+                );
             } else {
-                let (sine, cosine) = (self.spoke_angle + 90.0 * index as f64).to_radians().sin_cos();
+                let (sine, cosine) = (self.spoke_angle + 90.0 * index as f64)
+                    .to_radians()
+                    .sin_cos();
                 let along = |half: [f64; 2]| {
-                    let x = if cosine.abs() > 1.0e-12 { half[0] / cosine.abs() } else { f64::INFINITY };
-                    let y = if sine.abs() > 1.0e-12 { half[1] / sine.abs() } else { f64::INFINITY };
+                    let x = if cosine.abs() > 1.0e-12 {
+                        half[0] / cosine.abs()
+                    } else {
+                        f64::INFINITY
+                    };
+                    let y = if sine.abs() > 1.0e-12 {
+                        half[1] / sine.abs()
+                    } else {
+                        f64::INFINITY
+                    };
                     x.min(y)
                 };
-                let local = [if cosine.abs() > 1.0e-12 { cosine } else { 0.0 }, if sine.abs() > 1.0e-12 { sine } else { 0.0 }];
-                *slot = (turn(local, self.orientation), along(self.half), along([self.half[0] + reach, self.half[1] + reach]));
+                let local = [
+                    if cosine.abs() > 1.0e-12 { cosine } else { 0.0 },
+                    if sine.abs() > 1.0e-12 { sine } else { 0.0 },
+                ];
+                *slot = (
+                    turn(local, self.orientation),
+                    along(self.half),
+                    along([self.half[0] + reach, self.half[1] + reach]),
+                );
             }
         }
         result
@@ -239,9 +263,9 @@ impl Board {
     /// floor).
     pub fn copper_clearance(&self, class: &RuleClass, obstacle: &Obstacle) -> f64 {
         let obstacle_side = obstacle.clearance_override.unwrap_or_else(|| {
-            let obstacle_class = obstacle
-                .net
-                .map_or(0.0, |net| self.classes[self.nets[net as usize].class].clearance);
+            let obstacle_class = obstacle.net.map_or(0.0, |net| {
+                self.classes[self.nets[net as usize].class].clearance
+            });
             obstacle.clearance.max(obstacle_class)
         });
         class.clearance.max(obstacle_side)
@@ -259,7 +283,9 @@ impl Board {
         if *OLD.get_or_init(|| std::env::var_os("PCB_ROUTER_OLD_FILL_CLEARANCE").is_some()) {
             return self.copper_clearance(class, obstacle);
         }
-        obstacle.clearance_override.unwrap_or_else(|| self.copper_clearance(class, obstacle))
+        obstacle
+            .clearance_override
+            .unwrap_or_else(|| self.copper_clearance(class, obstacle))
     }
 }
 

@@ -397,7 +397,10 @@ impl<'a> State<'a> {
 
     /// Exchanges the payloads on two units of a group.
     fn exchange(&mut self, group: usize, first: usize, second: usize) {
-        let (a, b) = (self.payload_on[group][first], self.payload_on[group][second]);
+        let (a, b) = (
+            self.payload_on[group][first],
+            self.payload_on[group][second],
+        );
         self.payload_on[group][first] = b;
         self.payload_on[group][second] = a;
         self.unit_of[group][a] = second;
@@ -427,7 +430,10 @@ impl<'a> State<'a> {
         second: usize,
         keep: impl FnOnce(f64) -> bool,
     ) -> Option<f64> {
-        let (a, b) = (self.payload_on[group][first], self.payload_on[group][second]);
+        let (a, b) = (
+            self.payload_on[group][first],
+            self.payload_on[group][second],
+        );
         if !self.allowed(group, a, second) || !self.allowed(group, b, first) {
             return None;
         }
@@ -438,7 +444,13 @@ impl<'a> State<'a> {
         let before = self.local_cost(&touched);
         let saved: Vec<(Vec<Edge>, f64, usize)> = touched
             .iter()
-            .map(|net| (self.edges[*net].clone(), self.lengths[*net], self.bodies[*net]))
+            .map(|net| {
+                (
+                    self.edges[*net].clone(),
+                    self.lengths[*net],
+                    self.bodies[*net],
+                )
+            })
             .collect();
         self.exchange(group, first, second);
         for net in &touched {
@@ -485,7 +497,10 @@ fn optimize<'a>(problem: &'a Problem, config: &'a KiCadPinSwapConfig) -> State<'
     if movable.is_empty() {
         return state;
     }
-    let units: usize = movable.iter().map(|group| problem.groups[*group].units.len()).sum();
+    let units: usize = movable
+        .iter()
+        .map(|group| problem.groups[*group].units.len())
+        .sum();
     let mut random = Random(config.seed ^ 0x9e37_79b9_7f4a_7c15);
     let pick = |random: &mut Random| {
         // Groups are drawn in proportion to their size.
@@ -584,17 +599,30 @@ fn board_pads(pcb: &Expr) -> Result<BoardPads, String> {
         all: Vec::new(),
         bodies: Vec::new(),
     };
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
         let at = form_at(footprint)?;
         let reference = footprint_reference(footprint).unwrap_or_default();
         let mut own: Vec<(PinKey, [f64; 2], Option<String>)> = Vec::new();
         let mut through = false;
-        for pad in footprint.children().iter().filter(|item| item.head() == Some("pad")) {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+        {
             through |= matches!(
                 pad.children().get(2).and_then(Expr::atom),
                 Some("thru_hole" | "np_thru_hole")
             );
-            let name = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+            let name = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
             let offset = rotate_vector(
                 {
                     let pad_at = form_at(pad)?;
@@ -629,7 +657,10 @@ fn board_pads(pcb: &Expr) -> Result<BoardPads, String> {
         for (key, center, net) in own {
             let escape = match field {
                 Some((minimum, maximum)) => {
-                    let middle = [(minimum[0] + maximum[0]) / 2.0, (minimum[1] + maximum[1]) / 2.0];
+                    let middle = [
+                        (minimum[0] + maximum[0]) / 2.0,
+                        (minimum[1] + maximum[1]) / 2.0,
+                    ];
                     let half = [
                         ((maximum[0] - minimum[0]) / 2.0).max(1.0e-3),
                         ((maximum[1] - minimum[1]) / 2.0).max(1.0e-3),
@@ -638,7 +669,11 @@ fn board_pads(pcb: &Expr) -> Result<BoardPads, String> {
                         (center[0] - middle[0]) / half[0],
                         (center[1] - middle[1]) / half[1],
                     ];
-                    let axis = if relative[0].abs() >= relative[1].abs() { 0 } else { 1 };
+                    let axis = if relative[0].abs() >= relative[1].abs() {
+                        0
+                    } else {
+                        1
+                    };
                     let mut escape = center;
                     escape[axis] = if relative[axis] >= 0.0 {
                         maximum[axis] + ESCAPE_MM
@@ -649,8 +684,14 @@ fn board_pads(pcb: &Expr) -> Result<BoardPads, String> {
                 }
                 None => center,
             };
-            let terminal = Terminal { pad: center, escape };
-            pads.positions.entry(key.clone()).or_default().push(terminal);
+            let terminal = Terminal {
+                pad: center,
+                escape,
+            };
+            pads.positions
+                .entry(key.clone())
+                .or_default()
+                .push(terminal);
             let entry = pads.nets.entry(key.clone()).or_insert_with(|| net.clone());
             if entry.is_none() {
                 *entry = net.clone();
@@ -833,7 +874,10 @@ fn unconnected_name(
 }
 
 fn quoted(value: &str) -> Expr {
-    Expr::Atom(format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+    Expr::Atom(format!(
+        "\"{}\"",
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
 }
 
 /// Writes `changes` (pin -> new net, `None` for no connection) into the
@@ -845,7 +889,11 @@ fn apply_to_board(
 ) -> Result<HashMap<PinKey, String>, String> {
     // Old-style boards number their nets.
     let mut numbers: BTreeMap<String, String> = BTreeMap::new();
-    for item in pcb.children().iter().filter(|item| item.head() == Some("net")) {
+    for item in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("net"))
+    {
         if let (Some(number), Some(name)) = (
             item.children().get(1).and_then(Expr::atom),
             item.children().get(2).and_then(Expr::atom),
@@ -865,13 +913,24 @@ fn apply_to_board(
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
-    for footprint in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+    for footprint in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let Expr::List(children) = footprint else {
             continue;
         };
-        for pad in children.iter_mut().filter(|item| item.head() == Some("pad")) {
-            let pad_name = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+        for pad in children
+            .iter_mut()
+            .filter(|item| item.head() == Some("pad"))
+        {
+            let pad_name = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
             let key = PinKey {
                 reference: reference.clone(),
                 pad: pad_name.clone(),
@@ -923,7 +982,11 @@ fn apply_to_board(
         for (offset, (number, name)) in new_declarations.into_iter().enumerate() {
             items.insert(
                 at + offset,
-                Expr::List(vec![Expr::Atom("net".into()), Expr::Atom(number), quoted(&name)]),
+                Expr::List(vec![
+                    Expr::Atom("net".into()),
+                    Expr::Atom(number),
+                    quoted(&name),
+                ]),
             );
         }
     }
@@ -1024,14 +1087,23 @@ fn library_pins(schematic: &Expr) -> BTreeMap<String, Vec<LibraryPin>> {
     let Some(library) = schematic.child("lib_symbols") else {
         return result;
     };
-    for symbol in library.children().iter().filter(|item| item.head() == Some("symbol")) {
+    for symbol in library
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("symbol"))
+    {
         let Some(id) = symbol.children().get(1).and_then(Expr::atom) else {
             continue;
         };
         let pins = result.entry(id.to_string()).or_default();
         let mut visit = |node: &Expr, unit: u32| {
-            for pin in node.children().iter().filter(|item| item.head() == Some("pin")) {
-                let (Ok(at), Some(number)) = (form_xy(pin, "at"), form_atom(pin, "number", 1)) else {
+            for pin in node
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("pin"))
+            {
+                let (Ok(at), Some(number)) = (form_xy(pin, "at"), form_atom(pin, "number", 1))
+                else {
                     continue;
                 };
                 let name = form_atom(pin, "name", 1).unwrap_or("");
@@ -1039,7 +1111,11 @@ fn library_pins(schematic: &Expr) -> BTreeMap<String, Vec<LibraryPin>> {
             }
         };
         visit(symbol, 0);
-        for unit_symbol in symbol.children().iter().filter(|item| item.head() == Some("symbol")) {
+        for unit_symbol in symbol
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("symbol"))
+        {
             // Sub-symbols are named <name>_<unit>_<style>.
             let unit = unit_symbol
                 .children()
@@ -1071,8 +1147,16 @@ fn schematic_pins(schematic: &Expr) -> Result<Vec<SchematicPin>, String> {
                 if let Some(points) = item.child("pts") {
                     for point in points.children().iter().filter(|p| p.head() == Some("xy")) {
                         if let (Some(x), Some(y)) = (
-                            point.children().get(1).and_then(Expr::atom).and_then(|v| v.parse().ok()),
-                            point.children().get(2).and_then(Expr::atom).and_then(|v| v.parse().ok()),
+                            point
+                                .children()
+                                .get(1)
+                                .and_then(Expr::atom)
+                                .and_then(|v| v.parse().ok()),
+                            point
+                                .children()
+                                .get(2)
+                                .and_then(Expr::atom)
+                                .and_then(|v| v.parse().ok()),
                         ) {
                             anchors.push([x, y]);
                         }
@@ -1088,7 +1172,11 @@ fn schematic_pins(schematic: &Expr) -> Result<Vec<SchematicPin>, String> {
         }
     }
     let mut result = Vec::new();
-    for symbol in schematic.children().iter().filter(|item| item.head() == Some("symbol")) {
+    for symbol in schematic
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("symbol"))
+    {
         let Some(id) = form_atom(symbol, "lib_id", 1) else {
             continue;
         };
@@ -1103,10 +1191,16 @@ fn schematic_pins(schematic: &Expr) -> Result<Vec<SchematicPin>, String> {
             .unwrap_or("")
             .to_string();
         let at = form_at(symbol)?;
-        let unit: u32 = form_atom(symbol, "unit", 1).and_then(|u| u.parse().ok()).unwrap_or(1);
+        let unit: u32 = form_atom(symbol, "unit", 1)
+            .and_then(|u| u.parse().ok())
+            .unwrap_or(1);
         let pins: Vec<&LibraryPin> = library
             .get(id)
-            .map(|pins| pins.iter().filter(|pin| pin.0 == 0 || pin.0 == unit).collect())
+            .map(|pins| {
+                pins.iter()
+                    .filter(|pin| pin.0 == 0 || pin.0 == unit)
+                    .collect()
+            })
             .unwrap_or_default();
         let origin = [at[0], at[1]];
         let standard = kicad_orientation(at[2], form_atom(symbol, "mirror", 1));
@@ -1177,7 +1271,9 @@ fn wire_network(
                 continue;
             }
             let touches = wire.iter().any(|end| same_point(*end, point))
-                || wire.windows(2).any(|pair| on_segment(point, pair[0], pair[1]));
+                || wire
+                    .windows(2)
+                    .any(|pair| on_segment(point, pair[0], pair[1]));
             if touches {
                 visited.insert(*index);
                 points.extend(wire.iter().copied());
@@ -1257,7 +1353,10 @@ fn apply_to_schematic(
         .iter()
         .enumerate()
         .filter(|(_, item)| {
-            matches!(item.head(), Some("label" | "global_label" | "hierarchical_label"))
+            matches!(
+                item.head(),
+                Some("label" | "global_label" | "hierarchical_label")
+            )
         })
         .filter_map(|(index, item)| {
             Some((
@@ -1294,9 +1393,9 @@ fn apply_to_schematic(
                 )
             })?;
         let (visited, points) = wire_network(pin.at, &wires, &remove);
-        let wired_to_pin = pins
-            .iter()
-            .any(|other| !std::ptr::eq(other, pin) && on_network(other.at, &points, &visited, &wires));
+        let wired_to_pin = pins.iter().any(|other| {
+            !std::ptr::eq(other, pin) && on_network(other.at, &points, &visited, &wires)
+        });
         let before_connected = !is_unconnected(before);
         let after_connected = !is_unconnected(after);
         if !wired_to_pin {
@@ -1443,7 +1542,16 @@ fn choose(
     pcb: &Expr,
     spec: &KiCadPinSwapSpec,
     config: &KiCadPinSwapConfig,
-) -> Result<(HashMap<PinKey, (Option<String>, Option<String>)>, KiCadPinSwapEstimate, KiCadPinSwapEstimate, usize, usize), String> {
+) -> Result<
+    (
+        HashMap<PinKey, (Option<String>, Option<String>)>,
+        KiCadPinSwapEstimate,
+        KiCadPinSwapEstimate,
+        usize,
+        usize,
+    ),
+    String,
+> {
     let pads = board_pads(pcb)?;
     let problem = build_problem(spec, &pads, config)?;
     let before = State::new(&problem, config).estimate();
@@ -1524,7 +1632,8 @@ fn swap_pins(
         })
         .collect();
     report.sort_by(|a, b| {
-        (a.reference.as_str(), natural_key(&a.pad)).cmp(&(b.reference.as_str(), natural_key(&b.pad)))
+        (a.reference.as_str(), natural_key(&a.pad))
+            .cmp(&(b.reference.as_str(), natural_key(&b.pad)))
     });
     Ok(KiCadPinSwapResult {
         before,
@@ -1543,7 +1652,8 @@ fn natural_key(pad: &str) -> (u64, String) {
 
 pub fn read_pin_swap_spec(path: &Path) -> Result<KiCadPinSwapSpec, String> {
     serde_json::from_str(
-        &fs::read_to_string(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?,
+        &fs::read_to_string(path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?,
     )
     .map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
@@ -1584,9 +1694,9 @@ pub fn swap_kicad_pins_in_place(
             .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?,
     )?;
     let mut schematic = if schematic_path.exists() {
-        Some(parse(&fs::read_to_string(&schematic_path).map_err(|error| {
-            format!("failed to read {}: {error}", schematic_path.display())
-        })?)?)
+        Some(parse(&fs::read_to_string(&schematic_path).map_err(
+            |error| format!("failed to read {}: {error}", schematic_path.display()),
+        )?)?)
     } else {
         None
     };
@@ -1761,8 +1871,13 @@ mod tests {
             r#"{"version": 1, "components": {"U1": {"groups": [{"name": "gpio", "units": [["1"], ["2"]]}]}}}"#,
         )
         .unwrap();
-        let result =
-            swap_pins(&mut pcb, Some(&mut schematic), &spec, &KiCadPinSwapConfig::default()).unwrap();
+        let result = swap_pins(
+            &mut pcb,
+            Some(&mut schematic),
+            &spec,
+            &KiCadPinSwapConfig::default(),
+        )
+        .unwrap();
         assert_eq!(result.schematic_labels_changed, 2);
         let labels: Vec<(String, [f64; 2])> = schematic
             .children()
@@ -1775,7 +1890,13 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(labels, vec![("B".to_string(), [92.0, 99.0]), ("A".to_string(), [92.0, 101.0])]);
+        assert_eq!(
+            labels,
+            vec![
+                ("B".to_string(), [92.0, 99.0]),
+                ("A".to_string(), [92.0, 101.0])
+            ]
+        );
     }
 
     #[test]
@@ -1808,8 +1929,13 @@ mod tests {
             r#"{"version": 1, "components": {"U1": {"groups": [{"name": "gpio", "units": [["1"], ["2"]]}]}}}"#,
         )
         .unwrap();
-        let result =
-            swap_pins(&mut pcb, Some(&mut schematic), &spec, &KiCadPinSwapConfig::default()).unwrap();
+        let result = swap_pins(
+            &mut pcb,
+            Some(&mut schematic),
+            &spec,
+            &KiCadPinSwapConfig::default(),
+        )
+        .unwrap();
         assert_eq!(result.schematic_labels_changed, 2);
         let wires = schematic
             .children()

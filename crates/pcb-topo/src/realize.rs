@@ -23,7 +23,10 @@
 
 use crate::taut::{self, Disc, Path, Portal, cross, distance, sub};
 use pcb_router::{Board, ClassId, NetId, NetRoute, ObstacleKind, Point, Segment, Shape, Via};
-use spade::{ConstrainedDelaunayTriangulation, HasPosition, Intersection, LineIntersectionIterator, Point2, Triangulation};
+use spade::{
+    ConstrainedDelaunayTriangulation, HasPosition, Intersection, LineIntersectionIterator, Point2,
+    Triangulation,
+};
 use std::collections::HashMap;
 
 /// Room kept beyond every clearance, for rounding in the output.
@@ -71,8 +74,13 @@ pub struct PlacedVia {
 #[derive(Clone, Copy, Debug)]
 enum Feature {
     /// A corner (radius 0) or centre of an obstacle's shape.
-    Obstacle { obstacle: usize, radius: f64 },
-    Via { via: usize },
+    Obstacle {
+        obstacle: usize,
+        radius: f64,
+    },
+    Via {
+        via: usize,
+    },
     Outline,
 }
 
@@ -85,18 +93,36 @@ struct LayerMesh {
 }
 
 fn key(point: Point) -> (i64, i64) {
-    ((point[0] * 1.0e6).round() as i64, (point[1] * 1.0e6).round() as i64)
+    (
+        (point[0] * 1.0e6).round() as i64,
+        (point[1] * 1.0e6).round() as i64,
+    )
 }
 
 impl LayerMesh {
     fn new(board: &Board, layer: usize, vias: &[PlacedVia]) -> Self {
-        let mut cdt: ConstrainedDelaunayTriangulation<Vertex> = ConstrainedDelaunayTriangulation::new();
+        let mut cdt: ConstrainedDelaunayTriangulation<Vertex> =
+            ConstrainedDelaunayTriangulation::new();
         let mut features: HashMap<usize, Vec<Feature>> = HashMap::new();
         let insert = |cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, point: Point| {
-            cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok()
+            cdt.insert(Vertex {
+                position: Point2::new(point[0], point[1]),
+            })
+            .ok()
         };
-        let ring = |cdt: &mut ConstrainedDelaunayTriangulation<Vertex>, points: &[Point], features: &mut HashMap<usize, Vec<Feature>>, feature: Feature| {
-            let handles: Vec<_> = points.iter().filter_map(|&point| cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok()).collect();
+        let ring = |cdt: &mut ConstrainedDelaunayTriangulation<Vertex>,
+                    points: &[Point],
+                    features: &mut HashMap<usize, Vec<Feature>>,
+                    feature: Feature| {
+            let handles: Vec<_> = points
+                .iter()
+                .filter_map(|&point| {
+                    cdt.insert(Vertex {
+                        position: Point2::new(point[0], point[1]),
+                    })
+                    .ok()
+                })
+                .collect();
             for handle in &handles {
                 features.entry(handle.index()).or_default().push(feature);
             }
@@ -113,27 +139,58 @@ impl LayerMesh {
             features: &mut HashMap<usize, Vec<Feature>>,
             obstacle: usize,
             shape: &Shape,
-            ring: &dyn Fn(&mut ConstrainedDelaunayTriangulation<Vertex>, &[Point], &mut HashMap<usize, Vec<Feature>>, Feature),
+            ring: &dyn Fn(
+                &mut ConstrainedDelaunayTriangulation<Vertex>,
+                &[Point],
+                &mut HashMap<usize, Vec<Feature>>,
+                Feature,
+            ),
         ) {
             match shape {
                 Shape::Circle { center, radius } => {
-                    if let Ok(handle) = cdt.insert(Vertex { position: Point2::new(center[0], center[1]) }) {
-                        features.entry(handle.index()).or_default().push(Feature::Obstacle { obstacle, radius: *radius });
+                    if let Ok(handle) = cdt.insert(Vertex {
+                        position: Point2::new(center[0], center[1]),
+                    }) {
+                        features
+                            .entry(handle.index())
+                            .or_default()
+                            .push(Feature::Obstacle {
+                                obstacle,
+                                radius: *radius,
+                            });
                     }
                 }
                 Shape::Capsule { start, end, radius } => {
-                    let a = cdt.insert(Vertex { position: Point2::new(start[0], start[1]) });
-                    let b = cdt.insert(Vertex { position: Point2::new(end[0], end[1]) });
+                    let a = cdt.insert(Vertex {
+                        position: Point2::new(start[0], start[1]),
+                    });
+                    let b = cdt.insert(Vertex {
+                        position: Point2::new(end[0], end[1]),
+                    });
                     if let (Ok(a), Ok(b)) = (a, b) {
                         if a != b {
                             cdt.add_constraint_and_split(a, b, |position| Vertex { position });
                         }
                         for handle in [a, b] {
-                            features.entry(handle.index()).or_default().push(Feature::Obstacle { obstacle, radius: *radius });
+                            features
+                                .entry(handle.index())
+                                .or_default()
+                                .push(Feature::Obstacle {
+                                    obstacle,
+                                    radius: *radius,
+                                });
                         }
                     }
                 }
-                Shape::Polygon { points } => ring(cdt, points, features, Feature::Obstacle { obstacle, radius: 0.0 }),
+                Shape::Polygon { points } => ring(
+                    cdt,
+                    points,
+                    features,
+                    Feature::Obstacle {
+                        obstacle,
+                        radius: 0.0,
+                    },
+                ),
                 Shape::Union { parts } => {
                     for part in parts {
                         add_shape(cdt, features, obstacle, part, ring);
@@ -148,10 +205,16 @@ impl LayerMesh {
         }
         for (index, via) in vias.iter().enumerate() {
             if let Some(handle) = insert(&mut cdt, via.at) {
-                features.entry(handle.index()).or_default().push(Feature::Via { via: index });
+                features
+                    .entry(handle.index())
+                    .or_default()
+                    .push(Feature::Via { via: index });
             }
         }
-        let positions: Vec<Point> = cdt.vertices().map(|vertex| [vertex.position().x, vertex.position().y]).collect();
+        let positions: Vec<Point> = cdt
+            .vertices()
+            .map(|vertex| [vertex.position().x, vertex.position().y])
+            .collect();
         let mut list = vec![Vec::new(); positions.len()];
         for (vertex, found) in features {
             list[vertex] = found;
@@ -167,19 +230,37 @@ impl LayerMesh {
                     continue;
                 }
                 let bounds = obstacle.shape.aabb().inflated(1.0e-6);
-                if point[0] < bounds.minimum[0] || point[0] > bounds.maximum[0] || point[1] < bounds.minimum[1] || point[1] > bounds.maximum[1] {
+                if point[0] < bounds.minimum[0]
+                    || point[0] > bounds.maximum[0]
+                    || point[1] < bounds.minimum[1]
+                    || point[1] > bounds.maximum[1]
+                {
                     continue;
                 }
                 if obstacle.shape.distance_to_point(point) < 1.0e-6 {
-                    list[vertex].push(Feature::Obstacle { obstacle: index, radius: 0.0 });
+                    list[vertex].push(Feature::Obstacle {
+                        obstacle: index,
+                        radius: 0.0,
+                    });
                 }
             }
-            if pcb_router::geometry::polygon_edges(&board.outline).any(|(a, b)| pcb_router::geometry::point_segment_distance(point, a, b) < 1.0e-6) {
+            if pcb_router::geometry::polygon_edges(&board.outline)
+                .any(|(a, b)| pcb_router::geometry::point_segment_distance(point, a, b) < 1.0e-6)
+            {
                 list[vertex].push(Feature::Outline);
             }
         }
-        let at = positions.iter().enumerate().map(|(index, &point)| (key(point), index)).collect();
-        Self { cdt, positions, features: list, at }
+        let at = positions
+            .iter()
+            .enumerate()
+            .map(|(index, &point)| (key(point), index))
+            .collect();
+        Self {
+            cdt,
+            positions,
+            features: list,
+            at,
+        }
     }
 }
 
@@ -203,7 +284,11 @@ fn trace(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Crossing>> {
             continue;
         }
         let direction = sub(to, from);
-        for intersection in LineIntersectionIterator::new(&mesh.cdt, Point2::new(from[0], from[1]), Point2::new(to[0], to[1])) {
+        for intersection in LineIntersectionIterator::new(
+            &mesh.cdt,
+            Point2::new(from[0], from[1]),
+            Point2::new(to[0], to[1]),
+        ) {
             match intersection {
                 Intersection::EdgeIntersection(edge) => {
                     let (a, b) = (edge.from(), edge.to());
@@ -216,13 +301,22 @@ fn trace(mesh: &LayerMesh, points: &[Point]) -> Option<Vec<Crossing>> {
                     };
                     let span = sub(pr, pl);
                     let denominator = cross(direction, span);
-                    let at = if denominator.abs() < 1.0e-15 { 0.5 } else { cross(sub(pl, from), direction) / denominator };
+                    let at = if denominator.abs() < 1.0e-15 {
+                        0.5
+                    } else {
+                        cross(sub(pl, from), direction) / denominator
+                    };
                     let undirected = edge.as_undirected().fix().index();
                     if crossings.last().is_some_and(|last| last.edge == undirected) {
                         crossings.pop();
                         continue;
                     }
-                    crossings.push(Crossing { edge: undirected, left, right, at: at.clamp(0.0, 1.0) });
+                    crossings.push(Crossing {
+                        edge: undirected,
+                        left,
+                        right,
+                        at: at.clamp(0.0, 1.0),
+                    });
                 }
                 Intersection::VertexIntersection(vertex) => {
                     let p = [vertex.position().x, vertex.position().y];
@@ -310,8 +404,12 @@ impl Nearby {
                 continue;
             }
             let bounds = obstacle.shape.aabb();
-            for x in (bounds.minimum[0] / BUCKET).floor() as i64..=(bounds.maximum[0] / BUCKET).floor() as i64 {
-                for y in (bounds.minimum[1] / BUCKET).floor() as i64..=(bounds.maximum[1] / BUCKET).floor() as i64 {
+            for x in (bounds.minimum[0] / BUCKET).floor() as i64
+                ..=(bounds.maximum[0] / BUCKET).floor() as i64
+            {
+                for y in (bounds.minimum[1] / BUCKET).floor() as i64
+                    ..=(bounds.maximum[1] / BUCKET).floor() as i64
+                {
                     buckets.entry((x, y)).or_default().push(index);
                 }
             }
@@ -347,16 +445,26 @@ fn corner_discs(shape: &Shape, near: Point) -> Vec<(Point, f64)> {
         Shape::Polygon { points } => {
             let mut best = (f64::INFINITY, 0);
             for index in 0..points.len() {
-                let d = taut::point_segment_distance(near, points[index], points[(index + 1) % points.len()]);
+                let d = taut::point_segment_distance(
+                    near,
+                    points[index],
+                    points[(index + 1) % points.len()],
+                );
                 if d < best.0 {
                     best = (d, index);
                 }
             }
-            vec![(points[best.1], 0.0), (points[(best.1 + 1) % points.len()], 0.0)]
+            vec![
+                (points[best.1], 0.0),
+                (points[(best.1 + 1) % points.len()], 0.0),
+            ]
         }
         Shape::Union { parts } => parts
             .iter()
-            .min_by(|a, b| a.distance_to_point(near).total_cmp(&b.distance_to_point(near)))
+            .min_by(|a, b| {
+                a.distance_to_point(near)
+                    .total_cmp(&b.distance_to_point(near))
+            })
             .map(|part| corner_discs(part, near))
             .unwrap_or_default(),
     }
@@ -373,7 +481,11 @@ pub struct Failed {
 
 impl Failed {
     fn new(reason: String) -> Self {
-        Self { reason, at: None, deficit: 0.0 }
+        Self {
+            reason,
+            at: None,
+            deficit: 0.0,
+        }
     }
 }
 
@@ -397,13 +509,22 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
     let mut paths = vec![None; pieces.len()];
     for via in vias {
         let class = &board.classes[via.class];
-        routes[via.net as usize].vias.push(Via { at: via.at, diameter: class.via_diameter, drill: class.via_drill });
+        routes[via.net as usize].vias.push(Via {
+            at: via.at,
+            diameter: class.via_diameter,
+            drill: class.via_drill,
+        });
         via_wire[via.net as usize].push(via.wire);
     }
-    let pieces: Vec<Piece> = pieces.iter().map(|piece| settle_ends(board, vias, piece)).collect();
+    let pieces: Vec<Piece> = pieces
+        .iter()
+        .map(|piece| settle_ends(board, vias, piece))
+        .collect();
     let pieces = pieces.as_slice();
     for layer in 0..board.layer_count {
-        let on_layer: Vec<usize> = (0..pieces.len()).filter(|&index| pieces[index].layer == layer).collect();
+        let on_layer: Vec<usize> = (0..pieces.len())
+            .filter(|&index| pieces[index].layer == layer)
+            .collect();
         if on_layer.is_empty() {
             continue;
         }
@@ -417,7 +538,12 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
                         if distance(pair[0], pair[1]) < 1.0e-6 {
                             continue;
                         }
-                        routes[piece.net as usize].segments.push(Segment { layer, start: pair[0], end: pair[1], width });
+                        routes[piece.net as usize].segments.push(Segment {
+                            layer,
+                            start: pair[0],
+                            end: pair[1],
+                            width,
+                        });
                         segment_wire[piece.net as usize].push(piece.wire);
                     }
                     paths[index] = Some(points);
@@ -426,7 +552,13 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
             }
         }
     }
-    Realized { routes, segment_wire, via_wire, failed, paths }
+    Realized {
+        routes,
+        segment_wire,
+        via_wire,
+        failed,
+        paths,
+    }
 }
 
 /// Whether a track end of `piece` at `point` keeps its clearances.
@@ -452,7 +584,11 @@ fn legal_end(board: &Board, vias: &[PlacedVia], piece: &Piece, point: Point) -> 
             ObstacleKind::Keepout => 0.0,
         };
         let bounds = obstacle.shape.aabb().inflated(gap + half);
-        if point[0] < bounds.minimum[0] || point[0] > bounds.maximum[0] || point[1] < bounds.minimum[1] || point[1] > bounds.maximum[1] {
+        if point[0] < bounds.minimum[0]
+            || point[0] > bounds.maximum[0]
+            || point[1] < bounds.minimum[1]
+            || point[1] > bounds.maximum[1]
+        {
             continue;
         }
         if obstacle.shape.distance_to_point(point) < gap + half {
@@ -461,7 +597,9 @@ fn legal_end(board: &Board, vias: &[PlacedVia], piece: &Piece, point: Point) -> 
     }
     vias.iter().all(|via| {
         let other = &board.classes[via.class];
-        via.net == piece.net || distance(via.at, point) >= other.via_diameter / 2.0 + rule.clearance.max(other.clearance) + half
+        via.net == piece.net
+            || distance(via.at, point)
+                >= other.via_diameter / 2.0 + rule.clearance.max(other.clearance) + half
     })
 }
 
@@ -481,7 +619,8 @@ fn settle_ends(board: &Board, vias: &[PlacedVia], piece: &Piece) -> Piece {
             points.reverse();
         }
         // points[0] is the anchor; find where the embedding leaves the pad.
-        let exit = (0..points.len() - 1).find(|&index| shape.contains(points[index]) && !shape.contains(points[index + 1]));
+        let exit = (0..points.len() - 1)
+            .find(|&index| shape.contains(points[index]) && !shape.contains(points[index + 1]));
         if let Some(index) = exit {
             let (inside, outside) = (points[index], points[index + 1]);
             let (mut low, mut high) = (0.0, 1.0);
@@ -495,7 +634,11 @@ fn settle_ends(board: &Board, vias: &[PlacedVia], piece: &Piece) -> Piece {
             }
             let edge = taut::lerp(inside, outside, low);
             let back = distance(edge, inside);
-            let entry = if back > 1.0e-9 { taut::lerp(edge, inside, (piece.width / 2.0).min(back) / back) } else { edge };
+            let entry = if back > 1.0e-9 {
+                taut::lerp(edge, inside, (piece.width / 2.0).min(back) / back)
+            } else {
+                edge
+            };
             if legal_end(board, vias, piece, entry) {
                 points.splice(0..=index, [entry]);
             } else if !legal_end(board, vias, piece, points[0]) {
@@ -504,10 +647,14 @@ fn settle_ends(board: &Board, vias: &[PlacedVia], piece: &Piece) -> Piece {
                 let anchor = points[0];
                 let mut targets = vec![entry, points[1]];
                 let reach = shape.aabb();
-                let size = (reach.maximum[0] - reach.minimum[0]).max(reach.maximum[1] - reach.minimum[1]);
+                let size =
+                    (reach.maximum[0] - reach.minimum[0]).max(reach.maximum[1] - reach.minimum[1]);
                 for turn in 0..16 {
                     let angle = turn as f64 * std::f64::consts::TAU / 16.0;
-                    targets.push([anchor[0] + size * angle.cos(), anchor[1] + size * angle.sin()]);
+                    targets.push([
+                        anchor[0] + size * angle.cos(),
+                        anchor[1] + size * angle.sin(),
+                    ]);
                 }
                 'search: for target in targets {
                     for step in 1..=40 {
@@ -532,16 +679,29 @@ fn settle_ends(board: &Board, vias: &[PlacedVia], piece: &Piece) -> Piece {
     settled
 }
 
-fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[PlacedVia], layer: usize) -> Vec<Result<Vec<Point>, Failed>> {
+fn realize_layer(
+    board: &Board,
+    pieces: &[Piece],
+    on_layer: &[usize],
+    vias: &[PlacedVia],
+    layer: usize,
+) -> Vec<Result<Vec<Point>, Failed>> {
     let mesh = LayerMesh::new(board, layer, vias);
     let nearby = Nearby::new(board, layer);
     let count = on_layer.len();
-    let channels: Vec<Option<Vec<Crossing>>> = on_layer.iter().map(|&index| trace_nudged(&mesh, &pieces[index].points)).collect();
+    let channels: Vec<Option<Vec<Crossing>>> = on_layer
+        .iter()
+        .map(|&index| trace_nudged(&mesh, &pieces[index].points))
+        .collect();
     // Per edge: (position from the edge's lower vertex, piece) in order.
     let mut on_edge: HashMap<usize, Vec<(f64, usize)>> = HashMap::new();
     for (local, channel) in channels.iter().enumerate() {
         for crossing in channel.iter().flatten() {
-            let at = if crossing.left < crossing.right { crossing.at } else { 1.0 - crossing.at };
+            let at = if crossing.left < crossing.right {
+                crossing.at
+            } else {
+                1.0 - crossing.at
+            };
             on_edge.entry(crossing.edge).or_default().push((at, local));
         }
     }
@@ -551,7 +711,10 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
     let piece = |local: usize| &pieces[on_layer[local]];
     let base = |local: usize, vertex: usize| -> f64 {
         let piece = piece(local);
-        mesh.features[vertex].iter().map(|&feature| required(board, vias, feature, piece)).fold(0.0, f64::max)
+        mesh.features[vertex]
+            .iter()
+            .map(|&feature| required(board, vias, feature, piece))
+            .fold(0.0, f64::max)
     };
     // Radius per piece and vertex: the base, grown by nested pieces.
     let mut radii: Vec<HashMap<usize, f64>> = vec![HashMap::new(); count];
@@ -563,7 +726,8 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
             }
         }
     }
-    let mut results: Vec<Result<Path, Failed>> = vec![Err(Failed::new("not realized".into())); count];
+    let mut results: Vec<Result<Path, Failed>> =
+        vec![Err(Failed::new("not realized".into())); count];
     // Discs a piece keeps clear of besides its channel's: other pieces'
     // bends it runs along.
     let mut along: Vec<Vec<Disc>> = vec![Vec::new(); count];
@@ -576,20 +740,38 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
             dirty[local] = false;
             let Some(channel) = &channels[local] else {
                 let points = &piece(local).points;
-                results[local] = Err(Failed::new(format!("no channel (the embedding passes through a vertex): {} points {:?}", points.len(), &points[..points.len().min(6)])));
+                results[local] = Err(Failed::new(format!(
+                    "no channel (the embedding passes through a vertex): {} points {:?}",
+                    points.len(),
+                    &points[..points.len().min(6)]
+                )));
                 continue;
             };
-            results[local] = pull(board, &mesh, &nearby, vias, piece(local), channel, &radii[local], &along[local]);
+            results[local] = pull(
+                board,
+                &mesh,
+                &nearby,
+                vias,
+                piece(local),
+                channel,
+                &radii[local],
+                &along[local],
+            );
         }
         // Grow radii by the pieces of other nets nested inside.
         let mut changed = false;
         for local in 0..count {
-            let Some(channel) = &channels[local] else { continue };
+            let Some(channel) = &channels[local] else {
+                continue;
+            };
             let own = piece(local);
             let own_class = &board.classes[own.class];
             for crossing in channel {
                 let list = &on_edge[&crossing.edge];
-                let mine = list.iter().position(|&(_, other)| other == local).expect("own crossing");
+                let mine = list
+                    .iter()
+                    .position(|&(_, other)| other == local)
+                    .expect("own crossing");
                 for vertex in [crossing.left, crossing.right] {
                     // At its own copper a piece ends or may run over it:
                     // nothing nests there.
@@ -597,13 +779,24 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                         continue;
                     }
                     let lower = vertex == crossing.left.min(crossing.right);
-                    let inside: &[(f64, usize)] = if lower { &list[..mine] } else { &list[mine + 1..] };
+                    let inside: &[(f64, usize)] = if lower {
+                        &list[..mine]
+                    } else {
+                        &list[mine + 1..]
+                    };
                     // Pieces of other nets passing the vertex inside this
                     // one: it keeps its room from them, as close as they
                     // come to the vertex where they cross this edge.
                     let mut need = radii[local][&vertex];
-                    let (a, b) = (mesh.positions[crossing.left], mesh.positions[crossing.right]);
-                    let wraps = |result: &Result<Path, Failed>| result.as_ref().is_ok_and(|path| path.discs.iter().any(|disc| disc.vertex == vertex));
+                    let (a, b) = (
+                        mesh.positions[crossing.left],
+                        mesh.positions[crossing.right],
+                    );
+                    let wraps = |result: &Result<Path, Failed>| {
+                        result
+                            .as_ref()
+                            .is_ok_and(|path| path.discs.iter().any(|disc| disc.vertex == vertex))
+                    };
                     let own_wraps = wraps(&results[local]);
                     for &(_, other) in inside {
                         let other_piece = piece(other);
@@ -617,13 +810,22 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                         // there).
                         let gap = match path.discs.iter().find(|disc| disc.vertex == vertex) {
                             Some(disc) => disc.radius,
-                            None if own_wraps => taut::closest_near(path, mesh.positions[vertex], a, b),
+                            None if own_wraps => {
+                                taut::closest_near(path, mesh.positions[vertex], a, b)
+                            }
                             None => continue,
                         };
                         let other_class = &board.classes[other_piece.class];
-                        let wanted = gap + other_piece.width / 2.0 + own_class.clearance.max(other_class.clearance) + own.width / 2.0 + MARGIN;
+                        let wanted = gap
+                            + other_piece.width / 2.0
+                            + own_class.clearance.max(other_class.clearance)
+                            + own.width / 2.0
+                            + MARGIN;
                         if wanted > need && trace_wire() == Some(own.wire) {
-                            eprintln!("    wire {} at {:?}: stacked on wire {} (gap {gap:.3}) -> {wanted:.3}", own.wire, mesh.positions[vertex], other_piece.wire);
+                            eprintln!(
+                                "    wire {} at {:?}: stacked on wire {} (gap {gap:.3}) -> {wanted:.3}",
+                                own.wire, mesh.positions[vertex], other_piece.wire
+                            );
                         }
                         need = need.max(wanted);
                     }
@@ -641,14 +843,25 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
             let own = piece(local);
             let other_piece = piece(other);
             let Ok(path) = &results[other] else { continue };
-            let Ok(own_path) = &results[local] else { continue };
-            let room = other_piece.width / 2.0 + board.classes[own.class].clearance.max(board.classes[other_piece.class].clearance) + own.width / 2.0 + MARGIN;
+            let Ok(own_path) = &results[local] else {
+                continue;
+            };
+            let room = other_piece.width / 2.0
+                + board.classes[own.class]
+                    .clearance
+                    .max(board.classes[other_piece.class].clearance)
+                + own.width / 2.0
+                + MARGIN;
             let (_, place) = taut::closest(path, at);
             let (direction, discs) = taut::element(path, place, toward);
             let (_, own_place) = taut::closest(own_path, toward);
             let (own_direction, _) = taut::element(own_path, own_place, at);
             // The side of the other piece this one is on.
-            let side = if cross(direction, sub(toward, at)) >= 0.0 { 1.0 } else { -1.0 };
+            let side = if cross(direction, sub(toward, at)) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
             let same_way = taut::dot(direction, own_direction) >= 0.0;
             for disc in discs {
                 // This piece is the outer one if the disc's vertex lies on
@@ -656,13 +869,19 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                 // copper.
                 // Outer also means farther from the disc's vertex (so of two
                 // pieces only one yields).
-                if disc.side == side || own_copper_at(board, &mesh, vias, disc.vertex, own.net) || distance(toward, disc.center) <= distance(at, disc.center) {
+                if disc.side == side
+                    || own_copper_at(board, &mesh, vias, disc.vertex, own.net)
+                    || distance(toward, disc.center) <= distance(at, disc.center)
+                {
                     continue;
                 }
                 let radius = disc.radius + room;
                 let own_side = if same_way { disc.side } else { -disc.side };
                 if trace_wire() == Some(own.wire) {
-                    eprintln!("    wire {} along wire {} at {:?}: disc r {:.3} -> {radius:.3}", own.wire, other_piece.wire, disc.center, disc.radius);
+                    eprintln!(
+                        "    wire {} along wire {} at {:?}: disc r {:.3} -> {radius:.3}",
+                        own.wire, other_piece.wire, disc.center, disc.radius
+                    );
                 }
                 if let Some(known) = radii[local].get_mut(&disc.vertex) {
                     if radius > *known + 1.0e-6 {
@@ -672,7 +891,10 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                     }
                     continue;
                 }
-                match along[local].iter_mut().find(|known| known.vertex == disc.vertex) {
+                match along[local]
+                    .iter_mut()
+                    .find(|known| known.vertex == disc.vertex)
+                {
                     Some(known) if radius <= known.radius + 1.0e-6 => {}
                     Some(known) => {
                         known.radius = radius;
@@ -680,7 +902,12 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
                         changed = true;
                     }
                     None => {
-                        along[local].push(Disc { center: disc.center, radius, side: own_side, vertex: disc.vertex });
+                        along[local].push(Disc {
+                            center: disc.center,
+                            radius,
+                            side: own_side,
+                            vertex: disc.vertex,
+                        });
                         dirty[local] = true;
                         changed = true;
                     }
@@ -699,14 +926,25 @@ fn realize_layer(board: &Board, pieces: &[Piece], on_layer: &[usize], vias: &[Pl
 
 /// The wire whose radii to trace (`PCB_TOPO_TRACE`), for debugging.
 fn trace_wire() -> Option<usize> {
-    std::env::var("PCB_TOPO_TRACE").ok().and_then(|value| value.parse().ok())
+    std::env::var("PCB_TOPO_TRACE")
+        .ok()
+        .and_then(|value| value.parse().ok())
 }
 
 /// Whether `vertex` is (on) copper of `net`: a pad or a via of it.
-fn own_copper_at(board: &Board, mesh: &LayerMesh, vias: &[PlacedVia], vertex: usize, net: NetId) -> bool {
+fn own_copper_at(
+    board: &Board,
+    mesh: &LayerMesh,
+    vias: &[PlacedVia],
+    vertex: usize,
+    net: NetId,
+) -> bool {
     mesh.features.get(vertex).is_some_and(|features| {
         features.iter().any(|feature| match *feature {
-            Feature::Obstacle { obstacle, .. } => board.obstacles[obstacle].kind == ObstacleKind::Copper && board.obstacles[obstacle].net == Some(net),
+            Feature::Obstacle { obstacle, .. } => {
+                board.obstacles[obstacle].kind == ObstacleKind::Copper
+                    && board.obstacles[obstacle].net == Some(net)
+            }
             Feature::Via { via } => vias[via].net == net,
             Feature::Outline => false,
         })
@@ -716,15 +954,29 @@ fn own_copper_at(board: &Board, mesh: &LayerMesh, vias: &[PlacedVia], vertex: us
 /// Pairs of pieces of different nets on the layer that come closer than
 /// their clearance: (piece, other piece, the point of the other nearest to
 /// the piece, the point of the piece nearest to the other), both ways.
-fn close_pairs(board: &Board, pieces: &[Piece], on_layer: &[usize], results: &[Result<Path, Failed>]) -> Vec<(usize, usize, Point, Point)> {
+fn close_pairs(
+    board: &Board,
+    pieces: &[Piece],
+    on_layer: &[usize],
+    results: &[Result<Path, Failed>],
+) -> Vec<(usize, usize, Point, Point)> {
     const CELL: f64 = 1.0;
-    let polylines: Vec<Option<Vec<Point>>> = results.iter().map(|result| result.as_ref().ok().map(|path| taut::polyline(path, BULGE))).collect();
+    let polylines: Vec<Option<Vec<Point>>> = results
+        .iter()
+        .map(|result| result.as_ref().ok().map(|path| taut::polyline(path, BULGE)))
+        .collect();
     let mut cells: HashMap<(i64, i64), Vec<(usize, usize)>> = HashMap::new();
     for (local, polyline) in polylines.iter().enumerate() {
         let Some(points) = polyline else { continue };
         for (index, pair) in points.windows(2).enumerate() {
-            let (x0, x1) = ((pair[0][0].min(pair[1][0]) / CELL).floor() as i64, (pair[0][0].max(pair[1][0]) / CELL).floor() as i64);
-            let (y0, y1) = ((pair[0][1].min(pair[1][1]) / CELL).floor() as i64, (pair[0][1].max(pair[1][1]) / CELL).floor() as i64);
+            let (x0, x1) = (
+                (pair[0][0].min(pair[1][0]) / CELL).floor() as i64,
+                (pair[0][0].max(pair[1][0]) / CELL).floor() as i64,
+            );
+            let (y0, y1) = (
+                (pair[0][1].min(pair[1][1]) / CELL).floor() as i64,
+                (pair[0][1].max(pair[1][1]) / CELL).floor() as i64,
+            );
             for x in x0..=x1 {
                 for y in y0..=y1 {
                     cells.entry((x, y)).or_default().push((local, index));
@@ -740,9 +992,15 @@ fn close_pairs(board: &Board, pieces: &[Piece], on_layer: &[usize], results: &[R
                 if pa.net == pb.net {
                     continue;
                 }
-                let (Some(la), Some(lb)) = (&polylines[a], &polylines[b]) else { continue };
+                let (Some(la), Some(lb)) = (&polylines[a], &polylines[b]) else {
+                    continue;
+                };
                 let (p, q) = closest_points(la[sa], la[sa + 1], lb[sb], lb[sb + 1]);
-                let required = pa.width / 2.0 + pb.width / 2.0 + board.classes[pa.class].clearance.max(board.classes[pb.class].clearance);
+                let required = pa.width / 2.0
+                    + pb.width / 2.0
+                    + board.classes[pa.class]
+                        .clearance
+                        .max(board.classes[pb.class].clearance);
                 let deficit = required - distance(p, q);
                 if deficit > 1.0e-7 {
                     let key = (a.min(b), a.max(b));
@@ -771,9 +1029,18 @@ fn closest_points(a: Point, b: Point, c: Point, d: Point) -> (Point, Point) {
         if length < 1.0e-24 {
             return from;
         }
-        taut::lerp(from, to, (taut::dot(sub(point, from), span) / length).clamp(0.0, 1.0))
+        taut::lerp(
+            from,
+            to,
+            (taut::dot(sub(point, from), span) / length).clamp(0.0, 1.0),
+        )
     };
-    let candidates = [(a, project(a, c, d)), (b, project(b, c, d)), (project(c, a, b), c), (project(d, a, b), d)];
+    let candidates = [
+        (a, project(a, c, d)),
+        (b, project(b, c, d)),
+        (project(c, a, b), c),
+        (project(d, a, b), d),
+    ];
     let mut best = candidates[0];
     for candidate in candidates {
         if distance(candidate.0, candidate.1) < distance(best.0, best.1) {
@@ -821,20 +1088,41 @@ fn pull(
     for _ in 0..20 {
         let path = taut::taut_with(start, end, &portals, &extra).map_err(|failure| {
             let describe = |vertex: usize| -> String {
-                let Some(features) = mesh.features.get(vertex) else { return "end".into() };
+                let Some(features) = mesh.features.get(vertex) else {
+                    return "end".into();
+                };
                 features
                     .iter()
                     .map(|feature| match *feature {
-                        Feature::Obstacle { obstacle, radius } => format!("{} r{radius:.2} (r {:.3})", board.obstacles[obstacle].label, radii.get(&vertex).copied().unwrap_or(0.0)),
-                        Feature::Via { via } => format!("via of wire {} (r {:.3})", vias[via].wire, radii.get(&vertex).copied().unwrap_or(0.0)),
+                        Feature::Obstacle { obstacle, radius } => format!(
+                            "{} r{radius:.2} (r {:.3})",
+                            board.obstacles[obstacle].label,
+                            radii.get(&vertex).copied().unwrap_or(0.0)
+                        ),
+                        Feature::Via { via } => format!(
+                            "via of wire {} (r {:.3})",
+                            vias[via].wire,
+                            radii.get(&vertex).copied().unwrap_or(0.0)
+                        ),
                         Feature::Outline => "outline".into(),
                     })
                     .collect::<Vec<_>>()
                     .join("+")
             };
             match failure {
-                taut::Failure::Squeezed { vertices, at, need, have } => Failed {
-                    reason: format!("squeezed between {} and {} at [{:.3}, {:.3}]: {need:.3} > {have:.3}", describe(vertices.0), describe(vertices.1), at[0], at[1]),
+                taut::Failure::Squeezed {
+                    vertices,
+                    at,
+                    need,
+                    have,
+                } => Failed {
+                    reason: format!(
+                        "squeezed between {} and {} at [{:.3}, {:.3}]: {need:.3} > {have:.3}",
+                        describe(vertices.0),
+                        describe(vertices.1),
+                        at[0],
+                        at[1]
+                    ),
                     at: Some(at),
                     deficit: need - have,
                 },
@@ -855,7 +1143,8 @@ fn pull(
                     ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                     ObstacleKind::Keepout => 0.0,
                 };
-                let deficit = gap + piece.width / 2.0 - obstacle.shape.distance_to_segment(pair[0], pair[1]);
+                let deficit =
+                    gap + piece.width / 2.0 - obstacle.shape.distance_to_segment(pair[0], pair[1]);
                 if deficit > 1.0e-7 && worst.is_none_or(|w| deficit > w.0) {
                     worst = Some((deficit, index, pair[0], pair[1]));
                 }
@@ -869,14 +1158,31 @@ fn pull(
         let middle = taut::lerp(a, b, 0.5);
         let mut added = false;
         for (center, radius) in corner_discs(&obstacle.shape, middle) {
-            let vertex = mesh.at.get(&key(center)).copied().unwrap_or(usize::MAX / 2 + index * 64 + extra.len());
+            let vertex = mesh
+                .at
+                .get(&key(center))
+                .copied()
+                .unwrap_or(usize::MAX / 2 + index * 64 + extra.len());
             if extra.iter().any(|disc| disc.vertex == vertex) {
                 continue;
             }
-            let side = if cross(direction, sub(center, a)) >= 0.0 { 1.0 } else { -1.0 };
-            let feature = Feature::Obstacle { obstacle: index, radius };
-            let needed = required(board, vias, feature, piece).max(radii.get(&vertex).copied().unwrap_or(0.0));
-            extra.push(Disc { center, radius: needed, side, vertex });
+            let side = if cross(direction, sub(center, a)) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            let feature = Feature::Obstacle {
+                obstacle: index,
+                radius,
+            };
+            let needed = required(board, vias, feature, piece)
+                .max(radii.get(&vertex).copied().unwrap_or(0.0));
+            extra.push(Disc {
+                center,
+                radius: needed,
+                side,
+                vertex,
+            });
             added = true;
         }
         if !added {

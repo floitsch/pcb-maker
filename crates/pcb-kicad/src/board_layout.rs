@@ -12,9 +12,14 @@
 
 use super::*;
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
+use crate::board_router::{
+    LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower,
+    planned_pours, pours,
+};
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
-use crate::placement_constraints::{KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints};
-use crate::board_router::{LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower, planned_pours, pours};
+use crate::placement_constraints::{
+    KiCadConstraintStatus, constraint_report, default_area_factor, resolve_constraints,
+};
 use pcb_placer as placer;
 use pcb_router as core;
 
@@ -86,23 +91,36 @@ fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSw
             .children()
             .iter()
             .filter(|item| item.head() == Some("footprint"))
-            .find(|footprint| footprint_reference(footprint).as_deref() == Some(entry.part.as_str()))
+            .find(|footprint| {
+                footprint_reference(footprint).as_deref() == Some(entry.part.as_str())
+            })
             .ok_or_else(|| format!("swappable: no part {:?}", entry.part))?;
         let mut units = Vec::new();
-        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
             let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("");
             let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
             let matches = |patterns: &[String]| {
-                patterns
-                    .iter()
-                    .any(|pattern| board_placer::glob_matches(pattern, number) || board_placer::glob_matches(pattern, function))
+                patterns.iter().any(|pattern| {
+                    board_placer::glob_matches(pattern, number)
+                        || board_placer::glob_matches(pattern, function)
+                })
             };
-            if matches(&entry.pins) && !matches(&entry.except) && !units.iter().any(|unit: &Vec<String>| unit[0] == number) {
+            if matches(&entry.pins)
+                && !matches(&entry.except)
+                && !units.iter().any(|unit: &Vec<String>| unit[0] == number)
+            {
                 units.push(vec![number.to_string()]);
             }
         }
         if units.len() < 2 {
-            return Err(format!("swappable {}: fewer than two pins match {:?}", entry.part, entry.pins));
+            return Err(format!(
+                "swappable {}: fewer than two pins match {:?}",
+                entry.part, entry.pins
+            ));
         }
         components.insert(
             entry.part.clone(),
@@ -116,7 +134,10 @@ fn swappable_spec(pcb: &Expr, swappable: &[KiCadSwappable]) -> Result<KiCadPinSw
             },
         );
     }
-    Ok(KiCadPinSwapSpec { version: 1, components })
+    Ok(KiCadPinSwapSpec {
+        version: 1,
+        components,
+    })
 }
 
 impl Default for KiCadBoardLayoutConfig {
@@ -247,7 +268,8 @@ fn size_outline(
     };
     let board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let start = default_area_factor(&crate::canonical_order::parse_board(
-        &fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?,
+        &fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?,
     )?);
     let mut quick = core_config(router_config);
     quick.verbose = false;
@@ -255,13 +277,19 @@ fn size_outline(
     quick.cleanup_passes = 0;
     quick.via_reduction_rounds = 0;
     let sizing = output_directory.join("sizing");
-    fs::create_dir_all(&sizing).map_err(|error| format!("failed to create {}: {error}", sizing.display()))?;
+    fs::create_dir_all(&sizing)
+        .map_err(|error| format!("failed to create {}: {error}", sizing.display()))?;
     let mut trials = Vec::new();
     let mut chosen = None;
     // Grow from the start; with `shrink`, once the start routes, shrink.
-    let steps: Vec<f64> = (0..4).map(|step| 1.25f64.powi(step)).chain((1..5).map(|step| 0.8f64.powi(step))).collect();
+    let steps: Vec<f64> = (0..4)
+        .map(|step| 1.25f64.powi(step))
+        .chain((1..5).map(|step| 0.8f64.powi(step)))
+        .collect();
     for scale in steps {
-        let routed_first = trials.first().is_some_and(|trial: &KiCadOutlineTrial| trial.open == Some(0));
+        let routed_first = trials
+            .first()
+            .is_some_and(|trial: &KiCadOutlineTrial| trial.open == Some(0));
         if scale < 1.0 && !(shrink && routed_first) {
             break;
         }
@@ -281,14 +309,16 @@ fn size_outline(
         let open = if legal {
             let placed = directory.join(format!("{board_id}.kicad_pcb"));
             let mut pcb = crate::canonical_order::parse_board(
-                &fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?,
+                &fs::read_to_string(&placed)
+                    .map_err(|error| format!("failed to read {}: {error}", placed.display()))?,
             )?;
             let planned = planned_pours(&pcb, router_config)?;
             if !planned.is_empty() {
                 add_pour_zones(&mut pcb, &planned)?;
             }
             let layers = LayerTable::from_pcb(&pcb)?;
-            let connect = !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
+            let connect =
+                !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
             let board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
             let mut quick = quick.clone();
             quick.deadline_work = Some((work_deadline - *work - *pool_excess).max(0.0));
@@ -301,13 +331,22 @@ fn size_outline(
         };
         eprintln!(
             "outline at {factor} times the parts' area{}: {}",
-            placement.outline_mm.map_or(String::new(), |size| format!(" ({:.1} x {:.1} mm)", size[0], size[1])),
+            placement.outline_mm.map_or(String::new(), |size| format!(
+                " ({:.1} x {:.1} mm)",
+                size[0], size[1]
+            )),
             match open {
                 Some(open) => format!("{open} open"),
                 None => "parts do not fit".into(),
             }
         );
-        trials.push(KiCadOutlineTrial { area_factor: factor, size_mm: placement.outline_mm, legal, open, used: false });
+        trials.push(KiCadOutlineTrial {
+            area_factor: factor,
+            size_mm: placement.outline_mm,
+            legal,
+            open,
+            used: false,
+        });
         if scale < 1.0 {
             // Shrinking: stop at the first size that no longer routes.
             if open != Some(0) {
@@ -329,7 +368,11 @@ fn size_outline(
         && let Some(best) = trials
             .iter()
             .filter(|trial| trial.open.is_some())
-            .min_by(|a, b| a.open.cmp(&b.open).then(b.area_factor.total_cmp(&a.area_factor)))
+            .min_by(|a, b| {
+                a.open
+                    .cmp(&b.open)
+                    .then(b.area_factor.total_cmp(&a.area_factor))
+            })
     {
         chosen = Some(best.area_factor);
     }
@@ -343,7 +386,9 @@ fn size_outline(
 }
 
 /// The constraints' outline when it is sized from the parts alone.
-fn automatic_outline(config: &mut KiCadBoardPlacerConfig) -> Option<&mut crate::placement_constraints::KiCadOutlineConstraint> {
+fn automatic_outline(
+    config: &mut KiCadBoardPlacerConfig,
+) -> Option<&mut crate::placement_constraints::KiCadOutlineConstraint> {
     match &mut config.constraints {
         Some(KiCadConstraintsSource::Inline(constraints)) => constraints
             .outline
@@ -378,7 +423,12 @@ fn score(result: &core::RoutingResult, board: &core::Board) -> (usize, f64) {
 }
 
 /// Mean congestion under a body plus a margin, on the routing lattice.
-fn body_congestion(result: &core::RoutingResult, center: [f64; 2], half: [f64; 2], margin: f64) -> f64 {
+fn body_congestion(
+    result: &core::RoutingResult,
+    center: [f64; 2],
+    half: [f64; 2],
+    margin: f64,
+) -> f64 {
     let grid = &result.grid;
     let range = |axis: usize, size: usize| {
         let low = center[axis] - half[axis] - margin;
@@ -429,7 +479,9 @@ pub(crate) fn without_copper_texts(pcb: &Expr) -> Expr {
             .iter()
             .filter(|item| {
                 !(item.head() == Some("gr_text")
-                    && form_atom(item, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu") && !crate::labels::has_mask_twin(&twins, item, layer)))
+                    && form_atom(item, "layer", 1).is_some_and(|layer| {
+                        layer.ends_with(".Cu") && !crate::labels::has_mask_twin(&twins, item, layer)
+                    }))
             })
             .cloned()
             .collect(),
@@ -520,7 +572,13 @@ const CONTINUATION_FIRST_SEED: u64 = 101;
 /// connections are open, the wall clock has not passed the layout's guard
 /// and at least `floor` of work is left (`NARROW_CONTINUATION_FLOOR`);
 /// else nothing.
-pub(crate) fn narrow_continuation(choice: NarrowContinuation, work_left: f64, floor: f64, open: usize, wall_passed: bool) -> NarrowContinuation {
+pub(crate) fn narrow_continuation(
+    choice: NarrowContinuation,
+    work_left: f64,
+    floor: f64,
+    open: usize,
+    wall_passed: bool,
+) -> NarrowContinuation {
     if open == 0 || wall_passed || work_left < floor {
         NarrowContinuation::Stop
     } else {
@@ -608,7 +666,11 @@ pub(crate) struct WallStop<F: Fn() -> bool> {
 
 impl<F: Fn() -> bool> WallStop<F> {
     pub(crate) fn new(passed: F) -> Self {
-        Self { passed, fired: std::cell::Cell::new(false), skipped: std::cell::RefCell::new(Vec::new()) }
+        Self {
+            passed,
+            fired: std::cell::Cell::new(false),
+            skipped: std::cell::RefCell::new(Vec::new()),
+        }
     }
 
     /// Whether `step` runs: always until the wall clock has passed the
@@ -623,8 +685,14 @@ impl<F: Fn() -> bool> WallStop<F> {
         let mut skipped = self.skipped.borrow_mut();
         if !skipped.contains(&step) {
             skipped.push(step);
-            eprintln!("layout: past the deadline, {} skipped: finishing with the board kept so far", step.name());
-            core::router::note_wall_cut("layout", format_args!("{} skipped past the deadline", step.name()));
+            eprintln!(
+                "layout: past the deadline, {} skipped: finishing with the board kept so far",
+                step.name()
+            );
+            core::router::note_wall_cut(
+                "layout",
+                format_args!("{} skipped past the deadline", step.name()),
+            );
         }
         false
     }
@@ -676,8 +744,10 @@ pub fn layout_kicad_board(
         router_config
     } else {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?).map_err(crate::verdict::input_error)?;
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
+            .map_err(crate::verdict::input_error)?;
         &with_classes
     };
     // KiCad's checks inside the layout (the board kept, the ladder's
@@ -692,7 +762,8 @@ pub fn layout_kicad_board(
             Some(seconds) => seconds,
             None => {
                 let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-                let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+                let text = fs::read_to_string(&board)
+                    .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
                 let inputs = crate::check_work::check_inputs(&parse(&text)?);
                 let seconds = crate::check_work::check_seconds(inputs);
                 eprintln!(
@@ -709,9 +780,12 @@ pub fn layout_kicad_board(
     // past what the agent waits for.
     // (None under `PCB_ROUTER_NO_WALL_GUARD`: the work alone decides.)
     let with_deadline = KiCadBoardRouterConfig {
-        deadline: router_config.deadline.or(core::router::wall_guard().then(|| {
-            layout_started + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0))
-        })),
+        deadline: router_config
+            .deadline
+            .or(core::router::wall_guard().then(|| {
+                layout_started
+                    + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0))
+            })),
         kicad_check_work: Some(check_seconds),
         ..router_config.clone()
     };
@@ -729,9 +803,14 @@ pub fn layout_kicad_board(
         let own = router.work();
         router.config_mut().deadline_work = Some(own + (work_deadline - work).max(0.0));
     };
-    let wall_passed = || router_config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+    let wall_passed = || {
+        router_config
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    };
     let stop = WallStop::new(wall_passed);
-    let mut placer_config = resolve_constraints(&config.placer, source_directory).map_err(crate::verdict::input_error)?;
+    let mut placer_config = resolve_constraints(&config.placer, source_directory)
+        .map_err(crate::verdict::input_error)?;
     // Bodies keep at least the largest copper clearance apart.
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
@@ -742,7 +821,9 @@ pub fn layout_kicad_board(
     if placer_config.solder_mask_to_copper_mm.is_none() {
         placer_config.solder_mask_to_copper_mm = router_config.solder_mask_to_copper_mm;
     }
-    placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
+    placer_config.edge_margin_mm = placer_config
+        .edge_margin_mm
+        .max(router_config.edge_clearance_mm);
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
     }
@@ -773,7 +854,9 @@ pub fn layout_kicad_board(
     // A congestion model ranks more of the placer's seeds than the race
     // could probe.
     let congestion_model = match &config.congestion_model {
-        Some(path) => Some(pcb_congestion::CongestionModel::load(path).map_err(crate::verdict::input_error)?),
+        Some(path) => {
+            Some(pcb_congestion::CongestionModel::load(path).map_err(crate::verdict::input_error)?)
+        }
         None => None,
     };
     // Only where the race runs: one router seed, no pin swaps.
@@ -782,18 +865,34 @@ pub fn layout_kicad_board(
         && router_config.seeds.unwrap_or(1) <= 1
         && config.pin_swaps.is_none()
         && config.swappable.is_empty();
-    if config.congestion_score != "none" && config.congestion_score != "rudy" && congestion_model.is_none() {
-        return Err(crate::verdict::input_error(format!("congestion_score {:?} needs a congestion_model", config.congestion_score)));
+    if config.congestion_score != "none"
+        && config.congestion_score != "rudy"
+        && congestion_model.is_none()
+    {
+        return Err(crate::verdict::input_error(format!(
+            "congestion_score {:?} needs a congestion_model",
+            config.congestion_score
+        )));
     }
     if pre_ranking {
-        placer_config.placement_seeds = placer_config.placement_seeds.max(config.congestion_candidates);
+        placer_config.placement_seeds = placer_config
+            .placement_seeds
+            .max(config.congestion_candidates);
     }
-    let placement = place_kicad_board(source_directory, board_id, &placed_directory, &placer_config)?;
+    let placement = place_kicad_board(
+        source_directory,
+        board_id,
+        &placed_directory,
+        &placer_config,
+    )?;
     work += placement.work_seconds;
     pool_excess += (placement.pool_work_seconds - placement.work_seconds).max(0.0);
     let pool_excess = pool_excess;
     if wall_passed() {
-        core::router::note_wall_cut("placement", format_args!("the placement ended past the deadline, {work:.0} s of work done"));
+        core::router::note_wall_cut(
+            "placement",
+            format_args!("the placement ended past the deadline, {work:.0} s of work done"),
+        );
     }
     eprintln!(
         "layout: placed ({:.0} s, work {work:.0} s, {} seeds kept of {} run, seed {} kept; {:.0} s more of it in the pool of seeds, {:.0} s of seeds in all)",
@@ -826,13 +925,27 @@ pub fn layout_kicad_board(
     let pin_swaps = match &config.pin_swaps {
         Some(path) => {
             let spec = read_pin_swap_spec(&source_directory.join(path))?;
-            Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
+            Some(swap_kicad_pins_in_place(
+                &placed_directory,
+                board_id,
+                &spec,
+                &config.pin_swap,
+            )?)
         }
         None if !config.swappable.is_empty() => {
             let placed = placed_directory.join(format!("{board_id}.kicad_pcb"));
-            let text = fs::read_to_string(&placed).map_err(|error| format!("failed to read {}: {error}", placed.display()))?;
-            let spec = swappable_spec(&crate::canonical_order::parse_board(&text)?, &config.swappable)?;
-            Some(swap_kicad_pins_in_place(&placed_directory, board_id, &spec, &config.pin_swap)?)
+            let text = fs::read_to_string(&placed)
+                .map_err(|error| format!("failed to read {}: {error}", placed.display()))?;
+            let spec = swappable_spec(
+                &crate::canonical_order::parse_board(&text)?,
+                &config.swappable,
+            )?;
+            Some(swap_kicad_pins_in_place(
+                &placed_directory,
+                board_id,
+                &spec,
+                &config.pin_swap,
+            )?)
         }
         None => None,
     };
@@ -847,7 +960,11 @@ pub fn layout_kicad_board(
         if router_config.add_pours.is_empty() {
             eprintln!(
                 "automatic planes: {}",
-                planned.iter().map(|pour| format!("{} on {}", pour.net, pour.layers.join(", "))).collect::<Vec<_>>().join("; ")
+                planned
+                    .iter()
+                    .map(|pour| format!("{} on {}", pour.net, pour.layers.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             );
         }
         add_pour_zones(&mut pcb, &planned)?;
@@ -855,7 +972,12 @@ pub fn layout_kicad_board(
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
     }
     if !router_config.net_classes.is_empty() {
-        crate::net_classes::write_net_classes(&placed_directory, board_id, &pcb, &router_config.net_classes)?;
+        crate::net_classes::write_net_classes(
+            &placed_directory,
+            board_id,
+            &pcb,
+            &router_config.net_classes,
+        )?;
     }
     let layers = LayerTable::from_pcb(&pcb)?;
     let has_pours = !pours(&pcb, &layers)?.is_empty();
@@ -865,9 +987,10 @@ pub fn layout_kicad_board(
     // spacing is never legal.
     placer_config.tight_bodies = Some(placement.tight_bodies);
     if placer_config.holes_in_courtyards_error.is_none() {
-        placer_config.holes_in_courtyards_error = Some(crate::board_placer::holes_in_courtyards_error(
-            &source_directory.join(format!("{board_id}.kicad_pro")),
-        ));
+        placer_config.holes_in_courtyards_error =
+            Some(crate::board_placer::holes_in_courtyards_error(
+                &source_directory.join(format!("{board_id}.kicad_pro")),
+            ));
     }
     let mut problem = lower_placement(&pcb, &placer_config, &[])?;
     let first_relaxation = placer::Relaxation {
@@ -935,7 +1058,10 @@ pub fn layout_kicad_board(
                     })
                 })
                 .collect();
-            let routed: Vec<_> = handles.into_iter().map(|handle| handle.join().expect("routing thread")).collect();
+            let routed: Vec<_> = handles
+                .into_iter()
+                .map(|handle| handle.join().expect("routing thread"))
+                .collect();
             let expansions: u64 = routed.iter().map(|(router, _)| router.expansions()).sum();
             let best = routed
                 .into_iter()
@@ -945,14 +1071,22 @@ pub fn layout_kicad_board(
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .expect("at least one seed");
-            (best.0, best.1, expansions as f64 / core::router::EXPANSIONS_PER_SECOND)
+            (
+                best.0,
+                best.1,
+                expansions as f64 / core::router::EXPANSIONS_PER_SECOND,
+            )
         })
     };
     // What the user asked for comes first: only placements that keep the
     // constraints as well as the kept one race it. Seeds that placed alike
     // (every part fixed: the laptop raced one placement against itself for
     // 6 minutes) count once.
-    let missed: f64 = placement.constraints.iter().map(|status| status.violation_mm).sum();
+    let missed: f64 = placement
+        .constraints
+        .iter()
+        .map(|status| status.violation_mm)
+        .sum();
     let alike = |a: &[placer::Pose], b: &[placer::Pose]| {
         a.len() == b.len()
             && a.iter().zip(b).all(|(a, b)| {
@@ -987,15 +1121,31 @@ pub fn layout_kicad_board(
         && others.len() + 1 > config.congestion_probes.max(1)
     {
         pool.push((problem.problem.poses.clone(), first_relaxation));
-        pool.extend(others.iter().map(|(poses, relaxation)| ((*poses).clone(), (*relaxation).clone())));
-        let ranked = crate::congestion_rank::rank_placements(&pcb, &pool, congestion_model.as_ref(), router_config, &core_config, connect, &config.congestion_score)?;
+        pool.extend(
+            others
+                .iter()
+                .map(|(poses, relaxation)| ((*poses).clone(), (*relaxation).clone())),
+        );
+        let ranked = crate::congestion_rank::rank_placements(
+            &pcb,
+            &pool,
+            congestion_model.as_ref(),
+            router_config,
+            &core_config,
+            connect,
+            &config.congestion_score,
+        )?;
         // A placement that needed courtyards touching is a last resort
         // whatever its score: it is probed only when too few others are
         // (laptop power: RUDY picked a touching seed, 18 connections open
         // against 9 for the best of the five that needed no touching).
         let mut order = ranked.order.clone();
         order.sort_by_key(|index| pool[*index].1.courtyard_spacing);
-        let keep: Vec<usize> = order.iter().copied().take(config.congestion_probes.max(1)).collect();
+        let keep: Vec<usize> = order
+            .iter()
+            .copied()
+            .take(config.congestion_probes.max(1))
+            .collect();
         eprintln!(
             "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
             config.congestion_score,
@@ -1005,7 +1155,9 @@ pub fn layout_kicad_board(
             ranked.feature_seconds,
             ranked.inference_seconds,
             keep,
-            keep.iter().map(|index| (ranked.scores[*index] * 100.0).round() / 100.0).collect::<Vec<_>>()
+            keep.iter()
+                .map(|index| (ranked.scores[*index] * 100.0).round() / 100.0)
+                .collect::<Vec<_>>()
         );
         if keep[0] != 0 {
             let (poses, relaxation) = &pool[keep[0]];
@@ -1022,11 +1174,21 @@ pub fn layout_kicad_board(
             problem = lower_placement(&pcb, &placer_config, &[])?;
             relaxation.apply(&mut problem.problem);
         }
-        others = keep[1..].iter().map(|index| (&pool[*index].0, &pool[*index].1)).collect();
-        congestion = Some(KiCadCongestionRanking { scores: ranked.scores, probed: keep });
+        others = keep[1..]
+            .iter()
+            .map(|index| (&pool[*index].0, &pool[*index].1))
+            .collect();
+        congestion = Some(KiCadCongestionRanking {
+            scores: ranked.scores,
+            probed: keep,
+        });
     }
     let mut race = Vec::new();
-    let (mut router, mut result) = if seeds == 1 && pin_swaps.is_none() && !others.is_empty() && stop.allows(LayoutStep::Race) {
+    let (mut router, mut result) = if seeds == 1
+        && pin_swaps.is_none()
+        && !others.is_empty()
+        && stop.allows(LayoutStep::Race)
+    {
         // Wirelength is not routability: each placement is probed with the
         // same search, as route mode probes its rungs, and only the one
         // with the fewest nets unfinished routes on (routing the others in
@@ -1043,7 +1205,8 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
-            let candidate_board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
+            let candidate_board =
+                lower(&without_copper_texts(&candidate), router_config, connect)?.board;
             candidates.push((candidate, candidate_board, relaxation));
         }
         // The placements are probed side by side, each a router of its own,
@@ -1057,34 +1220,48 @@ pub fn layout_kicad_board(
         let first = core::router::Router::new(&board, &core_config);
         let router_mb = (crate::board_router::resident_mb() - before_mb).max(1.0);
         let side_by_side = crate::board_router::memory_mb()
-            .map_or(1, |(_, available)| (available * 0.5 / (router_mb * 1.5)) as usize)
+            .map_or(1, |(_, available)| {
+                (available * 0.5 / (router_mb * 1.5)) as usize
+            })
             .clamp(1, candidates.len() + 1);
         if side_by_side > 1 {
-            eprintln!("placement race: {} placements, {side_by_side} side by side", candidates.len() + 1);
+            eprintln!(
+                "placement race: {} placements, {side_by_side} side by side",
+                candidates.len() + 1
+            );
         }
         let mut probed: Vec<(usize, core::router::Router)> = Vec::new();
         let mut first = Some(first);
         let mut next = 0;
         while next <= candidates.len() {
-            let wave: Vec<usize> = (next..(next + side_by_side).min(candidates.len() + 1)).collect();
+            let wave: Vec<usize> =
+                (next..(next + side_by_side).min(candidates.len() + 1)).collect();
             let routers: Vec<(usize, usize, core::router::Router)> = std::thread::scope(|scope| {
                 let handles: Vec<_> = wave
                     .iter()
                     .map(|&index| {
                         let built = if index == 0 { first.take() } else { None };
-                        let board = if index == 0 { &board } else { &candidates[index - 1].1 };
+                        let board = if index == 0 {
+                            &board
+                        } else {
+                            &candidates[index - 1].1
+                        };
                         let mut quiet = core_config.clone();
                         // One probe's lines in the log; the others' would
                         // interleave with them.
                         quiet.verbose = quiet.verbose && index == wave[0];
                         scope.spawn(move || {
-                            let mut router = built.unwrap_or_else(|| core::router::Router::new(board, &quiet));
+                            let mut router =
+                                built.unwrap_or_else(|| core::router::Router::new(board, &quiet));
                             let unfinished = router.probe(probe_seconds);
                             (index, unfinished, router)
                         })
                     })
                     .collect();
-                handles.into_iter().map(|handle| handle.join().expect("probe thread")).collect()
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("probe thread"))
+                    .collect()
             });
             for (index, unfinished, router) in routers {
                 probed.push((index, router));
@@ -1099,14 +1276,17 @@ pub fn layout_kicad_board(
         let mut raced = 1;
         let mut candidates = candidates.into_iter();
         for (index, mut candidate_router) in probed {
-            let (candidate, candidate_board, relaxation) = candidates.next().expect("a candidate per probe");
+            let (candidate, candidate_board, relaxation) =
+                candidates.next().expect("a candidate per probe");
             if work > 0.4 * config.total_seconds {
                 break;
             }
             let unfinished = race[index];
             raced += 1;
             work += candidate_router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
-            eprintln!("placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})");
+            eprintln!(
+                "placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})"
+            );
             if unfinished < best_unfinished {
                 best_unfinished = unfinished;
                 pcb = candidate;
@@ -1130,15 +1310,19 @@ pub fn layout_kicad_board(
         let left = (work_deadline - work - pool_excess).max(0.0);
         // (The router's negotiation budget in work: its seconds are the
         // wall-clock guard, `GUARD` times that.)
-        let budget = core_config.negotiation_expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
+        let budget =
+            core_config.negotiation_expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
         let mut seconds = (budget - probe_seconds).max(60.0);
         if seconds > left / 2.0 {
             seconds = (left / 2.0).max(1.0);
-            eprintln!("layout: the first route negotiates on for at most {seconds:.0} s of work ({left:.0} s left before the deadline)");
+            eprintln!(
+                "layout: the first route negotiates on for at most {seconds:.0} s of work ({left:.0} s left before the deadline)"
+            );
         }
         let before = kept.expansions();
         let result = kept.resume_polished(seconds, false);
-        work += kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+        work +=
+            kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;
         (kept, result)
     } else {
         let (router, result, first_work) = route_once(&board);
@@ -1149,7 +1333,11 @@ pub fn layout_kicad_board(
     let first_route_seconds = first_started.elapsed().as_secs_f64();
     let first = (
         best.0,
-        result.routes.iter().map(|route| route.vias.len()).sum::<usize>(),
+        result
+            .routes
+            .iter()
+            .map(|route| route.vias.len())
+            .sum::<usize>(),
         result
             .routes
             .iter()
@@ -1172,7 +1360,10 @@ pub fn layout_kicad_board(
     let mut since_fewer_open = 0;
     let mut recently: Vec<usize> = Vec::new();
     let movable: Vec<usize> = (0..problem.problem.components.len())
-        .filter(|index| !problem.problem.components[*index].fixed && !problem.problem.components[*index].pins.is_empty())
+        .filter(|index| {
+            !problem.problem.components[*index].fixed
+                && !problem.problem.components[*index].pins.is_empty()
+        })
         .collect();
     // Moves fine-tune a placement that nearly routes; with many
     // connections open the final ladder (pours as tracks or planes, finer
@@ -1194,9 +1385,13 @@ pub fn layout_kicad_board(
     // (`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` keeps the old split.)
     let old_split = std::env::var_os("PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET").is_some();
     let narrow_applies = !old_split && crate::board_router::narrow_step_applies(router_config);
-    let far_open = narrow_applies && ladder_has_rungs && !many_open && far_from_complete(best.0, terminals);
+    let far_open =
+        narrow_applies && ladder_has_rungs && !many_open && far_from_complete(best.0, terminals);
     if many_open {
-        eprintln!("layout: {} open after the first route: no moves, the final ladder gets the time", best.0);
+        eprintln!(
+            "layout: {} open after the first route: no moves, the final ladder gets the time",
+            best.0
+        );
     } else if far_open {
         eprintln!(
             "layout: {} open after the first route (more than {}), the narrow-signal step applies: no moves, the narrow-signal attempt gets the time",
@@ -1234,7 +1429,12 @@ pub fn layout_kicad_board(
                 let component = &problem.problem.components[*index];
                 let pose = problem.problem.poses[*index];
                 (
-                    body_congestion(&result, component.center(pose), component.half_extent(pose.angle), 2.0),
+                    body_congestion(
+                        &result,
+                        component.center(pose),
+                        component.half_extent(pose.angle),
+                        2.0,
+                    ),
                     *index,
                 )
             })
@@ -1263,7 +1463,12 @@ pub fn layout_kicad_board(
                     let wanted = [center[0] + dx, center[1] + dy];
                     let position = component.position_for_center(wanted, angle);
                     let pose = placer::Pose {
-                        position: placer::constraints::snap_position(&problem.problem, index, position, angle),
+                        position: placer::constraints::snap_position(
+                            &problem.problem,
+                            index,
+                            position,
+                            angle,
+                        ),
                         angle,
                     };
                     if pose == current {
@@ -1288,8 +1493,11 @@ pub fn layout_kicad_board(
                         );
                         let mut trial = problem.problem.poses.clone();
                         trial[index] = pose;
-                        if placer::constraints::relation_penalty(&problem.problem, &trial, Some(index))
-                            > before + 1.0e-9
+                        if placer::constraints::relation_penalty(
+                            &problem.problem,
+                            &trial,
+                            Some(index),
+                        ) > before + 1.0e-9
                         {
                             continue;
                         }
@@ -1350,7 +1558,8 @@ pub fn layout_kicad_board(
             };
             let polish = best.0 == 0;
             let trial = router.reroute(polish);
-            work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+            work += router.expansions().saturating_sub(expansions_before) as f64
+                / core::router::EXPANSIONS_PER_SECOND;
             let trial_score = score(&trial, &trial_board);
             let kept = trial_score < best;
             if kept && trial_score.0 < best.0 {
@@ -1360,7 +1569,11 @@ pub fn layout_kicad_board(
             }
             moves.push(KiCadBoardLayoutMove {
                 reference: problem.references[index].clone(),
-                from: [saved_pose.position[0], saved_pose.position[1], saved_pose.angle],
+                from: [
+                    saved_pose.position[0],
+                    saved_pose.position[1],
+                    saved_pose.angle,
+                ],
                 to: [pose.position[0], pose.position[1], pose.angle],
                 rerouted_nets: rerouted,
                 seconds: trial_started.elapsed().as_secs_f64(),
@@ -1421,7 +1634,8 @@ pub fn layout_kicad_board(
                 full.stall_drop = router_config.stall_drop.unwrap_or(defaults.stall_drop);
             }
             let resumed = router.resume_polished(share, false);
-            work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+            work += router.expansions().saturating_sub(expansions_before) as f64
+                / core::router::EXPANSIONS_PER_SECOND;
             let (before, after) = (score(&result, &board), score(&resumed, &board));
             eprintln!(
                 "layout: the first route resumed with {share:.0} s: {} open (before {}), {:.0} s",
@@ -1454,23 +1668,38 @@ pub fn layout_kicad_board(
     // next not started), the final one gets the run-sized one.
     let polish_again = polished && work < 0.5 * config.total_seconds;
     if polish_again {
-        eprintln!("layout: polished by a move trial, {:.0} s of {:.0} s of work left: polishing again", config.total_seconds - work, config.total_seconds);
+        eprintln!(
+            "layout: polished by a move trial, {:.0} s of {:.0} s of work left: polishing again",
+            config.total_seconds - work,
+            config.total_seconds
+        );
     }
     arm(&mut router, work + pool_excess);
-    if (!polished || polish_again) && !many_open && !router.past_deadline() && polish_left >= 240.0 && stop.allows(LayoutStep::Polish) {
+    if (!polished || polish_again)
+        && !many_open
+        && !router.past_deadline()
+        && polish_left >= 240.0
+        && stop.allows(LayoutStep::Polish)
+    {
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {
             let own = expansions_before as f64 / core::router::EXPANSIONS_PER_SECOND;
             let polish = router.config_mut();
-            polish.via_reduction_seconds = polish.via_reduction_seconds.min((polish_left - 120.0) / 2.0);
+            polish.via_reduction_seconds = polish
+                .via_reduction_seconds
+                .min((polish_left - 120.0) / 2.0);
             // What is left of the layout's budget, its router's own work
             // counted against it.
-            polish.run_work = Some((config.total_seconds, (config.total_seconds - work).max(0.0) + own));
+            polish.run_work = Some((
+                config.total_seconds,
+                (config.total_seconds - work).max(0.0) + own,
+            ));
             polish.cleanup_seconds = polish.cleanup_seconds.min((polish_left - 120.0) / 4.0);
         }
         let polished_result = router.polish();
-        work += router.expansions().saturating_sub(expansions_before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+        work += router.expansions().saturating_sub(expansions_before) as f64
+            / core::router::EXPANSIONS_PER_SECOND;
         // A polish the deadline cut short can leave more open than it
         // found (Sisu: 146 open before it, 255 after): then the board stays
         // as the moves left it.
@@ -1478,7 +1707,10 @@ pub fn layout_kicad_board(
         if after.0 <= before.0 {
             result = polished_result;
         } else {
-            eprintln!("layout: the polish left {} open (before it {}): kept the unpolished routes", after.0, before.0);
+            eprintln!(
+                "layout: the polish left {} open (before it {}): kept the unpolished routes",
+                after.0, before.0
+            );
             router = saved_router;
         }
     }
@@ -1491,7 +1723,11 @@ pub fn layout_kicad_board(
     // Copper texts (decoration on copper) off the copper and the parts.
     let copper_texts = crate::labels::place_copper_texts(&mut pcb, &result.routes, &layer_names)?;
     if copper_texts.moved > 0 || !copper_texts.stuck.is_empty() {
-        eprintln!("copper texts: {} moved, {} without a free spot", copper_texts.moved, copper_texts.stuck.len());
+        eprintln!(
+            "copper texts: {} moved, {} without a free spot",
+            copper_texts.moved,
+            copper_texts.stuck.len()
+        );
     }
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
     let result_directory = output_directory.join("result");
@@ -1505,7 +1741,10 @@ pub fn layout_kicad_board(
         board_id,
         &result_directory,
         router_config,
-        [0.0, first_route_seconds + move_started.elapsed().as_secs_f64()],
+        [
+            0.0,
+            first_route_seconds + move_started.elapsed().as_secs_f64(),
+        ],
     )?;
     routed.pours = if !has_pours {
         "none"
@@ -1533,11 +1772,16 @@ pub fn layout_kicad_board(
                 .map_or(0, |native| native.selected_net_unconnected_items)
     };
     let quality = |result: &KiCadBoardRouterResult, directory: &Path| {
-        (open(result), crate::board_router::starved_thermals(directory))
+        (
+            open(result),
+            crate::board_router::starved_thermals(directory),
+        )
     };
     let current = quality(&routed, &result_directory);
     // Whether KiCad checked a ladder's board (or no check runs at all).
-    let checked = |result: &KiCadBoardRouterResult| result.native.is_some() || router_config.skip_native_verification;
+    let checked = |result: &KiCadBoardRouterResult| {
+        result.native.is_some() || router_config.skip_native_verification
+    };
     let layout_work = work;
     // The ladder below builds routers of its own (probes side by side,
     // seeds side by side): this one would only hold its memory meanwhile.
@@ -1571,7 +1815,11 @@ pub fn layout_kicad_board(
     } else if direct_narrow {
         let ladder_left = work_deadline - work - pool_excess;
         let mut narrow = crate::board_router::narrow_step_config(router_config);
-        narrow.pours = if connect { KiCadPourMode::Connect } else { KiCadPourMode::Tracks };
+        narrow.pours = if connect {
+            KiCadPourMode::Connect
+        } else {
+            KiCadPourMode::Tracks
+        };
         narrow.refine_pitches_mm = Some(Vec::new());
         let (negotiation, cleanup) = direct_narrow_budget(ladder_left);
         narrow.negotiation_seconds = Some(negotiation);
@@ -1604,7 +1852,12 @@ pub fn layout_kicad_board(
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
         let mut fallback_config = fallback_config;
         let left = (config.total_seconds - work).max(120.0);
-        fallback_config.ladder_budget_seconds = Some(fallback_config.ladder_budget_seconds.unwrap_or(1200.0).min(left));
+        fallback_config.ladder_budget_seconds = Some(
+            fallback_config
+                .ladder_budget_seconds
+                .unwrap_or(1200.0)
+                .min(left),
+        );
         // The ladder decides whether another attempt fits in work, up to
         // the layout's nominal end.
         fallback_config.deadline_work = Some((work_deadline - work - pool_excess).max(0.0));
@@ -1612,8 +1865,20 @@ pub fn layout_kicad_board(
         // kept, at most the two best by the router's count, the board kept
         // among them (`CheckGate`).
         fallback_config.kicad_check_top = Some(KICAD_CHECK_TOP);
-        fallback_config.kicad_kept = Some(((crate::board_router::router_open(&routed), routed.vias, routed.length_mm), current));
-        let fallback = route_kicad_board(&placed_directory, board_id, &fallback_directory, &fallback_config)?;
+        fallback_config.kicad_kept = Some((
+            (
+                crate::board_router::router_open(&routed),
+                routed.vias,
+                routed.length_mm,
+            ),
+            current,
+        ));
+        let fallback = route_kicad_board(
+            &placed_directory,
+            board_id,
+            &fallback_directory,
+            &fallback_config,
+        )?;
         // (Its checks are in its work already.)
         checks_charged.add(fallback.kicad_checks_charged);
         // The work of the narrow-signal attempt and what follows it counts
@@ -1627,7 +1892,8 @@ pub fn layout_kicad_board(
         // not beat the board kept) is never kept.
         if checked(&fallback) && fallback_quality < current {
             fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
-            fs::rename(&fallback_directory, &result_directory).map_err(|error| error.to_string())?;
+            fs::rename(&fallback_directory, &result_directory)
+                .map_err(|error| error.to_string())?;
             routed = fallback;
             best_quality = fallback_quality;
         } else {
@@ -1665,20 +1931,30 @@ pub fn layout_kicad_board(
                 }
                 NarrowContinuation::OtherPours => {
                     let mut other = fallback_config.clone();
-                    other.pours = if fallback_pours == "tracks" { KiCadPourMode::Connect } else { KiCadPourMode::Tracks };
+                    other.pours = if fallback_pours == "tracks" {
+                        KiCadPourMode::Connect
+                    } else {
+                        KiCadPourMode::Tracks
+                    };
                     let (negotiation, cleanup) = direct_narrow_budget(left);
                     other.negotiation_seconds = Some(negotiation);
                     other.cleanup_seconds = Some(cleanup);
                     eprintln!(
                         "layout: {left:.0} s of work left after the narrow-signal attempt: it again with pours {} (negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
-                        if other.pours == KiCadPourMode::Tracks { "as tracks" } else { "connected" }
+                        if other.pours == KiCadPourMode::Tracks {
+                            "as tracks"
+                        } else {
+                            "connected"
+                        }
                     );
                     Some(other)
                 }
                 NarrowContinuation::Seeds => {
                     let seeds = continuation_seeds(left, attempt_work);
                     if seeds == 0 {
-                        eprintln!("layout: {left:.0} s of work left after the narrow-signal attempt, under one attempt's {attempt_work:.0} s: no seeds");
+                        eprintln!(
+                            "layout: {left:.0} s of work left after the narrow-signal attempt, under one attempt's {attempt_work:.0} s: no seeds"
+                        );
                         None
                     } else {
                         let mut seeded = fallback_config.clone();
@@ -1700,7 +1976,9 @@ pub fn layout_kicad_board(
                     let mut ladder = router_config.clone();
                     ladder.use_narrow_signals = Some(false);
                     ladder.relaxed_clearance_mm = None;
-                    eprintln!("layout: {left:.0} s of work left after the narrow-signal attempt: the class-width ladder");
+                    eprintln!(
+                        "layout: {left:.0} s of work left after the narrow-signal attempt: the class-width ladder"
+                    );
                     Some(ladder)
                 }
             };
@@ -1709,15 +1987,29 @@ pub fn layout_kicad_board(
                 continuation_config.ladder_budget_seconds = Some(share.min(1200.0));
                 continuation_config.deadline_work = Some(share.max(0.0));
                 continuation_config.kicad_check_top = Some(KICAD_CHECK_TOP);
-                continuation_config.kicad_kept = Some(((crate::board_router::router_open(&routed), routed.vias, routed.length_mm), best_quality));
+                continuation_config.kicad_kept = Some((
+                    (
+                        crate::board_router::router_open(&routed),
+                        routed.vias,
+                        routed.length_mm,
+                    ),
+                    best_quality,
+                ));
                 let continuation_directory = output_directory.join("result-continuation");
-                let mut continuation =
-                    route_kicad_board(&placed_directory, board_id, &continuation_directory, &continuation_config)?;
+                let mut continuation = route_kicad_board(
+                    &placed_directory,
+                    board_id,
+                    &continuation_directory,
+                    &continuation_config,
+                )?;
                 // The ladder counts one seed's work for an attempt of seeds
                 // (not its checks: one per attempt).
                 checks_charged.add(continuation.kicad_checks_charged);
-                continuation.work_seconds =
-                    seeds_work(continuation.work_seconds, continuation.kicad_check_work_seconds, side_by_side);
+                continuation.work_seconds = seeds_work(
+                    continuation.work_seconds,
+                    continuation.kicad_check_work_seconds,
+                    side_by_side,
+                );
                 after_work += continuation.work_seconds;
                 let continuation_quality = quality(&continuation, &continuation_directory);
                 eprintln!(
@@ -1731,10 +2023,12 @@ pub fn layout_kicad_board(
                 );
                 if checked(&continuation) && continuation_quality < best_quality {
                     fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
-                    fs::rename(&continuation_directory, &result_directory).map_err(|error| error.to_string())?;
+                    fs::rename(&continuation_directory, &result_directory)
+                        .map_err(|error| error.to_string())?;
                     routed = continuation;
                 } else {
-                    fs::remove_dir_all(&continuation_directory).map_err(|error| error.to_string())?;
+                    fs::remove_dir_all(&continuation_directory)
+                        .map_err(|error| error.to_string())?;
                 }
             }
         }
@@ -1747,15 +2041,29 @@ pub fn layout_kicad_board(
     // KiCad's connection_width necks on the board kept (a no-op when the
     // route mode ladder above has repaired it already). It improves the
     // board: past the deadline it is skipped.
-    if (routed.native.is_some() || router_config.skip_native_verification) && stop.allows(LayoutStep::NeckRepair) {
-        let checks = crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+    if (routed.native.is_some() || router_config.skip_native_verification)
+        && stop.allows(LayoutStep::NeckRepair)
+    {
+        let checks = crate::board_router::repair_necks(
+            &mut routed,
+            &output_directory.join("result"),
+            board_id,
+            router_config,
+        )?;
         // Its checks count as work (after every decision: only the tally).
         routed.work_seconds += checks_charged.add(checks);
     }
-    if routed.neck_repair.as_ref().is_some_and(|repair| repair.kept) {
+    if routed
+        .neck_repair
+        .as_ref()
+        .is_some_and(|repair| repair.kept)
+    {
         let report_path = output_directory.join("result").join("board-router.json");
-        fs::write(&report_path, serde_json::to_string_pretty(&routed).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+        fs::write(
+            &report_path,
+            serde_json::to_string_pretty(&routed).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     }
     // The placement file should show the final poses too.
     {
@@ -1786,7 +2094,11 @@ pub fn layout_kicad_board(
         labels,
         quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),
         pin_swaps,
-        constraints: constraint_report(&problem.problem, &problem.problem.poses, &problem.references),
+        constraints: constraint_report(
+            &problem.problem,
+            &problem.problem.poses,
+            &problem.references,
+        ),
         routed,
         cut: core::router::wall_cuts(),
     };
@@ -1807,7 +2119,14 @@ pub fn layout_kicad_board(
         crate::board_router::checks_skipped(),
         checks_charged.checks,
         if stop.fired() {
-            format!("; past the deadline: {}", stop.skipped().iter().map(|step| format!("{step:?}")).collect::<Vec<_>>().join(", "))
+            format!(
+                "; past the deadline: {}",
+                stop.skipped()
+                    .iter()
+                    .map(|step| format!("{step:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         } else {
             String::new()
         }
@@ -1827,14 +2146,31 @@ mod budget_tests {
             looks.set(looks.get() + 1);
             looks.get() > fires_after
         });
-        let ran = steps.iter().copied().filter(|step| stop.allows(*step)).collect();
+        let ran = steps
+            .iter()
+            .copied()
+            .filter(|step| stop.allows(*step))
+            .collect();
         (ran, stop.skipped())
     }
 
     #[test]
     fn past_the_wall_guard_only_the_finishing_steps_run() {
         use LayoutStep::*;
-        let steps = [Race, Move, Move, Move, Resume, Polish, Labels, Check, Ladder, Continuation, NeckRepair, Report];
+        let steps = [
+            Race,
+            Move,
+            Move,
+            Move,
+            Resume,
+            Polish,
+            Labels,
+            Check,
+            Ladder,
+            Continuation,
+            NeckRepair,
+            Report,
+        ];
         // The guard never fires: everything runs.
         let (ran, skipped) = run_steps(&steps, usize::MAX);
         assert_eq!(ran, steps.to_vec());
@@ -1844,7 +2180,10 @@ mod budget_tests {
         // the labels, the check of the board kept and the report run.
         let (ran, skipped) = run_steps(&steps, 2);
         assert_eq!(ran, vec![Race, Move, Labels, Check, Report]);
-        assert_eq!(skipped, vec![Move, Resume, Polish, Ladder, Continuation, NeckRepair]);
+        assert_eq!(
+            skipped,
+            vec![Move, Resume, Polish, Ladder, Continuation, NeckRepair]
+        );
         // Fired already in placement: no race either.
         let (ran, _) = run_steps(&steps, 0);
         assert_eq!(ran, vec![Labels, Check, Report]);
@@ -1880,7 +2219,9 @@ mod budget_tests {
     #[test]
     fn the_narrow_attempt_alone_negotiates_most_of_what_is_left() {
         // Jetson: about 600 s left.
-        let close = |(a, b): (f64, f64), (c, d): (f64, f64)| (a - c).abs() < 1.0e-9 && (b - d).abs() < 1.0e-9;
+        let close = |(a, b): (f64, f64), (c, d): (f64, f64)| {
+            (a - c).abs() < 1.0e-9 && (b - d).abs() < 1.0e-9
+        };
         assert!(close(direct_narrow_budget(600.0), (405.0, 60.0)));
         // Little left: the floors.
         assert!(close(direct_narrow_budget(200.0), (127.5, 30.0)));
@@ -1899,17 +2240,50 @@ mod budget_tests {
         use NarrowContinuation::*;
         for choice in [OtherPours, Seeds, Ladder] {
             // Hub: about 900 s left, 30 open.
-            assert_eq!(narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, false), choice);
+            assert_eq!(
+                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, false),
+                choice
+            );
             // At the floor it runs, under it not.
-            assert_eq!(narrow_continuation(choice, NARROW_CONTINUATION_FLOOR, NARROW_CONTINUATION_FLOOR, 30, false), choice);
-            assert_eq!(narrow_continuation(choice, NARROW_CONTINUATION_FLOOR - 1.0, NARROW_CONTINUATION_FLOOR, 30, false), Stop);
+            assert_eq!(
+                narrow_continuation(
+                    choice,
+                    NARROW_CONTINUATION_FLOOR,
+                    NARROW_CONTINUATION_FLOOR,
+                    30,
+                    false
+                ),
+                choice
+            );
+            assert_eq!(
+                narrow_continuation(
+                    choice,
+                    NARROW_CONTINUATION_FLOOR - 1.0,
+                    NARROW_CONTINUATION_FLOOR,
+                    30,
+                    false
+                ),
+                Stop
+            );
             // Module and jetson: under 200 s left.
-            assert_eq!(narrow_continuation(choice, 170.0, NARROW_CONTINUATION_FLOOR, 17, false), Stop);
+            assert_eq!(
+                narrow_continuation(choice, 170.0, NARROW_CONTINUATION_FLOOR, 17, false),
+                Stop
+            );
             // Complete, or past the wall-clock guard: nothing.
-            assert_eq!(narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 0, false), Stop);
-            assert_eq!(narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, true), Stop);
+            assert_eq!(
+                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 0, false),
+                Stop
+            );
+            assert_eq!(
+                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, true),
+                Stop
+            );
         }
-        assert_eq!(narrow_continuation(Stop, 900.0, NARROW_CONTINUATION_FLOOR, 30, false), Stop);
+        assert_eq!(
+            narrow_continuation(Stop, 900.0, NARROW_CONTINUATION_FLOOR, 30, false),
+            Stop
+        );
         assert_eq!(NarrowContinuation::parse("tracks"), Some(OtherPours));
         assert_eq!(NarrowContinuation::parse("ladder"), Some(Ladder));
         assert_eq!(NarrowContinuation::parse("seeds"), Some(Seeds));

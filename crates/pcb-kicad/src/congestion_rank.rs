@@ -40,7 +40,11 @@ pub(crate) fn score_board(
     let inferred = std::time::Instant::now();
     let value = match (score, model) {
         ("rudy", _) => rudy,
-        (_, None) => return Err(format!("congestion score {score:?} needs a congestion_model")),
+        (_, None) => {
+            return Err(format!(
+                "congestion score {score:?} needs a congestion_model"
+            ));
+        }
         ("overflow", Some(model)) => model.predict(&maps)?.overflow_sum() as f64,
         (_, Some(model)) => model.predict(&maps)?.open as f64,
     };
@@ -50,7 +54,10 @@ pub(crate) fn score_board(
 /// Per value, its rank among `values` (0 for the lowest; ties share the
 /// lower rank).
 fn ranks(values: &[f64]) -> Vec<f64> {
-    values.iter().map(|value| values.iter().filter(|other| **other < *value).count() as f64).collect()
+    values
+        .iter()
+        .map(|value| values.iter().filter(|other| **other < *value).count() as f64)
+        .collect()
 }
 
 pub(crate) fn rank_placements(
@@ -85,11 +92,22 @@ pub(crate) fn rank_placements(
     }
     if score == "open+rudy" {
         let (model_ranks, rudy_ranks) = (ranks(&scores), ranks(&rudies));
-        scores = model_ranks.iter().zip(&rudy_ranks).map(|(a, b)| a + b).collect();
+        scores = model_ranks
+            .iter()
+            .zip(&rudy_ranks)
+            .map(|(a, b)| a + b)
+            .collect();
     }
     let mut order: Vec<usize> = (0..scores.len()).collect();
     order.sort_by(|a, b| scores[*a].total_cmp(&scores[*b]).then(a.cmp(b)));
-    Ok(Ranking { scores, order, seconds: started.elapsed().as_secs_f64(), lower_seconds, feature_seconds, inference_seconds })
+    Ok(Ranking {
+        scores,
+        order,
+        seconds: started.elapsed().as_secs_f64(),
+        lower_seconds,
+        feature_seconds,
+        inference_seconds,
+    })
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -114,12 +132,19 @@ pub fn score_kicad_congestion(
     router_config: &KiCadBoardRouterConfig,
 ) -> Result<KiCadCongestionScore, String> {
     let board_path = source_directory.join(format!("{board_id}.kicad_pcb"));
-    let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
+    let text = fs::read_to_string(&board_path)
+        .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = crate::canonical_order::parse_board(&text)?;
     let Expr::List(items) = &pcb else {
         return Err("PCB root is not a list".into());
     };
-    let pcb = Expr::List(items.iter().filter(|item| !matches!(item.head(), Some("segment" | "arc" | "via"))).cloned().collect());
+    let pcb = Expr::List(
+        items
+            .iter()
+            .filter(|item| !matches!(item.head(), Some("segment" | "arc" | "via")))
+            .cloned()
+            .collect(),
+    );
     let layers = crate::board_router::LayerTable::from_pcb(&pcb)?;
     let connect = !crate::board_router::pours(&pcb, &layers)?.is_empty();
     let model = pcb_congestion::CongestionModel::load(model_path)?;
@@ -154,13 +179,22 @@ pub fn score_kicad_congestion(
 
 /// Predicts on a sample's stored features (`export-congestion-sample`),
 /// to compare tract's output with PyTorch's.
-pub fn score_congestion_sample(sample_json: &Path, model_path: &Path) -> Result<(f64, f64, Vec<f64>), String> {
+pub fn score_congestion_sample(
+    sample_json: &Path,
+    model_path: &Path,
+) -> Result<(f64, f64, Vec<f64>), String> {
     let header: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(sample_json).map_err(|error| format!("failed to read {}: {error}", sample_json.display()))?,
+        &fs::read_to_string(sample_json)
+            .map_err(|error| format!("failed to read {}: {error}", sample_json.display()))?,
     )
     .map_err(|error| error.to_string())?;
     let entry = &header["arrays"]["features"];
-    let shape: Vec<usize> = entry["shape"].as_array().ok_or("no features")?.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect();
+    let shape: Vec<usize> = entry["shape"]
+        .as_array()
+        .ok_or("no features")?
+        .iter()
+        .map(|v| v.as_u64().unwrap_or(0) as usize)
+        .collect();
     let offset = entry["offset"].as_u64().unwrap_or(0) as usize;
     let bytes = fs::read(sample_json.with_extension("bin")).map_err(|error| error.to_string())?;
     let count: usize = shape.iter().product();
@@ -169,8 +203,23 @@ pub fn score_congestion_sample(sample_json: &Path, model_path: &Path) -> Result<
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     let model = pcb_congestion::CongestionModel::load(model_path)?;
-    let prediction = model.predict(&pcb_congestion::FeatureMaps { tiles_x: shape[2], tiles_y: shape[1], data })?;
+    let prediction = model.predict(&pcb_congestion::FeatureMaps {
+        tiles_x: shape[2],
+        tiles_y: shape[1],
+        data,
+    })?;
     let size = prediction.tiles_x * prediction.tiles_y;
-    let planes = (0..prediction.planes).map(|plane| prediction.overflow[plane * size..(plane + 1) * size].iter().map(|v| *v as f64).sum()).collect();
-    Ok((prediction.open as f64, prediction.overflow_sum() as f64, planes))
+    let planes = (0..prediction.planes)
+        .map(|plane| {
+            prediction.overflow[plane * size..(plane + 1) * size]
+                .iter()
+                .map(|v| *v as f64)
+                .sum()
+        })
+        .collect();
+    Ok((
+        prediction.open as f64,
+        prediction.overflow_sum() as f64,
+        planes,
+    ))
 }

@@ -48,7 +48,12 @@ pub fn decided_exit() -> Option<u8> {
 
 fn set_target(command: &str, report: PathBuf, outputs: BTreeMap<String, String>) {
     if let Ok(mut target) = TARGET.lock() {
-        *target = Some(ReportTarget { command: command.into(), report, outputs, started: Instant::now() });
+        *target = Some(ReportTarget {
+            command: command.into(),
+            report,
+            outputs,
+            started: Instant::now(),
+        });
     }
 }
 
@@ -66,18 +71,30 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
     let Some(directory) = target.report.parent() else {
         return;
     };
-    let room = (status == KiCadRunStatus::UsageError).then(pcb_kicad::noted_room).flatten();
+    let room = (status == KiCadRunStatus::UsageError)
+        .then(pcb_kicad::noted_room)
+        .flatten();
     if !directory.exists() {
-        if (status == KiCadRunStatus::UsageError && room.is_none()) || fs::create_dir_all(directory).is_err() {
+        if (status == KiCadRunStatus::UsageError && room.is_none())
+            || fs::create_dir_all(directory).is_err()
+        {
             return;
         }
     }
-    let mut verdict = pcb_kicad::error_verdict(&target.command, status, message, target.started.elapsed().as_secs_f64(), existing(&target.outputs));
+    let mut verdict = pcb_kicad::error_verdict(
+        &target.command,
+        status,
+        message,
+        target.started.elapsed().as_secs_f64(),
+        existing(&target.outputs),
+    );
     // A constraint the outline cannot hold (a row longer than the board):
     // the room it needs, as numbers.
     if let Some(room) = room {
         if let Some(size) = room.suggested_outline_mm {
-            verdict.next_actions.push(pcb_kicad::room_action(&room, size));
+            verdict
+                .next_actions
+                .push(pcb_kicad::room_action(&room, size));
         }
         verdict.room = Some(room);
     }
@@ -86,29 +103,52 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
 
 /// Writes `verdict` as `<directory>/verdict.json` and, when the run wrote
 /// its report (`report`), as the report's `verdict` too.
-fn write_verdict(directory: &Path, report: Option<&Path>, verdict: &KiCadVerdict) -> Result<(), String> {
+fn write_verdict(
+    directory: &Path,
+    report: Option<&Path>,
+    verdict: &KiCadVerdict,
+) -> Result<(), String> {
     let mut value = serde_json::to_value(verdict).map_err(|error| error.to_string())?;
     // KiCad DRC runs this process asked for and how many the cache answered.
-    value["drc_cache"] = serde_json::to_value(pcb_kicad::drc_cache_counts()).map_err(|error| error.to_string())?;
+    value["drc_cache"] =
+        serde_json::to_value(pcb_kicad::drc_cache_counts()).map_err(|error| error.to_string())?;
     let path = directory.join("verdict.json");
-    fs::write(&path, serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     let Some(report) = report else {
         return Ok(());
     };
-    let text = fs::read_to_string(report).map_err(|error| format!("failed to read {}: {error}", report.display()))?;
-    let mut content: serde_json::Value =
-        serde_json::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", report.display()))?;
+    let text = fs::read_to_string(report)
+        .map_err(|error| format!("failed to read {}: {error}", report.display()))?;
+    let mut content: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("failed to parse {}: {error}", report.display()))?;
     content["verdict"] = value;
-    fs::write(report, serde_json::to_string_pretty(&content).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("failed to write {}: {error}", report.display()))
+    fs::write(
+        report,
+        serde_json::to_string_pretty(&content).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", report.display()))
 }
 
 /// Prints the verdict: its line and next actions on stdout, and for a
 /// result that is not complete one line on stderr.
 fn announce(verdict: &KiCadVerdict, report: &Path) {
-    DECIDED.store(i32::from(verdict.exit_code), std::sync::atomic::Ordering::Relaxed);
-    println!("verdict: {} (exit {}): {}", serde_json::to_value(verdict.status).unwrap_or_default().as_str().unwrap_or(""), verdict.exit_code, verdict.reason);
+    DECIDED.store(
+        i32::from(verdict.exit_code),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    println!(
+        "verdict: {} (exit {}): {}",
+        serde_json::to_value(verdict.status)
+            .unwrap_or_default()
+            .as_str()
+            .unwrap_or(""),
+        verdict.exit_code,
+        verdict.reason
+    );
     for action in &verdict.next_actions {
         println!("next: {action}");
     }
@@ -120,7 +160,10 @@ fn announce(verdict: &KiCadVerdict, report: &Path) {
 /// A path as the report gives it: absolute, so that an agent in another
 /// directory finds it.
 fn path_text(path: &Path) -> String {
-    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()).display().to_string()
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string()
 }
 
 /// The outputs that exist (KiCad's reports are missing when its check did
@@ -134,16 +177,24 @@ fn existing(outputs: &BTreeMap<String, String>) -> BTreeMap<String, String> {
 }
 
 /// Splits `--name value` flags from the positional arguments.
-fn split_flags(arguments: Vec<String>, flags: &[&str], usage: &str) -> Result<(Vec<String>, BTreeMap<String, String>), Failure> {
+fn split_flags(
+    arguments: Vec<String>,
+    flags: &[&str],
+    usage: &str,
+) -> Result<(Vec<String>, BTreeMap<String, String>), Failure> {
     let mut positional = Vec::new();
     let mut values = BTreeMap::new();
     let mut iterator = arguments.into_iter();
     while let Some(argument) = iterator.next() {
         if let Some(flag) = flags.iter().find(|flag| **flag == argument) {
-            let value = iterator.next().ok_or_else(|| Failure::Usage(format!("{flag} needs a value; {usage}")))?;
+            let value = iterator
+                .next()
+                .ok_or_else(|| Failure::Usage(format!("{flag} needs a value; {usage}")))?;
             values.insert(flag.to_string(), value);
         } else if argument.starts_with("--") {
-            return Err(Failure::Usage(format!("unknown option {argument}; {usage}")));
+            return Err(Failure::Usage(format!(
+                "unknown option {argument}; {usage}"
+            )));
         } else {
             positional.push(argument);
         }
@@ -151,7 +202,11 @@ fn split_flags(arguments: Vec<String>, flags: &[&str], usage: &str) -> Result<(V
     Ok((positional, values))
 }
 
-fn positional_count(arguments: &[String], range: std::ops::RangeInclusive<usize>, usage: &str) -> Result<(), Failure> {
+fn positional_count(
+    arguments: &[String],
+    range: std::ops::RangeInclusive<usize>,
+    usage: &str,
+) -> Result<(), Failure> {
     if range.contains(&arguments.len()) {
         Ok(())
     } else {
@@ -163,10 +218,15 @@ fn positional_count(arguments: &[String], range: std::ops::RangeInclusive<usize>
 fn check_project(directory: &str, board_id: &str) -> Result<(), Failure> {
     let board = Path::new(directory).join(format!("{board_id}.kicad_pcb"));
     if !Path::new(directory).is_dir() {
-        return Err(Failure::Usage(format!("project directory {directory} does not exist")));
+        return Err(Failure::Usage(format!(
+            "project directory {directory} does not exist"
+        )));
     }
     if !board.is_file() {
-        return Err(Failure::Usage(format!("{} does not exist (the board id is the file stem)", board.display())));
+        return Err(Failure::Usage(format!(
+            "{} does not exist (the board id is the file stem)",
+            board.display()
+        )));
     }
     Ok(())
 }
@@ -177,17 +237,25 @@ fn check_fresh_output(directory: &str) -> Result<(), Failure> {
     // error (the room a constraint needs) is taken again: the retry with
     // the fixed input goes where the first run went.
     let only_verdict = fs::read_dir(path)
-        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect::<Vec<_>>())
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name())
+                .collect::<Vec<_>>()
+        })
         .is_ok_and(|names| names == [std::ffi::OsString::from("verdict.json")])
         && fs::read_to_string(path.join("verdict.json"))
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .is_some_and(|verdict| verdict["status"] == "usage_error");
     if only_verdict {
-        fs::remove_dir_all(path).map_err(|error| Failure::Usage(format!("failed to remove {directory}: {error}")))?;
+        fs::remove_dir_all(path)
+            .map_err(|error| Failure::Usage(format!("failed to remove {directory}: {error}")))?;
     }
     if path.exists() {
-        return Err(Failure::Usage(format!("output directory {directory} already exists; give a new one")));
+        return Err(Failure::Usage(format!(
+            "output directory {directory} already exists; give a new one"
+        )));
     }
     Ok(())
 }
@@ -200,19 +268,29 @@ fn check_file(path: &str) -> Result<(), Failure> {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Failure> {
-    let text = fs::read_to_string(path).map_err(|error| Failure::Usage(format!("failed to read {path}: {error}")))?;
-    serde_json::from_str(&text).map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))
+    let text = fs::read_to_string(path)
+        .map_err(|error| Failure::Usage(format!("failed to read {path}: {error}")))?;
+    serde_json::from_str(&text)
+        .map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))
 }
 
 /// A library error: the input's (marked by `pcb_kicad::input_error`) or
 /// internal.
 fn classify(error: String) -> Failure {
-    if pcb_kicad::is_input_error(&error) { Failure::Usage(error) } else { Failure::Internal(error) }
+    if pcb_kicad::is_input_error(&error) {
+        Failure::Usage(error)
+    } else {
+        Failure::Internal(error)
+    }
 }
 
 /// The reference project of `--reference`: `none`, a directory, or the
 /// default.
-fn reference_option(values: &BTreeMap<String, String>, default: Option<&str>, board_id: &str) -> Result<Option<PathBuf>, Failure> {
+fn reference_option(
+    values: &BTreeMap<String, String>,
+    default: Option<&str>,
+    board_id: &str,
+) -> Result<Option<PathBuf>, Failure> {
     match values.get("--reference").map(String::as_str).or(default) {
         None | Some("none") => Ok(None),
         Some(directory) => {
@@ -223,17 +301,31 @@ fn reference_option(values: &BTreeMap<String, String>, default: Option<&str>, bo
 }
 
 /// Fills in the reference's errors when the result has errors that count.
-fn check_reference(facts: &mut KiCadRunFacts, reference: Option<&Path>, board_id: &str, report: &Path) {
+fn check_reference(
+    facts: &mut KiCadRunFacts,
+    reference: Option<&Path>,
+    board_id: &str,
+    report: &Path,
+) {
     let Some(project) = reference else {
         return;
     };
     if !facts.needs_reference() {
         return;
     }
-    eprintln!("checking the reference board {} for the findings it has already", project.display());
+    eprintln!(
+        "checking the reference board {} for the findings it has already",
+        project.display()
+    );
     facts.reference = match pcb_kicad::reference_findings(project, board_id, report) {
-        Ok(errors) => KiCadReference::Findings { from: project.to_path_buf(), errors },
-        Err(error) => KiCadReference::Failed { from: project.to_path_buf(), error: error.lines().next().unwrap_or("").to_string() },
+        Ok(errors) => KiCadReference::Findings {
+            from: project.to_path_buf(),
+            errors,
+        },
+        Err(error) => KiCadReference::Failed {
+            from: project.to_path_buf(),
+            error: error.lines().next().unwrap_or("").to_string(),
+        },
     };
 }
 
@@ -242,8 +334,14 @@ fn missed_constraints(constraints: &[pcb_kicad::KiCadConstraintStatus]) -> Vec<S
         .iter()
         .filter(|status| !status.satisfied)
         .map(|status| match &status.other {
-            Some(other) => format!("{} {} {} ({:.2} mm)", status.kind, status.part, other, status.violation_mm),
-            None => format!("{} {} ({:.2} mm)", status.kind, status.part, status.violation_mm),
+            Some(other) => format!(
+                "{} {} {} ({:.2} mm)",
+                status.kind, status.part, other, status.violation_mm
+            ),
+            None => format!(
+                "{} {} ({:.2} mm)",
+                status.kind, status.part, status.violation_mm
+            ),
         })
         .collect()
 }
@@ -254,7 +352,8 @@ const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <b
 /// of its default budget.
 const PLACE_WORK_SECONDS: f64 = 600.0;
 
-const PLACE_USAGE: &str = "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json]";
+const PLACE_USAGE: &str =
+    "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json]";
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "route-kicad-board";
@@ -264,14 +363,25 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     check_project(source, board_id)?;
     check_fresh_output(output)?;
     let reference = reference_option(&values, Some(source), board_id)?;
-    let config = crate::board_router_config(positional.get(3).map(String::as_str), source, board_id).map_err(Failure::Usage)?;
+    let config =
+        crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
+            .map_err(Failure::Usage)?;
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
-        ("board".to_string(), path_text(&output.join(format!("{board_id}.kicad_pcb")))),
+        (
+            "board".to_string(),
+            path_text(&output.join(format!("{board_id}.kicad_pcb"))),
+        ),
         ("drc".to_string(), path_text(&output.join("drc.json"))),
-        ("report".to_string(), path_text(&output.join("board-router.json"))),
-        ("verdict".to_string(), path_text(&output.join("verdict.json"))),
+        (
+            "report".to_string(),
+            path_text(&output.join("board-router.json")),
+        ),
+        (
+            "verdict".to_string(),
+            path_text(&output.join("verdict.json")),
+        ),
     ]);
     let report = output.join("board-router.json");
     set_target(command, report.clone(), outputs.clone());
@@ -280,7 +390,8 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         panic!("PCB_MAKER_TEST_PANIC is set");
     }
     let started = Instant::now();
-    let result = pcb_kicad::route_kicad_board(Path::new(source), board_id, output, &config).map_err(classify)?;
+    let result = pcb_kicad::route_kicad_board(Path::new(source), board_id, output, &config)
+        .map_err(classify)?;
     println!(
         "routed {}/{} connections ({} unconnected terminals), pours {}, {} vias, {:.1} mm, {} iterations; lowering {:.2}s routing {:.2}s internal check {:.2}s ({} violations) native {:.2}s complete={}",
         result.routed_connections,
@@ -295,12 +406,21 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         result.internal_verification_seconds,
         result.internal_violations.len(),
         result.native_verification_seconds,
-        result.native.as_ref().map(|native| native.complete).unwrap_or(false),
+        result
+            .native
+            .as_ref()
+            .map(|native| native.complete)
+            .unwrap_or(false),
     );
     let mut facts = pcb_kicad::route_facts(command, &result, output);
     facts.work_seconds = Some(result.work_seconds);
     facts.outputs = existing(&outputs);
-    check_reference(&mut facts, reference.as_deref(), board_id, &output.join("reference-drc.json"));
+    check_reference(
+        &mut facts,
+        reference.as_deref(),
+        board_id,
+        &output.join("reference-drc.json"),
+    );
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
     write_verdict(output, Some(&report), &verdict).map_err(Failure::Internal)?;
@@ -309,12 +429,26 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
 }
 
 fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String> {
-    if let Some(size) = result.outline_sizing.iter().find(|trial| trial.used).and_then(|trial| trial.size_mm) {
-        println!("outline: {:.1} x {:.1} mm, sized from the parts ({} tried)", size[0], size[1], result.outline_sizing.len());
+    if let Some(size) = result
+        .outline_sizing
+        .iter()
+        .find(|trial| trial.used)
+        .and_then(|trial| trial.size_mm)
+    {
+        println!(
+            "outline: {:.1} x {:.1} mm, sized from the parts ({} tried)",
+            size[0],
+            size[1],
+            result.outline_sizing.len()
+        );
     }
     println!(
         "placed in {:.1}s; first route {:.1}s: {} open, {} vias, {:.0} mm",
-        result.placement_seconds, result.first_route_seconds, result.first_unconnected_terminals, result.first_vias, result.first_length_mm,
+        result.placement_seconds,
+        result.first_route_seconds,
+        result.first_unconnected_terminals,
+        result.first_vias,
+        result.first_length_mm,
     );
     for step in &result.moves {
         println!(
@@ -351,15 +485,25 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
         "constraints: {} of {} kept{}",
         result.constraints.len() - missed.len(),
         result.constraints.len(),
-        if missed.is_empty() { String::new() } else { format!("; missed: {}", missed.join(", ")) }
+        if missed.is_empty() {
+            String::new()
+        } else {
+            format!("; missed: {}", missed.join(", "))
+        }
     );
     println!(
         "silkscreen: {} labels moved{}",
         result.labels.moved,
-        if result.labels.stuck.is_empty() { String::new() } else { format!(", no room for {:?}", result.labels.stuck) }
+        if result.labels.stuck.is_empty() {
+            String::new()
+        } else {
+            format!(", no room for {:?}", result.labels.stuck)
+        }
     );
     if let Some(quality) = &result.quality {
-        let serde_json::Value::Object(report) = serde_json::to_value(quality).map_err(|error| error.to_string())? else {
+        let serde_json::Value::Object(report) =
+            serde_json::to_value(quality).map_err(|error| error.to_string())?
+        else {
             unreachable!();
         };
         let decoupling = &report["decoupling"];
@@ -369,23 +513,40 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
                 decoupling["capacitor_median_mm"], decoupling["capacitors_within_3mm"]
             );
         }
-        for (key, label) in [("crystals", "crystal"), ("switch_inductors", "switch inductor"), ("esd", "ESD protector")] {
+        for (key, label) in [
+            ("crystals", "crystal"),
+            ("switch_inductors", "switch inductor"),
+            ("esd", "ESD protector"),
+        ] {
             for entry in report[key].as_array().into_iter().flatten() {
                 let (name, distance) = match entry {
                     serde_json::Value::Array(pair) => (pair[0].clone(), pair[1].clone()),
                     other => (other["reference"].clone(), other["longest_mm"].clone()),
                 };
-                println!("{label} {}: {} mm from its pins", name.as_str().unwrap_or("?"), distance);
+                println!(
+                    "{label} {}: {} mm from its pins",
+                    name.as_str().unwrap_or("?"),
+                    distance
+                );
             }
         }
         for hot in report["hot_parts"].as_array().into_iter().flatten() {
-            let planes: Vec<&str> = hot["planes"].as_array().into_iter().flatten().filter_map(|layer| layer.as_str()).collect();
+            let planes: Vec<&str> = hot["planes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|layer| layer.as_str())
+                .collect();
             println!(
                 "hot part {}: {} mm² pad on {}, {}, {} vias in the pad, {} mm² of tracks near it",
                 hot["reference"].as_str().unwrap_or("?"),
                 hot["pad_mm2"],
                 hot["net"].as_str().unwrap_or("?"),
-                if planes.is_empty() { "no plane".to_string() } else { format!("planes on {}", planes.join(", ")) },
+                if planes.is_empty() {
+                    "no plane".to_string()
+                } else {
+                    format!("planes on {}", planes.join(", "))
+                },
                 hot["vias_in_pad"],
                 hot["track_mm2"]
             );
@@ -399,11 +560,21 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
                 let currency = fab["currency"].as_str().unwrap_or("");
                 let assembly = fab["assembly"].as_f64();
                 let board = fab["total"].as_f64().unwrap_or(0.0) - assembly.unwrap_or(0.0);
-                let assembly = assembly.map_or(String::new(), |assembly| format!(" (+ {assembly} {currency} assembly)"));
-                format!("{} {:.2} {currency}{assembly}", fab["fab"].as_str().unwrap_or(""), board)
+                let assembly = assembly.map_or(String::new(), |assembly| {
+                    format!(" (+ {assembly} {currency} assembly)")
+                });
+                format!(
+                    "{} {:.2} {currency}{assembly}",
+                    fab["fab"].as_str().unwrap_or(""),
+                    board
+                )
             })
             .collect();
-        println!("cost of {} boards (estimate, parts excluded): {}", cost["quantity"], totals.join(", "));
+        println!(
+            "cost of {} boards (estimate, parts excluded): {}",
+            cost["quantity"],
+            totals.join(", ")
+        );
         for hint in cost["hints"].as_array().into_iter().flatten() {
             println!("cost hint: {}", hint.as_str().unwrap_or(""));
         }
@@ -411,9 +582,13 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
     Ok(())
 }
 
-fn check_constraints(source: &str, placer: &pcb_kicad::KiCadBoardPlacerConfig) -> Result<(), Failure> {
+fn check_constraints(
+    source: &str,
+    placer: &pcb_kicad::KiCadBoardPlacerConfig,
+) -> Result<(), Failure> {
     if let Some(pcb_kicad::KiCadConstraintsSource::File(path)) = &placer.constraints {
-        pcb_kicad::read_placement_constraints(&Path::new(source).join(path)).map_err(Failure::Usage)?;
+        pcb_kicad::read_placement_constraints(&Path::new(source).join(path))
+            .map_err(Failure::Usage)?;
     }
     Ok(())
 }
@@ -421,7 +596,12 @@ fn check_constraints(source: &str, placer: &pcb_kicad::KiCadBoardPlacerConfig) -
 /// The placement's facts from its report (`board-placer.json`).
 fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     let strings = |key: &str| -> Vec<String> {
-        report[key].as_array().into_iter().flatten().filter_map(|value| value.as_str().map(str::to_string)).collect()
+        report[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect()
     };
     let mut facts = KiCadRunFacts::new(command);
     facts.routes = false;
@@ -449,7 +629,9 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     check_project(source, board_id)?;
     check_fresh_output(output)?;
     let reference = reference_option(&values, None, board_id)?;
-    let router = crate::board_router_config(positional.get(3).map(String::as_str), source, board_id).map_err(Failure::Usage)?;
+    let router =
+        crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
+            .map_err(Failure::Usage)?;
     let config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
         Some(path) => read_json(path)?,
         None => Default::default(),
@@ -459,17 +641,41 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let result_directory = output.join("result");
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(&result_directory)),
-        ("board".to_string(), path_text(&result_directory.join(format!("{board_id}.kicad_pcb")))),
-        ("drc".to_string(), path_text(&result_directory.join("drc.json"))),
-        ("report".to_string(), path_text(&output.join("board-layout.json"))),
-        ("placement".to_string(), path_text(&output.join("placed/placement.html"))),
-        ("placement_report".to_string(), path_text(&output.join("placed/board-placer.json"))),
-        ("verdict".to_string(), path_text(&output.join("verdict.json"))),
+        (
+            "board".to_string(),
+            path_text(&result_directory.join(format!("{board_id}.kicad_pcb"))),
+        ),
+        (
+            "drc".to_string(),
+            path_text(&result_directory.join("drc.json")),
+        ),
+        (
+            "report".to_string(),
+            path_text(&output.join("board-layout.json")),
+        ),
+        (
+            "placement".to_string(),
+            path_text(&output.join("placed/placement.html")),
+        ),
+        (
+            "placement_report".to_string(),
+            path_text(&output.join("placed/board-placer.json")),
+        ),
+        (
+            "verdict".to_string(),
+            path_text(&output.join("verdict.json")),
+        ),
     ]);
     let report = output.join("board-layout.json");
     set_target(command, report.clone(), outputs.clone());
     let started = Instant::now();
-    let result = match pcb_kicad::layout_kicad_board(Path::new(source), board_id, output, &config, &router) {
+    let result = match pcb_kicad::layout_kicad_board(
+        Path::new(source),
+        board_id,
+        output,
+        &config,
+        &router,
+    ) {
         Ok(result) => result,
         Err(error) => {
             // Parts without a legal place end the layout before it routes:
@@ -478,7 +684,11 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
                 .ok()
                 .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
             let Some(placed) = placed.filter(|placed| {
-                ["unplaced", "illegal"].iter().any(|key| placed[*key].as_array().is_some_and(|parts| !parts.is_empty()))
+                ["unplaced", "illegal"].iter().any(|key| {
+                    placed[*key]
+                        .as_array()
+                        .is_some_and(|parts| !parts.is_empty())
+                })
             }) else {
                 return Err(classify(error));
             };
@@ -506,7 +716,12 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
     facts.kicad_check_work_seconds = Some(result.kicad_check_work_seconds);
     facts.outputs = existing(&outputs);
-    check_reference(&mut facts, reference.as_deref(), board_id, &output.join("reference-drc.json"));
+    check_reference(
+        &mut facts,
+        reference.as_deref(),
+        board_id,
+        &output.join("reference-drc.json"),
+    );
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
     write_verdict(output, Some(&report), &verdict).map_err(Failure::Internal)?;
@@ -526,10 +741,12 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         // its placer object is the placement's config.
         Some(path) => match read_json::<serde_json::Value>(path)? {
             serde_json::Value::Object(mut layout) if layout.contains_key("placer") => {
-                serde_json::from_value(layout.remove("placer").unwrap_or_default())
-                    .map_err(|error| Failure::Usage(format!("failed to parse {path}: placer: {error}")))?
+                serde_json::from_value(layout.remove("placer").unwrap_or_default()).map_err(
+                    |error| Failure::Usage(format!("failed to parse {path}: placer: {error}")),
+                )?
             }
-            value => serde_json::from_value(value).map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?,
+            value => serde_json::from_value(value)
+                .map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?,
         },
         None => Default::default(),
     };
@@ -539,20 +756,36 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     // board without room ran the placer's relaxation levels for over 12
     // minutes without one. PCB_PLACER_WORK_SECONDS sets another.
     config.work_seconds = Some(
-        std::env::var("PCB_PLACER_WORK_SECONDS").ok().and_then(|value| value.parse().ok()).unwrap_or(PLACE_WORK_SECONDS),
+        std::env::var("PCB_PLACER_WORK_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(PLACE_WORK_SECONDS),
     );
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
-        ("board".to_string(), path_text(&output.join(format!("{board_id}.kicad_pcb")))),
-        ("report".to_string(), path_text(&output.join("board-placer.json"))),
-        ("placement".to_string(), path_text(&output.join("placement.html"))),
-        ("verdict".to_string(), path_text(&output.join("verdict.json"))),
+        (
+            "board".to_string(),
+            path_text(&output.join(format!("{board_id}.kicad_pcb"))),
+        ),
+        (
+            "report".to_string(),
+            path_text(&output.join("board-placer.json")),
+        ),
+        (
+            "placement".to_string(),
+            path_text(&output.join("placement.html")),
+        ),
+        (
+            "verdict".to_string(),
+            path_text(&output.join("verdict.json")),
+        ),
     ]);
     let report = output.join("board-placer.json");
     set_target(command, report.clone(), outputs.clone());
     let started = Instant::now();
-    let result = pcb_kicad::place_kicad_board(Path::new(source), board_id, output, &config).map_err(classify)?;
+    let result = pcb_kicad::place_kicad_board(Path::new(source), board_id, output, &config)
+        .map_err(classify)?;
     println!(
         "placed {} of {} components ({} nets): wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
         result.movable,
@@ -568,7 +801,10 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         result.illegal,
         result.seconds,
     );
-    let mut facts = placement_facts(command, &serde_json::to_value(&result).map_err(|error| Failure::Internal(error.to_string()))?);
+    let mut facts = placement_facts(
+        command,
+        &serde_json::to_value(&result).map_err(|error| Failure::Internal(error.to_string()))?,
+    );
     facts.outputs = existing(&outputs);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
@@ -577,24 +813,38 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     Ok(verdict.status)
 }
 
-const DRC_USAGE: &str = "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]";
+const DRC_USAGE: &str =
+    "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]";
 
 /// KiCad's DRC of a board, through the DRC cache: complete when KiCad
 /// finds no error that counts and no unconnected item.
 fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let refill = !arguments.iter().any(|argument| argument == "--no-refill");
-    let arguments = arguments.into_iter().filter(|argument| argument != "--no-refill").collect();
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--no-refill")
+        .collect();
     let (positional, _) = split_flags(arguments, &[], DRC_USAGE)?;
     positional_count(&positional, 3..=3, DRC_USAGE)?;
     let (source, board_id, report) = (&positional[0], &positional[1], Path::new(&positional[2]));
     check_project(source, board_id)?;
-    if let Some(parent) = report.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-        fs::create_dir_all(parent).map_err(|error| Failure::Usage(format!("failed to create {}: {error}", parent.display())))?;
+    if let Some(parent) = report
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            Failure::Usage(format!("failed to create {}: {error}", parent.display()))
+        })?;
     }
-    let value = pcb_kicad::kicad_drc_report(Path::new(source), board_id, report, refill).map_err(Failure::Internal)?;
+    let value = pcb_kicad::kicad_drc_report(Path::new(source), board_id, report, refill)
+        .map_err(Failure::Internal)?;
     let tally = pcb_kicad::tally_drc(&value);
     let cache = pcb_kicad::drc_cache_counts();
-    let errors: Vec<String> = tally.errors.iter().map(|(kind, count)| format!("{kind} {count}")).collect();
+    let errors: Vec<String> = tally
+        .errors
+        .iter()
+        .map(|(kind, count)| format!("{kind} {count}"))
+        .collect();
     println!(
         "drc: {} errors ({}), {} unconnected items, {} warnings, {} cosmetic; drc_cache: {{calls {}, hits {}}}; report {}",
         tally.errors.values().sum::<usize>(),
@@ -606,15 +856,30 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         cache.hits,
         path_text(report)
     );
-    Ok(if tally.errors.is_empty() && tally.unconnected == 0 { KiCadRunStatus::Complete } else { KiCadRunStatus::Incomplete })
+    Ok(if tally.errors.is_empty() && tally.unconnected == 0 {
+        KiCadRunStatus::Complete
+    } else {
+        KiCadRunStatus::Incomplete
+    })
 }
 
 /// The commands that only read a project and write files: the arguments
 /// are checked here (exit 2), the work is the command's own (an error
 /// there exits 4).
 fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
-    let usage = || Failure::Usage(format!("{}; see pcb-maker {command} --help", usage_line(command)));
-    let count = |range: std::ops::RangeInclusive<usize>| if range.contains(&arguments.len()) { Ok(()) } else { Err(usage()) };
+    let usage = || {
+        Failure::Usage(format!(
+            "{}; see pcb-maker {command} --help",
+            usage_line(command)
+        ))
+    };
+    let count = |range: std::ops::RangeInclusive<usize>| {
+        if range.contains(&arguments.len()) {
+            Ok(())
+        } else {
+            Err(usage())
+        }
+    };
     match command {
         "describe-kicad-board" | "score-kicad-board" => {
             count(2..=2)?;
@@ -661,7 +926,9 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
             if positional != 3 {
                 return Err(usage());
             }
-            if let Some(index) = arguments.iter().position(|argument| argument == "--footprints-from")
+            if let Some(index) = arguments
+                .iter()
+                .position(|argument| argument == "--footprints-from")
                 && let Some(board) = arguments.get(index + 1)
             {
                 check_file(board)?;
@@ -673,7 +940,8 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
 }
 
 /// The message `repair-kicad-silkscreen` ends with when findings remain.
-pub const SILKSCREEN_INCOMPLETE: &str = "silkscreen repair remains incomplete; retained native report and rendering";
+pub const SILKSCREEN_INCOMPLETE: &str =
+    "silkscreen repair remains incomplete; retained native report and rendering";
 /// The message `import-kicad-netlist` ends with when footprints are missing.
 pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from) and import again into the same directory (constraints.json and layout.json are kept)";
 
@@ -684,22 +952,26 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
         "layout-kicad-board" => layout(arguments),
         "place-kicad-board" => place(arguments),
         "drc-kicad-board" => drc(arguments),
-        "describe-kicad-board" | "score-kicad-board" | "export-kicad-fab" | "repair-kicad-silkscreen" | "swap-kicad-pins"
-        | "strip-kicad-tracks" | "strip-kicad-copper" | "import-kicad-netlist" => {
-            checked_simple(command, &arguments).and_then(|()| {
-                let mut all = vec![command.to_string()];
-                all.extend(arguments);
-                match crate::run(all) {
-                    Ok(()) => Ok(KiCadRunStatus::Complete),
-                    Err(error) if error == SILKSCREEN_INCOMPLETE || error == IMPORT_INCOMPLETE => {
-                        eprintln!("incomplete: {error}");
-                        Ok(KiCadRunStatus::Incomplete)
-                    }
-                    Err(error) if error.starts_with("usage:") => Err(Failure::Usage(error)),
-                    Err(error) => Err(classify(error)),
+        "describe-kicad-board"
+        | "score-kicad-board"
+        | "export-kicad-fab"
+        | "repair-kicad-silkscreen"
+        | "swap-kicad-pins"
+        | "strip-kicad-tracks"
+        | "strip-kicad-copper"
+        | "import-kicad-netlist" => checked_simple(command, &arguments).and_then(|()| {
+            let mut all = vec![command.to_string()];
+            all.extend(arguments);
+            match crate::run(all) {
+                Ok(()) => Ok(KiCadRunStatus::Complete),
+                Err(error) if error == SILKSCREEN_INCOMPLETE || error == IMPORT_INCOMPLETE => {
+                    eprintln!("incomplete: {error}");
+                    Ok(KiCadRunStatus::Incomplete)
                 }
-            })
-        }
+                Err(error) if error.starts_with("usage:") => Err(Failure::Usage(error)),
+                Err(error) => Err(classify(error)),
+            }
+        }),
         _ => return None,
     })
 }
@@ -816,9 +1088,21 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
         "prints the board's parts, pads, nets and swap candidates as JSON",
         "usage: pcb-maker describe-kicad-board <project-dir> <board-id>\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n\nPrints JSON on stdout: outline, layers, footprints with pads and nets, nets, swap_candidates.",
     ),
-    ("place-kicad-board", "places the movable parts (no routing): checks constraints in seconds", PLACE_HELP),
-    ("route-kicad-board", "routes a placed board and has KiCad check it", ROUTE_HELP),
-    ("layout-kicad-board", "places and routes a board and has KiCad check it", LAYOUT_HELP),
+    (
+        "place-kicad-board",
+        "places the movable parts (no routing): checks constraints in seconds",
+        PLACE_HELP,
+    ),
+    (
+        "route-kicad-board",
+        "routes a placed board and has KiCad check it",
+        ROUTE_HELP,
+    ),
+    (
+        "layout-kicad-board",
+        "places and routes a board and has KiCad check it",
+        LAYOUT_HELP,
+    ),
     (
         "swap-kicad-pins",
         "reassigns interchangeable pins to shorten the ratsnest (board and schematic)",
@@ -880,17 +1164,31 @@ mod tests {
     #[test]
     fn every_agent_command_has_a_usage_line() {
         for (name, ..) in AGENT_COMMANDS {
-            assert!(usage_line(name).starts_with(&format!("usage: pcb-maker {name} ")), "{name}");
+            assert!(
+                usage_line(name).starts_with(&format!("usage: pcb-maker {name} ")),
+                "{name}"
+            );
         }
     }
 
     #[test]
     fn flags_are_split_from_positional_arguments() {
-        let arguments = ["a", "--reference", "r", "b"].iter().map(|text| text.to_string()).collect();
-        let Ok((positional, values)) = split_flags(arguments, &["--reference"], "usage") else { panic!() };
+        let arguments = ["a", "--reference", "r", "b"]
+            .iter()
+            .map(|text| text.to_string())
+            .collect();
+        let Ok((positional, values)) = split_flags(arguments, &["--reference"], "usage") else {
+            panic!()
+        };
         assert_eq!(positional, vec!["a", "b"]);
         assert_eq!(values.get("--reference").map(String::as_str), Some("r"));
-        assert!(matches!(split_flags(vec!["--bogus".into()], &["--reference"], "usage"), Err(Failure::Usage(_))));
-        assert!(matches!(split_flags(vec!["--reference".into()], &["--reference"], "usage"), Err(Failure::Usage(_))));
+        assert!(matches!(
+            split_flags(vec!["--bogus".into()], &["--reference"], "usage"),
+            Err(Failure::Usage(_))
+        ));
+        assert!(matches!(
+            split_flags(vec!["--reference".into()], &["--reference"], "usage"),
+            Err(Failure::Usage(_))
+        ));
     }
 }

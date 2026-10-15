@@ -27,8 +27,8 @@
 //! constraint is reported back with whether the placement keeps it.
 
 use super::*;
-use pcb_placer as core;
 use crate::board_placer::glob_matches;
+use pcb_placer as core;
 use pcb_placer::constraints::{Anchor, Edge, Relation};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -142,14 +142,19 @@ pub struct KiCadAddConstraint {
 /// import puts it there), and those given `x` and `y` are kept there, as
 /// `place` keeps a part. Empties `add`, so that a second call changes
 /// nothing.
-pub(super) fn expand_additions(constraints: &mut KiCadPlacementConstraints, pcb: &Expr) -> Result<(), String> {
+pub(super) fn expand_additions(
+    constraints: &mut KiCadPlacementConstraints,
+    pcb: &Expr,
+) -> Result<(), String> {
     let additions = std::mem::take(&mut constraints.add);
     for addition in additions {
         let on_board = pcb
             .children()
             .iter()
             .filter(|item| item.head() == Some("footprint"))
-            .any(|footprint| footprint_reference(footprint).as_deref() == Some(addition.part.as_str()));
+            .any(|footprint| {
+                footprint_reference(footprint).as_deref() == Some(addition.part.as_str())
+            });
         if !on_board {
             return Err(format!(
                 "add {}: the board has no such part; import-kicad-netlist adds the parts of add: import again into the same directory",
@@ -331,7 +336,10 @@ pub struct KiCadCutout {
 impl KiCadOutlineConstraint {
     /// Sized from the parts: no size, no polygon, no pieces.
     pub fn automatic(&self) -> bool {
-        self.width.is_none() && self.height.is_none() && self.polygon.is_none() && self.pieces.is_empty()
+        self.width.is_none()
+            && self.height.is_none()
+            && self.polygon.is_none()
+            && self.pieces.is_empty()
     }
 
     /// A polygon, or pieces one of which is: edge constraints then hold a
@@ -480,11 +488,16 @@ pub struct KiCadConstraintStatus {
 }
 
 pub fn read_placement_constraints(path: &Path) -> Result<KiCadPlacementConstraints, String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let constraints: KiCadPlacementConstraints =
-        serde_json::from_str(&text).map_err(|error| format!("invalid constraints {}: {error}", path.display()))?;
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let constraints: KiCadPlacementConstraints = serde_json::from_str(&text)
+        .map_err(|error| format!("invalid constraints {}: {error}", path.display()))?;
     if constraints.version != 1 {
-        return Err(format!("{}: unsupported constraints version {}", path.display(), constraints.version));
+        return Err(format!(
+            "{}: unsupported constraints version {}",
+            path.display(),
+            constraints.version
+        ));
     }
     Ok(constraints)
 }
@@ -512,7 +525,13 @@ pub(super) fn default_area_factor(pcb: &Expr) -> f64 {
             layers
                 .children()
                 .iter()
-                .filter(|layer| layer.children().get(1).and_then(Expr::atom).is_some_and(|name| name.ends_with(".Cu")))
+                .filter(|layer| {
+                    layer
+                        .children()
+                        .get(1)
+                        .and_then(Expr::atom)
+                        .is_some_and(|name| name.ends_with(".Cu"))
+                })
                 .count()
         })
         .unwrap_or(2);
@@ -537,7 +556,10 @@ pub(super) fn apply_outline(
     let (width, height) = match (outline.width, outline.height) {
         (Some(width), Some(height)) => (width, height),
         (None, None) => {
-            let area = part_area * outline.area_factor.unwrap_or_else(|| default_area_factor(pcb));
+            let area = part_area
+                * outline
+                    .area_factor
+                    .unwrap_or_else(|| default_area_factor(pcb));
             let aspect = outline.aspect.unwrap_or(1.5).max(0.1);
             let mut width = (area * aspect).sqrt();
             // Both sides within 100 mm keeps the cheap fabs' flat price
@@ -546,7 +568,10 @@ pub(super) fn apply_outline(
                 width = 100.0;
             }
             // Whole half millimetres, rounded up.
-            ((width * 2.0).ceil() / 2.0, (area / width * 2.0).ceil() / 2.0)
+            (
+                (width * 2.0).ceil() / 2.0,
+                (area / width * 2.0).ceil() / 2.0,
+            )
         }
         _ => return Err("outline needs both width and height, or neither (automatic size)".into()),
     };
@@ -554,9 +579,12 @@ pub(super) fn apply_outline(
         return Err("outline width and height must be positive".into());
     }
     let old = outline::board_loops(pcb).ok().map(|loops| {
-        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY], |corner, point| {
-            [corner[0].min(point[0]), corner[1].min(point[1])]
-        })
+        loops
+            .outline
+            .iter()
+            .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+                [corner[0].min(point[0]), corner[1].min(point[1])]
+            })
     });
     let corner = match (outline.x, outline.y, old) {
         (Some(x), Some(y), _) => [x, y],
@@ -570,9 +598,9 @@ pub(super) fn apply_outline(
                 .map(form_at)
                 .collect::<Result<_, _>>()?;
             let count = origins.len().max(1) as f64;
-            let center = origins
-                .iter()
-                .fold([0.0, 0.0], |sum, at| [sum[0] + at[0] / count, sum[1] + at[1] / count]);
+            let center = origins.iter().fold([0.0, 0.0], |sum, at| {
+                [sum[0] + at[0] / count, sum[1] + at[1] / count]
+            });
             [
                 x.unwrap_or(center[0] - width / 2.0),
                 y.unwrap_or(center[1] - height / 2.0),
@@ -603,13 +631,19 @@ pub(super) fn apply_outline(
 /// times their area at `aspect`, both sides within 100 mm when the area
 /// allows, in whole half millimetres.
 fn automatic_size(pcb: &Expr, outline: &KiCadOutlineConstraint, part_area: f64) -> (f64, f64) {
-    let area = part_area * outline.area_factor.unwrap_or_else(|| default_area_factor(pcb));
+    let area = part_area
+        * outline
+            .area_factor
+            .unwrap_or_else(|| default_area_factor(pcb));
     let aspect = outline.aspect.unwrap_or(1.5).max(0.1);
     let mut width = (area * aspect).sqrt();
     if width > 100.0 && area <= 100.0 * 100.0 {
         width = 100.0;
     }
-    ((width * 2.0).ceil() / 2.0, (area / width * 2.0).ceil() / 2.0)
+    (
+        (width * 2.0).ceil() / 2.0,
+        (area / width * 2.0).ceil() / 2.0,
+    )
 }
 
 /// A closed contour as written: its corners and the radius rounding
@@ -622,12 +656,23 @@ struct Contour {
 
 /// One corner of a contour, rounded: the arc's start, middle and end (all
 /// three the corner itself when it stays sharp).
-fn fillet(previous: [f64; 2], corner: [f64; 2], next: [f64; 2], radius: f64) -> Option<[[f64; 2]; 3]> {
-    let (la, lb) = (distance_squared(previous, corner).sqrt(), distance_squared(next, corner).sqrt());
+fn fillet(
+    previous: [f64; 2],
+    corner: [f64; 2],
+    next: [f64; 2],
+    radius: f64,
+) -> Option<[[f64; 2]; 3]> {
+    let (la, lb) = (
+        distance_squared(previous, corner).sqrt(),
+        distance_squared(next, corner).sqrt(),
+    );
     if radius <= 0.0 || la < 1.0e-9 || lb < 1.0e-9 {
         return None;
     }
-    let u = [(previous[0] - corner[0]) / la, (previous[1] - corner[1]) / la];
+    let u = [
+        (previous[0] - corner[0]) / la,
+        (previous[1] - corner[1]) / la,
+    ];
     let v = [(next[0] - corner[0]) / lb, (next[1] - corner[1]) / lb];
     let angle = (u[0] * v[0] + u[1] * v[1]).clamp(-1.0, 1.0).acos();
     // A straight run or a spike stays as it is.
@@ -647,7 +692,10 @@ fn fillet(previous: [f64; 2], corner: [f64; 2], next: [f64; 2], radius: f64) -> 
     let length = w[0].hypot(w[1]);
     let w = [w[0] / length, w[1] / length];
     let center_distance = radius / half.sin();
-    let center = [corner[0] + w[0] * center_distance, corner[1] + w[1] * center_distance];
+    let center = [
+        corner[0] + w[0] * center_distance,
+        corner[1] + w[1] * center_distance,
+    ];
     let mid = [center[0] - w[0] * radius, center[1] - w[1] * radius];
     Some([start, mid, end])
 }
@@ -658,7 +706,14 @@ fn contour_pieces(contour: &Contour) -> Vec<Result<[[f64; 2]; 2], [[f64; 2]; 3]>
     let corners = &contour.corners;
     let count = corners.len();
     let rounded: Vec<Option<[[f64; 2]; 3]>> = (0..count)
-        .map(|index| fillet(corners[(index + count - 1) % count], corners[index], corners[(index + 1) % count], contour.radius))
+        .map(|index| {
+            fillet(
+                corners[(index + count - 1) % count],
+                corners[index],
+                corners[(index + 1) % count],
+                contour.radius,
+            )
+        })
         .collect();
     let mut pieces = Vec::new();
     for index in 0..count {
@@ -684,7 +739,10 @@ fn contour_points(contour: &Contour) -> Vec<[f64; 2]> {
             Err(arc) => outline::arc_points(arc[0], arc[1], arc[2]),
         };
         for point in run {
-            if points.last().is_none_or(|last| distance_squared(*last, point) > 1.0e-18) {
+            if points
+                .last()
+                .is_none_or(|last| distance_squared(*last, point) > 1.0e-18)
+            {
                 points.push(point);
             }
         }
@@ -736,13 +794,25 @@ fn signed_area(points: &[[f64; 2]]) -> f64 {
 
 /// Whether segments ab and cd cross or touch.
 fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
-    let cross = |o: [f64; 2], p: [f64; 2], q: [f64; 2]| (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
-    let on = |o: [f64; 2], p: [f64; 2], q: [f64; 2]| {
-        q[0] >= o[0].min(p[0]) - 1.0e-9 && q[0] <= o[0].max(p[0]) + 1.0e-9 && q[1] >= o[1].min(p[1]) - 1.0e-9 && q[1] <= o[1].max(p[1]) + 1.0e-9
+    let cross = |o: [f64; 2], p: [f64; 2], q: [f64; 2]| {
+        (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0])
     };
-    let (d1, d2, d3, d4) = (cross(c, d, a), cross(c, d, b), cross(a, b, c), cross(a, b, d));
+    let on = |o: [f64; 2], p: [f64; 2], q: [f64; 2]| {
+        q[0] >= o[0].min(p[0]) - 1.0e-9
+            && q[0] <= o[0].max(p[0]) + 1.0e-9
+            && q[1] >= o[1].min(p[1]) - 1.0e-9
+            && q[1] <= o[1].max(p[1]) + 1.0e-9
+    };
+    let (d1, d2, d3, d4) = (
+        cross(c, d, a),
+        cross(c, d, b),
+        cross(a, b, c),
+        cross(a, b, d),
+    );
     let eps = 1.0e-12;
-    if ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps)) {
+    if ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps))
+        && ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
+    {
         return true;
     }
     (d1.abs() <= eps && on(c, d, a))
@@ -758,7 +828,10 @@ fn checked_polygon(points: &[[f64; 2]], what: &str) -> Result<Vec<[f64; 2]>, Str
     if points.len() > 1 && distance_squared(points[0], *points.last().unwrap()) < 1.0e-18 {
         points.pop();
     }
-    if points.iter().any(|point| !point[0].is_finite() || !point[1].is_finite()) {
+    if points
+        .iter()
+        .any(|point| !point[0].is_finite() || !point[1].is_finite())
+    {
         return Err(format!("{what}: coordinates must be numbers"));
     }
     points.dedup_by(|a, b| distance_squared(*a, *b) < 1.0e-18);
@@ -775,10 +848,18 @@ fn checked_polygon(points: &[[f64; 2]], what: &str) -> Result<Vec<[f64; 2]>, Str
             if j == i + 1 || (i == 0 && j == count - 1) {
                 continue;
             }
-            if segments_meet(points[i], points[(i + 1) % count], points[j], points[(j + 1) % count]) {
+            if segments_meet(
+                points[i],
+                points[(i + 1) % count],
+                points[j],
+                points[(j + 1) % count],
+            ) {
                 return Err(format!(
                     "{what} crosses itself: the side from {:?} to {:?} meets the side from {:?} to {:?}",
-                    points[i], points[(i + 1) % count], points[j], points[(j + 1) % count]
+                    points[i],
+                    points[(i + 1) % count],
+                    points[j],
+                    points[(j + 1) % count]
                 ));
             }
         }
@@ -795,9 +876,22 @@ fn radius_of(radius: Option<f64>, what: &str) -> Result<f64, String> {
 }
 
 fn bounding_box(points: &[[f64; 2]]) -> [f64; 4] {
-    points.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
-        [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
-    })
+    points.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |b, p| {
+            [
+                b[0].min(p[0]),
+                b[1].min(p[1]),
+                b[2].max(p[0]),
+                b[3].max(p[1]),
+            ]
+        },
+    )
 }
 
 /// Whether two closed polygons share any point (a side meets a side, or
@@ -827,17 +921,29 @@ struct ShapedPiece {
     cutouts: Vec<(Contour, bool)>,
 }
 
-fn shaped_piece(piece: &KiCadOutlineConstraint, what: &str, nested: bool, pcb: &Expr, part_area: f64) -> Result<ShapedPiece, String> {
+fn shaped_piece(
+    piece: &KiCadOutlineConstraint,
+    what: &str,
+    nested: bool,
+    pcb: &Expr,
+    part_area: f64,
+) -> Result<ShapedPiece, String> {
     if nested && !piece.pieces.is_empty() {
         return Err(format!("{what}: a piece cannot have pieces"));
     }
-    if (piece.shrink || piece.area_factor.is_some() || piece.aspect.is_some()) && (nested || !piece.automatic()) {
-        return Err(format!("{what}: area_factor, aspect and shrink are for an outline sized from the parts (no width, height or polygon)"));
+    if (piece.shrink || piece.area_factor.is_some() || piece.aspect.is_some())
+        && (nested || !piece.automatic())
+    {
+        return Err(format!(
+            "{what}: area_factor, aspect and shrink are for an outline sized from the parts (no width, height or polygon)"
+        ));
     }
     let radius = radius_of(piece.corner_radius, what)?;
     let corners = match (&piece.polygon, piece.width, piece.height) {
         (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
-            return Err(format!("{what}: give a polygon or width and height, not both"))
+            return Err(format!(
+                "{what}: give a polygon or width and height, not both"
+            ));
         }
         (Some(polygon), None, None) => checked_polygon(polygon, &format!("{what} polygon"))?,
         (None, Some(width), Some(height)) => {
@@ -848,7 +954,9 @@ fn shaped_piece(piece: &KiCadOutlineConstraint, what: &str, nested: bool, pcb: &
         }
         (None, None, None) if !nested => {
             if !piece.cutouts.is_empty() {
-                return Err(format!("{what}: cutouts need a sized outline (width and height, or a polygon)"));
+                return Err(format!(
+                    "{what}: cutouts need a sized outline (width and height, or a polygon)"
+                ));
             }
             let (width, height) = automatic_size(pcb, piece, part_area);
             vec![[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]]
@@ -858,8 +966,15 @@ fn shaped_piece(piece: &KiCadOutlineConstraint, what: &str, nested: bool, pcb: &
     };
     // The corners' box moves to the piece's own offset.
     let own = bounding_box(&corners);
-    let offset = if nested { [piece.x.unwrap_or(0.0), piece.y.unwrap_or(0.0)] } else { [0.0, 0.0] };
-    let corners: Vec<[f64; 2]> = corners.iter().map(|p| [p[0] - own[0] + offset[0], p[1] - own[1] + offset[1]]).collect();
+    let offset = if nested {
+        [piece.x.unwrap_or(0.0), piece.y.unwrap_or(0.0)]
+    } else {
+        [0.0, 0.0]
+    };
+    let corners: Vec<[f64; 2]> = corners
+        .iter()
+        .map(|p| [p[0] - own[0] + offset[0], p[1] - own[1] + offset[1]])
+        .collect();
     let mut cutouts = Vec::new();
     for (number, cutout) in piece.cutouts.iter().enumerate() {
         let name = format!("{what} cutout {}", number + 1);
@@ -867,12 +982,21 @@ fn shaped_piece(piece: &KiCadOutlineConstraint, what: &str, nested: bool, pcb: &
         let absolute = match cutout.origin.as_deref() {
             None | Some("board") => false,
             Some("absolute") => true,
-            Some(other) => return Err(format!("unknown cutout origin {other:?} (board or absolute)")),
+            Some(other) => {
+                return Err(format!(
+                    "unknown cutout origin {other:?} (board or absolute)"
+                ));
+            }
         };
         let corners = match (&cutout.polygon, cutout.x, cutout.y) {
             (Some(polygon), None, None) => checked_polygon(polygon, &name)?,
             (None, Some(x), Some(y)) => {
-                let (x0, x1, y0, y1) = (x[0].min(x[1]), x[0].max(x[1]), y[0].min(y[1]), y[0].max(y[1]));
+                let (x0, x1, y0, y1) = (
+                    x[0].min(x[1]),
+                    x[0].max(x[1]),
+                    y[0].min(y[1]),
+                    y[0].max(y[1]),
+                );
                 if !(x1 > x0 && y1 > y0) {
                     return Err(format!("{name} is empty"));
                 }
@@ -882,13 +1006,21 @@ fn shaped_piece(piece: &KiCadOutlineConstraint, what: &str, nested: bool, pcb: &
         };
         cutouts.push((Contour { corners, radius }, absolute));
     }
-    Ok(ShapedPiece { bounds: bounding_box(&corners), contour: Contour { corners, radius }, cutouts })
+    Ok(ShapedPiece {
+        bounds: bounding_box(&corners),
+        contour: Contour { corners, radius },
+        cutouts,
+    })
 }
 
 /// Writes an outline that is not a plain rectangle (a polygon, rounded
 /// corners, cutouts, several pieces) as Edge.Cuts lines and arcs,
 /// replacing the board's own. Returns the size of its bounding box.
-fn apply_shaped_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint, part_area: f64) -> Result<[f64; 2], String> {
+fn apply_shaped_outline(
+    pcb: &mut Expr,
+    outline: &KiCadOutlineConstraint,
+    part_area: f64,
+) -> Result<[f64; 2], String> {
     let mut pieces = Vec::new();
     if outline.pieces.is_empty() {
         pieces.push(shaped_piece(outline, "outline", false, pcb, part_area)?);
@@ -905,17 +1037,39 @@ fn apply_shaped_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint, part_a
             return Err("outline: with pieces, each piece carries its own shape (width and height or polygon, corner_radius, cutouts); the outline only x and y".into());
         }
         for (number, piece) in outline.pieces.iter().enumerate() {
-            pieces.push(shaped_piece(piece, &format!("outline piece {}", number + 1), true, pcb, part_area)?);
+            pieces.push(shaped_piece(
+                piece,
+                &format!("outline piece {}", number + 1),
+                true,
+                pcb,
+                part_area,
+            )?);
         }
     }
-    let set = pieces.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, piece| {
-        [b[0].min(piece.bounds[0]), b[1].min(piece.bounds[1]), b[2].max(piece.bounds[2]), b[3].max(piece.bounds[3])]
-    });
+    let set = pieces.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |b, piece| {
+            [
+                b[0].min(piece.bounds[0]),
+                b[1].min(piece.bounds[1]),
+                b[2].max(piece.bounds[2]),
+                b[3].max(piece.bounds[3]),
+            ]
+        },
+    );
     let (width, height) = (set[2] - set[0], set[3] - set[1]);
     let old = outline::board_loops(pcb).ok().map(|loops| {
-        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY], |corner, point| {
-            [corner[0].min(point[0]), corner[1].min(point[1])]
-        })
+        loops
+            .outline
+            .iter()
+            .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+                [corner[0].min(point[0]), corner[1].min(point[1])]
+            })
     });
     let corner = match (outline.x, outline.y, old) {
         (Some(x), Some(y), _) => [x, y],
@@ -928,24 +1082,42 @@ fn apply_shaped_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint, part_a
                 .map(form_at)
                 .collect::<Result<_, _>>()?;
             let count = origins.len().max(1) as f64;
-            let center = origins
-                .iter()
-                .fold([0.0, 0.0], |sum, at| [sum[0] + at[0] / count, sum[1] + at[1] / count]);
-            [x.unwrap_or(center[0] - width / 2.0), y.unwrap_or(center[1] - height / 2.0)]
+            let center = origins.iter().fold([0.0, 0.0], |sum, at| {
+                [sum[0] + at[0] / count, sum[1] + at[1] / count]
+            });
+            [
+                x.unwrap_or(center[0] - width / 2.0),
+                y.unwrap_or(center[1] - height / 2.0),
+            ]
         }
     };
     let shift = [corner[0] - set[0], corner[1] - set[1]];
-    let moved = |points: &[[f64; 2]], by: [f64; 2]| -> Vec<[f64; 2]> { points.iter().map(|p| [p[0] + by[0], p[1] + by[1]]).collect() };
+    let moved = |points: &[[f64; 2]], by: [f64; 2]| -> Vec<[f64; 2]> {
+        points
+            .iter()
+            .map(|p| [p[0] + by[0], p[1] + by[1]])
+            .collect()
+    };
     let mut contours: Vec<Contour> = Vec::new();
     let mut flat_pieces: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut flat_cutouts: Vec<(Vec<[f64; 2]>, String)> = Vec::new();
     for (index, piece) in pieces.iter().enumerate() {
-        let name = if pieces.len() > 1 { format!("outline piece {}", index + 1) } else { "outline".to_string() };
-        let contour = Contour { corners: moved(&piece.contour.corners, shift), radius: piece.contour.radius };
+        let name = if pieces.len() > 1 {
+            format!("outline piece {}", index + 1)
+        } else {
+            "outline".to_string()
+        };
+        let contour = Contour {
+            corners: moved(&piece.contour.corners, shift),
+            radius: piece.contour.radius,
+        };
         let flat = contour_points(&contour);
         for (other, earlier) in flat_pieces.iter().enumerate() {
             if polygons_meet(&flat, earlier) {
-                return Err(format!("{name} meets outline piece {}: pieces may not overlap or touch", other + 1));
+                return Err(format!(
+                    "{name} meets outline piece {}: pieces may not overlap or touch",
+                    other + 1
+                ));
             }
         }
         contours.push(contour);
@@ -954,17 +1126,31 @@ fn apply_shaped_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint, part_a
         for (number, (cutout, absolute)) in piece.cutouts.iter().enumerate() {
             let cutout_name = format!("{name} cutout {}", number + 1);
             let by = if *absolute { [0.0, 0.0] } else { piece_corner };
-            let cutout = Contour { corners: moved(&cutout.corners, by), radius: cutout.radius };
+            let cutout = Contour {
+                corners: moved(&cutout.corners, by),
+                radius: cutout.radius,
+            };
             let hole = contour_points(&cutout);
             let crosses = (0..hole.len()).any(|i| {
-                (0..flat.len()).any(|j| segments_meet(hole[i], hole[(i + 1) % hole.len()], flat[j], flat[(j + 1) % flat.len()]))
+                (0..flat.len()).any(|j| {
+                    segments_meet(
+                        hole[i],
+                        hole[(i + 1) % hole.len()],
+                        flat[j],
+                        flat[(j + 1) % flat.len()],
+                    )
+                })
             });
             if crosses || !point_in_polygon(hole[0], &flat) {
-                return Err(format!("{cutout_name} does not lie inside its outline (coordinates are relative to the outline's top-left corner unless origin is absolute)"));
+                return Err(format!(
+                    "{cutout_name} does not lie inside its outline (coordinates are relative to the outline's top-left corner unless origin is absolute)"
+                ));
             }
             for (earlier, earlier_name) in &flat_cutouts {
                 if polygons_meet(&hole, earlier) {
-                    return Err(format!("{cutout_name} meets {earlier_name}: cutouts may not overlap or touch"));
+                    return Err(format!(
+                        "{cutout_name} meets {earlier_name}: cutouts may not overlap or touch"
+                    ));
                 }
             }
             flat_cutouts.push((hole, cutout_name));
@@ -994,12 +1180,16 @@ fn apply_shaped_outline(pcb: &mut Expr, outline: &KiCadOutlineConstraint, part_a
 pub(super) const KEEPOUT_NAME: &str = "constraint keepout";
 
 /// Replaces the board's constraint keepouts by the given ones.
-pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]) -> Result<(), String> {
+pub(super) fn apply_keepouts(
+    pcb: &mut Expr,
+    keepouts: &[KiCadKeepoutConstraint],
+) -> Result<(), String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
     items.retain(|item| {
-        !(item.head() == Some("zone") && form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)))
+        !(item.head() == Some("zone")
+            && form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)))
     });
     if keepouts.is_empty() {
         return Ok(());
@@ -1015,10 +1205,20 @@ pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]
         let offset = match keepout.origin.as_deref() {
             None | Some("board") => corner,
             Some("absolute") => [0.0, 0.0],
-            Some(other) => return Err(format!("unknown keepout origin {other:?} (board or absolute)")),
+            Some(other) => {
+                return Err(format!(
+                    "unknown keepout origin {other:?} (board or absolute)"
+                ));
+            }
         };
-        let (x0, x1) = (offset[0] + keepout.x[0].min(keepout.x[1]), offset[0] + keepout.x[0].max(keepout.x[1]));
-        let (y0, y1) = (offset[1] + keepout.y[0].min(keepout.y[1]), offset[1] + keepout.y[0].max(keepout.y[1]));
+        let (x0, x1) = (
+            offset[0] + keepout.x[0].min(keepout.x[1]),
+            offset[0] + keepout.x[0].max(keepout.x[1]),
+        );
+        let (y0, y1) = (
+            offset[1] + keepout.y[0].min(keepout.y[1]),
+            offset[1] + keepout.y[0].max(keepout.y[1]),
+        );
         if !(x1 > x0 && y1 > y0) {
             return Err(format!("keepout {} is empty", number + 1));
         }
@@ -1027,9 +1227,17 @@ pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]
             (Some("back"), _) => "\"B.Cu\"",
             (None | Some("both"), false) => "\"F.Cu\" \"B.Cu\"",
             (None | Some("both"), true) => "\"*.Cu\"",
-            (Some(other), _) => return Err(format!("unknown keepout side {other:?} (front, back or both)")),
+            (Some(other), _) => {
+                return Err(format!(
+                    "unknown keepout side {other:?} (front, back or both)"
+                ));
+            }
         };
-        let copper = if keepout.copper { "not_allowed" } else { "allowed" };
+        let copper = if keepout.copper {
+            "not_allowed"
+        } else {
+            "allowed"
+        };
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
         for byte in format!("{KEEPOUT_NAME} {number} {x0} {y0} {x1} {y1}").bytes() {
             hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
@@ -1056,12 +1264,18 @@ pub(super) fn apply_keepouts(pcb: &mut Expr, keepouts: &[KiCadKeepoutConstraint]
 }
 
 /// Flips the footprints `back` and `front` name onto that side.
-pub(super) fn apply_sides(pcb: &mut Expr, constraints: &KiCadPlacementConstraints) -> Result<(), String> {
+pub(super) fn apply_sides(
+    pcb: &mut Expr,
+    constraints: &KiCadPlacementConstraints,
+) -> Result<(), String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
     let mut used = vec![false; constraints.back.len() + constraints.front.len()];
-    for item in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
+    for item in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
         let reference = footprint_reference(item).unwrap_or_default();
         let mut side = None;
         for (index, (pattern, wanted)) in constraints
@@ -1074,7 +1288,9 @@ pub(super) fn apply_sides(pcb: &mut Expr, constraints: &KiCadPlacementConstraint
             if glob_matches(pattern, &reference) {
                 used[index] = true;
                 if side.is_some_and(|side| side != wanted) {
-                    return Err(format!("{reference} is named for both the front and the back"));
+                    return Err(format!(
+                        "{reference} is named for both the front and the back"
+                    ));
                 }
                 side = Some(wanted);
             }
@@ -1086,7 +1302,12 @@ pub(super) fn apply_sides(pcb: &mut Expr, constraints: &KiCadPlacementConstraint
         }
     }
     if let Some(index) = used.iter().position(|used| !used) {
-        let pattern = constraints.back.iter().chain(&constraints.front).nth(index).unwrap();
+        let pattern = constraints
+            .back
+            .iter()
+            .chain(&constraints.front)
+            .nth(index)
+            .unwrap();
         return Err(format!("side constraint {pattern:?} matches no part"));
     }
     Ok(())
@@ -1098,13 +1319,17 @@ fn edge(name: &str) -> Result<Edge, String> {
         "right" => Ok(Edge::Right),
         "top" => Ok(Edge::Top),
         "bottom" => Ok(Edge::Bottom),
-        other => Err(format!("unknown edge {other:?} (left, right, top, bottom or any)")),
+        other => Err(format!(
+            "unknown edge {other:?} (left, right, top, bottom or any)"
+        )),
     }
 }
 
 /// Natural order of references: D2 before D10.
 pub(super) fn natural(reference: &str) -> (String, u64, String) {
-    let digits = reference.find(|c: char| c.is_ascii_digit()).unwrap_or(reference.len());
+    let digits = reference
+        .find(|c: char| c.is_ascii_digit())
+        .unwrap_or(reference.len());
     let end = reference[digits..]
         .find(|c: char| !c.is_ascii_digit())
         .map_or(reference.len(), |end| digits + end);
@@ -1124,7 +1349,14 @@ fn apply_rows(
     footprints: usize,
     pad_boxes: &[Vec<[f64; 4]>],
     rows: &[KiCadRowConstraint],
-) -> Result<(BTreeMap<usize, usize>, BTreeMap<usize, RowPlace>, Vec<usize>), String> {
+) -> Result<
+    (
+        BTreeMap<usize, usize>,
+        BTreeMap<usize, RowPlace>,
+        Vec<usize>,
+    ),
+    String,
+> {
     let mut leaders = BTreeMap::new();
     let mut places = BTreeMap::new();
     // The first parts of the user's rows (the placer's own bus rows turn
@@ -1133,7 +1365,9 @@ fn apply_rows(
     for row in rows {
         let mut members: Vec<usize> = Vec::new();
         for pattern in &row.parts {
-            let mut parts: Vec<usize> = (0..footprints).filter(|index| glob_matches(pattern, &references[*index])).collect();
+            let mut parts: Vec<usize> = (0..footprints)
+                .filter(|index| glob_matches(pattern, &references[*index]))
+                .collect();
             if parts.is_empty() {
                 return Err(format!("row part {pattern:?} matches no part"));
             }
@@ -1160,7 +1394,10 @@ fn apply_rows(
         let columns = row.columns.unwrap_or(members.len());
         let line_pitch = row.row_pitch_mm.unwrap_or(row.pitch_mm);
         if columns == 0 || !(line_pitch > 0.0) {
-            return Err(format!("row {:?}: columns and row_pitch_mm must be positive", row.parts));
+            return Err(format!(
+                "row {:?}: columns and row_pitch_mm must be positive",
+                row.parts
+            ));
         }
         let leader = members[0];
         if !row.turns {
@@ -1178,10 +1415,17 @@ fn apply_rows(
         let place_of = |place: usize| {
             let along = (place % columns) as f64 * row.pitch_mm;
             let line = (place / columns) as f64 * line_pitch;
-            [axis[0] * along + across[0] * line, axis[1] * along + across[1] * line]
+            [
+                axis[0] * along + across[0] * line,
+                axis[1] * along + across[1] * line,
+            ]
         };
         let leader_pose = problem.poses[leader];
-        let turns: &[f64] = if row.turns { &[0.0, 180.0, 90.0, 270.0] } else { &[0.0, 180.0] };
+        let turns: &[f64] = if row.turns {
+            &[0.0, 180.0, 90.0, 270.0]
+        } else {
+            &[0.0, 180.0]
+        };
         let mismatch = |turn: f64| -> f64 {
             members
                 .iter()
@@ -1189,7 +1433,8 @@ fn apply_rows(
                 .map(|(place, member)| {
                     let offset = core::problem::rotate(place_of(place), turn);
                     let at = problem.poses[*member].position;
-                    (leader_pose.position[0] + offset[0] - at[0]).powi(2) + (leader_pose.position[1] + offset[1] - at[1]).powi(2)
+                    (leader_pose.position[0] + offset[0] - at[0]).powi(2)
+                        + (leader_pose.position[1] + offset[1] - at[1]).powi(2)
                 })
                 .sum()
         };
@@ -1207,11 +1452,18 @@ fn apply_rows(
             }
         }
         let angle = leader_pose.angle + turn;
-        let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut body = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         let mut carried = problem.components[leader].clone();
         // Where a member blocks with shaped boxes (`hollow`), the row
         // blocks with every member's: its own boxes, or its whole body.
-        let shaped = members.iter().any(|member| !problem.components[*member].hollow.is_empty());
+        let shaped = members
+            .iter()
+            .any(|member| !problem.components[*member].hollow.is_empty());
         carried.hollow.clear();
         carried.tight_hollow.clear();
         carried.pins.clear();
@@ -1225,35 +1477,57 @@ fn apply_rows(
             }
             let component = &problem.components[*member];
             if component.side != side {
-                return Err(format!("row {:?}: all parts must be on one side", row.parts));
+                return Err(format!(
+                    "row {:?}: all parts must be on one side",
+                    row.parts
+                ));
             }
             // The member's place in the leader's own frame.
             let offset = core::problem::rotate(place_of(place), angle);
             let shift = |boxes: &[[f64; 4]]| -> Vec<[f64; 4]> {
                 boxes
                     .iter()
-                    .map(|b| [b[0] + offset[0], b[1] + offset[1], b[2] + offset[0], b[3] + offset[1]])
+                    .map(|b| {
+                        [
+                            b[0] + offset[0],
+                            b[1] + offset[1],
+                            b[2] + offset[0],
+                            b[3] + offset[1],
+                        ]
+                    })
                     .collect()
             };
-            let center = [component.body_center[0] + offset[0], component.body_center[1] + offset[1]];
+            let center = [
+                component.body_center[0] + offset[0],
+                component.body_center[1] + offset[1],
+            ];
             body = [
                 body[0].min(center[0] - component.body_size[0] / 2.0),
                 body[1].min(center[1] - component.body_size[1] / 2.0),
                 body[2].max(center[0] + component.body_size[0] / 2.0),
                 body[3].max(center[1] + component.body_size[1] / 2.0),
             ];
-            carried.pins.extend(component.pins.iter().map(|pin| core::Pin {
-                offset: [pin.offset[0] + offset[0], pin.offset[1] + offset[1]],
-                net: pin.net,
-            }));
+            carried
+                .pins
+                .extend(component.pins.iter().map(|pin| core::Pin {
+                    offset: [pin.offset[0] + offset[0], pin.offset[1] + offset[1]],
+                    net: pin.net,
+                }));
             carried.far_side.extend(shift(&component.far_side));
             carried.far_copper.extend(shift(&component.far_copper));
-            carried.far_courtyard.extend(shift(&component.far_courtyard));
+            carried
+                .far_courtyard
+                .extend(shift(&component.far_courtyard));
             carried.pads.extend(shift(&pad_boxes[*member]));
             if shaped {
                 if component.hollow.is_empty() {
                     let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
-                    carried.hollow.push([center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]);
+                    carried.hollow.push([
+                        center[0] - half[0],
+                        center[1] - half[1],
+                        center[0] + half[0],
+                        center[1] + half[1],
+                    ]);
                 } else {
                     carried.hollow.extend(shift(&component.hollow));
                 }
@@ -1270,12 +1544,15 @@ fn apply_rows(
                         half: [component.body_size[0] / 2.0, component.body_size[1] / 2.0],
                     },
                 );
-                problem.constraints.followers.push(core::constraints::Follower {
-                    part: *member,
-                    leader,
-                    offset,
-                    angle: 0.0,
-                });
+                problem
+                    .constraints
+                    .followers
+                    .push(core::constraints::Follower {
+                        part: *member,
+                        leader,
+                        offset,
+                        angle: 0.0,
+                    });
             }
         }
         carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
@@ -1327,10 +1604,17 @@ struct RowPlace {
 /// in vain first (a minute on an 80-part keyboard) and then report the
 /// part as unplaced. The smallest body counts (the tight one, without the
 /// courtyard's margin, where the part has one).
-fn region_holds(component: &core::Component, reference: &str, region: [f64; 4]) -> Result<(), String> {
+fn region_holds(
+    component: &core::Component,
+    reference: &str,
+    region: [f64; 4],
+) -> Result<(), String> {
     let mut size = component.body_size;
     if let Some(tight) = component.tight {
-        size = [size[0].min(tight[2] - tight[0]), size[1].min(tight[3] - tight[1])];
+        size = [
+            size[0].min(tight[2] - tight[0]),
+            size[1].min(tight[3] - tight[1]),
+        ];
     }
     let quarter = |angle: f64| {
         let turns = angle.rem_euclid(360.0) / 90.0;
@@ -1349,7 +1633,11 @@ fn region_holds(component: &core::Component, reference: &str, region: [f64; 4]) 
     }
     let (width, height) = (region[2] - region[0], region[3] - region[1]);
     let fits = turns.iter().any(|turn| {
-        let (w, h) = if *turn == 0 { (size[0], size[1]) } else { (size[1], size[0]) };
+        let (w, h) = if *turn == 0 {
+            (size[0], size[1])
+        } else {
+            (size[1], size[0])
+        };
         w <= width + 1.0e-6 && h <= height + 1.0e-6
     });
     if fits {
@@ -1377,7 +1665,8 @@ pub(super) fn apply_constraints(
     weight: f64,
 ) -> Result<Vec<String>, String> {
     let footprints = pads.len();
-    let (leaders, places, user_rows) = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
+    let (leaders, places, user_rows) =
+        apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
     // Constraints no placement can keep (a region smaller than its part, a
     // row longer than the board): said at the end, all of them, with the
     // room the board would need.
@@ -1405,8 +1694,13 @@ pub(super) fn apply_constraints(
     // of a task that writes them only for the copies at an edge bound
     // other copies (the molecules' fixed J1, J3 and J4 missed 17 edges by
     // whole tile pitches).
-    let instance = |reference: &str, uuid: Option<&str>, used: &mut BTreeMap<String, usize>| -> Result<usize, String> {
-        let parts: Vec<usize> = (0..footprints).filter(|index| references[*index] == reference).collect();
+    let instance = |reference: &str,
+                    uuid: Option<&str>,
+                    used: &mut BTreeMap<String, usize>|
+     -> Result<usize, String> {
+        let parts: Vec<usize> = (0..footprints)
+            .filter(|index| references[*index] == reference)
+            .collect();
         let index = if let Some(uuid) = uuid {
             if parts.is_empty() {
                 return find(reference);
@@ -1435,7 +1729,9 @@ pub(super) fn apply_constraints(
     // Globs skip the parts rows carry (their first part stands for them).
     let matching = |pattern: &str| -> Vec<usize> {
         (0..footprints)
-            .filter(|index| !leaders.contains_key(index) && glob_matches(pattern, &references[*index]))
+            .filter(|index| {
+                !leaders.contains_key(index) && glob_matches(pattern, &references[*index])
+            })
             .collect()
     };
     let mut warnings = Vec::new();
@@ -1448,7 +1744,10 @@ pub(super) fn apply_constraints(
         let mut angles = rotation.angles.clone();
         angles.extend(rotation.angle);
         if angles.is_empty() {
-            return Err(format!("rotation constraint for {} names no angle", rotation.part));
+            return Err(format!(
+                "rotation constraint for {} names no angle",
+                rotation.part
+            ));
         }
         let angles: Vec<f64> = angles.iter().map(|angle| angle.rem_euclid(360.0)).collect();
         let current = problem.poses[index].angle;
@@ -1462,7 +1761,12 @@ pub(super) fn apply_constraints(
             };
         }
         problem.components[index].angle_options = angles.clone();
-        problem.constraints.kept.push(core::constraints::Kept { kind: "rotation", part: index, side: None, angles });
+        problem.constraints.kept.push(core::constraints::Kept {
+            kind: "rotation",
+            part: index,
+            side: None,
+            angles,
+        });
         constrained.insert(index);
     }
     // Parts put somewhere in words become edge and region constraints;
@@ -1473,7 +1777,9 @@ pub(super) fn apply_constraints(
         "right" => Ok("left"),
         "top" => Ok("bottom"),
         "bottom" => Ok("top"),
-        other => Err(format!("unknown device_front {other:?} (left, right, top or bottom)")),
+        other => Err(format!(
+            "unknown device_front {other:?} (left, right, top or bottom)"
+        )),
     };
     let mut used = BTreeMap::new();
     for entry in &constraints.place {
@@ -1482,18 +1788,26 @@ pub(super) fn apply_constraints(
             (Some(at), None, None) => {
                 let word = match at.as_str() {
                     "front" | "rear" => {
-                        let front = constraints
-                            .device_front
-                            .as_deref()
-                            .ok_or_else(|| format!("place {}: {at:?} needs device_front", entry.part))?;
+                        let front = constraints.device_front.as_deref().ok_or_else(|| {
+                            format!("place {}: {at:?} needs device_front", entry.part)
+                        })?;
                         opposite(front)?;
-                        if at == "front" { front.to_string() } else { opposite(front)?.to_string() }
+                        if at == "front" {
+                            front.to_string()
+                        } else {
+                            opposite(front)?.to_string()
+                        }
                     }
                     other => other.to_string(),
                 };
                 let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
                 let region = |x0: f64, y0: f64, x1: f64, y1: f64| {
-                    [bounds[0] + x0 * width, bounds[1] + y0 * height, bounds[0] + x1 * width, bounds[1] + y1 * height]
+                    [
+                        bounds[0] + x0 * width,
+                        bounds[1] + y0 * height,
+                        bounds[0] + x1 * width,
+                        bounds[1] + y1 * height,
+                    ]
                 };
                 let (edges, area): (Vec<Edge>, Option<[f64; 4]>) = match word.as_str() {
                     "left" | "right" | "top" | "bottom" => (vec![edge(&word)?], None),
@@ -1501,7 +1815,10 @@ pub(super) fn apply_constraints(
                     "top-right" => (vec![Edge::Top, Edge::Right], None),
                     "bottom-left" => (vec![Edge::Bottom, Edge::Left], None),
                     "bottom-right" => (vec![Edge::Bottom, Edge::Right], None),
-                    "center" => (Vec::new(), Some(region(1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0))),
+                    "center" => (
+                        Vec::new(),
+                        Some(region(1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0)),
+                    ),
                     "left-half" => (Vec::new(), Some(region(0.0, 0.0, 0.5, 1.0))),
                     "right-half" => (Vec::new(), Some(region(0.5, 0.0, 1.0, 1.0))),
                     "top-half" => (Vec::new(), Some(region(0.0, 0.0, 1.0, 0.5))),
@@ -1510,7 +1827,7 @@ pub(super) fn apply_constraints(
                         return Err(format!(
                             "place {}: unknown position {other:?} (an edge, a corner like top-left, center, a half like left-half, front or rear)",
                             entry.part
-                        ))
+                        ));
                     }
                 };
                 for side in edges {
@@ -1525,9 +1842,16 @@ pub(super) fn apply_constraints(
                 let offset = match entry.origin.as_deref() {
                     None | Some("board") => [bounds[0], bounds[1]],
                     Some("absolute") => [0.0, 0.0],
-                    Some(other) => return Err(format!("unknown place origin {other:?} (board or absolute)")),
+                    Some(other) => {
+                        return Err(format!(
+                            "unknown place origin {other:?} (board or absolute)"
+                        ));
+                    }
                 };
-                let angle = entry.angle.unwrap_or(problem.poses[index].angle).rem_euclid(360.0);
+                let angle = entry
+                    .angle
+                    .unwrap_or(problem.poses[index].angle)
+                    .rem_euclid(360.0);
                 problem.poses[index] = core::Pose {
                     position: [offset[0] + x, offset[1] + y],
                     angle,
@@ -1538,7 +1862,7 @@ pub(super) fn apply_constraints(
                 return Err(format!(
                     "place {}: give either `at` or both `x` and `y`",
                     entry.part
-                ))
+                ));
             }
         }
     }
@@ -1546,7 +1870,10 @@ pub(super) fn apply_constraints(
     for entry in &constraints.edge {
         let index = instance(&entry.part, entry.uuid.as_deref(), &mut used)?;
         let reach = entry.max_mm.unwrap_or(if entry.flush { 0.0 } else { 1.0 });
-        problem.constraints.edges.push((index, edge(&entry.edge)?, reach.max(0.0) + 1.0e-3));
+        problem
+            .constraints
+            .edges
+            .push((index, edge(&entry.edge)?, reach.max(0.0) + 1.0e-3));
         if let Some(overhang) = &entry.overhang {
             let side = match overhang.get("edge").and_then(|edge| edge.as_str()) {
                 Some(name) => edge(name)?,
@@ -1561,9 +1888,15 @@ pub(super) fn apply_constraints(
             // Only orientations that point the keepout at that edge.
             let component = &problem.components[index];
             let pointing = |angle: f64| {
-                let box_center = component.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], angle);
+                let box_center = component.offset(
+                    [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+                    angle,
+                );
                 let body_center = component.offset(component.body_center, angle);
-                let direction = [box_center[0] - body_center[0], box_center[1] - body_center[1]];
+                let direction = [
+                    box_center[0] - body_center[0],
+                    box_center[1] - body_center[1],
+                ];
                 match side {
                     Edge::Left => direction[0] < -direction[1].abs(),
                     Edge::Right => direction[0] > direction[1].abs(),
@@ -1571,14 +1904,23 @@ pub(super) fn apply_constraints(
                     Edge::Bottom => direction[1] > direction[0].abs(),
                 }
             };
-            let angles: Vec<f64> = component.angle_options.iter().copied().filter(|angle| pointing(*angle)).collect();
+            let angles: Vec<f64> = component
+                .angle_options
+                .iter()
+                .copied()
+                .filter(|angle| pointing(*angle))
+                .collect();
             if angles.is_empty() {
                 return Err(format!(
                     "edge constraint for {}: no allowed rotation points its keepout at the {} edge",
-                    entry.part, side.name()
+                    entry.part,
+                    side.name()
                 ));
             }
-            if !angles.iter().any(|angle| (angle - problem.poses[index].angle).abs() < 1.0e-6) {
+            if !angles
+                .iter()
+                .any(|angle| (angle - problem.poses[index].angle).abs() < 1.0e-6)
+            {
                 let center = component.center(problem.poses[index]);
                 problem.poses[index] = core::Pose {
                     position: component.position_for_center(center, angles[0]),
@@ -1606,7 +1948,12 @@ pub(super) fn apply_constraints(
                     Edge::Bottom => direction[1] > 0.5,
                 }
             };
-            let angles: Vec<f64> = component.angle_options.iter().copied().filter(|angle| facing(*angle)).collect();
+            let angles: Vec<f64> = component
+                .angle_options
+                .iter()
+                .copied()
+                .filter(|angle| facing(*angle))
+                .collect();
             if angles.is_empty() {
                 return Err(format!(
                     "edge constraint for {}: no allowed rotation opens it towards the {} edge",
@@ -1614,7 +1961,10 @@ pub(super) fn apply_constraints(
                     side.name()
                 ));
             }
-            if !angles.iter().any(|angle| (angle - problem.poses[index].angle).abs() < 1.0e-6) {
+            if !angles
+                .iter()
+                .any(|angle| (angle - problem.poses[index].angle).abs() < 1.0e-6)
+            {
                 let center = component.center(problem.poses[index]);
                 problem.poses[index] = core::Pose {
                     position: component.position_for_center(center, angles[0]),
@@ -1622,7 +1972,12 @@ pub(super) fn apply_constraints(
                 };
             }
             problem.components[index].angle_options = angles.clone();
-            problem.constraints.kept.push(core::constraints::Kept { kind: "opening_outwards", part: index, side: None, angles });
+            problem.constraints.kept.push(core::constraints::Kept {
+                kind: "opening_outwards",
+                part: index,
+                side: None,
+                angles,
+            });
         }
         constrained.insert(index);
     }
@@ -1630,12 +1985,19 @@ pub(super) fn apply_constraints(
         let offset = match entry.origin.as_deref() {
             None | Some("board") => [bounds[0], bounds[1]],
             Some("absolute") => [0.0, 0.0],
-            Some(other) => return Err(format!("unknown region origin {other:?} (board or absolute)")),
+            Some(other) => {
+                return Err(format!(
+                    "unknown region origin {other:?} (board or absolute)"
+                ));
+            }
         };
         let region = match (&entry.at, entry.x, entry.y) {
-            (None, Some(x), Some(y)) => {
-                [offset[0] + x[0].min(x[1]), offset[1] + y[0].min(y[1]), offset[0] + x[0].max(x[1]), offset[1] + y[0].max(y[1])]
-            }
+            (None, Some(x), Some(y)) => [
+                offset[0] + x[0].min(x[1]),
+                offset[1] + y[0].min(y[1]),
+                offset[0] + x[0].max(x[1]),
+                offset[1] + y[0].max(y[1]),
+            ],
             (Some(at), None, None) => {
                 let [x0, y0, x1, y1] = match at.as_str() {
                     "left-half" => [0.0, 0.0, 0.5, 1.0],
@@ -1647,18 +2009,30 @@ pub(super) fn apply_constraints(
                         return Err(format!(
                             "region {:?}: unknown at {other:?} (left-half, right-half, top-half, bottom-half or center)",
                             entry.parts
-                        ))
+                        ));
                     }
                 };
                 let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
-                [bounds[0] + x0 * width, bounds[1] + y0 * height, bounds[0] + x1 * width, bounds[1] + y1 * height]
+                [
+                    bounds[0] + x0 * width,
+                    bounds[1] + y0 * height,
+                    bounds[0] + x1 * width,
+                    bounds[1] + y1 * height,
+                ]
             }
-            _ => return Err(format!("region {:?}: give both x and y, or at", entry.parts)),
+            _ => {
+                return Err(format!(
+                    "region {:?}: give both x and y, or at",
+                    entry.parts
+                ));
+            }
         };
         let mut any = false;
         for pattern in &entry.parts {
             for index in matching(pattern) {
-                if let Err(error) = region_holds(&problem.components[index], &references[index], region) {
+                if let Err(error) =
+                    region_holds(&problem.components[index], &references[index], region)
+                {
                     cannot.push(error);
                 }
                 problem.constraints.regions.push((index, region));
@@ -1667,7 +2041,10 @@ pub(super) fn apply_constraints(
             }
         }
         if !any {
-            return Err(format!("region constraint {:?} matches no part", entry.parts));
+            return Err(format!(
+                "region constraint {:?} matches no part",
+                entry.parts
+            ));
         }
     }
     for entry in &constraints.near {
@@ -1684,7 +2061,9 @@ pub(super) fn apply_constraints(
             (Some(other), None) => {
                 let index = any(other)?;
                 match (leaders.get(&index), places.get(&index)) {
-                    (Some(leader), Some(place)) => Anchor::Area(*leader, index, place.center, place.half),
+                    (Some(leader), Some(place)) => {
+                        Anchor::Area(*leader, index, place.center, place.half)
+                    }
                     _ => Anchor::Body(index),
                 }
             }
@@ -1697,13 +2076,21 @@ pub(super) fn apply_constraints(
                     .get(pad)
                     .ok_or_else(|| format!("pin_of {pin:?}: {reference} has no pad {pad:?}"))?;
                 match (leaders.get(&index), places.get(&index)) {
-                    (Some(leader), Some(place)) => {
-                        Anchor::Area(*leader, index, [offset[0] + place.offset[0], offset[1] + place.offset[1]], [0.0, 0.0])
-                    }
+                    (Some(leader), Some(place)) => Anchor::Area(
+                        *leader,
+                        index,
+                        [offset[0] + place.offset[0], offset[1] + place.offset[1]],
+                        [0.0, 0.0],
+                    ),
                     _ => Anchor::Point(index, *offset),
                 }
             }
-            _ => return Err(format!("near constraint for {} needs exactly one of part_of and pin_of", entry.part)),
+            _ => {
+                return Err(format!(
+                    "near constraint for {} needs exactly one of part_of and pin_of",
+                    entry.part
+                ));
+            }
         };
         problem.constraints.relations.push(Relation::Near {
             part,
@@ -1730,7 +2117,10 @@ pub(super) fn apply_constraints(
             None => *members
                 .iter()
                 .max_by(|a, b| {
-                    let area = |index: usize| problem.components[index].body_size[0] * problem.components[index].body_size[1];
+                    let area = |index: usize| {
+                        problem.components[index].body_size[0]
+                            * problem.components[index].body_size[1]
+                    };
                     area(**a).total_cmp(&area(**b))
                 })
                 .expect("a group has members"),
@@ -1763,7 +2153,10 @@ pub(super) fn apply_constraints(
         };
         let (parts, others) = (expand(&entry.parts)?, expand(&entry.from)?);
         if !(entry.min_mm > 0.0) {
-            return Err(format!("apart constraint {:?}: min_mm must be positive", entry.parts));
+            return Err(format!(
+                "apart constraint {:?}: min_mm must be positive",
+                entry.parts
+            ));
         }
         for part in &parts {
             for other in others.iter().filter(|other| *other != part) {
@@ -1807,7 +2200,11 @@ pub(super) fn apply_constraints(
         // Parts without nets move too: from a netlist they sit in the stack
         // with the rest. Mounting holes nobody placed go to the corners, as
         // designers put them, then to the middle of the edges.
-        let named: BTreeSet<usize> = constraints.fixed.iter().flat_map(|pattern| matching(pattern)).collect();
+        let named: BTreeSet<usize> = constraints
+            .fixed
+            .iter()
+            .flat_map(|pattern| matching(pattern))
+            .collect();
         let mut spots = [
             vec![Edge::Top, Edge::Left],
             vec![Edge::Top, Edge::Right],
@@ -1822,7 +2219,10 @@ pub(super) fn apply_constraints(
         for index in 0..footprints {
             // Artwork (a logo) occupies nothing and stays.
             let component = &problem.components[index];
-            if locked[index] || leaders.contains_key(&index) || component.side == core::Side::Neither {
+            if locked[index]
+                || leaders.contains_key(&index)
+                || component.side == core::Side::Neither
+            {
                 continue;
             }
             // A part without nets and without a reference (a keyboard's
@@ -1833,7 +2233,11 @@ pub(super) fn apply_constraints(
                 continue;
             }
             let mounting_hole = component.pins.is_empty() && component.has_holes();
-            if mounting_hole && !constrained.contains(&index) && !named.contains(&index) && !pinned.contains(&index) {
+            if mounting_hole
+                && !constrained.contains(&index)
+                && !named.contains(&index)
+                && !pinned.contains(&index)
+            {
                 for side in spots.next().unwrap_or_default() {
                     problem.constraints.edges.push((index, side, 1.0 + 1.0e-3));
                 }
@@ -1895,10 +2299,21 @@ pub(super) fn apply_constraints(
     // A row or an edge's parts the outline cannot hold. Not for an
     // outline sized from the parts: the layout grows it while parts do
     // not fit.
-    let automatic = constraints.outline.as_ref().is_some_and(KiCadOutlineConstraint::automatic);
-    let outlined = if automatic { Vec::new() } else { crate::placement_room::outline_holds(problem, references, &user_rows) };
+    let automatic = constraints
+        .outline
+        .as_ref()
+        .is_some_and(KiCadOutlineConstraint::automatic);
+    let outlined = if automatic {
+        Vec::new()
+    } else {
+        crate::placement_room::outline_holds(problem, references, &user_rows)
+    };
     if !cannot.is_empty() || !outlined.is_empty() {
-        crate::placement_room::note_room(crate::placement_room::room(problem, references, !outlined.is_empty()));
+        crate::placement_room::note_room(crate::placement_room::room(
+            problem,
+            references,
+            !outlined.is_empty(),
+        ));
         cannot.extend(outlined);
         return Err(cannot.join("; "));
     }
@@ -1910,9 +2325,18 @@ pub(super) fn apply_constraints(
     // part lies on the front, and every `back` entry for them was reported
     // missed on a board that kept them all.
     for (kind, patterns) in [("back", &constraints.back), ("front", &constraints.front)] {
-        for index in (0..footprints).filter(|index| patterns.iter().any(|pattern| glob_matches(pattern, &references[*index]))) {
+        for index in (0..footprints).filter(|index| {
+            patterns
+                .iter()
+                .any(|pattern| glob_matches(pattern, &references[*index]))
+        }) {
             let side = problem.components[index].side;
-            problem.constraints.kept.push(core::constraints::Kept { kind, part: index, side: Some(side), angles: Vec::new() });
+            problem.constraints.kept.push(core::constraints::Kept {
+                kind,
+                part: index,
+                side: Some(side),
+                angles: Vec::new(),
+            });
         }
     }
     Ok(warnings)
@@ -1931,7 +2355,10 @@ pub(super) fn constraint_report(
         .map(|status| KiCadConstraintStatus {
             kind: status.kind.into(),
             part: references[status.part].clone(),
-            other: status.other.filter(|other| *other != status.part).map(|other| references[other].clone()),
+            other: status
+                .other
+                .filter(|other| *other != status.part)
+                .map(|other| references[other].clone()),
             satisfied: status.satisfied,
             violation_mm: (status.violation * 1000.0).round() / 1000.0,
         })
@@ -1970,7 +2397,13 @@ mod tests {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
             components: vec![part(true), part(false), part(false)],
             net_weights: Vec::new(),
-            poses: vec![core::Pose { position: [10.0, 10.0], angle: 0.0 }; 3],
+            poses: vec![
+                core::Pose {
+                    position: [10.0, 10.0],
+                    angle: 0.0
+                };
+                3
+            ],
             spacing: 0.2,
             grid: 0.1,
             edge_margin: 0.5,
@@ -1991,20 +2424,20 @@ mod tests {
 
     fn apply(json: &str) -> Result<(core::Problem, Vec<String>), String> {
         let (mut problem, references, pads) = problem();
-        let constraints: KiCadPlacementConstraints = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        let warnings =
-            apply_constraints(
-                &mut problem,
-                &references,
-                &pads,
-                &[vec![[0.0, -0.5, 1.0, 0.5]], Vec::new(), Vec::new()],
-                &[None, None, None],
-                &[None, None, None],
-                &[false, false, false],
-                &[None, None, None],
-                &constraints,
-                10.0,
-            )?;
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let warnings = apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[vec![[0.0, -0.5, 1.0, 0.5]], Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &[None, None, None],
+            &constraints,
+            10.0,
+        )?;
         Ok((problem, warnings))
     }
 
@@ -2032,12 +2465,19 @@ mod tests {
         };
         let problem = run(r#"{"version": 1, "move_all": true}"#);
         assert!(problem.components.iter().all(|component| !component.fixed));
-        assert_eq!(problem.constraints.edges, vec![(0, Edge::Top, 1.0 + 1.0e-3), (0, Edge::Left, 1.0 + 1.0e-3)]);
+        assert_eq!(
+            problem.constraints.edges,
+            vec![(0, Edge::Top, 1.0 + 1.0e-3), (0, Edge::Left, 1.0 + 1.0e-3)]
+        );
         // Named anywhere, it goes where it is told.
         let problem = run(r#"{"version": 1, "move_all": true, "fixed": ["J1"]}"#);
         assert!(problem.components[0].fixed && problem.constraints.edges.is_empty());
-        let problem = run(r#"{"version": 1, "move_all": true, "place": [{"part": "J1", "at": "bottom"}]}"#);
-        assert_eq!(problem.constraints.edges, vec![(0, Edge::Bottom, 1.0 + 1.0e-3)]);
+        let problem =
+            run(r#"{"version": 1, "move_all": true, "place": [{"part": "J1", "at": "bottom"}]}"#);
+        assert_eq!(
+            problem.constraints.edges,
+            vec![(0, Edge::Bottom, 1.0 + 1.0e-3)]
+        );
     }
 
     #[test]
@@ -2066,7 +2506,12 @@ mod tests {
             10.0,
         )
         .unwrap();
-        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
+        let edges: Vec<(usize, Edge)> = problem
+            .constraints
+            .edges
+            .iter()
+            .map(|(part, edge, _)| (*part, *edge))
+            .collect();
         assert_eq!(edges, vec![(1, Edge::Left), (2, Edge::Right)]);
         assert_eq!(problem.components[1].angle_options, vec![90.0]);
         assert_eq!(problem.components[2].angle_options, vec![0.0]);
@@ -2082,7 +2527,11 @@ mod tests {
         // uuid no such footprint has is an error.
         let (mut problem, mut references, pads) = problem();
         references[2] = "C1".to_string();
-        let uuids = [Some("aaaa".to_string()), Some("b1".to_string()), Some("C2".to_string())];
+        let uuids = [
+            Some("aaaa".to_string()),
+            Some("b1".to_string()),
+            Some("C2".to_string()),
+        ];
         let constraints: KiCadPlacementConstraints = serde_json::from_str(
             r#"{"version": 1,
                 "edge": [{"part": "C1", "edge": "top", "uuid": "c2"}, {"part": "C1", "edge": "left"},
@@ -2104,8 +2553,21 @@ mod tests {
             10.0,
         )
         .unwrap();
-        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
-        assert_eq!(edges, vec![(1, Edge::Right), (2, Edge::Top), (1, Edge::Left), (2, Edge::Bottom)]);
+        let edges: Vec<(usize, Edge)> = problem
+            .constraints
+            .edges
+            .iter()
+            .map(|(part, edge, _)| (*part, *edge))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![
+                (1, Edge::Right),
+                (2, Edge::Top),
+                (1, Edge::Left),
+                (2, Edge::Bottom)
+            ]
+        );
         assert_eq!(problem.components[2].angle_options, vec![90.0]);
         assert_ne!(problem.components[1].angle_options, vec![90.0]);
         // Written back as read: no uuid where the entry had none.
@@ -2114,8 +2576,10 @@ mod tests {
 
         let (mut fresh, mut references, pads) = super::tests::problem();
         references[2] = "C1".to_string();
-        let unknown: KiCadPlacementConstraints =
-            serde_json::from_str(r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "uuid": "aaaa"}]}"#).unwrap();
+        let unknown: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "uuid": "aaaa"}]}"#,
+        )
+        .unwrap();
         let error = apply_constraints(
             &mut fresh,
             &references,
@@ -2150,11 +2614,20 @@ mod tests {
         assert_eq!(problem.constraints.regions.len(), 2);
         assert_eq!(
             problem.constraints.relations[0],
-            Relation::Near { part: 1, anchor: Anchor::Point(0, [0.5, 0.0]), max: 2.0 }
+            Relation::Near {
+                part: 1,
+                anchor: Anchor::Point(0, [0.5, 0.0]),
+                max: 2.0
+            }
         );
         assert!(matches!(
             problem.constraints.relations[1],
-            Relation::Beside { part: 2, anchor: 1, side: Edge::Bottom, .. }
+            Relation::Beside {
+                part: 2,
+                anchor: 1,
+                side: Edge::Bottom,
+                ..
+            }
         ));
         assert_eq!(problem.components[2].angle_options, vec![90.0, 270.0]);
         assert_eq!(problem.poses[2].angle, 90.0);
@@ -2171,7 +2644,10 @@ mod tests {
         .unwrap();
         assert_eq!(problem.constraints.regions[0], (1, [0.0, 0.0, 15.0, 20.0]));
         let (_, centre) = problem.constraints.regions[1];
-        assert!((centre[0] - 10.0).abs() < 1e-9 && (centre[3] - 40.0 / 3.0).abs() < 1e-9, "{centre:?}");
+        assert!(
+            (centre[0] - 10.0).abs() < 1e-9 && (centre[3] - 40.0 / 3.0).abs() < 1e-9,
+            "{centre:?}"
+        );
         for wrong in [
             r#"{"version": 1, "region": [{"parts": ["C1"], "at": "left"}]}"#,
             r#"{"version": 1, "region": [{"parts": ["C1"], "at": "left-half", "x": [0, 1], "y": [0, 1]}]}"#,
@@ -2201,14 +2677,23 @@ mod tests {
         // 4500 mm2 of parts, 9000 mm2 of board: 116 x 78 at 1.5, but both
         // sides stay within 100 mm (the flat price at JLCPCB and PCBWay).
         let automatic: KiCadOutlineConstraint = serde_json::from_str("{}").unwrap();
-        assert_eq!(apply_outline(&mut pcb, &automatic, 4500.0).unwrap(), [100.0, 90.0]);
+        assert_eq!(
+            apply_outline(&mut pcb, &automatic, 4500.0).unwrap(),
+            [100.0, 90.0]
+        );
         // On four layers, 1.5 times the parts.
         let mut four = parse("(kicad_pcb (layers (0 \"F.Cu\" signal) (4 \"In1.Cu\" signal) (6 \"In2.Cu\" signal) (2 \"B.Cu\" signal)))").unwrap();
-        assert_eq!(apply_outline(&mut four, &outline, 300.0).unwrap(), [30.0, 15.0]);
+        assert_eq!(
+            apply_outline(&mut four, &outline, 300.0).unwrap(),
+            [30.0, 15.0]
+        );
     }
 
     fn edge_cuts(pcb: &Expr) -> Vec<&Expr> {
-        pcb.children().iter().filter(|item| form_atom(item, "layer", 1) == Some("Edge.Cuts")).collect()
+        pcb.children()
+            .iter()
+            .filter(|item| form_atom(item, "layer", 1) == Some("Edge.Cuts"))
+            .collect()
     }
 
     #[test]
@@ -2225,10 +2710,19 @@ mod tests {
         let pieces: KiCadOutlineConstraint =
             serde_json::from_str(r#"{"pieces": [{"width": 20, "height": 10}, {"polygon": [[0, 0], [10, 0], [0, 10]], "x": 25}]}"#).unwrap();
         assert!(pieces.polygonal() && !pieces.automatic());
-        let rounded: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 20, "height": 10, "corner_radius": 2}"#).unwrap();
+        let rounded: KiCadOutlineConstraint =
+            serde_json::from_str(r#"{"width": 20, "height": 10, "corner_radius": 2}"#).unwrap();
         assert!(!rounded.polygonal());
-        assert!(serde_json::from_str::<KiCadOutlineConstraint>(r#"{"polygon": [[0, 0]], "radius": 1}"#).is_err(), "unknown key");
-        assert!(serde_json::from_str::<KiCadCutout>(r#"{"x": [0, 1], "y": [0, 1], "diameter": 1}"#).is_err(), "unknown key");
+        assert!(
+            serde_json::from_str::<KiCadOutlineConstraint>(r#"{"polygon": [[0, 0]], "radius": 1}"#)
+                .is_err(),
+            "unknown key"
+        );
+        assert!(
+            serde_json::from_str::<KiCadCutout>(r#"{"x": [0, 1], "y": [0, 1], "diameter": 1}"#)
+                .is_err(),
+            "unknown key"
+        );
 
         let error = |json: &str| {
             let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)))").unwrap();
@@ -2237,16 +2731,42 @@ mod tests {
         };
         assert!(error(r#"{"polygon": [[0, 0], [10, 0]]}"#).contains("three corners"));
         assert!(error(r#"{"polygon": [[0, 0], [10, 0], [20, 0]]}"#).contains("no area"));
-        assert!(error(r#"{"polygon": [[0, 0], [10, 0], [0, 10], [12, 14]]}"#).contains("crosses itself"));
-        assert!(error(r#"{"polygon": [[0, 0], [10, 0], [0, 10]], "width": 10}"#).contains("not both"));
-        assert!(error(r#"{"polygon": [[0, 0], [10, 0], [0, 10]], "aspect": 2}"#).contains("sized from the parts"));
-        assert!(error(r#"{"width": 10, "height": 10, "corner_radius": -1}"#).contains("corner_radius"));
-        assert!(error(r#"{"width": 10, "height": 10, "cutouts": [{"x": [8, 12], "y": [1, 2]}]}"#).contains("does not lie inside"));
+        assert!(
+            error(r#"{"polygon": [[0, 0], [10, 0], [0, 10], [12, 14]]}"#)
+                .contains("crosses itself")
+        );
+        assert!(
+            error(r#"{"polygon": [[0, 0], [10, 0], [0, 10]], "width": 10}"#).contains("not both")
+        );
+        assert!(
+            error(r#"{"polygon": [[0, 0], [10, 0], [0, 10]], "aspect": 2}"#)
+                .contains("sized from the parts")
+        );
+        assert!(
+            error(r#"{"width": 10, "height": 10, "corner_radius": -1}"#).contains("corner_radius")
+        );
+        assert!(
+            error(r#"{"width": 10, "height": 10, "cutouts": [{"x": [8, 12], "y": [1, 2]}]}"#)
+                .contains("does not lie inside")
+        );
         assert!(error(r#"{"width": 10, "height": 10, "cutouts": [{"x": [1, 4], "y": [1, 4]}, {"x": [3, 6], "y": [3, 6]}]}"#).contains("cutouts may not overlap"));
-        assert!(error(r#"{"width": 10, "height": 10, "cutouts": [{"x": [1, 4]}]}"#).contains("x and y ranges or a polygon"));
-        assert!(error(r#"{"cutouts": [{"x": [1, 4], "y": [1, 4]}]}"#).contains("need a sized outline"));
-        assert!(error(r#"{"pieces": [{"width": 10, "height": 10}, {"width": 10, "height": 10, "x": 5}]}"#).contains("pieces may not overlap"));
-        assert!(error(r#"{"pieces": [{"width": 10, "height": 10}], "width": 5}"#).contains("each piece carries its own shape"));
+        assert!(
+            error(r#"{"width": 10, "height": 10, "cutouts": [{"x": [1, 4]}]}"#)
+                .contains("x and y ranges or a polygon")
+        );
+        assert!(
+            error(r#"{"cutouts": [{"x": [1, 4], "y": [1, 4]}]}"#).contains("need a sized outline")
+        );
+        assert!(
+            error(
+                r#"{"pieces": [{"width": 10, "height": 10}, {"width": 10, "height": 10, "x": 5}]}"#
+            )
+            .contains("pieces may not overlap")
+        );
+        assert!(
+            error(r#"{"pieces": [{"width": 10, "height": 10}], "width": 5}"#)
+                .contains("each piece carries its own shape")
+        );
         assert!(error(r#"{"pieces": [{"x": 5}]}"#).contains("needs width and height or a polygon"));
     }
 
@@ -2258,7 +2778,10 @@ mod tests {
         let mut pcb = parse("(kicad_pcb (gr_rect (start 0 0) (end 1 1) (layer \"Edge.Cuts\")) (footprint \"x\" (at 10 10)))").unwrap();
         let outline: KiCadOutlineConstraint =
             serde_json::from_str(r#"{"polygon": [[0, 0], [40, 0], [40, 10], [20, 10], [20, 30], [0, 30]], "x": 5, "y": 5}"#).unwrap();
-        assert_eq!(apply_outline(&mut pcb, &outline, 0.0).unwrap(), [40.0, 30.0]);
+        assert_eq!(
+            apply_outline(&mut pcb, &outline, 0.0).unwrap(),
+            [40.0, 30.0]
+        );
         let items = edge_cuts(&pcb);
         assert_eq!(items.len(), 6);
         assert!(items.iter().all(|item| item.head() == Some("gr_line")));
@@ -2277,26 +2800,47 @@ mod tests {
                 "cutouts": [{"x": [10, 20], "y": [5, 10]}, {"polygon": [[2, 12], [6, 12], [2, 16]], "origin": "absolute"}]}"#,
         )
         .unwrap();
-        assert_eq!(apply_outline(&mut pcb, &outline, 0.0).unwrap(), [30.0, 20.0]);
+        assert_eq!(
+            apply_outline(&mut pcb, &outline, 0.0).unwrap(),
+            [30.0, 20.0]
+        );
         let items = edge_cuts(&pcb);
-        let count = |head: &str| items.iter().filter(|item| item.head() == Some(head)).count();
+        let count = |head: &str| {
+            items
+                .iter()
+                .filter(|item| item.head() == Some(head))
+                .count()
+        };
         assert_eq!((count("gr_arc"), count("gr_line")), (4, 4 + 4 + 3));
         // The top-left arc: from (0, 3) through the corner's diagonal to (3, 0).
-        let arc = items.iter().find(|item| item.head() == Some("gr_arc")).unwrap();
+        let arc = items
+            .iter()
+            .find(|item| item.head() == Some("gr_arc"))
+            .unwrap();
         assert_eq!(form_xy(arc, "start").unwrap(), [0.0, 3.0]);
         assert_eq!(form_xy(arc, "end").unwrap(), [3.0, 0.0]);
         let mid = form_xy(arc, "mid").unwrap();
         let expected = 3.0 - 3.0 / 2f64.sqrt();
-        assert!((mid[0] - expected).abs() < 1.0e-6 && (mid[1] - expected).abs() < 1.0e-6, "{mid:?}");
+        assert!(
+            (mid[0] - expected).abs() < 1.0e-6 && (mid[1] - expected).abs() < 1.0e-6,
+            "{mid:?}"
+        );
         let loops = board_loops(&pcb).unwrap();
         // (The arcs are read back as chords within 5 um.)
         let rounded = 30.0 * 20.0 - (4.0 - std::f64::consts::PI) * 9.0;
-        assert!((area(&loops.outline) - rounded).abs() < 0.1, "{}", area(&loops.outline));
+        assert!(
+            (area(&loops.outline) - rounded).abs() < 0.1,
+            "{}",
+            area(&loops.outline)
+        );
         assert_eq!(loops.cutouts.len(), 2);
         assert_eq!(loops.board_cutouts, vec![true, true]);
         let mut holes: Vec<f64> = loops.cutouts.iter().map(|cutout| area(cutout)).collect();
         holes.sort_by(f64::total_cmp);
-        assert!((holes[0] - 8.0).abs() < 1.0e-9 && (holes[1] - 50.0).abs() < 1.0e-9, "{holes:?}");
+        assert!(
+            (holes[0] - 8.0).abs() < 1.0e-9 && (holes[1] - 50.0).abs() < 1.0e-9,
+            "{holes:?}"
+        );
 
         // Two pieces, a rectangle and a triangle 5 mm to its right.
         let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)))").unwrap();
@@ -2304,35 +2848,62 @@ mod tests {
             r#"{"x": 100, "y": 50, "pieces": [{"width": 20, "height": 10}, {"polygon": [[0, 0], [10, 0], [0, 10]], "x": 25, "y": 0}]}"#,
         )
         .unwrap();
-        assert_eq!(apply_outline(&mut pcb, &outline, 0.0).unwrap(), [35.0, 10.0]);
+        assert_eq!(
+            apply_outline(&mut pcb, &outline, 0.0).unwrap(),
+            [35.0, 10.0]
+        );
         let loops = board_loops(&pcb).unwrap();
-        assert_eq!(loops.pieces, vec![[100.0, 50.0, 120.0, 60.0], [125.0, 50.0, 135.0, 60.0]]);
+        assert_eq!(
+            loops.pieces,
+            vec![[100.0, 50.0, 120.0, 60.0], [125.0, 50.0, 135.0, 60.0]]
+        );
         assert!((area(&loops.outline) - 250.0).abs() < 1.0e-9);
 
         // A rectangle without round corners or cutouts stays one gr_rect.
         let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)))").unwrap();
-        let plain: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 30, "height": 20, "corner_radius": 0}"#).unwrap();
+        let plain: KiCadOutlineConstraint =
+            serde_json::from_str(r#"{"width": 30, "height": 20, "corner_radius": 0}"#).unwrap();
         apply_outline(&mut pcb, &plain, 0.0).unwrap();
-        assert_eq!(edge_cuts(&pcb).iter().map(|item| item.head()).collect::<Vec<_>>(), vec![Some("gr_rect")]);
+        assert_eq!(
+            edge_cuts(&pcb)
+                .iter()
+                .map(|item| item.head())
+                .collect::<Vec<_>>(),
+            vec![Some("gr_rect")]
+        );
         // A radius larger than a side allows rounds that corner less.
         let mut pcb = parse("(kicad_pcb (footprint \"x\" (at 10 10)))").unwrap();
-        let slot: KiCadOutlineConstraint = serde_json::from_str(r#"{"width": 30, "height": 4, "corner_radius": 5}"#).unwrap();
+        let slot: KiCadOutlineConstraint =
+            serde_json::from_str(r#"{"width": 30, "height": 4, "corner_radius": 5}"#).unwrap();
         apply_outline(&mut pcb, &slot, 0.0).unwrap();
         let loops = board_loops(&pcb).unwrap();
         let stadium = 26.0 * 4.0 + std::f64::consts::PI * 4.0;
-        assert!((area(&loops.outline) - stadium).abs() < 0.1, "{}", area(&loops.outline));
+        assert!(
+            (area(&loops.outline) - stadium).abs() < 0.1,
+            "{}",
+            area(&loops.outline)
+        );
     }
 
     #[test]
     fn fixed_wins_over_a_constraint_and_mistakes_are_errors() {
         let (problem, _) = apply(r#"{"version": 1, "fixed": ["C1"], "near": [{"part": "C1", "part_of": "C2", "max_mm": 1}]}"#).unwrap();
         assert!(problem.components[1].fixed);
-        let (problem, _) = apply(r#"{"version": 1, "group": [{"parts": ["C*", "J1"], "around": "J1", "max_mm": 2}]}"#).unwrap();
+        let (problem, _) = apply(
+            r#"{"version": 1, "group": [{"parts": ["C*", "J1"], "around": "J1", "max_mm": 2}]}"#,
+        )
+        .unwrap();
         assert_eq!(problem.constraints.relations.len(), 2);
-        assert!(problem.constraints.relations.iter().all(|relation| matches!(
-            relation,
-            Relation::Near { anchor: Anchor::Body(0), max, .. } if *max == 2.0
-        )));
+        assert!(
+            problem
+                .constraints
+                .relations
+                .iter()
+                .all(|relation| matches!(
+                    relation,
+                    Relation::Near { anchor: Anchor::Body(0), max, .. } if *max == 2.0
+                ))
+        );
         let (problem, _) = apply(r#"{"version": 1, "hollow": ["J1"]}"#).unwrap();
         assert_eq!(problem.components[0].hollow, vec![[0.0, -0.5, 1.0, 0.5]]);
         for bad in [
@@ -2354,10 +2925,24 @@ mod tests {
 
     #[test]
     fn apart_keeps_every_named_part_from_every_other() {
-        let (problem, _) = apply(r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["C*", "J1"], "min_mm": 5}]}"#).unwrap();
+        let (problem, _) = apply(
+            r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["C*", "J1"], "min_mm": 5}]}"#,
+        )
+        .unwrap();
         assert_eq!(
             problem.constraints.relations,
-            vec![Relation::Apart { part: 1, anchor: 2, min: 5.0 }, Relation::Apart { part: 1, anchor: 0, min: 5.0 }]
+            vec![
+                Relation::Apart {
+                    part: 1,
+                    anchor: 2,
+                    min: 5.0
+                },
+                Relation::Apart {
+                    part: 1,
+                    anchor: 0,
+                    min: 5.0
+                }
+            ]
         );
         for bad in [
             r#"{"version": 1, "apart": [{"parts": ["C1"], "from": ["U*"], "min_mm": 5}]}"#,
@@ -2375,17 +2960,38 @@ mod tests {
                           {"part": "J1", "x": 5, "y": 6, "angle": 90}]}"#,
         )
         .unwrap();
-        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
-        assert_eq!(edges, vec![(1, Edge::Left), (2, Edge::Bottom), (2, Edge::Right)]);
+        let edges: Vec<(usize, Edge)> = problem
+            .constraints
+            .edges
+            .iter()
+            .map(|(part, edge, _)| (*part, *edge))
+            .collect();
+        assert_eq!(
+            edges,
+            vec![(1, Edge::Left), (2, Edge::Bottom), (2, Edge::Right)]
+        );
         assert!(!problem.components[1].fixed && !problem.components[2].fixed);
-        assert_eq!(problem.poses[0], core::Pose { position: [5.0, 6.0], angle: 90.0 });
+        assert_eq!(
+            problem.poses[0],
+            core::Pose {
+                position: [5.0, 6.0],
+                angle: 90.0
+            }
+        );
         assert!(problem.components[0].fixed);
         let (problem, _) = apply(r#"{"version": 1, "place": [{"part": "C1", "at": "center"}, {"part": "C2", "at": "top-half"}]}"#).unwrap();
-        let expected = [(1, [10.0, 20.0 / 3.0, 20.0, 40.0 / 3.0]), (2, [0.0, 0.0, 30.0, 10.0])];
+        let expected = [
+            (1, [10.0, 20.0 / 3.0, 20.0, 40.0 / 3.0]),
+            (2, [0.0, 0.0, 30.0, 10.0]),
+        ];
         assert_eq!(problem.constraints.regions.len(), 2);
-        for ((part, region), (want_part, want)) in problem.constraints.regions.iter().zip(expected) {
+        for ((part, region), (want_part, want)) in problem.constraints.regions.iter().zip(expected)
+        {
             assert_eq!(*part, want_part);
-            assert!(region.iter().zip(want).all(|(a, b)| (a - b).abs() < 1.0e-9), "{region:?}");
+            assert!(
+                region.iter().zip(want).all(|(a, b)| (a - b).abs() < 1.0e-9),
+                "{region:?}"
+            );
         }
         for bad in [
             r#"{"version": 1, "place": [{"part": "C1", "at": "front"}]}"#,
@@ -2400,14 +3006,20 @@ mod tests {
 
     #[test]
     fn a_row_is_placed_as_its_first_part() {
-        let (problem, _) = apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
+        let (problem, _) =
+            apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
         // C1 carries C2 three millimetres to its right: one 5 x 1 mm body.
         assert_eq!(problem.components[1].body_size, [5.0, 1.0]);
         assert_eq!(problem.components[1].body_center, [1.5, 0.0]);
         assert!(problem.components[2].fixed && problem.components[2].side == core::Side::Neither);
         assert_eq!(
             problem.constraints.followers,
-            vec![core::constraints::Follower { part: 2, leader: 1, offset: [3.0, 0.0], angle: 0.0 }]
+            vec![core::constraints::Follower {
+                part: 2,
+                leader: 1,
+                offset: [3.0, 0.0],
+                angle: 0.0
+            }]
         );
         assert_eq!(problem.poses[2].position, [13.0, 10.0]);
         // Only half turns keep the row along its axis.
@@ -2459,21 +3071,35 @@ mod tests {
                 .map(|status| (status.kind, status.part, status.satisfied))
                 .collect()
         };
-        let row = |kind: &str, part: &str, satisfied: bool| (kind.to_string(), part.to_string(), satisfied);
+        let row = |kind: &str, part: &str, satisfied: bool| {
+            (kind.to_string(), part.to_string(), satisfied)
+        };
         assert_eq!(
             kept(&problem.poses),
-            vec![row("rotation", "C2", true), row("opening_outwards", "C1", true), row("front", "C1", true)]
+            vec![
+                row("rotation", "C2", true),
+                row("opening_outwards", "C1", true),
+                row("front", "C1", true)
+            ]
         );
         // Turned another way, they would be missed.
         let mut poses = problem.poses.clone();
         poses[1].angle = 180.0;
         poses[2].angle = 0.0;
-        assert_eq!(kept(&poses), vec![row("rotation", "C2", false), row("opening_outwards", "C1", false), row("front", "C1", true)]);
+        assert_eq!(
+            kept(&poses),
+            vec![
+                row("rotation", "C2", false),
+                row("opening_outwards", "C1", false),
+                row("front", "C1", true)
+            ]
+        );
 
         // A footprint `back` put on B.Cu whose pads are on the front (a key
         // socket under its switch) lies on the front: kept all the same.
         let (mut socket, references, pads) = self::problem();
-        let constraints: KiCadPlacementConstraints = serde_json::from_str(r#"{"version": 1, "back": ["C1"]}"#).unwrap();
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "back": ["C1"]}"#).unwrap();
         assert_eq!(socket.components[1].side, core::Side::Front);
         apply_constraints(
             &mut socket,
@@ -2488,8 +3114,10 @@ mod tests {
             10.0,
         )
         .unwrap();
-        let statuses: Vec<(String, bool)> =
-            constraint_report(&socket, &socket.poses, &references).into_iter().map(|status| (status.kind, status.satisfied)).collect();
+        let statuses: Vec<(String, bool)> = constraint_report(&socket, &socket.poses, &references)
+            .into_iter()
+            .map(|status| (status.kind, status.satisfied))
+            .collect();
         assert_eq!(statuses, vec![("back".to_string(), true)]);
     }
 
@@ -2498,8 +3126,14 @@ mod tests {
         // Two 2 x 1 mm parts 25 mm apart: 27 mm on a 30 mm board; 40 apart
         // do not fit, turned by a half or not (a row turns no further).
         assert!(apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 25}]}"#).is_ok());
-        let error = apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 40}]}"#).unwrap_err();
-        assert!(error.contains("the row of C1 (2 parts) cannot fit the outline: the row is 42.00 x 1.00 mm"), "{error}");
+        let error =
+            apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 40}]}"#).unwrap_err();
+        assert!(
+            error.contains(
+                "the row of C1 (2 parts) cannot fit the outline: the row is 42.00 x 1.00 mm"
+            ),
+            "{error}"
+        );
         // The room it would need is noted for the verdict (other tests may
         // note theirs in between: only that there is one).
         assert!(crate::placement_room::noted_room().is_some());
@@ -2508,7 +3142,10 @@ mod tests {
             r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 40}], "region": [{"parts": ["J1"], "x": [0, 1], "y": [0, 0.5]}]}"#,
         )
         .unwrap_err();
-        assert!(error.contains("region for J1 cannot hold it") && error.contains("the row of C1"), "{error}");
+        assert!(
+            error.contains("region for J1 cannot hold it") && error.contains("the row of C1"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2518,10 +3155,17 @@ mod tests {
         // row runs the way it lies; it used to run to the right and pull
         // C2 there.
         let (mut problem, references, pads) = problem();
-        problem.poses[1] = core::Pose { position: [10.0, 10.0], angle: 180.0 };
-        problem.poses[2] = core::Pose { position: [7.0, 10.0], angle: 180.0 };
+        problem.poses[1] = core::Pose {
+            position: [10.0, 10.0],
+            angle: 180.0,
+        };
+        problem.poses[2] = core::Pose {
+            position: [7.0, 10.0],
+            angle: 180.0,
+        };
         let constraints: KiCadPlacementConstraints =
-            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
+            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#)
+                .unwrap();
         apply_constraints(
             &mut problem,
             &references,
@@ -2537,7 +3181,10 @@ mod tests {
         .unwrap();
         assert_eq!(problem.poses[2].position, [7.0, 10.0]);
         let center = problem.components[1].center(problem.poses[1]);
-        assert!((center[0] - 8.5).abs() < 1.0e-9 && (center[1] - 10.0).abs() < 1.0e-9, "{center:?}");
+        assert!(
+            (center[0] - 8.5).abs() < 1.0e-9 && (center[1] - 10.0).abs() < 1.0e-9,
+            "{center:?}"
+        );
     }
 
     #[test]
@@ -2546,7 +3193,10 @@ mod tests {
         // place in the row (its body, or its pad), on the row's first part.
         let (mut problem, mut references, mut pads) = problem();
         problem.components.push(problem.components[1].clone());
-        problem.poses.push(core::Pose { position: [10.0, 10.0], angle: 0.0 });
+        problem.poses.push(core::Pose {
+            position: [10.0, 10.0],
+            angle: 0.0,
+        });
         references.push("D1".into());
         pads[2].insert("1".into(), [0.5, 0.0]);
         pads.push(BTreeMap::new());
@@ -2571,8 +3221,16 @@ mod tests {
         assert_eq!(
             problem.constraints.relations,
             vec![
-                Relation::Near { part: 3, anchor: Anchor::Area(1, 2, [3.0, 0.0], [1.0, 0.5]), max: 1.0 },
-                Relation::Near { part: 3, anchor: Anchor::Area(1, 2, [3.5, 0.0], [0.0, 0.0]), max: 1.0 },
+                Relation::Near {
+                    part: 3,
+                    anchor: Anchor::Area(1, 2, [3.0, 0.0], [1.0, 0.5]),
+                    max: 1.0
+                },
+                Relation::Near {
+                    part: 3,
+                    anchor: Anchor::Area(1, 2, [3.5, 0.0], [0.0, 0.0]),
+                    max: 1.0
+                },
             ]
         );
         assert!(apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "near": [{"part": "C2", "part_of": "J1", "max_mm": 1}]}"#).is_err());
@@ -2586,7 +3244,12 @@ mod tests {
                  (pad \"1\" smd rect (at 1 1) (size 1 1) (layers \"{layer}\")))"
             )
         };
-        let board = format!("(kicad_pcb {} {} {})", footprint("R1", "F.Cu"), footprint("R2", "F.Cu"), footprint("C1", "B.Cu"));
+        let board = format!(
+            "(kicad_pcb {} {} {})",
+            footprint("R1", "F.Cu"),
+            footprint("R2", "F.Cu"),
+            footprint("C1", "B.Cu")
+        );
         let sides = |json: &str| -> Result<Vec<String>, String> {
             let mut pcb = parse(&board).unwrap();
             apply_sides(&mut pcb, &serde_json::from_str(json).unwrap())?;
@@ -2597,9 +3260,15 @@ mod tests {
                 .map(|item| form_atom(item, "layer", 1).unwrap().to_string())
                 .collect())
         };
-        assert_eq!(sides(r#"{"version": 1, "back": ["R*"], "front": ["C1"]}"#).unwrap(), ["B.Cu", "B.Cu", "F.Cu"]);
+        assert_eq!(
+            sides(r#"{"version": 1, "back": ["R*"], "front": ["C1"]}"#).unwrap(),
+            ["B.Cu", "B.Cu", "F.Cu"]
+        );
         // A part already on its side stays as it is.
-        assert_eq!(sides(r#"{"version": 1, "back": ["C1", "R2"]}"#).unwrap(), ["F.Cu", "B.Cu", "B.Cu"]);
+        assert_eq!(
+            sides(r#"{"version": 1, "back": ["C1", "R2"]}"#).unwrap(),
+            ["F.Cu", "B.Cu", "B.Cu"]
+        );
         assert!(sides(r#"{"version": 1, "back": ["R*"], "front": ["R1"]}"#).is_err());
         assert!(sides(r#"{"version": 1, "back": ["U1"]}"#).is_err());
     }
@@ -2611,10 +3280,16 @@ mod tests {
         )
         .unwrap();
         let keepouts = |json: &str| -> Vec<KiCadKeepoutConstraint> {
-            serde_json::from_str::<KiCadPlacementConstraints>(json).unwrap().keepout
+            serde_json::from_str::<KiCadPlacementConstraints>(json)
+                .unwrap()
+                .keepout
         };
         let zones = |pcb: &Expr| -> Vec<Expr> {
-            pcb.children().iter().filter(|item| item.head() == Some("zone")).cloned().collect()
+            pcb.children()
+                .iter()
+                .filter(|item| item.head() == Some("zone"))
+                .cloned()
+                .collect()
         };
         apply_keepouts(
             &mut pcb,
@@ -2625,12 +3300,26 @@ mod tests {
         assert_eq!(written.len(), 2);
         // Relative to the outline's corner; copper keepouts block tracks on every layer.
         let text = format!("{}", encode(&written[0]));
-        assert!(text.contains("(xy 10 22)") && text.contains("(xy 15 24)"), "{text}");
-        assert!(text.contains("\"*.Cu\"") && text.contains("(tracks not_allowed)"), "{text}");
+        assert!(
+            text.contains("(xy 10 22)") && text.contains("(xy 15 24)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\"*.Cu\"") && text.contains("(tracks not_allowed)"),
+            "{text}"
+        );
         let text = format!("{}", encode(&written[1]));
-        assert!(text.contains("\"B.Cu\"") && text.contains("(tracks allowed)") && text.contains("(footprints not_allowed)"));
+        assert!(
+            text.contains("\"B.Cu\"")
+                && text.contains("(tracks allowed)")
+                && text.contains("(footprints not_allowed)")
+        );
         // Applying again replaces them; nothing removes them all.
-        apply_keepouts(&mut pcb, &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [0, 5]}]}"#)).unwrap();
+        apply_keepouts(
+            &mut pcb,
+            &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [0, 5]}]}"#),
+        )
+        .unwrap();
         assert_eq!(zones(&pcb).len(), 1);
         apply_keepouts(&mut pcb, &[]).unwrap();
         assert!(zones(&pcb).is_empty());
@@ -2639,7 +3328,10 @@ mod tests {
             r#"{"version": 1, "keepout": [{"x": [0, 1], "y": [0, 5], "side": "top"}]}"#,
             r#"{"version": 1, "keepout": [{"x": [0, 1], "y": [0, 5], "origin": "center"}]}"#,
         ] {
-            assert!(apply_keepouts(&mut pcb, &keepouts(bad)).is_err(), "{bad} was accepted");
+            assert!(
+                apply_keepouts(&mut pcb, &keepouts(bad)).is_err(),
+                "{bad} was accepted"
+            );
         }
     }
 }

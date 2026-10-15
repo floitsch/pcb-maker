@@ -13,7 +13,9 @@
 use super::*;
 use crate::board_layout::{footprint_items, without_copper_texts};
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
-use crate::board_router::{KiCadPourMode, LayerTable, add_pour_zones, core_config, lower, planned_pours, pours};
+use crate::board_router::{
+    KiCadPourMode, LayerTable, add_pour_zones, core_config, lower, planned_pours, pours,
+};
 use crate::placement_constraints::resolve_constraints;
 use pcb_placer as placer;
 use pcb_router as core;
@@ -40,7 +42,10 @@ impl Default for KiCadCongestionJob {
     fn default() -> Self {
         Self {
             probe_seconds: 20.0,
-            variants: vec![KiCadCongestionVariant { name: "source".into(), ..Default::default() }],
+            variants: vec![KiCadCongestionVariant {
+                name: "source".into(),
+                ..Default::default()
+            }],
             layout: None,
             placement_seconds: 60.0,
             keep_boards: false,
@@ -116,7 +121,10 @@ impl Random {
 /// The placement problem perturbations are judged in: the source's bodies
 /// without halos at the smallest spacing (a designer packs tighter than
 /// the placer's comfort margins).
-fn perturbation_problem(pcb: &Expr, placer_config: &KiCadBoardPlacerConfig) -> Result<placer::Problem, String> {
+fn perturbation_problem(
+    pcb: &Expr,
+    placer_config: &KiCadBoardPlacerConfig,
+) -> Result<placer::Problem, String> {
     let mut problem = lower_placement(pcb, placer_config, &[])?.problem;
     problem.spacing = problem.min_spacing;
     for component in &mut problem.components {
@@ -127,11 +135,18 @@ fn perturbation_problem(pcb: &Expr, placer_config: &KiCadBoardPlacerConfig) -> R
 
 fn movable(problem: &placer::Problem) -> Vec<usize> {
     (0..problem.components.len())
-        .filter(|index| !problem.components[*index].fixed && !problem.components[*index].pins.is_empty())
+        .filter(|index| {
+            !problem.components[*index].fixed && !problem.components[*index].pins.is_empty()
+        })
         .collect()
 }
 
-fn legal_at(problem: &placer::Problem, poses: &[placer::Pose], index: usize, pose: placer::Pose) -> bool {
+fn legal_at(
+    problem: &placer::Problem,
+    poses: &[placer::Pose],
+    index: usize,
+    pose: placer::Pose,
+) -> bool {
     placer::legal::is_legal(problem, poses, index, pose, 0..problem.components.len())
 }
 
@@ -149,7 +164,10 @@ fn perturb(problem: &placer::Problem, poses: &mut [placer::Pose], spec: &KiCadPe
             let radius = spec.max_mm * random.unit().sqrt();
             let angle = random.unit() * std::f64::consts::TAU;
             let mut pose = poses[index];
-            pose.position = [pose.position[0] + radius * angle.cos(), pose.position[1] + radius * angle.sin()];
+            pose.position = [
+                pose.position[0] + radius * angle.cos(),
+                pose.position[1] + radius * angle.sin(),
+            ];
             if legal_at(problem, poses, index, pose) {
                 poses[index] = pose;
                 break;
@@ -186,14 +204,21 @@ fn perturb(problem: &placer::Problem, poses: &mut [placer::Pose], spec: &KiCadPe
             if a == b || first.side != second.side {
                 continue;
             }
-            let area = |component: &placer::Component| component.body_size[0] * component.body_size[1];
+            let area =
+                |component: &placer::Component| component.body_size[0] * component.body_size[1];
             let ratio = area(first) / area(second).max(1.0e-9);
             if !(0.5..=2.0).contains(&ratio) {
                 continue;
             }
             let (center_a, center_b) = (first.center(poses[a]), second.center(poses[b]));
-            let pose_a = placer::Pose { position: first.position_for_center(center_b, poses[a].angle), angle: poses[a].angle };
-            let pose_b = placer::Pose { position: second.position_for_center(center_a, poses[b].angle), angle: poses[b].angle };
+            let pose_a = placer::Pose {
+                position: first.position_for_center(center_b, poses[a].angle),
+                angle: poses[a].angle,
+            };
+            let pose_b = placer::Pose {
+                position: second.position_for_center(center_a, poses[b].angle),
+                angle: poses[b].angle,
+            };
             let mut trial = poses.to_vec();
             trial[a] = pose_a;
             trial[b] = pose_b;
@@ -213,12 +238,19 @@ fn shuffle(problem: &placer::Problem, poses: &mut [placer::Pose], seed: u64) {
     let bounds = problem.bounds();
     for index in movable(problem) {
         let options = &problem.components[index].angle_options;
-        let angle = if options.is_empty() { poses[index].angle } else { options[random.below(options.len())] };
+        let angle = if options.is_empty() {
+            poses[index].angle
+        } else {
+            options[random.below(options.len())]
+        };
         let center = [
             bounds[0] + random.unit() * (bounds[2] - bounds[0]),
             bounds[1] + random.unit() * (bounds[3] - bounds[1]),
         ];
-        poses[index] = placer::Pose { position: problem.components[index].position_for_center(center, angle), angle };
+        poses[index] = placer::Pose {
+            position: problem.components[index].position_for_center(center, angle),
+            angle,
+        };
     }
     let mut relaxed = problem.clone();
     relaxed.grid = relaxed.grid.min(0.1);
@@ -230,14 +262,24 @@ fn stripped(pcb: &Expr) -> Expr {
     let Expr::List(items) = pcb else {
         return pcb.clone();
     };
-    Expr::List(items.iter().filter(|item| !matches!(item.head(), Some("segment" | "arc" | "via"))).cloned().collect())
+    Expr::List(
+        items
+            .iter()
+            .filter(|item| !matches!(item.head(), Some("segment" | "arc" | "via")))
+            .cloned()
+            .collect(),
+    )
 }
 
 fn with_poses(pcb: &Expr, poses: &[placer::Pose]) -> Result<Expr, String> {
     let mut placed = pcb.clone();
     let mut footprints = footprint_items(&mut placed)?;
     if footprints.len() != poses.len() {
-        return Err(format!("{} footprints, {} poses", footprints.len(), poses.len()));
+        return Err(format!(
+            "{} footprints, {} poses",
+            footprints.len(),
+            poses.len()
+        ));
     }
     for (footprint, pose) in footprints.iter_mut().zip(poses) {
         write_footprint_pose(footprint, *pose)?;
@@ -269,9 +311,13 @@ impl Blob {
             }
         }
         header["arrays"] = serde_json::Value::Object(index);
-        fs::write(path.with_extension("bin"), &bytes).map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-        fs::write(path.with_extension("json"), serde_json::to_string(header).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("failed to write {}: {error}", path.display()))
+        fs::write(path.with_extension("bin"), &bytes)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        fs::write(
+            path.with_extension("json"),
+            serde_json::to_string(header).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))
     }
 }
 
@@ -299,22 +345,29 @@ pub fn export_congestion_samples(
     job: &KiCadCongestionJob,
     router_config: &KiCadBoardRouterConfig,
 ) -> Result<Vec<KiCadCongestionSampleReport>, String> {
-    fs::create_dir_all(output_directory).map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
+    fs::create_dir_all(output_directory)
+        .map_err(|error| format!("failed to create {}: {error}", output_directory.display()))?;
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
-    let text = fs::read_to_string(&source_board).map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    let text = fs::read_to_string(&source_board)
+        .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let source = stripped(&parse(&text)?);
     let layout = job.layout.clone().unwrap_or_default();
     let mut placer_config = resolve_constraints(&layout.placer, source_directory)?;
     if placer_config.copper_clearance_mm.is_none() {
         placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
     }
-    placer_config.edge_margin_mm = placer_config.edge_margin_mm.max(router_config.edge_clearance_mm);
+    placer_config.edge_margin_mm = placer_config
+        .edge_margin_mm
+        .max(router_config.edge_clearance_mm);
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
     }
     // Perturbations move the designer's parts too: only locked parts,
     // parts without nets and edge connectors stay.
-    let perturb_config = KiCadBoardPlacerConfig { constraints: None, ..KiCadBoardPlacerConfig::default() };
+    let perturb_config = KiCadBoardPlacerConfig {
+        constraints: None,
+        ..KiCadBoardPlacerConfig::default()
+    };
     let mut core_config = race_core_config(router_config);
     core_config.verbose = false;
     let mut placements: BTreeMap<String, Expr> = BTreeMap::new();
@@ -323,7 +376,10 @@ pub fn export_congestion_samples(
         let started = std::time::Instant::now();
         let outcome = (|| -> Result<KiCadCongestionSampleReport, String> {
             let base = match &variant.base {
-                Some(name) => placements.get(name).cloned().ok_or_else(|| format!("no variant {name:?} before this one"))?,
+                Some(name) => placements
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("no variant {name:?} before this one"))?,
                 None => source.clone(),
             };
             let mut pcb = if let Some(seed) = variant.placer_seed {
@@ -375,7 +431,8 @@ pub fn export_congestion_samples(
             let planned = planned_pours(&routed, router_config)?;
             add_pour_zones(&mut routed, &planned)?;
             let layers = LayerTable::from_pcb(&routed)?;
-            let connect = !pours(&routed, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
+            let connect = !pours(&routed, &layers)?.is_empty()
+                && router_config.pours != KiCadPourMode::Tracks;
             let lowered_at = std::time::Instant::now();
             let board = lower(&without_copper_texts(&routed), router_config, connect)?.board;
             let seconds_lower = lowered_at.elapsed().as_secs_f64();
@@ -385,7 +442,11 @@ pub fn export_congestion_samples(
             let seconds_features = features_at.elapsed().as_secs_f64();
             let tiles = [frame.tiles_y, frame.tiles_x];
             let mut blob = Blob { arrays: Vec::new() };
-            blob.add("features", vec![pcb_congestion::channel_count(), tiles[0], tiles[1]], maps.data.clone());
+            blob.add(
+                "features",
+                vec![pcb_congestion::channel_count(), tiles[0], tiles[1]],
+                maps.data.clone(),
+            );
             let mut header = serde_json::json!({
                 "board_id": board_id,
                 "source": source_directory,
@@ -419,24 +480,56 @@ pub fn export_congestion_samples(
                     || labels.frame.tiles_y != frame.tiles_y
                     || (labels.frame.pitch - frame.pitch).abs() > 1.0e-12
                 {
-                    return Err(format!("the router's tiles differ from the features' ({:?} against {:?})", labels.frame, frame));
+                    return Err(format!(
+                        "the router's tiles differ from the features' ({:?} against {:?})",
+                        labels.frame, frame
+                    ));
                 }
                 let planes = board.layer_count + 1;
-                blob.add("conflict", vec![planes, tiles[0], tiles[1]], labels.conflict);
+                blob.add(
+                    "conflict",
+                    vec![planes, tiles[0], tiles[1]],
+                    labels.conflict,
+                );
                 blob.add("history", vec![planes, tiles[0], tiles[1]], labels.history);
-                blob.add("tile_history", vec![planes, tiles[0], tiles[1]], labels.tile_history);
+                blob.add(
+                    "tile_history",
+                    vec![planes, tiles[0], tiles[1]],
+                    labels.tile_history,
+                );
                 blob.add("usage", vec![planes, tiles[0], tiles[1]], labels.usage);
-                blob.add("claimed", vec![board.layer_count, tiles[0], tiles[1]], labels.claimed);
-                blob.add("routable", vec![board.layer_count, tiles[0], tiles[1]], labels.routable);
-                blob.add("open_terminals", vec![1, tiles[0], tiles[1]], labels.open_terminals);
-                let flags = |values: &[bool]| values.iter().map(|value| *value as u8 as f32).collect::<Vec<f32>>();
+                blob.add(
+                    "claimed",
+                    vec![board.layer_count, tiles[0], tiles[1]],
+                    labels.claimed,
+                );
+                blob.add(
+                    "routable",
+                    vec![board.layer_count, tiles[0], tiles[1]],
+                    labels.routable,
+                );
+                blob.add(
+                    "open_terminals",
+                    vec![1, tiles[0], tiles[1]],
+                    labels.open_terminals,
+                );
+                let flags = |values: &[bool]| {
+                    values
+                        .iter()
+                        .map(|value| *value as u8 as f32)
+                        .collect::<Vec<f32>>()
+                };
                 let nets = labels.net_routable.len();
                 blob.add("net_routable", vec![nets], flags(&labels.net_routable));
                 blob.add("net_complete", vec![nets], flags(&labels.net_complete));
                 blob.add("net_conflicted", vec![nets], flags(&labels.net_conflicted));
                 let routable = labels.net_routable.iter().filter(|value| **value).count();
-                let incomplete = (0..nets).filter(|net| labels.net_routable[*net] && !labels.net_complete[*net]).count();
-                let conflicted = (0..nets).filter(|net| labels.net_routable[*net] && labels.net_conflicted[*net]).count();
+                let incomplete = (0..nets)
+                    .filter(|net| labels.net_routable[*net] && !labels.net_complete[*net])
+                    .count();
+                let conflicted = (0..nets)
+                    .filter(|net| labels.net_routable[*net] && labels.net_conflicted[*net])
+                    .count();
                 header["probe"] = serde_json::json!({
                     "unfinished": probed,
                     "routable_nets": routable,
@@ -446,13 +539,22 @@ pub fn export_congestion_samples(
                     "expansions": labels.expansions,
                     "seconds": seconds_probe,
                 });
-                header["net_names"] = serde_json::json!(board.nets.iter().map(|net| net.name.clone()).collect::<Vec<_>>());
+                header["net_names"] = serde_json::json!(
+                    board
+                        .nets
+                        .iter()
+                        .map(|net| net.name.clone())
+                        .collect::<Vec<_>>()
+                );
                 unfinished = Some(probed);
             }
             blob.write(&output_directory.join(&variant.name), &mut header)?;
             if job.keep_boards {
-                fs::write(output_directory.join(format!("{}.kicad_pcb", variant.name)), format!("{}\n", encode(&pcb)))
-                    .map_err(|error| error.to_string())?;
+                fs::write(
+                    output_directory.join(format!("{}.kicad_pcb", variant.name)),
+                    format!("{}\n", encode(&pcb)),
+                )
+                .map_err(|error| error.to_string())?;
             }
             Ok(KiCadCongestionSampleReport {
                 name: variant.name.clone(),

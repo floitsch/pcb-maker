@@ -97,14 +97,19 @@ fn polygon_perimeter(outline: &[core::Point]) -> f64 {
 fn sizes(component: &core::Component, tight: bool) -> Vec<[f64; 2]> {
     let mut size = component.body_size;
     if tight && let Some(box_) = component.tight {
-        size = [size[0].min(box_[2] - box_[0]), size[1].min(box_[3] - box_[1])];
+        size = [
+            size[0].min(box_[2] - box_[0]),
+            size[1].min(box_[3] - box_[1]),
+        ];
     }
     let mut out: Vec<[f64; 2]> = component
         .angle_options
         .iter()
         .map(|angle| {
             let turns = (angle.rem_euclid(360.0) / 90.0).round() as i64 % 2;
-            let quarter = ((angle.rem_euclid(360.0) / 90.0) - (angle.rem_euclid(360.0) / 90.0).round()).abs() < 1.0e-6;
+            let quarter =
+                ((angle.rem_euclid(360.0) / 90.0) - (angle.rem_euclid(360.0) / 90.0).round()).abs()
+                    < 1.0e-6;
             if !quarter {
                 // Any angle: the box fits either way round.
                 [size[0].min(size[1]), size[0].min(size[1])]
@@ -123,11 +128,25 @@ fn sizes(component: &core::Component, tight: bool) -> Vec<[f64; 2]> {
 
 /// The copper's (pads') extent of a part at each of its angles, as `sizes`.
 fn copper_sizes(component: &core::Component) -> Vec<[f64; 2]> {
-    let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut extent = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for pad in &component.pads {
-        extent = [extent[0].min(pad[0]), extent[1].min(pad[1]), extent[2].max(pad[2]), extent[3].max(pad[3])];
+        extent = [
+            extent[0].min(pad[0]),
+            extent[1].min(pad[1]),
+            extent[2].max(pad[2]),
+            extent[3].max(pad[3]),
+        ];
     }
-    let size = if extent[0].is_finite() { [extent[2] - extent[0], extent[3] - extent[1]] } else { [0.0, 0.0] };
+    let size = if extent[0].is_finite() {
+        [extent[2] - extent[0], extent[3] - extent[1]]
+    } else {
+        [0.0, 0.0]
+    };
     let mut copy = component.clone();
     copy.body_size = size;
     copy.tight = None;
@@ -175,7 +194,10 @@ pub fn edge_needs(problem: &core::Problem) -> Vec<EdgeNeed> {
                     || !component.hollow.is_empty()
                     || !component.side.collides(side)
                     || parts.contains(part)
-                    || constraints.overhangs.iter().any(|(other, _, _)| other == part)
+                    || constraints
+                        .overhangs
+                        .iter()
+                        .any(|(other, _, _)| other == part)
                 {
                     continue;
                 }
@@ -184,12 +206,17 @@ pub fn edge_needs(problem: &core::Problem) -> Vec<EdgeNeed> {
                     continue;
                 }
                 let copper = copper_sizes(component);
-                length += bodies.iter().map(|size| along(edge, *size).0).fold(f64::INFINITY, f64::min);
+                length += bodies
+                    .iter()
+                    .map(|size| along(edge, *size).0)
+                    .fold(f64::INFINITY, f64::min);
                 slack.push(
                     bodies
                         .iter()
                         .zip(&copper)
-                        .map(|(body, copper)| (along(edge, *body).0 - along(edge, *copper).0).max(0.0))
+                        .map(|(body, copper)| {
+                            (along(edge, *body).0 - along(edge, *copper).0).max(0.0)
+                        })
                         .fold(0.0, f64::max),
                 );
                 parts.push(*part);
@@ -199,7 +226,12 @@ pub fn edge_needs(problem: &core::Problem) -> Vec<EdgeNeed> {
             }
             slack.sort_by(|a, b| b.total_cmp(a));
             length -= slack.iter().take(2).sum::<f64>();
-            needs.push(EdgeNeed { edge, side: name, parts, length: length.max(0.0) });
+            needs.push(EdgeNeed {
+                edge,
+                side: name,
+                parts,
+                length: length.max(0.0),
+            });
         }
     }
     needs
@@ -232,7 +264,9 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
         .iter()
         .map(|index| polygon_area(&problem.components[*index].cutout_outline))
         .sum();
-    let inner = (polygon_area(&problem.outline) - polygon_perimeter(&problem.outline) * margin - holes).max(0.0);
+    let inner =
+        (polygon_area(&problem.outline) - polygon_perimeter(&problem.outline) * margin - holes)
+            .max(0.0);
     let mut fixed = [0.0f64; 2];
     let mut parts = [0.0f64; 2];
     let sides = |side: core::Side| -> &'static [usize] {
@@ -263,14 +297,31 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
         }
     }
     let usable = fixed.map(|fixed| (inner - fixed).max(0.0));
-    let ratio = |side: usize| if usable[side] > 0.0 { parts[side] / usable[side] } else if parts[side] > 0.0 { 99.0 } else { 0.0 };
-    let utilization = [ratio(0), ratio(1)].map(|share: f64| (share.min(99.0) * 1000.0).round() / 1000.0);
-    let missing = [0, 1].map(|side| ((parts[side] / TARGET_UTILIZATION - usable[side]).max(0.0) * 10.0).round() / 10.0);
+    let ratio = |side: usize| {
+        if usable[side] > 0.0 {
+            parts[side] / usable[side]
+        } else if parts[side] > 0.0 {
+            99.0
+        } else {
+            0.0
+        }
+    };
+    let utilization =
+        [ratio(0), ratio(1)].map(|share: f64| (share.min(99.0) * 1000.0).round() / 1000.0);
+    let missing = [0, 1].map(|side| {
+        ((parts[side] / TARGET_UTILIZATION - usable[side]).max(0.0) * 10.0).round() / 10.0
+    });
 
     // The smallest outline at this aspect: its area less the margin band
     // holds each side's fixed parts and its parts at the target.
-    let aspect = if outline[1] > 0.0 { (outline[0] / outline[1]).max(0.05) } else { 1.0 };
-    let need = (0..2).map(|side| parts[side] / TARGET_UTILIZATION + fixed[side]).fold(0.0, f64::max);
+    let aspect = if outline[1] > 0.0 {
+        (outline[0] / outline[1]).max(0.05)
+    } else {
+        1.0
+    };
+    let need = (0..2)
+        .map(|side| parts[side] / TARGET_UTILIZATION + fixed[side])
+        .fold(0.0, f64::max);
     // aspect h^2 - 2 (aspect + 1) margin h - need = 0
     let b = 2.0 * (aspect + 1.0) * margin;
     let height = (b + (b * b + 4.0 * aspect * need).sqrt()) / (2.0 * aspect);
@@ -292,19 +343,31 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
                         && !component.copper_only
                         && component.side.collides(*side)
                         && component.side != core::Side::Neither
-                        && !problem.constraints.edges.iter().any(|(part, _, _)| part == index)
+                        && !problem
+                            .constraints
+                            .edges
+                            .iter()
+                            .any(|(part, _, _)| part == index)
                         && problem.constraints.overhang(*index).is_none()
                 })
-                .map(|(_, component)| core::least_extents(component).map(|extent| extent + problem.spacing))
+                .map(|(_, component)| {
+                    core::least_extents(component).map(|extent| extent + problem.spacing)
+                })
                 .collect()
         })
         .collect();
     // At the target, as the area: the strips' length is at most that full.
     let slack = TARGET_UTILIZATION.sqrt();
     let holds = |outline: [f64; 2]| {
-        strip_parts
-            .iter()
-            .all(|parts| core::strips_hold(parts, [(outline[0] - 2.0 * margin) * slack, (outline[1] - 2.0 * margin) * slack]))
+        strip_parts.iter().all(|parts| {
+            core::strips_hold(
+                parts,
+                [
+                    (outline[0] - 2.0 * margin) * slack,
+                    (outline[1] - 2.0 * margin) * slack,
+                ],
+            )
+        })
     };
     if !holds(smallest) {
         // Growing either side (two grids side by side or one above the
@@ -315,14 +378,26 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
             .iter()
             .filter_map(|grow| {
                 let width = smallest[0] * grow;
-                steps.iter().map(|grow| smallest[1] * grow).find(|height| holds([width, *height])).map(|height| [width, height])
+                steps
+                    .iter()
+                    .map(|grow| smallest[1] * grow)
+                    .find(|height| holds([width, *height]))
+                    .map(|height| [width, height])
             })
             .collect();
-        let least = candidates.iter().map(|size| size[0] * size[1]).fold(f64::INFINITY, f64::min);
+        let least = candidates
+            .iter()
+            .map(|size| size[0] * size[1])
+            .fold(f64::INFINITY, f64::min);
         if let Some(best) = candidates
             .iter()
             .filter(|size| size[0] * size[1] <= 1.1 * least)
-            .min_by(|a, b| ((a[0] / a[1]) / aspect).ln().abs().total_cmp(&((b[0] / b[1]) / aspect).ln().abs()))
+            .min_by(|a, b| {
+                ((a[0] / a[1]) / aspect)
+                    .ln()
+                    .abs()
+                    .total_cmp(&((b[0] / b[1]) / aspect).ln().abs())
+            })
         {
             smallest = *best;
         }
@@ -334,15 +409,31 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
         if component.fixed || component.copper_only || component.side == core::Side::Neither {
             continue;
         }
-        let options: Vec<[f64; 2]> =
-            sizes(component, true).into_iter().map(|size| [size[0] + 2.0 * margin, size[1] + 2.0 * margin]).collect();
-        let fits = |outline: [f64; 2]| options.iter().any(|size| size[0] <= outline[0] + 1.0e-6 && size[1] <= outline[1] + 1.0e-6);
+        let options: Vec<[f64; 2]> = sizes(component, true)
+            .into_iter()
+            .map(|size| [size[0] + 2.0 * margin, size[1] + 2.0 * margin])
+            .collect();
+        let fits = |outline: [f64; 2]| {
+            options
+                .iter()
+                .any(|size| size[0] <= outline[0] + 1.0e-6 && size[1] <= outline[1] + 1.0e-6)
+        };
         if !fits(outline) {
             let size = sizes(component, true)[0];
             let name = references.get(index).map_or("?", String::as_str);
-            let row = problem.constraints.followers.iter().filter(|follower| follower.leader == index).count();
+            let row = problem
+                .constraints
+                .followers
+                .iter()
+                .filter(|follower| follower.leader == index)
+                .count();
             limits.push(if row > 0 {
-                format!("the row of {name} ({} parts) is {:.1} x {:.1} mm", row + 1, size[0], size[1])
+                format!(
+                    "the row of {name} ({} parts) is {:.1} x {:.1} mm",
+                    row + 1,
+                    size[0],
+                    size[1]
+                )
             } else {
                 format!("{name} is {:.1} x {:.1} mm", size[0], size[1])
             });
@@ -368,7 +459,11 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
                 "the parts held at the {} edge on the {} ({}) need {:.1} mm along it",
                 edge_name(need.edge),
                 need.side,
-                need.parts.iter().map(|part| references.get(*part).map_or("?", String::as_str)).collect::<Vec<_>>().join(", "),
+                need.parts
+                    .iter()
+                    .map(|part| references.get(*part).map_or("?", String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 need.length
             ));
         }
@@ -402,7 +497,11 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
 /// user's row that fits the outline in no orientation it may take, and
 /// parts held at an edge that need more length than it has (`edge_needs`).
 /// Errors name what does not fit and by how much.
-pub fn outline_holds(problem: &core::Problem, references: &[String], rows: &[usize]) -> Vec<String> {
+pub fn outline_holds(
+    problem: &core::Problem,
+    references: &[String],
+    rows: &[usize],
+) -> Vec<String> {
     let mut errors = Vec::new();
     if problem.outline.len() < 3 {
         return errors;
@@ -414,12 +513,22 @@ pub fn outline_holds(problem: &core::Problem, references: &[String], rows: &[usi
         // A row held at an edge needs only its copper on the board at the
         // last level, and an overhanging one reaches beyond it.
         let constraints = &problem.constraints;
-        if constraints.edges.iter().any(|(part, _, _)| part == leader) || constraints.overhang(*leader).is_some() {
+        if constraints.edges.iter().any(|(part, _, _)| part == leader)
+            || constraints.overhang(*leader).is_some()
+        {
             continue;
         }
         let options = sizes(component, false);
-        if !options.iter().any(|size| size[0] <= outline[0] + 1.0e-6 && size[1] <= outline[1] + 1.0e-6) {
-            let members = 1 + problem.constraints.followers.iter().filter(|follower| follower.leader == *leader).count();
+        if !options
+            .iter()
+            .any(|size| size[0] <= outline[0] + 1.0e-6 && size[1] <= outline[1] + 1.0e-6)
+        {
+            let members = 1 + problem
+                .constraints
+                .followers
+                .iter()
+                .filter(|follower| follower.leader == *leader)
+                .count();
             errors.push(format!(
                 "the row of {} ({members} parts) cannot fit the outline: the row is {:.2} x {:.2} mm (turned as it may be), the outline {:.2} x {:.2} mm: give the board more room (room.suggested_outline_mm in verdict.json) or the row a smaller pitch or more lines",
                 references[*leader], component.body_size[0], component.body_size[1], outline[0], outline[1]
@@ -481,7 +590,13 @@ mod tests {
             outline: vec![[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]],
             components,
             net_weights: Vec::new(),
-            poses: vec![core::Pose { position: [0.0, 0.0], angle: 0.0 }; count],
+            poses: vec![
+                core::Pose {
+                    position: [0.0, 0.0],
+                    angle: 0.0
+                };
+                count
+            ],
             spacing: 0.0,
             grid: 0.5,
             edge_margin: 0.0,
@@ -510,7 +625,10 @@ mod tests {
         assert_eq!(room.smallest_outline_mm, [60.5, 27.0]);
         assert_eq!(room.suggested_outline_mm, Some([60.5, 27.0]));
         // Nothing wanting, nothing suggested.
-        assert_eq!(super::room(&problem, &references, false).suggested_outline_mm, None);
+        assert_eq!(
+            super::room(&problem, &references, false).suggested_outline_mm,
+            None
+        );
     }
 
     #[test]

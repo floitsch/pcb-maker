@@ -409,7 +409,9 @@ fn default_hole_clearance() -> f64 {
 impl KiCadBoardRouterConfig {
     /// The narrowest track width allowed by `min_connection_mm` (0: none).
     pub fn width_floor(&self) -> f64 {
-        self.min_connection_mm.filter(|floor| *floor > 0.0).unwrap_or(0.0)
+        self.min_connection_mm
+            .filter(|floor| *floor > 0.0)
+            .unwrap_or(0.0)
     }
 
     /// Raises every track width of the configuration to `width_floor`:
@@ -419,7 +421,11 @@ impl KiCadBoardRouterConfig {
         if floor <= 0.0 {
             return;
         }
-        for rules in self.connection_rules.values_mut().chain(self.default_rules.iter_mut()) {
+        for rules in self
+            .connection_rules
+            .values_mut()
+            .chain(self.default_rules.iter_mut())
+        {
             rules.trace_width_mm = rules.trace_width_mm.max(floor);
         }
         self.narrow_signal_mm = self.narrow_signal_mm.map(|width| width.max(floor));
@@ -585,7 +591,11 @@ impl KiCadRulesSummary {
         Self {
             width_floor_mm: config.min_connection_mm.filter(|floor| *floor > 0.0),
             connection_width_severity: config.connection_width_severity.clone(),
-            narrowest_track_mm: if narrowest.is_finite() { narrowest } else { 0.0 },
+            narrowest_track_mm: if narrowest.is_finite() {
+                narrowest
+            } else {
+                0.0
+            },
             neck_width_mm: board.neck_width,
         }
     }
@@ -631,7 +641,11 @@ fn starved_thermal_diagnostics(directory: &Path) -> Vec<KiCadStarvedThermal> {
     };
     let number_after = |text: &str, key: &str| -> Option<usize> {
         let rest = &text[text.find(key)? + key.len()..];
-        rest.trim_start().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+        rest.trim_start()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()
     };
     let mut found = Vec::new();
     for violation in report["violations"].as_array().into_iter().flatten() {
@@ -643,7 +657,11 @@ fn starved_thermal_diagnostics(directory: &Path) -> Vec<KiCadStarvedThermal> {
             .as_array()
             .into_iter()
             .flatten()
-            .find(|item| item["description"].as_str().is_some_and(|text| text.contains("ad ")))
+            .find(|item| {
+                item["description"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("ad "))
+            })
         else {
             continue;
         };
@@ -667,7 +685,10 @@ fn starved_thermal_diagnostics(directory: &Path) -> Vec<KiCadStarvedThermal> {
         found.push(KiCadStarvedThermal {
             pad: pad["description"].as_str().unwrap_or("").to_string(),
             layer,
-            at: [pad["pos"]["x"].as_f64().unwrap_or(0.0), pad["pos"]["y"].as_f64().unwrap_or(0.0)],
+            at: [
+                pad["pos"]["x"].as_f64().unwrap_or(0.0),
+                pad["pos"]["y"].as_f64().unwrap_or(0.0),
+            ],
             spokes,
             needed,
             advice,
@@ -691,8 +712,17 @@ pub struct KiCadHotSpot {
     pub history: f32,
 }
 
-fn diagnostics(board: &core::Board, result: &core::RoutingResult, layer_names: &[String]) -> KiCadRoutingDiagnostics {
-    let round = |point: [f64; 2]| [(point[0] * 1000.0).round() / 1000.0, (point[1] * 1000.0).round() / 1000.0];
+fn diagnostics(
+    board: &core::Board,
+    result: &core::RoutingResult,
+    layer_names: &[String],
+) -> KiCadRoutingDiagnostics {
+    let round = |point: [f64; 2]| {
+        [
+            (point[0] * 1000.0).round() / 1000.0,
+            (point[1] * 1000.0).round() / 1000.0,
+        ]
+    };
     KiCadRoutingDiagnostics {
         dead_pads: result
             .diagnostics
@@ -855,17 +885,33 @@ thread_local! {
 /// pads, for `routable_net` (on this thread, for the lowering that follows).
 fn note_jumper_nets(pcb: &Expr) {
     let mut pads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-        for pad in footprint.children().iter().filter(|item| item.head() == Some("pad")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+        {
             if let Some(net) = node_net(pad)
-                && net.rsplit('/').next().unwrap_or(net).starts_with("unconnected-(")
+                && net
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(net)
+                    .starts_with("unconnected-(")
             {
                 *pads.entry(net).or_default() += 1;
             }
         }
     }
     JUMPER_NETS.with(|jumpers| {
-        *jumpers.borrow_mut() = pads.into_iter().filter(|(_, count)| *count >= 2).map(|(net, _)| net.to_string()).collect();
+        *jumpers.borrow_mut() = pads
+            .into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .map(|(net, _)| net.to_string())
+            .collect();
     });
 }
 
@@ -875,7 +921,11 @@ fn note_jumper_nets(pcb: &Expr) {
 pub(super) fn routable_net(raw: &str) -> bool {
     !raw.is_empty()
         && !raw.bytes().all(|byte| byte.is_ascii_digit())
-        && (!raw.rsplit('/').next().unwrap_or(raw).starts_with("unconnected-(")
+        && (!raw
+            .rsplit('/')
+            .next()
+            .unwrap_or(raw)
+            .starts_with("unconnected-(")
             || JUMPER_NETS.with(|jumpers| jumpers.borrow().contains(raw)))
 }
 
@@ -899,7 +949,11 @@ fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, Stri
     Ok(Some(match values.get(1) {
         Some(&height) if (height - diameter).abs() > 1.0e-9 => {
             let (long, short) = (diameter.max(height), diameter.min(height));
-            let axis = if diameter >= height { [1.0, 0.0] } else { [0.0, 1.0] };
+            let axis = if diameter >= height {
+                [1.0, 0.0]
+            } else {
+                [0.0, 1.0]
+            };
             let half = (long - short) / 2.0;
             let offset = [
                 half * (axis[0] * cos - axis[1] * sin),
@@ -929,7 +983,10 @@ static LOWER_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// threads), for the board check's line.
 pub(super) fn lowering_totals() -> (u64, f64) {
     use std::sync::atomic::Ordering::Relaxed;
-    (LOWER_CALLS.load(Relaxed), LOWER_NANOS.load(Relaxed) as f64 / 1.0e9)
+    (
+        LOWER_CALLS.load(Relaxed),
+        LOWER_NANOS.load(Relaxed) as f64 / 1.0e9,
+    )
 }
 
 pub(super) fn lower(
@@ -970,13 +1027,18 @@ fn lower_board(
     let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64, f64)> = Vec::new();
     // Board copper graphics, with the net they carry, placed once the nets
     // of the pads are known.
-    let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> = Vec::new();
+    let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> =
+        Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
-    let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> = std::collections::HashMap::new();
+    let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
+        std::collections::HashMap::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
     // ground or a rail) route at the project's smallest predefined width.
     let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
-        pours(pcb, &layers)?.into_iter().map(|pour| pour.net).collect()
+        pours(pcb, &layers)?
+            .into_iter()
+            .map(|pour| pour.net)
+            .collect()
     } else {
         Default::default()
     };
@@ -1005,7 +1067,9 @@ fn lower_board(
             _ => None,
         };
         let class = core::RuleClass {
-            trace_width: narrow.unwrap_or(rules.trace_width_mm).max(config.width_floor()),
+            trace_width: narrow
+                .unwrap_or(rules.trace_width_mm)
+                .max(config.width_floor()),
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
@@ -1033,18 +1097,28 @@ fn lower_board(
     // expansion is `pad_to_mask_clearance` (KiCad's setup has no
     // `solder_mask_margin`; the rule below read that key until 2026-10-15,
     // so only pads and footprints with their own margin had an aperture).
-    let board_pad_to_mask = pcb.child("setup").and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok()).unwrap_or(0.0);
+    let board_pad_to_mask = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok())
+        .unwrap_or(0.0);
     let min_mask_web = pcb
         .child("setup")
         .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
         .unwrap_or(0.0)
         .max(0.0);
-    let pad_mask_reach = if min_mask_web > 0.0 { min_mask_web / 2.0 + 0.01 } else { 0.0 };
+    let pad_mask_reach = if min_mask_web > 0.0 {
+        min_mask_web / 2.0 + 0.01
+    } else {
+        0.0
+    };
     let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
     let tented = vias_tented(pcb);
     // KiCad's exact rule where its bridges are errors; the rule of before
     // where the designer rated them lower.
-    let strict_mask = !matches!(config.solder_mask_bridge_severity.as_deref(), Some("warning" | "ignore"));
+    let strict_mask = !matches!(
+        config.solder_mask_bridge_severity.as_deref(),
+        Some("warning" | "ignore")
+    );
     let smallest_clearance = config
         .connection_rules
         .values()
@@ -1063,7 +1137,9 @@ fn lower_board(
                     .iter()
                     .filter(|child| child.head() == Some("zone") && is_rule_area(child))
                 {
-                    if let Some(obstacle) = rule_area_obstacle(zone, &layers, &format!("{reference} keepout"))? {
+                    if let Some(obstacle) =
+                        rule_area_obstacle(zone, &layers, &format!("{reference} keepout"))?
+                    {
                         obstacles.push(obstacle);
                     }
                     if let Some(keepout) = pour_keepout(zone, &layers)? {
@@ -1073,7 +1149,10 @@ fn lower_board(
                 // Copper drawn inside the footprint (a logo, a net tie's
                 // bridge) belongs to no net.
                 for graphic in item.children().iter().filter(|child| {
-                    matches!(child.head(), Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly"))
+                    matches!(
+                        child.head(),
+                        Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly")
+                    )
                 }) {
                     // Mask graphics open the mask like the board's own
                     // (Sisu's 190 B.Mask polygons, link's connector).
@@ -1083,13 +1162,28 @@ fn lower_board(
                             .map(|shape| place_shape(shape, footprint_at))
                             .collect();
                         if !shapes.is_empty() {
-                            let layer = if side == "F.Mask" { 0 } else { layers.len() - 1 };
-                            let expansion = form_f64(graphic, "solder_mask_margin", 1).ok().unwrap_or(board_pad_to_mask).max(0.0);
-                            mask_openings.push((shapes, layer, graphic.head().unwrap_or("graphic").to_string(), 0.0, expansion));
+                            let layer = if side == "F.Mask" {
+                                0
+                            } else {
+                                layers.len() - 1
+                            };
+                            let expansion = form_f64(graphic, "solder_mask_margin", 1)
+                                .ok()
+                                .unwrap_or(board_pad_to_mask)
+                                .max(0.0);
+                            mask_openings.push((
+                                shapes,
+                                layer,
+                                graphic.head().unwrap_or("graphic").to_string(),
+                                0.0,
+                                expansion,
+                            ));
                         }
                         continue;
                     }
-                    let Some(layer) = form_atom(graphic, "layer", 1).and_then(|name| layers.index(name)) else {
+                    let Some(layer) =
+                        form_atom(graphic, "layer", 1).and_then(|name| layers.index(name))
+                    else {
                         continue;
                     };
                     for shape in copper_graphic_shapes(graphic)? {
@@ -1102,7 +1196,10 @@ fn lower_board(
                             clearance_override: None,
                             blocks_tracks: true,
                             blocks_vias: true,
-                            label: format!("{reference} copper {}", graphic.head().unwrap_or("graphic")),
+                            label: format!(
+                                "{reference} copper {}",
+                                graphic.head().unwrap_or("graphic")
+                            ),
                         });
                     }
                 }
@@ -1115,7 +1212,9 @@ fn lower_board(
                     let label = format!("{reference}.{}", pad_name.trim_matches('"'));
                     // KiCad's zone connection: the pad's own, else its
                     // footprint's (0 none, 1 thermal, 2 solid).
-                    match form_atom(pad, "zone_connect", 1).or_else(|| form_atom(item, "zone_connect", 1)) {
+                    match form_atom(pad, "zone_connect", 1)
+                        .or_else(|| form_atom(item, "zone_connect", 1))
+                    {
                         Some("0") => isolated_pads.push(label.clone()),
                         Some("2") => solid_pads.push(label.clone()),
                         _ => {}
@@ -1125,7 +1224,8 @@ fn lower_board(
                     // Plated holes of pads without a net are just holes to
                     // everyone; the board's hole clearance applies. Holes of
                     // mechanical (unplated) pads always are.
-                    let hole = (pad_type == "thru_hole" && !node_net(pad).is_some_and(routable_net))
+                    let hole = (pad_type == "thru_hole"
+                        && !node_net(pad).is_some_and(routable_net))
                         || pad_type == "np_thru_hole";
                     if hole && let Some(shape) = drill_shape(pad, lowered.center)? {
                         obstacles.push(core::Obstacle {
@@ -1161,8 +1261,12 @@ fn lower_board(
                                 .skip(1)
                                 .filter_map(Expr::atom)
                                 .collect();
-                            let front = names.iter().any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"));
-                            let back = names.iter().any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"));
+                            let front = names
+                                .iter()
+                                .any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"));
+                            let back = names
+                                .iter()
+                                .any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"));
                             let margin = form_f64(pad, "solder_mask_margin", 1)
                                 .ok()
                                 .or_else(|| form_f64(item, "solder_mask_margin", 1).ok())
@@ -1171,7 +1275,13 @@ fn lower_board(
                             let kind = format!("pad {label}");
                             for (open, side) in [(front, 0), (back, layers.len() - 1)] {
                                 if open {
-                                    mask_openings.push((vec![shape(&lowered.geometry)], side, kind.clone(), margin, margin));
+                                    mask_openings.push((
+                                        vec![shape(&lowered.geometry)],
+                                        side,
+                                        kind.clone(),
+                                        margin,
+                                        margin,
+                                    ));
                                 }
                             }
                         }
@@ -1185,8 +1295,8 @@ fn lower_board(
                         .transpose()?;
                     // A positive pad or footprint override replaces the
                     // net class's clearance in KiCad, also when smaller.
-                    let clearance_override =
-                        Some(local_clearance::pad_clearance(pad, item)?).filter(|value| *value > 0.0);
+                    let clearance_override = Some(local_clearance::pad_clearance(pad, item)?)
+                        .filter(|value| *value > 0.0);
                     let mut clearance = 0.0;
                     if net.is_none() {
                         // A pad the router never connects (single-pin net,
@@ -1237,9 +1347,16 @@ fn lower_board(
                         .ok()
                         .or_else(|| form_f64(item, "solder_mask_margin", 1).ok());
                     let expansion = local_margin.unwrap_or(board_pad_to_mask);
-                    let web_reach = local_margin.filter(|margin| *margin > 0.0).map_or(0.0, |margin| margin + pad_mask_reach);
-                    let covered = if strict_mask { web_reach.max(mask_to_copper + expansion) } else { web_reach };
-                    let floor = smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY)) - 1.0e-9;
+                    let web_reach = local_margin
+                        .filter(|margin| *margin > 0.0)
+                        .map_or(0.0, |margin| margin + pad_mask_reach);
+                    let covered = if strict_mask {
+                        web_reach.max(mask_to_copper + expansion)
+                    } else {
+                        web_reach
+                    };
+                    let floor = smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY))
+                        - 1.0e-9;
                     let mask_names: Vec<&str> = pad
                         .child("layers")
                         .map(Expr::children)
@@ -1249,8 +1366,18 @@ fn lower_board(
                         .filter_map(Expr::atom)
                         .collect();
                     let sides = [
-                        (0usize, mask_names.iter().any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"))),
-                        (layers.len() - 1, mask_names.iter().any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"))),
+                        (
+                            0usize,
+                            mask_names
+                                .iter()
+                                .any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask")),
+                        ),
+                        (
+                            layers.len() - 1,
+                            mask_names
+                                .iter()
+                                .any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask")),
+                        ),
                     ];
                     for (index, (side, open)) in sides.into_iter().enumerate() {
                         // The looser rule: every outer copper layer of the
@@ -1264,22 +1391,26 @@ fn lower_board(
                         } else {
                             web_reach.max(min_mask_web + expansion + board_pad_to_mask)
                         };
-                        let aperture = |clearance: f64, blocks_tracks: bool, blocks_vias: bool| core::Obstacle {
-                            shape: shape(&lowered.geometry),
-                            layers: 1 << side,
-                            kind: core::ObstacleKind::Keepout,
-                            net,
-                            clearance,
-                            clearance_override: None,
-                            blocks_tracks,
-                            blocks_vias,
-                            label: format!("{label} mask aperture"),
+                        let aperture = |clearance: f64, blocks_tracks: bool, blocks_vias: bool| {
+                            core::Obstacle {
+                                shape: shape(&lowered.geometry),
+                                layers: 1 << side,
+                                kind: core::ObstacleKind::Keepout,
+                                net,
+                                clearance,
+                                clearance_override: None,
+                                blocks_tracks,
+                                blocks_vias,
+                                label: format!("{label} mask aperture"),
+                            }
                         };
                         // A reach at the copper clearance adds nothing (KiCad's
                         // tests are strict on both); the older rule keeps
                         // its own threshold (USB_Cable_Tester: 0.05 + 0.05
                         // mm against classes of 0.1 rerouted for nothing).
-                        let needed = |reach: f64| reach > floor + 2.0e-9 || (reach == web_reach && reach > floor);
+                        let needed = |reach: f64| {
+                            reach > floor + 2.0e-9 || (reach == web_reach && reach > floor)
+                        };
                         if (via_reach - covered).abs() < 1.0e-9 {
                             if needed(covered) {
                                 obstacles.push(aperture(covered, true, true));
@@ -1326,11 +1457,19 @@ fn lower_board(
                                 .and_then(|name| layers.index(name))
                                 .map(|layer| 1 << layer)
                                 .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
-                            terminal_layers = side.unwrap_or(pad_layers & pad_layers.wrapping_neg());
+                            terminal_layers =
+                                side.unwrap_or(pad_layers & pad_layers.wrapping_neg());
                         }
                         // A custom pad connects through its anchor only.
-                        let contact = match (pad.children().get(3).and_then(Expr::atom), &lowered.geometry) {
-                            (Some("custom"), ObstacleGeometry::Union { parts }) if parts.len() > 1 => Some(shape(&parts[0])),
+                        let contact = match (
+                            pad.children().get(3).and_then(Expr::atom),
+                            &lowered.geometry,
+                        ) {
+                            (Some("custom"), ObstacleGeometry::Union { parts })
+                                if parts.len() > 1 =>
+                            {
+                                Some(shape(&parts[0]))
+                            }
                             _ => None,
                         };
                         nets[net as usize].terminals.push(core::Terminal {
@@ -1427,16 +1566,25 @@ fn lower_board(
                 let shapes = copper_graphic_shapes(item)?;
                 let kind = item.head().unwrap_or("graphic").to_string();
                 if copper != 0 {
-                    let net = node_net(item).filter(|raw| routable_net(raw)).map(|raw| normalize_net(raw).to_string());
+                    let net = node_net(item)
+                        .filter(|raw| routable_net(raw))
+                        .map(|raw| normalize_net(raw).to_string());
                     copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
                 }
-                let shapes = if strict_mask && !sides.is_empty() { mask_graphic_shapes(item)? } else { shapes };
+                let shapes = if strict_mask && !sides.is_empty() {
+                    mask_graphic_shapes(item)?
+                } else {
+                    shapes
+                };
                 // KiCad's bridge test grows a shape by its mask expansion,
                 // a text by nothing.
                 let expansion = if item.head() == Some("gr_text") {
                     0.0
                 } else {
-                    form_f64(item, "solder_mask_margin", 1).ok().unwrap_or(board_pad_to_mask).max(0.0)
+                    form_f64(item, "solder_mask_margin", 1)
+                        .ok()
+                        .unwrap_or(board_pad_to_mask)
+                        .max(0.0)
                 };
                 for side in sides {
                     mask_openings.push((shapes.clone(), side, kind.clone(), 0.0, expansion));
@@ -1464,7 +1612,11 @@ fn lower_board(
             (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[1] - bounds.minimum[1])
         };
         let mut order: Vec<usize> = (0..net.terminals.len()).collect();
-        order.sort_by(|a, b| area(&net.terminals[*b]).total_cmp(&area(&net.terminals[*a])).then(a.cmp(b)));
+        order.sort_by(|a, b| {
+            area(&net.terminals[*b])
+                .total_cmp(&area(&net.terminals[*a]))
+                .then(a.cmp(b))
+        });
         let mut keep = vec![true; net.terminals.len()];
         let mut host = vec![usize::MAX; net.terminals.len()];
         for (position, &large) in order.iter().enumerate() {
@@ -1474,7 +1626,9 @@ fn lower_board(
             for &small in &order[position + 1..] {
                 if keep[small]
                     && net.terminals[small].label == net.terminals[large].label
-                    && obstacles[net.terminals[large].pad].shape.contains(net.terminals[small].anchor)
+                    && obstacles[net.terminals[large].pad]
+                        .shape
+                        .contains(net.terminals[small].anchor)
                 {
                     keep[small] = false;
                     host[small] = large;
@@ -1514,12 +1668,16 @@ fn lower_board(
         // a pad (Sisu's antenna feed, a rectangle on /RF/ANT, stayed an
         // island): it is a terminal of its net too.
         // Its fill is the one shape that is not a stroke's capsule.
-        let fills: Vec<usize> =
-            (0..shapes.len()).filter(|index| !matches!(shapes[*index], core::Shape::Capsule { .. })).collect();
+        let fills: Vec<usize> = (0..shapes.len())
+            .filter(|index| !matches!(shapes[*index], core::Shape::Capsule { .. }))
+            .collect();
         if let (Some(id), [fill]) = (net, fills.as_slice()) {
             let shape = &shapes[*fill];
             let bounds = shape.aabb();
-            let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+            let center = [
+                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+            ];
             if shape.contains(center) {
                 nets[id as usize].terminals.push(core::Terminal {
                     anchor: center,
@@ -1563,7 +1721,11 @@ fn lower_board(
     // above.
     for (shapes, layer, kind, margin, expansion) in mask_openings {
         let reach = (mask_reach + margin).max(mask_to_copper + expansion);
-        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb())).inflated(margin);
+        let bounds = shapes
+            .iter()
+            .skip(1)
+            .fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()))
+            .inflated(margin);
         let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
             .iter()
             .filter(|obstacle| {
@@ -1573,10 +1735,16 @@ fn lower_board(
             })
             .filter_map(|obstacle| obstacle.net)
             .collect();
-        let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+        let center = [
+            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+        ];
         let under: Vec<&Pour> = pours
             .iter()
-            .filter(|pour| pour.layers & (1 << layer) != 0 && core::geometry::point_in_polygon(center, &pour.polygon))
+            .filter(|pour| {
+                pour.layers & (1 << layer) != 0
+                    && core::geometry::point_in_polygon(center, &pour.polygon)
+            })
             .collect();
         // A pour's fill keeps its clearance from pads: it shows through
         // only where the opening has no pad of its own.
@@ -1591,12 +1759,19 @@ fn lower_board(
             );
         }
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-            eprintln!("mask opening ({kind}) on layer {layer}: {:?}, nets {exposed:?}", bounds);
+            eprintln!(
+                "mask opening ({kind}) on layer {layer}: {:?}, nets {exposed:?}",
+                bounds
+            );
         }
         // Over bare board an opening is no net's: copper of two nets under
         // one text bridges (jetson-nano's B.Mask title over three nets'
         // vias and tracks).
-        let net = if exposed.len() == 1 { exposed.first().copied() } else { None };
+        let net = if exposed.len() == 1 {
+            exposed.first().copied()
+        } else {
+            None
+        };
         obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
             shape,
             layers: 1 << layer,
@@ -1684,7 +1859,11 @@ fn lower_board(
                 // out of this one's fill (an equal one overlaps it).
                 above: pours
                     .iter()
-                    .filter(|other| other.net == pour.net && other.layers & (1 << layer) != 0 && other.priority > pour.priority)
+                    .filter(|other| {
+                        other.net == pour.net
+                            && other.layers & (1 << layer) != 0
+                            && other.priority > pour.priority
+                    })
                     .map(|other| other.polygon.clone())
                     .collect(),
                 connect: connect_pours,
@@ -1692,7 +1871,8 @@ fn lower_board(
                 thermal_gap: pour.thermal_gap,
                 // An inner layer poured over nearly the whole board is a
                 // plane: it carries no signals.
-                exclusive: layers.names[layer].starts_with("In") && polygon_area(&pour.polygon) >= 0.9 * board_area,
+                exclusive: layers.names[layer].starts_with("In")
+                    && polygon_area(&pour.polygon) >= 0.9 * board_area,
                 solid: pour.solid,
                 hatch: pour.hatch,
             });
@@ -1707,7 +1887,12 @@ fn lower_board(
         }
         let last = layers.len().saturating_sub(1);
         for (_, mut indices) in by_net {
-            indices.sort_by_key(|index| (planes[*index].layer.min(last - planes[*index].layer), planes[*index].layer));
+            indices.sort_by_key(|index| {
+                (
+                    planes[*index].layer.min(last - planes[*index].layer),
+                    planes[*index].layer,
+                )
+            });
             for index in indices.into_iter().skip(limit) {
                 planes[index].exclusive = false;
             }
@@ -1761,13 +1946,21 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
     let size = form_xy(pad, "size")?;
     let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
     let anchor = if shape == "custom" {
-        pad.child("options").and_then(|options| form_atom(options, "anchor", 1)).unwrap_or("circle")
+        pad.child("options")
+            .and_then(|options| form_atom(options, "anchor", 1))
+            .unwrap_or("circle")
     } else {
         shape
     };
-    let offset = match pad.child("drill").filter(|drill| drill.child("offset").is_some()) {
+    let offset = match pad
+        .child("drill")
+        .filter(|drill| drill.child("offset").is_some())
+    {
         Some(drill) => {
-            let (x, y) = (form_f64(drill, "offset", 1).unwrap_or(0.0), form_f64(drill, "offset", 2).unwrap_or(0.0));
+            let (x, y) = (
+                form_f64(drill, "offset", 1).unwrap_or(0.0),
+                form_f64(drill, "offset", 2).unwrap_or(0.0),
+            );
             let (sine, cosine) = quarter_sin_cos(-pad_at[2]);
             [x * cosine - y * sine, x * sine + y * cosine]
         }
@@ -1777,7 +1970,11 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
         center: [center[0] + offset[0], center[1] + offset[1]],
         half: [size[0] / 2.0, size[1] / 2.0],
         orientation: pad_at[2],
-        spoke_angle: form_f64(pad, "thermal_bridge_angle", 1).unwrap_or(if anchor == "circle" { 45.0 } else { 90.0 }),
+        spoke_angle: form_f64(pad, "thermal_bridge_angle", 1).unwrap_or(if anchor == "circle" {
+            45.0
+        } else {
+            90.0
+        }),
         circular: shape == "circle" || (shape == "oval" && (size[0] - size[1]).abs() < 1.0e-9),
     })
 }
@@ -1804,9 +2001,18 @@ pub fn dump_kicad_pour_map(
     if std::env::var_os("PCB_ROUTER_DUMP_MANUAL_SPOKES").is_some() {
         eprintln!("manual spokes: {} added", router.add_manual_spokes());
     }
-    router.dump_pours(output_directory).map_err(|error| error.to_string())?;
-    let names: Vec<String> = layer_names.iter().map(|name| format!("\"{name}\"")).collect();
-    fs::write(output_directory.join("layers.json"), format!("[{}]\n", names.join(", "))).map_err(|error| error.to_string())
+    router
+        .dump_pours(output_directory)
+        .map_err(|error| error.to_string())?;
+    let names: Vec<String> = layer_names
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect();
+    fs::write(
+        output_directory.join("layers.json"),
+        format!("[{}]\n", names.join(", ")),
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// The search benchmark: the board lowered with its pours connected, a
@@ -1909,7 +2115,10 @@ fn place_shape(shape: core::Shape, at: [f64; 3]) -> core::Shape {
             points: points.into_iter().map(place).collect(),
         },
         core::Shape::Union { parts } => core::Shape::Union {
-            parts: parts.into_iter().map(|part| place_shape(part, at)).collect(),
+            parts: parts
+                .into_iter()
+                .map(|part| place_shape(part, at))
+                .collect(),
         },
     }
 }
@@ -1929,7 +2138,9 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         radius: width / 2.0,
     };
     let shapes = match item.head() {
-        Some("gr_line" | "fp_line") => vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)],
+        Some("gr_line" | "fp_line") => {
+            vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)]
+        }
         Some("gr_arc" | "fp_arc") => outline::arc_points(
             form_xy(item, "start")?,
             form_xy(item, "mid")?,
@@ -1947,7 +2158,9 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             let mut shapes: Vec<_> = if filled && width <= 0.0 {
                 Vec::new()
             } else {
-                (0..4).map(|index| capsule(corners[index], corners[(index + 1) % 4])).collect()
+                (0..4)
+                    .map(|index| capsule(corners[index], corners[(index + 1) % 4]))
+                    .collect()
             };
             if filled {
                 shapes.push(core::Shape::Polygon {
@@ -1984,7 +2197,9 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
             // opening: a via 0.006 mm off the bare outline bridged to it).
             let filled = !matches!(form_atom(item, "fill", 1), Some("no" | "none"));
             let mut shapes: Vec<_> = if width > 0.0 || !filled {
-                (0..points.len()).map(|index| capsule(points[index], points[(index + 1) % points.len()])).collect()
+                (0..points.len())
+                    .map(|index| capsule(points[index], points[(index + 1) % points.len()]))
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -1995,16 +2210,23 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         }
         // Text in a TrueType face carries its glyphs as polygons.
         Some("gr_text")
-            if item
-                .child("render_cache")
-                .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon"))) =>
+            if item.child("render_cache").is_some_and(|cache| {
+                cache
+                    .children()
+                    .iter()
+                    .any(|child| child.head() == Some("polygon"))
+            }) =>
         {
             let cache = item.child("render_cache").unwrap();
             cache
                 .children()
                 .iter()
                 .filter(|child| child.head() == Some("polygon"))
-                .map(|polygon| Ok(core::Shape::Polygon { points: rule_area_like_points(polygon)? }))
+                .map(|polygon| {
+                    Ok(core::Shape::Polygon {
+                        points: rule_area_like_points(polygon)?,
+                    })
+                })
                 .collect::<Result<_, String>>()?
         }
         Some("gr_text") => vec![stroke_text_box(item)?],
@@ -2015,14 +2237,23 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
     // "0bsilab" on F.Cu: tracks and pads landed inside the plate, shorts
     // and mask bridges).
     let knockout = matches!(item.head(), Some("gr_text" | "fp_text"))
-        && item.child("layer").is_some_and(|layer| layer.children().iter().skip(2).any(|child| child.atom() == Some("knockout")));
+        && item.child("layer").is_some_and(|layer| {
+            layer
+                .children()
+                .iter()
+                .skip(2)
+                .any(|child| child.atom() == Some("knockout"))
+        });
     if knockout && !shapes.is_empty() {
         let thickness = item
             .child("effects")
             .and_then(|effects| effects.child("font"))
             .and_then(|font| form_f64(font, "thickness", 1).ok())
             .unwrap_or(0.15);
-        let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
+        let bounds = shapes
+            .iter()
+            .skip(1)
+            .fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()));
         let (low, high) = (bounds.minimum, bounds.maximum);
         return Ok(vec![core::Shape::Polygon {
             points: vec![
@@ -2047,9 +2278,12 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
 fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
     let mut shapes = copper_graphic_shapes(item)?;
     let cached = item.head() == Some("gr_text")
-        && item
-            .child("render_cache")
-            .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon")));
+        && item.child("render_cache").is_some_and(|cache| {
+            cache
+                .children()
+                .iter()
+                .any(|child| child.head() == Some("polygon"))
+        });
     if cached {
         shapes.push(stroke_text_box(item)?);
     }
@@ -2097,10 +2331,14 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
         .fold(0.0, f64::max);
     // Symbols outside ASCII reach as far (eurorack-pmod's "⇒⊕⊥∃⊢≢" on
     // F.Mask: 0.73 mm across the line of a 1 mm text).
-    let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';') || !c.is_ascii());
+    let descends = text
+        .chars()
+        .any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';') || !c.is_ascii());
     let half = [
         (widest * size[1] + thickness) / 2.0,
-        (lines - 1.0) * 1.62 * size[0] / 2.0 + (if descends { 0.8 } else { 0.5 }) * size[0] + thickness / 2.0,
+        (lines - 1.0) * 1.62 * size[0] / 2.0
+            + (if descends { 0.8 } else { 0.5 }) * size[0]
+            + thickness / 2.0,
     ];
     let justify: Vec<&str> = item
         .child("effects")
@@ -2143,7 +2381,11 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
     // 2.5 mm text, jetson-nano's title 0.03 mm): some room on both
     // sides.
     let half = [half[0], half[1] + 0.08 * size[0]];
-    Ok(core::Shape::rectangle([at[0] + offset[0], at[1] + offset[1]], half, -at[2]))
+    Ok(core::Shape::rectangle(
+        [at[0] + offset[0], at[1] + offset[1]],
+        half,
+        -at[2],
+    ))
 }
 
 /// Whether the board tents its vias on the front and on the back, as KiCad
@@ -2164,7 +2406,10 @@ pub(crate) fn vias_tented(pcb: &Expr) -> [bool; 2] {
         let yes = |side: &str| matches!(form_atom(tenting, side, 1), Some("yes" | "true"));
         return [yes("front"), yes("back")];
     }
-    match setup.child("pcbplotparams").and_then(|plot| form_atom(plot, "viasonmask", 1)) {
+    match setup
+        .child("pcbplotparams")
+        .and_then(|plot| form_atom(plot, "viasonmask", 1))
+    {
         Some("yes" | "true") => [false, false],
         _ => [true, true],
     }
@@ -2201,13 +2446,20 @@ fn pour_keepout(zone: &Expr, layers: &LayerTable) -> Result<Option<(u32, Vec<[f6
 /// middle across), as a 32-gon around it; `None` for any other outline.
 fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
     let pts = zone.child("polygon")?.child("pts")?;
-    let arcs: Vec<&Expr> = pts.children().iter().filter(|item| item.head() == Some("arc")).collect();
+    let arcs: Vec<&Expr> = pts
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("arc"))
+        .collect();
     let [arc] = arcs.as_slice() else {
         return None;
     };
     let point = |name: &str| -> Option<[f64; 2]> {
         let form = arc.child(name)?;
-        Some([form.children().get(1)?.atom()?.parse().ok()?, form.children().get(2)?.atom()?.parse().ok()?])
+        Some([
+            form.children().get(1)?.atom()?.parse().ok()?,
+            form.children().get(2)?.atom()?.parse().ok()?,
+        ])
     };
     let (start, middle, end) = (point("start")?, point("mid")?, point("end")?);
     if (start[0] - end[0]).abs() > 1.0e-6 || (start[1] - end[1]).abs() > 1.0e-6 {
@@ -2219,7 +2471,10 @@ fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
         (0..32)
             .map(|index| {
                 let angle = index as f64 * std::f64::consts::TAU / 32.0;
-                [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]
+                [
+                    center[0] + radius * angle.cos(),
+                    center[1] + radius * angle.sin(),
+                ]
             })
             .collect()
     })
@@ -2227,7 +2482,11 @@ fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
 
 /// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
 /// footprints are stored in board coordinates too.
-fn rule_area_obstacle(zone: &Expr, layers: &LayerTable, fallback_label: &str) -> Result<Option<core::Obstacle>, String> {
+fn rule_area_obstacle(
+    zone: &Expr,
+    layers: &LayerTable,
+    fallback_label: &str,
+) -> Result<Option<core::Obstacle>, String> {
     let allowed = |kind: &str| {
         zone.child("keepout")
             .and_then(|keepout| keepout.child(kind))
@@ -2250,7 +2509,9 @@ fn rule_area_obstacle(zone: &Expr, layers: &LayerTable, fallback_label: &str) ->
         clearance_override: None,
         blocks_tracks,
         blocks_vias,
-        label: form_atom(zone, "name", 1).unwrap_or(fallback_label).to_string(),
+        label: form_atom(zone, "name", 1)
+            .unwrap_or(fallback_label)
+            .to_string(),
     }))
 }
 
@@ -2339,14 +2600,19 @@ pub(super) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                         + form_f64(fill, "thermal_bridge_width", 1).unwrap_or(0.5)
                 })
                 .unwrap_or(1.0),
-            hatch: zone.child("fill").filter(|fill| form_atom(fill, "mode", 1) == Some("hatch")).map(|fill| core::Hatch {
-                thickness: form_f64(fill, "hatch_thickness", 1).unwrap_or(1.0),
-                gap: form_f64(fill, "hatch_gap", 1).unwrap_or(1.5),
-                orientation: form_f64(fill, "hatch_orientation", 1).unwrap_or(0.0),
-                smoothing_level: form_f64(fill, "hatch_smoothing_level", 1).unwrap_or(0.0).max(0.0) as u32,
-                smoothing_value: form_f64(fill, "hatch_smoothing_value", 1).unwrap_or(0.0),
-                min_hole_area: form_f64(fill, "hatch_min_hole_area", 1).unwrap_or(0.3),
-            }),
+            hatch: zone
+                .child("fill")
+                .filter(|fill| form_atom(fill, "mode", 1) == Some("hatch"))
+                .map(|fill| core::Hatch {
+                    thickness: form_f64(fill, "hatch_thickness", 1).unwrap_or(1.0),
+                    gap: form_f64(fill, "hatch_gap", 1).unwrap_or(1.5),
+                    orientation: form_f64(fill, "hatch_orientation", 1).unwrap_or(0.0),
+                    smoothing_level: form_f64(fill, "hatch_smoothing_level", 1)
+                        .unwrap_or(0.0)
+                        .max(0.0) as u32,
+                    smoothing_value: form_f64(fill, "hatch_smoothing_value", 1).unwrap_or(0.0),
+                    min_hole_area: form_f64(fill, "hatch_min_hole_area", 1).unwrap_or(0.3),
+                }),
             polygon: rule_area_polygon_points(zone)?,
         });
     }
@@ -2409,7 +2675,12 @@ pub(crate) fn memory_mb() -> Option<(f64, f64)> {
 /// the board's minimum clearance where the project rates clearance
 /// findings as warnings (smaller than some class's clearance).
 pub(crate) fn narrow_step_applies(config: &KiCadBoardRouterConfig) -> bool {
-    let rules = || config.connection_rules.values().chain(config.default_rules.iter());
+    let rules = || {
+        config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+    };
     let narrow = config.use_narrow_signals.is_none()
         && config
             .narrow_signal_mm
@@ -2444,8 +2715,14 @@ pub(crate) fn narrow_step_reserve_floored(first_attempt_work: f64, share: f64, c
     if share <= 0.0 {
         return 0.0;
     }
-    let kept = (first_attempt_work * share).max(NARROW_RESERVE_FLOOR).min(cap);
-    if kept < narrow_step_minimum(kept) { 0.0 } else { kept }
+    let kept = (first_attempt_work * share)
+        .max(NARROW_RESERVE_FLOOR)
+        .min(cap);
+    if kept < narrow_step_minimum(kept) {
+        0.0
+    } else {
+        kept
+    }
 }
 
 /// The work the narrow-signal step needs left to run, with `kept` kept
@@ -2470,7 +2747,12 @@ pub(crate) fn narrow_step_negotiation(work_left: f64, own: Option<f64>) -> f64 {
 /// much: a deadline inside the negotiation leaves every net in conflict
 /// open). DSP-ADAU1452's step, varying a finer rung with a smaller
 /// budget, got less negotiation than the first attempt had.
-pub(crate) fn narrow_step_negotiation_floored(work_left: f64, own: Option<f64>, first: f64, kept: f64) -> f64 {
+pub(crate) fn narrow_step_negotiation_floored(
+    work_left: f64,
+    own: Option<f64>,
+    first: f64,
+    kept: f64,
+) -> f64 {
     narrow_step_negotiation(work_left, own).max(first.min(kept).min(0.5 * work_left))
 }
 
@@ -2492,7 +2774,11 @@ pub(crate) fn fits_before_reserve(work_left: f64, reserve: f64, cost: f64) -> bo
 /// from one of `work` on `previous` mm: a lattice grows with the square of
 /// the pitch ratio.
 pub(crate) fn projected_attempt_work(work: f64, previous: f64, pitch: f64) -> f64 {
-    if pitch > 0.0 && pitch < previous { work * (previous / pitch).powi(2) } else { work }
+    if pitch > 0.0 && pitch < previous {
+        work * (previous / pitch).powi(2)
+    } else {
+        work
+    }
 }
 
 /// The work deadline of each of `routers` routers whose work counts
@@ -2546,7 +2832,10 @@ pub(crate) fn could_win(count: usize, vias: usize, length_mm: f64, best: Checked
     let ((open, starved), best_vias, best_length) = best;
     count < open
         || (count == open
-            && (starved > 0 || (vias, length_mm).partial_cmp(&(best_vias, best_length)).is_some_and(|order| order.is_lt())))
+            && (starved > 0
+                || (vias, length_mm)
+                    .partial_cmp(&(best_vias, best_length))
+                    .is_some_and(|order| order.is_lt())))
 }
 
 /// Whether an attempt with router open count `count` can beat the caller's
@@ -2559,7 +2848,14 @@ impl CheckGate {
     /// Whether KiCad should check an attempt (router count `count`) given
     /// the ladder's `best` so far; `finishing` once the wall clock passed
     /// the deadline (no further attempt follows).
-    pub(crate) fn wants(&self, count: usize, vias: usize, length_mm: f64, best: Option<CheckedQuality>, finishing: bool) -> bool {
+    pub(crate) fn wants(
+        &self,
+        count: usize,
+        vias: usize,
+        length_mm: f64,
+        best: Option<CheckedQuality>,
+        finishing: bool,
+    ) -> bool {
         if finishing {
             return best.is_none_or(|best| could_win(count, vias, length_mm, best))
                 && self.kept.is_none_or(|kept| could_beat_kept(count, kept));
@@ -2576,7 +2872,11 @@ impl CheckGate {
                 && self.top.is_none_or(|top| {
                     self.counts
                         .iter()
-                        .filter(|other| other.partial_cmp(&&measure).is_some_and(|order| order.is_le()))
+                        .filter(|other| {
+                            other
+                                .partial_cmp(&&measure)
+                                .is_some_and(|order| order.is_le())
+                        })
                         .count()
                         < top
                 }))
@@ -2606,7 +2906,11 @@ pub(crate) fn router_open(result: &KiCadBoardRouterResult) -> usize {
 /// KiCad's check of an attempt routed without it
 /// (`skip_native_verification`), as `finish_routed_board` runs it: the
 /// native report, the starved thermals, the report file again.
-pub(crate) fn check_attempt(result: &mut KiCadBoardRouterResult, directory: &Path, board_id: &str) -> Result<(), String> {
+pub(crate) fn check_attempt(
+    result: &mut KiCadBoardRouterResult,
+    directory: &Path,
+    board_id: &str,
+) -> Result<(), String> {
     let started = std::time::Instant::now();
     result.native = Some(verify_materialized_rung(directory, board_id)?);
     result.native_verification_seconds = started.elapsed().as_secs_f64();
@@ -2620,8 +2924,11 @@ pub(crate) fn check_attempt(result: &mut KiCadBoardRouterResult, directory: &Pat
         drc_cache.hits
     );
     let report_path = directory.join("board-router.json");
-    fs::write(&report_path, serde_json::to_string_pretty(&*result).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("failed to write {}: {error}", report_path.display()))
+    fs::write(
+        &report_path,
+        serde_json::to_string_pretty(&*result).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", report_path.display()))
 }
 
 /// `config` as the narrow-signal step routes it: signal nets at the
@@ -2631,13 +2938,23 @@ pub(crate) fn check_attempt(result: &mut KiCadBoardRouterResult, directory: &Pat
 /// again.
 pub(crate) fn narrow_step_config(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
     let mut step = config.clone();
-    let wider = |narrow: f64| config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9);
+    let wider = |narrow: f64| {
+        config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+            .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+    };
     if config.use_narrow_signals.is_none() {
         step.use_narrow_signals = Some(config.narrow_signal_mm.is_some_and(wider));
     }
     if let Some(relaxed) = config.relaxed_clearance_mm {
         step.relaxed_clearance_mm = None;
-        for rules in step.connection_rules.values_mut().chain(step.default_rules.iter_mut()) {
+        for rules in step
+            .connection_rules
+            .values_mut()
+            .chain(step.default_rules.iter_mut())
+        {
             rules.clearance_mm = rules.clearance_mm.min(relaxed);
         }
     }
@@ -2656,7 +2973,10 @@ pub fn route_kicad_board(
     let config = match (config.deadline, config.deadline_seconds) {
         (None, Some(seconds)) => {
             with_deadline = KiCadBoardRouterConfig {
-                deadline: Some(std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds.max(0.0))),
+                deadline: Some(
+                    std::time::Instant::now()
+                        + std::time::Duration::from_secs_f64(seconds.max(0.0)),
+                ),
                 ..config.clone()
             };
             &with_deadline
@@ -2669,9 +2989,13 @@ pub fn route_kicad_board(
         config
     } else {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        with_classes = crate::net_classes::with_net_classes(config, &parse(&text).map_err(crate::verdict::input_error)?)
-            .map_err(crate::verdict::input_error)?;
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        with_classes = crate::net_classes::with_net_classes(
+            config,
+            &parse(&text).map_err(crate::verdict::input_error)?,
+        )
+        .map_err(crate::verdict::input_error)?;
         &with_classes
     };
     // The minimum connection width floors every width, also those of a
@@ -2692,13 +3016,22 @@ pub fn route_kicad_board(
     let poured_directory = output_directory.with_extension("poured");
     let planned = {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        planned_pours(&crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?, config).map_err(crate::verdict::input_error)?
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        planned_pours(
+            &crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?,
+            config,
+        )
+        .map_err(crate::verdict::input_error)?
     };
     if config.add_pours.is_empty() && !planned.is_empty() {
         eprintln!(
             "automatic planes: {}",
-            planned.iter().map(|pour| format!("{} on {}", pour.net, pour.layers.join(", "))).collect::<Vec<_>>().join("; ")
+            planned
+                .iter()
+                .map(|pour| format!("{} on {}", pour.net, pour.layers.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ")
         );
     }
     let prepared = !planned.is_empty() || !config.net_classes.is_empty();
@@ -2710,21 +3043,34 @@ pub fn route_kicad_board(
         }
         copy_directory_tree(source_directory, &poured_directory)?;
         let board = poured_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board).map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         let mut pcb = crate::canonical_order::parse_board(&text)?;
         add_pour_zones(&mut pcb, &planned).map_err(crate::verdict::input_error)?;
-        fs::write(&board, format!("{}\n", encode(&pcb))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
+        fs::write(&board, format!("{}\n", encode(&pcb)))
+            .map_err(|error| format!("failed to write {}: {error}", board.display()))?;
         if !config.net_classes.is_empty() {
-            crate::net_classes::write_net_classes(&poured_directory, board_id, &pcb, &config.net_classes)?;
+            crate::net_classes::write_net_classes(
+                &poured_directory,
+                board_id,
+                &pcb,
+                &config.net_classes,
+            )?;
         }
         poured_directory.as_path()
     };
     let swapped_directory = output_directory.with_extension("swapped");
     let (source_directory, pin_swaps) = match &config.pin_swaps {
         Some(path) => {
-            let spec = read_pin_swap_spec(&source_directory.join(path)).map_err(crate::verdict::input_error)?;
-            let result =
-                swap_kicad_pins(source_directory, board_id, &swapped_directory, &spec, &config.pin_swap)?;
+            let spec = read_pin_swap_spec(&source_directory.join(path))
+                .map_err(crate::verdict::input_error)?;
+            let result = swap_kicad_pins(
+                source_directory,
+                board_id,
+                &swapped_directory,
+                &spec,
+                &config.pin_swap,
+            )?;
             eprintln!(
                 "pin swaps: ratsnest {:.0} mm with {} crossings -> {:.0} mm with {} crossings, {} pins changed",
                 result.before.length_mm,
@@ -2739,7 +3085,8 @@ pub fn route_kicad_board(
     };
     // The topological engine makes one attempt, pour nets as tracks.
     if config.engine.as_deref() == Some("topological") {
-        let mut report = route_kicad_board_once(source_directory, board_id, output_directory, config, false)?;
+        let mut report =
+            route_kicad_board_once(source_directory, board_id, output_directory, config, false)?;
         report.pin_swaps = pin_swaps;
         report.pours = "topological (pour nets as tracks)".into();
         return Ok(report);
@@ -2792,10 +3139,21 @@ pub fn route_kicad_board(
     let stubs = config.fixed_plane_stubs;
     let modes: Vec<(bool, bool, bool, bool)> = match (has_pours, config.pours) {
         (false, _) | (true, KiCadPourMode::Tracks) => vec![(false, false, false, false)],
-        (true, KiCadPourMode::Connect) => vec![(true, skeleton, exclusive.unwrap_or(false), stubs.unwrap_or(false))],
-        (true, KiCadPourMode::Auto) if skeleton => vec![(true, true, false, false), (false, false, false, false)],
+        (true, KiCadPourMode::Connect) => vec![(
+            true,
+            skeleton,
+            exclusive.unwrap_or(false),
+            stubs.unwrap_or(false),
+        )],
+        (true, KiCadPourMode::Auto) if skeleton => {
+            vec![(true, true, false, false), (false, false, false, false)]
+        }
         (true, KiCadPourMode::Auto) if two_layers => {
-            vec![(true, false, false, false), (true, true, false, false), (false, false, false, false)]
+            vec![
+                (true, false, false, false),
+                (true, true, false, false),
+                (false, false, false, false),
+            ]
         }
         (true, KiCadPourMode::Auto) => {
             let mut modes = match exclusive {
@@ -2854,11 +3212,18 @@ pub fn route_kicad_board(
     // What one check counts as work (none in route mode), and the checks
     // counted so far: every check run, whether the DRC cache answered it
     // or not, so that a warm run ends where a cold one does.
-    let check_charge = if checking { config.kicad_check_work.unwrap_or(0.0) } else { 0.0 };
+    let check_charge = if checking {
+        config.kicad_check_work.unwrap_or(0.0)
+    } else {
+        0.0
+    };
     let checks_charged = std::cell::Cell::new(crate::check_work::CheckTally::new(check_charge));
     let gate = std::cell::RefCell::new(CheckGate {
         top: config.kicad_check_top,
-        counts: config.kicad_kept.map(|(measure, _)| vec![measure]).unwrap_or_default(),
+        counts: config
+            .kicad_kept
+            .map(|(measure, _)| vec![measure])
+            .unwrap_or_default(),
         kept: config.kicad_kept.map(|(_, quality)| quality),
         ..CheckGate::default()
     });
@@ -2909,16 +3274,24 @@ pub fn route_kicad_board(
         }
     };
     let past_deadline = || {
-        let past = config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        let past = config
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline);
         if past {
-            core::router::note_wall_cut("deadline", format_args!("the ladder at {:.0} s of its work", ladder_work_now.get()));
+            core::router::note_wall_cut(
+                "deadline",
+                format_args!("the ladder at {:.0} s of its work", ladder_work_now.get()),
+            );
         }
         past
     };
     // An attempt's (open, starved) as KiCad checked it, or None when its
     // check was skipped because it cannot win (`CheckGate`; its router
     // count, a lower bound of its open count, is then what it is ranked by).
-    let judge = |result: &mut KiCadBoardRouterResult, directory: &Path, best: Option<CheckedQuality>| -> Result<Option<(usize, usize)>, String> {
+    let judge = |result: &mut KiCadBoardRouterResult,
+                 directory: &Path,
+                 best: Option<CheckedQuality>|
+     -> Result<Option<(usize, usize)>, String> {
         if !checking {
             return Ok(Some(open(result, directory)));
         }
@@ -2926,29 +3299,48 @@ pub fn route_kicad_board(
         // Past the deadline no further attempt starts: only whether this
         // one beats the kept boards matters.
         let finishing = past_deadline();
-        if !gate.borrow().wants(count, result.vias, result.length_mm, best, finishing) {
+        if !gate
+            .borrow()
+            .wants(count, result.vias, result.length_mm, best, finishing)
+        {
             gate.borrow_mut().skipped += 1;
             CHECKS_SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let winnable = best.is_none_or(|best| could_win(count, result.vias, result.length_mm, best));
+            let winnable =
+                best.is_none_or(|best| could_win(count, result.vias, result.length_mm, best));
             eprintln!(
                 "board check: KiCad skipped, the attempt {} (router count {count}, {} vias; best {}{})",
-                if winnable && !finishing { "is not among the best by the router's measures" } else { "cannot win" },
+                if winnable && !finishing {
+                    "is not among the best by the router's measures"
+                } else {
+                    "cannot win"
+                },
                 result.vias,
-                best.map_or("none".to_string(), |((open, starved), vias, _)| format!("{open} open, {starved} starved, {vias} vias")),
+                best.map_or("none".to_string(), |((open, starved), vias, _)| format!(
+                    "{open} open, {starved} starved, {vias} vias"
+                )),
                 if finishing { ", past the deadline" } else { "" }
             );
             return Ok(None);
         }
         check_attempt(result, directory, board_id)?;
         charge_checks(1);
-        gate.borrow_mut().record((count, result.vias, result.length_mm));
+        gate.borrow_mut()
+            .record((count, result.vias, result.length_mm));
         Ok(Some(open(result, directory)))
     };
-    let quality_of = |best: &Option<((usize, usize), KiCadBoardRouterResult)>| -> Option<CheckedQuality> {
-        best.as_ref().map(|(opens, result)| (*opens, result.vias, result.length_mm))
-    };
+    let quality_of =
+        |best: &Option<((usize, usize), KiCadBoardRouterResult)>| -> Option<CheckedQuality> {
+            best.as_ref()
+                .map(|(opens, result)| (*opens, result.vias, result.length_mm))
+        };
     // How an attempt's line names an open count KiCad did not check.
-    let by_router = |judged: &Option<(usize, usize)>| if judged.is_none() { " (router's count, not checked)" } else { "" };
+    let by_router = |judged: &Option<(usize, usize)>| {
+        if judged.is_none() {
+            " (router's count, not checked)"
+        } else {
+            ""
+        }
+    };
     // What the last attempt took, in work: no attempt starts with less
     // than that left before the run's nominal end (an attempt checks the
     // deadline only in its negotiation; MokyaLora's last rung started at
@@ -2956,7 +3348,11 @@ pub fn route_kicad_board(
     let last_attempt_work = std::cell::Cell::new(120.0f64);
     // Its lattice pitch (0: none yet), for projecting a finer rung.
     let last_attempt_pitch = std::cell::Cell::new(0.0f64);
-    let work_left = || config.deadline_work.map_or(f64::INFINITY, |left| left - ladder_work_now.get());
+    let work_left = || {
+        config
+            .deadline_work
+            .map_or(f64::INFINITY, |left| left - ladder_work_now.get())
+    };
     // The final narrow-signal (or minimum-clearance) step comes after
     // every rung and seed round; with a work deadline (the layout's
     // ladder, whose deadline is barely beyond its budget) the rungs used
@@ -2972,10 +3368,13 @@ pub fn route_kicad_board(
         .and_then(|value| value.parse::<f64>().ok())
         .or(config.narrow_reserve_share)
         .unwrap_or(0.75);
-    let reserve_cap = config.deadline_work.map_or(0.0, |left| (0.4 * left).min(600.0));
+    let reserve_cap = config
+        .deadline_work
+        .map_or(0.0, |left| (0.4 * left).min(600.0));
     let mut reserve_set = false;
     // An attempt's check comes on top of its routing (`check_charge`).
-    let no_time_for_another = || work_left() - reserve.get() < last_attempt_work.get().max(120.0) + check_charge;
+    let no_time_for_another =
+        || work_left() - reserve.get() < last_attempt_work.get().max(120.0) + check_charge;
     // The reserve is a floor (2026-10-15): once kept, no rung, finer pitch
     // or seed round starts unless its projected work leaves the whole
     // reserve, and none may run into it (their work deadlines end where
@@ -2998,10 +3397,19 @@ pub fn route_kicad_board(
     // connected), for the narrow-signal retry at the end.
     let mut best_attempt: Option<(KiCadBoardRouterConfig, bool)> = None;
     let mut probe_complete = false;
-    if config.probe_ladder.unwrap_or(true) && modes.len() >= 3 && config.negotiation_seconds.is_none() {
+    if config.probe_ladder.unwrap_or(true)
+        && modes.len() >= 3
+        && config.negotiation_seconds.is_none()
+    {
         let probe_seconds = config.probe_seconds.unwrap_or(75.0);
         let layer_names = LayerTable::from_pcb(&parsed)?.names;
-        let mut leader: Option<(usize, usize, core::router::Router, core::Board, KiCadBoardRouterConfig)> = None;
+        let mut leader: Option<(
+            usize,
+            usize,
+            core::router::Router,
+            core::Board,
+            KiCadBoardRouterConfig,
+        )> = None;
         // The rungs' boards, in rung order.
         let mut rungs: Vec<(usize, core::Board, KiCadBoardRouterConfig)> = Vec::new();
         for (mode, (connect, skeleton, exclusive, plane_stubs)) in modes.iter().enumerate() {
@@ -3013,7 +3421,11 @@ pub fn route_kicad_board(
                 attempt.exclusive_layers = Some(if layer_table.names.len() >= 6 { 2 } else { 1 });
             }
             let board = lower(&parsed, &attempt, *connect)?.board;
-            let connections: usize = board.nets.iter().map(|net| net.terminals.len().saturating_sub(1)).sum();
+            let connections: usize = board
+                .nets
+                .iter()
+                .map(|net| net.terminals.len().saturating_sub(1))
+                .sum();
             if mode == 0 && (board.layer_count < 4 || connections < 120) {
                 break;
             }
@@ -3021,7 +3433,9 @@ pub fn route_kicad_board(
         }
         if !rungs.is_empty() && (past_deadline() || work_left() < probe_seconds * 3.0 + 180.0) {
             eprintln!("deadline too near for the ladder: no attempts");
-            skipped.push("the rung probes did not run: too little work left before the deadline".into());
+            skipped.push(
+                "the rung probes did not run: too little work left before the deadline".into(),
+            );
             rungs.clear();
         }
         // The probes run side by side, each a router of its own: as many
@@ -3047,7 +3461,8 @@ pub fn route_kicad_board(
             if router_mb_estimate.is_none() {
                 let before = resident_mb();
                 let started = std::time::Instant::now();
-                let router = core::router::Router::new(&rungs[next].1, &core_config(&rungs[next].2));
+                let router =
+                    core::router::Router::new(&rungs[next].1, &core_config(&rungs[next].2));
                 let megabytes = (resident_mb() - before).max(1.0);
                 first = Some((router, started.elapsed().as_secs_f64()));
                 router_mb_estimate = Some(megabytes);
@@ -3056,15 +3471,23 @@ pub fn route_kicad_board(
             // top of the maps a new router holds.
             let side_by_side = memory_mb()
                 .zip(router_mb_estimate)
-                .map_or(1, |((_, available), megabytes)| (available * 0.5 / (megabytes * 1.5)) as usize)
+                .map_or(1, |((_, available), megabytes)| {
+                    (available * 0.5 / (megabytes * 1.5)) as usize
+                })
                 .clamp(1, rungs.len() - next)
                 // A cap for experiments (1: one after the other).
-                .min(std::env::var("PCB_PROBES_SIDE_BY_SIDE").ok().and_then(|value| value.parse().ok()).unwrap_or(usize::MAX));
+                .min(
+                    std::env::var("PCB_PROBES_SIDE_BY_SIDE")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(usize::MAX),
+                );
             let wave = &rungs[next..next + side_by_side];
             let first_router = first.take();
-            let probed: Vec<(usize, usize, core::router::Router, f64)> = std::thread::scope(|scope| {
-                let mut first_router = first_router;
-                let handles: Vec<_> = wave
+            let probed: Vec<(usize, usize, core::router::Router, f64)> = std::thread::scope(
+                |scope| {
+                    let mut first_router = first_router;
+                    let handles: Vec<_> = wave
                     .iter()
                     .enumerate()
                     .map(|(index, (mode, board, attempt))| {
@@ -3102,10 +3525,16 @@ pub fn route_kicad_board(
                         })
                     })
                     .collect();
-                handles.into_iter().map(|handle| handle.join().expect("probe thread")).collect()
-            });
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("probe thread"))
+                        .collect()
+                },
+            );
             let mut out_of_work = false;
-            for ((mode, unfinished, mut router, seconds), (_, board, attempt)) in probed.into_iter().zip(wave) {
+            for ((mode, unfinished, mut router, seconds), (_, board, attempt)) in
+                probed.into_iter().zip(wave)
+            {
                 // As one probe after the other: a probe the work left would
                 // not have started counts for nothing, however many ran side
                 // by side (that number follows the memory available).
@@ -3118,13 +3547,28 @@ pub fn route_kicad_board(
                 eprintln!(
                     "probe pours={}{}: {unfinished} nets unfinished after {:.0} s{}",
                     if connect { "connect" } else { "tracks" },
-                    if exclusive { " (exclusive planes)" } else if plane_stubs { " (plane stubs)" } else { "" },
+                    if exclusive {
+                        " (exclusive planes)"
+                    } else if plane_stubs {
+                        " (plane stubs)"
+                    } else {
+                        ""
+                    },
                     seconds,
-                    if side_by_side > 1 { format!(" ({side_by_side} side by side)") } else { String::new() }
+                    if side_by_side > 1 {
+                        format!(" ({side_by_side} side by side)")
+                    } else {
+                        String::new()
+                    }
                 );
                 // Experiment hook: continue this rung whatever the probes say.
-                let forced = std::env::var("PCB_LADDER_FORCE_RUNG").ok().and_then(|value| value.parse::<usize>().ok());
-                if forced.map_or(leader.as_ref().is_none_or(|(best, ..)| unfinished < *best), |rung| rung == mode) {
+                let forced = std::env::var("PCB_LADDER_FORCE_RUNG")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok());
+                if forced.map_or(
+                    leader.as_ref().is_none_or(|(best, ..)| unfinished < *best),
+                    |rung| rung == mode,
+                ) {
                     router.config_mut().verbose = core_config(attempt).verbose;
                     leader = Some((unfinished, mode, router, board.clone(), attempt.clone()));
                 }
@@ -3144,14 +3588,19 @@ pub fn route_kicad_board(
             let remaining = (ladder_budget - spent(ladder_work_now.get())).max(60.0);
             // Experiment hook: the open count after a short continuation
             // of a copy (no polish), another statistic a judge could use.
-            if let Some(seconds) = std::env::var("PCB_LADDER_SHORT_RESUME").ok().and_then(|value| value.parse::<f64>().ok()) {
+            if let Some(seconds) = std::env::var("PCB_LADDER_SHORT_RESUME")
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+            {
                 let mut copy = router.clone();
                 let short = copy.resume_polished(seconds, false);
                 let open: usize = short
                     .status
                     .iter()
                     .map(|status| match status {
-                        core::NetStatus::Partial { unconnected_terminals } => *unconnected_terminals,
+                        core::NetStatus::Partial {
+                            unconnected_terminals,
+                        } => *unconnected_terminals,
                         core::NetStatus::Unreachable => 1,
                         _ => 0,
                     })
@@ -3160,11 +3609,15 @@ pub fn route_kicad_board(
             }
             let probed = router.expansions();
             // The router's own probe is in its work already.
-            router.config_mut().run_work = Some((ladder_budget, ladder_budget - spent(ladder_work_now.get()) + work_of(probed)));
+            router.config_mut().run_work = Some((
+                ladder_budget,
+                ladder_budget - spent(ladder_work_now.get()) + work_of(probed),
+            ));
             // It stops where the run's work ends, not where the wall
             // clock does (the deadline stays as the guard against load).
             if config.deadline_work.is_some() {
-                router.config_mut().deadline_work = Some(work_of(probed) + (work_left() - check_charge).max(0.0));
+                router.config_mut().deadline_work =
+                    Some(work_of(probed) + (work_left() - check_charge).max(0.0));
             }
             let resumed = (remaining / 3.0).clamp(60.0, 900.0);
             let routed = router.resume(resumed);
@@ -3201,7 +3654,13 @@ pub fn route_kicad_board(
             eprintln!(
                 "attempt pours={}{} pitch=regular (probed, continued): {} open{}, {} starved, {} vias, {:.1} s",
                 result.pours,
-                if exclusive { " (exclusive planes)" } else if plane_stubs { " (plane stubs)" } else { "" },
+                if exclusive {
+                    " (exclusive planes)"
+                } else if plane_stubs {
+                    " (plane stubs)"
+                } else {
+                    ""
+                },
                 opens.0,
                 by_router(&judged),
                 opens.1,
@@ -3216,7 +3675,11 @@ pub fn route_kicad_board(
                 first_negotiation = probe_seconds + resumed;
                 reserve.set(reserve_with_check(
                     if reserve_floor {
-                        narrow_step_reserve_floored(work_of(router_expansions), reserve_share, reserve_cap)
+                        narrow_step_reserve_floored(
+                            work_of(router_expansions),
+                            reserve_share,
+                            reserve_cap,
+                        )
                     } else {
                         narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap)
                     },
@@ -3321,9 +3784,11 @@ pub fn route_kicad_board(
         let rung_directory = |mode: usize| output_directory.with_extension(format!("rung{mode}"));
         // A probed rung continued with what it had is not run again; the
         // other rungs still get their turn when it left connections open.
-        let candidates: Vec<usize> =
-            (0..modes.len()).filter(|mode| !(pitch.is_none() && probed_mode == Some(*mode))).collect();
-        let mut ran: Vec<Option<Result<KiCadBoardRouterResult, String>>> = (0..modes.len()).map(|_| None).collect();
+        let candidates: Vec<usize> = (0..modes.len())
+            .filter(|mode| !(pitch.is_none() && probed_mode == Some(*mode)))
+            .collect();
+        let mut ran: Vec<Option<Result<KiCadBoardRouterResult, String>>> =
+            (0..modes.len()).map(|_| None).collect();
         for (position, &mode) in candidates.iter().enumerate() {
             let (connect, skeleton, exclusive, plane_stubs) = &modes[mode];
             // With work kept for the narrow-signal step, the rung's work
@@ -3332,7 +3797,11 @@ pub fn route_kicad_board(
             // after its 0.075 mm rungs) must leave all of it.
             let short_of_work = if reserve_floor && reserve.get() > 0.0 {
                 let cost = pitch.as_ref().map_or(last_attempt_work.get(), |pitch| {
-                    projected_attempt_work(last_attempt_work.get(), last_attempt_pitch.get(), pitch[0])
+                    projected_attempt_work(
+                        last_attempt_work.get(),
+                        last_attempt_pitch.get(),
+                        pitch[0],
+                    )
                 });
                 !fits_before_reserve(work_left() - check_charge, reserve.get(), cost)
             } else {
@@ -3370,31 +3839,50 @@ pub fn route_kicad_board(
                     1
                 } else {
                     let each = router_mb.map_or(0.0, |(megabytes, previous)| {
-                        megabytes * (previous / pitch.as_ref().map_or(previous, |pitch| pitch[0])).powi(2)
+                        megabytes
+                            * (previous / pitch.as_ref().map_or(previous, |pitch| pitch[0])).powi(2)
                     }) + 2200.0;
-                    (1..=candidates.len() - position).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(1)
+                    (1..=candidates.len() - position)
+                        .rev()
+                        .find(|count| fits(each * *count as f64, 0.5))
+                        .unwrap_or(1)
                 };
                 let wave: Vec<usize> = candidates[position..position + side_by_side].to_vec();
                 if wave.len() > 1 {
                     eprintln!("ladder: {} rungs side by side", wave.len());
                 }
-                let routed: Vec<(usize, Result<KiCadBoardRouterResult, String>)> = std::thread::scope(|scope| {
-                    let handles: Vec<_> = wave
-                        .iter()
-                        .map(|&other| {
-                            let attempt = unchecked(&rung_attempt(other));
-                            let directory = rung_directory(other);
-                            let connect = modes[other].0;
-                            scope.spawn(move || {
-                                if directory.exists() {
-                                    fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
-                                }
-                                route_kicad_board_once(source_directory, board_id, &directory, &attempt, connect)
+                let routed: Vec<(usize, Result<KiCadBoardRouterResult, String>)> =
+                    std::thread::scope(|scope| {
+                        let handles: Vec<_> = wave
+                            .iter()
+                            .map(|&other| {
+                                let attempt = unchecked(&rung_attempt(other));
+                                let directory = rung_directory(other);
+                                let connect = modes[other].0;
+                                scope.spawn(move || {
+                                    if directory.exists() {
+                                        fs::remove_dir_all(&directory)
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                    route_kicad_board_once(
+                                        source_directory,
+                                        board_id,
+                                        &directory,
+                                        &attempt,
+                                        connect,
+                                    )
+                                })
                             })
-                        })
-                        .collect();
-                    wave.iter().copied().zip(handles.into_iter().map(|handle| handle.join().expect("rung thread"))).collect()
-                });
+                            .collect();
+                        wave.iter()
+                            .copied()
+                            .zip(
+                                handles
+                                    .into_iter()
+                                    .map(|handle| handle.join().expect("rung thread")),
+                            )
+                            .collect()
+                    });
                 for (other, result) in routed {
                     ran[other] = Some(result);
                 }
@@ -3424,7 +3912,10 @@ pub fn route_kicad_board(
                     return wanted;
                 };
                 let each = megabytes * (previous / result.grid_pitch_mm).powi(2);
-                (1..=wanted).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(1)
+                (1..=wanted)
+                    .rev()
+                    .find(|count| fits(each * *count as f64, 0.5))
+                    .unwrap_or(1)
             };
             // What one attempt at this pitch costs, for projecting finer
             // pitches; a seed retry does not change it.
@@ -3462,17 +3953,27 @@ pub fn route_kicad_board(
                 // Their work counts `retry` times: each stops at its share
                 // of what is left beyond the reserve.
                 if reserve_floor && reserve.get() > 0.0 {
-                    seeded.router_deadline_work = Some(deadline_before_reserve(work_left() - check_charge, reserve.get(), retry));
+                    seeded.router_deadline_work = Some(deadline_before_reserve(
+                        work_left() - check_charge,
+                        reserve.get(),
+                        retry,
+                    ));
                 }
                 let retry_directory = output_directory.with_extension("seeds");
                 if retry_directory.exists() {
                     fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
                 }
-                let mut other =
-                    route_kicad_board_once(source_directory, board_id, &retry_directory, &unchecked(&seeded), *connect)?;
+                let mut other = route_kicad_board_once(
+                    source_directory,
+                    board_id,
+                    &retry_directory,
+                    &unchecked(&seeded),
+                    *connect,
+                )?;
                 other.pours = result.pours.clone();
                 // The seeds run side by side: about `retry` times one's work.
-                ladder_work_now.set(ladder_work_now.get() + work_of(other.expansions) * retry as f64);
+                ladder_work_now
+                    .set(ladder_work_now.get() + work_of(other.expansions) * retry as f64);
                 let other_judged = judge(&mut other, &retry_directory, quality_of(&best))?;
                 let other_opens = other_judged.unwrap_or((router_open(&other), 0));
                 eprintln!(
@@ -3507,7 +4008,13 @@ pub fn route_kicad_board(
             eprintln!(
                 "attempt pours={}{} pitch={}: {} open{}, {} starved, {} vias, {:.1} s",
                 result.pours,
-                if *exclusive { " (exclusive planes)" } else if *plane_stubs { " (plane stubs)" } else { "" },
+                if *exclusive {
+                    " (exclusive planes)"
+                } else if *plane_stubs {
+                    " (plane stubs)"
+                } else {
+                    ""
+                },
                 pitch
                     .as_ref()
                     .map_or("regular".to_string(), |pitch| format!("{:?}", pitch)),
@@ -3562,8 +4069,14 @@ pub fn route_kicad_board(
             }
             // A complete board needs no narrow-signal step: what was kept
             // for it is the next rung's again (a clean skeleton rung).
-            if reserve_floor && best.as_ref().is_some_and(|(opens, _)| opens.0 == 0) && reserve.get() > 0.0 {
-                eprintln!("ladder: the board is complete: the {:.0} s kept for the narrow-signal step are released", reserve.get());
+            if reserve_floor
+                && best.as_ref().is_some_and(|(opens, _)| opens.0 == 0)
+                && reserve.get() > 0.0
+            {
+                eprintln!(
+                    "ladder: the board is complete: the {:.0} s kept for the narrow-signal step are released",
+                    reserve.get()
+                );
                 reserve.set(0.0);
             }
             // Another way of connecting the pours is always worth trying
@@ -3611,16 +4124,26 @@ pub fn route_kicad_board(
         };
         let cost = work_of(best_result.expansions).max(1.0);
         // A round's seeds and its one check.
-        let mut affordable = ((ladder_budget - spent(ladder_work_now.get()) - cost - check_charge) / cost).floor().max(0.0) as usize;
+        let mut affordable = ((ladder_budget - spent(ladder_work_now.get()) - cost - check_charge)
+            / cost)
+            .floor()
+            .max(0.0) as usize;
         if reserve.get() > 0.0 {
-            affordable = affordable.min(((work_left() - check_charge - reserve.get()) / cost).floor().max(0.0) as usize);
+            affordable = affordable.min(
+                ((work_left() - check_charge - reserve.get()) / cost)
+                    .floor()
+                    .max(0.0) as usize,
+            );
         }
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
         // As many at once as fit half the memory available; how many seeds
         // route does not depend on it.
         let side_by_side = router_mb.map_or(retry, |(megabytes, previous)| {
             let each = megabytes * (previous / best_result.grid_pitch_mm).powi(2);
-            (1..=retry).rev().find(|count| fits(each * *count as f64, 0.5)).unwrap_or(1)
+            (1..=retry)
+                .rev()
+                .find(|count| fits(each * *count as f64, 0.5))
+                .unwrap_or(1)
         });
         if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() || no_time_for_another() {
             break;
@@ -3630,7 +4153,11 @@ pub fn route_kicad_board(
         seeded.seeds_side_by_side = Some(side_by_side);
         seeded.first_seed = Some(next_seed);
         if reserve_floor && reserve.get() > 0.0 {
-            seeded.router_deadline_work = Some(deadline_before_reserve(work_left() - check_charge, reserve.get(), retry));
+            seeded.router_deadline_work = Some(deadline_before_reserve(
+                work_left() - check_charge,
+                reserve.get(),
+                retry,
+            ));
         }
         next_seed += retry as u64;
         if scratch.exists() {
@@ -3638,7 +4165,13 @@ pub fn route_kicad_board(
         }
         let connect = *connect;
         let quality = quality_of(&best);
-        let mut other = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&seeded), connect)?;
+        let mut other = route_kicad_board_once(
+            source_directory,
+            board_id,
+            &scratch,
+            &unchecked(&seeded),
+            connect,
+        )?;
         other.pours = best_result.pours.clone();
         ladder_work_now.set(ladder_work_now.get() + work_of(other.expansions) * retry as f64);
         let other_judged = judge(&mut other, &scratch, quality)?;
@@ -3677,11 +4210,22 @@ pub fn route_kicad_board(
     // (and of what is left, what its check leaves).
     let kept_routing = (kept - check_charge).max(0.0);
     let routing_left = || work_left() - check_charge;
-    let step_has_time = || if kept > 0.0 { routing_left() >= narrow_step_minimum(kept_routing) } else { !no_time_for_another() };
+    let step_has_time = || {
+        if kept > 0.0 {
+            routing_left() >= narrow_step_minimum(kept_routing)
+        } else {
+            !no_time_for_another()
+        }
+    };
     let step_budget = |step: &mut KiCadBoardRouterConfig| {
         if kept > 0.0 {
             step.negotiation_seconds = Some(if reserve_floor {
-                narrow_step_negotiation_floored(routing_left(), step.negotiation_seconds, first_negotiation, kept_routing)
+                narrow_step_negotiation_floored(
+                    routing_left(),
+                    step.negotiation_seconds,
+                    first_negotiation,
+                    kept_routing,
+                )
             } else {
                 narrow_step_negotiation(routing_left(), step.negotiation_seconds)
             });
@@ -3708,27 +4252,45 @@ pub fn route_kicad_board(
             None
         }
     };
-    if let (Some((opens, _)), Some(_), Some(narrow)) = (best.as_ref(), best_attempt.as_ref(), config.narrow_signal_mm)
-        && opens.0 > 0
+    if let (Some((opens, _)), Some(_), Some(narrow)) = (
+        best.as_ref(),
+        best_attempt.as_ref(),
+        config.narrow_signal_mm,
+    ) && opens.0 > 0
         && config.use_narrow_signals.is_none()
-        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+        && config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+            .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
         && let Some(why) = blocked()
     {
-        eprintln!("the narrow-signal step did not run: {why} ({:.0} s of work left)", work_left());
-        skipped.push(format!("the narrow-signal step (signals at {narrow} mm) did not run: {why}"));
+        eprintln!(
+            "the narrow-signal step did not run: {why} ({:.0} s of work left)",
+            work_left()
+        );
+        skipped.push(format!(
+            "the narrow-signal step (signals at {narrow} mm) did not run: {why}"
+        ));
     }
     // Connections still open at the class widths: the best attempt once
     // more with signal nets at the project's smallest predefined width
     // (designers often keep the default class at a power width and draw
     // signals narrower).
-    if let (Some((opens, _)), Some((attempt, connect)), Some(narrow)) =
-        (best.as_ref(), best_attempt.as_ref(), config.narrow_signal_mm)
-        && opens.0 > 0
+    if let (Some((opens, _)), Some((attempt, connect)), Some(narrow)) = (
+        best.as_ref(),
+        best_attempt.as_ref(),
+        config.narrow_signal_mm,
+    ) && opens.0 > 0
         && config.use_narrow_signals.is_none()
         && spent(ladder_work_now.get()) < 1.5 * ladder_budget
         && !past_deadline()
         && step_has_time()
-        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+        && config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+            .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
     {
         let mut narrowed = attempt.clone();
         narrowed.use_narrow_signals = Some(true);
@@ -3738,7 +4300,11 @@ pub fn route_kicad_board(
         // drew 0.1016 tracks 0.149 from balls in classes of 0.2).
         if let Some(relaxed) = config.relaxed_clearance_mm {
             narrowed.relaxed_clearance_mm = None;
-            for rules in narrowed.connection_rules.values_mut().chain(narrowed.default_rules.iter_mut()) {
+            for rules in narrowed
+                .connection_rules
+                .values_mut()
+                .chain(narrowed.default_rules.iter_mut())
+            {
                 rules.clearance_mm = rules.clearance_mm.min(relaxed);
             }
             narrow_step_relaxed = true;
@@ -3746,14 +4312,26 @@ pub fn route_kicad_board(
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
-        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&narrowed), *connect)?;
+        let mut result = route_kicad_board_once(
+            source_directory,
+            board_id,
+            &scratch,
+            &unchecked(&narrowed),
+            *connect,
+        )?;
         ladder_work_now.set(ladder_work_now.get() + work_of(result.expansions));
-        result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
+        result.pours = best
+            .as_ref()
+            .map(|(_, best)| best.pours.clone())
+            .unwrap_or_default();
         let narrow_judged = judge(&mut result, &scratch, quality_of(&best))?;
         let narrow_opens = narrow_judged.unwrap_or((router_open(&result), 0));
         eprintln!(
             "attempt with signals at {narrow} mm{}: {} open{}, {} starved, {} vias, {:.1} s, work {:.0} s",
-            config.relaxed_clearance_mm.map(|relaxed| format!(" and clearance {relaxed} mm")).unwrap_or_default(),
+            config
+                .relaxed_clearance_mm
+                .map(|relaxed| format!(" and clearance {relaxed} mm"))
+                .unwrap_or_default(),
             narrow_opens.0,
             by_router(&narrow_judged),
             narrow_opens.1,
@@ -3761,11 +4339,12 @@ pub fn route_kicad_board(
             result.routing_seconds,
             work_of(result.expansions)
         );
-        let better = narrow_judged.is_some() && best.as_ref().is_some_and(|(best_opens, best_result)| {
-            (narrow_opens, result.vias, result.length_mm)
-                .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
-                .is_some_and(|order| order.is_lt())
-        });
+        let better = narrow_judged.is_some()
+            && best.as_ref().is_some_and(|(best_opens, best_result)| {
+                (narrow_opens, result.vias, result.length_mm)
+                    .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                    .is_some_and(|order| order.is_lt())
+            });
         if better {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
             fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
@@ -3778,35 +4357,63 @@ pub fn route_kicad_board(
     // Still open, and the project takes clearance findings as warnings:
     // the best attempt once more at the board's minimum clearance, which is
     // what the designer held to.
-    if let (Some((opens, _)), Some(_), Some(relaxed)) = (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
-        && opens.0 > 0
+    if let (Some((opens, _)), Some(_), Some(relaxed)) = (
+        best.as_ref(),
+        best_attempt.as_ref(),
+        config.relaxed_clearance_mm,
+    ) && opens.0 > 0
         && !narrow_step_relaxed
-        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
+        && config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+            .any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
         && let Some(why) = blocked()
     {
-        skipped.push(format!("the minimum-clearance step (clearance {relaxed} mm) did not run: {why}"));
+        skipped.push(format!(
+            "the minimum-clearance step (clearance {relaxed} mm) did not run: {why}"
+        ));
     }
-    if let (Some((opens, _)), Some((attempt, connect)), Some(relaxed)) =
-        (best.as_ref(), best_attempt.as_ref(), config.relaxed_clearance_mm)
-        && opens.0 > 0
+    if let (Some((opens, _)), Some((attempt, connect)), Some(relaxed)) = (
+        best.as_ref(),
+        best_attempt.as_ref(),
+        config.relaxed_clearance_mm,
+    ) && opens.0 > 0
         && !narrow_step_relaxed
         && spent(ladder_work_now.get()) < 1.5 * ladder_budget
         && !past_deadline()
         && step_has_time()
-        && config.connection_rules.values().chain(config.default_rules.iter()).any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
+        && config
+            .connection_rules
+            .values()
+            .chain(config.default_rules.iter())
+            .any(|rules| rules.clearance_mm > relaxed + 1.0e-9)
     {
         let mut relaxed_attempt = attempt.clone();
         step_budget(&mut relaxed_attempt);
         relaxed_attempt.relaxed_clearance_mm = None;
-        for rules in relaxed_attempt.connection_rules.values_mut().chain(relaxed_attempt.default_rules.iter_mut()) {
+        for rules in relaxed_attempt
+            .connection_rules
+            .values_mut()
+            .chain(relaxed_attempt.default_rules.iter_mut())
+        {
             rules.clearance_mm = rules.clearance_mm.min(relaxed);
         }
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
         }
-        let mut result = route_kicad_board_once(source_directory, board_id, &scratch, &unchecked(&relaxed_attempt), *connect)?;
+        let mut result = route_kicad_board_once(
+            source_directory,
+            board_id,
+            &scratch,
+            &unchecked(&relaxed_attempt),
+            *connect,
+        )?;
         ladder_work_now.set(ladder_work_now.get() + work_of(result.expansions));
-        result.pours = best.as_ref().map(|(_, best)| best.pours.clone()).unwrap_or_default();
+        result.pours = best
+            .as_ref()
+            .map(|(_, best)| best.pours.clone())
+            .unwrap_or_default();
         let relaxed_judged = judge(&mut result, &scratch, quality_of(&best))?;
         let relaxed_opens = relaxed_judged.unwrap_or((router_open(&result), 0));
         eprintln!(
@@ -3817,11 +4424,12 @@ pub fn route_kicad_board(
             result.vias,
             result.routing_seconds
         );
-        let better = relaxed_judged.is_some() && best.as_ref().is_some_and(|(best_opens, best_result)| {
-            (relaxed_opens, result.vias, result.length_mm)
-                .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
-                .is_some_and(|order| order.is_lt())
-        });
+        let better = relaxed_judged.is_some()
+            && best.as_ref().is_some_and(|(best_opens, best_result)| {
+                (relaxed_opens, result.vias, result.length_mm)
+                    .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                    .is_some_and(|order| order.is_lt())
+            });
         if better {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
             fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
@@ -3853,29 +4461,49 @@ pub fn route_kicad_board(
             .collect();
         if !starved.is_empty() {
             let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
-            let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
+            let text = fs::read_to_string(&board_path)
+                .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
             let mut pcb = parse(&text)?;
             let mut changed = 0;
             if let Expr::List(items) = &mut pcb {
-                for footprint in items.iter_mut().filter(|item| item.head() == Some("footprint")) {
-                    let reference = footprint_reference(footprint).unwrap_or_default().to_string();
-                    let Expr::List(children) = footprint else { continue };
-                    for pad in children.iter_mut().filter(|child| child.head() == Some("pad")) {
-                        let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
+                for footprint in items
+                    .iter_mut()
+                    .filter(|item| item.head() == Some("footprint"))
+                {
+                    let reference = footprint_reference(footprint)
+                        .unwrap_or_default()
+                        .to_string();
+                    let Expr::List(children) = footprint else {
+                        continue;
+                    };
+                    for pad in children
+                        .iter_mut()
+                        .filter(|child| child.head() == Some("pad"))
+                    {
+                        let number = pad
+                            .children()
+                            .get(1)
+                            .and_then(Expr::atom)
+                            .unwrap_or("")
+                            .to_string();
                         if !starved.iter().any(|(r, n)| *r == reference && *n == number) {
                             continue;
                         }
                         if let Expr::List(fields) = pad {
                             fields.retain(|field| field.head() != Some("zone_connect"));
-                            fields.push(Expr::List(vec![Expr::Atom("zone_connect".into()), Expr::Atom("2".into())]));
+                            fields.push(Expr::List(vec![
+                                Expr::Atom("zone_connect".into()),
+                                Expr::Atom("2".into()),
+                            ]));
                             changed += 1;
                         }
                     }
                 }
             }
             if changed > 0 {
-                fs::write(&board_path, format!("{}\n", encode(&pcb)))
-                    .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+                fs::write(&board_path, format!("{}\n", encode(&pcb))).map_err(|error| {
+                    format!("failed to write {}: {error}", board_path.display())
+                })?;
                 result.native = Some(verify_materialized_rung(output_directory, board_id)?);
                 charge_checks(1);
                 result.diagnostics.starved_thermals = starved_thermal_diagnostics(output_directory);
@@ -3923,7 +4551,10 @@ pub struct KiCadPourRequest {
 
 /// The pours to add to `pcb`: the requested ones, or else the automatic
 /// planes of a multilayer board (see `automatic_planes`).
-pub(crate) fn planned_pours(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<Vec<KiCadPourRequest>, String> {
+pub(crate) fn planned_pours(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+) -> Result<Vec<KiCadPourRequest>, String> {
     if !config.add_pours.is_empty() {
         return Ok(config.add_pours.clone());
     }
@@ -3931,27 +4562,52 @@ pub(crate) fn planned_pours(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Resu
         return Ok(Vec::new());
     }
     let layers = LayerTable::from_pcb(pcb)?;
-    let inner: Vec<&String> = layers.names.iter().filter(|name| name.starts_with("In")).collect();
+    let inner: Vec<&String> = layers
+        .names
+        .iter()
+        .filter(|name| name.starts_with("In"))
+        .collect();
     if inner.len() < 2 || !pours(pcb, &layers)?.is_empty() {
         return Ok(Vec::new());
     }
     let mut pads: BTreeMap<String, usize> = BTreeMap::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-        for pad in footprint.children().iter().filter(|item| item.head() == Some("pad")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+        {
             if let Some(net) = node_net(pad).filter(|net| routable_net(net)) {
                 *pads.entry(net.to_string()).or_default() += 1;
             }
         }
     }
     let busiest = |accept: &dyn Fn(&str) -> bool| {
-        pads.iter().filter(|(net, count)| accept(net) && **count >= 3).max_by_key(|(_, count)| **count).map(|(net, _)| net.clone())
+        pads.iter()
+            .filter(|(net, count)| accept(net) && **count >= 3)
+            .max_by_key(|(_, count)| **count)
+            .map(|(net, _)| net.clone())
     };
     let mut requests = Vec::new();
     if let Some(ground) = busiest(&|net| crate::quality::ground(net)) {
-        requests.push(KiCadPourRequest { net: ground, layers: vec![inner[0].clone()], clearance_mm: None });
+        requests.push(KiCadPourRequest {
+            net: ground,
+            layers: vec![inner[0].clone()],
+            clearance_mm: None,
+        });
     }
-    if let Some(rail) = busiest(&|net| crate::quality::rail_name(net) && !crate::quality::ground(net)) {
-        requests.push(KiCadPourRequest { net: rail, layers: vec![inner[inner.len() - 1].clone()], clearance_mm: None });
+    if let Some(rail) =
+        busiest(&|net| crate::quality::rail_name(net) && !crate::quality::ground(net))
+    {
+        requests.push(KiCadPourRequest {
+            net: rail,
+            layers: vec![inner[inner.len() - 1].clone()],
+            clearance_mm: None,
+        });
     }
     Ok(requests)
 }
@@ -3964,8 +4620,16 @@ pub(super) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
     let outline = outline::board_loops(pcb)?.outline;
     let layers = LayerTable::from_pcb(pcb)?;
     let mut nets = BTreeSet::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
             if let Some(net) = node_net(pad) {
                 nets.insert(net.to_string());
             }
@@ -3974,13 +4638,25 @@ pub(super) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
     // Zones the board already has, by (net, layer): a requested pour that
     // exists already is not added twice.
     let mut existing = BTreeSet::new();
-    for zone in pcb.children().iter().filter(|item| item.head() == Some("zone")) {
+    for zone in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("zone"))
+    {
         let Some(net) = form_atom(zone, "net_name", 1).or_else(|| node_net(zone)) else {
             continue;
         };
         let names: Vec<String> = zone
             .child("layers")
-            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).map(str::to_owned).collect())
+            .map(|layers| {
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .map(str::to_owned)
+                    .collect()
+            })
             .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
             .unwrap_or_default();
         for layer in names {
@@ -3996,13 +4672,22 @@ pub(super) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
         let clearance = request.clearance_mm.unwrap_or(0.3);
         for layer in &request.layers {
             if layers.index(layer).is_none() {
-                return Err(format!("pour for {:?}: {layer:?} is not a copper layer of the board", request.net));
+                return Err(format!(
+                    "pour for {:?}: {layer:?} is not a copper layer of the board",
+                    request.net
+                ));
             }
             if existing.contains(&(normalize_net(&net).to_string(), layer.clone())) {
-                eprintln!("pour for {} on {layer}: the board has one already", request.net);
+                eprintln!(
+                    "pour for {} on {layer}: the board has one already",
+                    request.net
+                );
                 continue;
             }
-            let points: Vec<String> = outline.iter().map(|point| format!("(xy {} {})", point[0], point[1])).collect();
+            let points: Vec<String> = outline
+                .iter()
+                .map(|point| format!("(xy {} {})", point[0], point[1]))
+                .collect();
             // A stable identifier from the request.
             let mut hash = 0xcbf2_9ce4_8422_2325u64;
             for byte in net.bytes().chain(layer.bytes()) {
@@ -4031,7 +4716,13 @@ pub(super) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
 
 /// Routes `board` with seeds `first..first + count` in parallel (seed 0 is
 /// the deterministic order) and returns the best result.
-fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: usize, side_by_side: usize) -> core::RoutingResult {
+fn route_seeds(
+    board: &core::Board,
+    config: &core::Config,
+    first: u64,
+    count: usize,
+    side_by_side: usize,
+) -> core::RoutingResult {
     // In waves of `side_by_side` (memory), in seed order.
     let seeds: Vec<u64> = (first..first + count.max(1) as u64).collect();
     let mut results: Vec<(Option<u64>, core::RoutingResult)> = Vec::new();
@@ -4046,7 +4737,10 @@ fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: us
                     scope.spawn(move || (seeded.seed, core::route(board, &seeded)))
                 })
                 .collect();
-            handles.into_iter().map(|handle| handle.join().expect("routing thread")).collect()
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("routing thread"))
+                .collect()
         });
         results.extend(routed);
     }
@@ -4055,7 +4749,9 @@ fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: us
             .status
             .iter()
             .map(|status| match status {
-                core::NetStatus::Partial { unconnected_terminals } => *unconnected_terminals,
+                core::NetStatus::Partial {
+                    unconnected_terminals,
+                } => *unconnected_terminals,
                 core::NetStatus::Unreachable => 1,
                 _ => 0,
             })
@@ -4070,9 +4766,15 @@ fn route_seeds(board: &core::Board, config: &core::Config, first: u64, count: us
             .sum();
         (open, vias, length)
     };
-    let scored: Vec<_> = results.into_iter().map(|(seed, result)| (key(&result), seed, result)).collect();
+    let scored: Vec<_> = results
+        .into_iter()
+        .map(|(seed, result)| (key(&result), seed, result))
+        .collect();
     for (score, seed, _) in &scored {
-        eprintln!("seed {seed:?}: {} open, {} vias, {:.0} mm", score.0, score.1, score.2);
+        eprintln!(
+            "seed {seed:?}: {} open, {} vias, {:.0} mm",
+            score.0, score.1, score.2
+        );
     }
     scored
         .into_iter()
@@ -4130,7 +4832,8 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // A budget given in seconds is turned into work (search
         // expansions), so that results do not depend on the machine's
         // load; the clock stays as a guard.
-        router_config.negotiation_expansions = (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+        router_config.negotiation_expansions =
+            (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
         router_config.negotiation_seconds = seconds * core::router::GUARD;
         // The polish after it may not take longer than the negotiation was
         // allowed.
@@ -4142,7 +4845,8 @@ pub(super) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // and video's narrow-signal attempt stopped at 900 s of wall clock
         // wherever the load had brought it (1124 s of work on one run).
         let seconds = router_config.negotiation_seconds;
-        router_config.negotiation_expansions = (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+        router_config.negotiation_expansions =
+            (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
         router_config.negotiation_seconds = seconds * core::router::GUARD;
     }
     if let Some(length) = config.escape_stub_mm {
@@ -4302,8 +5006,15 @@ pub(super) fn finish_routed_board(
     let (builds, build_total) = core::router::build_totals();
     eprintln!(
         "board check: internal verification {verify_seconds:.1}s, KiCad {} (lowering {:.1}s, routing {:.1}s); drc_cache: {{calls {}, hits {}}}; so far {lowerings} lowerings {lowering_total:.1}s, {builds} lattices {build_total:.1}s",
-        if native.is_some() { format!("{native_verification_seconds:.1}s") } else { "not run".to_string() },
-        timings[0], timings[1], drc_cache.calls, drc_cache.hits
+        if native.is_some() {
+            format!("{native_verification_seconds:.1}s")
+        } else {
+            "not run".to_string()
+        },
+        timings[0],
+        timings[1],
+        drc_cache.calls,
+        drc_cache.hits
     );
     let routable: Vec<_> = nets.iter().filter(|net| net.terminals >= 2).collect();
     let report = KiCadBoardRouterResult {
@@ -4473,9 +5184,8 @@ fn route_kicad_board_once(
                 let written = emit_routes(&mut frame, &frame_board, snapshot, &frame_layers)
                     .and_then(|_| {
                         let path = directory.join(format!("frame-{iteration:04}.kicad_pcb"));
-                        fs::write(&path, format!("{}\n", encode(&frame))).map_err(|error| {
-                            format!("failed to write {}: {error}", path.display())
-                        })
+                        fs::write(&path, format!("{}\n", encode(&frame)))
+                            .map_err(|error| format!("failed to write {}: {error}", path.display()))
                     });
                 if let Err(error) = written {
                     eprintln!("frame {iteration}: {error}");
@@ -4511,7 +5221,15 @@ fn move_undefined_layers(pcb: &mut Expr) -> usize {
                 .children()
                 .iter()
                 .skip(1)
-                .flat_map(|entry| entry.children().iter().skip(1).take(3).filter_map(Expr::atom).map(str::to_string))
+                .flat_map(|entry| {
+                    entry
+                        .children()
+                        .iter()
+                        .skip(1)
+                        .take(3)
+                        .filter_map(Expr::atom)
+                        .map(str::to_string)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -4523,7 +5241,12 @@ fn move_undefined_layers(pcb: &mut Expr) -> usize {
             return 0;
         };
         // The layer table itself and the stackup name layers by design.
-        if !top && matches!(items.first().and_then(Expr::atom), Some("layers" | "stackup")) {
+        if !top
+            && matches!(
+                items.first().and_then(Expr::atom),
+                Some("layers" | "stackup")
+            )
+        {
             return 0;
         }
         let mut moved = 0;
@@ -4563,7 +5286,9 @@ fn write_attempt(
     let [lowering_seconds, mut routing_seconds] = seconds;
     let moved = move_undefined_layers(&mut pcb);
     if moved > 0 {
-        eprintln!("{moved} items on layers the board does not define moved to Cmts.User (KiCad would not load the board)");
+        eprintln!(
+            "{moved} items on layers the board does not define moved to Cmts.User (KiCad would not load the board)"
+        );
     }
     let mut result = result;
     if config.tighten && config.engine.as_deref() != Some("topological") {
@@ -4602,8 +5327,16 @@ mod pour_request_tests {
     #[test]
     fn multilayer_boards_without_pours_get_ground_and_rail_planes() {
         let board = |layers: &str, zone: &str| {
-            let pad = |number: usize, net: &str| format!(r#"(pad "{number}" smd rect (at {number} 0) (size 0.5 0.5) (layers "F.Cu") (net "{net}"))"#);
-            let pads: String = (1..=4).map(|n| pad(n, "GND")).chain((5..=7).map(|n| pad(n, "+3V3"))).chain((8..=10).map(|n| pad(n, "/SIG"))).collect();
+            let pad = |number: usize, net: &str| {
+                format!(
+                    r#"(pad "{number}" smd rect (at {number} 0) (size 0.5 0.5) (layers "F.Cu") (net "{net}"))"#
+                )
+            };
+            let pads: String = (1..=4)
+                .map(|n| pad(n, "GND"))
+                .chain((5..=7).map(|n| pad(n, "+3V3")))
+                .chain((8..=10).map(|n| pad(n, "/SIG")))
+                .collect();
             parse(&format!(
                 r#"(kicad_pcb (layers {layers} (25 "Edge.Cuts" user))
                   (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
@@ -4614,13 +5347,37 @@ mod pour_request_tests {
         let four = r#"(0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal)"#;
         let config = KiCadBoardRouterConfig::default();
         let planned = planned_pours(&board(four, ""), &config).unwrap();
-        let summary: Vec<(String, Vec<String>)> = planned.into_iter().map(|pour| (pour.net, pour.layers)).collect();
-        assert_eq!(summary, vec![("GND".into(), vec!["In1.Cu".into()]), ("+3V3".into(), vec!["In2.Cu".into()])]);
+        let summary: Vec<(String, Vec<String>)> = planned
+            .into_iter()
+            .map(|pour| (pour.net, pour.layers))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                ("GND".into(), vec!["In1.Cu".into()]),
+                ("+3V3".into(), vec!["In2.Cu".into()])
+            ]
+        );
         // Two layers, an existing pour, or switched off: none.
-        assert!(planned_pours(&board(r#"(0 "F.Cu" signal) (2 "B.Cu" signal)"#, ""), &config).unwrap().is_empty());
-        let zone = r#"(zone (net "GND") (layer "In1.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10))))"#;
-        assert!(planned_pours(&board(four, zone), &config).unwrap().is_empty());
-        let off = KiCadBoardRouterConfig { automatic_planes: Some(false), ..KiCadBoardRouterConfig::default() };
+        assert!(
+            planned_pours(
+                &board(r#"(0 "F.Cu" signal) (2 "B.Cu" signal)"#, ""),
+                &config
+            )
+            .unwrap()
+            .is_empty()
+        );
+        let zone =
+            r#"(zone (net "GND") (layer "In1.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10))))"#;
+        assert!(
+            planned_pours(&board(four, zone), &config)
+                .unwrap()
+                .is_empty()
+        );
+        let off = KiCadBoardRouterConfig {
+            automatic_planes: Some(false),
+            ..KiCadBoardRouterConfig::default()
+        };
         assert!(planned_pours(&board(four, ""), &off).unwrap().is_empty());
     }
 
@@ -4638,16 +5395,35 @@ mod pour_request_tests {
         .unwrap();
         let exclusive = |config: &KiCadBoardRouterConfig| -> Vec<usize> {
             let board = lower(&pcb, config, true).unwrap().board;
-            let mut layers: Vec<usize> = board.planes.iter().filter(|plane| plane.exclusive).map(|plane| plane.layer).collect();
+            let mut layers: Vec<usize> = board
+                .planes
+                .iter()
+                .filter(|plane| plane.exclusive)
+                .map(|plane| plane.layer)
+                .collect();
             layers.sort_unstable();
             layers
         };
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let all = KiCadBoardRouterConfig { default_rules: Some(rules.clone()), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let all = KiCadBoardRouterConfig {
+            default_rules: Some(rules.clone()),
+            ..KiCadBoardRouterConfig::default()
+        };
         assert_eq!(exclusive(&all), vec![1, 2, 3, 4]);
-        let two = KiCadBoardRouterConfig { exclusive_layers: Some(2), ..all.clone() };
+        let two = KiCadBoardRouterConfig {
+            exclusive_layers: Some(2),
+            ..all.clone()
+        };
         assert_eq!(exclusive(&two), vec![1, 4]);
-        let one = KiCadBoardRouterConfig { exclusive_layers: Some(1), ..all.clone() };
+        let one = KiCadBoardRouterConfig {
+            exclusive_layers: Some(1),
+            ..all.clone()
+        };
         assert_eq!(exclusive(&one), vec![1]);
     }
 
@@ -4668,8 +5444,16 @@ mod pour_request_tests {
                 (polygon (pts (xy 20 0) (xy 10 0) (arc (start 10 0) (mid 17.071068 2.928932) (end 20 10))))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, true).unwrap().board;
         assert_eq!(board.planes.len(), 2);
         let (low, high) = (&board.planes[0], &board.planes[1]);
@@ -4678,7 +5462,10 @@ mod pour_request_tests {
         // The corner between the arc and the board's corner is the higher
         // zone's; a point between the arc and its chord is not.
         assert!(core::geometry::point_in_polygon([19.0, 1.0], &low.above[0]));
-        assert!(!core::geometry::point_in_polygon([16.0, 4.0], &low.above[0]));
+        assert!(!core::geometry::point_in_polygon(
+            [16.0, 4.0],
+            &low.above[0]
+        ));
         assert!(high.polygon.len() > 10);
     }
 
@@ -4700,17 +5487,46 @@ mod pour_request_tests {
                 (polygon (pts (xy 8 2) (xy 12 2) (xy 12 8) (xy 8 8)))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, true).unwrap().board;
-        let excluded = |layer: usize| board.planes.iter().find(|plane| plane.layer == layer).unwrap().excluded.clone();
+        let excluded = |layer: usize| {
+            board
+                .planes
+                .iter()
+                .find(|plane| plane.layer == layer)
+                .unwrap()
+                .excluded
+                .clone()
+        };
         assert!(excluded(1).is_empty());
         assert_eq!(excluded(2).len(), 1);
-        assert!(core::geometry::point_in_polygon([10.0, 5.0], &excluded(2)[0]));
+        assert!(core::geometry::point_in_polygon(
+            [10.0, 5.0],
+            &excluded(2)[0]
+        ));
         // Neither keeps a track out of In2; the other one keeps them out
         // of In1 as before.
-        assert!(!board.obstacles.iter().any(|obstacle| obstacle.label == "no fill"));
-        assert!(board.obstacles.iter().any(|obstacle| obstacle.label == "no tracks" && obstacle.blocks_tracks));
+        assert!(
+            !board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label == "no fill")
+        );
+        assert!(
+            board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label == "no tracks" && obstacle.blocks_tracks)
+        );
     }
 
     #[test]
@@ -4735,10 +5551,23 @@ mod pour_request_tests {
             circle("F.Cu", 9.0)
         ))
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, true).unwrap().board;
-        let excluded = &board.planes.iter().find(|plane| plane.layer == 0).unwrap().excluded;
+        let excluded = &board
+            .planes
+            .iter()
+            .find(|plane| plane.layer == 0)
+            .unwrap()
+            .excluded;
         assert_eq!(excluded.len(), 1);
         assert!(core::geometry::point_in_polygon([10.0, 5.0], &excluded[0]));
         assert!(!core::geometry::point_in_polygon([4.0, 5.0], &excluded[0]));
@@ -4757,11 +5586,27 @@ mod pour_request_tests {
               (gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) (layer "F.Mask")))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, false).unwrap().board;
-        let opening = board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap();
-        assert!((opening.clearance - 0.06).abs() < 1.0e-9, "{}", opening.clearance);
+        let opening = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label.starts_with("solder mask opening"))
+            .unwrap();
+        assert!(
+            (opening.clearance - 0.06).abs() < 1.0e-9,
+            "{}",
+            opening.clearance
+        );
     }
 
     #[test]
@@ -4777,7 +5622,9 @@ mod pour_request_tests {
             let opening = if text {
                 r#"(gr_text "X" (at 5 5 0) (layer "F.Mask") (effects (font (size 1 1) (thickness 0.15))) (render_cache "X" 0 (polygon (pts (xy 4.5 4.5) (xy 5.5 4.5) (xy 5.5 5.5) (xy 4.5 5.5)))))"#.to_string()
             } else {
-                format!(r#"(gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) {margin} (layer "F.Mask"))"#)
+                format!(
+                    r#"(gr_rect (start 4 4) (end 6 6) (stroke (width 0) (type solid)) (fill yes) {margin} (layer "F.Mask"))"#
+                )
             };
             let pcb = parse(&format!(
                 r#"(kicad_pcb
@@ -4790,14 +5637,36 @@ mod pour_request_tests {
                   {opening})"#
             ))
             .unwrap();
-            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: mask_to_copper, ..KiCadBoardRouterConfig::default() };
+            let rules = KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            };
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules),
+                solder_mask_to_copper_mm: mask_to_copper,
+                ..KiCadBoardRouterConfig::default()
+            };
             let board = lower(&pcb, &config, false).unwrap().board;
-            board.obstacles.iter().find(|obstacle| obstacle.label.starts_with("solder mask opening")).unwrap().clearance
+            board
+                .obstacles
+                .iter()
+                .find(|obstacle| obstacle.label.starts_with("solder mask opening"))
+                .unwrap()
+                .clearance
         };
-        let close = |value: f64, expected: f64| assert!((value - expected).abs() < 1.0e-9, "{value} against {expected}");
+        let close = |value: f64, expected: f64| {
+            assert!(
+                (value - expected).abs() < 1.0e-9,
+                "{value} against {expected}"
+            )
+        };
         close(lowered("", Some(0.05), false), 0.05 + 0.05);
-        close(lowered("(solder_mask_margin 0.2)", Some(0.05), false), 0.05 + 0.2);
+        close(
+            lowered("(solder_mask_margin 0.2)", Some(0.05), false),
+            0.05 + 0.2,
+        );
         close(lowered("", None, false), 0.075);
         close(lowered("", Some(0.05), true), 0.075);
     }
@@ -4822,25 +5691,55 @@ mod pour_request_tests {
                     (pad "9" smd rect (at 1 0) (size 0.6 1.55) (layers "B.Cu") (net "/M3") {margin})))"#
             ))
             .unwrap();
-            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.09, clearance_mm: clearance, via_size_mm: 0.45, via_drill_mm: 0.2 };
-            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: mask_to_copper, ..KiCadBoardRouterConfig::default() };
+            let rules = KiCadConnectionRoutingRules {
+                trace_width_mm: 0.09,
+                clearance_mm: clearance,
+                via_size_mm: 0.45,
+                via_drill_mm: 0.2,
+            };
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules),
+                solder_mask_to_copper_mm: mask_to_copper,
+                ..KiCadBoardRouterConfig::default()
+            };
             let board = lower(&pcb, &config, false).unwrap().board;
             let mut apertures: Vec<(String, f64, bool, bool, u32)> = board
                 .obstacles
                 .iter()
                 .filter(|obstacle| obstacle.label.ends_with("mask aperture"))
-                .map(|obstacle| (obstacle.label.clone(), obstacle.clearance, obstacle.blocks_tracks, obstacle.blocks_vias, obstacle.layers))
+                .map(|obstacle| {
+                    (
+                        obstacle.label.clone(),
+                        obstacle.clearance,
+                        obstacle.blocks_tracks,
+                        obstacle.blocks_vias,
+                        obstacle.layers,
+                    )
+                })
                 .collect();
             apertures.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)));
             apertures
         };
-        let close = |value: f64, expected: f64| assert!((value - expected).abs() < 1.0e-9, "{value} against {expected}");
+        let close = |value: f64, expected: f64| {
+            assert!(
+                (value - expected).abs() < 1.0e-9,
+                "{value} against {expected}"
+            )
+        };
         // J1: margin plus the project's clearance, for tracks and the
         // (tented) vias alike, on the back only; pad 9 has no mask opening.
-        let j1 = lowered("(pad_to_mask_clearance 0)", "(solder_mask_margin 0.102)", Some(0.005), 0.09);
+        let j1 = lowered(
+            "(pad_to_mask_clearance 0)",
+            "(solder_mask_margin 0.102)",
+            Some(0.005),
+            0.09,
+        );
         assert_eq!(j1.len(), 2, "{j1:?}");
         for (label, clearance, tracks, vias, layers) in &j1 {
-            assert!(label.starts_with("J1.7") || label.starts_with("J1.8"), "{label}");
+            assert!(
+                label.starts_with("J1.7") || label.starts_with("J1.8"),
+                "{label}"
+            );
             close(*clearance, 0.107);
             assert!(*tracks && *vias);
             assert_eq!(*layers, 0b10);
@@ -4852,16 +5751,31 @@ mod pour_request_tests {
         close(board[0].1, 0.15);
         // Untented vias are openings: the web plus both expansions (the
         // pad's and the board's for the via), apart from the tracks' rule.
-        let untented = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting none)", "", Some(0.0), 0.04);
+        let untented = lowered(
+            "(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting none)",
+            "",
+            Some(0.0),
+            0.04,
+        );
         assert_eq!(untented.len(), 4, "{untented:?}");
         close(untented[0].1, 0.05);
         assert!(untented[0].2 && !untented[0].3);
         close(untented[1].1, 0.1 + 0.05 + 0.05);
         assert!(!untented[1].2 && untented[1].3);
         // KiCad 10's own form, the back side untented.
-        let back = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front yes) (back no))", "", Some(0.0), 0.04);
+        let back = lowered(
+            "(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front yes) (back no))",
+            "",
+            Some(0.0),
+            0.04,
+        );
         assert_eq!(back.len(), 4);
-        let front = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front no) (back yes))", "", Some(0.0), 0.04);
+        let front = lowered(
+            "(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front no) (back yes))",
+            "",
+            Some(0.0),
+            0.04,
+        );
         assert_eq!(front.len(), 2);
         // Within the copper clearance, nothing.
         assert!(lowered("(pad_to_mask_clearance 0.05)", "", Some(0.05), 0.2).is_empty());
@@ -4883,7 +5797,12 @@ mod pour_request_tests {
                 (pad "7" smd rect (at -1 0) (size 0.6 1.55) (layers "B.Cu" "B.Mask" "B.Paste") (net "/M3") (solder_mask_margin 0.102))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.09, clearance_mm: 0.09, via_size_mm: 0.45, via_drill_mm: 0.2 };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.09,
+            clearance_mm: 0.09,
+            via_size_mm: 0.45,
+            via_drill_mm: 0.2,
+        };
         let lowered = |severity: Option<&str>| {
             let config = KiCadBoardRouterConfig {
                 default_rules: Some(rules.clone()),
@@ -4892,17 +5811,35 @@ mod pour_request_tests {
                 ..KiCadBoardRouterConfig::default()
             };
             let board = lower(&pcb, &config, false).unwrap().board;
-            let apertures: Vec<f64> =
-                board.obstacles.iter().filter(|obstacle| obstacle.label.ends_with("mask aperture")).map(|obstacle| obstacle.clearance).collect();
-            let text = board.obstacles.iter().filter(|obstacle| obstacle.label == "solder mask opening (gr_text)").count();
+            let apertures: Vec<f64> = board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label.ends_with("mask aperture"))
+                .map(|obstacle| obstacle.clearance)
+                .collect();
+            let text = board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label == "solder mask opening (gr_text)")
+                .count();
             (apertures, text)
         };
         let (warning, text) = lowered(Some("warning"));
         assert_eq!(warning.len(), 2);
-        assert!(warning.iter().all(|clearance| (clearance - 0.102).abs() < 1.0e-9), "{warning:?}");
+        assert!(
+            warning
+                .iter()
+                .all(|clearance| (clearance - 0.102).abs() < 1.0e-9),
+            "{warning:?}"
+        );
         assert_eq!(text, 1);
         let (error, text) = lowered(None);
-        assert!(error.iter().all(|clearance| (clearance - 0.107).abs() < 1.0e-9), "{error:?}");
+        assert!(
+            error
+                .iter()
+                .all(|clearance| (clearance - 0.107).abs() < 1.0e-9),
+            "{error:?}"
+        );
         assert_eq!(text, 2);
     }
 
@@ -4937,16 +5874,31 @@ mod pour_request_tests {
                     (pad "4" thru_hole rect (at 2.54 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net "GND"))))"#
             ))
             .unwrap();
-            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.25, clearance_mm: 0.2, via_size_mm: 0.8, via_drill_mm: 0.4 };
-            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: Some(0.0), ..KiCadBoardRouterConfig::default() };
+            let rules = KiCadConnectionRoutingRules {
+                trace_width_mm: 0.25,
+                clearance_mm: 0.2,
+                via_size_mm: 0.8,
+                via_drill_mm: 0.4,
+            };
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules),
+                solder_mask_to_copper_mm: Some(0.0),
+                ..KiCadBoardRouterConfig::default()
+            };
             let board = lower(&pcb, &config, false).unwrap().board;
-            assert!(!board.obstacles.iter().any(|obstacle| obstacle.label.ends_with("mask aperture")));
+            assert!(
+                !board
+                    .obstacles
+                    .iter()
+                    .any(|obstacle| obstacle.label.ends_with("mask aperture"))
+            );
         }
     }
 
     #[test]
     fn via_tenting_is_read_as_kicad_10_reads_it() {
-        let tented = |setup: &str| vias_tented(&parse(&format!("(kicad_pcb (setup {setup}))")).unwrap());
+        let tented =
+            |setup: &str| vias_tented(&parse(&format!("(kicad_pcb (setup {setup}))")).unwrap());
         assert_eq!(tented(""), [true, true]);
         assert_eq!(tented("(tenting (front yes) (back yes))"), [true, true]);
         assert_eq!(tented("(tenting (front yes))"), [true, false]);
@@ -4972,8 +5924,16 @@ mod pour_request_tests {
         // The track at (68.17, 39.05) and the via at (69.47, 38.75) that
         // bridged were inside KiCad's glyphs.
         assert!(mask.iter().any(|shape| shape.contains([68.17, 39.05])));
-        assert!(mask.iter().any(|shape| shape.distance_to_point([69.47, 38.75]) < 0.225));
-        assert_eq!(copper_graphic_shapes(&parse(&text("B.Mask")).unwrap()).unwrap().len(), 1);
+        assert!(
+            mask.iter()
+                .any(|shape| shape.distance_to_point([69.47, 38.75]) < 0.225)
+        );
+        assert_eq!(
+            copper_graphic_shapes(&parse(&text("B.Mask")).unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -5016,7 +5976,9 @@ mod pour_request_tests {
     #[test]
     fn a_polygon_counts_its_stroke_and_only_a_fill_it_has() {
         let shapes = |text: &str| copper_graphic_shapes(&parse(text).unwrap()).unwrap();
-        let reaches = |shapes: &[core::Shape], point: [f64; 2]| shapes.iter().any(|shape| shape.contains(point));
+        let reaches = |shapes: &[core::Shape], point: [f64; 2]| {
+            shapes.iter().any(|shape| shape.contains(point))
+        };
         let stroked = shapes(
             r#"(fp_poly (pts (xy 0 0) (xy 4 0) (xy 4 4) (xy 0 4)) (stroke (width 0.1) (type solid)) (fill yes) (layer "F.Mask"))"#,
         );
@@ -5045,8 +6007,16 @@ mod pour_request_tests {
               (gr_text "LABEL" (at 14 5) (layer "F.Mask") (effects (font (size 1 1) (thickness 0.15)))) {zone})"#
             ))
             .unwrap();
-            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-            let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+            let rules = KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            };
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules),
+                ..KiCadBoardRouterConfig::default()
+            };
             lower(&pcb, &config, false).unwrap().board
         };
         let openings = |board: &core::Board| -> Vec<(Option<core::NetId>, String)> {
@@ -5058,21 +6028,40 @@ mod pour_request_tests {
                 .collect()
         };
         let board = lowered("");
-        let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
-        let net_a = board.nets.iter().position(|net| net.name.ends_with('A')).map(|index| index as core::NetId);
+        let net_b = board
+            .nets
+            .iter()
+            .position(|net| net.name.ends_with('B'))
+            .map(|index| index as core::NetId);
+        let net_a = board
+            .nets
+            .iter()
+            .position(|net| net.name.ends_with('A'))
+            .map(|index| index as core::NetId);
         // The first rectangle (its fill; no stroke) is pad 1's; the
         // second spans two pads and keeps everything out; so does text
         // over bare board (two nets under it would bridge).
         let bare = openings(&board);
         assert_eq!(bare.len(), 3);
-        assert!(bare[..1].iter().all(|(net, _)| net.is_some() && *net == net_a));
-        assert!(bare[1..2].iter().all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)")));
+        assert!(
+            bare[..1]
+                .iter()
+                .all(|(net, _)| net.is_some() && *net == net_a)
+        );
+        assert!(
+            bare[1..2]
+                .iter()
+                .all(|(net, label)| net.is_none() && label.ends_with("(gr_rect)"))
+        );
         assert_eq!(bare[2], (None, "solder mask opening (gr_text)".to_string()));
         // Over a pour, the text exposes the fill: it is the pour's net's.
         let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10))))"#;
         let poured = openings(&lowered(zone));
         assert_eq!(poured.len(), 3);
-        assert_eq!(poured[2], (net_b, "solder mask opening (gr_text)".to_string()));
+        assert_eq!(
+            poured[2],
+            (net_b, "solder mask opening (gr_text)".to_string())
+        );
     }
 
     #[test]
@@ -5092,8 +6081,16 @@ mod pour_request_tests {
                 (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/B"))) {zone})"#
             ))
             .unwrap();
-            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-            let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..config };
+            let rules = KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            };
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules),
+                ..config
+            };
             lower(&pcb, &config, false).unwrap().board
         };
         let openings = |board: &core::Board| -> Vec<(Option<core::NetId>, f64, u32, String)> {
@@ -5101,7 +6098,14 @@ mod pour_request_tests {
                 .obstacles
                 .iter()
                 .filter(|obstacle| obstacle.label.starts_with("solder mask opening"))
-                .map(|obstacle| (obstacle.net, obstacle.clearance, obstacle.layers, obstacle.label.clone()))
+                .map(|obstacle| {
+                    (
+                        obstacle.net,
+                        obstacle.clearance,
+                        obstacle.layers,
+                        obstacle.label.clone(),
+                    )
+                })
                 .collect()
         };
         // Over bare board it is no net's: nothing goes under it, by the
@@ -5115,10 +6119,17 @@ mod pour_request_tests {
         // Over a pour it is the pour's net's.
         let zone = r#"(zone (net "/B") (layer "F.Cu") (polygon (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))"#;
         let board = lowered(zone, KiCadBoardRouterConfig::default());
-        let net_b = board.nets.iter().position(|net| net.name.ends_with('B')).map(|index| index as core::NetId);
+        let net_b = board
+            .nets
+            .iter()
+            .position(|net| net.name.ends_with('B'))
+            .map(|index| index as core::NetId);
         assert_eq!(openings(&board)[0].0, net_b);
         // Off: the pad is nothing to the router.
-        let off = KiCadBoardRouterConfig { mask_only_pad_openings: Some(false), ..KiCadBoardRouterConfig::default() };
+        let off = KiCadBoardRouterConfig {
+            mask_only_pad_openings: Some(false),
+            ..KiCadBoardRouterConfig::default()
+        };
         assert!(openings(&lowered("", off)).is_empty());
     }
 
@@ -5134,15 +6145,35 @@ mod pour_request_tests {
             (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, false).unwrap().board;
-        let ground = board.nets.iter().position(|net| net.name == "GND").map(|index| index as core::NetId);
+        let ground = board
+            .nets
+            .iter()
+            .position(|net| net.name == "GND")
+            .map(|index| index as core::NetId);
         assert!(ground.is_some());
-        let copper: Vec<_> = board.obstacles.iter().filter(|obstacle| obstacle.label == "copper gr_rect").collect();
+        let copper: Vec<_> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "copper gr_rect")
+            .collect();
         assert_eq!(copper.len(), 1);
         assert_eq!((copper[0].net, copper[0].layers), (ground, 1));
-        let opening: Vec<_> = board.obstacles.iter().filter(|obstacle| obstacle.label.starts_with("solder mask opening")).collect();
+        let opening: Vec<_> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label.starts_with("solder mask opening"))
+            .collect();
         assert_eq!(opening.len(), 1);
         assert_eq!(opening[0].net, ground);
     }
@@ -5161,14 +6192,29 @@ mod pour_request_tests {
             (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/W"))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, false).unwrap().board;
-        let net = board.nets.iter().find(|net| net.name.ends_with('W')).unwrap();
+        let net = board
+            .nets
+            .iter()
+            .find(|net| net.name.ends_with('W'))
+            .unwrap();
         assert_eq!(net.terminals.len(), 2);
         // The large pad stays, and the terminal points at its copper.
         assert_eq!(net.terminals[0].anchor, [5.0, 5.0]);
-        assert_eq!(board.obstacles[net.terminals[0].pad].kind, core::ObstacleKind::Copper);
+        assert_eq!(
+            board.obstacles[net.terminals[0].pad].kind,
+            core::ObstacleKind::Copper
+        );
     }
 
     #[test]
@@ -5184,10 +6230,22 @@ mod pour_request_tests {
               (primitives (gr_circle (center -2.75 0) (end 0 0) (width 0.7) (fill no))))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.2, clearance_mm: 0.2, via_size_mm: 0.6, via_drill_mm: 0.3 };
-        let config = KiCadBoardRouterConfig { default_rules: Some(rules), ..KiCadBoardRouterConfig::default() };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: 0.2,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules),
+            ..KiCadBoardRouterConfig::default()
+        };
         let board = lower(&pcb, &config, false).unwrap().board;
-        let ring = board.obstacles.iter().find(|obstacle| obstacle.label == "SW1.2").unwrap();
+        let ring = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "SW1.2")
+            .unwrap();
         // The inner pad's centre is free of the ring; the ring itself is copper.
         assert!(ring.shape.distance_to_point([10.0, 5.0]) > 2.0);
         assert!(ring.shape.distance_to_point([12.75, 5.0]) < 1.0e-6);
@@ -5211,7 +6269,12 @@ mod pour_request_tests {
                 (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "3V3_SYS"))))"#,
         )
         .unwrap();
-        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.1, clearance_mm: 0.125, via_size_mm: 0.5, via_drill_mm: 0.15 };
+        let rules = KiCadConnectionRoutingRules {
+            trace_width_mm: 0.1,
+            clearance_mm: 0.125,
+            via_size_mm: 0.5,
+            via_drill_mm: 0.15,
+        };
         let config = KiCadBoardRouterConfig {
             default_rules: Some(rules),
             hole_clearance_mm: 0.25,
@@ -5219,39 +6282,71 @@ mod pour_request_tests {
             ..KiCadBoardRouterConfig::default()
         };
         let board = lower(&pcb, &config, false).unwrap().board;
-        let net = |name: &str| board.nets.iter().position(|net| net.name == name).unwrap() as core::NetId;
+        let net =
+            |name: &str| board.nets.iter().position(|net| net.name == name).unwrap() as core::NetId;
         let (ground, supply) = (net("GND"), net("3V3_SYS"));
-        let hole = board.obstacles.iter().find(|obstacle| obstacle.label == "J2.1 plated hole").unwrap();
+        let hole = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "J2.1 plated hole")
+            .unwrap();
         assert!(hole.blocks_vias && hole.net == Some(ground));
         // The via's place on a lattice node: J2.1 at (5, 5), the via at
         // (-0.741, +0.205) from it as on jetson.
         let at = [5.0 - 0.741, 5.0 + 0.205];
         let pitch = 0.1;
-        let grid = core::grid::Grid { origin: [at[0] - 42.0 * pitch, at[1] - 52.0 * pitch], pitch, nx: 99, ny: 99 };
+        let grid = core::grid::Grid {
+            origin: [at[0] - 42.0 * pitch, at[1] - 52.0 * pitch],
+            pitch,
+            nx: 99,
+            ny: 99,
+        };
         let node = grid.nearest_node(at).unwrap();
         assert!(core::geometry::distance(grid.center_of(node), at) < 1.0e-9);
         let class = board.nets[supply as usize].class;
         let maps = core::grid::StaticMaps::build(&board, &grid, class, true);
-        assert!(!maps.via_allowed(node, supply), "another net's via within the hole clearance");
-        assert!(maps.via_allowed(node, ground), "the pad's own net keeps the copper rule");
+        assert!(
+            !maps.via_allowed(node, supply),
+            "another net's via within the hole clearance"
+        );
+        assert!(
+            maps.via_allowed(node, ground),
+            "the pad's own net keeps the copper rule"
+        );
         // One node further out (0.866 from the centre, 0.775 needed) is free.
         assert!(maps.via_allowed(node - 1, supply));
         // The exact verifier reports the via against the hole.
         let via_at = |net: core::NetId| {
             let mut routes = vec![core::NetRoute::default(); board.nets.len()];
-            routes[net as usize].vias.push(core::board::Via { at, diameter: 0.5, drill: 0.15 });
+            routes[net as usize].vias.push(core::board::Via {
+                at,
+                diameter: 0.5,
+                drill: 0.15,
+            });
             core::verify(&board, &routes)
         };
         let found = via_at(supply);
-        let hole_finding = found.iter().find(|violation| violation.other == "J2.1 plated hole").expect("a hole clearance violation");
+        let hole_finding = found
+            .iter()
+            .find(|violation| violation.other == "J2.1 plated hole")
+            .expect("a hole clearance violation");
         assert!((hole_finding.required - 0.25).abs() < 1.0e-9);
-        assert!((hole_finding.actual - 0.2439).abs() < 1.0e-3, "{}", hole_finding.actual);
-        assert!(!via_at(ground).iter().any(|violation| violation.other.starts_with("J2.1")));
+        assert!(
+            (hole_finding.actual - 0.2439).abs() < 1.0e-3,
+            "{}",
+            hole_finding.actual
+        );
+        assert!(
+            !via_at(ground)
+                .iter()
+                .any(|violation| violation.other.starts_with("J2.1"))
+        );
     }
 
     #[test]
     fn starved_thermals_come_with_advice() {
-        let directory = std::env::temp_dir().join(format!("pcb-maker-starved-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-starved-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join("drc.json"),
@@ -5266,7 +6361,15 @@ mod pour_request_tests {
         let found = starved_thermal_diagnostics(&directory);
         fs::remove_dir_all(&directory).unwrap();
         assert_eq!(found.len(), 2);
-        assert_eq!((found[0].layer.as_str(), found[0].spokes, found[0].needed, found[0].at), ("F.Cu", Some(1), Some(2), [3.5, 4.0]));
+        assert_eq!(
+            (
+                found[0].layer.as_str(),
+                found[0].spokes,
+                found[0].needed,
+                found[0].at
+            ),
+            ("F.Cu", Some(1), Some(2), [3.5, 4.0])
+        );
         assert!(found[0].advice.contains("only 1 of 2 spokes"));
         assert!(found[1].advice.contains("not joined"));
         assert!(found[1].pad.contains("J102"));
@@ -5288,12 +6391,19 @@ mod pour_request_tests {
             clearance_mm: None,
         };
         add_pour_zones(&mut pcb, &[request(&["F.Cu", "B.Cu"])]).unwrap();
-        let zones: Vec<_> = pcb.children().iter().filter(|item| item.head() == Some("zone")).collect();
+        let zones: Vec<_> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("zone"))
+            .collect();
         // B.Cu had one already; F.Cu got a new one over the outline.
         assert_eq!(zones.len(), 2);
         assert_eq!(form_atom(zones[1], "layer", 1), Some("F.Cu"));
         assert_eq!(node_net(zones[1]), Some("/GND"));
-        let unknown = KiCadPourRequest { net: "VCC".into(), ..request(&["F.Cu"]) };
+        let unknown = KiCadPourRequest {
+            net: "VCC".into(),
+            ..request(&["F.Cu"])
+        };
         assert!(add_pour_zones(&mut pcb, &[unknown]).is_err());
         assert!(add_pour_zones(&mut pcb, &[request(&["In1.Cu"])]).is_err());
     }
@@ -5304,29 +6414,54 @@ mod narrow_step_tests {
     use super::*;
 
     fn rules(width: f64, clearance: f64) -> KiCadConnectionRoutingRules {
-        KiCadConnectionRoutingRules { trace_width_mm: width, clearance_mm: clearance, via_size_mm: 0.6, via_drill_mm: 0.3 }
+        KiCadConnectionRoutingRules {
+            trace_width_mm: width,
+            clearance_mm: clearance,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        }
     }
 
     #[test]
     fn the_step_applies_only_with_a_narrower_width_or_a_relaxed_clearance() {
-        let plain = KiCadBoardRouterConfig { default_rules: Some(rules(0.2, 0.2)), ..KiCadBoardRouterConfig::default() };
+        let plain = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2, 0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
         assert!(!narrow_step_applies(&plain));
         // A menu width no narrower than every class: nothing to narrow.
-        let same = KiCadBoardRouterConfig { narrow_signal_mm: Some(0.2), ..plain.clone() };
+        let same = KiCadBoardRouterConfig {
+            narrow_signal_mm: Some(0.2),
+            ..plain.clone()
+        };
         assert!(!narrow_step_applies(&same));
-        let narrower = KiCadBoardRouterConfig { narrow_signal_mm: Some(0.15), ..plain.clone() };
+        let narrower = KiCadBoardRouterConfig {
+            narrow_signal_mm: Some(0.15),
+            ..plain.clone()
+        };
         assert!(narrow_step_applies(&narrower));
         // Already narrow (the step itself): it does not apply again.
-        let narrowed = KiCadBoardRouterConfig { use_narrow_signals: Some(true), ..narrower.clone() };
+        let narrowed = KiCadBoardRouterConfig {
+            use_narrow_signals: Some(true),
+            ..narrower.clone()
+        };
         assert!(!narrow_step_applies(&narrowed));
-        let relaxed = KiCadBoardRouterConfig { relaxed_clearance_mm: Some(0.1), ..plain.clone() };
+        let relaxed = KiCadBoardRouterConfig {
+            relaxed_clearance_mm: Some(0.1),
+            ..plain.clone()
+        };
         assert!(narrow_step_applies(&relaxed));
-        let not_smaller = KiCadBoardRouterConfig { relaxed_clearance_mm: Some(0.2), ..plain.clone() };
+        let not_smaller = KiCadBoardRouterConfig {
+            relaxed_clearance_mm: Some(0.2),
+            ..plain.clone()
+        };
         assert!(!narrow_step_applies(&not_smaller));
         // A wide class among narrow ones is enough.
         let mut classes = plain.clone();
         classes.default_rules = Some(rules(0.125, 0.2));
-        classes.connection_rules.insert("/PWR".into(), rules(0.5, 0.2));
+        classes
+            .connection_rules
+            .insert("/PWR".into(), rules(0.5, 0.2));
         classes.narrow_signal_mm = Some(0.125);
         assert!(narrow_step_applies(&classes));
     }
@@ -5366,13 +6501,28 @@ mod narrow_step_tests {
         // A finer rung with 60 s of negotiation is the best attempt; the
         // first attempt negotiated 120 s, 300 s kept and 330 s left.
         assert_eq!(narrow_step_negotiation(330.0, Some(60.0)), 60.0);
-        assert_eq!(narrow_step_negotiation_floored(330.0, Some(60.0), 120.0, 300.0), 120.0);
+        assert_eq!(
+            narrow_step_negotiation_floored(330.0, Some(60.0), 120.0, 300.0),
+            120.0
+        );
         // Bounded by the reserve and by half of what is left.
-        assert_eq!(narrow_step_negotiation_floored(1000.0, Some(60.0), 400.0, 250.0), 250.0);
-        assert_eq!(narrow_step_negotiation_floored(300.0, Some(60.0), 400.0, 600.0), 150.0);
+        assert_eq!(
+            narrow_step_negotiation_floored(1000.0, Some(60.0), 400.0, 250.0),
+            250.0
+        );
+        assert_eq!(
+            narrow_step_negotiation_floored(300.0, Some(60.0), 400.0, 600.0),
+            150.0
+        );
         // Never less than before.
-        assert_eq!(narrow_step_negotiation_floored(900.0, None, 100.0, 300.0), 300.0);
-        assert_eq!(narrow_step_negotiation_floored(900.0, None, 0.0, 300.0), 300.0);
+        assert_eq!(
+            narrow_step_negotiation_floored(900.0, None, 100.0, 300.0),
+            300.0
+        );
+        assert_eq!(
+            narrow_step_negotiation_floored(900.0, None, 0.0, 300.0),
+            300.0
+        );
     }
 
     #[test]
@@ -5396,7 +6546,10 @@ mod narrow_step_tests {
         for work in [10.0, 100.0, 320.0, 500.0, 2000.0] {
             for cap in [100.0, 179.0, 180.0, 240.0, 400.0, 600.0] {
                 let kept = narrow_step_reserve_floored(work, 0.75, cap);
-                assert!(kept == 0.0 || kept >= narrow_step_minimum(kept), "{work} {cap}");
+                assert!(
+                    kept == 0.0 || kept >= narrow_step_minimum(kept),
+                    "{work} {cap}"
+                );
             }
         }
     }
@@ -5454,13 +6607,21 @@ mod narrow_step_tests {
         assert!(!fits_before_reserve(135.0 + kept - check, kept, 130.0));
         // Without a charge (route mode) the arithmetic is the old one.
         assert_eq!(reserve_with_check(300.0, 0.0), 300.0);
-        assert_eq!(deadline_before_reserve(left - 0.0, 300.0, 1), deadline_before_reserve(left, 300.0, 1));
+        assert_eq!(
+            deadline_before_reserve(left - 0.0, 300.0, 1),
+            deadline_before_reserve(left, 300.0, 1)
+        );
     }
 
     #[test]
     fn the_minimum_connection_floors_classes_the_narrow_width_and_the_neck() {
-        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.09, 0.09)), ..KiCadBoardRouterConfig::default() };
-        config.connection_rules.insert("/PWR".into(), rules(0.5, 0.2));
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.09, 0.09)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        config
+            .connection_rules
+            .insert("/PWR".into(), rules(0.5, 0.2));
         config.narrow_signal_mm = Some(0.11);
         config.neck_width_mm = Some(0.1);
         assert!(narrow_step_applies(&config));
@@ -5474,7 +6635,10 @@ mod narrow_step_tests {
         // at the floor.
         assert!(narrow_step_applies(&config));
         // No floor, nothing changes.
-        let mut plain = KiCadBoardRouterConfig { default_rules: Some(rules(0.09, 0.09)), ..KiCadBoardRouterConfig::default() };
+        let mut plain = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.09, 0.09)),
+            ..KiCadBoardRouterConfig::default()
+        };
         plain.apply_width_floor();
         assert_eq!(plain.default_rules.as_ref().unwrap().trace_width_mm, 0.09);
     }
@@ -5495,7 +6659,10 @@ mod narrow_step_tests {
                 (pad "2" smd rect (at 0 2) (size 0.8 0.8) (layers "F.Cu") (net "/B"))))"#,
         )
         .unwrap();
-        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.3, 0.1)), ..KiCadBoardRouterConfig::default() };
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.3, 0.1)),
+            ..KiCadBoardRouterConfig::default()
+        };
         config.narrow_signal_mm = Some(0.1);
         config.use_narrow_signals = Some(true);
         config.neck_width_mm = Some(0.1);
@@ -5506,19 +6673,36 @@ mod narrow_step_tests {
             assert_eq!(board.classes[net.class].trace_width, 0.15, "{}", net.name);
         }
         let result = core::route(&board, &core_config(&config));
-        let widths: Vec<f64> = result.routes.iter().flat_map(|route| route.segments.iter().map(|segment| segment.width)).collect();
+        let widths: Vec<f64> = result
+            .routes
+            .iter()
+            .flat_map(|route| route.segments.iter().map(|segment| segment.width))
+            .collect();
         assert!(!widths.is_empty());
-        assert!(widths.iter().all(|width| *width >= 0.15 - 1.0e-12), "{widths:?}");
+        assert!(
+            widths.iter().all(|width| *width >= 0.15 - 1.0e-12),
+            "{widths:?}"
+        );
         // Without the floor the same board routes at the narrow width.
         config.min_connection_mm = None;
         let board = lower(&pcb, &config, false).unwrap().board;
-        assert!(board.nets.iter().all(|net| board.classes[net.class].trace_width == 0.1));
+        assert!(
+            board
+                .nets
+                .iter()
+                .all(|net| board.classes[net.class].trace_width == 0.1)
+        );
     }
 
     #[test]
     fn the_step_config_narrows_signals_and_relaxes_clearance_once() {
-        let mut config = KiCadBoardRouterConfig { default_rules: Some(rules(0.2, 0.2)), ..KiCadBoardRouterConfig::default() };
-        config.connection_rules.insert("/PWR".into(), rules(0.5, 0.25));
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2, 0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        config
+            .connection_rules
+            .insert("/PWR".into(), rules(0.5, 0.25));
         config.narrow_signal_mm = Some(0.125);
         config.relaxed_clearance_mm = Some(0.1);
         let step = narrow_step_config(&config);
@@ -5530,7 +6714,10 @@ mod narrow_step_tests {
         assert_eq!(step.connection_rules["/PWR"].trace_width_mm, 0.5);
         assert!(!narrow_step_applies(&step));
         // Only a relaxed clearance: no narrow width to use.
-        let relaxed = KiCadBoardRouterConfig { narrow_signal_mm: None, ..config.clone() };
+        let relaxed = KiCadBoardRouterConfig {
+            narrow_signal_mm: None,
+            ..config.clone()
+        };
         let step = narrow_step_config(&relaxed);
         assert_eq!(step.use_narrow_signals, Some(false));
         assert_eq!(step.default_rules.as_ref().unwrap().clearance_mm, 0.1);
@@ -5558,7 +6745,11 @@ mod check_gate_tests {
 
     #[test]
     fn the_first_attempt_and_router_clean_ones_are_always_checked() {
-        let gate = CheckGate { top: Some(2), counts: vec![(3, 10, 1.0), (4, 10, 1.0)], ..CheckGate::default() };
+        let gate = CheckGate {
+            top: Some(2),
+            counts: vec![(3, 10, 1.0), (4, 10, 1.0)],
+            ..CheckGate::default()
+        };
         assert!(gate.wants(50, 0, 0.0, None, false));
         assert!(gate.wants(0, 500, 9000.0, Some(((0, 1), 10, 10.0)), false));
     }
@@ -5578,7 +6769,12 @@ mod check_gate_tests {
     #[test]
     fn the_final_ladder_checks_only_the_two_best_by_the_routers_measures() {
         // The layout's board (router count 12) is the first measure.
-        let mut gate = CheckGate { top: Some(2), counts: vec![(12, 100, 500.0)], kept: Some((20, 0)), ..CheckGate::default() };
+        let mut gate = CheckGate {
+            top: Some(2),
+            counts: vec![(12, 100, 500.0)],
+            kept: Some((20, 0)),
+            ..CheckGate::default()
+        };
         let best = Some(((30, 1), 100, 500.0));
         // The ladder's first attempt: checked whatever its count.
         assert!(gate.wants(25, 100, 500.0, None, false));
@@ -5600,7 +6796,12 @@ mod check_gate_tests {
 
     #[test]
     fn past_the_deadline_only_a_board_that_beats_both_is_checked() {
-        let gate = CheckGate { top: Some(2), counts: vec![(12, 100, 500.0)], kept: Some((20, 0)), ..CheckGate::default() };
+        let gate = CheckGate {
+            top: Some(2),
+            counts: vec![(12, 100, 500.0)],
+            kept: Some((20, 0)),
+            ..CheckGate::default()
+        };
         // No best yet: the layout's kept board alone decides.
         assert!(gate.wants(19, 0, 0.0, None, true));
         assert!(!gate.wants(20, 0, 0.0, None, true));
@@ -5611,8 +6812,10 @@ mod check_gate_tests {
         assert!(gate.wants(17, 0, 0.0, best, true));
         assert!(!gate.wants(19, 0, 0.0, best, true));
         // A kept board with starved thermals loses a tie to a clean one.
-        let starved = CheckGate { kept: Some((20, 3)), ..CheckGate::default() };
+        let starved = CheckGate {
+            kept: Some((20, 3)),
+            ..CheckGate::default()
+        };
         assert!(starved.wants(20, 0, 0.0, None, true));
     }
 }
-

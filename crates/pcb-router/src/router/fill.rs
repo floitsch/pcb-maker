@@ -18,7 +18,9 @@ use std::cell::OnceCell;
 
 use super::{FREE_END, FastMap, NO_TERMINAL, PLANE_TERMINAL, Router};
 use crate::board::{Hatch, NetId, ObstacleKind, Plane};
-use crate::geometry::{Point, distance, point_in_polygon, point_segment_distance, polygon_edges, segments_intersect};
+use crate::geometry::{
+    Point, distance, point_in_polygon, point_segment_distance, polygon_edges, segments_intersect,
+};
 
 /// Side of the index's buckets, in mm.
 const BUCKET: f64 = 1.0;
@@ -61,9 +63,18 @@ enum Item {
     Obstacle(usize),
     /// A routed track of another net: its centreline, half its width and
     /// the clearance of its net class.
-    Segment { a: Point, b: Point, half_width: f64, clearance: f64 },
+    Segment {
+        a: Point,
+        b: Point,
+        half_width: f64,
+        clearance: f64,
+    },
     /// A routed via of another net.
-    Via { at: Point, radius: f64, clearance: f64 },
+    Via {
+        at: Point,
+        radius: f64,
+        clearance: f64,
+    },
     /// An edge of the pour's outline, of a region it leaves out, or of the
     /// board: a brush centre keeps `margin` from it.
     Edge { a: Point, b: Point, margin: f64 },
@@ -111,7 +122,6 @@ fn polygon_vertices(shape: &crate::geometry::Shape) -> u64 {
     }
 }
 
-
 fn bucket_range(minimum: Point, maximum: Point) -> (i64, i64, i64, i64) {
     (
         (minimum[0] / BUCKET).floor() as i64,
@@ -122,19 +132,41 @@ fn bucket_range(minimum: Point, maximum: Point) -> (i64, i64, i64, i64) {
 }
 
 fn segment_box(a: Point, b: Point) -> (Point, Point) {
-    ([a[0].min(b[0]), a[1].min(b[1])], [a[0].max(b[0]), a[1].max(b[1])])
+    (
+        [a[0].min(b[0]), a[1].min(b[1])],
+        [a[0].max(b[0]), a[1].max(b[1])],
+    )
 }
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
-        Self { router, net, rings, index: OnceCell::new(), holes: std::cell::RefCell::new(FastMap::default()), tolerance: std::cell::Cell::new(EPSILON), ops: std::cell::Cell::new(0), queries: std::cell::Cell::new(0), vertices: std::cell::Cell::new(0) }
+        Self {
+            router,
+            net,
+            rings,
+            index: OnceCell::new(),
+            holes: std::cell::RefCell::new(FastMap::default()),
+            tolerance: std::cell::Cell::new(EPSILON),
+            ops: std::cell::Cell::new(0),
+            queries: std::cell::Cell::new(0),
+            vertices: std::cell::Cell::new(0),
+        }
     }
 
     /// Adds the probe's work so far to its router's pour work.
     pub(super) fn charge(&self) {
-        self.router.scratch.probe_ops.fetch_add(self.ops.replace(0), std::sync::atomic::Ordering::Relaxed);
-        self.router.scratch.probe_queries.fetch_add(self.queries.replace(0), std::sync::atomic::Ordering::Relaxed);
-        self.router.scratch.probe_vertices.fetch_add(self.vertices.replace(0), std::sync::atomic::Ordering::Relaxed);
+        self.router
+            .scratch
+            .probe_ops
+            .fetch_add(self.ops.replace(0), std::sync::atomic::Ordering::Relaxed);
+        self.router.scratch.probe_queries.fetch_add(
+            self.queries.replace(0),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.router.scratch.probe_vertices.fetch_add(
+            self.vertices.replace(0),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 
     /// `f` with brush centres allowed `TRACK_END_TOLERANCE` closer than
@@ -148,12 +180,15 @@ impl<'a> FillProbe<'a> {
 
     /// `shape`'s distance to `point`, counting its vertices.
     fn distance_to(&self, shape: &crate::geometry::Shape, point: Point) -> f64 {
-        self.vertices.set(self.vertices.get() + polygon_vertices(shape));
+        self.vertices
+            .set(self.vertices.get() + polygon_vertices(shape));
         shape.distance_to_point(point)
     }
 
     fn half(&self, layer: usize) -> f64 {
-        self.router.board.classes[self.router.nets[self.net as usize].plane_class[layer]].trace_width / 2.0
+        self.router.board.classes[self.router.nets[self.net as usize].plane_class[layer]]
+            .trace_width
+            / 2.0
     }
 
     /// The net's zones on `layer` that KiCad fills: all of them, those of
@@ -166,18 +201,24 @@ impl<'a> FillProbe<'a> {
         let router = self.router;
         let net = self.net;
         let any = router.config.tracks_rung_fill || (hatch && router.hatch_any_plane);
-        router.board.planes.iter().filter(move |plane| plane.net == net && plane.layer == layer && (plane.connect || any))
+        router
+            .board
+            .planes
+            .iter()
+            .filter(move |plane| plane.net == net && plane.layer == layer && (plane.connect || any))
     }
 
     /// The hatch of the net's pour on `layer`, if it is hatched.
     pub(super) fn hatch(&self, layer: usize) -> Option<Hatch> {
-        self.filled_planes(layer, true).find_map(|plane| plane.hatch)
+        self.filled_planes(layer, true)
+            .find_map(|plane| plane.hatch)
     }
 
     /// How far past the gap KiCad tests a spoke's end: half the minimum
     /// width, or half a hatched zone's web.
     pub(super) fn spoke_half_width(&self, layer: usize) -> f64 {
-        self.hatch(layer).map_or(self.half(layer), |hatch| hatch.thickness / 2.0)
+        self.hatch(layer)
+            .map_or(self.half(layer), |hatch| hatch.thickness / 2.0)
     }
 
     /// The fill KiCad tests a spoke's end against (the fill before its
@@ -197,7 +238,8 @@ impl<'a> FillProbe<'a> {
         if self.hatch(layer).is_none() {
             return self.fill_at(layer, point);
         }
-        self.in_ring(layer, point) || (self.fill_at(layer, point) && !self.in_hatch_hole(layer, point))
+        self.in_ring(layer, point)
+            || (self.fill_at(layer, point) && !self.in_hatch_hole(layer, point))
     }
 
     /// Whether `point` lies in a hatched zone's thermal ring around a pad
@@ -210,7 +252,10 @@ impl<'a> FillProbe<'a> {
         }
         let board = &self.router.board;
         let half = self.half(layer);
-        let bridge = self.filled_planes(layer, true).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+        let bridge = self
+            .filled_planes(layer, true)
+            .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+            .fold(0.0f64, f64::max);
         for (pad, reach) in &self.rings[layer] {
             let gap = reach - half;
             let shape = &board.obstacles[*pad].shape;
@@ -218,7 +263,8 @@ impl<'a> FillProbe<'a> {
                 Some(frame) => 2.0 * frame.half[0].min(frame.half[1]),
                 None => {
                     let bounds = shape.aabb();
-                    (bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1])
+                    (bounds.maximum[0] - bounds.minimum[0])
+                        .min(bounds.maximum[1] - bounds.minimum[1])
                 }
             };
             let width = bridge.min(minor);
@@ -232,9 +278,15 @@ impl<'a> FillProbe<'a> {
             for radius in [0.0, half * 0.5, half - 1.0e-3] {
                 for step in 0..(if radius == 0.0 { 1 } else { 16 }) {
                     let angle = std::f64::consts::TAU * step as f64 / 16.0;
-                    let centre = [point[0] + radius * angle.cos(), point[1] + radius * angle.sin()];
+                    let centre = [
+                        point[0] + radius * angle.cos(),
+                        point[1] + radius * angle.sin(),
+                    ];
                     let from_pad = self.distance_to(shape, centre);
-                    if from_pad >= gap + half - 1.0e-9 && from_pad <= gap + width - half + 1.0e-9 && self.blocker(layer, centre, None).is_none() {
+                    if from_pad >= gap + half - 1.0e-9
+                        && from_pad <= gap + width - half + 1.0e-9
+                        && self.blocker(layer, centre, None).is_none()
+                    {
                         return true;
                     }
                 }
@@ -258,7 +310,10 @@ impl<'a> FillProbe<'a> {
         let grid = thickness + hatch.gap;
         let size = hatch.gap + 2.0 * half;
         let (sine, cosine) = hatch.orientation.to_radians().sin_cos();
-        let q = [point[0] * cosine - point[1] * sine, point[0] * sine + point[1] * cosine];
+        let q = [
+            point[0] * cosine - point[1] * sine,
+            point[0] * sine + point[1] * cosine,
+        ];
         let (k, m) = ((q[0] / grid).floor(), (q[1] / grid).floor());
         let (u, v) = (q[0] - k * grid, q[1] - m * grid);
         if !self.in_hole_shape(&hatch, half, size, u, v, half) {
@@ -274,7 +329,15 @@ impl<'a> FillProbe<'a> {
     /// Whether (u, v) in a hole's square (side `size`, before the fill is
     /// grown back by half the minimum width) lies in the hole shrunk by
     /// `inset`, with KiCad's corner smoothing.
-    fn in_hole_shape(&self, hatch: &Hatch, half: f64, size: f64, u: f64, v: f64, inset: f64) -> bool {
+    fn in_hole_shape(
+        &self,
+        hatch: &Hatch,
+        half: f64,
+        size: f64,
+        u: f64,
+        v: f64,
+        inset: f64,
+    ) -> bool {
         let (low, high) = (inset, size - inset);
         if u <= low || u >= high || v <= low || v >= high {
             return false;
@@ -303,7 +366,13 @@ impl<'a> FillProbe<'a> {
         [reach * 0.5, reach - 0.005].iter().any(|radius| {
             (0..16).any(|step| {
                 let angle = std::f64::consts::TAU * step as f64 / 16.0;
-                !self.fill_at(layer, [point[0] + radius * angle.cos(), point[1] + radius * angle.sin()])
+                !self.fill_at(
+                    layer,
+                    [
+                        point[0] + radius * angle.cos(),
+                        point[1] + radius * angle.sin(),
+                    ],
+                )
             })
         })
     }
@@ -326,19 +395,30 @@ impl<'a> FillProbe<'a> {
             [q[0] * cosine + q[1] * sine, -q[0] * sine + q[1] * cosine]
         };
         let to_hatch = |point: Point| {
-            let q = [point[0] * cosine - point[1] * sine, point[0] * sine + point[1] * cosine];
+            let q = [
+                point[0] * cosine - point[1] * sine,
+                point[0] * sine + point[1] * cosine,
+            ];
             (q[0] - k as f64 * grid, q[1] - m as f64 * grid)
         };
-        let bridge = self.filled_planes(layer, true).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+        let bridge = self
+            .filled_planes(layer, true)
+            .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+            .fold(0.0f64, f64::max);
         let encloses_ring = self.rings[layer].iter().any(|(pad, reach)| {
             let outer = reach - half + bridge;
             let bounds = board.obstacles[*pad].shape.aabb().inflated(outer);
-            [bounds.minimum, bounds.maximum, [bounds.minimum[0], bounds.maximum[1]], [bounds.maximum[0], bounds.minimum[1]]]
-                .iter()
-                .all(|corner| {
-                    let (u, v) = to_hatch(*corner);
-                    self.in_hole_shape(hatch, half, size, u, v, 0.0)
-                })
+            [
+                bounds.minimum,
+                bounds.maximum,
+                [bounds.minimum[0], bounds.maximum[1]],
+                [bounds.maximum[0], bounds.minimum[1]],
+            ]
+            .iter()
+            .all(|corner| {
+                let (u, v) = to_hatch(*corner);
+                self.in_hole_shape(hatch, half, size, u, v, 0.0)
+            })
         });
         let kept = !encloses_ring && {
             // The share of the hole the fill (less a web along its edge)
@@ -347,7 +427,10 @@ impl<'a> FillProbe<'a> {
             let samples = 8;
             for i in 0..samples {
                 for j in 0..samples {
-                    let (u, v) = ((i as f64 + 0.5) * size / samples as f64, (j as f64 + 0.5) * size / samples as f64);
+                    let (u, v) = (
+                        (i as f64 + 0.5) * size / samples as f64,
+                        (j as f64 + 0.5) * size / samples as f64,
+                    );
                     if !self.in_hole_shape(hatch, half, size, u, v, 0.0) {
                         continue;
                     }
@@ -372,27 +455,40 @@ impl<'a> FillProbe<'a> {
             let state = &router.nets[self.net as usize];
             let mut buckets: FastMap<(usize, i64, i64), Vec<Item>> = FastMap::default();
             let mut reach: f64 = board.edge_clearance.max(board.hole_clearance);
-            let insert = |layer: usize, (minimum, maximum): (Point, Point), item: Item, buckets: &mut FastMap<(usize, i64, i64), Vec<Item>>| {
-                let (x0, y0, x1, y1) = bucket_range(minimum, maximum);
-                for by in y0..=y1 {
-                    for bx in x0..=x1 {
-                        buckets.entry((layer, bx, by)).or_default().push(item);
+            let insert =
+                |layer: usize,
+                 (minimum, maximum): (Point, Point),
+                 item: Item,
+                 buckets: &mut FastMap<(usize, i64, i64), Vec<Item>>| {
+                    let (x0, y0, x1, y1) = bucket_range(minimum, maximum);
+                    for by in y0..=y1 {
+                        for bx in x0..=x1 {
+                            buckets.entry((layer, bx, by)).or_default().push(item);
+                        }
                     }
-                }
-            };
+                };
             for (position, obstacle) in board.obstacles.iter().enumerate() {
                 if obstacle.net == Some(self.net) || !obstacle.blocks_tracks {
                     continue;
                 }
                 // Mask openings do not stop a fill (the static maps' fill
                 // trace).
-                if obstacle.kind == ObstacleKind::Keepout && obstacle.label.starts_with("solder mask opening") {
+                if obstacle.kind == ObstacleKind::Keepout
+                    && obstacle.label.starts_with("solder mask opening")
+                {
                     continue;
                 }
-                reach = reach.max(obstacle.clearance).max(obstacle.clearance_override.unwrap_or(0.0));
+                reach = reach
+                    .max(obstacle.clearance)
+                    .max(obstacle.clearance_override.unwrap_or(0.0));
                 let bounds = obstacle.shape.aabb();
                 for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0) {
-                    insert(layer, (bounds.minimum, bounds.maximum), Item::Obstacle(position), &mut buckets);
+                    insert(
+                        layer,
+                        (bounds.minimum, bounds.maximum),
+                        Item::Obstacle(position),
+                        &mut buckets,
+                    );
                 }
             }
             for class in &board.classes {
@@ -408,33 +504,85 @@ impl<'a> FillProbe<'a> {
                 let clearance = rules.clearance;
                 for branch in &other_state.branches {
                     for pair in branch.nodes.windows(2) {
-                        let (a, b) = (router.grid.center_of(pair[0].cell as usize), router.grid.center_of(pair[1].cell as usize));
+                        let (a, b) = (
+                            router.grid.center_of(pair[0].cell as usize),
+                            router.grid.center_of(pair[1].cell as usize),
+                        );
                         if pair[0].layer == pair[1].layer {
-                            let half_width = router.width_at(other as NetId, pair[0].cell).min(router.width_at(other as NetId, pair[1].cell)) / 2.0;
+                            let half_width = router
+                                .width_at(other as NetId, pair[0].cell)
+                                .min(router.width_at(other as NetId, pair[1].cell))
+                                / 2.0;
                             extent = extent.max(half_width);
-                            insert(pair[0].layer as usize, segment_box(a, b), Item::Segment { a, b, half_width, clearance }, &mut buckets);
+                            insert(
+                                pair[0].layer as usize,
+                                segment_box(a, b),
+                                Item::Segment {
+                                    a,
+                                    b,
+                                    half_width,
+                                    clearance,
+                                },
+                                &mut buckets,
+                            );
                         } else if pair[0].cell == pair[1].cell {
                             extent = extent.max(rules.via_diameter / 2.0);
                             for layer in 0..layers {
-                                insert(layer, (a, a), Item::Via { at: a, radius: rules.via_diameter / 2.0, clearance }, &mut buckets);
+                                insert(
+                                    layer,
+                                    (a, a),
+                                    Item::Via {
+                                        at: a,
+                                        radius: rules.via_diameter / 2.0,
+                                        clearance,
+                                    },
+                                    &mut buckets,
+                                );
                             }
                         }
                     }
                     // The stubs from the pads to the lattice.
-                    for (terminal, node) in [(branch.start_terminal, branch.nodes[0]), (branch.end_terminal, *branch.nodes.last().unwrap())] {
-                        if terminal == NO_TERMINAL || terminal == PLANE_TERMINAL || terminal == FREE_END {
+                    for (terminal, node) in [
+                        (branch.start_terminal, branch.nodes[0]),
+                        (branch.end_terminal, *branch.nodes.last().unwrap()),
+                    ] {
+                        if terminal == NO_TERMINAL
+                            || terminal == PLANE_TERMINAL
+                            || terminal == FREE_END
+                        {
                             continue;
                         }
                         let center = router.grid.center_of(node.cell as usize);
                         if let Some((_, width, polyline)) = other_state.escapes.get(&node) {
                             extent = extent.max(width / 2.0);
                             for pair in polyline.windows(2) {
-                                insert(node.layer as usize, segment_box(pair[0], pair[1]), Item::Segment { a: pair[0], b: pair[1], half_width: width / 2.0, clearance }, &mut buckets);
+                                insert(
+                                    node.layer as usize,
+                                    segment_box(pair[0], pair[1]),
+                                    Item::Segment {
+                                        a: pair[0],
+                                        b: pair[1],
+                                        half_width: width / 2.0,
+                                        clearance,
+                                    },
+                                    &mut buckets,
+                                );
                             }
-                        } else if let Some(described) = description.terminals.get(terminal as usize) {
+                        } else if let Some(described) = description.terminals.get(terminal as usize)
+                        {
                             let half_width = router.width_at(other as NetId, node.cell) / 2.0;
                             extent = extent.max(half_width);
-                            insert(node.layer as usize, segment_box(described.anchor, center), Item::Segment { a: described.anchor, b: center, half_width, clearance }, &mut buckets);
+                            insert(
+                                node.layer as usize,
+                                segment_box(described.anchor, center),
+                                Item::Segment {
+                                    a: described.anchor,
+                                    b: center,
+                                    half_width,
+                                    clearance,
+                                },
+                                &mut buckets,
+                            );
                         }
                     }
                 }
@@ -450,21 +598,47 @@ impl<'a> FillProbe<'a> {
                 for plane in self.filled_planes(layer, false) {
                     for polygon in std::iter::once(&plane.polygon).chain(plane.excluded.iter()) {
                         for (a, b) in polygon_edges(polygon) {
-                            insert(layer, segment_box(a, b), Item::Edge { a, b, margin: half }, &mut buckets);
+                            insert(
+                                layer,
+                                segment_box(a, b),
+                                Item::Edge { a, b, margin: half },
+                                &mut buckets,
+                            );
                         }
                     }
                 }
                 for (a, b) in polygon_edges(&board.outline) {
-                    insert(layer, segment_box(a, b), Item::Edge { a, b, margin: board.edge_clearance + half }, &mut buckets);
+                    insert(
+                        layer,
+                        segment_box(a, b),
+                        Item::Edge {
+                            a,
+                            b,
+                            margin: board.edge_clearance + half,
+                        },
+                        &mut buckets,
+                    );
                 }
                 for (pad, pad_reach) in &self.rings[layer] {
                     let bounds = board.obstacles[*pad].shape.aabb();
                     reach = reach.max(*pad_reach);
-                    insert(layer, (bounds.minimum, bounds.maximum), Item::Ring { pad: *pad, reach: *pad_reach }, &mut buckets);
+                    insert(
+                        layer,
+                        (bounds.minimum, bounds.maximum),
+                        Item::Ring {
+                            pad: *pad,
+                            reach: *pad_reach,
+                        },
+                        &mut buckets,
+                    );
                 }
             }
-            self.ops.set(self.ops.get() + buckets.values().map(Vec::len).sum::<usize>() as u64);
-            Index { buckets, span: reach + extent + half_most + board.edge_clearance + 1.0e-3 }
+            self.ops
+                .set(self.ops.get() + buckets.values().map(Vec::len).sum::<usize>() as u64);
+            Index {
+                buckets,
+                span: reach + extent + half_most + board.edge_clearance + 1.0e-3,
+            }
         })
     }
 
@@ -478,12 +652,21 @@ impl<'a> FillProbe<'a> {
         let state = &router.nets[self.net as usize];
         if let Some(node) = router.grid.nearest_node(point) {
             let center = router.grid.center_of(node);
-            if state.plane[layer][node] && !edges.iter().any(|(a, b)| segments_intersect(point, center, *a, *b) || point_segment_distance(center, *a, *b) < 1.0e-9) {
+            if state.plane[layer][node]
+                && !edges.iter().any(|(a, b)| {
+                    segments_intersect(point, center, *a, *b)
+                        || point_segment_distance(center, *a, *b) < 1.0e-9
+                })
+            {
                 return true;
             }
         }
         self.filled_planes(layer, false).any(|plane| {
-            point_in_polygon(point, &plane.polygon) && !plane.excluded.iter().any(|other| point_in_polygon(point, other))
+            point_in_polygon(point, &plane.polygon)
+                && !plane
+                    .excluded
+                    .iter()
+                    .any(|other| point_in_polygon(point, other))
         }) && point_in_polygon(point, &board.outline)
     }
 
@@ -499,7 +682,12 @@ impl<'a> FillProbe<'a> {
     /// What keeps a brush centre from `point` (`fits`; with `except` None,
     /// no thermal relief does: a spoke's), for debugging: None where it
     /// fits.
-    pub(super) fn blocker(&self, layer: usize, point: Point, except: Option<&[usize]>) -> Option<String> {
+    pub(super) fn blocker(
+        &self,
+        layer: usize,
+        point: Point,
+        except: Option<&[usize]>,
+    ) -> Option<String> {
         let router = self.router;
         let board = &router.board;
         let state = &router.nets[self.net as usize];
@@ -511,7 +699,10 @@ impl<'a> FillProbe<'a> {
         let index = self.index();
         let span = index.span;
         let tolerance = self.tolerance.get();
-        let (x0, y0, x1, y1) = bucket_range([point[0] - span, point[1] - span], [point[0] + span, point[1] + span]);
+        let (x0, y0, x1, y1) = bucket_range(
+            [point[0] - span, point[1] - span],
+            [point[0] + span, point[1] + span],
+        );
         self.queries.set(self.queries.get() + 1);
         let mut edges: Vec<(Point, Point)> = Vec::new();
         for by in y0..=y1 {
@@ -531,29 +722,54 @@ impl<'a> FillProbe<'a> {
                             };
                             self.distance_to(&obstacle.shape, point) < clearance + half - tolerance
                         }
-                        Item::Segment { a, b, half_width, clearance } => {
-                            point_segment_distance(point, *a, *b) < half_width + clearance.max(brush.clearance) + half - tolerance
+                        Item::Segment {
+                            a,
+                            b,
+                            half_width,
+                            clearance,
+                        } => {
+                            point_segment_distance(point, *a, *b)
+                                < half_width + clearance.max(brush.clearance) + half - tolerance
                         }
-                        Item::Via { at, radius, clearance } => distance(point, *at) < radius + clearance.max(brush.clearance) + half - tolerance,
+                        Item::Via {
+                            at,
+                            radius,
+                            clearance,
+                        } => {
+                            distance(point, *at)
+                                < radius + clearance.max(brush.clearance) + half - tolerance
+                        }
                         Item::Edge { a, b, margin } => {
                             edges.push((*a, *b));
                             point_segment_distance(point, *a, *b) < *margin - EPSILON
                         }
-                        Item::Ring { pad, reach } => except.is_some_and(|except| !except.contains(pad)) && self.distance_to(&board.obstacles[*pad].shape, point) < *reach - EPSILON,
+                        Item::Ring { pad, reach } => {
+                            except.is_some_and(|except| !except.contains(pad))
+                                && self.distance_to(&board.obstacles[*pad].shape, point)
+                                    < *reach - EPSILON
+                        }
                     };
                     if blocked {
                         return Some(match item {
-                            Item::Obstacle(position) => format!("obstacle {}", board.obstacles[*position].label),
+                            Item::Obstacle(position) => {
+                                format!("obstacle {}", board.obstacles[*position].label)
+                            }
                             Item::Segment { a, b, .. } => format!("track {a:?}-{b:?}"),
                             Item::Via { at, .. } => format!("via {at:?}"),
                             Item::Edge { a, b, .. } => format!("edge {a:?}-{b:?}"),
-                            Item::Ring { pad, .. } => format!("relief of {}", board.obstacles[*pad].label),
+                            Item::Ring { pad, .. } => {
+                                format!("relief of {}", board.obstacles[*pad].label)
+                            }
                         });
                     }
                 }
             }
         }
-        if self.inside(layer, point, &edges) { None } else { Some("outside".into()) }
+        if self.inside(layer, point, &edges) {
+            None
+        } else {
+            Some("outside".into())
+        }
     }
 
     /// How much room a brush centre at `point` has to spare: the least of
@@ -571,7 +787,10 @@ impl<'a> FillProbe<'a> {
         let half = brush.trace_width / 2.0;
         let index = self.index();
         let span = index.span;
-        let (x0, y0, x1, y1) = bucket_range([point[0] - span, point[1] - span], [point[0] + span, point[1] + span]);
+        let (x0, y0, x1, y1) = bucket_range(
+            [point[0] - span, point[1] - span],
+            [point[0] + span, point[1] + span],
+        );
         self.queries.set(self.queries.get() + 1);
         let mut edges: Vec<(Point, Point)> = Vec::new();
         let mut least = f64::INFINITY;
@@ -592,8 +811,22 @@ impl<'a> FillProbe<'a> {
                             };
                             self.distance_to(&obstacle.shape, point) - clearance - half
                         }
-                        Item::Segment { a, b, half_width, clearance } => point_segment_distance(point, *a, *b) - half_width - clearance.max(brush.clearance) - half,
-                        Item::Via { at, radius, clearance } => distance(point, *at) - radius - clearance.max(brush.clearance) - half,
+                        Item::Segment {
+                            a,
+                            b,
+                            half_width,
+                            clearance,
+                        } => {
+                            point_segment_distance(point, *a, *b)
+                                - half_width
+                                - clearance.max(brush.clearance)
+                                - half
+                        }
+                        Item::Via {
+                            at,
+                            radius,
+                            clearance,
+                        } => distance(point, *at) - radius - clearance.max(brush.clearance) - half,
                         Item::Edge { a, b, margin } => {
                             edges.push((*a, *b));
                             point_segment_distance(point, *a, *b) - margin
@@ -610,7 +843,11 @@ impl<'a> FillProbe<'a> {
                 }
             }
         }
-        if self.inside(layer, point, &edges) { least } else { -1.0 }
+        if self.inside(layer, point, &edges) {
+            least
+        } else {
+            -1.0
+        }
     }
 
     /// `fill_at`, and where its samples miss, the best brush centre along
@@ -627,11 +864,17 @@ impl<'a> FillProbe<'a> {
         // The slack changes no faster than the point moves: from five
         // samples half a half-width apart, a centre that fits must lie
         // within a quarter of one of the best.
-        let samples: Vec<(f64, f64)> = (0..5).map(|index| {
-            let t = -half + half * index as f64 / 2.0;
-            (t, at(t))
-        }).collect();
-        let (best_t, best) = samples.iter().copied().fold((0.0, f64::NEG_INFINITY), |a, b| if b.1 > a.1 { b } else { a });
+        let samples: Vec<(f64, f64)> = (0..5)
+            .map(|index| {
+                let t = -half + half * index as f64 / 2.0;
+                (t, at(t))
+            })
+            .collect();
+        let (best_t, best) =
+            samples.iter().copied().fold(
+                (0.0, f64::NEG_INFINITY),
+                |a, b| if b.1 > a.1 { b } else { a },
+            );
         if best >= -EPSILON {
             return true;
         }
@@ -639,7 +882,10 @@ impl<'a> FillProbe<'a> {
             return false;
         }
         let ratio = (5.0f64.sqrt() - 1.0) / 2.0;
-        let (mut low, mut high) = ((best_t - half / 2.0).max(-half), (best_t + half / 2.0).min(half));
+        let (mut low, mut high) = (
+            (best_t - half / 2.0).max(-half),
+            (best_t + half / 2.0).min(half),
+        );
         let (mut a, mut b) = (high - ratio * (high - low), low + ratio * (high - low));
         let (mut fa, mut fb) = (at(a), at(b));
         for _ in 0..24 {
@@ -673,7 +919,14 @@ impl<'a> FillProbe<'a> {
         for radius in [half * 0.5, half - 1.0e-3] {
             for step in 0..16 {
                 let angle = std::f64::consts::TAU * step as f64 / 16.0;
-                if self.fits(layer, [point[0] + radius * angle.cos(), point[1] + radius * angle.sin()], &[]) {
+                if self.fits(
+                    layer,
+                    [
+                        point[0] + radius * angle.cos(),
+                        point[1] + radius * angle.sin(),
+                    ],
+                    &[],
+                ) {
                     return true;
                 }
             }
@@ -688,7 +941,15 @@ impl<'a> FillProbe<'a> {
     /// what is narrower than the minimum width. KiCad adds the spokes after
     /// cutting the thermal reliefs out, so no relief cuts a spoke (a USB-C
     /// receptacle's A1 beside B12: keyboar_'s J1).
-    pub(super) fn spoke_clear(&self, layer: usize, anchor: Point, direction: Point, from: f64, to: f64, side: f64) -> bool {
+    pub(super) fn spoke_clear(
+        &self,
+        layer: usize,
+        anchor: Point,
+        direction: Point,
+        from: f64,
+        to: f64,
+        side: f64,
+    ) -> bool {
         let half = self.half(layer);
         let step = (half / 2.0).max(0.01);
         let steps = (((to - from) / step).ceil() as usize).max(1);
@@ -696,12 +957,17 @@ impl<'a> FillProbe<'a> {
             vec![0.0]
         } else {
             let count = (side / step).ceil() as usize;
-            (0..=2 * count).map(|index| -side + side * index as f64 / count as f64).collect()
+            (0..=2 * count)
+                .map(|index| -side + side * index as f64 / count as f64)
+                .collect()
         };
         (0..=steps).all(|index| {
             let along = from + (to - from) * index as f64 / steps as f64;
             across.iter().any(|offset| {
-                let at = [anchor[0] + direction[0] * along - direction[1] * offset, anchor[1] + direction[1] * along + direction[0] * offset];
+                let at = [
+                    anchor[0] + direction[0] * along - direction[1] * offset,
+                    anchor[1] + direction[1] * along + direction[0] * offset,
+                ];
                 self.blocker(layer, at, None).is_none()
             })
         })

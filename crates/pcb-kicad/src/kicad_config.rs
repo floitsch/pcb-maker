@@ -37,7 +37,11 @@ pub(crate) const USER_LIBS_ENV: &str = "PCB_MAKER_KICAD_USER_LIBS";
 const DRC_SEVERITIES: &str = "/board/design_settings/rule_severities";
 const DRC_LIBRARY_RULES: [&str; 2] = ["lib_footprint_issues", "lib_footprint_mismatch"];
 const ERC_SEVERITIES: &str = "/erc/rule_severities";
-const ERC_LIBRARY_RULES: [&str; 3] = ["lib_symbol_issues", "lib_symbol_mismatch", "footprint_link_issues"];
+const ERC_LIBRARY_RULES: [&str; 3] = [
+    "lib_symbol_issues",
+    "lib_symbol_mismatch",
+    "footprint_link_issues",
+];
 
 const FOOTPRINT_TABLE: &str = "(fp_lib_table\n\t(version 7)\n)\n";
 const SYMBOL_TABLE: &str = "(sym_lib_table\n\t(version 7)\n)\n";
@@ -117,9 +121,14 @@ fn project_counts_library_findings(input: &Path, severities: &str, rules: &[&str
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return true;
     };
-    value.pointer(severities).and_then(|severities| severities.as_object()).is_some_and(|severities| {
-        severities.iter().any(|(name, severity)| rules.contains(&name.as_str()) && severity == "error")
-    })
+    value
+        .pointer(severities)
+        .and_then(|severities| severities.as_object())
+        .is_some_and(|severities| {
+            severities
+                .iter()
+                .any(|(name, severity)| rules.contains(&name.as_str()) && severity == "error")
+        })
 }
 
 /// KiCad's settings directory name for `version` (`10.0.7` -> `10.0`).
@@ -134,10 +143,15 @@ fn series(version: &str) -> Option<String> {
 /// they differ) and returns `home`. Safe against concurrent processes:
 /// tables are written to a temporary file and renamed.
 pub(crate) fn prepare(home: &Path, version: &str) -> Result<PathBuf, String> {
-    let series = series(version).ok_or_else(|| format!("unexpected kicad-cli version {version:?}"))?;
+    let series =
+        series(version).ok_or_else(|| format!("unexpected kicad-cli version {version:?}"))?;
     let directory = home.join(series);
-    fs::create_dir_all(&directory).map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
-    for (name, contents) in [("fp-lib-table", FOOTPRINT_TABLE), ("sym-lib-table", SYMBOL_TABLE)] {
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("failed to create {}: {error}", directory.display()))?;
+    for (name, contents) in [
+        ("fp-lib-table", FOOTPRINT_TABLE),
+        ("sym-lib-table", SYMBOL_TABLE),
+    ] {
         let path = directory.join(name);
         if fs::read(&path).ok().as_deref() != Some(contents.as_bytes()) {
             crate::drc_cache::write_atomically(&path, contents.as_bytes())?;
@@ -160,12 +174,16 @@ mod tests {
 
     #[test]
     fn prepare_writes_empty_tables_and_repairs_them() {
-        let home = std::env::temp_dir().join(format!("pcb-maker-kicad-config-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("pcb-maker-kicad-config-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         assert_eq!(prepare(&home, "10.0.7").unwrap(), home);
         let table = home.join("10.0/fp-lib-table");
         assert_eq!(fs::read_to_string(&table).unwrap(), FOOTPRINT_TABLE);
-        assert_eq!(fs::read_to_string(home.join("10.0/sym-lib-table")).unwrap(), SYMBOL_TABLE);
+        assert_eq!(
+            fs::read_to_string(home.join("10.0/sym-lib-table")).unwrap(),
+            SYMBOL_TABLE
+        );
         fs::write(&table, "(fp_lib_table (lib (name x)))").unwrap();
         prepare(&home, "10.0.7").unwrap();
         assert_eq!(fs::read_to_string(&table).unwrap(), FOOTPRINT_TABLE);
@@ -174,11 +192,14 @@ mod tests {
 
     #[test]
     fn library_errors_in_the_project_keep_the_user_libraries() {
-        let directory = std::env::temp_dir().join(format!("pcb-maker-kicad-project-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-kicad-project-{}", std::process::id()));
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let board = directory.join("board.kicad_pcb");
-        let counts = |board: &Path| project_counts_library_findings(board, DRC_SEVERITIES, &DRC_LIBRARY_RULES);
+        let counts = |board: &Path| {
+            project_counts_library_findings(board, DRC_SEVERITIES, &DRC_LIBRARY_RULES)
+        };
         assert!(!counts(&board), "no project: KiCad's defaults");
         let project = directory.join("board.kicad_pro");
         let with = |severity: &str| {
@@ -194,9 +215,21 @@ mod tests {
         assert!(counts(&board));
         // ERC's rules sit elsewhere in the project file.
         let schematic = directory.join("board.kicad_sch");
-        assert!(!project_counts_library_findings(&schematic, ERC_SEVERITIES, &ERC_LIBRARY_RULES));
-        fs::write(&project, "{\"erc\": {\"rule_severities\": {\"footprint_link_issues\": \"error\"}}}").unwrap();
-        assert!(project_counts_library_findings(&schematic, ERC_SEVERITIES, &ERC_LIBRARY_RULES));
+        assert!(!project_counts_library_findings(
+            &schematic,
+            ERC_SEVERITIES,
+            &ERC_LIBRARY_RULES
+        ));
+        fs::write(
+            &project,
+            "{\"erc\": {\"rule_severities\": {\"footprint_link_issues\": \"error\"}}}",
+        )
+        .unwrap();
+        assert!(project_counts_library_findings(
+            &schematic,
+            ERC_SEVERITIES,
+            &ERC_LIBRARY_RULES
+        ));
         assert!(!counts(&board));
         fs::write(&project, "{").unwrap();
         assert!(counts(&board), "unreadable: keep the user's libraries");

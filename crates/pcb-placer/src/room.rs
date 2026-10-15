@@ -39,7 +39,14 @@ pub struct RoutingRoom {
 
 impl Default for RoutingRoom {
     fn default() -> Self {
-        Self { net_demand: Vec::new(), band: 1.0, floor: 0.5, most: 2.0, share: 1.0, all_parts: true }
+        Self {
+            net_demand: Vec::new(),
+            band: 1.0,
+            floor: 0.5,
+            most: 2.0,
+            share: 1.0,
+            all_parts: true,
+        }
     }
 }
 
@@ -66,7 +73,10 @@ fn net_wire(points: &[[f64; 2]]) -> f64 {
     best[0] = 0.0;
     let mut total = 0.0;
     for _ in 0..n {
-        let next = (0..n).filter(|index| !in_tree[*index]).min_by(|a, b| best[*a].total_cmp(&best[*b])).unwrap();
+        let next = (0..n)
+            .filter(|index| !in_tree[*index])
+            .min_by(|a, b| best[*a].total_cmp(&best[*b]))
+            .unwrap();
         in_tree[next] = true;
         total += best[next];
         for other in 0..n {
@@ -81,7 +91,11 @@ fn net_wire(points: &[[f64; 2]]) -> f64 {
 fn overlap(a: [f64; 4], b: [f64; 4]) -> f64 {
     let width = a[2].min(b[2]) - a[0].max(b[0]);
     let height = a[3].min(b[3]) - a[1].max(b[1]);
-    if width > 0.0 && height > 0.0 { width * height } else { 0.0 }
+    if width > 0.0 && height > 0.0 {
+        width * height
+    } else {
+        0.0
+    }
 }
 
 /// Per component, the routing demand density (RUDY: each net's wire
@@ -103,9 +117,19 @@ pub fn demand(problem: &Problem, poses: &[Pose], room: &RoutingRoom) -> Vec<f64>
         if points.len() < 2 || weight <= 0.0 {
             continue;
         }
-        let mut bounds = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut bounds = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for point in points {
-            bounds = [bounds[0].min(point[0]), bounds[1].min(point[1]), bounds[2].max(point[0]), bounds[3].max(point[1])];
+            bounds = [
+                bounds[0].min(point[0]),
+                bounds[1].min(point[1]),
+                bounds[2].max(point[0]),
+                bounds[3].max(point[1]),
+            ];
         }
         for axis in 0..2 {
             let missing = 2.0 * room.band - (bounds[axis + 2] - bounds[axis]);
@@ -135,7 +159,11 @@ pub fn demand(problem: &Problem, poses: &[Pose], room: &RoutingRoom) -> Vec<f64>
                 center[1] + half[1] + room.band,
             ];
             let area = (ring[2] - ring[0]) * (ring[3] - ring[1]);
-            boxes.iter().map(|(bounds, density)| density * overlap(*bounds, ring)).sum::<f64>() / area
+            boxes
+                .iter()
+                .map(|(bounds, density)| density * overlap(*bounds, ring))
+                .sum::<f64>()
+                / area
         })
         .collect()
 }
@@ -148,10 +176,18 @@ fn halo_area(problem: &Problem, halos: &[f64]) -> f64 {
         .components
         .iter()
         .zip(halos)
-        .filter(|(component, _)| !component.fixed && !component.copper_only && component.side != Side::Neither && component.hollow.is_empty())
+        .filter(|(component, _)| {
+            !component.fixed
+                && !component.copper_only
+                && component.side != Side::Neither
+                && component.hollow.is_empty()
+        })
         .map(|(component, halo)| {
             let sides = if problem.shared_halos { 1.0 } else { 2.0 };
-            let (width, height) = (component.body_size[0] + problem.spacing, component.body_size[1] + problem.spacing);
+            let (width, height) = (
+                component.body_size[0] + problem.spacing,
+                component.body_size[1] + problem.spacing,
+            );
             (width + sides * halo) * (height + sides * halo) - width * height
         })
         .sum()
@@ -165,8 +201,16 @@ fn halo_area(problem: &Problem, halos: &[f64]) -> f64 {
 /// `floor` times the median; `factor` chosen so the halos take `share` of
 /// the area the level's halos took. Fixed parts keep theirs.
 pub fn halos(problem: &Problem, poses: &[Pose], room: &RoutingRoom, requested: &[f64]) -> Vec<f64> {
-    let old: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
-    let base: Vec<f64> = if room.all_parts && requested.len() == old.len() { requested.to_vec() } else { old.clone() };
+    let old: Vec<f64> = problem
+        .components
+        .iter()
+        .map(|component| component.halo)
+        .collect();
+    let base: Vec<f64> = if room.all_parts && requested.len() == old.len() {
+        requested.to_vec()
+    } else {
+        old.clone()
+    };
     let demand = demand(problem, poses, room);
     let movable: Vec<usize> = (0..problem.components.len())
         .filter(|index| {
@@ -246,7 +290,10 @@ mod tests {
     }
 
     fn pin(net: usize) -> Pin {
-        Pin { offset: [0.0, 0.0], net }
+        Pin {
+            offset: [0.0, 0.0],
+            net,
+        }
     }
 
     /// Four parts in a row, 3 mm apart: A-B and B-C joined by several
@@ -260,7 +307,12 @@ mod tests {
             part("D", vec![pin(8)], 0.65),
         ];
         components[3].body_size = [1.0, 1.0];
-        let poses = [0.0, 3.0, 6.0, 30.0].map(|x| Pose { position: [x, 0.0], angle: 0.0 }).to_vec();
+        let poses = [0.0, 3.0, 6.0, 30.0]
+            .map(|x| Pose {
+                position: [x, 0.0],
+                angle: 0.0,
+            })
+            .to_vec();
         let problem = Problem {
             outline: vec![[-5.0, -5.0], [40.0, -5.0], [40.0, 5.0], [-5.0, 5.0]],
             components,
@@ -281,7 +333,10 @@ mod tests {
     #[test]
     fn demand_follows_the_wires() {
         let (problem, poses) = board();
-        let room = RoutingRoom { net_demand: vec![1.0; 9], ..Default::default() };
+        let room = RoutingRoom {
+            net_demand: vec![1.0; 9],
+            ..Default::default()
+        };
         let demand = demand(&problem, &poses, &room);
         // B lies under all eight short nets; D under only the long one.
         assert!(demand[1] > demand[0] && demand[1] > demand[3], "{demand:?}");
@@ -295,15 +350,28 @@ mod tests {
     #[test]
     fn halos_move_to_the_busy_parts_within_the_old_area() {
         let (problem, poses) = board();
-        let room = RoutingRoom { net_demand: vec![1.0; 9], ..Default::default() };
-        let old: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
+        let room = RoutingRoom {
+            net_demand: vec![1.0; 9],
+            ..Default::default()
+        };
+        let old: Vec<f64> = problem
+            .components
+            .iter()
+            .map(|component| component.halo)
+            .collect();
         let new = halos(&problem, &poses, &room, &old);
         // D, far from the demand, gets none; B the most, within `most`.
         assert_eq!(new[3], 0.0, "{new:?}");
-        assert!(new[1] >= new[0] && new[1] > old[1] && new[1] <= room.most * old[1] + 1.0e-9, "{new:?}");
+        assert!(
+            new[1] >= new[0] && new[1] > old[1] && new[1] <= room.most * old[1] + 1.0e-9,
+            "{new:?}"
+        );
         // The total area stays the old one.
         let (before, after) = (halo_area(&problem, &old), halo_area(&problem, &new));
-        assert!((after - before).abs() < 1.0e-6 * before, "{before} against {after}");
+        assert!(
+            (after - before).abs() < 1.0e-6 * before,
+            "{before} against {after}"
+        );
         // A smaller share takes less.
         let half = RoutingRoom { share: 0.5, ..room };
         let less = halos(&problem, &poses, &half, &old);
@@ -313,20 +381,42 @@ mod tests {
     #[test]
     fn parts_the_level_left_without_halo_get_one_where_it_is_busy() {
         let (mut problem, poses) = board();
-        let requested: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
+        let requested: Vec<f64> = problem
+            .components
+            .iter()
+            .map(|component| component.halo)
+            .collect();
         // The level kept only A's halo (doubled for the area).
         for component in &mut problem.components[1..] {
             component.halo = 0.0;
         }
         problem.components[0].halo = 1.3;
-        let room = RoutingRoom { net_demand: vec![1.0; 9], ..Default::default() };
+        let room = RoutingRoom {
+            net_demand: vec![1.0; 9],
+            ..Default::default()
+        };
         let new = halos(&problem, &poses, &room, &requested);
         // B, in the middle of the demand, gets a halo now; D still none.
         assert!(new[1] > 0.0 && new[3] == 0.0, "{new:?}");
-        let level: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
-        assert!((halo_area(&problem, &new) - halo_area(&problem, &level)).abs() < 1.0e-6 * halo_area(&problem, &level));
+        let level: Vec<f64> = problem
+            .components
+            .iter()
+            .map(|component| component.halo)
+            .collect();
+        assert!(
+            (halo_area(&problem, &new) - halo_area(&problem, &level)).abs()
+                < 1.0e-6 * halo_area(&problem, &level)
+        );
         // Within the level only A's halo moves: nobody else gets one.
-        let within = halos(&problem, &poses, &RoutingRoom { all_parts: false, ..room }, &requested);
+        let within = halos(
+            &problem,
+            &poses,
+            &RoutingRoom {
+                all_parts: false,
+                ..room
+            },
+            &requested,
+        );
         assert!(within[1..].iter().all(|halo| *halo == 0.0), "{within:?}");
     }
 

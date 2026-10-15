@@ -71,7 +71,12 @@ pub struct Disc {
 
 impl Disc {
     pub fn point(at: Point) -> Self {
-        Self { center: at, radius: 0.0, side: 1.0, vertex: usize::MAX }
+        Self {
+            center: at,
+            radius: 0.0,
+            side: 1.0,
+            vertex: usize::MAX,
+        }
     }
 }
 
@@ -112,7 +117,11 @@ pub fn sweep(disc: &Disc, from: Point, to: Point) -> f64 {
     let a0 = (from[1] - disc.center[1]).atan2(from[0] - disc.center[0]);
     let a1 = (to[1] - disc.center[1]).atan2(to[0] - disc.center[0]);
     let tau = std::f64::consts::TAU;
-    if disc.side > 0.0 { (a1 - a0).rem_euclid(tau) } else { -(a0 - a1).rem_euclid(tau) }
+    if disc.side > 0.0 {
+        (a1 - a0).rem_euclid(tau)
+    } else {
+        -(a0 - a1).rem_euclid(tau)
+    }
 }
 
 pub enum Built {
@@ -143,7 +152,10 @@ pub fn build(discs: &[Disc]) -> Built {
             return Built::WrongTurn(index);
         }
     }
-    Built::Path(Path { discs: discs.to_vec(), touch })
+    Built::Path(Path {
+        discs: discs.to_vec(),
+        touch,
+    })
 }
 
 /// The closest approach of `path` to `point`: the distance, and where (the
@@ -173,7 +185,9 @@ fn elements(path: &Path) -> Vec<Where> {
 /// Distance from `point` to one piece of the path.
 fn element_distance(path: &Path, element: Where, point: Point) -> f64 {
     match element {
-        Where::Tangent(index) => point_segment_distance(point, path.touch[index].1, path.touch[index + 1].0),
+        Where::Tangent(index) => {
+            point_segment_distance(point, path.touch[index].1, path.touch[index + 1].0)
+        }
         Where::Arc(index) => {
             let disc = &path.discs[index];
             let (from, to) = path.touch[index];
@@ -185,7 +199,11 @@ fn element_distance(path: &Path, element: Where, point: Point) -> f64 {
             } else {
                 -(a0 - angle).rem_euclid(std::f64::consts::TAU)
             };
-            let within = if arc >= 0.0 { offset <= arc } else { offset >= arc };
+            let within = if arc >= 0.0 {
+                offset <= arc
+            } else {
+                offset >= arc
+            };
             if within {
                 (distance(point, disc.center) - disc.radius).abs()
             } else {
@@ -199,17 +217,32 @@ fn element_distance(path: &Path, element: Where, point: Point) -> f64 {
 /// nearest to `near`), and the discs that element belongs to (without the
 /// end points).
 pub fn element(path: &Path, element: Where, near: Point) -> (Point, Vec<Disc>) {
-    let inner = |index: usize| path.discs.get(index).copied().filter(|disc| disc.vertex != usize::MAX && disc.radius > 0.0);
+    let inner = |index: usize| {
+        path.discs
+            .get(index)
+            .copied()
+            .filter(|disc| disc.vertex != usize::MAX && disc.radius > 0.0)
+    };
     match element {
         Where::Tangent(index) => {
             let direction = sub(path.touch[index + 1].0, path.touch[index].1);
-            (direction, [inner(index), inner(index + 1)].into_iter().flatten().collect())
+            (
+                direction,
+                [inner(index), inner(index + 1)]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            )
         }
         Where::Arc(index) => {
             let disc = path.discs[index];
             let radial = sub(near, disc.center);
             // Left discs are passed counter-clockwise.
-            let direction = if disc.side > 0.0 { [-radial[1], radial[0]] } else { [radial[1], -radial[0]] };
+            let direction = if disc.side > 0.0 {
+                [-radial[1], radial[0]]
+            } else {
+                [radial[1], -radial[0]]
+            };
             (direction, inner(index).into_iter().collect())
         }
     }
@@ -247,7 +280,10 @@ pub fn closest_near(path: &Path, point: Point, a: Point, b: Point) -> f64 {
             let mut previous = from;
             (1..=8).any(|step| {
                 let angle = a0 + arc * step as f64 / 8.0;
-                let next = [disc.center[0] + disc.radius * angle.cos(), disc.center[1] + disc.radius * angle.sin()];
+                let next = [
+                    disc.center[0] + disc.radius * angle.cos(),
+                    disc.center[1] + disc.radius * angle.sin(),
+                ];
                 let hit = segments_cross(previous, next, a, b);
                 previous = next;
                 hit
@@ -259,11 +295,19 @@ pub fn closest_near(path: &Path, point: Point, a: Point, b: Point) -> f64 {
         if !crosses(element) {
             continue;
         }
-        for near in list.iter().take((position + 3).min(list.len())).skip(position.saturating_sub(2)) {
+        for near in list
+            .iter()
+            .take((position + 3).min(list.len()))
+            .skip(position.saturating_sub(2))
+        {
             best = best.min(element_distance(path, *near, point));
         }
     }
-    if best.is_finite() { best } else { closest(path, point).0 }
+    if best.is_finite() {
+        best
+    } else {
+        closest(path, point).0
+    }
 }
 
 /// Total length of the path.
@@ -288,7 +332,10 @@ pub fn polyline(path: &Path, bulge: f64) -> Vec<Point> {
     let count = path.discs.len();
     let mut points = vec![path.discs[0].center];
     let push = |points: &mut Vec<Point>, point: Point| {
-        if points.last().is_none_or(|last| distance(*last, point) > 1.0e-9) {
+        if points
+            .last()
+            .is_none_or(|last| distance(*last, point) > 1.0e-9)
+        {
             points.push(point);
         }
     };
@@ -300,7 +347,10 @@ pub fn polyline(path: &Path, bulge: f64) -> Vec<Point> {
             let arc = sweep(disc, from, to);
             // Half the step angle: the polygon's corners lie at
             // radius / cos(half), `bulge` outside the arc.
-            let half = (disc.radius / (disc.radius + bulge)).clamp(-1.0, 1.0).acos().max(1.0e-3);
+            let half = (disc.radius / (disc.radius + bulge))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .max(1.0e-3);
             let pieces = ((arc.abs() / (2.0 * half)).ceil() as usize).max(1);
             if arc.abs() > 1.0e-9 {
                 let step = arc / pieces as f64;
@@ -308,7 +358,13 @@ pub fn polyline(path: &Path, bulge: f64) -> Vec<Point> {
                 let a0 = (from[1] - disc.center[1]).atan2(from[0] - disc.center[0]);
                 for piece in 0..pieces {
                     let angle = a0 + step * (piece as f64 + 0.5);
-                    push(&mut points, [disc.center[0] + outer * angle.cos(), disc.center[1] + outer * angle.sin()]);
+                    push(
+                        &mut points,
+                        [
+                            disc.center[0] + outer * angle.cos(),
+                            disc.center[1] + outer * angle.sin(),
+                        ],
+                    );
                 }
             }
             push(&mut points, to);
@@ -334,7 +390,8 @@ pub struct Portal {
 /// portal) is narrowed to its middle.
 fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
     // (left point, right point, left disc, right disc)
-    let mut points: Vec<(Point, Point, Option<Disc>, Option<Disc>)> = Vec::with_capacity(portals.len() + 2);
+    let mut points: Vec<(Point, Point, Option<Disc>, Option<Disc>)> =
+        Vec::with_capacity(portals.len() + 2);
     points.push((start, start, None, None));
     for portal in portals {
         let span = distance(portal.left, portal.right).max(1.0e-12);
@@ -347,8 +404,18 @@ fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
         points.push((
             lerp(portal.left, portal.right, a),
             lerp(portal.left, portal.right, b),
-            Some(Disc { center: portal.left, radius: portal.left_radius, side: 1.0, vertex: portal.left_vertex }),
-            Some(Disc { center: portal.right, radius: portal.right_radius, side: -1.0, vertex: portal.right_vertex }),
+            Some(Disc {
+                center: portal.left,
+                radius: portal.left_radius,
+                side: 1.0,
+                vertex: portal.left_vertex,
+            }),
+            Some(Disc {
+                center: portal.right,
+                radius: portal.right_radius,
+                side: -1.0,
+                vertex: portal.right_vertex,
+            }),
         ));
     }
     points.push((end, end, None, None));
@@ -366,7 +433,9 @@ fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
         let (portal_left, portal_right, _, _) = points[index];
         // The right side: tighten, or cross over the left.
         if cross(sub(right, apex), sub(portal_right, apex)) >= 0.0 {
-            if distance(apex, right) < 1.0e-12 || cross(sub(left, apex), sub(portal_right, apex)) < 0.0 {
+            if distance(apex, right) < 1.0e-12
+                || cross(sub(left, apex), sub(portal_right, apex)) < 0.0
+            {
                 right = portal_right;
                 right_index = index;
             } else {
@@ -382,7 +451,9 @@ fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
         }
         // The left side.
         if cross(sub(left, apex), sub(portal_left, apex)) <= 0.0 {
-            if distance(apex, left) < 1.0e-12 || cross(sub(right, apex), sub(portal_left, apex)) > 0.0 {
+            if distance(apex, left) < 1.0e-12
+                || cross(sub(right, apex), sub(portal_left, apex)) > 0.0
+            {
                 left = portal_left;
                 left_index = index;
             } else {
@@ -406,7 +477,12 @@ fn funnel(start: Point, end: Point, portals: &[Portal]) -> Vec<Disc> {
 pub enum Failure {
     /// Two discs on opposite sides overlap (or an end lies in a disc): the
     /// channel is too narrow there, `need` against `have` millimetres.
-    Squeezed { vertices: (usize, usize), at: Point, need: f64, have: f64 },
+    Squeezed {
+        vertices: (usize, usize),
+        at: Point,
+        need: f64,
+        have: f64,
+    },
     /// The refinement did not settle.
     Unsettled,
 }
@@ -418,7 +494,12 @@ pub fn taut(start: Point, end: Point, portals: &[Portal]) -> Result<Path, Failur
 
 /// The taut path through `portals` that also keeps clear of `extra` discs
 /// (on their sides).
-pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -> Result<Path, Failure> {
+pub fn taut_with(
+    start: Point,
+    end: Point,
+    portals: &[Portal],
+    extra: &[Disc],
+) -> Result<Path, Failure> {
     let mut inner: Vec<Disc> = Vec::new();
     for disc in funnel(start, end, portals) {
         push_disc(&mut inner, disc, start, end);
@@ -427,8 +508,18 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
     let mut vertices: Vec<Disc> = Vec::new();
     for portal in portals {
         for disc in [
-            Disc { center: portal.left, radius: portal.left_radius, side: 1.0, vertex: portal.left_vertex },
-            Disc { center: portal.right, radius: portal.right_radius, side: -1.0, vertex: portal.right_vertex },
+            Disc {
+                center: portal.left,
+                radius: portal.left_radius,
+                side: 1.0,
+                vertex: portal.left_vertex,
+            },
+            Disc {
+                center: portal.right,
+                radius: portal.right_radius,
+                side: -1.0,
+                vertex: portal.right_vertex,
+            },
         ] {
             if disc.radius > 0.0 && !vertices.iter().any(|known| known.vertex == disc.vertex) {
                 vertices.push(disc);
@@ -436,7 +527,10 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
         }
     }
     for disc in extra {
-        match vertices.iter_mut().find(|known| known.vertex == disc.vertex) {
+        match vertices
+            .iter_mut()
+            .find(|known| known.vertex == disc.vertex)
+        {
             Some(known) => known.radius = known.radius.max(disc.radius),
             None => vertices.push(*disc),
         }
@@ -460,7 +554,11 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
                 // sides that overlap, leave no room.
                 let ends = a.vertex == usize::MAX || b.vertex == usize::MAX;
                 if a.side == b.side && !ends {
-                    let drop = if a.radius < b.radius { index } else { index + 1 };
+                    let drop = if a.radius < b.radius {
+                        index
+                    } else {
+                        index + 1
+                    };
                     inner.remove(drop - 1);
                     continue;
                 }
@@ -496,19 +594,29 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
                 let outgoing = sub(path.touch[index + 1].0, path.touch[index].1);
                 let unit = |v: Point| scale(v, 1.0 / length(v).max(1.0e-12));
                 let direction = add(unit(incoming), unit(outgoing));
-                if dot(sub(vertex.center, path.discs[index].center), direction) < 0.0 { index - 1 } else { index }
+                if dot(sub(vertex.center, path.discs[index].center), direction) < 0.0 {
+                    index - 1
+                } else {
+                    index
+                }
             }
         };
         inner.insert(at.min(inner.len()), vertex);
         let signature: Vec<usize> = inner.iter().map(|disc| disc.vertex).collect();
         if seen.contains(&signature) {
             if std::env::var_os("PCB_TOPO_TAUT").is_some() {
-                eprintln!("    taut unsettled from {start:?} to {end:?}; inserted {} ({:?} r {:.3} side {}) at {at}", vertex.vertex, vertex.center, vertex.radius, vertex.side);
+                eprintln!(
+                    "    taut unsettled from {start:?} to {end:?}; inserted {} ({:?} r {:.3} side {}) at {at}",
+                    vertex.vertex, vertex.center, vertex.radius, vertex.side
+                );
                 for (index, known) in seen.iter().enumerate().rev().take(6) {
                     eprintln!("      {index}: {known:?}");
                 }
                 for disc in &vertices {
-                    eprintln!("      vertex {} at {:?} r {:.3} side {}", disc.vertex, disc.center, disc.radius, disc.side);
+                    eprintln!(
+                        "      vertex {} at {:?} r {:.3} side {}",
+                        disc.vertex, disc.center, disc.radius, disc.side
+                    );
                 }
             }
             return Err(Failure::Unsettled);
@@ -521,7 +629,10 @@ pub fn taut_with(start: Point, end: Point, portals: &[Portal], extra: &[Disc]) -
 /// Appends `disc` unless it sits on an end point or repeats the last one
 /// (then the larger radius stays).
 fn push_disc(discs: &mut Vec<Disc>, disc: Disc, start: Point, end: Point) {
-    if distance(disc.center, start) < 1.0e-9 || distance(disc.center, end) < 1.0e-9 || disc.radius <= 0.0 {
+    if distance(disc.center, start) < 1.0e-9
+        || distance(disc.center, end) < 1.0e-9
+        || disc.radius <= 0.0
+    {
         return;
     }
     if let Some(last) = discs.last_mut()
@@ -546,8 +657,18 @@ mod tests {
         let sides = [1.0, -1.0];
         for &sa in &sides {
             for &sb in &sides {
-                let a = Disc { center: [0.0, 0.0], radius: 1.0, side: sa, vertex: 0 };
-                let b = Disc { center: [10.0, 2.0], radius: 2.0, side: sb, vertex: 1 };
+                let a = Disc {
+                    center: [0.0, 0.0],
+                    radius: 1.0,
+                    side: sa,
+                    vertex: 0,
+                };
+                let b = Disc {
+                    center: [10.0, 2.0],
+                    radius: 2.0,
+                    side: sb,
+                    vertex: 1,
+                };
                 let (p, q) = tangent(&a, &b).unwrap();
                 assert!((distance(p, a.center) - 1.0).abs() < 1.0e-9);
                 assert!((distance(q, b.center) - 2.0).abs() < 1.0e-9);
@@ -565,7 +686,12 @@ mod tests {
     #[test]
     fn a_point_to_a_disc_inside_has_no_tangent() {
         let a = Disc::point([0.5, 0.0]);
-        let b = Disc { center: [0.0, 0.0], radius: 1.0, side: 1.0, vertex: 0 };
+        let b = Disc {
+            center: [0.0, 0.0],
+            radius: 1.0,
+            side: 1.0,
+            vertex: 0,
+        };
         assert!(tangent(&a, &b).is_none());
     }
 
@@ -601,7 +727,10 @@ mod tests {
 
     #[test]
     fn a_wide_channel_gives_a_straight_path() {
-        let portals = channel(&[(1.0, 5.0, 0.5), (3.0, 5.0, 0.5)], &[(2.0, -5.0, 0.5), (4.0, -5.0, 0.5)]);
+        let portals = channel(
+            &[(1.0, 5.0, 0.5), (3.0, 5.0, 0.5)],
+            &[(2.0, -5.0, 0.5), (4.0, -5.0, 0.5)],
+        );
         let path = taut([0.0, 0.0], [5.0, 0.0], &portals).unwrap();
         assert_eq!(path.discs.len(), 2);
         assert!((path_length(&path) - 5.0).abs() < 1.0e-9);
@@ -610,13 +739,20 @@ mod tests {
     #[test]
     fn a_vertex_in_the_way_is_wrapped_at_its_radius() {
         // A left vertex below the straight line: the path passes under it.
-        let portals = channel(&[(2.0, -1.0, 0.5), (4.0, 5.0, 0.5)], &[(1.0, -5.0, 0.5), (3.0, -5.0, 0.5)]);
+        let portals = channel(
+            &[(2.0, -1.0, 0.5), (4.0, 5.0, 0.5)],
+            &[(1.0, -5.0, 0.5), (3.0, -5.0, 0.5)],
+        );
         let path = taut([0.0, 0.0], [5.0, 0.0], &portals).unwrap();
         assert_eq!(path.discs.len(), 3);
         assert_eq!(path.discs[1].vertex, 0);
         let (d, _) = closest(&path, [2.0, -1.0]);
         assert!((d - 0.5).abs() < 1.0e-9, "{d}");
-        assert!(polyline(&path, 0.001).iter().all(|p| distance(*p, [2.0, -1.0]) >= 0.5 - 1.0e-9));
+        assert!(
+            polyline(&path, 0.001)
+                .iter()
+                .all(|p| distance(*p, [2.0, -1.0]) >= 0.5 - 1.0e-9)
+        );
     }
 
     #[test]
@@ -625,8 +761,22 @@ mod tests {
         // left vertex, but the path crosses at a shallow angle: measured
         // perpendicularly it would come closer; the refinement wraps it.
         let portals = vec![
-            Portal { left: [2.0, 0.4], right: [2.0, -5.0], left_vertex: 0, right_vertex: 1, left_radius: 0.5, right_radius: 0.1 },
-            Portal { left: [2.0, 0.4], right: [6.0, -5.0], left_vertex: 0, right_vertex: 2, left_radius: 0.5, right_radius: 0.1 },
+            Portal {
+                left: [2.0, 0.4],
+                right: [2.0, -5.0],
+                left_vertex: 0,
+                right_vertex: 1,
+                left_radius: 0.5,
+                right_radius: 0.1,
+            },
+            Portal {
+                left: [2.0, 0.4],
+                right: [6.0, -5.0],
+                left_vertex: 0,
+                right_vertex: 2,
+                left_radius: 0.5,
+                right_radius: 0.1,
+            },
         ];
         let path = taut([0.0, -0.5], [10.0, -0.3], &portals).unwrap();
         let (d, _) = closest(&path, [2.0, 0.4]);
@@ -640,7 +790,10 @@ mod tests {
             &[(1.0, -5.0, 0.3), (4.0, 0.5, 0.3), (7.0, -5.0, 0.3)],
         );
         let path = taut([0.0, 0.0], [8.0, 0.0], &portals).unwrap();
-        let wrapped: Vec<usize> = path.discs[1..path.discs.len() - 1].iter().map(|d| d.vertex).collect();
+        let wrapped: Vec<usize> = path.discs[1..path.discs.len() - 1]
+            .iter()
+            .map(|d| d.vertex)
+            .collect();
         assert_eq!(wrapped, vec![0, 101]);
         for (center, radius) in [([2.0, -0.5], 0.3), ([4.0, 0.5], 0.3)] {
             let (d, _) = closest(&path, center);
@@ -652,13 +805,26 @@ mod tests {
 
     #[test]
     fn a_channel_too_narrow_is_squeezed() {
-        let portals = vec![Portal { left: [2.0, 0.5], right: [2.0, -0.5], left_vertex: 0, right_vertex: 1, left_radius: 0.6, right_radius: 0.6 }];
-        assert!(matches!(taut([0.0, 0.0], [4.0, 0.0], &portals), Err(Failure::Squeezed { .. })));
+        let portals = vec![Portal {
+            left: [2.0, 0.5],
+            right: [2.0, -0.5],
+            left_vertex: 0,
+            right_vertex: 1,
+            left_radius: 0.6,
+            right_radius: 0.6,
+        }];
+        assert!(matches!(
+            taut([0.0, 0.0], [4.0, 0.0], &portals),
+            Err(Failure::Squeezed { .. })
+        ));
     }
 
     #[test]
     fn the_polyline_of_an_arc_stays_outside_by_at_most_the_bulge() {
-        let portals = channel(&[(5.0, -3.0, 2.0), (10.0, 5.0, 0.1)], &[(1.0, -9.0, 0.1), (9.0, -9.0, 0.1)]);
+        let portals = channel(
+            &[(5.0, -3.0, 2.0), (10.0, 5.0, 0.1)],
+            &[(1.0, -9.0, 0.1), (9.0, -9.0, 0.1)],
+        );
         let path = taut([0.0, 0.0], [10.0, 0.0], &portals).unwrap();
         let points = polyline(&path, 0.0005);
         for pair in points.windows(2) {
@@ -667,7 +833,10 @@ mod tests {
         }
         for point in &points {
             let d = distance(*point, [5.0, -3.0]);
-            assert!(d >= 2.0 - 1.0e-9 && (d > 2.1 || d <= 2.0005 + 1.0e-9), "{d}");
+            assert!(
+                d >= 2.0 - 1.0e-9 && (d > 2.1 || d <= 2.0005 + 1.0e-9),
+                "{d}"
+            );
         }
     }
 }

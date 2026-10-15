@@ -132,7 +132,10 @@ impl State<'_> {
         let fast = self.overlap_with(index, rect, false);
         if self.check_overlap {
             let full = self.overlap_with(index, rect, true);
-            assert!((fast - full).abs() <= 1.0e-9 * full.abs().max(1.0), "part {index}: bucketed {fast}, full {full}");
+            assert!(
+                (fast - full).abs() <= 1.0e-9 * full.abs().max(1.0),
+                "part {index}: bucketed {fast}, full {full}"
+            );
         }
         fast
     }
@@ -149,18 +152,31 @@ impl State<'_> {
             self.work.set(self.work.get() + 1);
             let width = a.1[0] + b.1[0] - (a.0[0] - b.0[0]).abs();
             let height = a.1[1] + b.1[1] - (a.0[1] - b.0[1]).abs();
-            if width > 0.0 && height > 0.0 { width * height } else { 0.0 }
+            if width > 0.0 && height > 0.0 {
+                width * height
+            } else {
+                0.0
+            }
         };
         let component = &self.problem.components[index];
         let pose = self.poses[index];
-        let own_far = if component.far_side.is_empty() { Vec::new() } else { built(component.far_boxes(pose)) };
+        let own_far = if component.far_side.is_empty() {
+            Vec::new()
+        } else {
+            built(component.far_boxes(pose))
+        };
         let mut near = self.near.borrow_mut();
-        let cells = self.grid.borrow_mut().query(rect.center, [rect.half[0] + self.reach, rect.half[1] + self.reach], &mut near);
+        let cells = self.grid.borrow_mut().query(
+            rect.center,
+            [rect.half[0] + self.reach, rect.half[1] + self.reach],
+            &mut near,
+        );
         if everything {
             near.clear();
             near.extend(0..self.rects.len());
         }
-        self.work.set(self.work.get() + cells as u64 + near.len() as u64 * self.visit_work);
+        self.work
+            .set(self.work.get() + cells as u64 + near.len() as u64 * self.visit_work);
         for &other in near.iter() {
             if other == index {
                 continue;
@@ -183,11 +199,18 @@ impl State<'_> {
                         // A cutout the user cut keeps bodies off too (by
                         // its box here; legality tests its outline).
                         let solid = &self.problem.constraints.solid_cutouts;
-                        if !solid.is_empty() && solid.contains(&if component.copper_only { index } else { other }) {
-                            total += area((part.center(part_pose), part.half_extent(part_pose.angle)), hole);
+                        if !solid.is_empty()
+                            && solid.contains(&if component.copper_only { index } else { other })
+                        {
+                            total += area(
+                                (part.center(part_pose), part.half_extent(part_pose.angle)),
+                                hole,
+                            );
                         }
                     }
-                } else if !component.hollow_for(other_component) && !other_component.hollow_for(component) {
+                } else if !component.hollow_for(other_component)
+                    && !other_component.hollow_for(component)
+                {
                     if self.problem.constraints.linked(index, other) {
                         // Parts tied together meet without their halos.
                         let (mine, theirs) = (component.halo, other_component.halo);
@@ -208,9 +231,24 @@ impl State<'_> {
                     }
                     // Courtyards on the other side meet there too
                     // (`legal::far_courtyard_overlap`).
-                    if !component.far_courtyard.is_empty() || !other_component.far_courtyard.is_empty() {
-                        total += self.far_courtyards(index, pose, other, self.poses[other], &built, &area)
-                            + self.far_courtyards(other, self.poses[other], index, pose, &built, &area);
+                    if !component.far_courtyard.is_empty()
+                        || !other_component.far_courtyard.is_empty()
+                    {
+                        total += self.far_courtyards(
+                            index,
+                            pose,
+                            other,
+                            self.poses[other],
+                            &built,
+                            &area,
+                        ) + self.far_courtyards(
+                            other,
+                            self.poses[other],
+                            index,
+                            pose,
+                            &built,
+                            &area,
+                        );
                     }
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
@@ -240,8 +278,25 @@ impl State<'_> {
                 // Across the board only holes and pads meet bodies, at the
                 // gaps the legality test asks for (`legal::far_side_overlap`).
                 if self.legal_far_side {
-                    total += self.far_overlap(index, pose, &rect, other, self.poses[other], body, &built, &area)
-                        + self.far_overlap(other, self.poses[other], body, index, pose, &rect, &built, &area);
+                    total += self.far_overlap(
+                        index,
+                        pose,
+                        &rect,
+                        other,
+                        self.poses[other],
+                        body,
+                        &built,
+                        &area,
+                    ) + self.far_overlap(
+                        other,
+                        self.poses[other],
+                        body,
+                        index,
+                        pose,
+                        &rect,
+                        &built,
+                        &area,
+                    );
                 } else {
                     for far in &own_far {
                         total += area(*far, (body.center, body.half));
@@ -257,7 +312,8 @@ impl State<'_> {
         // Leaving the board is as bad as overlapping something (for an
         // overhanging part, only with what belongs on the board).
         let component = &self.problem.components[index];
-        let margin = component.halo + self.share(component) - component.edge_margin(self.problem.edge_margin);
+        let margin = component.halo + self.share(component)
+            - component.edge_margin(self.problem.edge_margin);
         let mut bare = [rect.half[0] - margin, rect.half[1] - margin];
         let mut rect = rect;
         if !self.problem.constraints.is_empty() {
@@ -266,7 +322,12 @@ impl State<'_> {
             let pose = self.poses[index];
             let inner = constraints::inner_box(self.problem, index, pose).unwrap_or_else(|| {
                 let (center, half) = (component.center(pose), component.half_extent(pose.angle));
-                [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+                [
+                    center[0] - half[0],
+                    center[1] - half[1],
+                    center[0] + half[0],
+                    center[1] + half[1],
+                ]
             });
             let margins = constraints::side_margins(self.problem, index, pose.angle);
             let grown = [
@@ -323,13 +384,19 @@ impl State<'_> {
         }
         let other = &self.problem.components[body];
         let grow = |boxes: Vec<(Point, Point)>, margin: f64| -> Vec<(Point, Point)> {
-            boxes.into_iter().map(|(center, half)| (center, [half[0] + margin, half[1] + margin])).collect()
+            boxes
+                .into_iter()
+                .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
+                .collect()
         };
         // The body's copper: its pads, or all of it where it has none.
         let share = self.share(other);
         let pads = || {
             if other.pads.is_empty() {
-                vec![(body_rect.center, [body_rect.half[0] - share, body_rect.half[1] - share])]
+                vec![(
+                    body_rect.center,
+                    [body_rect.half[0] - share, body_rect.half[1] - share],
+                )]
             } else {
                 built(other.pad_boxes(body_pose))
             }
@@ -355,7 +422,10 @@ impl State<'_> {
         }
         if !component.far_copper.is_empty() {
             let pads = pads();
-            for far in grow(built(component.boxes_of(&component.far_copper, holes_pose)), min_spacing) {
+            for far in grow(
+                built(component.boxes_of(&component.far_copper, holes_pose)),
+                min_spacing,
+            ) {
                 for pad in &pads {
                     total += area(far, *pad);
                 }
@@ -376,7 +446,10 @@ impl State<'_> {
         built: &dyn Fn(Vec<(Point, Point)>) -> Vec<(Point, Point)>,
         area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
     ) -> f64 {
-        let (component, against) = (&self.problem.components[yard], &self.problem.components[other]);
+        let (component, against) = (
+            &self.problem.components[yard],
+            &self.problem.components[other],
+        );
         if component.far_courtyard.is_empty() || against.far_side.is_empty() {
             return 0.0;
         }
@@ -388,7 +461,10 @@ impl State<'_> {
             for (their_center, their_half) in &blocking {
                 total += area(
                     (*center, [half[0] + mine, half[1] + mine]),
-                    (*their_center, [their_half[0] + theirs, their_half[1] + theirs]),
+                    (
+                        *their_center,
+                        [their_half[0] + theirs, their_half[1] + theirs],
+                    ),
                 );
             }
         }
@@ -420,7 +496,8 @@ impl State<'_> {
                 ];
                 for (component, pin) in pins {
                     let description = &self.problem.components[*component];
-                    let at = description.pin_position(&description.pins[*pin], self.poses[*component]);
+                    let at =
+                        description.pin_position(&description.pins[*pin], self.poses[*component]);
                     bounds[0] = bounds[0].min(at[0]);
                     bounds[1] = bounds[1].min(at[1]);
                     bounds[2] = bounds[2].max(at[0]);
@@ -431,7 +508,6 @@ impl State<'_> {
             .sum()
     }
 }
-
 
 fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -> State<'a> {
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); problem.net_weights.len()];
@@ -473,15 +549,24 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         bounds,
         rectangular,
         work: std::cell::Cell::new(0),
-        grid: std::cell::RefCell::new(crate::buckets::Grid::new(bounds, 2.5, problem.components.len())),
+        grid: std::cell::RefCell::new(crate::buckets::Grid::new(
+            bounds,
+            2.5,
+            problem.components.len(),
+        )),
         near: std::cell::RefCell::new(Vec::new()),
         // The legality test's gaps across the board reach farther.
         reach: problem.edge_margin
             + 0.5
             + problem.far_reach()
             + problem.far_courtyard_reach()
-            + if legal_far_side { problem.spacing + problem.min_spacing } else { 0.0 },
-        visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round() as u64,
+            + if legal_far_side {
+                problem.spacing + problem.min_spacing
+            } else {
+                0.0
+            },
+        visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round()
+            as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         legal_far_side,
     };
@@ -498,7 +583,9 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
 /// Debugging aid: the overlap the annealer sees for every part at `poses`.
 pub fn overlaps(problem: &Problem, poses: &[Pose], config: &AnnealConfig) -> Vec<f64> {
     let state = build_state(problem, poses, config.legal_far_side);
-    (0..problem.components.len()).map(|index| state.overlap(index, state.rects[index])).collect()
+    (0..problem.components.len())
+        .map(|index| state.overlap(index, state.rects[index]))
+        .collect()
 }
 
 /// Improves `poses` in place and returns the remaining overlap area.
@@ -510,8 +597,12 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         return 0.0;
     }
     for index in &movable {
-        poses[*index].position =
-            constraints::snap_position(problem, *index, poses[*index].position, poses[*index].angle);
+        poses[*index].position = constraints::snap_position(
+            problem,
+            *index,
+            poses[*index].position,
+            poses[*index].angle,
+        );
     }
     let mut state = build_state(problem, poses, config.legal_far_side);
     // Work per move (before and after), besides the parts the overlap
@@ -533,14 +624,25 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             _ => 1,
         })
         .sum();
-    let fixed = scan
-        + if state.rectangular { 0 } else { problem.outline.len() }
-        + if held.is_empty() { 0 } else { (held.edges.len() + held.regions.len()) / 2 };
+    let fixed =
+        scan + if state.rectangular {
+            0
+        } else {
+            problem.outline.len()
+        } + if held.is_empty() {
+            0
+        } else {
+            (held.edges.len() + held.regions.len()) / 2
+        };
     // The relations a part is in are evaluated before and after its move.
     let move_work: Vec<u64> = (0..problem.components.len())
         .map(|index| {
-            let pins: usize = state.incident[index].iter().map(|net| state.members[*net].len()).sum();
-            2 * (fixed as u64 + crate::PIN_WORK * pins as u64) + 2 * constraints::relation_work(problem, index)
+            let pins: usize = state.incident[index]
+                .iter()
+                .map(|net| state.members[*net].len())
+                .sum();
+            2 * (fixed as u64 + crate::PIN_WORK * pins as u64)
+                + 2 * constraints::relation_work(problem, index)
         })
         .collect();
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
@@ -550,17 +652,33 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             problem.components.len(),
             movable.len(),
             problem.outline.len(),
-            if state.rectangular { "rectangular" } else { "shaped" },
+            if state.rectangular {
+                "rectangular"
+            } else {
+                "shaped"
+            },
             problem.constraints.relations.len(),
             problem.constraints.linked.len(),
-            problem.components.iter().filter(|component| !component.far_side.is_empty()).count(),
-            problem.components.iter().filter(|component| !component.hollow.is_empty()).count(),
+            problem
+                .components
+                .iter()
+                .filter(|component| !component.far_side.is_empty())
+                .count(),
+            problem
+                .components
+                .iter()
+                .filter(|component| !component.hollow.is_empty())
+                .count(),
         );
     }
     let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let bounds = state.bounds;
     let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
-    let grid = if problem.grid > 0.0 { problem.grid } else { 0.05 };
+    let grid = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.05
+    };
     let mut radius = (config.initial_radius * board).max(2.0 * grid);
     // Millimetres of wirelength one square millimetre of overlap is worth.
     let mut penalty = 0.5;
@@ -569,8 +687,12 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     let radius_decay = ((1.5 * grid) / radius).powf(1.0 / config.stages as f64);
 
     for _ in 0..config.stages {
-        if config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
-            || config.stop_at_work.is_some_and(|stop| crate::work() >= stop)
+        if config
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            || config
+                .stop_at_work
+                .is_some_and(|stop| crate::work() >= stop)
         {
             break;
         }
@@ -603,7 +725,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     position: constraints::snap_position(problem, part, pose.position, pose.angle),
                     angle: pose.angle,
                 };
-                let (first_new, second_new) = (snapped(index, first_new), snapped(other, second_new));
+                let (first_new, second_new) =
+                    (snapped(index, first_new), snapped(other, second_new));
                 let mut nets = state.incident[index].clone();
                 nets.extend(&state.incident[other]);
                 nets.sort_unstable();
@@ -617,7 +740,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 let saved = (state.rects[index], state.rects[other]);
                 state.poses[index] = first_new;
                 state.poses[other] = second_new;
-                let (first_rect, second_rect) = (state.rect(index, first_new), state.rect(other, second_new));
+                let (first_rect, second_rect) =
+                    (state.rect(index, first_new), state.rect(other, second_new));
                 state.set_rect(index, first_rect);
                 state.set_rect(other, second_rect);
                 let after = state.wirelength(&nets)

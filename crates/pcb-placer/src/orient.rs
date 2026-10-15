@@ -19,7 +19,11 @@ use crate::problem::{Pose, Problem};
 /// An angle's place in the canonical order: [0, 360).
 pub fn angle_key(angle: f64) -> f64 {
     let wrapped = angle.rem_euclid(360.0);
-    if (wrapped - 360.0).abs() < 1.0e-9 { 0.0 } else { wrapped }
+    if (wrapped - 360.0).abs() < 1.0e-9 {
+        0.0
+    } else {
+        wrapped
+    }
 }
 
 /// Sorts angle options into the canonical order (by `angle_key`) and drops
@@ -36,8 +40,12 @@ pub fn sort_angles(options: &mut Vec<f64>) {
 /// row's leader keeps its angle: the row's body is built in the leader's
 /// frame at the angle it had. Returns the number of parts turned.
 pub fn canonical_start(problem: &mut Problem) -> usize {
-    let leaders: std::collections::BTreeSet<usize> =
-        problem.constraints.followers.iter().map(|follower| follower.leader).collect();
+    let leaders: std::collections::BTreeSet<usize> = problem
+        .constraints
+        .followers
+        .iter()
+        .map(|follower| follower.leader)
+        .collect();
     let mut turned = 0;
     for index in 0..problem.components.len() {
         sort_angles(&mut problem.components[index].angle_options);
@@ -51,7 +59,10 @@ pub fn canonical_start(problem: &mut Problem) -> usize {
             continue;
         }
         let center = component.center(pose);
-        problem.poses[index] = Pose { position: component.position_for_center(center, angle), angle };
+        problem.poses[index] = Pose {
+            position: component.position_for_center(center, angle),
+            angle,
+        };
         turned += 1;
     }
     let mut poses = problem.poses.clone();

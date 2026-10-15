@@ -46,10 +46,22 @@ pub struct Stats {
 
 /// Per wire, per step: the crossing partners (other wire, its step).
 fn partners(mesh: &Mesh, topology: &Topology) -> Vec<Vec<Vec<(usize, usize)>>> {
-    let mut list: Vec<Vec<Vec<(usize, usize)>>> = topology.wires.iter().map(|wire| vec![Vec::new(); wire.faces.len()]).collect();
+    let mut list: Vec<Vec<Vec<(usize, usize)>>> = topology
+        .wires
+        .iter()
+        .map(|wire| vec![Vec::new(); wire.faces.len()])
+        .collect();
     for (a, b, face) in topology.crossing_pairs(mesh) {
-        let step_a = topology.wires[a].faces.iter().position(|&f| f == face).expect("face on wire");
-        let step_b = topology.wires[b].faces.iter().position(|&f| f == face).expect("face on wire");
+        let step_a = topology.wires[a]
+            .faces
+            .iter()
+            .position(|&f| f == face)
+            .expect("face on wire");
+        let step_b = topology.wires[b]
+            .faces
+            .iter()
+            .position(|&f| f == face)
+            .expect("face on wire");
         list[a][step_a].push((b, step_b));
         list[b][step_b].push((a, step_a));
     }
@@ -90,7 +102,10 @@ impl Usage {
         let room = Topology::track_room(board, path.class);
         for (step, &portal) in path.portals.iter().enumerate() {
             if let Portal::Edge(edge) = portal {
-                self.rooms.entry((edge, path.layers[step])).or_default().push((path.net, wire, room));
+                self.rooms
+                    .entry((edge, path.layers[step]))
+                    .or_default()
+                    .push((path.net, wire, room));
             }
         }
     }
@@ -109,7 +124,12 @@ impl Usage {
     }
 
     fn used(&self, edge: usize, layer: usize, net: u32) -> f64 {
-        self.rooms.get(&(edge, layer)).map_or(0.0, |list| list.iter().filter(|entry| entry.0 != net).map(|entry| entry.2).sum())
+        self.rooms.get(&(edge, layer)).map_or(0.0, |list| {
+            list.iter()
+                .filter(|entry| entry.0 != net)
+                .map(|entry| entry.2)
+                .sum()
+        })
     }
 }
 
@@ -127,12 +147,30 @@ struct Context<'a> {
 impl Context<'_> {
     fn overflow(&self, wire: usize, edge: usize, layer: usize, room: f64) -> f64 {
         let path = &self.topology.wires[wire];
-        let capacity = self.topology.capacity(self.board, self.mesh, edge, Some(layer), path.net, path.class);
+        let capacity = self.topology.capacity(
+            self.board,
+            self.mesh,
+            edge,
+            Some(layer),
+            path.net,
+            path.class,
+        );
         (self.usage.used(edge, layer, path.net) + room - capacity).clamp(0.0, room)
     }
 
-    fn state(&self, wire: usize, step: usize, layer: usize, partners: &[Vec<(usize, usize)>], allowed: &[u32]) -> f64 {
-        let mut cost = if allowed[step] & (1 << layer) == 0 { INFEASIBLE } else { 0.0 };
+    fn state(
+        &self,
+        wire: usize,
+        step: usize,
+        layer: usize,
+        partners: &[Vec<(usize, usize)>],
+        allowed: &[u32],
+    ) -> f64 {
+        let mut cost = if allowed[step] & (1 << layer) == 0 {
+            INFEASIBLE
+        } else {
+            0.0
+        };
         if self.costs.against > 1.0 {
             let (from, to) = self.chords[wire][step];
             let plain = ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2)).sqrt();
@@ -151,7 +189,10 @@ impl Context<'_> {
     fn transition(&self, wire: usize, portal: Portal, from: usize, to: usize) -> f64 {
         let path = &self.topology.wires[wire];
         match portal {
-            Portal::Edge(edge) if from == to => self.costs.overflow * self.overflow(wire, edge, to, Topology::track_room(self.board, path.class)),
+            Portal::Edge(edge) if from == to => {
+                self.costs.overflow
+                    * self.overflow(wire, edge, to, Topology::track_room(self.board, path.class))
+            }
             Portal::Edge(_) => INFEASIBLE,
             Portal::Vertex(_) if from == to => 0.0,
             Portal::Vertex(_) => self.costs.via,
@@ -159,7 +200,12 @@ impl Context<'_> {
     }
 
     /// The cheapest layers for `wire` given everyone else's, and their cost.
-    fn best(&self, wire: usize, partners: &[Vec<(usize, usize)>], allowed: &[u32]) -> (Vec<usize>, f64) {
+    fn best(
+        &self,
+        wire: usize,
+        partners: &[Vec<(usize, usize)>],
+        allowed: &[u32],
+    ) -> (Vec<usize>, f64) {
         let path = &self.topology.wires[wire];
         let layers = self.board.layer_count;
         let steps = path.faces.len();
@@ -174,7 +220,8 @@ impl Context<'_> {
                 let here = self.state(wire, step, layer, partners, allowed);
                 let mut best = (f64::INFINITY, 0);
                 for previous in 0..layers {
-                    let total = cost[step - 1][previous] + self.transition(wire, portal, previous, layer);
+                    let total =
+                        cost[step - 1][previous] + self.transition(wire, portal, previous, layer);
                     if total < best.0 {
                         best = (total, previous);
                     }
@@ -183,7 +230,9 @@ impl Context<'_> {
                 from[step][layer] = best.1;
             }
         }
-        let mut layer = (0..layers).min_by(|&a, &b| cost[steps - 1][a].total_cmp(&cost[steps - 1][b])).unwrap_or(0);
+        let mut layer = (0..layers)
+            .min_by(|&a, &b| cost[steps - 1][a].total_cmp(&cost[steps - 1][b]))
+            .unwrap_or(0);
         let total = cost[steps - 1][layer];
         let mut chosen = vec![0; steps];
         for step in (0..steps).rev() {
@@ -200,7 +249,12 @@ impl Context<'_> {
         for step in 0..path.faces.len() {
             total += self.state(wire, step, path.layers[step], partners, allowed);
             if step > 0 {
-                total += self.transition(wire, path.portals[step - 1], path.layers[step - 1], path.layers[step]);
+                total += self.transition(
+                    wire,
+                    path.portals[step - 1],
+                    path.layers[step - 1],
+                    path.layers[step],
+                );
             }
         }
         total
@@ -209,7 +263,13 @@ impl Context<'_> {
 
 /// Assigns layers to every routed wire; wires that already have layers
 /// start from them.
-pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs, seed: u64) -> Stats {
+pub fn assign(
+    board: &Board,
+    mesh: &Mesh,
+    topology: &mut Topology,
+    costs: Costs,
+    seed: u64,
+) -> Stats {
     let partners = partners(mesh, topology);
     let chords: Vec<Vec<(pcb_router::Point, pcb_router::Point)>> = topology
         .wires
@@ -220,14 +280,26 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
                 return Vec::new();
             }
             let mut places = vec![path.from];
-            places.extend(path.portals.iter().map(|&portal| topology.place(board, mesh, wire, portal)));
+            places.extend(
+                path.portals
+                    .iter()
+                    .map(|&portal| topology.place(board, mesh, wire, portal)),
+            );
             places.push(path.to);
             places.windows(2).map(|pair| (pair[0], pair[1])).collect()
         })
         .collect();
-    let routed: Vec<usize> = (0..topology.wires.len()).filter(|&wire| topology.wires[wire].routed).collect();
+    let routed: Vec<usize> = (0..topology.wires.len())
+        .filter(|&wire| topology.wires[wire].routed)
+        .collect();
     let allowed: Vec<Vec<u32>> = (0..topology.wires.len())
-        .map(|wire| if topology.wires[wire].routed { allowed(board, mesh, topology, wire) } else { Vec::new() })
+        .map(|wire| {
+            if topology.wires[wire].routed {
+                allowed(board, mesh, topology, wire)
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
     let mut usage = Usage::default();
     for &wire in &routed {
@@ -238,10 +310,22 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
         }
     }
     // First the unassigned wires, most crossed first.
-    let mut fresh: Vec<usize> = routed.iter().copied().filter(|&wire| topology.wires[wire].layers.is_empty()).collect();
-    fresh.sort_by_key(|&wire| std::cmp::Reverse(partners[wire].iter().map(Vec::len).sum::<usize>()));
+    let mut fresh: Vec<usize> = routed
+        .iter()
+        .copied()
+        .filter(|&wire| topology.wires[wire].layers.is_empty())
+        .collect();
+    fresh
+        .sort_by_key(|&wire| std::cmp::Reverse(partners[wire].iter().map(Vec::len).sum::<usize>()));
     for wire in fresh {
-        let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
+        let context = Context {
+            board,
+            mesh,
+            topology,
+            usage: &usage,
+            costs,
+            chords: &chords,
+        };
         let (layers, _) = context.best(wire, &partners[wire], &allowed[wire]);
         topology.wires[wire].layers = layers;
         usage.add(board, topology, wire);
@@ -260,7 +344,14 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
         let mut improved = false;
         for &wire in &order {
             usage.remove(board, topology, wire);
-            let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
+            let context = Context {
+                board,
+                mesh,
+                topology,
+                usage: &usage,
+                costs,
+                chords: &chords,
+            };
             let current = context.current(wire, &partners[wire], &allowed[wire]);
             let (layers, cost) = context.best(wire, &partners[wire], &allowed[wire]);
             if cost + 1.0e-9 < current {
@@ -283,7 +374,14 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             let mut improved = false;
             for &wire in &order {
                 usage.remove(board, topology, wire);
-                let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
+                let context = Context {
+                    board,
+                    mesh,
+                    topology,
+                    usage: &usage,
+                    costs,
+                    chords: &chords,
+                };
                 let current = context.current(wire, &partners[wire], &allowed[wire]);
                 let (layers, cost) = context.best(wire, &partners[wire], &allowed[wire]);
                 if cost + 1.0e-9 < current {
@@ -297,7 +395,14 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
             }
         }
     }
-    let context = Context { board, mesh, topology, usage: &usage, costs, chords: &chords };
+    let context = Context {
+        board,
+        mesh,
+        topology,
+        usage: &usage,
+        costs,
+        chords: &chords,
+    };
     let mut stats = Stats::default();
     for &wire in &routed {
         let path = &topology.wires[wire];
@@ -307,7 +412,9 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
                 stats.infeasible += 1;
             }
             for &(other, other_step) in &partners[wire][step] {
-                if other > wire && topology.wires[other].layers.get(other_step) == Some(&path.layers[step]) {
+                if other > wire
+                    && topology.wires[other].layers.get(other_step) == Some(&path.layers[step])
+                {
                     stats.conflicts += 1;
                 }
             }
@@ -327,7 +434,13 @@ pub fn assign(board: &Board, mesh: &Mesh, topology: &mut Topology, costs: Costs,
 /// so the stretches linked by crossings flip together, keeping every
 /// crossing apart. Simulated annealing over the clusters minimizes vias and
 /// layers not allowed. Returns whether the layers changed (for the better).
-fn flip_clusters(topology: &mut Topology, partners: &[Vec<Vec<(usize, usize)>>], allowed: &[Vec<u32>], costs: Costs, random: &mut u64) -> bool {
+fn flip_clusters(
+    topology: &mut Topology,
+    partners: &[Vec<Vec<(usize, usize)>>],
+    allowed: &[Vec<u32>],
+    costs: Costs,
+    random: &mut u64,
+) -> bool {
     let mut next = || {
         *random ^= *random << 13;
         *random ^= *random >> 7;
@@ -373,7 +486,10 @@ fn flip_clusters(topology: &mut Topology, partners: &[Vec<Vec<(usize, usize)>>],
                 if stretch_of[other].is_empty() {
                     continue;
                 }
-                let (a, b) = (find(&mut parent, stretch_of[wire][step]), find(&mut parent, stretch_of[other][other_step]));
+                let (a, b) = (
+                    find(&mut parent, stretch_of[wire][step]),
+                    find(&mut parent, stretch_of[other][other_step]),
+                );
                 parent[a] = b;
             }
         }
@@ -392,7 +508,10 @@ fn flip_clusters(topology: &mut Topology, partners: &[Vec<Vec<(usize, usize)>>],
     }
     // Per stretch: its layer, the cost of each layer, and its neighbours
     // along its wire (a via if their layers differ).
-    let mut layer: Vec<usize> = stretches.iter().map(|&(wire, first, _)| topology.wires[wire].layers[first].min(1)).collect();
+    let mut layer: Vec<usize> = stretches
+        .iter()
+        .map(|&(wire, first, _)| topology.wires[wire].layers[first].min(1))
+        .collect();
     let own_cost: Vec<[f64; 2]> = stretches
         .iter()
         .map(|&(wire, first, last)| {
@@ -484,8 +603,12 @@ pub fn troubled(board: &Board, mesh: &Mesh, topology: &Topology) -> Vec<usize> {
         let allowed = allowed(board, mesh, topology, wire);
         let bad = (0..path.faces.len()).any(|step| {
             allowed[step] & (1 << path.layers[step]) == 0
-                || partners[wire][step].iter().any(|&(other, other_step)| topology.wires[other].layers.get(other_step) == Some(&path.layers[step]))
-                || (step + 1 < path.faces.len() && path.via_at(step) && matches!(path.portals[step], Portal::Edge(_)))
+                || partners[wire][step].iter().any(|&(other, other_step)| {
+                    topology.wires[other].layers.get(other_step) == Some(&path.layers[step])
+                })
+                || (step + 1 < path.faces.len()
+                    && path.via_at(step)
+                    && matches!(path.portals[step], Portal::Edge(_)))
         });
         if bad {
             found.push(wire);

@@ -9,12 +9,23 @@ pub type Point = [f64; 2];
 /// A filled copper or keepout shape. Distances are zero inside the shape.
 #[derive(Clone, Debug)]
 pub enum Shape {
-    Circle { center: Point, radius: f64 },
+    Circle {
+        center: Point,
+        radius: f64,
+    },
     /// A segment swept by a disc: tracks, oval pads, rounded edges.
-    Capsule { start: Point, end: Point, radius: f64 },
+    Capsule {
+        start: Point,
+        end: Point,
+        radius: f64,
+    },
     /// A simple (possibly concave) filled polygon.
-    Polygon { points: Vec<Point> },
-    Union { parts: Vec<Shape> },
+    Polygon {
+        points: Vec<Point>,
+    },
+    Union {
+        parts: Vec<Shape>,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -72,12 +83,8 @@ pub fn degrees_sin_cos(degrees: f64) -> (f64, f64) {
 impl Shape {
     pub fn rectangle(center: Point, half_size: Point, angle_degrees: f64) -> Self {
         let (sin, cos) = degrees_sin_cos(angle_degrees);
-        let corner = |x: f64, y: f64| {
-            [
-                center[0] + x * cos - y * sin,
-                center[1] + x * sin + y * cos,
-            ]
-        };
+        let corner =
+            |x: f64, y: f64| [center[0] + x * cos - y * sin, center[1] + x * sin + y * cos];
         Self::Polygon {
             points: vec![
                 corner(-half_size[0], -half_size[1]),
@@ -111,14 +118,16 @@ impl Shape {
                 }
                 bounds
             }
-            Self::Union { parts } => parts
-                .iter()
-                .map(Shape::aabb)
-                .reduce(Aabb::union)
-                .unwrap_or(Aabb {
-                    minimum: [0.0; 2],
-                    maximum: [0.0; 2],
-                }),
+            Self::Union { parts } => {
+                parts
+                    .iter()
+                    .map(Shape::aabb)
+                    .reduce(Aabb::union)
+                    .unwrap_or(Aabb {
+                        minimum: [0.0; 2],
+                        maximum: [0.0; 2],
+                    })
+            }
         }
     }
 
@@ -179,11 +188,19 @@ impl Shape {
     /// the pads it is asked about).
     pub fn contains_disc(&self, center: Point, radius: f64) -> bool {
         match self {
-            Self::Circle { center: c, radius: r } => distance(center, *c) + radius <= *r,
-            Self::Capsule { start, end, radius: r } => point_segment_distance(center, *start, *end) + radius <= *r,
+            Self::Circle {
+                center: c,
+                radius: r,
+            } => distance(center, *c) + radius <= *r,
+            Self::Capsule {
+                start,
+                end,
+                radius: r,
+            } => point_segment_distance(center, *start, *end) + radius <= *r,
             Self::Polygon { points } => {
                 point_in_polygon(center, points)
-                    && polygon_edges(points).all(|(a, b)| point_segment_distance(center, a, b) >= radius)
+                    && polygon_edges(points)
+                        .all(|(a, b)| point_segment_distance(center, a, b) >= radius)
             }
             Self::Union { parts } => parts.iter().any(|part| part.contains_disc(center, radius)),
         }
@@ -208,8 +225,8 @@ pub fn point_segment_distance(point: Point, a: Point, b: Point) -> f64 {
     if length_squared <= 0.0 {
         return distance(point, a);
     }
-    let t = (((point[0] - a[0]) * ab[0] + (point[1] - a[1]) * ab[1]) / length_squared)
-        .clamp(0.0, 1.0);
+    let t =
+        (((point[0] - a[0]) * ab[0] + (point[1] - a[1]) * ab[1]) / length_squared).clamp(0.0, 1.0);
     distance(point, [a[0] + t * ab[0], a[1] + t * ab[1]])
 }
 
@@ -255,7 +272,15 @@ mod tests {
 
     #[test]
     fn one_angle_spelled_two_ways_has_one_sine_and_cosine() {
-        for (a, b) in [(180.0, -180.0), (270.0, -90.0), (90.0, -270.0), (0.0, 360.0), (0.0, -0.0), (30.0, -330.0), (-45.0, 315.0)] {
+        for (a, b) in [
+            (180.0, -180.0),
+            (270.0, -90.0),
+            (90.0, -270.0),
+            (0.0, 360.0),
+            (0.0, -0.0),
+            (30.0, -330.0),
+            (-45.0, 315.0),
+        ] {
             assert_eq!(degrees_sin_cos(a), degrees_sin_cos(b), "{a} and {b}");
         }
         assert_eq!(degrees_sin_cos(90.0), (1.0, 0.0));

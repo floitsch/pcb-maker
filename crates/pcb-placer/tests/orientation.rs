@@ -19,7 +19,11 @@ fn component(name: &str, size: [f64; 2], pins: Vec<Pin>, fixed: bool) -> Compone
         pins,
         side: if fixed { Side::Both } else { Side::Front },
         fixed,
-        angle_options: if fixed { vec![0.0] } else { vec![0.0, 90.0, 180.0, 270.0] },
+        angle_options: if fixed {
+            vec![0.0]
+        } else {
+            vec![0.0, 90.0, 180.0, 270.0]
+        },
         far_side: Vec::new(),
         far_copper: Vec::new(),
         far_courtyard: Vec::new(),
@@ -42,32 +46,74 @@ fn component(name: &str, size: [f64; 2], pins: Vec<Pin>, fixed: bool) -> Compone
 fn board(angle: impl Fn(usize) -> f64) -> Problem {
     let parts = 10;
     let mut components = vec![
-        component("J1", [4.0, 10.0], vec![Pin { offset: [0.0, 0.0], net: 0 }], true),
-        component("J2", [4.0, 10.0], vec![Pin { offset: [0.0, 0.0], net: parts }], true),
+        component(
+            "J1",
+            [4.0, 10.0],
+            vec![Pin {
+                offset: [0.0, 0.0],
+                net: 0,
+            }],
+            true,
+        ),
+        component(
+            "J2",
+            [4.0, 10.0],
+            vec![Pin {
+                offset: [0.0, 0.0],
+                net: parts,
+            }],
+            true,
+        ),
     ];
     let mut poses = vec![
-        Pose { position: [4.0, 25.0], angle: 0.0 },
-        Pose { position: [56.0, 25.0], angle: 0.0 },
+        Pose {
+            position: [4.0, 25.0],
+            angle: 0.0,
+        },
+        Pose {
+            position: [56.0, 25.0],
+            angle: 0.0,
+        },
     ];
     let mut net_count = parts + 1;
     for index in 0..parts {
-        let mut pins = vec![Pin { offset: [-2.0, 0.0], net: index }, Pin { offset: [2.0, 0.0], net: index + 1 }];
+        let mut pins = vec![
+            Pin {
+                offset: [-2.0, 0.0],
+                net: index,
+            },
+            Pin {
+                offset: [2.0, 0.0],
+                net: index + 1,
+            },
+        ];
         if index % 3 == 1 {
             // A third pin off the axis, on a net of its own with the next part.
-            pins.push(Pin { offset: [0.0, 1.0], net: net_count });
+            pins.push(Pin {
+                offset: [0.0, 1.0],
+                net: net_count,
+            });
             net_count += 1;
         }
         let mut part = component(&format!("U{index}"), [6.0, 3.0], pins, false);
         let start = angle(index);
-        part.angle_options = (0..4).map(|quarter| (start + 90.0 * quarter as f64).rem_euclid(360.0)).collect();
+        part.angle_options = (0..4)
+            .map(|quarter| (start + 90.0 * quarter as f64).rem_euclid(360.0))
+            .collect();
         components.push(part);
-        poses.push(Pose { position: [30.0, 25.0], angle: start });
+        poses.push(Pose {
+            position: [30.0, 25.0],
+            angle: start,
+        });
     }
     // The extra nets join the part after.
     for index in 0..parts {
         if index % 3 == 1 && index + 1 < parts {
             let net = components[index + 2].pins[2].net;
-            components[index + 3].pins.push(Pin { offset: [0.0, -1.0], net });
+            components[index + 3].pins.push(Pin {
+                offset: [0.0, -1.0],
+                net,
+            });
         }
     }
     Problem {
@@ -88,17 +134,29 @@ fn board(angle: impl Fn(usize) -> f64) -> Problem {
 
 /// The poses with angles in the canonical range, for comparison.
 fn normalized(poses: &[Pose]) -> Vec<([f64; 2], f64)> {
-    poses.iter().map(|pose| (pose.position, angle_key(pose.angle))).collect()
+    poses
+        .iter()
+        .map(|pose| (pose.position, angle_key(pose.angle)))
+        .collect()
 }
 
 #[test]
 fn angle_options_sort_into_one_order() {
     let mut options = vec![270.0, 0.0, 90.0, 180.0, -90.0, 360.0];
     sort_angles(&mut options);
-    assert_eq!(options.iter().map(|angle| angle_key(*angle)).collect::<Vec<_>>(), vec![0.0, 90.0, 180.0, 270.0]);
+    assert_eq!(
+        options
+            .iter()
+            .map(|angle| angle_key(*angle))
+            .collect::<Vec<_>>(),
+        vec![0.0, 90.0, 180.0, 270.0]
+    );
     let mut odd = vec![30.0, 120.0, 210.0, 300.0, 0.0, 90.0, 180.0, 270.0];
     sort_angles(&mut odd);
-    assert_eq!(odd, vec![0.0, 30.0, 90.0, 120.0, 180.0, 210.0, 270.0, 300.0]);
+    assert_eq!(
+        odd,
+        vec![0.0, 30.0, 90.0, 120.0, 180.0, 210.0, 270.0, 300.0]
+    );
 }
 
 #[test]
@@ -113,7 +171,10 @@ fn the_canonical_start_turns_movable_parts_only() {
     assert_eq!(problem.poses[2].angle, 270.0);
     for index in 3..problem.components.len() {
         assert_eq!(problem.poses[index].angle, 0.0);
-        assert_eq!(problem.components[index].angle_options, vec![0.0, 90.0, 180.0, 270.0]);
+        assert_eq!(
+            problem.components[index].angle_options,
+            vec![0.0, 90.0, 180.0, 270.0]
+        );
     }
     // Turned about the body centre (here the origin).
     assert_eq!(problem.poses[4].position, [30.0, 25.0]);
@@ -132,8 +193,14 @@ fn the_placement_does_not_depend_on_the_starting_angles() {
     // Deterministic: the same start places the same way again.
     assert_eq!(first.poses, place(&at_zero, &config).poses);
     // Without the canonical start the angles the parts start at decide.
-    let off = Config { orientation_search: false, ..Config::new() };
-    assert_ne!(normalized(&place(&at_zero, &off).poses), normalized(&place(&turned, &off).poses));
+    let off = Config {
+        orientation_search: false,
+        ..Config::new()
+    };
+    assert_ne!(
+        normalized(&place(&at_zero, &off).poses),
+        normalized(&place(&turned, &off).poses)
+    );
 }
 
 #[test]
@@ -145,11 +212,21 @@ fn a_part_turns_to_the_angle_that_shortens_its_wires() {
         let mut problem = board(|_| 0.0);
         problem.components.truncate(3);
         problem.poses.truncate(3);
-        problem.components[2].pins = vec![Pin { offset: [-2.0, 0.0], net: 1 }, Pin { offset: [2.0, 0.0], net: 0 }];
+        problem.components[2].pins = vec![
+            Pin {
+                offset: [-2.0, 0.0],
+                net: 1,
+            },
+            Pin {
+                offset: [2.0, 0.0],
+                net: 0,
+            },
+        ];
         problem.components[1].pins[0].net = 1;
         problem.net_weights = vec![1.0; 2];
-        problem.components[2].angle_options =
-            (0..4).map(|quarter| (start + 90.0 * quarter as f64).rem_euclid(360.0)).collect();
+        problem.components[2].angle_options = (0..4)
+            .map(|quarter| (start + 90.0 * quarter as f64).rem_euclid(360.0))
+            .collect();
         problem.poses[2].angle = start;
         let placement = place(&problem, &Config::new());
         assert_eq!(angle_key(placement.poses[2].angle), 180.0, "from {start}");

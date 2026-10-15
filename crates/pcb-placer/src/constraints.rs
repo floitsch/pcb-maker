@@ -62,7 +62,11 @@ impl Anchor {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Relation {
     /// The gap between `part`'s body and the anchor is at most `max`.
-    Near { part: usize, anchor: Anchor, max: f64 },
+    Near {
+        part: usize,
+        anchor: Anchor,
+        max: f64,
+    },
     /// `part` lies on `side` of `anchor`'s body (`Bottom`: below it), does
     /// not overlap it, overlaps its extent along the other axis, and the gap
     /// is at most `max_gap`.
@@ -74,10 +78,18 @@ pub enum Relation {
     },
     /// The gap between `part`'s body and `anchor`'s body is at least `min`
     /// (a temperature sensor away from a regulator).
-    Apart { part: usize, anchor: usize, min: f64 },
+    Apart {
+        part: usize,
+        anchor: usize,
+        min: f64,
+    },
     /// `Near`, to whichever of the anchors is closest (a decoupling
     /// capacitor at any supply pin of its rail).
-    NearAny { part: usize, anchors: Vec<Anchor>, max: f64 },
+    NearAny {
+        part: usize,
+        anchors: Vec<Anchor>,
+        max: f64,
+    },
 }
 
 impl Relation {
@@ -86,7 +98,9 @@ impl Relation {
             Relation::Near { part, anchor, .. } => [
                 Some(*part),
                 Some(match anchor {
-                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
+                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => {
+                        *index
+                    }
                 }),
             ],
             Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
@@ -100,7 +114,9 @@ impl Relation {
     /// of any anchor.
     pub fn involves(&self, index: usize) -> bool {
         match self {
-            Relation::NearAny { part, anchors, .. } => *part == index || anchors.iter().any(|anchor| anchor.part() == index),
+            Relation::NearAny { part, anchors, .. } => {
+                *part == index || anchors.iter().any(|anchor| anchor.part() == index)
+            }
             other => other.parts().contains(&Some(index)),
         }
     }
@@ -247,10 +263,23 @@ pub fn copper_edge_offsets_signed(problem: &Problem, index: usize, angle: f64) -
     if clearance <= 0.0 || component.pads.is_empty() {
         return [0.0; 4];
     }
-    let pose = Pose { position: [0.0, 0.0], angle };
+    let pose = Pose {
+        position: [0.0, 0.0],
+        angle,
+    };
     let (center, half) = (component.center(pose), component.half_extent(angle));
-    let body = [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]];
-    let mut copper = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let body = [
+        center[0] - half[0],
+        center[1] - half[1],
+        center[0] + half[0],
+        center[1] + half[1],
+    ];
+    let mut copper = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for (center, half) in component.pad_boxes(pose) {
         copper = [
             copper[0].min(center[0] - half[0]),
@@ -283,7 +312,11 @@ pub fn side_margins(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
     let mut margins = [problem.components[index].edge_margin(problem.edge_margin); 4];
     let constraints = &problem.constraints;
     let mut offsets = None;
-    for (_, edge, _) in constraints.edges.iter().filter(|(part, _, _)| *part == index) {
+    for (_, edge, _) in constraints
+        .edges
+        .iter()
+        .filter(|(part, _, _)| *part == index)
+    {
         let offsets = *offsets.get_or_insert_with(|| copper_edge_offsets(problem, index, angle));
         margins[side_index(*edge)] = offsets[side_index(*edge)];
     }
@@ -291,7 +324,11 @@ pub fn side_margins(problem: &Problem, index: usize, angle: f64) -> [f64; 4] {
         // The body reaches beyond this edge, as far as its pads allow: they
         // keep the copper clearance from it (negative: that far outside).
         let signed = copper_edge_offsets_signed(problem, index, angle);
-        margins[side_index(edge)] = if problem.components[index].pads.is_empty() { 0.0 } else { signed[side_index(edge)] };
+        margins[side_index(edge)] = if problem.components[index].pads.is_empty() {
+            0.0
+        } else {
+            signed[side_index(edge)]
+        };
     }
     margins
 }
@@ -398,7 +435,11 @@ pub fn outline_sides(loops: &[Vec<Point>]) -> Vec<(Edge, [Point; 2])> {
 fn point_segment_distance(p: Point, a: Point, b: Point) -> f64 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let length = dx * dx + dy * dy;
-    let t = if length > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0) } else { 0.0 };
+    let t = if length > 0.0 {
+        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     (p[0] - a[0] - t * dx).hypot(p[1] - a[1] - t * dy)
 }
 
@@ -409,7 +450,12 @@ fn box_segment_distance(low: Point, high: Point, a: Point, b: Point) -> f64 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
     let mut inside = true;
-    for (p, q) in [(-dx, a[0] - low[0]), (dx, high[0] - a[0]), (-dy, a[1] - low[1]), (dy, high[1] - a[1])] {
+    for (p, q) in [
+        (-dx, a[0] - low[0]),
+        (dx, high[0] - a[0]),
+        (-dy, a[1] - low[1]),
+        (dy, high[1] - a[1]),
+    ] {
         if p.abs() < 1.0e-15 {
             if q < 0.0 {
                 inside = false;
@@ -447,7 +493,12 @@ fn box_segment_distance(low: Point, high: Point, a: Point, b: Point) -> f64 {
 /// stretch alongside the body (a slanted side: where the body's corner
 /// meets it), or its nearer end's beyond it. A side no segment faces keeps
 /// the box's (`fallback`), missed by nothing.
-pub fn side_lines(sides: &[(Edge, [Point; 2])], at: Point, half: Point, fallback: [f64; 4]) -> ([f64; 4], [f64; 4]) {
+pub fn side_lines(
+    sides: &[(Edge, [Point; 2])],
+    at: Point,
+    half: Point,
+    fallback: [f64; 4],
+) -> ([f64; 4], [f64; 4]) {
     let low = [at[0] - half[0], at[1] - half[1]];
     let high = [at[0] + half[0], at[1] + half[1]];
     let mut lines = fallback;
@@ -466,7 +517,11 @@ pub fn side_lines(sides: &[(Edge, [Point; 2])], at: Point, half: Point, fallback
             Edge::Left | Edge::Right => 1,
         };
         let across = 1 - along;
-        let (start, end) = if a[along] <= b[along] { (*a, *b) } else { (*b, *a) };
+        let (start, end) = if a[along] <= b[along] {
+            (*a, *b)
+        } else {
+            (*b, *a)
+        };
         let at_along = |value: f64| {
             let span = end[along] - start[along];
             if span <= 0.0 {
@@ -498,7 +553,12 @@ pub fn side_lines(sides: &[(Edge, [Point; 2])], at: Point, half: Point, fallback
 /// a polygon outline facing `edge` (`side_lines`): the gap between the
 /// body's side and that segment's line, plus how far the body's extent
 /// misses the segment's. `None` when no segment faces that side.
-pub fn side_distance(sides: &[(Edge, [Point; 2])], edge: Edge, at: Point, half: Point) -> Option<f64> {
+pub fn side_distance(
+    sides: &[(Edge, [Point; 2])],
+    edge: Edge,
+    at: Point,
+    half: Point,
+) -> Option<f64> {
     if !sides.iter().any(|(facing, _)| *facing == edge) {
         return None;
     }
@@ -548,7 +608,9 @@ fn overhang_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         Edge::Right => bounds[2] - outside[0],
         Edge::Bottom => bounds[3] - outside[1],
     };
-    reach.max(0.0) + (-reach - OVERHANG_SLACK).max(0.0) + pad_edge_deficit(problem, index, pose, edge)
+    reach.max(0.0)
+        + (-reach - OVERHANG_SLACK).max(0.0)
+        + pad_edge_deficit(problem, index, pose, edge)
 }
 
 /// How far (mm) the part's pads fall short of the copper clearance from
@@ -573,7 +635,11 @@ fn pad_edge_deficit(problem: &Problem, index: usize, pose: Pose, edge: Edge) -> 
         };
         distance = distance.min(near);
     }
-    if distance.is_finite() { (clearance - distance).max(0.0) } else { 0.0 }
+    if distance.is_finite() {
+        (clearance - distance).max(0.0)
+    } else {
+        0.0
+    }
 }
 
 /// Body box of a component at a pose: centre and half extents.
@@ -597,8 +663,14 @@ fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Po
             let offset = component.offset(local, poses[index].angle);
             let (sin, cos) = (-poses[index].angle).to_radians().sin_cos();
             (
-                [poses[index].position[0] + offset[0], poses[index].position[1] + offset[1]],
-                [cos.abs() * half[0] + sin.abs() * half[1], sin.abs() * half[0] + cos.abs() * half[1]],
+                [
+                    poses[index].position[0] + offset[0],
+                    poses[index].position[1] + offset[1],
+                ],
+                [
+                    cos.abs() * half[0] + sin.abs() * half[1],
+                    sin.abs() * half[0] + cos.abs() * half[1],
+                ],
             )
         }
         Anchor::Point(index, local) => {
@@ -663,7 +735,10 @@ pub fn hard_ok(problem: &Problem, index: usize, pose: Pose) -> bool {
 /// How far (mm) the hard constraints on `index` are missed at `pose`.
 pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     let constraints = &problem.constraints;
-    if constraints.edges.is_empty() && constraints.regions.is_empty() && constraints.overhangs.is_empty() {
+    if constraints.edges.is_empty()
+        && constraints.regions.is_empty()
+        && constraints.overhangs.is_empty()
+    {
         return 0.0;
     }
     let (center, half) = body(problem, index, pose);
@@ -673,7 +748,10 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
     // The board's box and the pads' offsets only for a part an edge holds.
     let held = constraints.edges.iter().any(|(part, _, _)| *part == index);
     let (bounds, offsets) = if held {
-        (edge_frame(problem, center, half), copper_edge_offsets(problem, index, pose.angle))
+        (
+            edge_frame(problem, center, half),
+            copper_edge_offsets(problem, index, pose.angle),
+        )
     } else {
         ([0.0; 4], [0.0; 4])
     };
@@ -696,7 +774,9 @@ pub fn hard_violation(problem: &Problem, index: usize, pose: Pose) -> f64 {
         };
         // Beyond the edge is the outline check's business; the reach counts
         // from where the copper keeps its clearance.
-        violation = violation.max(distance - reach - offsets[side_index(*edge)]).max(misses[side_index(*edge)]);
+        violation = violation
+            .max(distance - reach - offsets[side_index(*edge)])
+            .max(misses[side_index(*edge)]);
     }
     for (part, region) in &constraints.regions {
         if *part != index {
@@ -730,7 +810,8 @@ pub fn clamp_center(problem: &Problem, index: usize, center: &mut Point, half: P
         // Pads too close to that edge: further out, as far as the slack
         // allows (the box may stay that far short of the edge).
         let position = component.position_for_center(*center, angle);
-        let deficit = pad_edge_deficit(problem, index, Pose { position, angle }, edge).min(OVERHANG_SLACK);
+        let deficit =
+            pad_edge_deficit(problem, index, Pose { position, angle }, edge).min(OVERHANG_SLACK);
         match edge {
             Edge::Left => center[0] -= deficit,
             Edge::Top => center[1] -= deficit,
@@ -778,13 +859,20 @@ pub const RELATION_TOLERANCE: f64 = 0.05;
 /// How far (mm) a relation is missed.
 pub fn relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
     let violation = raw_relation_violation(problem, poses, relation);
-    if violation <= RELATION_TOLERANCE { 0.0 } else { violation }
+    if violation <= RELATION_TOLERANCE {
+        0.0
+    } else {
+        violation
+    }
 }
 
 fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation) -> f64 {
     match relation {
         Relation::Apart { part, anchor, min } => {
-            let gap = box_gap(body(problem, *part, poses[*part]), body(problem, *anchor, poses[*anchor]));
+            let gap = box_gap(
+                body(problem, *part, poses[*part]),
+                body(problem, *anchor, poses[*anchor]),
+            );
             (min - gap).max(0.0)
         }
         Relation::NearAny { part, anchors, max } => {
@@ -886,18 +974,20 @@ pub fn add_relation_gradient(
                 let (b, _) = body(problem, *anchor, poses[*anchor]);
                 let delta = [a[0] - b[0], a[1] - b[1]];
                 let length = delta[0].hypot(delta[1]);
-                let unit = if length > 1.0e-9 { [delta[0] / length, delta[1] / length] } else { [1.0, 0.0] };
+                let unit = if length > 1.0e-9 {
+                    [delta[0] / length, delta[1] / length]
+                } else {
+                    [1.0, 0.0]
+                };
                 push(*part, [-unit[0], -unit[1]]);
                 push(*anchor, unit);
             }
             Relation::NearAny { part, anchors, .. } => {
                 let own = body(problem, *part, poses[*part]);
-                let nearest = anchors
-                    .iter()
-                    .min_by(|a, b| {
-                        box_gap(own, anchor_point(problem, poses, **a))
-                            .total_cmp(&box_gap(own, anchor_point(problem, poses, **b)))
-                    });
+                let nearest = anchors.iter().min_by(|a, b| {
+                    box_gap(own, anchor_point(problem, poses, **a))
+                        .total_cmp(&box_gap(own, anchor_point(problem, poses, **b)))
+                });
                 if let Some(anchor) = nearest {
                     let (b, _) = anchor_point(problem, poses, *anchor);
                     let delta = [own.0[0] - b[0], own.0[1] - b[1]];
@@ -913,7 +1003,9 @@ pub fn add_relation_gradient(
                 let unit = [delta[0] / length, delta[1] / length];
                 push(*part, unit);
                 let other = match anchor {
-                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => *index,
+                    Anchor::Body(index) | Anchor::Point(index, _) | Anchor::Area(index, ..) => {
+                        *index
+                    }
                 };
                 push(other, [-unit[0], -unit[1]]);
             }
@@ -1002,7 +1094,10 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
         let [part, other] = relation.parts();
         // A row member's place names the member, not the row's first part.
         let other = match relation {
-            Relation::Near { anchor: Anchor::Area(_, member, ..), .. } => Some(*member),
+            Relation::Near {
+                anchor: Anchor::Area(_, member, ..),
+                ..
+            } => Some(*member),
             _ => other,
         };
         statuses.push(Status {
@@ -1036,14 +1131,22 @@ pub fn report_kept(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
                 .iter()
                 .find(|follower| follower.part == kept.part)
                 .map_or(kept.part, |follower| follower.leader);
-            let side = kept.side.is_none_or(|side| problem.components[leader].side == side);
+            let side = kept
+                .side
+                .is_none_or(|side| problem.components[leader].side == side);
             let angle = poses[kept.part].angle.rem_euclid(360.0);
             let turned = kept.angles.is_empty()
                 || kept.angles.iter().any(|allowed| {
                     let difference = (allowed.rem_euclid(360.0) - angle).abs();
                     difference < 1.0e-6 || (difference - 360.0).abs() < 1.0e-6
                 });
-            Status { kind: kept.kind, part: kept.part, other: None, satisfied: side && turned, violation: 0.0 }
+            Status {
+                kind: kept.kind,
+                part: kept.part,
+                other: None,
+                satisfied: side && turned,
+                violation: 0.0,
+            }
         })
         .collect()
 }
@@ -1056,7 +1159,12 @@ pub fn snap_position(problem: &Problem, index: usize, position: Point, angle: f6
     if grid <= 0.0 {
         return position;
     }
-    let phase = grid_phase(problem, index, problem.components[index].center(Pose { position, angle }), angle);
+    let phase = grid_phase(
+        problem,
+        index,
+        problem.components[index].center(Pose { position, angle }),
+        angle,
+    );
     let snap = |value: f64, phase: f64| ((value - phase) / grid).round() * grid + phase;
     [snap(position[0], phase[0]), snap(position[1], phase[1])]
 }
@@ -1078,7 +1186,11 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
     let component = &problem.components[index];
     let half = component.half_extent(angle);
     let bounds = edge_frame(problem, at, half);
-    let offsets = if held { copper_edge_offsets(problem, index, angle) } else { [0.0; 4] };
+    let offsets = if held {
+        copper_edge_offsets(problem, index, angle)
+    } else {
+        [0.0; 4]
+    };
     for (part, edge, _) in &constraints.edges {
         if *part != index {
             continue;
@@ -1095,7 +1207,15 @@ fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
         phase[axis] = component.position_for_center(center, angle)[axis].rem_euclid(grid);
     }
     if let Some((edge, local)) = overhang {
-        let outside = overhang_box(problem, index, Pose { position: [0.0, 0.0], angle }, local);
+        let outside = overhang_box(
+            problem,
+            index,
+            Pose {
+                position: [0.0, 0.0],
+                angle,
+            },
+            local,
+        );
         let (axis, origin) = match edge {
             Edge::Left => (0, bounds[0] - outside[2]),
             Edge::Top => (1, bounds[1] - outside[3]),
@@ -1117,7 +1237,11 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
             let (b, bh) = body(problem, *anchor, poses[*anchor]);
             let delta = [a[0] - b[0], a[1] - b[1]];
             let length = delta[0].hypot(delta[1]);
-            let unit = if length > 1.0e-9 { [delta[0] / length, delta[1] / length] } else { [1.0, 0.0] };
+            let unit = if length > 1.0e-9 {
+                [delta[0] / length, delta[1] / length]
+            } else {
+                [1.0, 0.0]
+            };
             let distance = ah[0].hypot(ah[1]) + bh[0].hypot(bh[1]) + min;
             [b[0] + unit[0] * distance, b[1] + unit[1] * distance]
         }

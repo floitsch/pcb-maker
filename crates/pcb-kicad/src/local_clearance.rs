@@ -69,7 +69,10 @@ mod tests {
         }
         assert!(pad_clearance(&parse("(pad (clearance NaN))").unwrap(), &footprint).is_err());
         // KiCad 4 boards carry negative overrides; they mean no override.
-        assert_eq!(pad_clearance(&parse("(pad (clearance -1))").unwrap(), &footprint).unwrap(), 0.0);
+        assert_eq!(
+            pad_clearance(&parse("(pad (clearance -1))").unwrap(), &footprint).unwrap(),
+            0.0
+        );
     }
 
     #[test]

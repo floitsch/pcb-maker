@@ -79,7 +79,10 @@ fn mirror(node: &mut Expr, axis: f64) {
                     let Expr::List(values) = &mut items[index] else {
                         unreachable!();
                     };
-                    if let Some(mirrored) = values.iter().position(|value| value.atom() == Some("mirror")) {
+                    if let Some(mirrored) = values
+                        .iter()
+                        .position(|value| value.atom() == Some("mirror"))
+                    {
                         values.remove(mirrored);
                         if values.len() == 1 {
                             items.remove(index);
@@ -111,7 +114,11 @@ fn number(value: f64) -> Expr {
 
 /// y -> 2 axis - y for the atom at `index`.
 fn reflect(items: &mut [Expr], index: usize, axis: f64) {
-    if let Some(value) = items.get(index).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()) {
+    if let Some(value) = items
+        .get(index)
+        .and_then(Expr::atom)
+        .and_then(|atom| atom.parse::<f64>().ok())
+    {
         items[index] = number(2.0 * axis - value);
     }
 }
@@ -141,7 +148,10 @@ mod tests {
     fn a_flip_mirrors_the_part_and_swaps_its_layers() {
         let mut footprint = parse(FOOTPRINT).unwrap();
         flip_footprint(&mut footprint).unwrap();
-        let text = encode(&footprint).split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = encode(&footprint)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         for expected in [
             r#"(layer "B.Cu") (at 10 20 -90)"#,
             r#"(at 0 2 -90) (layer "B.SilkS") (effects (font (size 1 1)) (justify mirror))"#,
@@ -165,7 +175,12 @@ mod tests {
         let mut footprint = original.clone();
         flip_footprint(&mut footprint).unwrap();
         flip_footprint(&mut footprint).unwrap();
-        let normal = |expression: &Expr| encode(expression).split_whitespace().collect::<Vec<_>>().join(" ");
+        let normal = |expression: &Expr| {
+            encode(expression)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
         assert_eq!(normal(&footprint), normal(&original));
     }
 }

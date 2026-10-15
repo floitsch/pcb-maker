@@ -27,7 +27,9 @@ impl Rect {
     fn grown(self, margin: f64) -> Rect {
         Rect {
             half: [self.half[0] + margin, self.half[1] + margin],
-            turn: self.turn.map(|(direction, own)| (direction, [own[0] + margin, own[1] + margin])),
+            turn: self
+                .turn
+                .map(|(direction, own)| (direction, [own[0] + margin, own[1] + margin])),
             ..self
         }
     }
@@ -41,10 +43,15 @@ impl Rect {
                 [self.center[0] + self.half[0], self.center[1] + self.half[1]],
                 [self.center[0] - self.half[0], self.center[1] + self.half[1]],
             ],
-            Some(([cos, sin], own)) => [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]].map(|[sx, sy]| {
-                let (x, y) = (sx * own[0], sy * own[1]);
-                [self.center[0] + cos * x - sin * y, self.center[1] + sin * x + cos * y]
-            }),
+            Some(([cos, sin], own)) => {
+                [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]].map(|[sx, sy]| {
+                    let (x, y) = (sx * own[0], sy * own[1]);
+                    [
+                        self.center[0] + cos * x - sin * y,
+                        self.center[1] + sin * x + cos * y,
+                    ]
+                })
+            }
         }
     }
 
@@ -72,16 +79,30 @@ fn turn_of(angle: f64, half: Point) -> Option<(Point, Point)> {
 /// board at `pose`, grown by `margin`: turned with the part when it is not
 /// at a quarter turn (a 45 degree 0402's pads are not the square around
 /// them).
-fn turned_rects(component: &crate::problem::Component, boxes: &[[f64; 4]], pose: Pose, margin: f64) -> Vec<Rect> {
+fn turned_rects(
+    component: &crate::problem::Component,
+    boxes: &[[f64; 4]],
+    pose: Pose,
+    margin: f64,
+) -> Vec<Rect> {
     let (sin, cos) = (-pose.angle).to_radians().sin_cos();
     boxes
         .iter()
         .map(|local| {
-            let center = component.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], pose.angle);
-            let own = [(local[2] - local[0]) / 2.0 + margin, (local[3] - local[1]) / 2.0 + margin];
+            let center = component.offset(
+                [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+                pose.angle,
+            );
+            let own = [
+                (local[2] - local[0]) / 2.0 + margin,
+                (local[3] - local[1]) / 2.0 + margin,
+            ];
             Rect {
                 center: [pose.position[0] + center[0], pose.position[1] + center[1]],
-                half: [cos.abs() * own[0] + sin.abs() * own[1], sin.abs() * own[0] + cos.abs() * own[1]],
+                half: [
+                    cos.abs() * own[0] + sin.abs() * own[1],
+                    sin.abs() * own[0] + cos.abs() * own[1],
+                ],
                 round: false,
                 turn: turn_of(pose.angle, own),
             }
@@ -92,12 +113,19 @@ fn turned_rects(component: &crate::problem::Component, boxes: &[[f64; 4]], pose:
 fn rect(problem: &Problem, index: usize, pose: Pose) -> Rect {
     let component = &problem.components[index];
     let half = component.half_extent(pose.angle);
-    let own = [component.body_size[0] / 2.0 + component.halo, component.body_size[1] / 2.0 + component.halo];
+    let own = [
+        component.body_size[0] / 2.0 + component.halo,
+        component.body_size[1] / 2.0 + component.halo,
+    ];
     Rect {
         center: component.center(pose),
         half: [half[0] + component.halo, half[1] + component.halo],
         round: component.round,
-        turn: if component.round { None } else { turn_of(pose.angle, own) },
+        turn: if component.round {
+            None
+        } else {
+            turn_of(pose.angle, own)
+        },
     }
 }
 
@@ -110,8 +138,10 @@ fn turned_overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
     let (axes_b, half_b) = b.frame();
     let dot = |u: Point, v: Point| u[0] * v[0] + u[1] * v[1];
     for axis in axes_a.iter().chain(axes_b.iter()) {
-        let reach_a = half_a[0] * dot(axes_a[0], *axis).abs() + half_a[1] * dot(axes_a[1], *axis).abs();
-        let reach_b = half_b[0] * dot(axes_b[0], *axis).abs() + half_b[1] * dot(axes_b[1], *axis).abs();
+        let reach_a =
+            half_a[0] * dot(axes_a[0], *axis).abs() + half_a[1] * dot(axes_a[1], *axis).abs();
+        let reach_b =
+            half_b[0] * dot(axes_b[0], *axis).abs() + half_b[1] * dot(axes_b[1], *axis).abs();
         if dot(delta, *axis).abs() >= reach_a + reach_b + spacing - 1.0e-9 {
             return false;
         }
@@ -127,7 +157,10 @@ fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
                 // The disc's centre in the turned rectangle's frame.
                 let (disc, body) = if a.round { (a, b) } else { (b, a) };
                 let (axes, own) = body.frame();
-                let delta = [disc.center[0] - body.center[0], disc.center[1] - body.center[1]];
+                let delta = [
+                    disc.center[0] - body.center[0],
+                    disc.center[1] - body.center[1],
+                ];
                 let local = [
                     (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs(),
                     (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs(),
@@ -147,9 +180,7 @@ fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
             delta[0] < a.half[0] + b.half[0] + spacing - 1.0e-9
                 && delta[1] < a.half[1] + b.half[1] + spacing - 1.0e-9
         }
-        (true, true) => {
-            delta[0].hypot(delta[1]) < a.half[0] + b.half[0] + spacing - 1.0e-9
-        }
+        (true, true) => delta[0].hypot(delta[1]) < a.half[0] + b.half[0] + spacing - 1.0e-9,
         _ => {
             let (disc, body) = if a.round { (a, b) } else { (b, a) };
             let outside = [
@@ -166,21 +197,32 @@ fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
 fn body_spacing(problem: &Problem, a: usize, b: usize) -> f64 {
     if problem.constraints.courtyard_spacing {
         let components = &problem.components;
-        components[a].copper_share(problem.min_spacing) + components[b].copper_share(problem.min_spacing)
+        components[a].copper_share(problem.min_spacing)
+            + components[b].copper_share(problem.min_spacing)
     } else {
         problem.spacing
     }
 }
 
 fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
-    let orient = |p: Point, q: Point, r: Point| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
-    let (d1, d2, d3, d4) = (orient(c, d, a), orient(c, d, b), orient(a, b, c), orient(a, b, d));
+    let orient = |p: Point, q: Point, r: Point| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
+    let (d1, d2, d3, d4) = (
+        orient(c, d, a),
+        orient(c, d, b),
+        orient(a, b, c),
+        orient(a, b, d),
+    );
     ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0))
 }
 
 fn inside_outline(problem: &Problem, body: Rect) -> bool {
     let corners = body.corners();
-    if !corners.iter().all(|corner| point_in_polygon(*corner, &problem.outline)) {
+    if !corners
+        .iter()
+        .all(|corner| point_in_polygon(*corner, &problem.outline))
+    {
         return false;
     }
     let outline = &problem.outline;
@@ -199,12 +241,19 @@ fn inside_outline(problem: &Problem, body: Rect) -> bool {
 fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
     let component = &problem.components[index];
     let half = component.half_extent(pose.angle);
-    let own = [component.body_size[0] / 2.0 + margin, component.body_size[1] / 2.0 + margin];
+    let own = [
+        component.body_size[0] / 2.0 + margin,
+        component.body_size[1] / 2.0 + margin,
+    ];
     Rect {
         center: component.center(pose),
         half: [half[0] + margin, half[1] + margin],
         round: component.round,
-        turn: if component.round { None } else { turn_of(pose.angle, own) },
+        turn: if component.round {
+            None
+        } else {
+            turn_of(pose.angle, own)
+        },
     }
 }
 
@@ -230,7 +279,11 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             // keeps the copper clearance (the edge margin is room for
             // routing, which a tab does not need).
             let margins = touching.map(|touch| {
-                if touch { problem.constraints.copper_edge - 1.0e-6 } else { problem.min_spacing.min(problem.edge_margin) }
+                if touch {
+                    problem.constraints.copper_edge - 1.0e-6
+                } else {
+                    problem.min_spacing.min(problem.edge_margin)
+                }
             });
             return component.pad_boxes(pose).iter().all(|(center, half)| {
                 let grown = [
@@ -251,7 +304,12 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             });
         }
     }
-    let held = problem.constraints.edges.iter().any(|(part, _, _)| *part == index) || problem.constraints.overhang(index).is_some();
+    let held = problem
+        .constraints
+        .edges
+        .iter()
+        .any(|(part, _, _)| *part == index)
+        || problem.constraints.overhang(index).is_some();
     if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
         let margin = problem.components[index].edge_margin(problem.edge_margin);
         return inside_outline(problem, bare(problem, index, pose, margin));
@@ -261,13 +319,17 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             problem.components[index].center(pose),
             problem.components[index].half_extent(pose.angle),
         );
-        [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+        [
+            center[0] - half[0],
+            center[1] - half[1],
+            center[0] + half[0],
+            center[1] + half[1],
+        ]
     });
     // A side against a constrained edge may touch it: shrink by a hair so
     // the outline test does not sit on the boundary.
-    let margins = constraints::side_margins(problem, index, pose.angle).map(|margin| {
-        if margin > 0.0 { margin } else { -1.0e-6 }
-    });
+    let margins = constraints::side_margins(problem, index, pose.angle)
+        .map(|margin| if margin > 0.0 { margin } else { -1.0e-6 });
     let grown = [
         inner[0] - margins[0],
         inner[1] - margins[1],
@@ -337,7 +399,8 @@ fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bo
             // The edge and region lists are scanned for the part's own
             // entries, a few comparisons each (a panel's copies put a
             // region on each of its 344 movable parts).
-            *work += ((constraints.edges.len() + constraints.regions.len()).div_ceil(2) + 2 * problem.components[index].pads.len()) as u64;
+            *work += ((constraints.edges.len() + constraints.regions.len()).div_ceil(2)
+                + 2 * problem.components[index].pads.len()) as u64;
             *work += 2 * held_work(problem, index);
         }
         if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
@@ -353,7 +416,9 @@ fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bo
 /// times the work it counted).
 fn held_work(problem: &Problem, index: usize) -> u64 {
     let constraints = &problem.constraints;
-    if constraints.edges.iter().any(|(part, _, _)| *part == index) || constraints.overhang(index).is_some() {
+    if constraints.edges.iter().any(|(part, _, _)| *part == index)
+        || constraints.overhang(index).is_some()
+    {
         (4 * problem.components[index].pads.len() + problem.outline.len() / 4) as u64
     } else {
         0
@@ -409,16 +474,31 @@ fn clear_of(
                         let halo = problem.components[part].halo;
                         rect.grown(-halo)
                     };
-                    overlaps(bare(index, pose), bare(other, poses[other]), body_spacing(problem, index, other))
+                    overlaps(
+                        bare(index, pose),
+                        bare(other, poses[other]),
+                        body_spacing(problem, index, other),
+                    )
                 } else if problem.shared_halos {
                     // The larger halo between them, as spacing between the
                     // bodies (growing one body instead is not symmetric where
                     // a disc meets a rectangle's corner).
-                    let (mine, theirs) = (problem.components[index].halo, problem.components[other].halo);
+                    let (mine, theirs) = (
+                        problem.components[index].halo,
+                        problem.components[other].halo,
+                    );
                     let gap = body_spacing(problem, index, other) + mine.max(theirs);
-                    overlaps(body.grown(-mine), rect(problem, other, poses[other]).grown(-theirs), gap)
+                    overlaps(
+                        body.grown(-mine),
+                        rect(problem, other, poses[other]).grown(-theirs),
+                        gap,
+                    )
                 } else {
-                    overlaps(body, rect(problem, other, poses[other]), body_spacing(problem, index, other))
+                    overlaps(
+                        body,
+                        rect(problem, other, poses[other]),
+                        body_spacing(problem, index, other),
+                    )
                 }
             } {
                 return false;
@@ -426,7 +506,9 @@ fn clear_of(
             if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
                 return false;
             }
-        } else if side.opposite(other_side) && far_side_overlap(problem, index, pose, other, poses[other], work) {
+        } else if side.opposite(other_side)
+            && far_side_overlap(problem, index, pose, other, poses[other], work)
+        {
             return false;
         }
     }
@@ -435,9 +517,22 @@ fn clear_of(
 
 /// Debugging aid: why part `index` at `pose` may not sit beside `other`
 /// (`None` when it may), by the test that turns it down.
-pub fn conflict_kind(problem: &Problem, poses: &[Pose], index: usize, pose: Pose, other: usize) -> Option<&'static str> {
+pub fn conflict_kind(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    other: usize,
+) -> Option<&'static str> {
     let mut work = 0;
-    if clear_of(problem, poses, index, pose, std::iter::once(other), &mut work) {
+    if clear_of(
+        problem,
+        poses,
+        index,
+        pose,
+        std::iter::once(other),
+        &mut work,
+    ) {
         return None;
     }
     let (mine, theirs) = (&problem.components[index], &problem.components[other]);
@@ -446,7 +541,11 @@ pub fn conflict_kind(problem: &Problem, poses: &[Pose], index: usize, pose: Pose
             "pads in a cutout or pad keepout"
         } else if mine.hollow_for(theirs) || theirs.hollow_for(mine) {
             "shaped or hollow boxes"
-        } else if overlaps(rect(problem, index, pose).grown(-mine.halo), rect(problem, other, poses[other]).grown(-theirs.halo), -1.0e-3) {
+        } else if overlaps(
+            rect(problem, index, pose).grown(-mine.halo),
+            rect(problem, other, poses[other]).grown(-theirs.halo),
+            -1.0e-3,
+        ) {
             "bodies overlap"
         } else {
             "bodies closer than the spacing"
@@ -469,12 +568,23 @@ const RECT_WORK: u64 = 4;
 /// counts it.
 fn linked_work(problem: &Problem) -> u64 {
     let linked = problem.constraints.linked.len();
-    if linked == 0 { 0 } else { ((linked as f64 + 1.0).log2() / 2.0).round() as u64 }
+    if linked == 0 {
+        0
+    } else {
+        ((linked as f64 + 1.0).log2() / 2.0).round() as u64
+    }
 }
 
 /// The board's wirelength, counting its work (every pin).
 fn counted_wirelength(problem: &Problem, poses: &[Pose]) -> f64 {
-    crate::add_work(crate::PIN_WORK * problem.components.iter().map(|component| component.pins.len()).sum::<usize>() as u64);
+    crate::add_work(
+        crate::PIN_WORK
+            * problem
+                .components
+                .iter()
+                .map(|component| component.pins.len())
+                .sum::<usize>() as u64,
+    );
     problem.wirelength(poses)
 }
 
@@ -484,7 +594,9 @@ fn counted_penalty(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
     if problem.constraints.relations.is_empty() {
         return 0.0;
     }
-    crate::add_work(4 * problem.constraints.relations.len() as u64 + constraints::relation_work(problem, index));
+    crate::add_work(
+        4 * problem.constraints.relations.len() as u64 + constraints::relation_work(problem, index),
+    );
     constraints::relation_penalty(problem, poses, Some(index))
 }
 
@@ -525,14 +637,25 @@ impl Buckets {
     /// twenty times the work they counted).
     fn near(&mut self, problem: &Problem, index: usize, pose: Pose, out: &mut Vec<usize>) {
         let body = rect(problem, index, pose);
-        let cells = self.grid.query(body.center, [body.half[0] + self.reach, body.half[1] + self.reach], out);
+        let cells = self.grid.query(
+            body.center,
+            [body.half[0] + self.reach, body.half[1] + self.reach],
+            out,
+        );
         crate::add_work((SPOT_WORK + cells + out.len()) as u64);
     }
 }
 
 /// Whether a part's copper comes closer than the edge margin to a cutout
 /// (either way round); its body may reach over the hole.
-fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+fn copper_meets_cutout(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
     let (hole, pose_hole, part, pose_part) = if problem.components[a].copper_only {
         (a, pose_a, b, pose_b)
     } else {
@@ -551,9 +674,19 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
         // the hole runs diagonally. A pad outside the outline's box cannot
         // meet it (a tabbed panel's slots run around whole copies, with
         // thousands of points).
-        let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut extent = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for point in outline {
-            extent = [extent[0].min(point[0]), extent[1].min(point[1]), extent[2].max(point[0]), extent[3].max(point[1])];
+            extent = [
+                extent[0].min(point[0]),
+                extent[1].min(point[1]),
+                extent[2].max(point[0]),
+                extent[3].max(point[1]),
+            ];
         }
         *work += edge_work(outline.len());
         return pads.into_iter().any(|pad| {
@@ -569,12 +702,23 @@ fn copper_meets_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose
 /// Whether a part's body (without its halo) meets a cutout the user cut
 /// into the outline (`Constraints::solid_cutouts`): a window in the board
 /// holds no part, while a designer's slot may hold a connector's pegs.
-fn body_meets_solid_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+fn body_meets_solid_cutout(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
     let solid = &problem.constraints.solid_cutouts;
     if solid.is_empty() {
         return false;
     }
-    let (hole, part, pose_part) = if problem.components[a].copper_only { (a, b, pose_b) } else { (b, a, pose_a) };
+    let (hole, part, pose_part) = if problem.components[a].copper_only {
+        (a, b, pose_b)
+    } else {
+        (b, a, pose_a)
+    };
     if problem.components[part].copper_only || !solid.contains(&hole) {
         return false;
     }
@@ -583,9 +727,19 @@ fn body_meets_solid_cutout(problem: &Problem, a: usize, pose_a: Pose, b: usize, 
     if outline.len() < 3 {
         return false;
     }
-    let mut extent = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut extent = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for point in outline {
-        extent = [extent[0].min(point[0]), extent[1].min(point[1]), extent[2].max(point[0]), extent[3].max(point[1])];
+        extent = [
+            extent[0].min(point[0]),
+            extent[1].min(point[1]),
+            extent[2].max(point[0]),
+            extent[3].max(point[1]),
+        ];
     }
     // A body touching the hole's edge is on the board.
     let body = body.grown(-1.0e-6);
@@ -630,7 +784,12 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool
     let mut near = false;
     for index in 0..polygon.len() {
         let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
-        let extent = [a[0].min(b[0]), a[1].min(b[1]), a[0].max(b[0]), a[1].max(b[1])];
+        let extent = [
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[0].max(b[0]),
+            a[1].max(b[1]),
+        ];
         if !box_apart(rect, extent, POLYGON_SLACK) {
             near = true;
             break;
@@ -646,18 +805,24 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool
         return inside;
     }
     *work += 9 * edge_work(polygon.len());
-    if corners.iter().any(|corner| crate::problem::point_in_polygon(*corner, polygon)) {
+    if corners
+        .iter()
+        .any(|corner| crate::problem::point_in_polygon(*corner, polygon))
+    {
         return true;
     }
     // A polygon corner inside the box.
     let (axes, own) = rect.frame();
     if polygon.iter().any(|p| {
         let delta = [p[0] - rect.center[0], p[1] - rect.center[1]];
-        (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs() <= own[0] && (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs() <= own[1]
+        (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs() <= own[0]
+            && (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs() <= own[1]
     }) {
         return true;
     }
-    let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    };
     let segments_cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]| {
         let (d1, d2) = (cross(c, d, a), cross(c, d, b));
         let (d3, d4) = (cross(a, b, c), cross(a, b, d));
@@ -671,7 +836,14 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool
 
 /// Whether two parts on the same side meet where one of them is hollow:
 /// only its blocking boxes count.
-fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+fn hollow_overlap(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
     let blocking = |index: usize, pose: Pose, other: usize| -> Vec<Rect> {
         let component = &problem.components[index];
         if !component.hollow_for(&problem.components[other]) {
@@ -688,12 +860,23 @@ fn hollow_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: P
     let mine = blocking(a, pose_a, b);
     // The lists, and every pair at worst.
     *work += list_work(mine.len()) + list_work(theirs.len()) + (mine.len() * theirs.len()) as u64;
-    mine.into_iter().any(|mine| theirs.iter().any(|other| overlaps(mine, *other, problem.spacing)))
+    mine.into_iter().any(|mine| {
+        theirs
+            .iter()
+            .any(|other| overlaps(mine, *other, problem.spacing))
+    })
 }
 
 /// Whether a part's holes and pads on the far side meet the other part's
 /// body there (either way round), for parts on opposite sides.
-fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+fn far_side_overlap(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
     let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose, work: &mut u64| {
         let component = &problem.components[holes];
         if component.far_side.is_empty() && component.far_copper.is_empty() {
@@ -718,18 +901,27 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
             // Copper against copper only.
             let pads = pads(work);
             *work += ((far.len() + copper.len()) * pads.len()) as u64;
-            return far.iter().chain(&copper).any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)));
+            return far.iter().chain(&copper).any(|far| {
+                pads.iter()
+                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+            });
         }
         let target = rect(problem, body, pose_body);
         *work += far.len() as u64;
-        if far.into_iter().any(|far| overlaps(far, target, problem.spacing)) {
+        if far
+            .into_iter()
+            .any(|far| overlaps(far, target, problem.spacing))
+        {
             return true;
         }
         // Copper that only copper may not come near.
         !copper.is_empty() && {
             let pads = pads(work);
             *work += (copper.len() * pads.len()) as u64;
-            copper.iter().any(|far| pads.iter().any(|pad| overlaps(*far, *pad, problem.min_spacing)))
+            copper.iter().any(|far| {
+                pads.iter()
+                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+            })
         }
     };
     meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
@@ -741,7 +933,14 @@ fn far_side_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b:
 /// both sides: woagboard's back-mounted choc switches have their 14 mm
 /// squares on the front, larger than their sockets on the back, and the
 /// bodies alone let the squares overlap.
-fn far_courtyard_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, pose_b: Pose, work: &mut u64) -> bool {
+fn far_courtyard_overlap(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
     let meets = |yard: usize, pose_yard: Pose, other: usize, pose_other: Pose, work: &mut u64| {
         let (component, against) = (&problem.components[yard], &problem.components[other]);
         if component.far_courtyard.is_empty() || against.far_side.is_empty() {
@@ -751,7 +950,9 @@ fn far_courtyard_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, po
         let gap = body_spacing(problem, yard, other);
         let yards = turned_rects(component, &component.far_courtyard, pose_yard, 0.0);
         let theirs = turned_rects(against, &against.far_side, pose_other, 0.0);
-        yards.iter().any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))
+        yards
+            .iter()
+            .any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))
     };
     meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
 }
@@ -759,11 +960,16 @@ fn far_courtyard_overlap(problem: &Problem, a: usize, pose_a: Pose, b: usize, po
 pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {
     (0..problem.components.len())
         .filter(|index| {
-            !is_legal(problem, poses, *index, poses[*index], 0..problem.components.len())
+            !is_legal(
+                problem,
+                poses,
+                *index,
+                poses[*index],
+                0..problem.components.len(),
+            )
         })
         .collect()
 }
-
 
 /// Moves every movable component to the nearest legal, grid-snapped position,
 /// largest bodies first. Returns the components that found no position.
@@ -781,7 +987,12 @@ pub fn legalize_first(problem: &Problem, poses: &mut [Pose], first: &[usize]) ->
 /// `legalize_first`, with the parts of `keep` left at their poses (legal
 /// already: a looser level of the same placement) and placed before all
 /// others.
-pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], keep: &[usize]) -> Vec<usize> {
+pub fn legalize_keeping(
+    problem: &Problem,
+    poses: &mut [Pose],
+    first: &[usize],
+    keep: &[usize],
+) -> Vec<usize> {
     let count = problem.components.len();
     let mut placed: Vec<usize> = (0..count)
         .filter(|index| problem.components[*index].fixed || keep.contains(index))
@@ -794,11 +1005,23 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
             let size = problem.components[*index].body_size;
             size[0] * size[1]
         };
-        let rank = |index: &usize| first.iter().position(|part| part == index).unwrap_or(usize::MAX);
-        rank(a).cmp(&rank(b)).then(area(b).total_cmp(&area(a))).then(a.cmp(b))
+        let rank = |index: &usize| {
+            first
+                .iter()
+                .position(|part| part == index)
+                .unwrap_or(usize::MAX)
+        };
+        rank(a)
+            .cmp(&rank(b))
+            .then(area(b).total_cmp(&area(a)))
+            .then(a.cmp(b))
     });
     let bounds = problem.bounds();
-    let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.25
+    };
     let mut rings = (((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / step).ceil() as i64 + 1;
     // A fine grid is a last resort after the coarse one searched the whole
     // board: it only looks near where the part wants to be (a part with no
@@ -887,7 +1110,11 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
 pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec<usize> {
     let count = problem.components.len();
     let bounds = problem.bounds();
-    let step = if problem.grid > 0.0 { problem.grid.max(0.5) } else { 0.5 };
+    let step = if problem.grid > 0.0 {
+        problem.grid.max(0.5)
+    } else {
+        0.5
+    };
     let mut still = Vec::new();
     let mut placed: Vec<usize> = (0..count).filter(|index| !failed.contains(index)).collect();
     // Every spot is tested against the parts near it only (SmartSpin2k's
@@ -922,16 +1149,30 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                         continue;
                     }
                     buckets.near(problem, index, pose, &mut near);
-                    let fixed = near.iter().copied().filter(|other| problem.components[*other].fixed);
+                    let fixed = near
+                        .iter()
+                        .copied()
+                        .filter(|other| problem.components[*other].fixed);
                     if !clear_of(problem, poses, index, pose, fixed, &mut work) {
                         continue;
                     }
-                    let mut movable: Vec<usize> = near.iter().copied().filter(|other| !problem.components[*other].fixed).collect();
+                    let mut movable: Vec<usize> = near
+                        .iter()
+                        .copied()
+                        .filter(|other| !problem.components[*other].fixed)
+                        .collect();
                     movable.sort_unstable();
                     let mut area = 0.0;
                     let mut displaced = Vec::new();
                     for other in movable {
-                        if !clear_of(problem, poses, index, pose, std::iter::once(other), &mut work) {
+                        if !clear_of(
+                            problem,
+                            poses,
+                            index,
+                            pose,
+                            std::iter::once(other),
+                            &mut work,
+                        ) {
                             let size = problem.components[other].body_size;
                             area += size[0] * size[1];
                             displaced.push(other);
@@ -974,7 +1215,8 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                             position: constraints::snap_position(problem, moved, [x, y], *angle),
                             angle: *angle,
                         };
-                        let distance = (candidate.position[0] - wanted[0]).powi(2) + (candidate.position[1] - wanted[1]).powi(2);
+                        let distance = (candidate.position[0] - wanted[0]).powi(2)
+                            + (candidate.position[1] - wanted[1]).powi(2);
                         if spot.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
@@ -982,7 +1224,14 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                             continue;
                         }
                         buckets.near(problem, moved, candidate, &mut near);
-                        if clear_of(problem, poses, moved, candidate, near.iter().copied(), &mut work) {
+                        if clear_of(
+                            problem,
+                            poses,
+                            moved,
+                            candidate,
+                            near.iter().copied(),
+                            &mut work,
+                        ) {
                             spot = Some((distance, candidate));
                         }
                     }
@@ -1030,7 +1279,11 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
         return 0;
     }
     let count = problem.components.len();
-    let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.25
+    };
     let mut moved = 0;
     for relation in &constraints.relations {
         if crate::out_of_work(0) {
@@ -1054,7 +1307,9 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
                 counted_penalty(problem, poses, index) + counted_wirelength(problem, poses),
             )
         };
-        let better = |a: (f64, f64), b: (f64, f64)| a.0 < b.0 - 1.0e-9 || (a.0 <= b.0 + 1.0e-9 && a.1 < b.1 - 1.0e-9);
+        let better = |a: (f64, f64), b: (f64, f64)| {
+            a.0 < b.0 - 1.0e-9 || (a.0 <= b.0 + 1.0e-9 && a.1 < b.1 - 1.0e-9)
+        };
         let original = poses[index];
         let mut best = (score(poses), original);
         let target = constraints::relation_target(problem, poses, relation);
@@ -1110,7 +1365,8 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
             component.side as u8,
         )
     };
-    let mut kinds: std::collections::BTreeMap<(i64, i64, usize, u8), Vec<usize>> = Default::default();
+    let mut kinds: std::collections::BTreeMap<(i64, i64, usize, u8), Vec<usize>> =
+        Default::default();
     for index in 0..count {
         let component = &problem.components[index];
         if !component.fixed && component.pins.len() >= 2 && component.angle_options.len() > 1 {
@@ -1127,25 +1383,43 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
         for index in members {
             *counts.entry(angle_key(poses[*index].angle)).or_default() += 1;
         }
-        let (&modal, _) = counts.iter().max_by_key(|(angle, count)| (**count, -**angle)).unwrap();
+        let (&modal, _) = counts
+            .iter()
+            .max_by_key(|(angle, count)| (**count, -**angle))
+            .unwrap();
         for &index in members {
             if angle_key(poses[index].angle) == modal {
                 continue;
             }
             let component = &problem.components[index];
-            let Some(&angle) = component.angle_options.iter().find(|option| angle_key(**option) == modal) else {
+            let Some(&angle) = component
+                .angle_options
+                .iter()
+                .find(|option| angle_key(**option) == modal)
+            else {
                 continue;
             };
             let center = component.center(poses[index]);
-            let position = constraints::snap_position(problem, index, component.position_for_center(center, angle), angle);
+            let position = constraints::snap_position(
+                problem,
+                index,
+                component.position_for_center(center, angle),
+                angle,
+            );
             let pose = Pose { position, angle };
             if !is_legal(problem, poses, index, pose, 0..count) {
                 continue;
             }
-            let before = (counted_wirelength(problem, poses), counted_penalty(problem, poses, index));
+            let before = (
+                counted_wirelength(problem, poses),
+                counted_penalty(problem, poses, index),
+            );
             let original = poses[index];
             poses[index] = pose;
-            let after = (counted_wirelength(problem, poses), counted_penalty(problem, poses, index));
+            let after = (
+                counted_wirelength(problem, poses),
+                counted_penalty(problem, poses, index),
+            );
             if after.0 <= before.0 + tolerance && after.1 <= before.1 + 1.0e-9 {
                 turned += 1;
             } else {
@@ -1178,7 +1452,9 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         })
         .collect();
     let cost = |poses: &[Pose], nets: &[usize]| -> f64 {
-        crate::add_work(crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64);
+        crate::add_work(
+            crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64,
+        );
         nets.iter()
             .map(|net| {
                 let mut bounds = [
@@ -1209,7 +1485,11 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         buckets.insert(problem, index, poses[index]);
     }
     let mut near = Vec::new();
-    let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.25
+    };
     // Spots around a part's target are searched this far: legalization on
     // a crowded board leaves parts far from their nets, and the straight
     // line back is often taken (Sisu's feedback divider 46 mm from its
@@ -1301,7 +1581,10 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                                 continue;
                             }
                             let pose = Pose {
-                                position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                                position: [
+                                    origin[0] + dx as f64 * step,
+                                    origin[1] + dy as f64 * step,
+                                ],
                                 angle: *angle,
                             };
                             if pose == original {
@@ -1385,7 +1668,11 @@ pub fn center_edge_copper(problem: &Problem, poses: &mut [Pose]) {
     if !problem.constraints.edge_copper {
         return;
     }
-    let step = if problem.grid > 0.0 { problem.grid } else { 0.05 };
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.05
+    };
     let everyone = 0..problem.components.len();
     for (part, edge, _) in problem.constraints.edges.clone() {
         if problem.components[part].fixed || problem.components[part].pads.is_empty() {

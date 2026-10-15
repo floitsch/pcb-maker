@@ -89,7 +89,10 @@ impl FeatureMaps {
     }
 
     pub fn channel(&self, name: &str) -> Option<&[f32]> {
-        channel_names().iter().position(|known| known == name).map(|index| self.plane(index))
+        channel_names()
+            .iter()
+            .position(|known| known == name)
+            .map(|index| self.plane(index))
     }
 }
 
@@ -102,7 +105,11 @@ struct NodeMask {
 
 impl NodeMask {
     fn new(nx: usize, ny: usize) -> Self {
-        Self { nx, ny, bits: vec![0; (nx * ny).div_ceil(64)] }
+        Self {
+            nx,
+            ny,
+            bits: vec![0; (nx * ny).div_ceil(64)],
+        }
     }
 
     fn set_span(&mut self, y: usize, x0: usize, x1: usize) {
@@ -146,17 +153,23 @@ fn fill_shape(shape: &Shape, frame: &TileFrame, mask: &mut NodeMask) {
     let pitch = frame.pitch;
     let row_range = |low: f64, high: f64| -> Option<(usize, usize)> {
         let y0 = ((low - frame.origin[1]) / pitch).ceil().max(0.0);
-        let y1 = ((high - frame.origin[1]) / pitch).floor().min(frame.ny as f64 - 1.0);
+        let y1 = ((high - frame.origin[1]) / pitch)
+            .floor()
+            .min(frame.ny as f64 - 1.0);
         (y0 <= y1).then_some((y0 as usize, y1 as usize))
     };
     let span = |low: f64, high: f64| -> Option<(usize, usize)> {
         let x0 = ((low - frame.origin[0]) / pitch).ceil().max(0.0);
-        let x1 = ((high - frame.origin[0]) / pitch).floor().min(frame.nx as f64 - 1.0);
+        let x1 = ((high - frame.origin[0]) / pitch)
+            .floor()
+            .min(frame.nx as f64 - 1.0);
         (x0 <= x1).then_some((x0 as usize, x1 as usize))
     };
     match shape {
         Shape::Circle { center, radius } => {
-            let Some((y0, y1)) = row_range(center[1] - radius, center[1] + radius) else { return };
+            let Some((y0, y1)) = row_range(center[1] - radius, center[1] + radius) else {
+                return;
+            };
             for y in y0..=y1 {
                 let dy = frame.origin[1] + y as f64 * pitch - center[1];
                 let half = (radius * radius - dy * dy).max(0.0).sqrt();
@@ -167,11 +180,18 @@ fn fill_shape(shape: &Shape, frame: &TileFrame, mask: &mut NodeMask) {
         }
         Shape::Capsule { .. } => {
             let bounds = shape.aabb();
-            let Some((y0, y1)) = row_range(bounds.minimum[1], bounds.maximum[1]) else { return };
-            let Some((x0, x1)) = span(bounds.minimum[0], bounds.maximum[0]) else { return };
+            let Some((y0, y1)) = row_range(bounds.minimum[1], bounds.maximum[1]) else {
+                return;
+            };
+            let Some((x0, x1)) = span(bounds.minimum[0], bounds.maximum[0]) else {
+                return;
+            };
             for y in y0..=y1 {
                 for x in x0..=x1 {
-                    let point = [frame.origin[0] + x as f64 * pitch, frame.origin[1] + y as f64 * pitch];
+                    let point = [
+                        frame.origin[0] + x as f64 * pitch,
+                        frame.origin[1] + y as f64 * pitch,
+                    ];
                     if shape.contains(point) {
                         mask.set_span(y, x, x);
                     }
@@ -199,7 +219,9 @@ fn fill_polygon(points: &[Point], frame: &TileFrame, mask: &mut NodeMask) {
         high = high.max(point[1]);
     }
     let y0 = ((low - frame.origin[1]) / pitch).ceil().max(0.0);
-    let y1 = ((high - frame.origin[1]) / pitch).floor().min(frame.ny as f64 - 1.0);
+    let y1 = ((high - frame.origin[1]) / pitch)
+        .floor()
+        .min(frame.ny as f64 - 1.0);
     if y0 > y1 {
         return;
     }
@@ -216,7 +238,9 @@ fn fill_polygon(points: &[Point], frame: &TileFrame, mask: &mut NodeMask) {
         crossings.sort_by(f64::total_cmp);
         for pair in crossings.chunks_exact(2) {
             let x0 = ((pair[0] - frame.origin[0]) / pitch).ceil().max(0.0);
-            let x1 = ((pair[1] - frame.origin[0]) / pitch).floor().min(frame.nx as f64 - 1.0);
+            let x1 = ((pair[1] - frame.origin[0]) / pitch)
+                .floor()
+                .min(frame.nx as f64 - 1.0);
             if x0 <= x1 {
                 mask.set_span(y, x0 as usize, x1 as usize);
             }
@@ -230,7 +254,10 @@ fn add_box(frame: &TileFrame, out: &mut [f32], low: Point, high: Point, density:
     let tile_mm = frame.tile_mm();
     // Tile t spans nodes [t * tile, (t + 1) * tile): from half a pitch
     // before its first node centre.
-    let start = [frame.origin[0] - frame.pitch / 2.0, frame.origin[1] - frame.pitch / 2.0];
+    let start = [
+        frame.origin[0] - frame.pitch / 2.0,
+        frame.origin[1] - frame.pitch / 2.0,
+    ];
     let overlaps = |axis: usize, count: usize| -> Vec<(usize, f64)> {
         let a = (low[axis] - start[axis]) / tile_mm;
         let b = (high[axis] - start[axis]) / tile_mm;
@@ -268,16 +295,23 @@ fn mst_edges(points: &[Point]) -> Vec<(usize, usize)> {
     let mut best = vec![(f64::INFINITY, 0usize); n];
     in_tree[0] = true;
     for index in 1..n {
-        best[index] = ((points[index][0] - points[0][0]).abs() + (points[index][1] - points[0][1]).abs(), 0);
+        best[index] = (
+            (points[index][0] - points[0][0]).abs() + (points[index][1] - points[0][1]).abs(),
+            0,
+        );
     }
     let mut edges = Vec::with_capacity(n - 1);
     for _ in 1..n {
-        let next = (0..n).filter(|index| !in_tree[*index]).min_by(|a, b| best[*a].0.total_cmp(&best[*b].0)).unwrap();
+        let next = (0..n)
+            .filter(|index| !in_tree[*index])
+            .min_by(|a, b| best[*a].0.total_cmp(&best[*b].0))
+            .unwrap();
         in_tree[next] = true;
         edges.push((best[next].1, next));
         for index in 0..n {
             if !in_tree[index] {
-                let distance = (points[index][0] - points[next][0]).abs() + (points[index][1] - points[next][1]).abs();
+                let distance = (points[index][0] - points[next][0]).abs()
+                    + (points[index][1] - points[next][1]).abs();
                 if distance < best[index].0 {
                     best[index] = (distance, next);
                 }
@@ -296,12 +330,23 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
     let sizes = slot_sizes(layers);
     let plane_index = |channel: usize, slot: usize| (channel * SLOTS + slot) * tiles;
     let board_index = |name: &str| {
-        (LAYER_CHANNELS.len() * SLOTS + BOARD_CHANNELS.iter().position(|known| *known == name).unwrap()) * tiles
+        (LAYER_CHANNELS.len() * SLOTS
+            + BOARD_CHANNELS
+                .iter()
+                .position(|known| *known == name)
+                .unwrap())
+            * tiles
     };
     // Per layer: pad copper (copper with a net), other obstacles, pours.
-    let mut pad_masks: Vec<NodeMask> = (0..layers).map(|_| NodeMask::new(frame.nx, frame.ny)).collect();
-    let mut obstacle_masks: Vec<NodeMask> = (0..layers).map(|_| NodeMask::new(frame.nx, frame.ny)).collect();
-    let mut pour_masks: Vec<NodeMask> = (0..layers).map(|_| NodeMask::new(frame.nx, frame.ny)).collect();
+    let mut pad_masks: Vec<NodeMask> = (0..layers)
+        .map(|_| NodeMask::new(frame.nx, frame.ny))
+        .collect();
+    let mut obstacle_masks: Vec<NodeMask> = (0..layers)
+        .map(|_| NodeMask::new(frame.nx, frame.ny))
+        .collect();
+    let mut pour_masks: Vec<NodeMask> = (0..layers)
+        .map(|_| NodeMask::new(frame.nx, frame.ny))
+        .collect();
     for obstacle in &board.obstacles {
         let is_pad = obstacle.kind == ObstacleKind::Copper && obstacle.net.is_some();
         if !is_pad && !obstacle.blocks_tracks {
@@ -311,7 +356,11 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
             if obstacle.layers & (1 << layer) == 0 {
                 continue;
             }
-            let mask = if is_pad { &mut pad_masks[layer] } else { &mut obstacle_masks[layer] };
+            let mask = if is_pad {
+                &mut pad_masks[layer]
+            } else {
+                &mut obstacle_masks[layer]
+            };
             fill_shape(&obstacle.shape, frame, mask);
         }
     }
@@ -346,18 +395,27 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
     for slot in 0..SLOTS {
         if sizes[slot] > 0 {
             let base = plane_index(4, slot);
-            data[base..base + tiles].iter_mut().for_each(|value| *value = 1.0);
+            data[base..base + tiles]
+                .iter_mut()
+                .for_each(|value| *value = 1.0);
         }
     }
     // Pins per layer slot, through pins, distinct nets per tile.
     let all = board.all_layers();
     let mut last_net = vec![u32::MAX; tiles];
     let poured: Vec<bool> = (0..board.nets.len())
-        .map(|net| board.planes.iter().any(|plane| plane.net as usize == net && plane.connect))
+        .map(|net| {
+            board
+                .planes
+                .iter()
+                .any(|plane| plane.net as usize == net && plane.connect)
+        })
         .collect();
     for (net, record) in board.nets.iter().enumerate() {
         for terminal in &record.terminals {
-            let Some(tile) = tile_of(frame, terminal.anchor) else { continue };
+            let Some(tile) = tile_of(frame, terminal.anchor) else {
+                continue;
+            };
             for layer in 0..layers {
                 if terminal.layers & (1 << layer) != 0 {
                     let slot = slot_of(layer, layers);
@@ -388,7 +446,11 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
         }
         let rules = board.classes[record.class];
         let track = rules.trace_width + rules.clearance;
-        let points: Vec<Point> = record.terminals.iter().map(|terminal| terminal.anchor).collect();
+        let points: Vec<Point> = record
+            .terminals
+            .iter()
+            .map(|terminal| terminal.anchor)
+            .collect();
         let mut low = [f64::INFINITY; 2];
         let mut high = [f64::NEG_INFINITY; 2];
         for point in &points {
@@ -400,7 +462,9 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
         let edges = mst_edges(&points);
         let length: f64 = edges
             .iter()
-            .map(|(a, b)| (points[*a][0] - points[*b][0]).abs() + (points[*a][1] - points[*b][1]).abs())
+            .map(|(a, b)| {
+                (points[*a][0] - points[*b][0]).abs() + (points[*a][1] - points[*b][1]).abs()
+            })
             .sum();
         // Boxes at least a tile wide: a straight run's demand lies in the
         // tile row it runs along.
@@ -425,12 +489,25 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
         }
         add_box(frame, &mut rudy, box_low, box_high, density);
         for (a, b) in edges {
-            let edge_low = [points[a][0].min(points[b][0]), points[a][1].min(points[b][1])];
-            let edge_high = [points[a][0].max(points[b][0]), points[a][1].max(points[b][1])];
+            let edge_low = [
+                points[a][0].min(points[b][0]),
+                points[a][1].min(points[b][1]),
+            ];
+            let edge_high = [
+                points[a][0].max(points[b][0]),
+                points[a][1].max(points[b][1]),
+            ];
             let (edge_low, edge_high) = grow(edge_low, edge_high);
-            let edge_length = (points[a][0] - points[b][0]).abs() + (points[a][1] - points[b][1]).abs();
+            let edge_length =
+                (points[a][0] - points[b][0]).abs() + (points[a][1] - points[b][1]).abs();
             let edge_area = (edge_high[0] - edge_low[0]) * (edge_high[1] - edge_low[1]);
-            add_box(frame, &mut rudy_mst, edge_low, edge_high, edge_length * track / edge_area);
+            add_box(
+                frame,
+                &mut rudy_mst,
+                edge_low,
+                edge_high,
+                edge_length * track / edge_area,
+            );
         }
         let width = box_high[0] - box_low[0];
         let height = box_high[1] - box_low[1];
@@ -441,7 +518,12 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
             }
         }
     }
-    for (name, values) in [("rudy", &rudy), ("rudy_mst", &rudy_mst), ("pin_rudy", &pin_rudy), ("rudy_pour", &rudy_pour)] {
+    for (name, values) in [
+        ("rudy", &rudy),
+        ("rudy_mst", &rudy_mst),
+        ("pin_rudy", &pin_rudy),
+        ("rudy_pour", &rudy_pour),
+    ] {
         let base = board_index(name);
         data[base..base + tiles].copy_from_slice(values);
     }
@@ -450,25 +532,45 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
     for net in &board.nets {
         counts[net.class] += 1;
     }
-    let class = (0..counts.len()).max_by_key(|class| (counts[*class], usize::MAX - class)).unwrap_or(0);
-    let rules = board.classes.get(class).copied().unwrap_or(pcb_router::RuleClass {
-        trace_width: 0.25,
-        clearance: 0.2,
-        via_diameter: 0.6,
-        via_drill: 0.3,
-    });
+    let class = (0..counts.len())
+        .max_by_key(|class| (counts[*class], usize::MAX - class))
+        .unwrap_or(0);
+    let rules = board
+        .classes
+        .get(class)
+        .copied()
+        .unwrap_or(pcb_router::RuleClass {
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        });
     for (name, value) in [
         ("layer_count", layers as f64 / SLOTS as f64),
-        ("track_pitch", (rules.trace_width + rules.clearance) / tile_mm),
-        ("via_pitch", (rules.via_diameter + rules.clearance) / tile_mm),
+        (
+            "track_pitch",
+            (rules.trace_width + rules.clearance) / tile_mm,
+        ),
+        (
+            "via_pitch",
+            (rules.via_diameter + rules.clearance) / tile_mm,
+        ),
         ("tile_mm", tile_mm / 1.6),
     ] {
         let base = board_index(name);
         for tile in 0..tiles {
-            data[base + tile] = if inside_share[tile] > 0.0 { value as f32 } else { 0.0 };
+            data[base + tile] = if inside_share[tile] > 0.0 {
+                value as f32
+            } else {
+                0.0
+            };
         }
     }
-    FeatureMaps { tiles_x: frame.tiles_x, tiles_y: frame.tiles_y, data }
+    FeatureMaps {
+        tiles_x: frame.tiles_x,
+        tiles_y: frame.tiles_y,
+        data,
+    }
 }
 
 /// The cheap baseline ranker: routing demand (`rudy_mst`) above `alpha`
@@ -487,7 +589,9 @@ pub fn rudy_overflow(maps: &FeatureMaps, alpha: f32) -> f32 {
         }
         let mut capacity = 0.0;
         for slot in ["F", "B", "In1", "InN"] {
-            let free = 1.0 - plane(&format!("obstacle.{slot}"))[tile] - plane(&format!("pad_copper.{slot}"))[tile];
+            let free = 1.0
+                - plane(&format!("obstacle.{slot}"))[tile]
+                - plane(&format!("pad_copper.{slot}"))[tile];
             capacity += plane(&format!("layer_present.{slot}"))[tile] * free.clamp(0.0, 1.0);
         }
         total += (demand[tile] - alpha * capacity).max(0.0);
@@ -501,7 +605,15 @@ mod tests {
     use pcb_router::{Net, Obstacle, RuleClass, Terminal};
 
     fn frame(nx: usize, ny: usize) -> TileFrame {
-        TileFrame { origin: [0.0, 0.0], pitch: 0.1, nx, ny, tile: 16, tiles_x: nx.div_ceil(16), tiles_y: ny.div_ceil(16) }
+        TileFrame {
+            origin: [0.0, 0.0],
+            pitch: 0.1,
+            nx,
+            ny,
+            tile: 16,
+            tiles_x: nx.div_ceil(16),
+            tiles_y: ny.div_ceil(16),
+        }
     }
 
     fn pad_at(center: Point, half: f64, layers: u32, net: u32) -> Obstacle {
@@ -532,7 +644,12 @@ mod tests {
             edge_clearance: 0.0,
             hole_clearance: 0.0,
             hole_to_hole: 0.0,
-            classes: vec![RuleClass { trace_width: 0.2, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 }],
+            classes: vec![RuleClass {
+                trace_width: 0.2,
+                clearance: 0.2,
+                via_diameter: 0.6,
+                via_drill: 0.3,
+            }],
             neck_width: 0.2,
             // A 0.5 mm square SMD pad on the front (5 x 5 nodes at 0.1 mm)
             // and a through pad.
@@ -541,8 +658,20 @@ mod tests {
                 name: "A".into(),
                 class: 0,
                 terminals: vec![
-                    Terminal { anchor: [0.4, 0.4], layers: 1, pad: 0, contact: None, label: "U1.1".into() },
-                    Terminal { anchor: [2.4, 2.4], layers: 3, pad: 1, contact: None, label: "U2.1".into() },
+                    Terminal {
+                        anchor: [0.4, 0.4],
+                        layers: 1,
+                        pad: 0,
+                        contact: None,
+                        label: "U1.1".into(),
+                    },
+                    Terminal {
+                        anchor: [2.4, 2.4],
+                        layers: 3,
+                        pad: 1,
+                        contact: None,
+                        label: "U2.1".into(),
+                    },
                 ],
             }],
             planes: Vec::new(),
@@ -583,9 +712,13 @@ mod tests {
         let density = 4.0 * 0.4 / 4.0;
         let near = (1.55 - 0.4) / 1.6;
         let far = (2.4 - 1.55) / 1.6;
-        let expected = [near * near, far * near, near * far, far * far].map(|share| (density * share) as f32);
+        let expected =
+            [near * near, far * near, near * far, far * far].map(|share| (density * share) as f32);
         for (value, want) in rudy.iter().zip(expected) {
-            assert!((value - want).abs() < 1.0e-5, "{rudy:?} against {expected:?}");
+            assert!(
+                (value - want).abs() < 1.0e-5,
+                "{rudy:?} against {expected:?}"
+            );
         }
         // Two pins on one net, each tile counts the net once.
         assert_eq!(get("nets_here"), vec![1.0, 0.0, 0.0, 1.0]);
@@ -613,7 +746,12 @@ mod tests {
     #[test]
     fn rudy_ranking_on_a_two_by_two_tile_board() {
         let mut board = small_board();
-        board.classes[0] = RuleClass { trace_width: 1.0, clearance: 1.0, via_diameter: 0.6, via_drill: 0.3 };
+        board.classes[0] = RuleClass {
+            trace_width: 1.0,
+            clearance: 1.0,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        };
         let maps = rasterize(&board, &frame(32, 32));
         let near = (1.55 - 0.4) / 1.6;
         let far = (2.4 - 1.55) / 1.6;
@@ -622,9 +760,16 @@ mod tests {
         // both layers).
         let capacity: [f64; 4] = [2.0 - pad, 2.0, 2.0, 2.0 - 2.0 * pad];
         let demand = [near * near, far * near, near * far, far * far].map(|share| 2.0 * share);
-        let expected: f64 = demand.iter().zip(capacity).map(|(d, c)| (d - 0.25 * c).max(0.0)).sum();
+        let expected: f64 = demand
+            .iter()
+            .zip(capacity)
+            .map(|(d, c)| (d - 0.25 * c).max(0.0))
+            .sum();
         let spread = rudy_overflow(&maps, 0.25);
-        assert!((spread as f64 - expected).abs() < 1.0e-4, "{spread} against {expected}");
+        assert!(
+            (spread as f64 - expected).abs() < 1.0e-4,
+            "{spread} against {expected}"
+        );
         // The second pad next to the first: a 0.8 mm net in one tile.
         let mut close = board.clone();
         close.obstacles[1] = pad_at([0.8, 0.8], 0.25, 3, 0);

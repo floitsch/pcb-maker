@@ -151,7 +151,8 @@ pub(super) fn copper_options(
     blocked: impl Fn(GridPosition) -> bool,
 ) -> Result<Vec<GridPosition>, String> {
     let anchor = terminal.at;
-    let preferred = preferred_terminal_layer(terminal.layers).ok_or("terminal has no supported layer")?;
+    let preferred =
+        preferred_terminal_layer(terminal.layers).ok_or("terminal has no supported layer")?;
     let permitted = if terminal.layers == [true, true] {
         vec![preferred, 1 - preferred]
     } else {
@@ -502,9 +503,14 @@ mod tests {
             resolution_mm: 1.0,
             ..Default::default()
         };
-        let options = copper_options(&model, &model.electrical_terminals()[0], [0.0, 0.0], [10, 10], &config, |p| {
-            p.x == 2 && p.y == 2
-        })
+        let options = copper_options(
+            &model,
+            &model.electrical_terminals()[0],
+            [0.0, 0.0],
+            [10, 10],
+            &config,
+            |p| p.x == 2 && p.y == 2,
+        )
         .unwrap();
         assert!(!options.is_empty());
         assert!(
@@ -513,9 +519,16 @@ mod tests {
                 .all(|p| p.layer == 1 && (p.x != 2 || p.y != 2))
         );
         assert!(
-            copper_options(&model, &model.electrical_terminals()[0], [0.0, 0.0], [10, 10], &config, |_| true)
-                .unwrap()
-                .is_empty()
+            copper_options(
+                &model,
+                &model.electrical_terminals()[0],
+                [0.0, 0.0],
+                [10, 10],
+                &config,
+                |_| true
+            )
+            .unwrap()
+            .is_empty()
         );
         let geometry = terminal_copper_geometry_at(&model, [2.1, 2.1], 1).unwrap();
         assert!(options.iter().all(|p| segment_inside(

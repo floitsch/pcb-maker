@@ -73,14 +73,16 @@ pub(crate) fn check_inputs(pcb: &Expr) -> CheckInputs {
             continue;
         }
         inputs.hatched_zones += 1;
-        inputs.hatch_holes += polygon_area(&pour.polygon) * pour.layers.count_ones() as f64 / (pitch * pitch);
+        inputs.hatch_holes +=
+            polygon_area(&pour.polygon) * pour.layers.count_ones() as f64 / (pitch * pitch);
     }
     inputs
 }
 
 /// The modelled seconds of one check from the model's inputs.
 pub(crate) fn check_seconds(inputs: CheckInputs) -> f64 {
-    (CHECK_SECONDS + SECONDS_PER_THOUSAND_HATCH_HOLES * inputs.hatch_holes / 1000.0).min(MAX_CHECK_SECONDS)
+    (CHECK_SECONDS + SECONDS_PER_THOUSAND_HATCH_HOLES * inputs.hatch_holes / 1000.0)
+        .min(MAX_CHECK_SECONDS)
 }
 
 /// KiCad checks counted as work: each counts `charge`, whether the DRC
@@ -174,22 +176,43 @@ mod tests {
     #[test]
     fn hatch_holes_are_the_area_per_layer_over_the_square_pitch() {
         // 5000 mm2 on two layers at a 0.8 mm pitch: 15625 holes.
-        let hatched = board(&zone("\"F.Cu\" \"B.Cu\"", "(mode hatch) (hatch_thickness 0.2) (hatch_gap 0.6)"));
+        let hatched = board(&zone(
+            "\"F.Cu\" \"B.Cu\"",
+            "(mode hatch) (hatch_thickness 0.2) (hatch_gap 0.6)",
+        ));
         let inputs = check_inputs(&hatched);
         assert_eq!(inputs.hatched_zones, 1);
         assert!((inputs.hatch_holes - 15625.0).abs() < 1.0e-6, "{inputs:?}");
         // One layer, half the holes; a coarser pitch, fewer.
-        let one = check_inputs(&board(&zone("\"F.Cu\"", "(mode hatch) (hatch_thickness 0.2) (hatch_gap 0.6)")));
+        let one = check_inputs(&board(&zone(
+            "\"F.Cu\"",
+            "(mode hatch) (hatch_thickness 0.2) (hatch_gap 0.6)",
+        )));
         assert!((one.hatch_holes - 7812.5).abs() < 1.0e-6);
-        let coarse = check_inputs(&board(&zone("\"F.Cu\" \"B.Cu\"", "(mode hatch) (hatch_thickness 0.2) (hatch_gap 1.8)")));
+        let coarse = check_inputs(&board(&zone(
+            "\"F.Cu\" \"B.Cu\"",
+            "(mode hatch) (hatch_thickness 0.2) (hatch_gap 1.8)",
+        )));
         assert!((coarse.hatch_holes - 2500.0).abs() < 1.0e-6);
     }
 
     #[test]
     fn the_charge_grows_with_the_holes_up_to_its_cap() {
-        let few = check_seconds(CheckInputs { hatched_zones: 1, hatch_holes: 1000.0 });
-        let many = check_seconds(CheckInputs { hatched_zones: 1, hatch_holes: 5000.0 });
+        let few = check_seconds(CheckInputs {
+            hatched_zones: 1,
+            hatch_holes: 1000.0,
+        });
+        let many = check_seconds(CheckInputs {
+            hatched_zones: 1,
+            hatch_holes: 5000.0,
+        });
         assert!(CHECK_SECONDS < few && few < many, "{few} {many}");
-        assert_eq!(check_seconds(CheckInputs { hatched_zones: 1, hatch_holes: 1.0e9 }), MAX_CHECK_SECONDS);
+        assert_eq!(
+            check_seconds(CheckInputs {
+                hatched_zones: 1,
+                hatch_holes: 1.0e9
+            }),
+            MAX_CHECK_SECONDS
+        );
     }
 }

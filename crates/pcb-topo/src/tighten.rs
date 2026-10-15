@@ -17,7 +17,10 @@ use pcb_router::{Board, NetRoute, ObstacleKind, Point, Segment, verify};
 use std::collections::HashMap;
 
 fn key(point: Point) -> (i64, i64) {
-    ((point[0] * 1.0e5).round() as i64, (point[1] * 1.0e5).round() as i64)
+    (
+        (point[0] * 1.0e5).round() as i64,
+        (point[1] * 1.0e5).round() as i64,
+    )
 }
 
 /// A chain of one net's segments on one layer.
@@ -37,7 +40,10 @@ fn chains(board: &Board, routes: &[NetRoute]) -> Vec<Chain> {
         let mut nodes: HashMap<(usize, (i64, i64)), Vec<usize>> = HashMap::new();
         for (index, segment) in route.segments.iter().enumerate() {
             for end in [segment.start, segment.end] {
-                nodes.entry((segment.layer, key(end))).or_default().push(index);
+                nodes
+                    .entry((segment.layer, key(end)))
+                    .or_default()
+                    .push(index);
             }
         }
         let vias: Vec<(i64, i64)> = route.vias.iter().map(|via| key(via.at)).collect();
@@ -72,18 +78,31 @@ fn chains(board: &Board, routes: &[NetRoute]) -> Vec<Chain> {
                     let piece = &route.segments[current];
                     segments.push(piece.clone());
                     width = width.min(piece.width);
-                    let next = if key(piece.start) == key(at) { piece.end } else { piece.start };
+                    let next = if key(piece.start) == key(at) {
+                        piece.end
+                    } else {
+                        piece.start
+                    };
                     points.push(next);
                     at = next;
                     if fixed(layer, next) {
                         break;
                     }
-                    let Some(&following) = nodes[&(layer, key(next))].iter().find(|&&other| !used[other]) else {
+                    let Some(&following) = nodes[&(layer, key(next))]
+                        .iter()
+                        .find(|&&other| !used[other])
+                    else {
                         break;
                     };
                     current = following;
                 }
-                chains.push(Chain { net, layer, width, points, segments });
+                chains.push(Chain {
+                    net,
+                    layer,
+                    width,
+                    points,
+                    segments,
+                });
             }
         }
         for (index, segment) in route.segments.iter().enumerate() {
@@ -114,7 +133,10 @@ pub struct TightenReport {
 /// `routes` pulled tight where the result stays legal.
 pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenReport) {
     let chains = chains(board, routes);
-    let mut report = TightenReport { pieces: chains.len(), ..TightenReport::default() };
+    let mut report = TightenReport {
+        pieces: chains.len(),
+        ..TightenReport::default()
+    };
     let pieces: Vec<Piece> = chains
         .iter()
         .enumerate()
@@ -132,7 +154,12 @@ pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenRep
         .iter()
         .enumerate()
         .flat_map(|(net, route)| {
-            route.vias.iter().map(move |via| PlacedVia { wire: usize::MAX, net: net as u32, class: board.nets[net].class, at: via.at })
+            route.vias.iter().map(move |via| PlacedVia {
+                wire: usize::MAX,
+                net: net as u32,
+                class: board.nets[net].class,
+                at: via.at,
+            })
         })
         .collect();
     let realized = realize::realize(board, &pieces, &vias);
@@ -140,7 +167,13 @@ pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenRep
     // original copper for pieces the verifier objects to, until clean.
     let mut original: Vec<bool> = realized.paths.iter().map(Option::is_none).collect();
     let assemble = |original: &[bool]| -> (Vec<NetRoute>, Vec<Vec<usize>>) {
-        let mut out: Vec<NetRoute> = routes.iter().map(|route| NetRoute { segments: Vec::new(), vias: route.vias.clone() }).collect();
+        let mut out: Vec<NetRoute> = routes
+            .iter()
+            .map(|route| NetRoute {
+                segments: Vec::new(),
+                vias: route.vias.clone(),
+            })
+            .collect();
         let mut owners: Vec<Vec<usize>> = vec![Vec::new(); routes.len()];
         for (index, chain) in chains.iter().enumerate() {
             if original[index] {
@@ -154,7 +187,12 @@ pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenRep
                     if distance(pair[0], pair[1]) < 1.0e-6 {
                         continue;
                     }
-                    out[chain.net].segments.push(Segment { layer: chain.layer, start: pair[0], end: pair[1], width: chain.width });
+                    out[chain.net].segments.push(Segment {
+                        layer: chain.layer,
+                        start: pair[0],
+                        end: pair[1],
+                        width: chain.width,
+                    });
                     owners[chain.net].push(index);
                 }
             }
@@ -187,7 +225,11 @@ pub fn tighten(board: &Board, routes: &[NetRoute]) -> (Vec<NetRoute>, TightenRep
     report.kept = original.iter().filter(|&&kept| kept).count();
     report.tightened = report.pieces - report.kept;
     let length = |routes: &[NetRoute]| -> f64 {
-        routes.iter().flat_map(|route| &route.segments).map(|segment| distance(segment.start, segment.end)).sum()
+        routes
+            .iter()
+            .flat_map(|route| &route.segments)
+            .map(|segment| distance(segment.start, segment.end))
+            .sum()
     };
     report.length_before = length(routes);
     report.length_after = length(&result);

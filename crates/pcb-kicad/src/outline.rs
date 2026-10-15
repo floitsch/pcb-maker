@@ -27,7 +27,11 @@ pub(super) const ARC_TOLERANCE: f64 = 0.005;
 /// (its start, middle and end alone miss its bulge): for extents.
 pub(super) fn outline_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     if item.child("start").is_some() && item.child("mid").is_some() && item.child("end").is_some() {
-        return Ok(arc_points(form_xy(item, "start")?, form_xy(item, "mid")?, form_xy(item, "end")?));
+        return Ok(arc_points(
+            form_xy(item, "start")?,
+            form_xy(item, "mid")?,
+            form_xy(item, "end")?,
+        ));
     }
     let mut points = Vec::new();
     for head in ["start", "end"] {
@@ -44,7 +48,11 @@ pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
     let at = |dx: f64, dy: f64| [center[0] + dx, center[1] + dy];
     let mut points = arc_points(at(radius, 0.0), at(0.0, radius), at(-radius, 0.0));
     points.pop();
-    points.extend(arc_points(at(-radius, 0.0), at(0.0, -radius), at(radius, 0.0)));
+    points.extend(arc_points(
+        at(-radius, 0.0),
+        at(0.0, -radius),
+        at(radius, 0.0),
+    ));
     points
 }
 
@@ -52,14 +60,23 @@ pub(super) fn circle_points(center: [f64; 2], radius: f64) -> Vec<[f64; 2]> {
 /// polygon with rounded sides, KiCad 7 on), flattened as `arc_points` does.
 pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let mut points: Vec<[f64; 2]> = Vec::new();
-    for point in item.child("pts").map(Expr::children).unwrap_or_default().iter() {
+    for point in item
+        .child("pts")
+        .map(Expr::children)
+        .unwrap_or_default()
+        .iter()
+    {
         match point.head() {
             Some("xy") => points.push([
                 expression_coordinate(point, 1, "polygon x")?,
                 expression_coordinate(point, 2, "polygon y")?,
             ]),
             Some("arc") => {
-                for at in arc_points(form_xy(point, "start")?, form_xy(point, "mid")?, form_xy(point, "end")?) {
+                for at in arc_points(
+                    form_xy(point, "start")?,
+                    form_xy(point, "mid")?,
+                    form_xy(point, "end")?,
+                ) {
                     if points.last() != Some(&at) {
                         points.push(at);
                     }
@@ -77,16 +94,20 @@ pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
     // Circle through three points.
     let d = 2.0
-        * (start[0] * (mid[1] - end[1]) + mid[0] * (end[1] - start[1]) + end[0] * (start[1] - mid[1]));
+        * (start[0] * (mid[1] - end[1])
+            + mid[0] * (end[1] - start[1])
+            + end[0] * (start[1] - mid[1]));
     if d.abs() < 1.0e-12 {
         return vec![start, end];
     }
     let square = |p: [f64; 2]| p[0] * p[0] + p[1] * p[1];
     let center = [
-        (square(start) * (mid[1] - end[1]) + square(mid) * (end[1] - start[1])
+        (square(start) * (mid[1] - end[1])
+            + square(mid) * (end[1] - start[1])
             + square(end) * (start[1] - mid[1]))
             / d,
-        (square(start) * (end[0] - mid[0]) + square(mid) * (start[0] - end[0])
+        (square(start) * (end[0] - mid[0])
+            + square(mid) * (start[0] - end[0])
             + square(end) * (mid[0] - start[0]))
             / d,
     ];
@@ -97,8 +118,15 @@ pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[
     // Sweep from start to end in the direction that passes through mid.
     let forward = (a2 - a0).rem_euclid(tau);
     let through = (a1 - a0).rem_euclid(tau);
-    let sweep = if through <= forward { forward } else { forward - tau };
-    let step = 2.0 * (1.0 - ARC_TOLERANCE / radius.max(ARC_TOLERANCE)).clamp(-1.0, 1.0).acos();
+    let sweep = if through <= forward {
+        forward
+    } else {
+        forward - tau
+    };
+    let step = 2.0
+        * (1.0 - ARC_TOLERANCE / radius.max(ARC_TOLERANCE))
+            .clamp(-1.0, 1.0)
+            .acos();
     let pieces = ((sweep.abs() / step.max(1.0e-3)).ceil() as usize).clamp(2, 720);
     let mut points = Vec::with_capacity(pieces + 1);
     points.push(start);
@@ -182,7 +210,9 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             Some("gr_line" | "fp_line") => open.push(vec![xy("start")?, xy("end")?]),
             Some("gr_arc" | "fp_arc") => {
                 let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
-                if distance_squared(start, end).sqrt() < 1.0e-6 && distance_squared(start, mid).sqrt() > 1.0e-6 {
+                if distance_squared(start, end).sqrt() < 1.0e-6
+                    && distance_squared(start, mid).sqrt() > 1.0e-6
+                {
                     // An arc that ends where it starts is a full circle
                     // (start and mid are opposite).
                     let center = [(start[0] + mid[0]) / 2.0, (start[1] + mid[1]) / 2.0];
@@ -269,7 +299,13 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     // no edge: dropped, its neighbours' ends then chain to each other.
     let long: Vec<bool> = open
         .iter()
-        .map(|piece| piece.windows(2).map(|pair| distance_squared(pair[0], pair[1]).sqrt()).sum::<f64>() > CHAIN_TOLERANCE)
+        .map(|piece| {
+            piece
+                .windows(2)
+                .map(|pair| distance_squared(pair[0], pair[1]).sqrt())
+                .sum::<f64>()
+                > CHAIN_TOLERANCE
+        })
         .collect();
     let mut keep = long.iter();
     open.retain(|_| *keep.next().unwrap());
@@ -329,7 +365,8 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 let head = key(chain[0]);
                 let continues = (0..open.len()).any(|index| {
                     !used[index]
-                        && (key(open[index][0]) == head || key(*open[index].last().unwrap()) == head)
+                        && (key(open[index][0]) == head
+                            || key(*open[index].last().unwrap()) == head)
                 });
                 if continues {
                     chain.reverse();
@@ -364,7 +401,11 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     // polygon is their union (as the even-odd test and the edge distances
     // read it).
     let mut loops: Vec<(Vec<[f64; 2]>, bool)> = loops.into_iter().zip(loop_on_board).collect();
-    loops.sort_by(|a, b| polygon_area(&b.0).abs().total_cmp(&polygon_area(&a.0).abs()));
+    loops.sort_by(|a, b| {
+        polygon_area(&b.0)
+            .abs()
+            .total_cmp(&polygon_area(&a.0).abs())
+    });
     let mut pieces: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut board_cutouts = Vec::new();
@@ -373,7 +414,10 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         // the board's edge has vertices on that edge, which the even-odd
         // test may count either way.
         let inside = |piece: &Vec<[f64; 2]>| {
-            let count = candidate.iter().filter(|point| point_in_polygon(**point, piece)).count();
+            let count = candidate
+                .iter()
+                .filter(|point| point_in_polygon(**point, piece))
+                .count();
             2 * count >= candidate.len()
         };
         if pieces.iter().any(inside) {
@@ -387,8 +431,20 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         .iter()
         .map(|piece| {
             piece.iter().fold(
-                [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
-                |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ],
+                |b, p| {
+                    [
+                        b[0].min(p[0]),
+                        b[1].min(p[1]),
+                        b[2].max(p[0]),
+                        b[3].max(p[1]),
+                    ]
+                },
             )
         })
         .collect();
@@ -399,7 +455,8 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         let (i, j) = (0..outline.len())
             .flat_map(|i| (0..piece.len()).map(move |j| (i, j)))
             .min_by(|(a, b), (c, d)| {
-                distance_squared(outline[*a], piece[*b]).total_cmp(&distance_squared(outline[*c], piece[*d]))
+                distance_squared(outline[*a], piece[*b])
+                    .total_cmp(&distance_squared(outline[*c], piece[*d]))
             })
             .unwrap();
         let mut joined = outline[..=i].to_vec();
@@ -408,7 +465,12 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         outline = joined;
     }
     if std::env::var_os("PCB_OUTLINE_DEBUG").is_some() {
-        eprintln!("outline: area {:.1} ({} vertices), {} cutouts", polygon_area(&outline).abs(), outline.len(), cutouts.len());
+        eprintln!(
+            "outline: area {:.1} ({} vertices), {} cutouts",
+            polygon_area(&outline).abs(),
+            outline.len(),
+            cutouts.len()
+        );
     }
     let loops = cutouts;
     Ok(BoardLoops {
@@ -484,7 +546,11 @@ mod tests {
         .unwrap();
         let loops = board_loops(&pcb).unwrap();
         // The curve bulges 3 * 0.75 * 4 / 4 = 3 mm out at its middle.
-        let widest = loops.outline.iter().map(|point| point[0]).fold(0.0, f64::max);
+        let widest = loops
+            .outline
+            .iter()
+            .map(|point| point[0])
+            .fold(0.0, f64::max);
         assert!((widest - 13.0).abs() < 0.01, "{widest}");
         assert!(loops.outline.len() > 10);
     }

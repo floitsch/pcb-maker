@@ -27,7 +27,11 @@ impl PourMap {
     /// brush take the step from `start` (orientation 0: towards +x +y, 1:
     /// towards +x -y), asked only where both common neighbours are not
     /// free (otherwise they join through one of those).
-    pub fn build(grid: &Grid, free: &[Vec<bool>], diagonal: &dyn Fn(usize, usize, usize) -> bool) -> Self {
+    pub fn build(
+        grid: &Grid,
+        free: &[Vec<bool>],
+        diagonal: &dyn Fn(usize, usize, usize) -> bool,
+    ) -> Self {
         let (nx, ny) = (grid.nx, grid.ny);
         // `free` already says that the pour's brush fits, so every free node
         // is solid copper; the rim is left out to keep neighbour access safe.
@@ -76,7 +80,11 @@ impl PourMap {
                         if solid[corner_x] || solid[corner_y] {
                             continue;
                         }
-                        let (start, orientation) = if dx > 0 { (cell, (dy < 0) as usize) } else { (next, (dy > 0) as usize) };
+                        let (start, orientation) = if dx > 0 {
+                            (cell, (dy < 0) as usize)
+                        } else {
+                            (next, (dy > 0) as usize)
+                        };
                         if diagonal(layer, start, orientation) {
                             label[next] = pieces as u32;
                             stack.push(next);

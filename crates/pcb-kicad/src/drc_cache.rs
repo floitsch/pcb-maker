@@ -79,7 +79,10 @@ pub struct DrcCacheCounts {
 
 /// This process's DRC calls and cache hits so far.
 pub fn drc_cache_counts() -> DrcCacheCounts {
-    DrcCacheCounts { calls: CALLS.load(Ordering::Relaxed), hits: HITS.load(Ordering::Relaxed) }
+    DrcCacheCounts {
+        calls: CALLS.load(Ordering::Relaxed),
+        hits: HITS.load(Ordering::Relaxed),
+    }
 }
 
 pub(crate) fn count_call() {
@@ -116,7 +119,10 @@ pub(crate) fn tool_version(program: &OsStr) -> Option<String> {
         .and_then(|output| String::from_utf8(output.stdout).ok())
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty());
-    versions.lock().ok()?.insert(program.to_os_string(), version.clone());
+    versions
+        .lock()
+        .ok()?
+        .insert(program.to_os_string(), version.clone());
     version
 }
 
@@ -135,10 +141,19 @@ pub(crate) struct KeyContext {
 impl KeyContext {
     /// `config_home` is the `KICAD_CONFIG_HOME` kicad-cli runs with when it
     /// is not the process's own (see `kicad_config`): its tables are hashed.
-    fn current(program: &OsStr, arguments: &[&str], config_home: Option<&Path>) -> Result<Self, String> {
+    fn current(
+        program: &OsStr,
+        arguments: &[&str],
+        config_home: Option<&Path>,
+    ) -> Result<Self, String> {
         let version = tool_version(program).ok_or("kicad-cli version unknown")?;
         let mut environment: Vec<(String, String)> = std::env::vars_os()
-            .filter_map(|(name, value)| Some((name.into_string().ok()?, value.to_string_lossy().into_owned())))
+            .filter_map(|(name, value)| {
+                Some((
+                    name.into_string().ok()?,
+                    value.to_string_lossy().into_owned(),
+                ))
+            })
             .filter(|(name, _)| name.starts_with("KICAD"))
             .filter(|(name, _)| config_home.is_none() || name != "KICAD_CONFIG_HOME")
             .collect();
@@ -156,7 +171,12 @@ impl KeyContext {
         if let Some(config) = config.filter(|path| path.is_dir()) {
             let mut candidates = vec![config.clone()];
             if let Ok(entries) = fs::read_dir(&config) {
-                candidates.extend(entries.flatten().map(|entry| entry.path()).filter(|path| path.is_dir()));
+                candidates.extend(
+                    entries
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|path| path.is_dir()),
+                );
             }
             for directory in candidates {
                 for table in ["fp-lib-table", "sym-lib-table"] {
@@ -168,22 +188,44 @@ impl KeyContext {
             }
         }
         globals.sort();
-        Ok(Self { version, arguments: arguments.iter().map(|argument| argument.to_string()).collect(), globals, environment })
+        Ok(Self {
+            version,
+            arguments: arguments
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect(),
+            globals,
+            environment,
+        })
     }
 }
 
 fn is_design_file(name: &str) -> bool {
     matches!(name, "fp-lib-table" | "sym-lib-table")
-        || [".kicad_pcb", ".kicad_pro", ".kicad_dru", ".kicad_sch", ".kicad_sym", ".kicad_mod"]
-            .iter()
-            .any(|extension| name.ends_with(extension))
+        || [
+            ".kicad_pcb",
+            ".kicad_pro",
+            ".kicad_dru",
+            ".kicad_sch",
+            ".kicad_sym",
+            ".kicad_mod",
+        ]
+        .iter()
+        .any(|extension| name.ends_with(extension))
 }
 
 /// The KiCad design files under `root` (hidden entries skipped, symbolic
 /// links followed to a bounded depth), as relative paths, sorted.
 pub(crate) fn project_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>, String> {
-    fn walk(root: &Path, directory: &Path, depth: usize, files: &mut Vec<(PathBuf, PathBuf)>, bytes: &mut u64) -> Result<(), String> {
-        let entries = fs::read_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    fn walk(
+        root: &Path,
+        directory: &Path,
+        depth: usize,
+        files: &mut Vec<(PathBuf, PathBuf)>,
+        bytes: &mut u64,
+    ) -> Result<(), String> {
+        let entries =
+            fs::read_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
         for entry in entries {
             let entry = entry.map_err(|error| error.to_string())?;
             let name = entry.file_name();
@@ -193,17 +235,25 @@ pub(crate) fn project_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>, Stri
             }
             let path = entry.path();
             // Follows symbolic links; a dangling one is no input.
-            let Ok(metadata) = fs::metadata(&path) else { continue };
+            let Ok(metadata) = fs::metadata(&path) else {
+                continue;
+            };
             if metadata.is_dir() {
                 if depth < MAX_PROJECT_DEPTH {
                     walk(root, &path, depth + 1, files, bytes)?;
                 }
             } else if metadata.is_file() && is_design_file(name) {
                 *bytes += metadata.len();
-                let relative = path.strip_prefix(root).map_err(|error| error.to_string())?.to_path_buf();
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|error| error.to_string())?
+                    .to_path_buf();
                 files.push((relative, path));
                 if files.len() > MAX_PROJECT_FILES || *bytes > MAX_PROJECT_BYTES {
-                    return Err(format!("{} holds too many KiCad files to hash", root.display()));
+                    return Err(format!(
+                        "{} holds too many KiCad files to hash",
+                        root.display()
+                    ));
                 }
             }
         }
@@ -238,14 +288,19 @@ pub(crate) fn key(context: &KeyContext, input: &Path) -> Result<String, String> 
         field(name.as_bytes());
         field(bytes);
     }
-    let name = input.file_name().ok_or_else(|| format!("{} names no file", input.display()))?;
+    let name = input
+        .file_name()
+        .ok_or_else(|| format!("{} names no file", input.display()))?;
     field(name.as_encoded_bytes());
     let root = match input.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
     };
     let files = project_files(root)?;
-    if !files.iter().any(|(relative, _)| relative.as_os_str() == name) {
+    if !files
+        .iter()
+        .any(|(relative, _)| relative.as_os_str() == name)
+    {
         return Err(format!("{} does not exist", input.display()));
     }
     field(&(files.len() as u64).to_le_bytes());
@@ -261,9 +316,19 @@ pub(crate) fn key(context: &KeyContext, input: &Path) -> Result<String, String> 
 /// A unique name for a temporary file next to `path`.
 fn temporary_next_to(path: &Path) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|time| time.as_nanos()).unwrap_or(0);
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    path.with_file_name(format!(".{name}.{}.{nonce}.{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)))
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|time| time.as_nanos())
+        .unwrap_or(0);
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(
+        ".{name}.{}.{nonce}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Writes `bytes` to `path` so that readers see the old file or the whole
@@ -272,7 +337,10 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> 
     let temporary = temporary_next_to(path);
     let written = fs::write(&temporary, bytes)
         .map_err(|error| format!("failed to write {}: {error}", temporary.display()))
-        .and_then(|()| fs::rename(&temporary, path).map_err(|error| format!("failed to rename to {}: {error}", path.display())));
+        .and_then(|()| {
+            fs::rename(&temporary, path)
+                .map_err(|error| format!("failed to rename to {}: {error}", path.display()))
+        });
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
     }
@@ -295,7 +363,8 @@ impl DrcCache {
         input: &Path,
         config_home: Option<&Path>,
     ) -> Option<Self> {
-        let derived = KeyContext::current(program, arguments, config_home).and_then(|context| key(&context, input));
+        let derived = KeyContext::current(program, arguments, config_home)
+            .and_then(|context| key(&context, input));
         match derived {
             Ok(key) => Some(Self { directory, key }),
             Err(error) => {
@@ -345,12 +414,16 @@ impl DrcCache {
 /// removes temporary files a killed process left (older than an hour).
 /// Other processes may evict at the same time: what is gone is gone.
 pub(crate) fn evict(directory: &Path, max_entries: usize, max_bytes: u64) {
-    let Ok(entries) = fs::read_dir(directory) else { return };
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
     let mut kept = Vec::new();
     let mut total = 0u64;
     let now = SystemTime::now();
     for entry in entries.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         if !metadata.is_file() {
             continue;
         }
@@ -358,7 +431,9 @@ pub(crate) fn evict(directory: &Path, max_entries: usize, max_bytes: u64) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if name.starts_with('.') {
-            if name.ends_with(".tmp") && now.duration_since(modified).unwrap_or_default() > Duration::from_secs(3600) {
+            if name.ends_with(".tmp")
+                && now.duration_since(modified).unwrap_or_default() > Duration::from_secs(3600)
+            {
                 let _ = fs::remove_file(entry.path());
             }
             continue;
@@ -393,7 +468,8 @@ mod tests {
 
     impl Scratch {
         fn new(label: &str) -> Self {
-            let directory = temporary_next_to(&std::env::temp_dir().join(format!("drc-cache-test-{label}")));
+            let directory =
+                temporary_next_to(&std::env::temp_dir().join(format!("drc-cache-test-{label}")));
             fs::create_dir_all(&directory).unwrap();
             Self(directory)
         }
@@ -408,14 +484,30 @@ mod tests {
     fn context() -> KeyContext {
         KeyContext {
             version: "10.0.7".into(),
-            arguments: ["pcb", "drc", "--format", "json", "--severity-all", "--output"].map(String::from).to_vec(),
+            arguments: [
+                "pcb",
+                "drc",
+                "--format",
+                "json",
+                "--severity-all",
+                "--output",
+            ]
+            .map(String::from)
+            .to_vec(),
             globals: vec![("fp-lib-table".into(), b"(fp_lib_table)".to_vec())],
-            environment: vec![("KICAD10_FOOTPRINT_DIR".into(), "/usr/share/kicad/footprints".into())],
+            environment: vec![(
+                "KICAD10_FOOTPRINT_DIR".into(),
+                "/usr/share/kicad/footprints".into(),
+            )],
         }
     }
 
     fn project(directory: &Path) -> PathBuf {
-        fs::write(directory.join("board.kicad_pcb"), "(kicad_pcb (version 20240108))\n").unwrap();
+        fs::write(
+            directory.join("board.kicad_pcb"),
+            "(kicad_pcb (version 20240108))\n",
+        )
+        .unwrap();
         fs::write(directory.join("board.kicad_pro"), "{\"board\": {}}\n").unwrap();
         fs::write(directory.join("notes.txt"), "not a design file").unwrap();
         directory.join("board.kicad_pcb")
@@ -426,7 +518,11 @@ mod tests {
         let scratch = Scratch::new("key");
         let board = project(&scratch.0);
         let base = key(&context(), &board).unwrap();
-        assert_eq!(base, key(&context(), &board).unwrap(), "the key is deterministic");
+        assert_eq!(
+            base,
+            key(&context(), &board).unwrap(),
+            "the key is deterministic"
+        );
         assert_eq!(base.len(), 64);
 
         // Files kicad-cli does not read, and hidden ones (our temporary
@@ -461,7 +557,11 @@ mod tests {
             }
         }
         let _ = fs::remove_dir_all(scratch.0.join("lib"));
-        assert_eq!(base, key(&context(), &board).unwrap(), "restored inputs give the old key");
+        assert_eq!(
+            base,
+            key(&context(), &board).unwrap(),
+            "restored inputs give the old key"
+        );
 
         // So do the tool, its arguments, the global tables and environment.
         let mut other = context();
@@ -481,7 +581,10 @@ mod tests {
         variants.push(other);
         for variant in variants {
             let changed = key(&variant, &board).unwrap();
-            assert!(!seen.contains(&changed), "{variant:?} did not change the key");
+            assert!(
+                !seen.contains(&changed),
+                "{variant:?} did not change the key"
+            );
             seen.push(changed);
         }
 
@@ -513,7 +616,10 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), b"first");
         write_atomically(&path, b"second, longer").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"second, longer");
-        let names: Vec<_> = fs::read_dir(&scratch.0).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+        let names: Vec<_> = fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
         assert_eq!(names, vec![OsString::from("entry.json")]);
         // A failed write (no such directory) leaves nothing behind either.
         assert!(write_atomically(&scratch.0.join("missing/entry.json"), b"x").is_err());
@@ -546,19 +652,47 @@ mod tests {
         for index in 0..20u64 {
             let path = scratch.0.join(format!("{index:02}.json"));
             fs::write(&path, vec![b'x'; 100]).unwrap();
-            fs::File::options().write(true).open(&path).unwrap().set_modified(base + Duration::from_secs(index)).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(base + Duration::from_secs(index))
+                .unwrap();
         }
         let stale = scratch.0.join(".00.json.1.2.3.tmp");
         fs::write(&stale, "half").unwrap();
-        fs::File::options().write(true).open(&stale).unwrap().set_modified(base - Duration::from_secs(7200)).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(base - Duration::from_secs(7200))
+            .unwrap();
         evict(&scratch.0, 30, 1 << 20);
-        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 20, "within bounds: only the stale temporary goes");
+        assert_eq!(
+            fs::read_dir(&scratch.0).unwrap().count(),
+            20,
+            "within bounds: only the stale temporary goes"
+        );
         // Entry 00 was used last: it stays.
-        fs::File::options().write(true).open(scratch.0.join("00.json")).unwrap().set_modified(SystemTime::now()).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(scratch.0.join("00.json"))
+            .unwrap()
+            .set_modified(SystemTime::now())
+            .unwrap();
         evict(&scratch.0, 10, 1 << 20);
-        let mut left: Vec<_> = fs::read_dir(&scratch.0).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect();
+        let mut left: Vec<_> = fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
         left.sort();
-        assert_eq!(left, vec!["00.json", "12.json", "13.json", "14.json", "15.json", "16.json", "17.json", "18.json", "19.json"]);
+        assert_eq!(
+            left,
+            vec![
+                "00.json", "12.json", "13.json", "14.json", "15.json", "16.json", "17.json",
+                "18.json", "19.json"
+            ]
+        );
         // The byte bound alone.
         evict(&scratch.0, 100, 500);
         assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 4);
@@ -568,7 +702,9 @@ mod tests {
     fn the_cache_directory_follows_the_environment_rules() {
         // Only reads the environment; the variables are not changed here
         // (tests run side by side).
-        if std::env::var_os("PCB_MAKER_NO_CACHE").is_some_and(|value| !value.is_empty() && value != "0") {
+        if std::env::var_os("PCB_MAKER_NO_CACHE")
+            .is_some_and(|value| !value.is_empty() && value != "0")
+        {
             assert!(directory_from_env().is_none());
         } else if let Some(directory) = directory_from_env() {
             assert!(directory.ends_with("drc"));

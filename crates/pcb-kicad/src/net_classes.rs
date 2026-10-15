@@ -29,8 +29,16 @@ pub struct KiCadNetClassRequest {
 /// class naming it. A pattern that matches no net is an error.
 fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String>>, String> {
     let mut nets = BTreeSet::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
             if let Some(net) = node_net(pad) {
                 nets.insert(net.to_string());
             }
@@ -40,9 +48,17 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
     let mut assigned = Vec::new();
     for class in classes {
         if class.name.is_empty() || class.name == "Default" {
-            return Err(format!("net class name {:?} is reserved or empty", class.name));
+            return Err(format!(
+                "net class name {:?} is reserved or empty",
+                class.name
+            ));
         }
-        for value in [class.track_width_mm, class.clearance_mm, class.via_diameter_mm, class.via_drill_mm] {
+        for value in [
+            class.track_width_mm,
+            class.clearance_mm,
+            class.via_diameter_mm,
+            class.via_drill_mm,
+        ] {
             if value.is_some_and(|value| !(value > 0.0)) {
                 return Err(format!("net class {}: sizes must be positive", class.name));
             }
@@ -51,10 +67,15 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
         for pattern in &class.nets {
             let matched: Vec<&String> = nets
                 .iter()
-                .filter(|net| wildcard_match(pattern, net) || wildcard_match(pattern, normalize_net(net)))
+                .filter(|net| {
+                    wildcard_match(pattern, net) || wildcard_match(pattern, normalize_net(net))
+                })
                 .collect();
             if matched.is_empty() {
-                return Err(format!("net class {}: {pattern:?} matches no net", class.name));
+                return Err(format!(
+                    "net class {}: {pattern:?} matches no net",
+                    class.name
+                ));
             }
             for net in matched {
                 if taken.insert(net.clone()) {
@@ -68,7 +89,10 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
 }
 
 /// `config` with the rules of the requested classes' nets replaced.
-pub(super) fn with_net_classes(config: &KiCadBoardRouterConfig, pcb: &Expr) -> Result<KiCadBoardRouterConfig, String> {
+pub(super) fn with_net_classes(
+    config: &KiCadBoardRouterConfig,
+    pcb: &Expr,
+) -> Result<KiCadBoardRouterConfig, String> {
     let mut config = config.clone();
     let assigned = assign(pcb, &config.net_classes)?;
     for (class, members) in config.net_classes.clone().iter().zip(assigned) {
@@ -107,15 +131,23 @@ pub(super) fn write_net_classes(
     let assigned = assign(pcb, classes)?;
     let path = directory.join(format!("{board_id}.kicad_pro"));
     let mut project: serde_json::Value = match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|error| format!("failed to parse {}: {error}", path.display()))?,
-        Err(_) => serde_json::json!({"meta": {"filename": format!("{board_id}.kicad_pro"), "version": 1}}),
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|error| format!("failed to parse {}: {error}", path.display()))?,
+        Err(_) => {
+            serde_json::json!({"meta": {"filename": format!("{board_id}.kicad_pro"), "version": 1}})
+        }
     };
     if !project["net_settings"].is_object() {
         project["net_settings"] = serde_json::json!({"meta": {"version": 3}});
     }
     let settings = &mut project["net_settings"];
-    let mut existing: Vec<serde_json::Value> = settings["classes"].as_array().cloned().unwrap_or_default();
-    existing.retain(|entry| !classes.iter().any(|class| entry["name"] == class.name.as_str()));
+    let mut existing: Vec<serde_json::Value> =
+        settings["classes"].as_array().cloned().unwrap_or_default();
+    existing.retain(|entry| {
+        !classes
+            .iter()
+            .any(|class| entry["name"] == class.name.as_str())
+    });
     let template = existing
         .iter()
         .find(|entry| entry["name"] == "Default")
@@ -134,7 +166,10 @@ pub(super) fn write_net_classes(
     }
     // Ours first: KiCad takes a net's rules from its highest-priority class
     // (the smallest number).
-    for entry in existing.iter_mut().filter(|entry| entry["name"] != "Default") {
+    for entry in existing
+        .iter_mut()
+        .filter(|entry| entry["name"] != "Default")
+    {
         if let Some(priority) = entry["priority"].as_i64() {
             entry["priority"] = (priority + classes.len() as i64).into();
         }
@@ -158,8 +193,15 @@ pub(super) fn write_net_classes(
     }
     result.extend(existing);
     settings["classes"] = result.into();
-    let mut patterns: Vec<serde_json::Value> = settings["netclass_patterns"].as_array().cloned().unwrap_or_default();
-    patterns.retain(|entry| !classes.iter().any(|class| entry["netclass"] == class.name.as_str()));
+    let mut patterns: Vec<serde_json::Value> = settings["netclass_patterns"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    patterns.retain(|entry| {
+        !classes
+            .iter()
+            .any(|class| entry["netclass"] == class.name.as_str())
+    });
     let mut ours = Vec::new();
     for (class, members) in classes.iter().zip(assigned) {
         for net in members {
@@ -206,23 +248,36 @@ mod tests {
         };
         let config = with_net_classes(&config, &pcb).unwrap();
         let rules = |net: &str| config.connection_rules[net].clone();
-        assert_eq!((rules("VBUS").trace_width_mm, rules("VBUS").clearance_mm), (0.5, 0.3));
+        assert_eq!(
+            (rules("VBUS").trace_width_mm, rules("VBUS").clearance_mm),
+            (0.5, 0.3)
+        );
         assert_eq!(rules("GND").via_size_mm, 0.6);
         // The first class naming a net wins.
-        assert_eq!((rules("SDA").trace_width_mm, rules("SDA").clearance_mm), (0.15, 0.2));
+        assert_eq!(
+            (rules("SDA").trace_width_mm, rules("SDA").clearance_mm),
+            (0.15, 0.2)
+        );
         for bad in [
             r#"[{"name": "Power", "nets": ["VCC"]}]"#,
             r#"[{"name": "Default", "nets": ["GND"]}]"#,
             r#"[{"name": "Power", "nets": ["GND"], "track_width_mm": 0}]"#,
         ] {
-            let config = KiCadBoardRouterConfig { net_classes: classes(bad), ..KiCadBoardRouterConfig::default() };
-            assert!(with_net_classes(&config, &pcb).is_err(), "{bad} was accepted");
+            let config = KiCadBoardRouterConfig {
+                net_classes: classes(bad),
+                ..KiCadBoardRouterConfig::default()
+            };
+            assert!(
+                with_net_classes(&config, &pcb).is_err(),
+                "{bad} was accepted"
+            );
         }
     }
 
     #[test]
     fn classes_are_written_into_the_project_ahead_of_its_own() {
-        let directory = std::env::temp_dir().join(format!("pcb-maker-net-classes-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-net-classes-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join("board.kicad_pro"),
@@ -240,16 +295,29 @@ mod tests {
         )
         .unwrap();
         let project: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(directory.join("board.kicad_pro")).unwrap()).unwrap();
+            serde_json::from_str(&fs::read_to_string(directory.join("board.kicad_pro")).unwrap())
+                .unwrap();
         fs::remove_dir_all(&directory).unwrap();
         let classes = project["net_settings"]["classes"].as_array().unwrap();
-        let power = classes.iter().find(|class| class["name"] == "Power").unwrap();
-        assert_eq!((power["track_width"].as_f64(), power["priority"].as_i64()), (Some(0.5), Some(0)));
+        let power = classes
+            .iter()
+            .find(|class| class["name"] == "Power")
+            .unwrap();
+        assert_eq!(
+            (power["track_width"].as_f64(), power["priority"].as_i64()),
+            (Some(0.5), Some(0))
+        );
         let old = classes.iter().find(|class| class["name"] == "Old").unwrap();
         assert_eq!(old["priority"].as_i64(), Some(1));
         let patterns = &project["net_settings"]["netclass_patterns"];
-        assert_eq!(patterns[0], serde_json::json!({"netclass": "Power", "pattern": "/VBUS"}));
-        assert_eq!(patterns[1], serde_json::json!({"netclass": "Power", "pattern": "GND"}));
+        assert_eq!(
+            patterns[0],
+            serde_json::json!({"netclass": "Power", "pattern": "/VBUS"})
+        );
+        assert_eq!(
+            patterns[1],
+            serde_json::json!({"netclass": "Power", "pattern": "GND"})
+        );
         assert_eq!(patterns[2]["netclass"], "Old");
     }
 }

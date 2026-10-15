@@ -688,10 +688,16 @@ impl Fresh {
     fn of(stamps: &Stamps) -> Self {
         fn ahead(offsets: &[(i32, i32)], (sx, sy): (i32, i32)) -> Vec<(i32, i32)> {
             let all: HashSet<(i32, i32)> = offsets.iter().copied().collect();
-            offsets.iter().copied().filter(|(dx, dy)| !all.contains(&(dx + sx, dy + sy))).collect()
+            offsets
+                .iter()
+                .copied()
+                .filter(|(dx, dy)| !all.contains(&(dx + sx, dy + sy)))
+                .collect()
         }
         fn steps(offsets: &[(i32, i32)]) -> [Vec<(i32, i32)>; 9] {
-            std::array::from_fn(|index| ahead(offsets, (index as i32 / 3 - 1, index as i32 % 3 - 1)))
+            std::array::from_fn(|index| {
+                ahead(offsets, (index as i32 / 3 - 1, index as i32 % 3 - 1))
+            })
         }
         let lists = [
             &stamps.stub_to_trace,
@@ -718,7 +724,10 @@ impl Fresh {
         Self {
             trace_to_trace: steps(&stamps.trace_to_trace),
             trace_to_via: steps(&stamps.trace_to_via),
-            diagonal_block: [steps(&stamps.diagonal_block[0]), steps(&stamps.diagonal_block[1])],
+            diagonal_block: [
+                steps(&stamps.diagonal_block[0]),
+                steps(&stamps.diagonal_block[1]),
+            ],
             reach,
         }
     }
@@ -732,7 +741,9 @@ fn prefetch<T>(value: &T) {
     // part of every x86_64 target.
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(value as *const T as *const i8)
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
+            value as *const T as *const i8,
+        )
     };
     #[cfg(not(target_arch = "x86_64"))]
     let _ = value;
@@ -757,7 +768,13 @@ fn mark_footprint(
     let marks = &mut marks[map * words..(map + 1) * words];
     let x = cell as i64 % nx;
     let y = cell as i64 / nx;
-    if x >= reach && y >= reach && x + reach < nx && y + reach < ny && sx.abs() == 1 && sy.abs() == 1 {
+    if x >= reach
+        && y >= reach
+        && x + reach < nx
+        && y + reach < ny
+        && sx.abs() == 1
+        && sy.abs() == 1
+    {
         let (row, column) = (sy * nx, sx);
         for (dx, dy) in offsets {
             let target = (cell as i64 + *dy as i64 * row + *dx as i64 * column) as usize;
@@ -849,7 +866,10 @@ impl OwnStamps {
     #[inline]
     fn contains(&self, map: usize, cell: usize) -> bool {
         let index = self.slot[map];
-        assert!(index != NO_SLOT, "map {map} is not one of the net's own stamp maps");
+        assert!(
+            index != NO_SLOT,
+            "map {map} is not one of the net's own stamp maps"
+        );
         self.bits[index][cell / 64] & (1 << (cell % 64)) != 0
     }
 }
@@ -861,7 +881,10 @@ fn junction_hosts(branches: &[Branch], keep: &[bool]) -> HashMap<Node, usize> {
             continue;
         }
         let first = (branch.start_terminal == NO_TERMINAL) as usize;
-        let last = branch.nodes.len().saturating_sub((branch.end_terminal == NO_TERMINAL) as usize);
+        let last = branch
+            .nodes
+            .len()
+            .saturating_sub((branch.end_terminal == NO_TERMINAL) as usize);
         // A one-node branch between two junctions hosts nothing (the Hub
         // board: "slice index starts at 1 but ends at 0").
         if first >= last {
@@ -963,7 +986,11 @@ impl KeyHeap {
             let low = if b < a { 1 } else { 0 };
             let high = if d < c { 3 } else { 2 };
             let (first, second) = (a.min(b), c.min(d));
-            let (least, which) = if second < first { (second, high) } else { (first, low) };
+            let (least, which) = if second < first {
+                (second, high)
+            } else {
+                (first, low)
+            };
             if least >= last {
                 break;
             }
@@ -980,7 +1007,14 @@ impl KeyHeap {
 static WALL_CUT_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The kinds of wall-clock cut, in bit order.
-pub const WALL_CUTS: [&str; 6] = ["deadline", "negotiation guard", "budget guard", "ladder", "placement", "layout"];
+pub const WALL_CUTS: [&str; 6] = [
+    "deadline",
+    "negotiation guard",
+    "budget guard",
+    "ladder",
+    "placement",
+    "layout",
+];
 
 /// Records that the wall clock, not the work, stopped `what` (one of
 /// `WALL_CUTS`): the result then depends on how fast the machine ran, and
@@ -993,14 +1027,21 @@ pub fn note_wall_cut(what: &str, detail: std::fmt::Arguments) {
     };
     let before = WALL_CUT_BITS.fetch_or(1 << bit, std::sync::atomic::Ordering::Relaxed);
     if before & (1 << bit) == 0 {
-        eprintln!("wall guard: the wall clock cut the run short ({what}: {detail}); its result depends on the machine's load");
+        eprintln!(
+            "wall guard: the wall clock cut the run short ({what}: {detail}); its result depends on the machine's load"
+        );
     }
 }
 
 /// The kinds of wall-clock cut this process saw (`note_wall_cut`).
 pub fn wall_cuts() -> Vec<String> {
     let bits = WALL_CUT_BITS.load(std::sync::atomic::Ordering::Relaxed);
-    WALL_CUTS.iter().enumerate().filter(|(bit, _)| bits & (1 << bit) != 0).map(|(_, kind)| kind.to_string()).collect()
+    WALL_CUTS
+        .iter()
+        .enumerate()
+        .filter(|(bit, _)| bits & (1 << bit) != 0)
+        .map(|(_, kind)| kind.to_string())
+        .collect()
 }
 
 /// Whether the wall clock guards the work budgets (always, unless
@@ -1106,8 +1147,21 @@ fn diagonal_extra(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
 /// `Router::class_at` for a node given by its coordinates: the neck class
 /// inside one of the net's neck zones, else the net's class.
 #[inline]
-fn zone_class(class: usize, neck: usize, zones: &[(usize, usize, usize, usize)], x: usize, y: usize) -> usize {
-    if zones.iter().any(|&(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1) { neck } else { class }
+fn zone_class(
+    class: usize,
+    neck: usize,
+    zones: &[(usize, usize, usize, usize)],
+    x: usize,
+    y: usize,
+) -> usize {
+    if zones
+        .iter()
+        .any(|&(x0, y0, x1, y1)| x >= x0 && x <= x1 && y >= y0 && y <= y1)
+    {
+        neck
+    } else {
+        class
+    }
 }
 
 /// The start cells, relative to a node, of the diagonal steps that pass it
@@ -1259,7 +1313,10 @@ pub(crate) struct FastHasher(u64);
 impl FastHasher {
     #[inline]
     fn add(&mut self, word: u64) {
-        self.0 = self.0.wrapping_add(word).wrapping_mul(0xf135_7aea_2e62_a9c5);
+        self.0 = self
+            .0
+            .wrapping_add(word)
+            .wrapping_mul(0xf135_7aea_2e62_a9c5);
     }
 }
 
@@ -1413,7 +1470,10 @@ impl Scratch {
             + (self.targets.capacity() + self.tree.capacity()) * 7
             + self.own_via_near.capacity() * 2
             + self.own_mark.capacity() * 8
-            + self.corridor.as_ref().map_or(0, |corridor| corridor.capacity())
+            + self
+                .corridor
+                .as_ref()
+                .map_or(0, |corridor| corridor.capacity())
     }
 
     fn fits(&self, states: usize, cells: usize) -> bool {
@@ -1444,11 +1504,23 @@ impl Clone for Scratch {
             open_searches: self.open_searches,
             open_expansions: self.open_expansions,
             failed_searches: self.failed_searches,
-            pour_units: std::sync::atomic::AtomicU64::new(self.pour_units.load(std::sync::atomic::Ordering::Relaxed)),
-            pour_nanos: std::sync::atomic::AtomicU64::new(self.pour_nanos.load(std::sync::atomic::Ordering::Relaxed)),
-            probe_ops: std::sync::atomic::AtomicU64::new(self.probe_ops.load(std::sync::atomic::Ordering::Relaxed)),
-            probe_queries: std::sync::atomic::AtomicU64::new(self.probe_queries.load(std::sync::atomic::Ordering::Relaxed)),
-            probe_vertices: std::sync::atomic::AtomicU64::new(self.probe_vertices.load(std::sync::atomic::Ordering::Relaxed)),
+            pour_units: std::sync::atomic::AtomicU64::new(
+                self.pour_units.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            pour_nanos: std::sync::atomic::AtomicU64::new(
+                self.pour_nanos.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            probe_ops: std::sync::atomic::AtomicU64::new(
+                self.probe_ops.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            probe_queries: std::sync::atomic::AtomicU64::new(
+                self.probe_queries
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            probe_vertices: std::sync::atomic::AtomicU64::new(
+                self.probe_vertices
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
             ..Self::default()
         }
     }
@@ -1555,11 +1627,21 @@ static BUILD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// process and their seconds, summed over threads.
 pub fn build_totals() -> (u64, f64) {
     use std::sync::atomic::Ordering::Relaxed;
-    (BUILD_CALLS.load(Relaxed), BUILD_NANOS.load(Relaxed) as f64 / 1.0e9)
+    (
+        BUILD_CALLS.load(Relaxed),
+        BUILD_NANOS.load(Relaxed) as f64 / 1.0e9,
+    )
 }
 
 /// The phases the `profile work:` line splits the work into.
-const PHASES: [&str; 6] = ["negotiation", "resolve", "clean-up", "via reduction", "thermal spokes", "stitching"];
+const PHASES: [&str; 6] = [
+    "negotiation",
+    "resolve",
+    "clean-up",
+    "via reduction",
+    "thermal spokes",
+    "stitching",
+];
 
 /// A phase's start for the profile: search work, pour work, pour wall
 /// nanoseconds, wall clock, search expansions.
@@ -1592,12 +1674,19 @@ impl Profile {
     fn rate_line(&self) -> String {
         use std::sync::atomic::Ordering::Relaxed;
         let expansions: u64 = self.phase_expansions.iter().sum();
-        let wall: f64 = self.phase_wall.iter().sum::<f64>() - self.phase_pour_wall.iter().sum::<f64>();
+        let wall: f64 =
+            self.phase_wall.iter().sum::<f64>() - self.phase_pour_wall.iter().sum::<f64>();
         let pour_wall: f64 = self.phase_pour_wall.iter().sum();
         let pour_work: f64 = self.phase_pour_work.iter().sum();
         let inside = self.search_nanos.load(Relaxed) as f64 / 1.0e9;
         let inside_expansions = self.search_expansions.load(Relaxed);
-        let rate = |count: u64, seconds: f64| if seconds > 0.0 { count as f64 / seconds } else { 0.0 };
+        let rate = |count: u64, seconds: f64| {
+            if seconds > 0.0 {
+                count as f64 / seconds
+            } else {
+                0.0
+            }
+        };
         format!(
             "profile rate: phases {expansions} expansions in {wall:.3}s without pour analyses ({:.0}/s, constant {:.0}); pour {pour_work:.3}s work in {pour_wall:.3}s wall; inside the search {inside_expansions} expansions in {inside:.3}s ({:.0}/s)",
             rate(expansions, wall),
@@ -1607,7 +1696,10 @@ impl Profile {
     }
 
     fn line(&self, search: f64, stamp: f64) -> String {
-        let analysis = self.analysis_nanos.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1.0e9;
+        let analysis = self
+            .analysis_nanos
+            .load(std::sync::atomic::Ordering::Relaxed) as f64
+            / 1.0e9;
         format!(
             "profile: prepare {:.1}s, negotiation {:.1}s (search {:.1}s, stamp {:.1}s, conflicts and history {:.1}s, pour refresh {:.1}s, replan {:.1}s), resolve {:.1}s, clean-up {:.1}s, via reduction {:.1}s, thermal spokes {:.1}s, stitching {:.1}s, emit {:.1}s; pour analysis {:.1}s in {} calls; batches: {} single ({:.1}s), {} parallel with {} nets ({:.1}s wall, {:.1}s of net time); speculation {:.1}s: {} kept, {} redone, {} wrong ({} batches read changed cells, {} changed tiles)",
             self.prepare,
@@ -1624,7 +1716,8 @@ impl Profile {
             self.stitching,
             self.emit,
             analysis,
-            self.analysis_calls.load(std::sync::atomic::Ordering::Relaxed),
+            self.analysis_calls
+                .load(std::sync::atomic::Ordering::Relaxed),
             self.single_batches,
             self.single_seconds,
             self.parallel_batches,
@@ -1755,11 +1848,18 @@ impl Router {
             for class in 0..neck_of.len() {
                 let rules = board.classes[class];
                 if rules.trace_width > board.neck_width + 1.0e-9 {
-                    let neck = RuleClass { trace_width: board.neck_width, ..rules };
-                    let index = board.classes.iter().position(|existing| *existing == neck).unwrap_or_else(|| {
-                        board.classes.push(neck);
-                        board.classes.len() - 1
-                    });
+                    let neck = RuleClass {
+                        trace_width: board.neck_width,
+                        ..rules
+                    };
+                    let index = board
+                        .classes
+                        .iter()
+                        .position(|existing| *existing == neck)
+                        .unwrap_or_else(|| {
+                            board.classes.push(neck);
+                            board.classes.len() - 1
+                        });
                     neck_of[class] = Some(index);
                 }
             }
@@ -1772,7 +1872,10 @@ impl Router {
         let started = std::time::Instant::now();
         let router = Self::build(board, config);
         BUILD_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        BUILD_NANOS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        BUILD_NANOS.fetch_add(
+            started.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         router
     }
 
@@ -1815,16 +1918,19 @@ impl Router {
                         // diagonal step cuts).
                         let with_margin = |radius: f64| radius;
                         let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
-                        let trace_radius = own.trace_width / 2.0 + other.trace_width / 2.0 + clearance;
+                        let trace_radius =
+                            own.trace_width / 2.0 + other.trace_width / 2.0 + clearance;
                         // Copper keeps the copper clearance from a via's
                         // ring and the hole clearance from its drill;
                         // with a thin ring the hole rule is the larger
                         // (the laptop motherboard: 154 KiCad findings).
                         let hole = board.hole_clearance;
-                        let via_radius = (own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance)
-                            .max(own.trace_width / 2.0 + other.via_drill / 2.0 + hole);
-                        let own_via_radius = (own.via_diameter / 2.0 + other.trace_width / 2.0 + clearance)
-                            .max(own.via_drill / 2.0 + other.trace_width / 2.0 + hole);
+                        let via_radius =
+                            (own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance)
+                                .max(own.trace_width / 2.0 + other.via_drill / 2.0 + hole);
+                        let own_via_radius =
+                            (own.via_diameter / 2.0 + other.trace_width / 2.0 + clearance)
+                                .max(own.via_drill / 2.0 + other.trace_width / 2.0 + hole);
                         Stamps {
                             diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
                             diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
@@ -1851,7 +1957,11 @@ impl Router {
                             via_to_trace: disc(with_margin(own_via_radius), grid.pitch),
                             via_to_via: disc(
                                 (own.via_diameter / 2.0 + other.via_diameter / 2.0 + clearance)
-                                    .max(own.via_drill / 2.0 + other.via_drill / 2.0 + board.hole_to_hole)
+                                    .max(
+                                        own.via_drill / 2.0
+                                            + other.via_drill / 2.0
+                                            + board.hole_to_hole,
+                                    )
                                     .max(own.via_drill / 2.0 + other.via_diameter / 2.0 + hole)
                                     .max(own.via_diameter / 2.0 + other.via_drill / 2.0 + hole),
                                 grid.pitch,
@@ -1927,7 +2037,15 @@ impl Router {
             layer_cut: vec![1.0; layers],
             neck_of,
             searched,
-            exclusive: (0..layers).map(|layer| config.exclusive_planes && board.planes.iter().any(|plane| plane.layer == layer && plane.exclusive)).collect(),
+            exclusive: (0..layers)
+                .map(|layer| {
+                    config.exclusive_planes
+                        && board
+                            .planes
+                            .iter()
+                            .any(|plane| plane.layer == layer && plane.exclusive)
+                })
+                .collect(),
             layer_bias: Vec::new(),
             scratch: Scratch::new(states, cells),
             profile: Profile::default(),
@@ -1945,7 +2063,11 @@ impl Router {
         if let Some(seed) = config.seed.or_else(experiment_seed) {
             let mut state = seed;
             let amplitude = config.history_increment as f32;
-            for layer in router.history.iter_mut().chain(router.tile_history.iter_mut()) {
+            for layer in router
+                .history
+                .iter_mut()
+                .chain(router.tile_history.iter_mut())
+            {
                 for value in layer.iter_mut() {
                     *value = amplitude * unit_noise(&mut state) as f32;
                 }
@@ -1959,7 +2081,11 @@ impl Router {
         router.mark_via_cells();
         router.build_hot();
         if config.verbose {
-            eprintln!("{} (built in {:.1}s)", router.memory_report(), built.elapsed().as_secs_f64());
+            eprintln!(
+                "{} (built in {:.1}s)",
+                router.memory_report(),
+                built.elapsed().as_secs_f64()
+            );
         }
         router
     }
@@ -1970,17 +2096,30 @@ impl Router {
     /// batches come on top, one per worker thread that routed a batch.
     pub fn memory_report(&self) -> String {
         fn bytes<T>(maps: &[Vec<T>]) -> usize {
-            maps.iter().map(|map| map.capacity() * std::mem::size_of::<T>()).sum()
+            maps.iter()
+                .map(|map| map.capacity() * std::mem::size_of::<T>())
+                .sum()
         }
         let cells = self.grid.cells().max(1);
         let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
         let occupancy = bytes(&self.occupancy);
         let stamp_mark = self.stamp_mark.capacity() * 8;
         let hot = bytes(&self.hot);
-        let pour = bytes(&self.history) + bytes(&self.guard) + bytes(&self.covered) + self.via_marks.capacity() + 4 * self.via_cover.capacity();
-        let planes: usize = self.nets.iter().map(|state| bytes(&state.plane) + bytes(&state.plane_target)).sum();
+        let pour = bytes(&self.history)
+            + bytes(&self.guard)
+            + bytes(&self.covered)
+            + self.via_marks.capacity()
+            + 4 * self.via_cover.capacity();
+        let planes: usize = self
+            .nets
+            .iter()
+            .map(|state| bytes(&state.plane) + bytes(&state.plane_target))
+            .sum();
         let scratch = self.scratch.bytes();
-        let tiles = bytes(&self.tile_claimed) + bytes(&self.tile_routable) + bytes(&self.tile_history) + bytes(&self.tile_covered);
+        let tiles = bytes(&self.tile_claimed)
+            + bytes(&self.tile_routable)
+            + bytes(&self.tile_history)
+            + bytes(&self.tile_covered);
         let total = statics + occupancy + stamp_mark + hot + pour + planes + scratch + tiles;
         let mb = |value: usize| value as f64 / (1024.0 * 1024.0);
         format!(
@@ -1995,7 +2134,12 @@ impl Router {
             {
                 let mut geometries: Vec<(u64, u64)> = (0..self.board.classes.len())
                     .filter(|class| self.searched[*class])
-                    .map(|class| (self.board.classes[class].trace_width.to_bits(), self.board.classes[class].clearance.to_bits()))
+                    .map(|class| {
+                        (
+                            self.board.classes[class].trace_width.to_bits(),
+                            self.board.classes[class].clearance.to_bits(),
+                        )
+                    })
                     .collect();
                 geometries.sort();
                 geometries.dedup();
@@ -2033,7 +2177,8 @@ impl Router {
                         trace: trace[cell],
                         guard: match guard.get(cell) {
                             Some(&value) if value != 0 => {
-                                (value & !HARD_GUARD) as u16 | if value & HARD_GUARD != 0 { HOT_HARD } else { 0 }
+                                (value & !HARD_GUARD) as u16
+                                    | if value & HARD_GUARD != 0 { HOT_HARD } else { 0 }
                             }
                             _ => 0,
                         },
@@ -2183,20 +2328,39 @@ impl Router {
                         .obstacles
                         .iter()
                         .filter(|obstacle| {
-                            obstacle.net != Some(net) && obstacle.layers & (1 << layer) != 0 && obstacle.blocks_tracks && {
-                                let required = narrowest / 2.0
-                                    + SAFETY
-                                    + match obstacle.kind {
-                                        crate::board::ObstacleKind::Copper => self.board.copper_clearance(&class, obstacle),
-                                        crate::board::ObstacleKind::Keepout => obstacle.clearance,
-                                        crate::board::ObstacleKind::Hole => self.board.hole_clearance.max(obstacle.clearance),
-                                    };
-                                obstacle.shape.distance_to_segment(terminal.anchor, center) < required
-                            }
+                            obstacle.net != Some(net)
+                                && obstacle.layers & (1 << layer) != 0
+                                && obstacle.blocks_tracks
+                                && {
+                                    let required = narrowest / 2.0
+                                        + SAFETY
+                                        + match obstacle.kind {
+                                            crate::board::ObstacleKind::Copper => {
+                                                self.board.copper_clearance(&class, obstacle)
+                                            }
+                                            crate::board::ObstacleKind::Keepout => {
+                                                obstacle.clearance
+                                            }
+                                            crate::board::ObstacleKind::Hole => {
+                                                self.board.hole_clearance.max(obstacle.clearance)
+                                            }
+                                        };
+                                    obstacle.shape.distance_to_segment(terminal.anchor, center)
+                                        < required
+                                }
                         })
-                        .map(|obstacle| format!("{} ({:.3})", obstacle.label, obstacle.shape.distance_to_segment(terminal.anchor, center)))
+                        .map(|obstacle| {
+                            format!(
+                                "{} ({:.3})",
+                                obstacle.label,
+                                obstacle.shape.distance_to_segment(terminal.anchor, center)
+                            )
+                        })
                         .collect();
-                    eprintln!("  escape {} candidate at {:?} ({distance:.3} mm): stub of {narrowest} blocked by {blockers:?}", terminal.label, center);
+                    eprintln!(
+                        "  escape {} candidate at {:?} ({distance:.3} mm): stub of {narrowest} blocked by {blockers:?}",
+                        terminal.label, center
+                    );
                 }
             }
             for (_, cell) in candidates.into_iter().take(600) {
@@ -2274,7 +2438,13 @@ impl Router {
     }
 
     /// Whether the stub behind escape node `node` is free of other nets.
-    fn escape_is_free(&self, scratch: &Scratch, net_state: &NetState, net: NetId, node: Node) -> bool {
+    fn escape_is_free(
+        &self,
+        scratch: &Scratch,
+        net_state: &NetState,
+        net: NetId,
+        node: Node,
+    ) -> bool {
         let Some((cells, _, _)) = net_state.escapes.get(&node) else {
             return true;
         };
@@ -2394,10 +2564,16 @@ impl Router {
                 // the pad's own frame (`spoke_frames`) they cost Hub's
                 // route 6 connections (29 to 35 open; turned parts guarded
                 // diagonally), for no fewer starved pads.
-                let (_, anchor, geometry, _) = self.spoke_geometry_in(terminal.pad, terminal.anchor, 0.0, false);
+                let (_, anchor, geometry, _) =
+                    self.spoke_geometry_in(terminal.pad, terminal.anchor, 0.0, false);
                 let bridge = (plane.thermal_reach - plane.thermal_gap).max(0.0);
-                let width = bridge / 2.0 + self.board.classes[self.board.nets[plane.net as usize].class].clearance + 0.1;
-                let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds.inflated(plane.thermal_reach + width)) else {
+                let width = bridge / 2.0
+                    + self.board.classes[self.board.nets[plane.net as usize].class].clearance
+                    + 0.1;
+                let Some((x0, y0, x1, y1)) = self
+                    .grid
+                    .node_range(bounds.inflated(plane.thermal_reach + width))
+                else {
                     continue;
                 };
                 let mut cores: [Vec<usize>; 4] = Default::default();
@@ -2412,8 +2588,12 @@ impl Router {
                         for (index, (direction, edge, _)) in geometry.iter().enumerate() {
                             let edge = *edge;
                             let along = offset[0] * direction[0] + offset[1] * direction[1];
-                            let across = (offset[0] * direction[1] - offset[1] * direction[0]).abs();
-                            if along > edge - 1.0e-9 && along < edge + plane.thermal_reach && across < width {
+                            let across =
+                                (offset[0] * direction[1] - offset[1] * direction[0]).abs();
+                            if along > edge - 1.0e-9
+                                && along < edge + plane.thermal_reach
+                                && across < width
+                            {
                                 if across <= bridge / 2.0 + self.grid.pitch / 2.0 {
                                     cores[index].push(self.grid.index(x, y));
                                 } else {
@@ -2423,7 +2603,12 @@ impl Router {
                         }
                     }
                 }
-                let core_counts = [cores[0].len(), cores[1].len(), cores[2].len(), cores[3].len()];
+                let core_counts = [
+                    cores[0].len(),
+                    cores[1].len(),
+                    cores[2].len(),
+                    cores[3].len(),
+                ];
                 let mut cells: [Vec<usize>; 4] = Default::default();
                 for index in 0..4 {
                     cells[index] = std::mem::take(&mut cores[index]);
@@ -2452,9 +2637,20 @@ impl Router {
             // row, and is no measure).
             let statics = &self.statics[self.board.nets[net as usize].class];
             let open = |corridor: &Vec<usize>, core: usize| {
-                core > 0 && corridor[..core].iter().filter(|cell| statics.fill_allowed(layer, **cell, net)).count() * 2 >= core
+                core > 0
+                    && corridor[..core]
+                        .iter()
+                        .filter(|cell| statics.fill_allowed(layer, **cell, net))
+                        .count()
+                        * 2
+                        >= core
             };
-            let spare = cells.iter().zip(cores).filter(|(corridor, core)| open(corridor, *core)).count() > 2;
+            let spare = cells
+                .iter()
+                .zip(cores)
+                .filter(|(corridor, core)| open(corridor, *core))
+                .count()
+                > 2;
             let hard = self.config.hard_thermal_guards && !spare;
             for (corridor, core) in cells.iter().zip(cores) {
                 let mark = if hard && open(corridor, core) {
@@ -2490,8 +2686,15 @@ impl Router {
         for (net, state) in self.nets.iter().enumerate() {
             for branch in &state.branches {
                 for (index, node) in branch.nodes.iter().enumerate() {
-                    let via = branch.nodes.get(index + 1).is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
-                    let on: Vec<usize> = if via { (0..layers).collect() } else { vec![node.layer as usize] };
+                    let via = branch
+                        .nodes
+                        .get(index + 1)
+                        .is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
+                    let on: Vec<usize> = if via {
+                        (0..layers).collect()
+                    } else {
+                        vec![node.layer as usize]
+                    };
                     for layer in on {
                         let entry = occupants.entry((layer, node.cell as usize)).or_default();
                         if !entry.contains(&(net as NetId)) {
@@ -2508,7 +2711,9 @@ impl Router {
                     .iter()
                     .filter(|list| {
                         list.iter().any(|cell| {
-                            occupants.get(&(*layer, *cell)).is_some_and(|nets| nets.iter().any(|other| other != net))
+                            occupants
+                                .get(&(*layer, *cell))
+                                .is_some_and(|nets| nets.iter().any(|other| other != net))
                         })
                     })
                     .count();
@@ -2534,8 +2739,15 @@ impl Router {
             for (net, state) in router.nets.iter().enumerate() {
                 for branch in &state.branches {
                     for (index, node) in branch.nodes.iter().enumerate() {
-                        let via = branch.nodes.get(index + 1).is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
-                        let on: Vec<usize> = if via { (0..layers).collect() } else { vec![node.layer as usize] };
+                        let via = branch
+                            .nodes
+                            .get(index + 1)
+                            .is_some_and(|next| next.cell == node.cell && next.layer != node.layer);
+                        let on: Vec<usize> = if via {
+                            (0..layers).collect()
+                        } else {
+                            vec![node.layer as usize]
+                        };
                         for layer in on {
                             let entry = map.entry((layer, node.cell as usize)).or_default();
                             if !entry.contains(&(net as NetId)) {
@@ -2554,7 +2766,12 @@ impl Router {
             for (layer, net, lists, _) in &corridors {
                 let blocked: Vec<&Vec<usize>> = lists
                     .iter()
-                    .filter(|list| list.iter().any(|cell| map.get(&(*layer, *cell)).is_some_and(|nets| nets.iter().any(|other| other != net))))
+                    .filter(|list| {
+                        list.iter().any(|cell| {
+                            map.get(&(*layer, *cell))
+                                .is_some_and(|nets| nets.iter().any(|other| other != net))
+                        })
+                    })
                     .collect();
                 if lists.iter().filter(|list| !list.is_empty()).count() - blocked.len() >= 2 {
                     continue;
@@ -2593,7 +2810,10 @@ impl Router {
         // big lattice adds up (PolyKybd right: 435 s and 369 s in one
         // layout, and the harness killed the board).
         let clock = self.clock();
-        let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
+        let budget = self
+            .config
+            .cleanup_seconds
+            .min(self.negotiation_seconds.max(60.0));
         let mut skipped = 0;
         for net in offenders {
             if self.spent(&clock, budget) {
@@ -2621,7 +2841,9 @@ impl Router {
         self.cleanup = false;
         self.config.thermal_guard_cost = guard_cost;
         if self.config.verbose {
-            eprintln!("thermal spokes: {moved} nets moved out of starved pads' spoke corridors ({skipped} left by the budget)");
+            eprintln!(
+                "thermal spokes: {moved} nets moved out of starved pads' spoke corridors ({skipped} left by the budget)"
+            );
         }
         moved
     }
@@ -2681,9 +2903,14 @@ impl Router {
             let rules = self.board.classes[description.class];
             for terminal in &description.terminals {
                 let bounds = self.board.obstacles[terminal.pad].shape.aabb();
-                let narrow = (bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1]);
+                let narrow = (bounds.maximum[0] - bounds.minimum[0])
+                    .min(bounds.maximum[1] - bounds.minimum[1]);
                 if narrow < rules.trace_width + rules.clearance {
-                    let reach = crate::geometry::Aabb { minimum: terminal.anchor, maximum: terminal.anchor }.inflated(self.config.neck_reach);
+                    let reach = crate::geometry::Aabb {
+                        minimum: terminal.anchor,
+                        maximum: terminal.anchor,
+                    }
+                    .inflated(self.config.neck_reach);
                     if let Some(range) = self.grid.node_range(reach) {
                         neck_zones.push(range);
                     }
@@ -2696,12 +2923,15 @@ impl Router {
             .enumerate()
             .map(|(index, nodes)| {
                 // A pad set to no zone connection never joins a pour.
-                self.board.isolated_pads.binary_search(&description.terminals[index].label).is_err()
+                self.board
+                    .isolated_pads
+                    .binary_search(&description.terminals[index].label)
+                    .is_err()
                     && nodes.iter().any(|node| {
-                    plane
-                        .get(node.layer as usize)
-                        .is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
-                })
+                        plane
+                            .get(node.layer as usize)
+                            .is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
+                    })
             })
             .collect();
         let has_plane = !plane.is_empty();
@@ -2719,7 +2949,8 @@ impl Router {
                             for y in y0..=y1 {
                                 for x in x0..=x1 {
                                     let cell = self.grid.index(x, y);
-                                    inside += well_inside(&pad.shape, self.grid.center(x, y)) as usize;
+                                    inside +=
+                                        well_inside(&pad.shape, self.grid.center(x, y)) as usize;
                                     allowed += statics.trace_allowed(layer, cell, net) as usize;
                                 }
                             }
@@ -2727,8 +2958,16 @@ impl Router {
                     }
                     let near = pad.shape.aabb().inflated(1.0);
                     for other in &self.board.obstacles {
-                        if other.net != Some(net) && other.layers & terminal.layers != 0 && other.shape.aabb().intersects(near) {
-                            eprintln!("  blocked by {:?} net {:?} {:?}", other.kind, other.net, other.shape.aabb());
+                        if other.net != Some(net)
+                            && other.layers & terminal.layers != 0
+                            && other.shape.aabb().intersects(near)
+                        {
+                            eprintln!(
+                                "  blocked by {:?} net {:?} {:?}",
+                                other.kind,
+                                other.net,
+                                other.shape.aabb()
+                            );
                         }
                     }
                     eprintln!(
@@ -2947,9 +3186,15 @@ impl Router {
         let escapes = std::mem::take(&mut self.nets[net as usize].escapes);
         // Each node's class (narrower in a neck zone), all branches in one
         // list.
-        let mut node_classes: Vec<usize> = Vec::with_capacity(branches.iter().map(|branch| branch.nodes.len()).sum());
+        let mut node_classes: Vec<usize> =
+            Vec::with_capacity(branches.iter().map(|branch| branch.nodes.len()).sum());
         for branch in &branches {
-            node_classes.extend(branch.nodes.iter().map(|node| self.node_class(net, node.cell)));
+            node_classes.extend(
+                branch
+                    .nodes
+                    .iter()
+                    .map(|node| self.node_class(net, node.cell)),
+            );
         }
         let diagonal_base = self.board.classes.len() * (layers + 1);
         let size = (nx, ny);
@@ -2966,18 +3211,44 @@ impl Router {
                     if let Some((cells, width, _)) = escapes.get(&end) {
                         // A stub at the neck width stamps the neck's footprint.
                         let stub_class = match self.neck_of[class] {
-                            Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
+                            Some(neck)
+                                if *width < self.board.classes[class].trace_width - 1.0e-9 =>
+                            {
+                                neck
+                            }
                             _ => class,
                         };
                         let stub_stamps = &self.stamps[stub_class][querying];
                         let reach = stub_stamps.fresh.reach;
                         for cell in cells {
                             let map = base + end.layer as usize;
-                            mark_footprint(marks, words, &mut stamped, map, *cell, &stub_stamps.stub_to_trace, (1, 1), size, reach);
+                            mark_footprint(
+                                marks,
+                                words,
+                                &mut stamped,
+                                map,
+                                *cell,
+                                &stub_stamps.stub_to_trace,
+                                (1, 1),
+                                size,
+                                reach,
+                            );
                             let map = base + layers;
-                            mark_footprint(marks, words, &mut stamped, map, *cell, &stub_stamps.stub_to_via, (1, 1), size, reach);
+                            mark_footprint(
+                                marks,
+                                words,
+                                &mut stamped,
+                                map,
+                                *cell,
+                                &stub_stamps.stub_to_via,
+                                (1, 1),
+                                size,
+                                reach,
+                            );
                             for orientation in 0..2 {
-                                let map = diagonal_base + (querying * layers + end.layer as usize) * 2 + orientation;
+                                let map = diagonal_base
+                                    + (querying * layers + end.layer as usize) * 2
+                                    + orientation;
                                 mark_footprint(
                                     marks,
                                     words,
@@ -3008,7 +3279,8 @@ impl Router {
                     let mut via_before = false;
                     if index > 0 {
                         let previous = branch.nodes[index - 1];
-                        let (dx, dy) = (x - previous.cell as i64 % nx, y - previous.cell as i64 / nx);
+                        let (dx, dy) =
+                            (x - previous.cell as i64 % nx, y - previous.cell as i64 / nx);
                         is_via = previous.cell == node.cell && previous.layer != node.layer;
                         if classes[index - 1] == node_class && dx.abs() <= 1 && dy.abs() <= 1 {
                             step = Some(((dx + 1) * 3 + dy + 1) as usize);
@@ -3027,20 +3299,54 @@ impl Router {
                         Some(step) if same_layer => &own.fresh.trace_to_trace[step],
                         _ => &own.trace_to_trace,
                     };
-                    mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                    mark_footprint(
+                        marks,
+                        words,
+                        &mut stamped,
+                        map,
+                        node.cell,
+                        offsets,
+                        (1, 1),
+                        size,
+                        reach,
+                    );
                     let map = base + layers;
                     let offsets = match step {
                         Some(step) => &own.fresh.trace_to_via[step],
                         None => &own.trace_to_via,
                     };
-                    mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                    mark_footprint(
+                        marks,
+                        words,
+                        &mut stamped,
+                        map,
+                        node.cell,
+                        offsets,
+                        (1, 1),
+                        size,
+                        reach,
+                    );
                     for orientation in 0..2 {
-                        let map = diagonal_base + (querying * layers + node.layer as usize) * 2 + orientation;
+                        let map = diagonal_base
+                            + (querying * layers + node.layer as usize) * 2
+                            + orientation;
                         let offsets = match step {
-                            Some(step) if same_layer => &own.fresh.diagonal_block[orientation][step],
+                            Some(step) if same_layer => {
+                                &own.fresh.diagonal_block[orientation][step]
+                            }
                             _ => &own.diagonal_block[orientation],
                         };
-                        mark_footprint(marks, words, &mut stamped, map, node.cell, offsets, (1, 1), size, reach);
+                        mark_footprint(
+                            marks,
+                            words,
+                            &mut stamped,
+                            map,
+                            node.cell,
+                            offsets,
+                            (1, 1),
+                            size,
+                            reach,
+                        );
                     }
                     // A via through several layers at one cell: the via
                     // before stamped the same footprints at the same cell.
@@ -3048,13 +3354,34 @@ impl Router {
                         let reach = stamps.fresh.reach;
                         for layer in 0..layers {
                             let map = base + layer;
-                            mark_footprint(marks, words, &mut stamped, map, node.cell, &stamps.via_to_trace, (1, 1), size, reach);
+                            mark_footprint(
+                                marks,
+                                words,
+                                &mut stamped,
+                                map,
+                                node.cell,
+                                &stamps.via_to_trace,
+                                (1, 1),
+                                size,
+                                reach,
+                            );
                         }
                         let map = base + layers;
-                        mark_footprint(marks, words, &mut stamped, map, node.cell, &stamps.via_to_via, (1, 1), size, reach);
+                        mark_footprint(
+                            marks,
+                            words,
+                            &mut stamped,
+                            map,
+                            node.cell,
+                            &stamps.via_to_via,
+                            (1, 1),
+                            size,
+                            reach,
+                        );
                         for layer in 0..layers {
                             for orientation in 0..2 {
-                                let map = diagonal_base + (querying * layers + layer) * 2 + orientation;
+                                let map =
+                                    diagonal_base + (querying * layers + layer) * 2 + orientation;
                                 mark_footprint(
                                     marks,
                                     words,
@@ -3075,9 +3402,29 @@ impl Router {
                     if let Some(step) = diagonal {
                         let previous = branch.nodes[index - 1];
                         let map = base + node.layer as usize;
-                        mark_footprint(marks, words, &mut stamped, map, previous.cell, &own.diagonal_to_trace, step, size, reach);
+                        mark_footprint(
+                            marks,
+                            words,
+                            &mut stamped,
+                            map,
+                            previous.cell,
+                            &own.diagonal_to_trace,
+                            step,
+                            size,
+                            reach,
+                        );
                         let map = base + layers;
-                        mark_footprint(marks, words, &mut stamped, map, previous.cell, &own.diagonal_to_via, step, size, reach);
+                        mark_footprint(
+                            marks,
+                            words,
+                            &mut stamped,
+                            map,
+                            previous.cell,
+                            &own.diagonal_to_via,
+                            step,
+                            size,
+                            reach,
+                        );
                     }
                 }
             }
@@ -3101,7 +3448,8 @@ impl Router {
             }
             self.occupancy[map][cell] -= 1;
             if self.occupancy[map][cell] == 0 {
-                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] -= 1;
+                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] -=
+                    1;
             }
         }
         // A new stamp still marked was not stamped before: it counts.
@@ -3117,7 +3465,8 @@ impl Router {
             self.stamp_mark[map * words + cell / 64] &= !bit;
             self.occupancy[map][cell] += 1;
             if self.occupancy[map][cell] == 1 {
-                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] += 1;
+                self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] +=
+                    1;
             }
         }
         let state = &mut self.nets[net as usize];
@@ -3186,7 +3535,11 @@ impl Router {
         let Some(spec) = std::env::var_os("PCB_ROUTER_DUMP") else {
             return;
         };
-        let bounds: Vec<f64> = spec.to_string_lossy().split(',').filter_map(|v| v.parse().ok()).collect();
+        let bounds: Vec<f64> = spec
+            .to_string_lossy()
+            .split(',')
+            .filter_map(|v| v.parse().ok())
+            .collect();
         if bounds.len() != 4 {
             return;
         }
@@ -3206,7 +3559,10 @@ impl Router {
             }
         }
         for layer in 0..layers {
-            eprintln!("  layer {layer}, x {:.2}..{:.2}, y {:.2}..{:.2}", bounds[0], bounds[2], bounds[1], bounds[3]);
+            eprintln!(
+                "  layer {layer}, x {:.2}..{:.2}, y {:.2}..{:.2}",
+                bounds[0], bounds[2], bounds[1], bounds[3]
+            );
             for y in y0..=y1 {
                 let mut line = String::new();
                 for x in x0..=x1 {
@@ -3219,7 +3575,11 @@ impl Router {
                     } else if allowed == crate::grid::BLOCKED {
                         '#'
                     } else if allowed != crate::grid::FREE {
-                        if nets.iter().any(|net| allowed == crate::grid::owner(*net)) { 'x' } else { 'o' }
+                        if nets.iter().any(|net| allowed == crate::grid::owner(*net)) {
+                            'x'
+                        } else {
+                            'o'
+                        }
                     } else if occupancy > 0 {
                         char::from_digit(occupancy.min(9) as u32, 10).unwrap()
                     } else if self.statics[class].via_blocked[cell] {
@@ -3263,7 +3623,10 @@ impl Router {
         hard: bool,
         window_growth: f64,
     ) {
-        scratch.ensure(self.grid.cells() * self.board.layer_count, self.grid.cells());
+        scratch.ensure(
+            self.grid.cells() * self.board.layer_count,
+            self.grid.cells(),
+        );
         let terminal_count = self.board.nets[net as usize].terminals.len();
         let retained = net_state.branches.clone();
         let keep = vec![true; retained.len()];
@@ -3288,31 +3651,31 @@ impl Router {
                 (branch.end_terminal, *branch.nodes.last().unwrap()),
             ];
             for (terminal, node) in ends {
-                let other = if terminal == PLANE_TERMINAL {
-                    // While pads must reach the main piece, a stub joins the
-                    // plane only where it still ends in that piece: the
-                    // signals may have cut its end off since (k30's +5V: 22
-                    // pads stranded on stubs into islands or no fill at all,
-                    // which every reroute kept as connected).
-                    if !net_state.plane_target.is_empty()
-                        && !net_state
-                            .plane_target
-                            .get(node.layer as usize)
-                            .is_some_and(|mask| mask.get(node.cell as usize).copied().unwrap_or(false))
-                    {
+                let other =
+                    if terminal == PLANE_TERMINAL {
+                        // While pads must reach the main piece, a stub joins the
+                        // plane only where it still ends in that piece: the
+                        // signals may have cut its end off since (k30's +5V: 22
+                        // pads stranded on stubs into islands or no fill at all,
+                        // which every reroute kept as connected).
+                        if !net_state.plane_target.is_empty()
+                            && !net_state.plane_target.get(node.layer as usize).is_some_and(
+                                |mask| mask.get(node.cell as usize).copied().unwrap_or(false),
+                            )
+                        {
+                            continue;
+                        }
+                        plane_element
+                    } else if terminal == FREE_END {
                         continue;
-                    }
-                    plane_element
-                } else if terminal == FREE_END {
-                    continue;
-                } else if terminal != NO_TERMINAL {
-                    terminal as usize
-                } else if let Some(host) = hosts.get(&node) {
-                    terminal_count + host
-                } else {
-                    // A junction whose host is gone: the end is free.
-                    continue;
-                };
+                    } else if terminal != NO_TERMINAL {
+                        terminal as usize
+                    } else if let Some(host) = hosts.get(&node) {
+                        terminal_count + host
+                    } else {
+                        // A junction whose host is gone: the end is free.
+                        continue;
+                    };
                 let (a, b) = (find(&mut parent, element), find(&mut parent, other));
                 parent[a] = b;
             }
@@ -3347,7 +3710,9 @@ impl Router {
                     net_state.connected[element] = true;
                 } else {
                     for node in &retained[element - terminal_count].nodes {
-                        if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(state_of(*node) as u32) {
+                        if let std::collections::hash_map::Entry::Vacant(entry) =
+                            scratch.tree.entry(state_of(*node) as u32)
+                        {
                             entry.insert(NO_TERMINAL);
                             tree.push(*node);
                         }
@@ -3386,7 +3751,10 @@ impl Router {
         let mut left_out = vec![false; component.len()];
         if !hard && self.config.unreachable_terminals {
             for (terminal, unreachable) in net_state.unreachable.iter().enumerate() {
-                if *unreachable && terminal < terminal_count && component[terminal] != component[first_live] {
+                if *unreachable
+                    && terminal < terminal_count
+                    && component[terminal] != component[first_live]
+                {
                     left_out[component[terminal]] = true;
                 }
             }
@@ -3479,8 +3847,7 @@ impl Router {
                         &mut read,
                     );
                     scratch.read = read;
-                    let Some(corridor) = corridor
-                    else {
+                    let Some(corridor) = corridor else {
                         break;
                     };
                     scratch.corridor = Some(corridor);
@@ -3562,7 +3929,9 @@ impl Router {
                     }
                 }
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                    let open: Vec<usize> = (0..terminal_count).filter(|element| !in_tree[*element]).collect();
+                    let open: Vec<usize> = (0..terminal_count)
+                        .filter(|element| !in_tree[*element])
+                        .collect();
                     eprintln!(
                         "route_net {}: search failed (hard {hard}, fallback {fallback}, corridor tried {corridor_tried}, hopeless {}, cleanup {}), {} of {terminal_count} terminals in the tree, open {:?}",
                         self.board.nets[net as usize].name,
@@ -3576,10 +3945,16 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = scratch.tree.get(&(first as u32)).copied().unwrap_or(NO_TERMINAL);
+            let start_terminal = scratch
+                .tree
+                .get(&(first as u32))
+                .copied()
+                .unwrap_or(NO_TERMINAL);
             let reached = scratch.targets[&(last as u32)] as usize;
             for node in &path[1..] {
-                if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(self.state(*node) as u32) {
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    scratch.tree.entry(self.state(*node) as u32)
+                {
                     entry.insert(NO_TERMINAL);
                     tree.push(*node);
                 }
@@ -3672,8 +4047,14 @@ impl Router {
                 };
                 for node in nodes {
                     if inside {
-                        if let std::collections::hash_map::Entry::Vacant(entry) = scratch.tree.entry(self.state(node) as u32) {
-                            entry.insert(if element < terminal_count { element as u16 } else { NO_TERMINAL });
+                        if let std::collections::hash_map::Entry::Vacant(entry) =
+                            scratch.tree.entry(self.state(node) as u32)
+                        {
+                            entry.insert(if element < terminal_count {
+                                element as u16
+                            } else {
+                                NO_TERMINAL
+                            });
                             sources.push(node);
                         }
                     } else {
@@ -3710,7 +4091,11 @@ impl Router {
             };
             let first = self.state(path[0]);
             let last = self.state(*path.last().unwrap());
-            let start_terminal = scratch.tree.get(&(first as u32)).copied().unwrap_or(NO_TERMINAL);
+            let start_terminal = scratch
+                .tree
+                .get(&(first as u32))
+                .copied()
+                .unwrap_or(NO_TERMINAL);
             let (reached, end_terminal) = if scratch.nodes[last].target_mark == scratch.generation {
                 let element = scratch.targets[&(last as u32)] as usize;
                 (
@@ -4093,8 +4478,12 @@ impl Router {
         for node in sources {
             // A hard route may not even start inside another net's zone.
             if hard
-                && (self.occupancy_seen(scratch, class, self.map_index(class, node.layer as usize), node.cell as usize)
-                    > 0
+                && (self.occupancy_seen(
+                    scratch,
+                    class,
+                    self.map_index(class, node.layer as usize),
+                    node.cell as usize,
+                ) > 0
                     || !self.escape_is_free(scratch, net_state, net, *node))
             {
                 continue;
@@ -4104,7 +4493,10 @@ impl Router {
             scratch.nodes[state].seen = generation;
             scratch.nodes[state].cost = 0.0;
             scratch.nodes[state].parent = PARENT_SOURCE;
-            heap.push(heap_key(heuristic(node.layer as usize, x as i32, y as i32), state));
+            heap.push(heap_key(
+                heuristic(node.layer as usize, x as i32, y as i32),
+                state,
+            ));
         }
 
         let statics = &self.statics[class];
@@ -4116,11 +4508,16 @@ impl Router {
         // `class_at` from the coordinates the step has at hand (no division).
         let neck_class = self.neck_of[class];
         // The zones' bounding box: outside it no zone needs asking.
-        let zone_box = net_state.neck_zones.iter().fold((usize::MAX, usize::MAX, 0, 0), |b, z| {
-            (b.0.min(z.0), b.1.min(z.1), b.2.max(z.2), b.3.max(z.3))
-        });
+        let zone_box = net_state
+            .neck_zones
+            .iter()
+            .fold((usize::MAX, usize::MAX, 0, 0), |b, z| {
+                (b.0.min(z.0), b.1.min(z.1), b.2.max(z.2), b.3.max(z.3))
+            });
         let class_xy = |x: usize, y: usize| match neck_class {
-            Some(neck) if x >= zone_box.0 && y >= zone_box.1 && x <= zone_box.2 && y <= zone_box.3 => {
+            Some(neck)
+                if x >= zone_box.0 && y >= zone_box.1 && x <= zone_box.2 && y <= zone_box.3 =>
+            {
                 zone_class(class, neck, &net_state.neck_zones, x, y)
             }
             _ => class,
@@ -4160,9 +4557,14 @@ impl Router {
             scratch.read.note(x, y);
             let here = scratch.nodes[state].cost;
             let arrived = scratch.nodes[state].parent;
-            let here_statics = if necks { &self.statics[class_xy(x, y)] } else { statics };
+            let here_statics = if necks {
+                &self.statics[class_xy(x, y)]
+            } else {
+                statics
+            };
             let edge_block = here_statics.edge_block[layer][cell];
-            let blocked_edges = if edge_block != 0 && here_statics.edge_owner[layer][cell] == own16 {
+            let blocked_edges = if edge_block != 0 && here_statics.edge_owner[layer][cell] == own16
+            {
                 0
             } else {
                 edge_block
@@ -4172,7 +4574,11 @@ impl Router {
             let layer_hot = &self.hot[class * layers + layer];
             let cleanup = self.cleanup;
             let layer_costs = &direction_cost[layer];
-            let layer_factor = if self.layer_bias.is_empty() { 1.0 } else { self.layer_bias[layer] };
+            let layer_factor = if self.layer_bias.is_empty() {
+                1.0
+            } else {
+                self.layer_bias[layer]
+            };
             let thermal_guard_cost = self.config.thermal_guard_cost as f32;
 
             // Invariant per expansion: whether every neighbour lies inside
@@ -4182,7 +4588,11 @@ impl Router {
             let interior = x > window.0 && y > window.1 && x < window.2 && y < window.3;
             // Whether a neighbour may lie in a neck zone (else its class is
             // the net's).
-            let near_zones = necks && x + 1 >= zone_box.0 && y + 1 >= zone_box.1 && x <= zone_box.2 + 1 && y <= zone_box.3 + 1;
+            let near_zones = necks
+                && x + 1 >= zone_box.0
+                && y + 1 >= zone_box.1
+                && x <= zone_box.2 + 1
+                && y <= zone_box.3 + 1;
             let corridor_test = match &scratch.corridor {
                 None => 0,
                 Some(corridor) => {
@@ -4202,81 +4612,101 @@ impl Router {
             macro_rules! neighbour {
                 ($direction:expr, $dx:expr, $dy:expr) => {
                     'step: {
-                let direction: usize = $direction;
-                let (dx, dy): (&i32, &i32) = (&$dx, &$dy);
-                let tx = x as i64 + *dx as i64;
-                let ty = y as i64 + *dy as i64;
-                if !interior
-                    && (tx < window.0 as i64 || ty < window.1 as i64 || tx > window.2 as i64 || ty > window.3 as i64)
-                {
-                    break 'step;
-                }
-                if blocked_edges & (1 << direction) != 0 {
-                    break 'step;
-                }
-                if corridor_test == 1
-                    && let Some(corridor) = &scratch.corridor
-                    && !corridor[(ty as usize / TILE) * self.tiles_x + tx as usize / TILE]
-                {
-                    break 'step;
-                }
-                let target_cell = ty as usize * nx + tx as usize;
-                let target_state = layer * cells + target_cell;
-                // The search node is read for the cost update anyway: a
-                // closed neighbour costs no other map's cache line.
-                if scratch.nodes[target_state].closed == generation {
-                    break 'step;
-                }
-                let target_class = if near_zones { class_xy(tx as usize, ty as usize) } else { class };
-                let hot = if near_zones { self.hot[target_class * layers + layer][target_cell] } else { layer_hot[target_cell] };
-                if hot.trace != crate::grid::FREE && hot.trace != own {
-                    break 'step;
-                }
-                let map = target_class * (layers + 1) + layer;
-                let mut occupied = self.occupancy_seen(scratch, class, map, target_cell) as f32;
-                // A diagonal step passes the nodes on its bisector closer
-                // than its ends do: none of another net may lie there
-                // within the clearance (exact clearance; an axis step
-                // passes no node closer than its ends).
-                if *dx != 0 && *dy != 0 {
-                    let (start, orientation) = if *dx > 0 {
-                        (cell, (*dy < 0) as usize)
-                    } else {
-                        (target_cell, (*dy > 0) as usize)
-                    };
-                    let blocked = self.occupancy_seen(scratch, class, self.diagonal_map(target_class, layer, orientation), start) as f32;
-                    occupied = occupied.max(blocked);
-                }
-                if hard && occupied > 0.0 {
-                    break 'step;
-                }
-                let history = if cleanup { 0.0 } else { hot.history };
-                let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
-                if hot.guard != 0 && (hot.guard & !HOT_HARD) as u32 != own {
-                    if hot.guard & HOT_HARD != 0 {
-                        break 'step;
-                    }
-                    step *= thermal_guard_cost;
-                }
-                if hot.covered != 0 && hot.covered as u32 != own {
-                    if self.exclusive[layer] {
-                        break 'step;
-                    }
-                    step *= self.layer_cut[layer];
-                }
-                step *= layer_factor;
-                if (arrived as usize) < 8 {
-                    let turn = (direction as i32 - arrived as i32).rem_euclid(8);
-                    step += bend_cost * turn.min(8 - turn) as f32;
-                }
-                let total = here + step;
-                if scratch.nodes[target_state].seen != generation || total < scratch.nodes[target_state].cost {
-                    scratch.nodes[target_state].seen = generation;
-                    scratch.nodes[target_state].cost = total;
-                    scratch.nodes[target_state].parent = direction as u8;
-                    let estimate = total + heuristic(layer, tx as i32, ty as i32);
-                    heap.push(heap_key(estimate, target_state));
-                }
+                        let direction: usize = $direction;
+                        let (dx, dy): (&i32, &i32) = (&$dx, &$dy);
+                        let tx = x as i64 + *dx as i64;
+                        let ty = y as i64 + *dy as i64;
+                        if !interior
+                            && (tx < window.0 as i64
+                                || ty < window.1 as i64
+                                || tx > window.2 as i64
+                                || ty > window.3 as i64)
+                        {
+                            break 'step;
+                        }
+                        if blocked_edges & (1 << direction) != 0 {
+                            break 'step;
+                        }
+                        if corridor_test == 1
+                            && let Some(corridor) = &scratch.corridor
+                            && !corridor[(ty as usize / TILE) * self.tiles_x + tx as usize / TILE]
+                        {
+                            break 'step;
+                        }
+                        let target_cell = ty as usize * nx + tx as usize;
+                        let target_state = layer * cells + target_cell;
+                        // The search node is read for the cost update anyway: a
+                        // closed neighbour costs no other map's cache line.
+                        if scratch.nodes[target_state].closed == generation {
+                            break 'step;
+                        }
+                        let target_class = if near_zones {
+                            class_xy(tx as usize, ty as usize)
+                        } else {
+                            class
+                        };
+                        let hot = if near_zones {
+                            self.hot[target_class * layers + layer][target_cell]
+                        } else {
+                            layer_hot[target_cell]
+                        };
+                        if hot.trace != crate::grid::FREE && hot.trace != own {
+                            break 'step;
+                        }
+                        let map = target_class * (layers + 1) + layer;
+                        let mut occupied =
+                            self.occupancy_seen(scratch, class, map, target_cell) as f32;
+                        // A diagonal step passes the nodes on its bisector closer
+                        // than its ends do: none of another net may lie there
+                        // within the clearance (exact clearance; an axis step
+                        // passes no node closer than its ends).
+                        if *dx != 0 && *dy != 0 {
+                            let (start, orientation) = if *dx > 0 {
+                                (cell, (*dy < 0) as usize)
+                            } else {
+                                (target_cell, (*dy > 0) as usize)
+                            };
+                            let blocked = self.occupancy_seen(
+                                scratch,
+                                class,
+                                self.diagonal_map(target_class, layer, orientation),
+                                start,
+                            ) as f32;
+                            occupied = occupied.max(blocked);
+                        }
+                        if hard && occupied > 0.0 {
+                            break 'step;
+                        }
+                        let history = if cleanup { 0.0 } else { hot.history };
+                        let mut step =
+                            layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
+                        if hot.guard != 0 && (hot.guard & !HOT_HARD) as u32 != own {
+                            if hot.guard & HOT_HARD != 0 {
+                                break 'step;
+                            }
+                            step *= thermal_guard_cost;
+                        }
+                        if hot.covered != 0 && hot.covered as u32 != own {
+                            if self.exclusive[layer] {
+                                break 'step;
+                            }
+                            step *= self.layer_cut[layer];
+                        }
+                        step *= layer_factor;
+                        if (arrived as usize) < 8 {
+                            let turn = (direction as i32 - arrived as i32).rem_euclid(8);
+                            step += bend_cost * turn.min(8 - turn) as f32;
+                        }
+                        let total = here + step;
+                        if scratch.nodes[target_state].seen != generation
+                            || total < scratch.nodes[target_state].cost
+                        {
+                            scratch.nodes[target_state].seen = generation;
+                            scratch.nodes[target_state].cost = total;
+                            scratch.nodes[target_state].parent = direction as u8;
+                            let estimate = total + heuristic(layer, tx as i32, ty as i32);
+                            heap.push(heap_key(estimate, target_state));
+                        }
                     }
                 };
             }
@@ -4290,7 +4720,19 @@ impl Router {
                 neighbour!(6, 0, -1);
                 neighbour!(7, 1, -1);
             }
-            debug_assert_eq!(DIRECTIONS, [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]);
+            debug_assert_eq!(
+                DIRECTIONS,
+                [
+                    (1, 0),
+                    (1, 1),
+                    (0, 1),
+                    (-1, 1),
+                    (-1, 0),
+                    (-1, -1),
+                    (0, -1),
+                    (1, -1)
+                ]
+            );
 
             let via_occupied = self.occupancy_seen(scratch, class, via_map, cell) as f32;
             if layers > 1
@@ -4326,8 +4768,14 @@ impl Router {
                 // A via is copper on every layer: inside another net's
                 // thermal ring on any of them it starves the spokes there.
                 if marks & 2 != 0 {
-                    let foreign = |guard: &Vec<u32>| !guard.is_empty() && guard[cell] != 0 && guard[cell] & !HARD_GUARD != own;
-                    if self.guard.iter().any(|guard| foreign(guard) && guard[cell] & HARD_GUARD != 0) {
+                    let foreign = |guard: &Vec<u32>| {
+                        !guard.is_empty() && guard[cell] != 0 && guard[cell] & !HARD_GUARD != own
+                    };
+                    if self
+                        .guard
+                        .iter()
+                        .any(|guard| foreign(guard) && guard[cell] & HARD_GUARD != 0)
+                    {
                         continue;
                     }
                     if self.guard.iter().any(foreign) {
@@ -4350,7 +4798,14 @@ impl Router {
                             continue;
                         }
                     }
-                    if hard && self.occupancy_seen(scratch, class, cell_class * (layers + 1) + target_layer, cell) > 0 {
+                    if hard
+                        && self.occupancy_seen(
+                            scratch,
+                            class,
+                            cell_class * (layers + 1) + target_layer,
+                            cell,
+                        ) > 0
+                    {
                         continue;
                     }
                     let target_state = target_layer * cells + cell;
@@ -4374,8 +4829,12 @@ impl Router {
         scratch.heap = heap;
         if let Some(started) = timed {
             use std::sync::atomic::Ordering::Relaxed;
-            self.profile.search_nanos.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
-            self.profile.search_expansions.fetch_add(scratch.expansions - expansions_before, Relaxed);
+            self.profile
+                .search_nanos
+                .fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+            self.profile
+                .search_expansions
+                .fetch_add(scratch.expansions - expansions_before, Relaxed);
         }
         if scratch.corridor.is_none() {
             scratch.open_searches += 1;
@@ -4482,7 +4941,9 @@ impl Router {
         self.searched = searched_classes(&self.board, &self.neck_of);
         self.statics = Arc::new(
             (0..self.board.classes.len())
-                .map(|class| StaticMaps::build(&self.board, &self.grid, class, self.searched[class]))
+                .map(|class| {
+                    StaticMaps::build(&self.board, &self.grid, class, self.searched[class])
+                })
                 .collect(),
         );
         let layers = self.board.layer_count;
@@ -4550,7 +5011,8 @@ impl Router {
             .collect();
         // PCB_ROUTER_TIMING: where a reroute's time goes (layout moves).
         let timing = std::env::var_os("PCB_ROUTER_TIMING").is_some();
-        let (started, pending_count, iterations_before) = (std::time::Instant::now(), pending.len(), self.iterations);
+        let (started, pending_count, iterations_before) =
+            (std::time::Instant::now(), pending.len(), self.iterations);
         // At the price of sharing the negotiation reached, as `resume`: a
         // price started low again undid what was settled (the layout's
         // polish turned eurorack's 21 open into 42, PolyKybd's 33 into
@@ -4563,10 +5025,17 @@ impl Router {
         // moved capacitor's signals ran over /SHLD's plane end, a dangling
         // track in KiCad). Pads cut off so are routed to the main piece.
         if self.config.pour_islands {
-            let stranded: Vec<NetId> = order.iter().copied().filter(|net| self.refresh_pour(*net) > 0).collect();
+            let stranded: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|net| self.refresh_pour(*net) > 0)
+                .collect();
             if !stranded.is_empty() {
                 if self.config.verbose {
-                    eprintln!("reroute: {} pour nets with pads cut off, routed again", stranded.len());
+                    eprintln!(
+                        "reroute: {} pour nets with pads cut off, routed again",
+                        stranded.len()
+                    );
                 }
                 self.negotiate_from(&order, stranded, present);
             }
@@ -4615,7 +5084,10 @@ impl Router {
             (map / (layers + 1), map % (layers + 1))
         } else {
             let relative = map - diagonal_base;
-            (relative / (2 * layers), layers + 1 + relative % (2 * layers))
+            (
+                relative / (2 * layers),
+                layers + 1 + relative % (2 * layers),
+            )
         };
         let which = if of_class == class {
             0
@@ -4669,8 +5141,12 @@ impl Router {
         for (map, cell) in &net_state.stamped {
             let map = *map as usize;
             // The corridor planner's tile fill: cells only this net claims.
-            if map >= class_base && map < class_base + layers && self.occupancy[map][*cell as usize] == 1 {
-                let tile = (*cell as usize / self.grid.nx / TILE) * self.tiles_x + (*cell as usize % self.grid.nx) / TILE;
+            if map >= class_base
+                && map < class_base + layers
+                && self.occupancy[map][*cell as usize] == 1
+            {
+                let tile = (*cell as usize / self.grid.nx / TILE) * self.tiles_x
+                    + (*cell as usize % self.grid.nx) / TILE;
                 scratch.own_claimed[(map - class_base) * tiles + tile] += 1;
             }
             if let Some((which, kind)) = self.own_kind(class, map) {
@@ -4796,15 +5272,28 @@ impl Router {
         for net in order {
             counts[self.board.nets[*net as usize].class] += 1;
         }
-        let reference = (0..counts.len()).max_by_key(|&class| counts[class]).unwrap_or(0);
+        let reference = (0..counts.len())
+            .max_by_key(|&class| counts[class])
+            .unwrap_or(0);
         let rules = self.board.classes[reference];
         let free: Vec<Vec<bool>> = (0..layers)
-            .map(|layer| self.statics[reference].trace[layer].iter().map(|&value| value == crate::grid::FREE).collect())
+            .map(|layer| {
+                self.statics[reference].trace[layer]
+                    .iter()
+                    .map(|&value| value == crate::grid::FREE)
+                    .collect()
+            })
             .collect();
-        let via_free: Vec<bool> = self.statics[reference].via_blocked.iter().map(|&blocked| !blocked).collect();
+        let via_free: Vec<bool> = self.statics[reference]
+            .via_blocked
+            .iter()
+            .map(|&blocked| !blocked)
+            .collect();
         let tiles_x = self.tiles_x;
         let tiles = self.tiles_x * self.tiles_y;
-        let tile_of = |cell: u32| (cell as usize / self.grid.nx / TILE) * tiles_x + (cell as usize % self.grid.nx) / TILE;
+        let tile_of = |cell: u32| {
+            (cell as usize / self.grid.nx / TILE) * tiles_x + (cell as usize % self.grid.nx) / TILE
+        };
         let nets: Vec<crate::global::GlobalNet> = (0..self.board.nets.len())
             .map(|net| {
                 let state = &self.nets[net];
@@ -4817,13 +5306,17 @@ impl Router {
                         .terminal_nodes
                         .iter()
                         .map(|nodes| {
-                            let mut list: Vec<usize> = nodes.iter().map(|node| node.layer as usize * tiles + tile_of(node.cell)).collect();
+                            let mut list: Vec<usize> = nodes
+                                .iter()
+                                .map(|node| node.layer as usize * tiles + tile_of(node.cell))
+                                .collect();
                             list.sort_unstable();
                             list.dedup();
                             list
                         })
                         .collect(),
-                    demand: ((class.trace_width + class.clearance) / (rules.trace_width + rules.clearance)) as f32,
+                    demand: ((class.trace_width + class.clearance)
+                        / (rules.trace_width + rules.clearance)) as f32,
                     ..Default::default()
                 }
             })
@@ -4843,7 +5336,14 @@ impl Router {
         let planned: Vec<usize> = order
             .iter()
             .map(|net| *net as usize)
-            .filter(|&net| plan.nets[net].terminals.iter().filter(|terminal| !terminal.is_empty()).count() > 1)
+            .filter(|&net| {
+                plan.nets[net]
+                    .terminals
+                    .iter()
+                    .filter(|terminal| !terminal.is_empty())
+                    .count()
+                    > 1
+            })
             .collect();
         let overflow = plan.negotiate(&planned, 40);
         let _ = cells;
@@ -4873,7 +5373,9 @@ impl Router {
         }
         hits.sort_unstable();
         hits.dedup();
-        let Some(plan) = self.global.as_mut() else { return };
+        let Some(plan) = self.global.as_mut() else {
+            return;
+        };
         for (layer, tile) in hits {
             if layer < plan.layers {
                 plan.learn(layer, tile, 0.5);
@@ -4960,11 +5462,17 @@ impl Router {
             self.plan_globally(&order);
         }
         self.profile.prepare += started.elapsed().as_secs_f64();
-        let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        let limit = (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        );
         self.config.negotiation_seconds = seconds * GUARD;
         self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
         self.negotiate(&order, order.clone());
-        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
+        (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        ) = limit;
         self.unfinished()
     }
 
@@ -4988,7 +5496,10 @@ impl Router {
 
     /// `resume`; without `polish` as in `run_in_place_polished`.
     pub fn resume_polished(&mut self, seconds: f64, polish: bool) -> RoutingResult {
-        let limit = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        let limit = (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        );
         self.config.negotiation_seconds = seconds * GUARD;
         self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
         self.hopeless = false;
@@ -5004,7 +5515,10 @@ impl Router {
         let present = self.present_reached.max(self.config.present_factor as f32);
         self.negotiate_from(&order, pending, present);
         let result = self.finish_polished(&order, polish);
-        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limit;
+        (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        ) = limit;
         result
     }
 
@@ -5030,7 +5544,9 @@ impl Router {
         (
             self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND,
             self.pour_work_seconds(),
-            self.scratch.pour_nanos.load(std::sync::atomic::Ordering::Relaxed),
+            self.scratch
+                .pour_nanos
+                .load(std::sync::atomic::Ordering::Relaxed),
             std::time::Instant::now(),
             self.scratch.expansions,
         )
@@ -5049,14 +5565,20 @@ impl Router {
     /// The pour analyses' work so far, in seconds of an idle machine
     /// (`pour_analysis_nanos`, and the fill probes' `probe_nanos`).
     fn pour_work_seconds(&self) -> f64 {
-        let nanos = self.scratch.pour_units.load(std::sync::atomic::Ordering::Relaxed) + self.probe_nanos();
+        let nanos = self
+            .scratch
+            .pour_units
+            .load(std::sync::atomic::Ordering::Relaxed)
+            + self.probe_nanos();
         nanos as f64 / 1.0e9
     }
 
     /// The fill probes' work so far, in nanoseconds of an idle machine:
     /// their items, queries and polygon vertices.
     fn probe_nanos(&self) -> u64 {
-        let load = |counter: &std::sync::atomic::AtomicU64| counter.load(std::sync::atomic::Ordering::Relaxed);
+        let load = |counter: &std::sync::atomic::AtomicU64| {
+            counter.load(std::sync::atomic::Ordering::Relaxed)
+        };
         load(&self.scratch.probe_ops) * PROBE_ITEM_NANOS
             + load(&self.scratch.probe_queries) * PROBE_QUERY_NANOS
             + load(&self.scratch.probe_vertices) * PROBE_VERTEX_NANOS
@@ -5086,7 +5608,11 @@ impl Router {
         if self.wall_guard() && budget_guard_fires(clock.1.elapsed().as_secs_f64(), budget) {
             note_wall_cut(
                 "budget guard",
-                format_args!("{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done", clock.1.elapsed().as_secs_f64(), self.budget_work() - clock.0),
+                format_args!(
+                    "{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done",
+                    clock.1.elapsed().as_secs_f64(),
+                    self.budget_work() - clock.0
+                ),
             );
             return true;
         }
@@ -5109,15 +5635,23 @@ impl Router {
 
     /// Whether this router's work has reached the caller's `deadline_work`.
     fn past_work_deadline(&self) -> bool {
-        self.config.deadline_work.is_some_and(|limit| self.work_seconds() >= limit)
+        self.config
+            .deadline_work
+            .is_some_and(|limit| self.work_seconds() >= limit)
     }
 
     /// Whether the caller's wall-clock deadline has passed (noted as a cut:
     /// the work deadline, when there is one, did not stop it first).
     fn past_wall_deadline(&self) -> bool {
-        let past = self.config.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline);
+        let past = self
+            .config
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline);
         if past {
-            note_wall_cut("deadline", format_args!("{:.0} s of this router's work done", self.work_seconds()));
+            note_wall_cut(
+                "deadline",
+                format_args!("{:.0} s of this router's work done", self.work_seconds()),
+            );
         }
         past
     }
@@ -5310,13 +5844,24 @@ impl Router {
                     continue;
                 }
                 let bounds = self.board.obstacles[terminal.pad].shape.aabb();
-                let size = [bounds.maximum[0] - bounds.minimum[0], bounds.maximum[1] - bounds.minimum[1]];
+                let size = [
+                    bounds.maximum[0] - bounds.minimum[0],
+                    bounds.maximum[1] - bounds.minimum[1],
+                ];
                 let short = size[0].min(size[1]);
-                if short >= rules.trace_width + rules.clearance || size[0].max(size[1]) < 1.5 * short {
+                if short >= rules.trace_width + rules.clearance
+                    || size[0].max(size[1]) < 1.5 * short
+                {
                     continue;
                 }
                 let axis = usize::from(size[1] > size[0]);
-                narrow.push((*net, index, terminal.layers.trailing_zeros() as usize, axis, bounds));
+                narrow.push((
+                    *net,
+                    index,
+                    terminal.layers.trailing_zeros() as usize,
+                    axis,
+                    bounds,
+                ));
             }
         }
         // A row: at least four such pads of the same direction whose
@@ -5325,14 +5870,20 @@ impl Router {
         let mut in_row = vec![false; narrow.len()];
         for (i, (_, _, layer, axis, bounds)) in narrow.iter().enumerate() {
             let across = 1 - *axis;
-            let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+            let centre = [
+                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+            ];
             let short = (bounds.maximum[across] - bounds.minimum[across]).max(1.0e-6);
             let mut alike = 0;
             for (j, (_, _, other_layer, other_axis, other)) in narrow.iter().enumerate() {
                 if i == j || other_layer != layer || other_axis != axis {
                     continue;
                 }
-                let other_centre = [(other.minimum[0] + other.maximum[0]) / 2.0, (other.minimum[1] + other.maximum[1]) / 2.0];
+                let other_centre = [
+                    (other.minimum[0] + other.maximum[0]) / 2.0,
+                    (other.minimum[1] + other.maximum[1]) / 2.0,
+                ];
                 if (other_centre[*axis] - centre[*axis]).abs() < short
                     && (other_centre[across] - centre[across]).abs() <= 3.0 * (2.0 * short + 0.05)
                 {
@@ -5341,11 +5892,18 @@ impl Router {
             }
             in_row[i] = alike >= 3;
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && !in_row[i] {
-                eprintln!("  narrow pad {} not in a row ({alike} alike)", self.board.nets[narrow[i].0 as usize].terminals[narrow[i].1].label);
+                eprintln!(
+                    "  narrow pad {} not in a row ({alike} alike)",
+                    self.board.nets[narrow[i].0 as usize].terminals[narrow[i].1].label
+                );
             }
         }
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-            eprintln!("  {} narrow pads, {} in rows", narrow.len(), in_row.iter().filter(|r| **r).count());
+            eprintln!(
+                "  {} narrow pads, {} in rows",
+                narrow.len(),
+                in_row.iter().filter(|r| **r).count()
+            );
         }
         let mut fixed = 0;
         let mut by_net: HashMap<NetId, Vec<Branch>> = HashMap::new();
@@ -5365,7 +5923,10 @@ impl Router {
             // is (a QFN's inside is free of statics too).
             let (mut sum, mut count) = (0.0, 0usize);
             for (_, _, _, _, other) in &narrow {
-                let other_centre = [(other.minimum[0] + other.maximum[0]) / 2.0, (other.minimum[1] + other.maximum[1]) / 2.0];
+                let other_centre = [
+                    (other.minimum[0] + other.maximum[0]) / 2.0,
+                    (other.minimum[1] + other.maximum[1]) / 2.0,
+                ];
                 if (other_centre[0] - (bounds.minimum[0] + bounds.maximum[0]) / 2.0).abs() < 8.0
                     && (other_centre[1] - (bounds.minimum[1] + bounds.maximum[1]) / 2.0).abs() < 8.0
                 {
@@ -5374,21 +5935,35 @@ impl Router {
                 }
             }
             let offset = centre - sum / count.max(1) as f64;
-            let signs: &[i64] = if offset > 1.0 { &[1] } else if offset < -1.0 { &[-1] } else { &[-1, 1] };
+            let signs: &[i64] = if offset > 1.0 {
+                &[1]
+            } else if offset < -1.0 {
+                &[-1]
+            } else {
+                &[-1, 1]
+            };
             let mut best: Option<(i64, Vec<Node>)> = None;
             for sign in signs.iter().copied() {
-                let end = if sign > 0 { bounds.maximum[*axis] } else { bounds.minimum[*axis] };
+                let end = if sign > 0 {
+                    bounds.maximum[*axis]
+                } else {
+                    bounds.minimum[*axis]
+                };
                 let Some(start) = nodes
                     .iter()
                     .filter(|node| node.layer as usize == *layer)
                     .filter(|node| {
                         let at = self.grid.center_of(node.cell as usize);
-                        !self.nets[net as usize].escapes.contains_key(node) || (at[*axis] - centre) * sign as f64 > 0.0
+                        !self.nets[net as usize].escapes.contains_key(node)
+                            || (at[*axis] - centre) * sign as f64 > 0.0
                     })
                     .min_by(|a, b| {
                         let key = |node: &Node| {
                             let at = self.grid.center_of(node.cell as usize);
-                            ((at[across] - middle).abs() * 4.0 + (at[*axis] - end).abs(), 0)
+                            (
+                                (at[across] - middle).abs() * 4.0 + (at[*axis] - end).abs(),
+                                0,
+                            )
                         };
                         key(a).partial_cmp(&key(b)).unwrap()
                     })
@@ -5399,11 +5974,16 @@ impl Router {
                 let (mut x, mut y) = (start.cell as i64 % nx, start.cell as i64 / nx);
                 let inside = |cell: i64| {
                     let at = self.grid.center_of(cell as usize);
-                    at[*axis] >= bounds.minimum[*axis] - 1.0e-6 && at[*axis] <= bounds.maximum[*axis] + 1.0e-6
+                    at[*axis] >= bounds.minimum[*axis] - 1.0e-6
+                        && at[*axis] <= bounds.maximum[*axis] + 1.0e-6
                 };
                 let mut beyond = 0;
                 while beyond < steps {
-                    if *axis == 0 { x += sign } else { y += sign }
+                    if *axis == 0 {
+                        x += sign
+                    } else {
+                        y += sign
+                    }
                     if x < 0 || y < 0 || x >= nx || y >= ny {
                         break;
                     }
@@ -5414,7 +5994,10 @@ impl Router {
                     {
                         break;
                     }
-                    path.push(Node { layer: *layer as u8, cell: cell as u32 });
+                    path.push(Node {
+                        layer: *layer as u8,
+                        cell: cell as u32,
+                    });
                     if !inside(cell) {
                         beyond += 1;
                     }
@@ -5431,7 +6014,10 @@ impl Router {
                         "  escape stub {} ({}): ({:.2},{:.2}) -> ({:.2},{:.2}) on layer {layer}",
                         self.board.nets[net as usize].terminals[*index].label,
                         self.board.nets[net as usize].name,
-                        from[0], from[1], to[0], to[1]
+                        from[0],
+                        from[1],
+                        to[0],
+                        to[1]
                     );
                 }
                 by_net.entry(net).or_default().push(Branch {
@@ -5449,7 +6035,10 @@ impl Router {
             }
         }
         if self.config.verbose && fixed > 0 {
-            eprintln!("escape stubs fixed for {fixed} fine-pitch pads of {} nets", by_net.len());
+            eprintln!(
+                "escape stubs fixed for {fixed} fine-pitch pads of {} nets",
+                by_net.len()
+            );
         }
     }
 
@@ -5539,8 +6128,13 @@ impl Router {
             let state = &mut self.nets[*net as usize];
             let inner = (1..layers.saturating_sub(1)).any(|layer| !state.plane[layer].is_empty());
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-                let covered: Vec<usize> = (0..layers).filter(|layer| !state.plane[*layer].is_empty()).collect();
-                eprintln!("  plane stubs {}: pour layers {covered:?}, inner {inner}", self.board.nets[*net as usize].name);
+                let covered: Vec<usize> = (0..layers)
+                    .filter(|layer| !state.plane[*layer].is_empty())
+                    .collect();
+                eprintln!(
+                    "  plane stubs {}: pour layers {covered:?}, inner {inner}",
+                    self.board.nets[*net as usize].name
+                );
             }
             if !inner {
                 continue;
@@ -5550,7 +6144,10 @@ impl Router {
             state.plane[layers - 1] = Vec::new();
             for (index, nodes) in state.terminal_nodes.iter().enumerate() {
                 state.on_plane[index] = nodes.iter().any(|node| {
-                    state.plane.get(node.layer as usize).is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
+                    state
+                        .plane
+                        .get(node.layer as usize)
+                        .is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
                 });
             }
         }
@@ -5563,17 +6160,26 @@ impl Router {
         // At most a minute: of work where the wall clock guards (route
         // mode; a minute of wall clock made it depend on the load), as
         // before under a caller's deadline (the layout: stall alone).
-        let limits = (self.config.negotiation_seconds, self.config.negotiation_expansions);
+        let limits = (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        );
         if self.wall_guard() {
             let minute = (60.0 * EXPANSIONS_PER_SECOND) as u64;
-            self.config.negotiation_expansions =
-                if limits.1 == 0 { minute } else { limits.1.min(minute) };
+            self.config.negotiation_expansions = if limits.1 == 0 {
+                minute
+            } else {
+                limits.1.min(minute)
+            };
             self.config.negotiation_seconds = limits.0.min(60.0 * GUARD);
         } else {
             self.config.negotiation_seconds = limits.0.min(60.0);
         }
         self.negotiate(&pour_nets, pour_nets.clone());
-        (self.config.negotiation_seconds, self.config.negotiation_expansions) = limits;
+        (
+            self.config.negotiation_seconds,
+            self.config.negotiation_expansions,
+        ) = limits;
         for (net, plane, on_plane) in saved {
             let state = &mut self.nets[net as usize];
             state.plane = plane;
@@ -5629,7 +6235,8 @@ impl Router {
     /// and counts kept routes that differ (none may).
     fn route_batches(&mut self, batches: &[(Vec<NetId>, bool)], present: f32, growth: f64) {
         let threads = rayon::current_num_threads();
-        let paths = self.config.speculate_paths || std::env::var_os("PCB_ROUTER_SPECULATE_PATHS").is_some();
+        let paths =
+            self.config.speculate_paths || std::env::var_os("PCB_ROUTER_SPECULATE_PATHS").is_some();
         let speculate = self.config.parallel
             && (self.config.speculate || paths)
             && (threads > 1 || paths)
@@ -5643,7 +6250,14 @@ impl Router {
         let blocks_y = ny.div_ceil(1 << READ_BLOCK_SHIFT);
         let mut dirty_blocks = vec![false; if speculate { blocks_x * blocks_y } else { 0 }];
         let mut dirty_tiles = vec![false; if speculate { tiles } else { 0 }];
-        let mut dirty_cells = vec![false; if speculate && paths { self.grid.cells() } else { 0 }];
+        let mut dirty_cells = vec![
+            false;
+            if speculate && paths {
+                self.grid.cells()
+            } else {
+                0
+            }
+        ];
         let mut position = 0;
         while position < batches.len() {
             if !speculate || batches[position].1 {
@@ -5666,7 +6280,10 @@ impl Router {
                 continue;
             }
             let started = std::time::Instant::now();
-            let nets: Vec<NetId> = batches[position..end].iter().flat_map(|(members, _)| members.iter().copied()).collect();
+            let nets: Vec<NetId> = batches[position..end]
+                .iter()
+                .flat_map(|(members, _)| members.iter().copied())
+                .collect();
             let states = self.grid.cells() * self.board.layer_count;
             let cells = self.grid.cells();
             let this: &Self = self;
@@ -5703,7 +6320,8 @@ impl Router {
                         }
                         this.route_net(scratch, *net, &mut net_state, present, false, growth);
                         // The cells the new branches run through.
-                        let mut path_blocks: Vec<u32> = net_state.branches[kept.min(net_state.branches.len())..]
+                        let mut path_blocks: Vec<u32> = net_state.branches
+                            [kept.min(net_state.branches.len())..]
                             .iter()
                             .flat_map(|branch| &branch.nodes)
                             .map(|node| node.cell)
@@ -5730,12 +6348,18 @@ impl Router {
                 let routes: Vec<(NetState, [u64; 5], Vec<u32>, Vec<u32>, Vec<u32>)> =
                     speculative.by_ref().take(members.len()).collect();
                 let block_valid = if paths {
-                    routes.iter().all(|(_, _, _, _, path)| !path.iter().any(|cell| dirty_cells[*cell as usize]))
+                    routes.iter().all(|(_, _, _, _, path)| {
+                        !path.iter().any(|cell| dirty_cells[*cell as usize])
+                    })
                 } else {
-                    routes.iter().all(|(_, _, blocks, _, _)| !blocks.iter().any(|block| dirty_blocks[*block as usize]))
+                    routes.iter().all(|(_, _, blocks, _, _)| {
+                        !blocks.iter().any(|block| dirty_blocks[*block as usize])
+                    })
                 };
                 let tile_valid = paths
-                    || routes.iter().all(|(_, _, _, read_tiles, _)| !read_tiles.iter().any(|tile| dirty_tiles[*tile as usize]));
+                    || routes.iter().all(|(_, _, _, read_tiles, _)| {
+                        !read_tiles.iter().any(|tile| dirty_tiles[*tile as usize])
+                    });
                 if !block_valid {
                     self.profile.speculation_block_conflicts += 1;
                 }
@@ -5745,9 +6369,15 @@ impl Router {
                 // A pour net's search reads its brush class's maps, where its
                 // own old stamps stay unmasked: it routes in turn.
                 let valid = block_valid
-                    && (tile_valid || std::env::var_os("PCB_ROUTER_SPECULATION_NO_TILES").is_some())
-                    && members.iter().all(|net| self.nets[*net as usize].plane.is_empty());
-                let old: Vec<Vec<(u32, u32)>> = members.iter().map(|net| self.nets[*net as usize].stamped.clone()).collect();
+                    && (tile_valid
+                        || std::env::var_os("PCB_ROUTER_SPECULATION_NO_TILES").is_some())
+                    && members
+                        .iter()
+                        .all(|net| self.nets[*net as usize].plane.is_empty());
+                let old: Vec<Vec<(u32, u32)>> = members
+                    .iter()
+                    .map(|net| self.nets[*net as usize].stamped.clone())
+                    .collect();
                 if valid && !check {
                     let commit_started = std::time::Instant::now();
                     for (net, (mut state, counters, _, _, _)) in members.iter().zip(routes) {
@@ -5770,13 +6400,21 @@ impl Router {
                     if valid {
                         // Checking: a kept route must be the one routed in turn.
                         for (net, (state, _, _, _, _)) in members.iter().zip(&routes) {
-                            let same = state.branches.len() == self.nets[*net as usize].branches.len()
-                                && state.branches.iter().zip(&self.nets[*net as usize].branches).all(|(a, b)| a.nodes == b.nodes);
+                            let same = state.branches.len()
+                                == self.nets[*net as usize].branches.len()
+                                && state
+                                    .branches
+                                    .iter()
+                                    .zip(&self.nets[*net as usize].branches)
+                                    .all(|(a, b)| a.nodes == b.nodes);
                             if same {
                                 self.profile.speculation_kept += 1;
                             } else {
                                 self.profile.speculation_wrong += 1;
-                                eprintln!("speculation check: {} routed differently", self.board.nets[*net as usize].name);
+                                eprintln!(
+                                    "speculation check: {} routed differently",
+                                    self.board.nets[*net as usize].name
+                                );
                             }
                         }
                     } else {
@@ -5881,14 +6519,7 @@ impl Router {
                         if !net_state.stamped.is_empty() {
                             this.mask_own(scratch, *net, &net_state);
                         }
-                        this.route_net(
-                            scratch,
-                            *net,
-                            &mut net_state,
-                            present,
-                            false,
-                            growth,
-                        );
+                        this.route_net(scratch, *net, &mut net_state, present, false, growth);
                         scratch.unmask_own();
                         let after = scratch.counters();
                         let mut delta = [0u64; 5];
@@ -5949,7 +6580,11 @@ impl Router {
         if finishing && self.config.verbose {
             eprintln!("negotiation skipped: past the deadline, the routes stay as they are");
         }
-        for iteration in 0..if finishing { 0 } else { self.config.max_iterations } {
+        for iteration in 0..if finishing {
+            0
+        } else {
+            self.config.max_iterations
+        } {
             self.iterations += 1;
             let growth = 1.0 + iteration as f64 / 6.0;
             let batches = self.batches(&pending, growth);
@@ -5972,7 +6607,10 @@ impl Router {
             let mut conflicted = Vec::new();
             for net in order {
                 let conflicts = self.conflicts(*net);
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && (order.len() <= 3 || iteration % 10 == 9) && !conflicts.is_empty() {
+                if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
+                    && (order.len() <= 3 || iteration % 10 == 9)
+                    && !conflicts.is_empty()
+                {
                     let spots: Vec<String> = conflicts
                         .iter()
                         .take(8)
@@ -5984,10 +6622,20 @@ impl Router {
                                 .filter(|other| self.nets[*other].stamped.contains(&(map, *cell)))
                                 .map(|other| self.board.nets[other].name.as_str())
                                 .collect();
-                            format!("L{layer}({:.2},{:.2})x{}[{}]", at[0], at[1], self.occupancy[map as usize][*cell as usize], others.join(","))
+                            format!(
+                                "L{layer}({:.2},{:.2})x{}[{}]",
+                                at[0],
+                                at[1],
+                                self.occupancy[map as usize][*cell as usize],
+                                others.join(",")
+                            )
                         })
                         .collect();
-                    eprintln!("  {} conflicts at {}", self.board.nets[*net as usize].name, spots.join(" "));
+                    eprintln!(
+                        "  {} conflicts at {}",
+                        self.board.nets[*net as usize].name,
+                        spots.join(" ")
+                    );
                 }
                 if conflicts.is_empty() {
                     self.nets[*net as usize].stuck = 0;
@@ -6005,7 +6653,9 @@ impl Router {
                     self.history[layer][cell as usize] += self.config.history_increment as f32;
                     if layer < layers {
                         for class in 0..self.statics.len() {
-                            if let Some(hot) = self.hot[class * layers + layer].get_mut(cell as usize) {
+                            if let Some(hot) =
+                                self.hot[class * layers + layer].get_mut(cell as usize)
+                            {
                                 hot.history += self.config.history_increment as f32;
                             }
                         }
@@ -6119,18 +6769,24 @@ impl Router {
                             .iter()
                             .map(|t| format!("({:.2},{:.2})", t.anchor[0], t.anchor[1]))
                             .collect();
-                        eprintln!("    {} terminals {}", self.board.nets[*net as usize].name, terminals.join(" "));
+                        eprintln!(
+                            "    {} terminals {}",
+                            self.board.nets[*net as usize].name,
+                            terminals.join(" ")
+                        );
                     }
                     self.dump_region(&conflicted);
                 }
             }
             let at_cap = present >= self.config.present_cap as f32;
-            let progress = if at_cap && self.config.stall_drop > 0.0 && best_conflicted != usize::MAX {
-                let needed = ((best_conflicted as f64 * self.config.stall_drop).ceil() as usize).max(2);
-                really_conflicted + needed <= best_conflicted
-            } else {
-                really_conflicted < best_conflicted
-            };
+            let progress =
+                if at_cap && self.config.stall_drop > 0.0 && best_conflicted != usize::MAX {
+                    let needed =
+                        ((best_conflicted as f64 * self.config.stall_drop).ceil() as usize).max(2);
+                    really_conflicted + needed <= best_conflicted
+                } else {
+                    really_conflicted < best_conflicted
+                };
             if progress {
                 best_conflicted = really_conflicted;
                 stalled = 0;
@@ -6161,8 +6817,11 @@ impl Router {
                 (present * self.config.present_growth as f32).min(self.config.present_cap as f32);
             // At the price cap only history still moves anything: give up
             // sooner there.
-            let patience =
-                if present >= self.config.present_cap as f32 { self.config.stall_at_cap } else { self.config.stall_patience };
+            let patience = if present >= self.config.present_cap as f32 {
+                self.config.stall_at_cap
+            } else {
+                self.config.stall_patience
+            };
             // Work, not seconds, when the caller gives it: the same board
             // then routes the same way however busy the machine is; the
             // seconds stay as the last guard.
@@ -6171,10 +6830,17 @@ impl Router {
             if stalled > patience || worked_out || self.past_work_deadline() {
                 break;
             }
-            if self.wall_guard() && started.elapsed().as_secs_f64() > self.config.negotiation_seconds {
+            if self.wall_guard()
+                && started.elapsed().as_secs_f64() > self.config.negotiation_seconds
+            {
                 note_wall_cut(
                     "negotiation guard",
-                    format_args!("{:.0} s of wall clock, {:.0} s of work", started.elapsed().as_secs_f64(), (self.scratch.expansions - expansions_before) as f64 / EXPANSIONS_PER_SECOND),
+                    format_args!(
+                        "{:.0} s of wall clock, {:.0} s of work",
+                        started.elapsed().as_secs_f64(),
+                        (self.scratch.expansions - expansions_before) as f64
+                            / EXPANSIONS_PER_SECOND
+                    ),
                 );
                 break;
             }
@@ -6189,7 +6855,12 @@ impl Router {
             if iteration >= 1 && self.config.abandon_hopeless {
                 let (routable, pathless) = self.nets.iter().filter(|state| state.routable).fold(
                     (0usize, 0usize),
-                    |(routable, pathless), state| (routable + 1, pathless + usize::from(!state.complete && state.blocked)),
+                    |(routable, pathless), state| {
+                        (
+                            routable + 1,
+                            pathless + usize::from(!state.complete && state.blocked),
+                        )
+                    },
                 );
                 if pathless * 4 > routable {
                     if self.config.verbose {
@@ -6245,13 +6916,18 @@ impl Router {
     /// net's copper leave off the main piece. The polish keeps a change
     /// only if none of these grows (`pour_aware_polish`).
     fn pour_stranded(&self) -> Vec<usize> {
-        self.pour_net_ids().into_iter().map(|net| self.pour_stranded_of(net)).collect()
+        self.pour_net_ids()
+            .into_iter()
+            .map(|net| self.pour_stranded_of(net))
+            .collect()
     }
 
     /// The pour nets `pour_stranded` counts, in its order.
     fn pour_net_ids(&self) -> Vec<NetId> {
         (0..self.nets.len() as NetId)
-            .filter(|net| self.nets[*net as usize].routable && !self.nets[*net as usize].plane.is_empty())
+            .filter(|net| {
+                self.nets[*net as usize].routable && !self.nets[*net as usize].plane.is_empty()
+            })
             .collect()
     }
 
@@ -6270,7 +6946,9 @@ impl Router {
             for (cell, inside) in mask.iter().enumerate() {
                 if *inside {
                     let (x, y) = self.grid.xy(cell);
-                    bounds = Some(bounds.map_or((x, y, x, y), |(x0, y0, x1, y1)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y))));
+                    bounds = Some(bounds.map_or((x, y, x, y), |(x0, y0, x1, y1)| {
+                        (x0.min(x), y0.min(y), x1.max(x), y1.max(y))
+                    }));
                 }
             }
         }
@@ -6305,7 +6983,9 @@ impl Router {
                 }
                 let root = find(&mut parent, terminal_base + terminal);
                 if root != main {
-                    anchors.entry(root).or_insert(self.board.nets[net as usize].terminals[terminal].anchor);
+                    anchors
+                        .entry(root)
+                        .or_insert(self.board.nets[net as usize].terminals[terminal].anchor);
                 }
             }
             if !anchors.is_empty() {
@@ -6314,8 +6994,14 @@ impl Router {
                     for (layer, other, cell) in &vias {
                         self.nets[net as usize].branches.push(Branch {
                             nodes: vec![
-                                Node { layer: *layer as u8, cell: *cell as u32 },
-                                Node { layer: *other as u8, cell: *cell as u32 },
+                                Node {
+                                    layer: *layer as u8,
+                                    cell: *cell as u32,
+                                },
+                                Node {
+                                    layer: *other as u8,
+                                    cell: *cell as u32,
+                                },
                             ],
                             start_terminal: PLANE_TERMINAL,
                             end_terminal: PLANE_TERMINAL,
@@ -6323,7 +7009,11 @@ impl Router {
                     }
                     self.stamp(net);
                     if self.config.verbose {
-                        eprintln!("  pour {}: {} stitching vias for cut-off pads", self.board.nets[net as usize].name, vias.len());
+                        eprintln!(
+                            "  pour {}: {} stitching vias for cut-off pads",
+                            self.board.nets[net as usize].name,
+                            vias.len()
+                        );
                     }
                     (pours, parent, main) = self.analyze_pours(net);
                 }
@@ -6334,11 +7024,16 @@ impl Router {
         let terminal_count = state.terminal_nodes.len();
         let touches = |state: &NetState, terminal: usize| {
             state.terminal_nodes[terminal].iter().any(|node| {
-                state.plane.get(node.layer as usize).is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
+                state
+                    .plane
+                    .get(node.layer as usize)
+                    .is_some_and(|mask| !mask.is_empty() && mask[node.cell as usize])
             })
         };
         let newly: Vec<usize> = (0..terminal_count)
-            .filter(|terminal| state.on_plane[*terminal] && find(&mut parent, terminal_base + terminal) != main)
+            .filter(|terminal| {
+                state.on_plane[*terminal] && find(&mut parent, terminal_base + terminal) != main
+            })
             .collect();
         // Pads cut off before whose own piece joins the main one again
         // without any stub (a pad's branch to the plane): through the pour
@@ -6348,11 +7043,14 @@ impl Router {
             (branch.end_terminal == PLANE_TERMINAL && branch.start_terminal < FREE_END)
                 || (branch.start_terminal == PLANE_TERMINAL && branch.end_terminal < FREE_END)
         };
-        let rejoined: Vec<usize> = if (0..terminal_count).any(|terminal| !state.on_plane[terminal] && touches(state, terminal)) {
+        let rejoined: Vec<usize> = if (0..terminal_count)
+            .any(|terminal| !state.on_plane[terminal] && touches(state, terminal))
+        {
             // Without the stubs the pour has pieces of its own (the stubs'
             // nodes are fill no more), so the terminals follow its pieces,
             // not the full analysis's (ASH-ART Qfwfq: index 143 of 143).
-            let (pours_without, mut without, main_without) = self.analyze_pours_skipping(net, &is_stub);
+            let (pours_without, mut without, main_without) =
+                self.analyze_pours_skipping(net, &is_stub);
             let base_without = pours_without.pieces + 1;
             (0..terminal_count)
                 .filter(|terminal| !state.on_plane[*terminal] && touches(state, *terminal))
@@ -6365,7 +7063,11 @@ impl Router {
         // main piece is a target (the nearest pour node may be an island);
         // the piece moves with the signals, so it is found again each time.
         let any_off = !newly.is_empty()
-            || state.on_plane.iter().enumerate().any(|(terminal, on)| !on && !rejoined.contains(&terminal));
+            || state
+                .on_plane
+                .iter()
+                .enumerate()
+                .any(|(terminal, on)| !on && !rejoined.contains(&terminal));
         let target: Vec<Vec<bool>> = if any_off {
             (0..self.board.layer_count)
                 .map(|layer| {
@@ -6395,8 +7097,10 @@ impl Router {
                 .enumerate()
                 .map(|(index, branch)| {
                     index < fixed
-                        || !((branch.end_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.start_terminal as usize)))
-                            || (branch.start_terminal == PLANE_TERMINAL && rejoined.contains(&(branch.end_terminal as usize))))
+                        || !((branch.end_terminal == PLANE_TERMINAL
+                            && rejoined.contains(&(branch.start_terminal as usize)))
+                            || (branch.start_terminal == PLANE_TERMINAL
+                                && rejoined.contains(&(branch.end_terminal as usize))))
                 })
                 .collect();
             loop {
@@ -6406,8 +7110,10 @@ impl Router {
                     if !keep[index] || index < fixed {
                         continue;
                     }
-                    let dangling = (branch.start_terminal == NO_TERMINAL && !hosts.contains_key(&branch.nodes[0]))
-                        || (branch.end_terminal == NO_TERMINAL && !hosts.contains_key(branch.nodes.last().unwrap()));
+                    let dangling = (branch.start_terminal == NO_TERMINAL
+                        && !hosts.contains_key(&branch.nodes[0]))
+                        || (branch.end_terminal == NO_TERMINAL
+                            && !hosts.contains_key(branch.nodes.last().unwrap()));
                     if dangling {
                         keep[index] = false;
                         changed = true;
@@ -6444,11 +7150,19 @@ impl Router {
                 for net in order {
                     let conflicts = self.conflicts(*net);
                     if !conflicts.is_empty() {
-                        let spots: Vec<String> = conflicts.iter().take(6).map(|(layer, cell)| {
-                            let at = self.grid.center_of(*cell as usize);
-                            format!("L{layer}({:.2},{:.2})", at[0], at[1])
-                        }).collect();
-                        eprintln!("no via reduction: {} conflicts at {}", self.board.nets[*net as usize].name, spots.join(" "));
+                        let spots: Vec<String> = conflicts
+                            .iter()
+                            .take(6)
+                            .map(|(layer, cell)| {
+                                let at = self.grid.center_of(*cell as usize);
+                                format!("L{layer}({:.2},{:.2})", at[0], at[1])
+                            })
+                            .collect();
+                        eprintln!(
+                            "no via reduction: {} conflicts at {}",
+                            self.board.nets[*net as usize].name,
+                            spots.join(" ")
+                        );
                     }
                 }
             }
@@ -6470,10 +7184,17 @@ impl Router {
                 if let Some(limit) = self.config.deadline_work {
                     allowance = allowance.min((limit - self.work_seconds()).max(0.0) / 3.0);
                 } else if let Some(deadline) = self.config.deadline {
-                    allowance = allowance.min(deadline.saturating_duration_since(std::time::Instant::now()).as_secs_f64() / 3.0);
+                    allowance = allowance.min(
+                        deadline
+                            .saturating_duration_since(std::time::Instant::now())
+                            .as_secs_f64()
+                            / 3.0,
+                    );
                 }
                 if allowance > budget && self.config.verbose {
-                    eprintln!("via reduction: {left:.0}s of the run's {total:.0}s left, a budget of {allowance:.0}s");
+                    eprintln!(
+                        "via reduction: {left:.0}s of the run's {total:.0}s left, a budget of {allowance:.0}s"
+                    );
                 }
                 budget = budget.max(allowance);
             }
@@ -6501,8 +7222,16 @@ impl Router {
             }
             let round_started = self.budget_work();
             let before = self.quality();
-            let stranded_before = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
-            let starved_before = if self.config.via_reduction_keeps_spokes { self.starved_pads() } else { 0 };
+            let stranded_before = if self.config.pour_aware_via_reduction {
+                self.pour_stranded()
+            } else {
+                Vec::new()
+            };
+            let starved_before = if self.config.via_reduction_keeps_spokes {
+                self.starved_pads()
+            } else {
+                0
+            };
             let pending: Vec<NetId> = order
                 .iter()
                 .copied()
@@ -6520,7 +7249,11 @@ impl Router {
             }
             let snapshot = self.lean_snapshot();
             // After the snapshot: a revert restores the configuration too.
-            let limits = (self.config.negotiation_seconds, self.config.negotiation_expansions, self.config.cleanup_seconds);
+            let limits = (
+                self.config.negotiation_seconds,
+                self.config.negotiation_expansions,
+                self.config.cleanup_seconds,
+            );
             if strict {
                 // The round's negotiation stops where the budget ends (a
                 // cut round that leaves something open is reverted below).
@@ -6537,7 +7270,11 @@ impl Router {
             }
             // The rerouted nets find their way around the settled ones
             // rather than through them.
-            self.negotiate_from(order, pending.clone(), self.config.via_reduction_present as f32);
+            self.negotiate_from(
+                order,
+                pending.clone(),
+                self.config.via_reduction_present as f32,
+            );
             self.resolve_remaining(order);
             self.config.heuristic_weight = weight;
             if strict {
@@ -6555,15 +7292,30 @@ impl Router {
                 })
                 .collect();
             self.clean_up(&touched);
-            (self.config.negotiation_seconds, self.config.negotiation_expansions, self.config.cleanup_seconds) = limits;
+            (
+                self.config.negotiation_seconds,
+                self.config.negotiation_expansions,
+                self.config.cleanup_seconds,
+            ) = limits;
             last_round = Some(self.budget_work() - round_started);
             self.config.via_cost = via_cost;
             let after = self.quality();
-            let stranded_after = if self.config.pour_aware_via_reduction { self.pour_stranded() } else { Vec::new() };
-            let starved_after = if self.config.via_reduction_keeps_spokes { self.starved_pads() } else { 0 };
+            let stranded_after = if self.config.pour_aware_via_reduction {
+                self.pour_stranded()
+            } else {
+                Vec::new()
+            };
+            let starved_after = if self.config.via_reduction_keeps_spokes {
+                self.starved_pads()
+            } else {
+                0
+            };
             let keep = after.0 <= before.0
                 && after.1 < before.1
-                && stranded_after.iter().zip(&stranded_before).all(|(after, before)| after <= before)
+                && stranded_after
+                    .iter()
+                    .zip(&stranded_before)
+                    .all(|(after, before)| after <= before)
                 && starved_after <= starved_before;
             if self.config.verbose {
                 eprintln!(
@@ -6674,7 +7426,11 @@ impl Router {
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        let improved = if self.hopeless { 0 } else { self.clean_up(order) };
+        let improved = if self.hopeless {
+            0
+        } else {
+            self.clean_up(order)
+        };
         self.phase_charge(2, mark);
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.profile.cleanup += cleaned;
@@ -6689,7 +7445,10 @@ impl Router {
         self.phase_charge(3, mark);
         self.profile.via_reduction += reduction_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
-            eprintln!("fingerprint after via reduction: {:016x}", self.fingerprint());
+            eprintln!(
+                "fingerprint after via reduction: {:016x}",
+                self.fingerprint()
+            );
         }
         // A repair for the final board, like the via reduction: a trial
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
@@ -6702,7 +7461,10 @@ impl Router {
         self.phase_charge(4, mark);
         self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
-            eprintln!("fingerprint after thermal spokes: {:016x}", self.fingerprint());
+            eprintln!(
+                "fingerprint after thermal spokes: {:016x}",
+                self.fingerprint()
+            );
         }
         if self.config.verbose {
             eprintln!(
@@ -6734,7 +7496,10 @@ impl Router {
             let stitches = self.stitch_pours(net, order);
             let tails = self.trim_dangling_plane_ends(net);
             if self.config.verbose && tails > 0 {
-                eprintln!("pour {}: {tails} nodes of plane ends without fill trimmed", self.board.nets[net as usize].name);
+                eprintln!(
+                    "pour {}: {tails} nodes of plane ends without fill trimmed",
+                    self.board.nets[net as usize].name
+                );
             }
             self.profile.stitching += stitching_started.elapsed().as_secs_f64();
             self.phase_charge(5, mark);
@@ -6745,7 +7510,10 @@ impl Router {
                 );
             }
         }
-        if self.config.manual_spokes && self.config.kicad_spokes && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0) {
+        if self.config.manual_spokes
+            && self.config.kicad_spokes
+            && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0)
+        {
             let started = std::time::Instant::now();
             let added = self.add_manual_spokes();
             self.profile.thermal_spokes += started.elapsed().as_secs_f64();
@@ -6767,7 +7535,24 @@ impl Router {
             if let Err(error) = self.dump_pours(&directory) {
                 eprintln!("pour dump {}: {error}", directory.display());
             } else {
-                let vias: usize = (0..self.nets.len()).map(|net| self.nets[net].branches.iter().map(|branch| branch.nodes.windows(2).filter(|pair| pair[0].cell == pair[1].cell && pair[0].layer != pair[1].layer).count()).sum::<usize>()).sum();
+                let vias: usize = (0..self.nets.len())
+                    .map(|net| {
+                        self.nets[net]
+                            .branches
+                            .iter()
+                            .map(|branch| {
+                                branch
+                                    .nodes
+                                    .windows(2)
+                                    .filter(|pair| {
+                                        pair[0].cell == pair[1].cell
+                                            && pair[0].layer != pair[1].layer
+                                    })
+                                    .count()
+                            })
+                            .sum::<usize>()
+                    })
+                    .sum();
                 eprintln!("pour dump {}: {vias} via steps", directory.display());
             }
         }
@@ -6820,7 +7605,10 @@ impl Router {
         let diagnostics = self.diagnostics();
         self.profile.emit += emit_started.elapsed().as_secs_f64();
         if self.config.verbose {
-            eprintln!("{}", self.profile.line(self.search_seconds, self.stamp_seconds));
+            eprintln!(
+                "{}",
+                self.profile.line(self.search_seconds, self.stamp_seconds)
+            );
             eprintln!("{}", self.profile.work_line());
             eprintln!("{}", self.profile.rate_line());
         }
@@ -7017,15 +7805,28 @@ impl Router {
 
     /// `analyze_pours` leaving out the branches `skip` names (by index):
     /// what the pour and the other branches join without them.
-    fn analyze_pours_skipping(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
+    fn analyze_pours_skipping(
+        &self,
+        net: NetId,
+        skip: &dyn Fn(usize) -> bool,
+    ) -> (crate::pour::PourMap, Vec<usize>, usize) {
         let started = std::time::Instant::now();
         let result = self.analyze_pours_skipping_untimed(net, skip);
-        self.profile.analysis_nanos.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-        self.profile.analysis_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.profile.analysis_nanos.fetch_add(
+            started.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.profile
+            .analysis_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         result
     }
 
-    fn analyze_pours_skipping_untimed(&self, net: NetId, skip: &dyn Fn(usize) -> bool) -> (crate::pour::PourMap, Vec<usize>, usize) {
+    fn analyze_pours_skipping_untimed(
+        &self,
+        net: NetId,
+        skip: &dyn Fn(usize) -> bool,
+    ) -> (crate::pour::PourMap, Vec<usize>, usize) {
         let (pours, parent, main, _) = self.analyze_pours_full(net, skip);
         (pours, parent, main)
     }
@@ -7054,13 +7855,28 @@ impl Router {
         report: Option<&mut Vec<SpokeRecord>>,
     ) -> (crate::pour::PourMap, Vec<usize>, usize, Vec<(usize, usize)>) {
         let started = std::time::Instant::now();
-        let ops_before = self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed);
+        let ops_before = self
+            .scratch
+            .probe_ops
+            .load(std::sync::atomic::Ordering::Relaxed);
         let probe_before = self.probe_nanos();
-        let counts_before = (self.scratch.probe_queries.load(std::sync::atomic::Ordering::Relaxed), self.scratch.probe_vertices.load(std::sync::atomic::Ordering::Relaxed));
+        let counts_before = (
+            self.scratch
+                .probe_queries
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.scratch
+                .probe_vertices
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
         let result = self.analyze_pours_uncounted(net, skip, report);
         let units = self.pour_analysis_nanos(net);
-        self.scratch.pour_units.fetch_add(units, std::sync::atomic::Ordering::Relaxed);
-        self.scratch.pour_nanos.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        self.scratch
+            .pour_units
+            .fetch_add(units, std::sync::atomic::Ordering::Relaxed);
+        self.scratch.pour_nanos.fetch_add(
+            started.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         if std::env::var_os("PCB_ROUTER_POUR_TRACE").is_some() {
             // For calibrating the work's constants: the counts beside the
             // wall time.
@@ -7069,13 +7885,25 @@ impl Router {
                 "pour trace: inside {} stamped {} probe items {} work {units} ns, wall {} ns, layer nodes {} probe queries {} probe vertices {} probe work {} ns hatched {}",
                 self.pour_inside(net),
                 state.stamped.len(),
-                self.scratch.probe_ops.load(std::sync::atomic::Ordering::Relaxed) - ops_before,
+                self.scratch
+                    .probe_ops
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    - ops_before,
                 started.elapsed().as_nanos(),
                 self.pour_layer_nodes(net),
-                self.scratch.probe_queries.load(std::sync::atomic::Ordering::Relaxed) - counts_before.0,
-                self.scratch.probe_vertices.load(std::sync::atomic::Ordering::Relaxed) - counts_before.1,
+                self.scratch
+                    .probe_queries
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    - counts_before.0,
+                self.scratch
+                    .probe_vertices
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    - counts_before.1,
                 self.probe_nanos() - probe_before,
-                self.board.planes.iter().any(|plane| plane.net == net && plane.hatch.is_some()),
+                self.board
+                    .planes
+                    .iter()
+                    .any(|plane| plane.net == net && plane.hatch.is_some()),
             );
         }
         result
@@ -7085,18 +7913,28 @@ impl Router {
     /// nanoseconds of an idle machine: the lattice nodes inside its pour
     /// (the fill mask and its labelling) and its stamps.
     fn pour_analysis_nanos(&self, net: NetId) -> u64 {
-        self.pour_inside(net) as u64 * POUR_NODE_NANOS + self.nets[net as usize].stamped.len() as u64 * POUR_STAMP_NANOS
+        self.pour_inside(net) as u64 * POUR_NODE_NANOS
+            + self.nets[net as usize].stamped.len() as u64 * POUR_STAMP_NANOS
     }
 
     /// Lattice nodes of the layers `net` pours on (the fill mask and the
     /// labelling scan every node of such a layer).
     fn pour_layer_nodes(&self, net: NetId) -> usize {
-        self.nets[net as usize].plane.iter().filter(|mask| !mask.is_empty()).count() * self.grid.cells()
+        self.nets[net as usize]
+            .plane
+            .iter()
+            .filter(|mask| !mask.is_empty())
+            .count()
+            * self.grid.cells()
     }
 
     /// Lattice nodes inside the pour of `net`, over its layers.
     fn pour_inside(&self, net: NetId) -> usize {
-        self.nets[net as usize].plane.iter().map(|mask| mask.iter().filter(|inside| **inside).count()).sum()
+        self.nets[net as usize]
+            .plane
+            .iter()
+            .map(|mask| mask.iter().filter(|inside| **inside).count())
+            .sum()
     }
 
     fn analyze_pours_uncounted(
@@ -7112,7 +7950,11 @@ impl Router {
                 .filter(|layer| !state.plane[*layer].is_empty())
                 .flat_map(|layer| {
                     let class = state.plane_class[layer];
-                    [self.map_index(class, layer), self.diagonal_map(class, layer, 0), self.diagonal_map(class, layer, 1)]
+                    [
+                        self.map_index(class, layer),
+                        self.diagonal_map(class, layer, 0),
+                        self.diagonal_map(class, layer, 1),
+                    ]
                 })
                 .collect();
             OwnStamps::new(&state.stamped, &maps, self.grid.cells())
@@ -7165,27 +8007,32 @@ impl Router {
         // side; labelled 4-connected, k30-SBC's +5V plane on In1 fell into
         // 674 pieces where KiCad's fill has 178 outlines (with the diagonal
         // steps 183; GND on F.Cu 420, 298 and 306).
-        let diagonal = |layer: usize, start: usize, orientation: usize| {
-            let class = state.plane_class[layer];
-            let direction = if orientation == 0 { 1 } else { 7 };
-            if !self.statics[class].edge_allowed(layer, start, direction, net) {
-                return false;
-            }
-            let map = self.diagonal_map(class, layer, orientation);
-            if self.occupancy[map][start] as usize != own.contains(map, start) as usize {
-                return false;
-            }
-            let Some(end) = self.grid.neighbor(start, direction) else {
-                return false;
+        let diagonal =
+            |layer: usize, start: usize, orientation: usize| {
+                let class = state.plane_class[layer];
+                let direction = if orientation == 0 { 1 } else { 7 };
+                if !self.statics[class].edge_allowed(layer, start, direction, net) {
+                    return false;
+                }
+                let map = self.diagonal_map(class, layer, orientation);
+                if self.occupancy[map][start] as usize != own.contains(map, start) as usize {
+                    return false;
+                }
+                let Some(end) = self.grid.neighbor(start, direction) else {
+                    return false;
+                };
+                let (a, b) = (self.grid.center_of(start), self.grid.center_of(end));
+                let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+                !rings[layer].iter().any(|(pad, reach)| {
+                    let shape = &self.board.obstacles[*pad].shape;
+                    shape.aabb().inflated(*reach + self.grid.pitch).intersects(
+                        crate::geometry::Aabb {
+                            minimum: middle,
+                            maximum: middle,
+                        },
+                    ) && shape.distance_to_segment(a, b) < *reach
+                })
             };
-            let (a, b) = (self.grid.center_of(start), self.grid.center_of(end));
-            let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-            !rings[layer].iter().any(|(pad, reach)| {
-                let shape = &self.board.obstacles[*pad].shape;
-                shape.aabb().inflated(*reach + self.grid.pitch).intersects(crate::geometry::Aabb { minimum: middle, maximum: middle })
-                    && shape.distance_to_segment(a, b) < *reach
-            })
-        };
         let pours = crate::pour::PourMap::build(&self.grid, &free, &diagonal);
         let branch_pieces = self.branch_pieces(net, &pours, skip);
         let terminal_count = state.terminal_nodes.len();
@@ -7205,12 +8052,27 @@ impl Router {
         // A solid pour (KiCad's `connect_pads yes`) joins a pad wherever
         // its fill comes close.
         let solid: Vec<bool> = (0..layers)
-            .map(|layer| self.board.planes.iter().any(|plane| plane.net == net && plane.layer == layer && plane.solid))
+            .map(|layer| {
+                self.board
+                    .planes
+                    .iter()
+                    .any(|plane| plane.net == net && plane.layer == layer && plane.solid)
+            })
             .collect();
         let description = &self.board.nets[net as usize];
         // Per pad, KiCad's own zone connection overrides the pour's.
-        let isolated = |terminal: usize| self.board.isolated_pads.binary_search(&description.terminals[terminal].label).is_ok();
-        let solid_pad = |terminal: usize| self.board.solid_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        let isolated = |terminal: usize| {
+            self.board
+                .isolated_pads
+                .binary_search(&description.terminals[terminal].label)
+                .is_ok()
+        };
+        let solid_pad = |terminal: usize| {
+            self.board
+                .solid_pads
+                .binary_search(&description.terminals[terminal].label)
+                .is_ok()
+        };
         // Pieces with copper of the net in them: a track or via, or a pad
         // the fill touches. KiCad keeps a fill piece only with such an item
         // in it; a piece joined to the net by thermal spokes alone is an
@@ -7224,8 +8086,13 @@ impl Router {
             if isolated(terminal) {
                 continue;
             }
-            for node in nodes.iter().filter(|node| solid[node.layer as usize] || solid_pad(terminal)) {
-                if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach) {
+            for node in nodes
+                .iter()
+                .filter(|node| solid[node.layer as usize] || solid_pad(terminal))
+            {
+                if let Some(piece) =
+                    pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
+                {
                     union(&mut parent, terminal_base + terminal, piece as usize);
                     touched.push(piece as usize);
                 }
@@ -7261,10 +8128,23 @@ impl Router {
             }
         }
         let spoke_islands = if self.config.kicad_spokes {
-            self.kicad_spokes(net, &pours, &mut parent, terminal_base, skip, &rings, &branch_pieces, report)
+            self.kicad_spokes(
+                net,
+                &pours,
+                &mut parent,
+                terminal_base,
+                skip,
+                &rings,
+                &branch_pieces,
+                report,
+            )
         } else {
-            let with_items: HashSet<usize> = touched.iter().map(|piece| find(&mut parent, *piece)).collect();
-            let has_item = |parent: &mut Vec<usize>, piece: usize| with_items.contains(&find(parent, piece));
+            let with_items: HashSet<usize> = touched
+                .iter()
+                .map(|piece| find(&mut parent, *piece))
+                .collect();
+            let has_item =
+                |parent: &mut Vec<usize>, piece: usize| with_items.contains(&find(parent, piece));
             let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
             for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
                 if isolated(terminal) || solid_pad(terminal) {
@@ -7277,7 +8157,8 @@ impl Router {
                 // In layer order: a hash set's order made the union order, and
                 // so the roots, the main piece's tie-break and the stitching
                 // vias' anchors, differ from run to run.
-                let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
+                let layers_of_nodes: std::collections::BTreeSet<usize> =
+                    nodes.iter().map(|node| node.layer as usize).collect();
                 for layer in layers_of_nodes {
                     if pours.label[layer].is_empty() || solid[layer] {
                         continue;
@@ -7290,7 +8171,10 @@ impl Router {
                         .map(|plane| plane.thermal_reach)
                         .fold(0.0f64, f64::max)
                         .max(self.grid.pitch);
-                    let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+                    let half = [
+                        (bounds.maximum[0] - bounds.minimum[0]) / 2.0,
+                        (bounds.maximum[1] - bounds.minimum[1]) / 2.0,
+                    ];
                     let directions: [[f64; 2]; 4] = if round {
                         let d = std::f64::consts::FRAC_1_SQRT_2;
                         [[d, d], [d, -d], [-d, d], [-d, -d]]
@@ -7313,19 +8197,29 @@ impl Router {
                         .filter(|plane| plane.net == net && plane.layer == layer)
                         .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
                         .fold(0.0f64, f64::max);
-                    let side = ((bridge - self.board.classes[state.plane_class[layer]].trace_width) / 2.0).max(0.0);
+                    let side =
+                        ((bridge - self.board.classes[state.plane_class[layer]].trace_width) / 2.0)
+                            .max(0.0);
                     let plane_map = self.map_index(state.plane_class[layer], layer);
                     let clear = |cell: usize| {
                         state.plane[layer][cell]
-                            && self.occupancy[plane_map][cell] as usize == own.contains(plane_map, cell) as usize
+                            && self.occupancy[plane_map][cell] as usize
+                                == own.contains(plane_map, cell) as usize
                     };
                     for (direction_index, direction) in directions.into_iter().enumerate() {
                         // From the pad's edge along the spoke, the fill must
                         // begin within the gap and a little more.
-                        let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+                        let edge = if round {
+                            half[0]
+                        } else {
+                            (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs()
+                        };
                         for extra in [gap, gap + self.grid.pitch] {
                             let distance = edge + extra;
-                            let point = [anchor[0] + direction[0] * distance, anchor[1] + direction[1] * distance];
+                            let point = [
+                                anchor[0] + direction[0] * distance,
+                                anchor[1] + direction[1] * distance,
+                            ];
                             let Some(cell) = self.grid.nearest_node(point) else {
                                 continue;
                             };
@@ -7337,13 +8231,17 @@ impl Router {
                             // counted as a spoke past pad 6's corner, 0.2 mm
                             // from the spoke; KiCad left the pad unconnected).
                             if piece != 0 && self.config.spoke_clearance {
-                                let steps = ((extra / (self.grid.pitch / 2.0)).ceil() as usize).max(1);
+                                let steps =
+                                    ((extra / (self.grid.pitch / 2.0)).ceil() as usize).max(1);
                                 let blocked = (1..=steps).any(|step| {
                                     let along = edge + extra * step as f64 / steps as f64;
                                     [-side, 0.0, side].iter().any(|offset| {
                                         let at = [
-                                            anchor[0] + direction[0] * along - direction[1] * offset,
-                                            anchor[1] + direction[1] * along + direction[0] * offset,
+                                            anchor[0] + direction[0] * along
+                                                - direction[1] * offset,
+                                            anchor[1]
+                                                + direction[1] * along
+                                                + direction[0] * offset,
                                         ];
                                         self.grid.nearest_node(at).is_none_or(|cell| !clear(cell))
                                     })
@@ -7367,7 +8265,18 @@ impl Router {
                         }
                     }
                     if let Some(report) = report.as_deref_mut() {
-                        report.push(SpokeRecord { terminal, pad: description.terminals[terminal].pad, anchor, crossings: 0, layer, round, outcomes, tracks: 0, seam_short: 0, seam_zone: None });
+                        report.push(SpokeRecord {
+                            terminal,
+                            pad: description.terminals[terminal].pad,
+                            anchor,
+                            crossings: 0,
+                            layer,
+                            round,
+                            outcomes,
+                            tracks: 0,
+                            seam_short: 0,
+                            seam_zone: None,
+                        });
                     }
                     if good < 2 {
                         for piece in islands {
@@ -7387,7 +8296,11 @@ impl Router {
                 .or_default() += 1;
         }
         let most = votes.values().copied().max().unwrap_or(0);
-        let mut leaders: Vec<usize> = votes.iter().filter(|(_, count)| **count == most).map(|(root, _)| *root).collect();
+        let mut leaders: Vec<usize> = votes
+            .iter()
+            .filter(|(_, count)| **count == most)
+            .map(|(root, _)| *root)
+            .collect();
         leaders.sort_unstable();
         // Equal votes: the component with the most fill.
         let largest = if leaders.len() > 1 {
@@ -7395,11 +8308,17 @@ impl Router {
             let mut root_of: HashMap<u32, usize> = HashMap::new();
             for labels in &pours.label {
                 for label in labels.iter().filter(|label| **label != 0) {
-                    let root = *root_of.entry(*label).or_insert_with(|| find(&mut parent, *label as usize));
+                    let root = *root_of
+                        .entry(*label)
+                        .or_insert_with(|| find(&mut parent, *label as usize));
                     *area.entry(root).or_default() += 1;
                 }
             }
-            leaders.iter().copied().max_by_key(|root| (area.get(root).copied().unwrap_or(0), usize::MAX - *root)).unwrap_or(0)
+            leaders
+                .iter()
+                .copied()
+                .max_by_key(|root| (area.get(root).copied().unwrap_or(0), usize::MAX - *root))
+                .unwrap_or(0)
         } else {
             leaders.first().copied().unwrap_or(0)
         };
@@ -7451,12 +8370,28 @@ impl Router {
             let (a, b) = (find(parent, a), find(parent, b));
             parent[a] = b;
         };
-        let isolated = |terminal: usize| self.board.isolated_pads.binary_search(&description.terminals[terminal].label).is_ok();
-        let solid_pad = |terminal: usize| self.board.solid_pads.binary_search(&description.terminals[terminal].label).is_ok();
+        let isolated = |terminal: usize| {
+            self.board
+                .isolated_pads
+                .binary_search(&description.terminals[terminal].label)
+                .is_ok()
+        };
+        let solid_pad = |terminal: usize| {
+            self.board
+                .solid_pads
+                .binary_search(&description.terminals[terminal].label)
+                .is_ok()
+        };
         let solid: Vec<bool> = (0..layers)
-            .map(|layer| self.board.planes.iter().any(|plane| plane.net == net && plane.layer == layer && plane.solid))
+            .map(|layer| {
+                self.board
+                    .planes
+                    .iter()
+                    .any(|plane| plane.net == net && plane.layer == layer && plane.solid)
+            })
             .collect();
-        let label_at = |layer: usize, cell: usize| pours.label[layer].get(cell).copied().unwrap_or(0);
+        let label_at =
+            |layer: usize, cell: usize| pours.label[layer].get(cell).copied().unwrap_or(0);
         // Items per piece (KiCad's CN_ZONE_LAYER::HasSingleConnection):
         // each branch with a node in it, each pad joined solidly, and each
         // pad whose spoke lands in it.
@@ -7475,8 +8410,12 @@ impl Router {
                 continue;
             }
             let mut seen: Vec<u32> = Vec::new();
-            for node in nodes.iter().filter(|node| solid[node.layer as usize] || solid_pad(terminal)) {
-                if let Some(piece) = pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
+            for node in nodes
+                .iter()
+                .filter(|node| solid[node.layer as usize] || solid_pad(terminal))
+            {
+                if let Some(piece) =
+                    pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
                     && !seen.contains(&piece)
                 {
                     seen.push(piece);
@@ -7505,7 +8444,11 @@ impl Router {
                     .planes
                     .iter()
                     .enumerate()
-                    .filter(|(_, plane)| plane.net == net && plane.layer == layer && (plane.connect || self.config.tracks_rung_fill))
+                    .filter(|(_, plane)| {
+                        plane.net == net
+                            && plane.layer == layer
+                            && (plane.connect || self.config.tracks_rung_fill)
+                    })
                     .map(|(index, _)| index)
                     .collect();
                 if zones.len() >= 2 { zones } else { Vec::new() }
@@ -7538,14 +8481,34 @@ impl Router {
         // spokes reach; in a solid one the pad's relief takes them, and
         // the DRC counts what crosses their rings, the pad's own spokes).
         // Per pad, whether it lies inside its terminal's pad on the layer.
-        let mut spoke_pads: Vec<(usize, usize, crate::geometry::Point, std::collections::BTreeSet<usize>, std::collections::BTreeSet<usize>)> = Vec::new();
+        let mut spoke_pads: Vec<(
+            usize,
+            usize,
+            crate::geometry::Point,
+            std::collections::BTreeSet<usize>,
+            std::collections::BTreeSet<usize>,
+        )> = Vec::new();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
-            let layers_of_nodes: std::collections::BTreeSet<usize> = nodes.iter().map(|node| node.layer as usize).collect();
-            spoke_pads.push((terminal, description.terminals[terminal].pad, description.terminals[terminal].anchor, layers_of_nodes, Default::default()));
+            let layers_of_nodes: std::collections::BTreeSet<usize> =
+                nodes.iter().map(|node| node.layer as usize).collect();
+            spoke_pads.push((
+                terminal,
+                description.terminals[terminal].pad,
+                description.terminals[terminal].anchor,
+                layers_of_nodes,
+                Default::default(),
+            ));
         }
-        for merged in self.board.merged_pads.iter().filter(|merged| merged.net == net && merged.host < state.terminal_nodes.len()) {
+        for merged in self
+            .board
+            .merged_pads
+            .iter()
+            .filter(|merged| merged.net == net && merged.host < state.terminal_nodes.len())
+        {
             let host = &self.board.obstacles[description.terminals[merged.host].pad];
-            let inside = |layer: &usize| host.layers & (1 << layer) != 0 && host.shape.contains(merged.anchor);
+            let inside = |layer: &usize| {
+                host.layers & (1 << layer) != 0 && host.shape.contains(merged.anchor)
+            };
             let layers: std::collections::BTreeSet<usize> = (0..layers)
                 .filter(|layer| merged.layers & (1 << layer) != 0)
                 .filter(|layer| self.config.inner_pads || !inside(layer))
@@ -7563,13 +8526,26 @@ impl Router {
                 if pours.label[layer].is_empty() || solid[layer] {
                     continue;
                 }
-                let planes = || self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer && !plane.solid);
-                let gap = planes().map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
-                let bridge = planes().map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+                let planes = || {
+                    self.board
+                        .planes
+                        .iter()
+                        .filter(|plane| plane.net == net && plane.layer == layer && !plane.solid)
+                };
+                let gap = planes()
+                    .map(|plane| plane.thermal_gap)
+                    .fold(0.0f64, f64::max);
+                let bridge = planes()
+                    .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                    .fold(0.0f64, f64::max);
                 let minimum = self.board.classes[state.plane_class[layer]].trace_width;
                 // The end KiCad tests: half the minimum width past the
                 // gap, half the web's width in a hatched zone.
-                let (round, anchor, geometry, minor) = self.spoke_geometry(pad_index, pad_anchor, gap + fill::KICAD_MAX_ERROR + probe.spoke_half_width(layer));
+                let (round, anchor, geometry, minor) = self.spoke_geometry(
+                    pad_index,
+                    pad_anchor,
+                    gap + fill::KICAD_MAX_ERROR + probe.spoke_half_width(layer),
+                );
                 let width = bridge.min(minor);
                 // No spoke narrower than the minimum width.
                 if width + 1.0e-9 >= minimum {
@@ -7589,7 +8565,18 @@ impl Router {
                         });
                     }
                 }
-                records.push(SpokeRecord { terminal, pad: pad_index, anchor: pad_anchor, crossings: 0, layer, round, outcomes: [SpokeOutcome::NoFill; 4], tracks: 0, seam_short: 0, seam_zone: None });
+                records.push(SpokeRecord {
+                    terminal,
+                    pad: pad_index,
+                    anchor: pad_anchor,
+                    crossings: 0,
+                    layer,
+                    round,
+                    outcomes: [SpokeOutcome::NoFill; 4],
+                    tracks: 0,
+                    seam_short: 0,
+                    seam_zone: None,
+                });
                 record_inner.push(inner.contains(&layer));
             }
         }
@@ -7599,7 +8586,12 @@ impl Router {
             let across = (offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0]).abs();
             along >= -1.0e-6 && along <= spoke.tip + 1.0e-6 && across <= spoke.width / 2.0 + 1.0e-6
         };
-        let end_of = |spoke: &Spoke| [spoke.anchor[0] + spoke.direction[0] * spoke.tip, spoke.anchor[1] + spoke.direction[1] * spoke.tip];
+        let end_of = |spoke: &Spoke| {
+            [
+                spoke.anchor[0] + spoke.direction[0] * spoke.tip,
+                spoke.anchor[1] + spoke.direction[1] * spoke.tip,
+            ]
+        };
         // Per record, the pads whose spokes met its own.
         let mut met_pads: Vec<Vec<usize>> = vec![Vec::new(); records.len()];
         // Per spoke, whether what is left of it joins the pad to the ring
@@ -7641,16 +8633,27 @@ impl Router {
                 // exposed pad's thermal vias, `inner_pads`).
                 let meets = spokes.iter().find(|other| {
                     other.layer == layer
-                        && (records[other.record].terminal != records[spoke.record].terminal || (self.config.inner_pads && other.pad != spoke.pad))
+                        && (records[other.record].terminal != records[spoke.record].terminal
+                            || (self.config.inner_pads && other.pad != spoke.pad))
                         && crate::geometry::distance(other.anchor, spoke.anchor) > 1.0e-6
-                        && crate::geometry::distance(other.anchor, spoke.anchor) <= other.tip + spoke.tip
+                        && crate::geometry::distance(other.anchor, spoke.anchor)
+                            <= other.tip + spoke.tip
                         && inside(other, end)
                         && inside(spoke, end_of(other))
                 });
                 if let Some(other) = meets
-                    && (!self.config.spoke_clearance || probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, spoke.tip, spoke.side))
+                    && (!self.config.spoke_clearance
+                        || probe.spoke_clear(
+                            layer,
+                            spoke.anchor,
+                            spoke.direction,
+                            from,
+                            spoke.tip,
+                            spoke.side,
+                        ))
                 {
-                    records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Pad(records[other.record].terminal as u32);
+                    records[spoke.record].outcomes[spoke.index] =
+                        SpokeOutcome::Pad(records[other.record].terminal as u32);
                     met_pads[spoke.record].push(other.pad);
                 }
                 continue;
@@ -7665,18 +8668,38 @@ impl Router {
             // (`spoke_clear_to_fill`; Telemetry's D12.1: its spoke ends in
             // a strip exactly the minimum width between its relief and
             // D12.2's clearance, whose brush centres lie on one line).
-            let clear_to = if self.config.spoke_clear_to_fill { (spoke.tip - fill::KICAD_MAX_ERROR).max(from) } else { spoke.tip };
-            if self.config.spoke_clearance && !probe.spoke_clear(layer, spoke.anchor, spoke.direction, from, clear_to, spoke.side) {
+            let clear_to = if self.config.spoke_clear_to_fill {
+                (spoke.tip - fill::KICAD_MAX_ERROR).max(from)
+            } else {
+                spoke.tip
+            };
+            if self.config.spoke_clearance
+                && !probe.spoke_clear(
+                    layer,
+                    spoke.anchor,
+                    spoke.direction,
+                    from,
+                    clear_to,
+                    spoke.side,
+                )
+            {
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     let steps = 8;
                     for step in 0..=steps {
                         let along = from + (spoke.tip - from) * step as f64 / steps as f64;
-                        let at = [spoke.anchor[0] + spoke.direction[0] * along, spoke.anchor[1] + spoke.direction[1] * along];
+                        let at = [
+                            spoke.anchor[0] + spoke.direction[0] * along,
+                            spoke.anchor[1] + spoke.direction[1] * along,
+                        ];
                         if let Some(why) = probe.blocker(layer, at, None) {
                             eprintln!(
                                 "blocked spoke {} layer {layer} dir {:?} width {:.3} side {:.3} at {along:.3} ({:.3}..{:.3}): {why}",
                                 description.terminals[records[spoke.record].terminal].label,
-                                spoke.direction, spoke.width, spoke.side, from, spoke.tip
+                                spoke.direction,
+                                spoke.width,
+                                spoke.side,
+                                from,
+                                spoke.tip
                             );
                             break;
                         }
@@ -7689,12 +8712,21 @@ impl Router {
             // a sliver the lattice misses: a piece of its own).
             let radius = minimum / 2.0 + pitch;
             let mut best: Option<(f64, u32)> = None;
-            if let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: end, maximum: end }.inflated(radius)) {
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                crate::geometry::Aabb {
+                    minimum: end,
+                    maximum: end,
+                }
+                .inflated(radius),
+            ) {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let piece = label_at(layer, self.grid.index(x, y));
                         let distance = crate::geometry::distance(end, self.grid.center(x, y));
-                        if piece != 0 && distance <= radius && best.is_none_or(|(best, _)| distance < best) {
+                        if piece != 0
+                            && distance <= radius
+                            && best.is_none_or(|(best, _)| distance < best)
+                        {
                             best = Some((distance, piece));
                         }
                     }
@@ -7710,7 +8742,13 @@ impl Router {
             if best.is_none() {
                 let far = minimum + 4.0 * pitch;
                 let mut candidates: Vec<(f64, usize)> = Vec::new();
-                if let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: end, maximum: end }.inflated(far)) {
+                if let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                    crate::geometry::Aabb {
+                        minimum: end,
+                        maximum: end,
+                    }
+                    .inflated(far),
+                ) {
                     for y in y0..=y1 {
                         for x in x0..=x1 {
                             let cell = self.grid.index(x, y);
@@ -7729,21 +8767,38 @@ impl Router {
                     (1..steps)
                         .all(|index| {
                             let t = index as f64 / steps as f64;
-                            probe.test_area_at(layer, [end[0] + (centre[0] - end[0]) * t, end[1] + (centre[1] - end[1]) * t])
+                            probe.test_area_at(
+                                layer,
+                                [
+                                    end[0] + (centre[0] - end[0]) * t,
+                                    end[1] + (centre[1] - end[1]) * t,
+                                ],
+                            )
                         })
                         .then(|| (distance, label_at(layer, cell)))
                 });
             }
             // Piece 0 stands for a sliver the lattice misses: the spoke
             // counts only where a track of the pad touches it too.
-            records[spoke.record].outcomes[spoke.index] = SpokeOutcome::Good(best.map_or(0, |(_, piece)| piece));
+            records[spoke.record].outcomes[spoke.index] =
+                SpokeOutcome::Good(best.map_or(0, |(_, piece)| piece));
             // Only a kept spoke's join to the pad matters.
             if self.config.spoke_clearance {
                 // A brush centre within half the minimum width of the pad
                 // touches it.
-                attached[position] = probe.spoke_clear(layer, spoke.anchor, spoke.direction, (spoke.edge + minimum / 2.0 - 1.0e-3).min(from), from, spoke.side);
+                attached[position] = probe.spoke_clear(
+                    layer,
+                    spoke.anchor,
+                    spoke.direction,
+                    (spoke.edge + minimum / 2.0 - 1.0e-3).min(from),
+                    from,
+                    spoke.side,
+                );
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
-                    let at = [spoke.anchor[0] + spoke.direction[0] * spoke.edge, spoke.anchor[1] + spoke.direction[1] * spoke.edge];
+                    let at = [
+                        spoke.anchor[0] + spoke.direction[0] * spoke.edge,
+                        spoke.anchor[1] + spoke.direction[1] * spoke.edge,
+                    ];
                     eprintln!(
                         "spoke {} layer {layer} dir {:?} attached {} (edge {:.3} from {:.3} side {:.3}; at the edge: {:?})",
                         description.terminals[records[spoke.record].terminal].label,
@@ -7756,7 +8811,6 @@ impl Router {
                     );
                 }
             }
-
         }
         // The pads' drill holes: KiCad's fill keeps out of a plated hole,
         // so a spoke reaches into a through-hole pad only up to its hole.
@@ -7767,18 +8821,34 @@ impl Router {
         // Per label, each plated hole's centre and radius (pads may share
         // a number: the hole is the one at the pad).
         let mut holes: HashMap<&str, Vec<(crate::geometry::Point, f64)>> = HashMap::new();
-        for obstacle in self.board.obstacles.iter().filter(|obstacle| obstacle.kind == crate::board::ObstacleKind::Hole) {
+        for obstacle in self
+            .board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.kind == crate::board::ObstacleKind::Hole)
+        {
             if let Some(label) = obstacle.label.strip_suffix(" plated hole") {
                 let bounds = obstacle.shape.aabb();
-                let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
-                let radius = ((bounds.maximum[0] - bounds.minimum[0]).min(bounds.maximum[1] - bounds.minimum[1]) / 2.0).max(0.0);
+                let centre = [
+                    (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                    (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+                ];
+                let radius = ((bounds.maximum[0] - bounds.minimum[0])
+                    .min(bounds.maximum[1] - bounds.minimum[1])
+                    / 2.0)
+                    .max(0.0);
                 holes.entry(label).or_default().push((centre, radius));
             }
         }
         let hole_at = |label: &str, at: crate::geometry::Point| {
             holes
                 .get(label)
-                .and_then(|holes| holes.iter().min_by(|a, b| crate::geometry::distance(a.0, at).total_cmp(&crate::geometry::distance(b.0, at))))
+                .and_then(|holes| {
+                    holes.iter().min_by(|a, b| {
+                        crate::geometry::distance(a.0, at)
+                            .total_cmp(&crate::geometry::distance(b.0, at))
+                    })
+                })
                 .map_or(0.0, |(_, radius)| *radius)
         };
         // Per record, which of its spokes the pad's own tracks on the layer
@@ -7800,9 +8870,22 @@ impl Router {
             let (terminal, layer, outcomes) = (record.terminal, record.layer, record.outcomes);
             let kept: Vec<&Spoke> = spokes
                 .iter()
-                .filter(|spoke| spoke.record == record_index && matches!(outcomes[spoke.index], SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+                .filter(|spoke| {
+                    spoke.record == record_index
+                        && matches!(
+                            outcomes[spoke.index],
+                            SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)
+                        )
+                })
                 .collect();
-            let hole = if self.config.track_meets_spokes { hole_at(description.terminals[terminal].label.as_str(), record.anchor) } else { 0.0 };
+            let hole = if self.config.track_meets_spokes {
+                hole_at(
+                    description.terminals[terminal].label.as_str(),
+                    record.anchor,
+                )
+            } else {
+                0.0
+            };
             let strip_of = |spoke: &Spoke| {
                 let (d, w) = (spoke.direction, spoke.width / 2.0);
                 let normal = [-d[1] * w, d[0] * w];
@@ -7813,8 +8896,14 @@ impl Router {
                 } else {
                     spoke.edge + spoke.gap / 2.0
                 };
-                let near = [spoke.anchor[0] + d[0] * start.min(spoke.tip), spoke.anchor[1] + d[1] * start.min(spoke.tip)];
-                let far = [spoke.anchor[0] + d[0] * spoke.tip, spoke.anchor[1] + d[1] * spoke.tip];
+                let near = [
+                    spoke.anchor[0] + d[0] * start.min(spoke.tip),
+                    spoke.anchor[1] + d[1] * start.min(spoke.tip),
+                ];
+                let far = [
+                    spoke.anchor[0] + d[0] * spoke.tip,
+                    spoke.anchor[1] + d[1] * spoke.tip,
+                ];
                 crate::geometry::Shape::Polygon {
                     points: vec![
                         [near[0] + normal[0], near[1] + normal[1]],
@@ -7829,24 +8918,36 @@ impl Router {
                 if skip(index) || branch.nodes.is_empty() {
                     continue;
                 }
-                let ends_here = (branch.start_terminal as usize == terminal && branch.nodes.first().is_some_and(|node| node.layer as usize == layer))
-                    || (branch.end_terminal as usize == terminal && branch.nodes.last().is_some_and(|node| node.layer as usize == layer));
+                let ends_here = (branch.start_terminal as usize == terminal
+                    && branch
+                        .nodes
+                        .first()
+                        .is_some_and(|node| node.layer as usize == layer))
+                    || (branch.end_terminal as usize == terminal
+                        && branch
+                            .nodes
+                            .last()
+                            .is_some_and(|node| node.layer as usize == layer));
                 if !ends_here {
                     continue;
                 }
-                let segments: Vec<(crate::geometry::Point, crate::geometry::Point, f64)> = if let Some((start, end, radius)) = state.adopted.get(&index) {
-                    vec![(*start, *end, *radius)]
-                } else if self.config.track_meets_spokes {
-                    self.first_run(net, terminal, branch)
-                } else {
-                    for spoke in &kept {
-                        touched[spoke.index] = true;
-                    }
-                    continue;
-                };
+                let segments: Vec<(crate::geometry::Point, crate::geometry::Point, f64)> =
+                    if let Some((start, end, radius)) = state.adopted.get(&index) {
+                        vec![(*start, *end, *radius)]
+                    } else if self.config.track_meets_spokes {
+                        self.first_run(net, terminal, branch)
+                    } else {
+                        for spoke in &kept {
+                            touched[spoke.index] = true;
+                        }
+                        continue;
+                    };
                 for spoke in &kept {
                     let strip = strip_of(spoke);
-                    if segments.iter().any(|(a, b, radius)| strip.distance_to_segment(*a, *b) <= *radius) {
+                    if segments
+                        .iter()
+                        .any(|(a, b, radius)| strip.distance_to_segment(*a, *b) <= *radius)
+                    {
                         touched[spoke.index] = true;
                     }
                 }
@@ -7884,19 +8985,38 @@ impl Router {
             // KiCad, the pad one item of it.
             let joined_spokes: Vec<&&Spoke> = kept
                 .iter()
-                .filter(|spoke| record_attached[record_index][spoke.index] && matches!(outcomes[spoke.index], SpokeOutcome::Good(piece) if piece != 0))
+                .filter(|spoke| {
+                    record_attached[record_index][spoke.index]
+                        && matches!(outcomes[spoke.index], SpokeOutcome::Good(piece) if piece != 0)
+                })
                 .collect();
             if self.config.neck_joins && joined_spokes.len() > 1 {
-                let hole = hole_at(description.terminals[terminal].label.as_str(), record.anchor);
-                let piece_of = |spoke: &Spoke| if let SpokeOutcome::Good(piece) = outcomes[spoke.index] { piece } else { 0 };
+                let hole = hole_at(
+                    description.terminals[terminal].label.as_str(),
+                    record.anchor,
+                );
+                let piece_of = |spoke: &Spoke| {
+                    if let SpokeOutcome::Good(piece) = outcomes[spoke.index] {
+                        piece
+                    } else {
+                        0
+                    }
+                };
                 for (position, a) in joined_spokes.iter().enumerate() {
                     for b in &joined_spokes[position + 1..] {
                         let (pa, pb) = (piece_of(a), piece_of(b));
                         if pa == pb {
                             continue;
                         }
-                        let facing = a.direction[0] * b.direction[0] + a.direction[1] * b.direction[1] < -0.5;
-                        let reach = a.width.min(b.width) / 2.0 * if facing { 1.0 } else { std::f64::consts::SQRT_2 };
+                        let facing = a.direction[0] * b.direction[0]
+                            + a.direction[1] * b.direction[1]
+                            < -0.5;
+                        let reach = a.width.min(b.width) / 2.0
+                            * if facing {
+                                1.0
+                            } else {
+                                std::f64::consts::SQRT_2
+                            };
                         if hole < reach - 1.0e-6 {
                             spoke_joins.push((pa, pb));
                         }
@@ -7911,16 +9031,17 @@ impl Router {
         // census of 7 boards: 23 island spokes in KiCad outlines our map
         // splits, wrong verdicts on 4 pads such as Castor's U8.12).
         let mut groups: HashMap<u32, Vec<u32>> = HashMap::new();
-        let merge = |groups: &mut HashMap<u32, Vec<u32>>, parent: &mut Vec<usize>, a: u32, b: u32| {
-            union(parent, a as usize, b as usize);
-            let mut group = groups.get(&a).cloned().unwrap_or_else(|| vec![a]);
-            group.extend(groups.get(&b).cloned().unwrap_or_else(|| vec![b]));
-            group.sort_unstable();
-            group.dedup();
-            for member in &group {
-                groups.insert(*member, group.clone());
-            }
-        };
+        let merge =
+            |groups: &mut HashMap<u32, Vec<u32>>, parent: &mut Vec<usize>, a: u32, b: u32| {
+                union(parent, a as usize, b as usize);
+                let mut group = groups.get(&a).cloned().unwrap_or_else(|| vec![a]);
+                group.extend(groups.get(&b).cloned().unwrap_or_else(|| vec![b]));
+                group.sort_unstable();
+                group.dedup();
+                for member in &group {
+                    groups.insert(*member, group.clone());
+                }
+            };
         let count_of = |groups: &HashMap<u32, Vec<u32>>, piece: u32| -> usize {
             let single = [piece];
             let members: &[u32] = groups.get(&piece).map_or(&single[..], |group| &group[..]);
@@ -7954,7 +9075,13 @@ impl Router {
                 // The piece's nodes on the layer, from the node nearest the
                 // spoke's end (a bounded walk).
                 let end = end_of(spoke);
-                let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: end, maximum: end }.inflated(2.0 * pitch + spoke.width)) else {
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                    crate::geometry::Aabb {
+                        minimum: end,
+                        maximum: end,
+                    }
+                    .inflated(2.0 * pitch + spoke.width),
+                ) else {
                     continue;
                 };
                 let mut queue: Vec<usize> = Vec::new();
@@ -7986,11 +9113,15 @@ impl Router {
                                     queue.push(other);
                                 }
                             } else if label != 0 && !neighbours.contains(&label) {
-                                let (a, b) = (self.grid.center_of(cell), self.grid.center_of(other));
+                                let (a, b) =
+                                    (self.grid.center_of(cell), self.grid.center_of(other));
                                 let steps = 8;
                                 if (0..=steps).all(|step| {
                                     let t = step as f64 / steps as f64;
-                                    probe.fill_at(layer, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t])
+                                    probe.fill_at(
+                                        layer,
+                                        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t],
+                                    )
                                 }) {
                                     neighbours.push(label);
                                 }
@@ -8005,7 +9136,12 @@ impl Router {
         }
         // Pass two: spokes into pieces with another item count and join.
         let mut tallies: Vec<(usize, Vec<usize>)> = Vec::new();
-        for (((record, touched), joined), inner) in records.iter_mut().zip(&touched_spokes).zip(&record_attached).zip(&record_inner) {
+        for (((record, touched), joined), inner) in records
+            .iter_mut()
+            .zip(&touched_spokes)
+            .zip(&record_attached)
+            .zip(&record_inner)
+        {
             let mut good = 0;
             let mut islands: Vec<usize> = Vec::new();
             for (index, outcome) in record.outcomes.iter_mut().enumerate() {
@@ -8023,7 +9159,11 @@ impl Router {
                     good += 1;
                 } else if let SpokeOutcome::Pad(other) = *outcome {
                     // One outline holds both pads: the spoke counts.
-                    union(parent, terminal_base + record.terminal, terminal_base + other as usize);
+                    union(
+                        parent,
+                        terminal_base + record.terminal,
+                        terminal_base + other as usize,
+                    );
                     good += 1;
                 } else if let SpokeOutcome::Good(0) = *outcome {
                     if *tracked {
@@ -8062,7 +9202,9 @@ impl Router {
         // KiCad's clusters join a piece to the pads whose spokes reach it
         // whether the DRC counts them or not (BAGEL's J102.1: its In1 track
         // ends over a piece of In2 that pads spoke into as islands).
-        let mut terminal_roots: HashSet<usize> = (0..state.terminal_nodes.len()).map(|terminal| find(parent, terminal_base + terminal)).collect();
+        let mut terminal_roots: HashSet<usize> = (0..state.terminal_nodes.len())
+            .map(|terminal| find(parent, terminal_base + terminal))
+            .collect();
         for record in &records {
             for outcome in &record.outcomes {
                 if let SpokeOutcome::Island(piece) = outcome
@@ -8075,12 +9217,21 @@ impl Router {
         let kept_piece = |parent: &mut Vec<usize>, layer: usize, point: crate::geometry::Point| {
             let radius = self.board.classes[state.plane_class[layer]].trace_width / 2.0 + pitch;
             let mut best: Option<(f64, u32)> = None;
-            if let Some((x0, y0, x1, y1)) = self.grid.node_range(crate::geometry::Aabb { minimum: point, maximum: point }.inflated(radius)) {
+            if let Some((x0, y0, x1, y1)) = self.grid.node_range(
+                crate::geometry::Aabb {
+                    minimum: point,
+                    maximum: point,
+                }
+                .inflated(radius),
+            ) {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let piece = label_at(layer, self.grid.index(x, y));
                         let distance = crate::geometry::distance(point, self.grid.center(x, y));
-                        if piece != 0 && distance <= radius && best.is_none_or(|(best, _)| distance < best) {
+                        if piece != 0
+                            && distance <= radius
+                            && best.is_none_or(|(best, _)| distance < best)
+                        {
                             best = Some((distance, piece));
                         }
                     }
@@ -8095,20 +9246,34 @@ impl Router {
                     .obstacles
                     .iter()
                     .enumerate()
-                    .filter(|(_, obstacle)| obstacle.kind == crate::board::ObstacleKind::Hole && obstacle.net == Some(net) && obstacle.label.ends_with(" plated hole"))
+                    .filter(|(_, obstacle)| {
+                        obstacle.kind == crate::board::ObstacleKind::Hole
+                            && obstacle.net == Some(net)
+                            && obstacle.label.ends_with(" plated hole")
+                    })
                     .filter(|(_, obstacle)| {
                         let bounds = obstacle.shape.aabb();
-                        let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
-                        rings[layer].iter().any(|(pad, _)| self.board.obstacles[*pad].shape.contains(centre))
+                        let centre = [
+                            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+                        ];
+                        rings[layer]
+                            .iter()
+                            .any(|(pad, _)| self.board.obstacles[*pad].shape.contains(centre))
                     })
                     .map(|(index, _)| index)
                     .collect()
             })
             .collect();
-        let records_outcomes: Vec<[SpokeOutcome; 4]> = records.iter().map(|record| record.outcomes).collect();
-        let records_pads: Vec<(usize, usize, crate::geometry::Point)> = records.iter().map(|record| (record.terminal, record.pad, record.anchor)).collect();
+        let records_outcomes: Vec<[SpokeOutcome; 4]> =
+            records.iter().map(|record| record.outcomes).collect();
+        let records_pads: Vec<(usize, usize, crate::geometry::Point)> = records
+            .iter()
+            .map(|record| (record.terminal, record.pad, record.anchor))
+            .collect();
         let mut spoke_islands: Vec<(usize, usize)> = Vec::new();
-        for (record_index, (record, (good, islands))) in records.iter_mut().zip(tallies).enumerate() {
+        for (record_index, (record, (good, islands))) in records.iter_mut().zip(tallies).enumerate()
+        {
             // Where other pads' spokes cross this pad's ring (`zone_seams`).
             let mut crossing_points: Vec<crate::geometry::Point> = Vec::new();
             // Other pads' spokes across this pad's ring half a gap out: the
@@ -8118,18 +9283,35 @@ impl Router {
             // a round neighbour's diagonal spoke crosses). Spokes meeting
             // this pad's own are counted with it already.
             if self.config.foreign_spokes {
-                let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == record.layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
+                let gap = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == record.layer)
+                    .map(|plane| plane.thermal_gap)
+                    .fold(0.0f64, f64::max);
                 let pad = &self.board.obstacles[record.pad];
                 let minimum = self.board.classes[state.plane_class[record.layer]].trace_width;
                 let met = &met_pads[record_index];
                 let bounds = pad.shape.aabb();
-                let radius = 0.5 * (bounds.maximum[0] - bounds.minimum[0]).hypot(bounds.maximum[1] - bounds.minimum[1]) + gap;
-                let centre = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+                let radius = 0.5
+                    * (bounds.maximum[0] - bounds.minimum[0])
+                        .hypot(bounds.maximum[1] - bounds.minimum[1])
+                    + gap;
+                let centre = [
+                    (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                    (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+                ];
                 for other in spokes.iter().filter(|other| {
-                    other.layer == record.layer && other.pad != record.pad && crate::geometry::distance(other.anchor, centre) <= other.tip + other.width + radius
+                    other.layer == record.layer
+                        && other.pad != record.pad
+                        && crate::geometry::distance(other.anchor, centre)
+                            <= other.tip + other.width + radius
                 }) {
                     let (other_terminal, _, other_anchor) = records_pads[other.record];
-                    if crate::geometry::distance(other_anchor, record.anchor) < 1.0e-6 || met.contains(&other.pad) {
+                    if crate::geometry::distance(other_anchor, record.anchor) < 1.0e-6
+                        || met.contains(&other.pad)
+                    {
                         continue;
                     }
                     let counted = match records_outcomes[other.record][other.index] {
@@ -8137,31 +9319,58 @@ impl Router {
                         SpokeOutcome::Good(piece) => piece != 0,
                         _ => false,
                     };
-                    if !counted || pad.shape.distance_to_segment(other.anchor, end_of(other)) > gap / 2.0 + other.width / 2.0 {
+                    if !counted
+                        || pad.shape.distance_to_segment(other.anchor, end_of(other))
+                            > gap / 2.0 + other.width / 2.0
+                    {
                         continue;
                     }
                     // Where its strip comes within half a gap of the pad,
                     // the brush keeps room in it.
                     // Inside its terminal's pad, the strip over that pad
                     // (spokes start at their pad's centre).
-                    let start = if record_inner[record_index] { 0.0 } else { other.edge };
+                    let start = if record_inner[record_index] {
+                        0.0
+                    } else {
+                        other.edge
+                    };
                     let steps = (((other.tip - start) / (minimum / 4.0)).ceil() as usize).max(1);
                     let crossing = (0..=steps).find_map(|step| {
                         let along = start + (other.tip - start) * step as f64 / steps as f64;
-                        ([-other.width / 2.0, -other.side, 0.0, other.side, other.width / 2.0].iter().any(|offset| {
+                        ([
+                            -other.width / 2.0,
+                            -other.side,
+                            0.0,
+                            other.side,
+                            other.width / 2.0,
+                        ]
+                        .iter()
+                        .any(|offset| {
                             let at = [
-                                other.anchor[0] + other.direction[0] * along - other.direction[1] * offset,
-                                other.anchor[1] + other.direction[1] * along + other.direction[0] * offset,
+                                other.anchor[0] + other.direction[0] * along
+                                    - other.direction[1] * offset,
+                                other.anchor[1]
+                                    + other.direction[1] * along
+                                    + other.direction[0] * offset,
                             ];
                             pad.shape.distance_to_point(at) < gap / 2.0
                         }) && [-other.side, 0.0, other.side].iter().any(|offset| {
                             let at = [
-                                other.anchor[0] + other.direction[0] * along - other.direction[1] * offset,
-                                other.anchor[1] + other.direction[1] * along + other.direction[0] * offset,
+                                other.anchor[0] + other.direction[0] * along
+                                    - other.direction[1] * offset,
+                                other.anchor[1]
+                                    + other.direction[1] * along
+                                    + other.direction[0] * offset,
                             ];
-                            pad.shape.distance_to_point(at) < gap / 2.0 + minimum / 2.0 && probe.blocker(record.layer, at, None).is_none()
+                            pad.shape.distance_to_point(at) < gap / 2.0 + minimum / 2.0
+                                && probe.blocker(record.layer, at, None).is_none()
                         }))
-                        .then(|| [other.anchor[0] + other.direction[0] * along, other.anchor[1] + other.direction[1] * along])
+                        .then(|| {
+                            [
+                                other.anchor[0] + other.direction[0] * along,
+                                other.anchor[1] + other.direction[1] * along,
+                            ]
+                        })
                     });
                     if let Some(point) = crossing {
                         // Inside its terminal's pad a strip may run right
@@ -8169,13 +9378,22 @@ impl Router {
                         // its centre across a thermal via): KiCad counts the
                         // crossings on both sides, two spokes.
                         let through = record_inner[record_index]
-                            && pad.shape.distance_to_point(other.anchor) > gap / 2.0 + other.width / 2.0
-                            && pad.shape.distance_to_point(end_of(other)) > gap / 2.0 + other.width / 2.0;
+                            && pad.shape.distance_to_point(other.anchor)
+                                > gap / 2.0 + other.width / 2.0
+                            && pad.shape.distance_to_point(end_of(other))
+                                > gap / 2.0 + other.width / 2.0;
                         record.crossings += if through { 2 } else { 1 };
-                        crossing_points.extend(std::iter::repeat_n(point, if through { 2 } else { 1 }));
+                        crossing_points
+                            .extend(std::iter::repeat_n(point, if through { 2 } else { 1 }));
                         // A strip over the pad's copper joins the two pads.
-                        if pad.shape.distance_to_segment(other.anchor, end_of(other)) <= other.width / 2.0 {
-                            union(parent, terminal_base + record.terminal, terminal_base + other_terminal);
+                        if pad.shape.distance_to_segment(other.anchor, end_of(other))
+                            <= other.width / 2.0
+                        {
+                            union(
+                                parent,
+                                terminal_base + record.terminal,
+                                terminal_base + other_terminal,
+                            );
                         }
                     }
                 }
@@ -8201,8 +9419,11 @@ impl Router {
                         .map(|step| {
                             let offset = -half + half * step as f64 / 4.0;
                             [
-                                spoke.anchor[0] + spoke.direction[0] * along - spoke.direction[1] * offset,
-                                spoke.anchor[1] + spoke.direction[1] * along + spoke.direction[0] * offset,
+                                spoke.anchor[0] + spoke.direction[0] * along
+                                    - spoke.direction[1] * offset,
+                                spoke.anchor[1]
+                                    + spoke.direction[1] * along
+                                    + spoke.direction[0] * offset,
                             ]
                         })
                         .collect();
@@ -8220,7 +9441,9 @@ impl Router {
                     }
                 }
             }
-            let zone_needs_tracks = zone_tallies.iter().any(|[spokes, islands, crossings, _]| spokes + islands + crossings > 0 && spokes + crossings < 2);
+            let zone_needs_tracks = zone_tallies.iter().any(|[spokes, islands, crossings, _]| {
+                spokes + islands + crossings > 0 && spokes + crossings < 2
+            });
             let mut track_ends: Vec<crate::geometry::Point> = Vec::new();
             if good < 2 || zone_needs_tracks {
                 // The pad's own tracks (KiCad's DRC: each track segment
@@ -8231,8 +9454,15 @@ impl Router {
                 // run; an adopted one its track.
                 let terminal = &description.terminals[record.terminal];
                 let pad = &self.board.obstacles[record.pad];
-                let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == record.layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
-                let near_pad = |point: crate::geometry::Point| pad.shape.distance_to_point(point) <= gap / 2.0;
+                let gap = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == record.layer)
+                    .map(|plane| plane.thermal_gap)
+                    .fold(0.0f64, f64::max);
+                let near_pad =
+                    |point: crate::geometry::Point| pad.shape.distance_to_point(point) <= gap / 2.0;
                 let minimum = self.board.classes[state.plane_class[record.layer]].trace_width;
                 let in_fill = |parent: &mut Vec<usize>, point: crate::geometry::Point| {
                     // A kept spoke is fill too, as far as other nets'
@@ -8242,14 +9472,18 @@ impl Router {
                     // over the pad by its neighbours in the row).
                     spokes.iter().any(|spoke| {
                         if spoke.layer != record.layer
-                            || matches!(records_outcomes[spoke.record][spoke.index], SpokeOutcome::NoFill | SpokeOutcome::Blocked)
+                            || matches!(
+                                records_outcomes[spoke.record][spoke.index],
+                                SpokeOutcome::NoFill | SpokeOutcome::Blocked
+                            )
                             || !inside(spoke, point)
                         {
                             return false;
                         }
                         let offset = [point[0] - spoke.anchor[0], point[1] - spoke.anchor[1]];
                         let along = offset[0] * spoke.direction[0] + offset[1] * spoke.direction[1];
-                        let across = offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0];
+                        let across =
+                            offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0];
                         // A brush centre in the spoke (within `side` of its
                         // axis) within half the minimum width of the point,
                         // on a grid of an eighth of the minimum width: the
@@ -8262,25 +9496,34 @@ impl Router {
                         (-4..=4).any(|i: i64| {
                             (-4..=4).any(|j: i64| {
                                 let along = (along + i as f64 * step).clamp(0.0, spoke.tip);
-                                let across = (across + j as f64 * step).clamp(-spoke.side, spoke.side);
-                                let key = ((along / 1.0e-6).round() as i64, (across / 1.0e-6).round() as i64);
+                                let across =
+                                    (across + j as f64 * step).clamp(-spoke.side, spoke.side);
+                                let key = (
+                                    (along / 1.0e-6).round() as i64,
+                                    (across / 1.0e-6).round() as i64,
+                                );
                                 if tried.contains(&key) {
                                     return false;
                                 }
                                 tried.push(key);
                                 let centre = [
-                                    spoke.anchor[0] + spoke.direction[0] * along + spoke.direction[1] * across,
-                                    spoke.anchor[1] + spoke.direction[1] * along - spoke.direction[0] * across,
+                                    spoke.anchor[0]
+                                        + spoke.direction[0] * along
+                                        + spoke.direction[1] * across,
+                                    spoke.anchor[1] + spoke.direction[1] * along
+                                        - spoke.direction[0] * across,
                                 ];
                                 // No relief cuts a spoke (KiCad adds them after
                                 // the reliefs: Hub's C35.1, its track ends in
                                 // its spoke where it meets C30.1's, inside
                                 // C30.1's relief).
-                                crate::geometry::distance(centre, point) <= minimum / 2.0 + 1.0e-9 && probe.blocker(record.layer, centre, None).is_none()
+                                crate::geometry::distance(centre, point) <= minimum / 2.0 + 1.0e-9
+                                    && probe.blocker(record.layer, centre, None).is_none()
                             })
                         })
                     }) || probe.in_ring(record.layer, point)
-                        || (probe.final_fill_at(record.layer, point) && kept_piece(parent, record.layer, point))
+                        || (probe.final_fill_at(record.layer, point)
+                            && kept_piece(parent, record.layer, point))
                 };
                 // KiCad's fill keeps out of a thermal pad's plated hole (an
                 // exposed pad's thermal via: a track to its centre ends in
@@ -8289,8 +9532,15 @@ impl Router {
                 // where it keeps the clearance to a micron or so
                 // (`TRACK_END_TOLERANCE`).
                 let in_fill = |parent: &mut Vec<usize>, point: crate::geometry::Point| {
-                    !(self.config.inner_pads && thermal_holes[record.layer].iter().any(|hole| self.board.obstacles[*hole].shape.contains(point)))
-                        && if self.config.track_end_tolerance { probe.for_track_end(|| in_fill(parent, point)) } else { in_fill(parent, point) }
+                    !(self.config.inner_pads
+                        && thermal_holes[record.layer]
+                            .iter()
+                            .any(|hole| self.board.obstacles[*hole].shape.contains(point)))
+                        && if self.config.track_end_tolerance {
+                            probe.for_track_end(|| in_fill(parent, point))
+                        } else {
+                            in_fill(parent, point)
+                        }
                 };
                 // A pad merged into its terminal has the tracks whose copper
                 // overlaps its own (KiCad's connectivity: 0xCB's thermal
@@ -8298,26 +9548,41 @@ impl Router {
                 // terminal's.
                 let merged_pad = record.pad != terminal.pad && self.config.inner_pads;
                 let half_width = self.board.classes[description.class].trace_width / 2.0;
-                let connected = |a: crate::geometry::Point, b: crate::geometry::Point, radius: f64| !merged_pad || pad.shape.distance_to_segment(a, b) <= radius + 1.0e-6;
+                let connected =
+                    |a: crate::geometry::Point, b: crate::geometry::Point, radius: f64| {
+                        !merged_pad || pad.shape.distance_to_segment(a, b) <= radius + 1.0e-6
+                    };
                 // A branch ends at this pad, or at a pad of the net at its
                 // very spot (a USB-C receptacle's A1 and B12: KiCad connects
                 // a track to both).
                 let at_pad = |end: u16| {
                     end as usize == record.terminal
-                        || description.terminals.get(end as usize).is_some_and(|other| {
-                            end != NO_TERMINAL && end != PLANE_TERMINAL && end != FREE_END && crate::geometry::distance(other.anchor, record.anchor) < 1.0e-6
-                        })
+                        || description
+                            .terminals
+                            .get(end as usize)
+                            .is_some_and(|other| {
+                                end != NO_TERMINAL
+                                    && end != PLANE_TERMINAL
+                                    && end != FREE_END
+                                    && crate::geometry::distance(other.anchor, record.anchor)
+                                        < 1.0e-6
+                            })
                 };
                 // The emitted segments end at junctions (`materialize`):
                 // KiCad tests the end of the segment, not of the run
                 // (0xCB's MX3.S1: its track's run passes a junction in
                 // fill and ends in a hatch hole).
-                let junctions = if self.config.track_end_junctions { junction_nodes(&state.branches) } else { HashSet::new() };
+                let junctions = if self.config.track_end_junctions {
+                    junction_nodes(&state.branches)
+                } else {
+                    HashSet::new()
+                };
                 for (index, branch) in state.branches.iter().enumerate() {
                     if skip(index) || branch.nodes.is_empty() {
                         continue;
                     }
-                    let mut segments: Vec<(crate::geometry::Point, crate::geometry::Point)> = Vec::new();
+                    let mut segments: Vec<(crate::geometry::Point, crate::geometry::Point)> =
+                        Vec::new();
                     let mut radius = half_width;
                     if let Some((start, end, adopted)) = state.adopted.get(&index) {
                         radius = *adopted;
@@ -8327,54 +9592,85 @@ impl Router {
                             segments.push((*start, *end));
                         }
                     } else {
-                        for (end, forward) in [(branch.start_terminal, true), (branch.end_terminal, false)] {
+                        for (end, forward) in
+                            [(branch.start_terminal, true), (branch.end_terminal, false)]
+                        {
                             if !at_pad(end) {
                                 continue;
                             }
-                            let nodes: Vec<Node> = if forward { branch.nodes.clone() } else { branch.nodes.iter().rev().copied().collect() };
+                            let nodes: Vec<Node> = if forward {
+                                branch.nodes.clone()
+                            } else {
+                                branch.nodes.iter().rev().copied().collect()
+                            };
                             // Connected to the pad: on one of its layers.
                             if pad.layers & (1 << nodes[0].layer) == 0 {
                                 continue;
                             }
                             let first = self.grid.center_of(nodes[0].cell as usize);
                             match state.escapes.get(&nodes[0]) {
-                                Some((_, _, polyline)) => segments.extend(polyline.windows(2).map(|pair| (pair[0], pair[1]))),
-                                None if crate::geometry::distance(terminal.anchor, first) > 1.0e-7 => segments.push((terminal.anchor, first)),
+                                Some((_, _, polyline)) => segments
+                                    .extend(polyline.windows(2).map(|pair| (pair[0], pair[1]))),
+                                None if crate::geometry::distance(terminal.anchor, first)
+                                    > 1.0e-7 =>
+                                {
+                                    segments.push((terminal.anchor, first))
+                                }
                                 None => {}
                             }
                             let step = |a: Node, b: Node| {
                                 let (ax, ay) = self.grid.xy(a.cell as usize);
                                 let (bx, by) = self.grid.xy(b.cell as usize);
-                                (a.layer == b.layer).then_some((bx as i64 - ax as i64, by as i64 - ay as i64))
+                                (a.layer == b.layer)
+                                    .then_some((bx as i64 - ax as i64, by as i64 - ay as i64))
                             };
                             if nodes.len() >= 2
                                 && let Some(direction) = step(nodes[0], nodes[1])
                             {
                                 let mut last = 1;
-                                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) && !junctions.contains(&nodes[last]) {
+                                while last + 1 < nodes.len()
+                                    && step(nodes[last], nodes[last + 1]) == Some(direction)
+                                    && !junctions.contains(&nodes[last])
+                                {
                                     last += 1;
                                 }
-                                segments.push((first, self.grid.center_of(nodes[last].cell as usize)));
+                                segments
+                                    .push((first, self.grid.center_of(nodes[last].cell as usize)));
                             }
                         }
                     }
                     for (a, b) in segments {
-                        let counted = connected(a, b, radius) && if near_pad(a) { in_fill(parent, b) } else { near_pad(b) && in_fill(parent, a) };
+                        let counted = connected(a, b, radius)
+                            && if near_pad(a) {
+                                in_fill(parent, b)
+                            } else {
+                                near_pad(b) && in_fill(parent, a)
+                            };
                         if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() && !counted {
                             eprintln!(
                                 "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} hole {} {} ring {} {} kept {} {}",
-                                terminal.label, record.layer, near_pad(a), near_pad(b),
-                                probe.fill_at(record.layer, a), probe.fill_at(record.layer, b),
-                                probe.in_hatch_hole(record.layer, a), probe.in_hatch_hole(record.layer, b),
-                                probe.in_ring(record.layer, a), probe.in_ring(record.layer, b),
-                                kept_piece(parent, record.layer, a), kept_piece(parent, record.layer, b)
+                                terminal.label,
+                                record.layer,
+                                near_pad(a),
+                                near_pad(b),
+                                probe.fill_at(record.layer, a),
+                                probe.fill_at(record.layer, b),
+                                probe.in_hatch_hole(record.layer, a),
+                                probe.in_hatch_hole(record.layer, b),
+                                probe.in_ring(record.layer, a),
+                                probe.in_ring(record.layer, b),
+                                kept_piece(parent, record.layer, a),
+                                kept_piece(parent, record.layer, b)
                             );
                         }
                         if counted {
                             record.tracks += 1;
                             track_ends.push(if near_pad(a) { b } else { a });
                             if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
-                                eprintln!("track spoke {} layer {}: branch {index} {a:?}..{b:?}", terminal.label, record.layer);
+                                eprintln!(
+                                    "track spoke {} layer {}: branch {index} {a:?}..{b:?}",
+                                    terminal.label, record.layer
+                                );
                             }
                         }
                     }
@@ -8384,7 +9680,11 @@ impl Router {
                 for (layer, a, b, width) in &state.inner_spokes {
                     if *layer == record.layer
                         && pad.shape.distance_to_segment(*a, *b) <= width / 2.0 + 1.0e-6
-                        && if near_pad(*a) { in_fill(parent, *b) } else { near_pad(*b) && in_fill(parent, *a) }
+                        && if near_pad(*a) {
+                            in_fill(parent, *b)
+                        } else {
+                            near_pad(*b) && in_fill(parent, *a)
+                        }
                     {
                         record.tracks += 1;
                         track_ends.push(if near_pad(*a) { *b } else { *a });
@@ -8411,7 +9711,9 @@ impl Router {
                 // KiCad's rule per zone: none of its fill across the ring
                 // is no connection to it; tracks count with the spokes, and
                 // its island spokes only when nothing else does.
-                for (position, [spokes, islands, crossings, tracks]) in zone_tallies.iter().copied().enumerate() {
+                for (position, [spokes, islands, crossings, tracks]) in
+                    zone_tallies.iter().copied().enumerate()
+                {
                     if spokes + islands + crossings == 0 {
                         continue;
                     }
@@ -8449,7 +9751,12 @@ impl Router {
     /// (Castor's U6.5: its exit track and via run along a piece through
     /// nodes the neighbours' clearances keep from the fill, and the piece
     /// held them as two items).
-    fn branch_pieces(&self, net: NetId, pours: &crate::pour::PourMap, skip: &dyn Fn(usize) -> bool) -> Vec<Vec<(u32, usize)>> {
+    fn branch_pieces(
+        &self,
+        net: NetId,
+        pours: &crate::pour::PourMap,
+        skip: &dyn Fn(usize) -> bool,
+    ) -> Vec<Vec<(u32, usize)>> {
         let state = &self.nets[net as usize];
         let pitch = self.grid.pitch;
         let class = self.board.classes[self.board.nets[net as usize].class];
@@ -8466,7 +9773,10 @@ impl Router {
                 }
                 let mut run = 0usize;
                 let mut last: Option<(i64, i64, u8)> = None;
-                let add = |seen: &mut Vec<(u32, usize)>, piece: u32, run: usize, marks: &mut Vec<(u32, usize)>| {
+                let add = |seen: &mut Vec<(u32, usize)>,
+                           piece: u32,
+                           run: usize,
+                           marks: &mut Vec<(u32, usize)>| {
                     if marks.contains(&(piece, run)) {
                         return;
                     }
@@ -8512,7 +9822,8 @@ impl Router {
                     } else {
                         self.width_at(net, node.cell) / 2.0
                     };
-                    let reach = copper + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+                    let reach =
+                        copper + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
                     let cells = (reach / pitch).floor() as i64;
                     let (x, y) = self.grid.xy(node.cell as usize);
                     for dy in -cells..=cells {
@@ -8521,7 +9832,11 @@ impl Router {
                                 continue;
                             }
                             let (nx, ny) = (x as i64 + dx, y as i64 + dy);
-                            if nx < 0 || ny < 0 || nx >= self.grid.nx as i64 || ny >= self.grid.ny as i64 {
+                            if nx < 0
+                                || ny < 0
+                                || nx >= self.grid.nx as i64
+                                || ny >= self.grid.ny as i64
+                            {
                                 continue;
                             }
                             let piece = labels[self.grid.index(nx as usize, ny as usize)];
@@ -8545,12 +9860,33 @@ impl Router {
     /// the pad's edge along it and to the edge grown by `reach`; and the
     /// pad's smaller side (no spoke is wider). 0xCB's 1337 has its parts
     /// at 45 degrees, their spokes too.
-    fn spoke_geometry(&self, pad: usize, anchor: crate::geometry::Point, reach: f64) -> (bool, crate::geometry::Point, [(crate::geometry::Point, f64, f64); 4], f64) {
+    fn spoke_geometry(
+        &self,
+        pad: usize,
+        anchor: crate::geometry::Point,
+        reach: f64,
+    ) -> (
+        bool,
+        crate::geometry::Point,
+        [(crate::geometry::Point, f64, f64); 4],
+        f64,
+    ) {
         self.spoke_geometry_in(pad, anchor, reach, self.config.spoke_frames)
     }
 
     /// `spoke_geometry`, in the pad's own frame only with `frames`.
-    fn spoke_geometry_in(&self, pad: usize, anchor: crate::geometry::Point, reach: f64, frames: bool) -> (bool, crate::geometry::Point, [(crate::geometry::Point, f64, f64); 4], f64) {
+    fn spoke_geometry_in(
+        &self,
+        pad: usize,
+        anchor: crate::geometry::Point,
+        reach: f64,
+        frames: bool,
+    ) -> (
+        bool,
+        crate::geometry::Point,
+        [(crate::geometry::Point, f64, f64); 4],
+        f64,
+    ) {
         let d = std::f64::consts::FRAC_1_SQRT_2;
         let diagonals = [[d, d], [d, -d], [-d, d], [-d, -d]];
         let axes = [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
@@ -8565,23 +9901,37 @@ impl Router {
                 let best = (0..4)
                     .filter(|index| !taken[*index])
                     .max_by(|a, b| {
-                        let dot = |index: usize| spokes[index].0[0] * direction[0] + spokes[index].0[1] * direction[1];
+                        let dot = |index: usize| {
+                            spokes[index].0[0] * direction[0] + spokes[index].0[1] * direction[1]
+                        };
                         dot(*a).total_cmp(&dot(*b)).then(b.cmp(a))
                     })
                     .unwrap();
                 taken[best] = true;
                 result[slot] = spokes[best];
             }
-            return (round, frame.center, result, 2.0 * frame.half[0].min(frame.half[1]));
+            return (
+                round,
+                frame.center,
+                result,
+                2.0 * frame.half[0].min(frame.half[1]),
+            );
         }
         let shape = &self.board.obstacles[pad].shape;
         let bounds = shape.aabb();
         let round = matches!(shape, crate::geometry::Shape::Circle { .. });
-        let half = [(bounds.maximum[0] - bounds.minimum[0]) / 2.0, (bounds.maximum[1] - bounds.minimum[1]) / 2.0];
+        let half = [
+            (bounds.maximum[0] - bounds.minimum[0]) / 2.0,
+            (bounds.maximum[1] - bounds.minimum[1]) / 2.0,
+        ];
         let directions = if round { diagonals } else { axes };
         let mut result = [([0.0, 0.0], 0.0, 0.0); 4];
         for (slot, direction) in directions.into_iter().enumerate() {
-            let edge = if round { half[0] } else { (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs() };
+            let edge = if round {
+                half[0]
+            } else {
+                (half[0] * direction[0]).abs() + (half[1] * direction[1]).abs()
+            };
             result[slot] = (direction, edge, edge + reach);
         }
         (round, anchor, result, 2.0 * half[0].min(half[1]))
@@ -8592,7 +9942,12 @@ impl Router {
     /// lattice (an escape's polyline) and the first straight run, each
     /// segment with half its width. Empty when the branch does not end at
     /// the terminal.
-    fn first_run(&self, net: NetId, terminal: usize, branch: &Branch) -> Vec<(crate::geometry::Point, crate::geometry::Point, f64)> {
+    fn first_run(
+        &self,
+        net: NetId,
+        terminal: usize,
+        branch: &Branch,
+    ) -> Vec<(crate::geometry::Point, crate::geometry::Point, f64)> {
         let state = &self.nets[net as usize];
         let anchor = self.board.nets[net as usize].terminals[terminal].anchor;
         let mut segments = Vec::new();
@@ -8600,12 +9955,22 @@ impl Router {
             if end as usize != terminal || branch.nodes.is_empty() {
                 continue;
             }
-            let nodes: Vec<Node> = if forward { branch.nodes.clone() } else { branch.nodes.iter().rev().copied().collect() };
+            let nodes: Vec<Node> = if forward {
+                branch.nodes.clone()
+            } else {
+                branch.nodes.iter().rev().copied().collect()
+            };
             let first = self.grid.center_of(nodes[0].cell as usize);
             let half = self.width_at(net, nodes[0].cell) / 2.0;
             match state.escapes.get(&nodes[0]) {
-                Some((_, width, polyline)) => segments.extend(polyline.windows(2).map(|pair| (pair[0], pair[1], width / 2.0))),
-                None if crate::geometry::distance(anchor, first) > 1.0e-7 => segments.push((anchor, first, half)),
+                Some((_, width, polyline)) => segments.extend(
+                    polyline
+                        .windows(2)
+                        .map(|pair| (pair[0], pair[1], width / 2.0)),
+                ),
+                None if crate::geometry::distance(anchor, first) > 1.0e-7 => {
+                    segments.push((anchor, first, half))
+                }
                 None => {}
             }
             let step = |a: Node, b: Node| {
@@ -8617,7 +9982,9 @@ impl Router {
                 && let Some(direction) = step(nodes[0], nodes[1])
             {
                 let mut last = 1;
-                while last + 1 < nodes.len() && step(nodes[last], nodes[last + 1]) == Some(direction) {
+                while last + 1 < nodes.len()
+                    && step(nodes[last], nodes[last + 1]) == Some(direction)
+                {
                     last += 1;
                 }
                 segments.push((first, self.grid.center_of(nodes[last].cell as usize), half));
@@ -8631,8 +9998,16 @@ impl Router {
     /// and none into islands is no thermal connection (not starved); with
     /// tracks counted, the islands no longer stand in for spokes.
     fn spokes_short(record: &SpokeRecord) -> usize {
-        let good = record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count();
-        let islands = record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Island(_))).count();
+        let good = record
+            .outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+            .count();
+        let islands = record
+            .outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, SpokeOutcome::Island(_)))
+            .count();
         if good == 0 && islands == 0 && record.crossings == 0 {
             return 0;
         }
@@ -8648,7 +10023,11 @@ impl Router {
     /// zones of a higher priority there (`zone_seams`).
     fn in_zone_part(&self, zone: usize, point: crate::geometry::Point) -> bool {
         let plane = &self.board.planes[zone];
-        crate::geometry::point_in_polygon(point, &plane.polygon) && !plane.above.iter().any(|above| crate::geometry::point_in_polygon(point, above))
+        crate::geometry::point_in_polygon(point, &plane.polygon)
+            && !plane
+                .above
+                .iter()
+                .any(|above| crate::geometry::point_in_polygon(point, above))
     }
 
     /// For each pad the spoke model finds a starved thermal (fewer than
@@ -8666,7 +10045,14 @@ impl Router {
         // rung): KiCad fills their zones all the same, with the masks
         // set for the analysis only.
         let nets: Vec<NetId> = (0..self.nets.len() as NetId)
-            .filter(|net| self.nets[*net as usize].routable && self.board.planes.iter().any(|plane| plane.net == *net && plane.thermal_gap > 0.0))
+            .filter(|net| {
+                self.nets[*net as usize].routable
+                    && self
+                        .board
+                        .planes
+                        .iter()
+                        .any(|plane| plane.net == *net && plane.thermal_gap > 0.0)
+            })
             .collect();
         for net in nets {
             let lent = self.nets[net as usize].plane.is_empty();
@@ -8716,19 +10102,44 @@ impl Router {
             let description = &self.board.nets[net as usize];
             let inner = |record: &SpokeRecord| {
                 let host = &self.board.obstacles[description.terminals[record.terminal].pad];
-                record.pad != description.terminals[record.terminal].pad && host.layers & (1 << record.layer) != 0 && host.shape.contains(record.anchor)
+                record.pad != description.terminals[record.terminal].pad
+                    && host.layers & (1 << record.layer) != 0
+                    && host.shape.contains(record.anchor)
             };
-            let Some(record) = report.iter().find(|record| inner(record) && Self::spokes_short(record) > 0 && !tried.contains(&(record.pad, record.layer))) else {
+            let Some(record) = report.iter().find(|record| {
+                inner(record)
+                    && Self::spokes_short(record) > 0
+                    && !tried.contains(&(record.pad, record.layer))
+            }) else {
                 break;
             };
             tried.insert((record.pad, record.layer));
-            let (layer, anchor, pad, short) = (record.layer, record.anchor, record.pad, Self::spokes_short(record));
+            let (layer, anchor, pad, short) = (
+                record.layer,
+                record.anchor,
+                record.pad,
+                Self::spokes_short(record),
+            );
             let host = &self.board.obstacles[description.terminals[record.terminal].pad];
             let width = self.board.classes[description.class].trace_width;
-            let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
-            let bridge = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0)).fold(0.0f64, f64::max);
+            let gap = self
+                .board
+                .planes
+                .iter()
+                .filter(|plane| plane.net == net && plane.layer == layer)
+                .map(|plane| plane.thermal_gap)
+                .fold(0.0f64, f64::max);
+            let bridge = self
+                .board
+                .planes
+                .iter()
+                .filter(|plane| plane.net == net && plane.layer == layer)
+                .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                .fold(0.0f64, f64::max);
             let bounds = self.board.obstacles[pad].shape.aabb();
-            let radius = 0.5 * (bounds.maximum[0] - bounds.minimum[0]).max(bounds.maximum[1] - bounds.minimum[1]);
+            let radius = 0.5
+                * (bounds.maximum[0] - bounds.minimum[0])
+                    .max(bounds.maximum[1] - bounds.minimum[1]);
             // Copper wholly inside the larger pad: its ends and sides.
             let inside_host = |a: crate::geometry::Point, b: crate::geometry::Point| {
                 let length = crate::geometry::distance(a, b).max(1.0e-9);
@@ -8738,7 +10149,9 @@ impl Router {
                 (0..=steps).all(|step| {
                     let t = length * step as f64 / steps as f64;
                     let at = [a[0] + d[0] * t, a[1] + d[1] * t];
-                    [[-d[1] * h, d[0] * h], [d[1] * h, -d[0] * h], [0.0, 0.0]].iter().all(|offset| host.shape.contains([at[0] + offset[0], at[1] + offset[1]]))
+                    [[-d[1] * h, d[0] * h], [d[1] * h, -d[0] * h], [0.0, 0.0]]
+                        .iter()
+                        .all(|offset| host.shape.contains([at[0] + offset[0], at[1] + offset[1]]))
                 }) && host.shape.contains([b[0] + d[0] * h, b[1] + d[1] * h])
             };
             let candidate = {
@@ -8748,26 +10161,39 @@ impl Router {
                     .board
                     .obstacles
                     .iter()
-                    .filter(|obstacle| obstacle.kind == crate::board::ObstacleKind::Hole && obstacle.net == Some(net))
+                    .filter(|obstacle| {
+                        obstacle.kind == crate::board::ObstacleKind::Hole
+                            && obstacle.net == Some(net)
+                    })
                     .collect();
                 let mut best: Option<(f64, crate::geometry::Point)> = None;
                 // From the ring half a gap out to the far side of a
                 // hatched zone's ring.
-                let (near, far) = (radius + gap / 2.0 + width / 2.0, radius + gap + bridge.max(width));
+                let (near, far) = (
+                    radius + gap / 2.0 + width / 2.0,
+                    radius + gap + bridge.max(width),
+                );
                 for index in 0..16 {
                     let angle = std::f64::consts::TAU * index as f64 / 16.0;
                     let direction = [angle.cos(), angle.sin()];
                     let steps = 8;
                     for step in 0..=steps {
                         let length = near + (far - near) * step as f64 / steps as f64;
-                        let end = [anchor[0] + direction[0] * length, anchor[1] + direction[1] * length];
+                        let end = [
+                            anchor[0] + direction[0] * length,
+                            anchor[1] + direction[1] * length,
+                        ];
                         if best.is_some_and(|(best, _)| best <= length) {
                             break;
                         }
-                        if holes.iter().any(|hole| hole.shape.contains(end)) || !inside_host(anchor, end) {
+                        if holes.iter().any(|hole| hole.shape.contains(end))
+                            || !inside_host(anchor, end)
+                        {
                             continue;
                         }
-                        if probe.for_track_end(|| probe.in_ring(layer, end) || probe.final_fill_at(layer, end)) {
+                        if probe.for_track_end(|| {
+                            probe.in_ring(layer, end) || probe.final_fill_at(layer, end)
+                        }) {
                             best = Some((length, end));
                             break;
                         }
@@ -8776,7 +10202,9 @@ impl Router {
                 best.map(|(_, end)| end)
             };
             if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
-                eprintln!("inner spoke for pad {pad} layer {layer} at {anchor:?} short {short}: {candidate:?}");
+                eprintln!(
+                    "inner spoke for pad {pad} layer {layer} at {anchor:?} short {short}: {candidate:?}"
+                );
             }
             let Some(end) = candidate else {
                 continue;
@@ -8785,10 +10213,16 @@ impl Router {
             state.inner_spokes.push((layer, anchor, end, width));
             let mut report = Vec::new();
             self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
-            let after = report.iter().find(|record| record.pad == pad && record.layer == layer).map_or(short, Self::spokes_short);
+            let after = report
+                .iter()
+                .find(|record| record.pad == pad && record.layer == layer)
+                .map_or(short, Self::spokes_short);
             if after < short {
                 if self.config.verbose {
-                    eprintln!("inner spoke: {} pad at {anchor:?} on layer {layer} to {end:?}", self.board.obstacles[pad].label);
+                    eprintln!(
+                        "inner spoke: {} pad at {anchor:?} on layer {layer} to {end:?}",
+                        self.board.obstacles[pad].label
+                    );
                 }
                 added += 1;
             } else {
@@ -8810,11 +10244,22 @@ impl Router {
             let mut tried: HashMap<(usize, usize), usize> = HashMap::new();
             loop {
                 let mut report = Vec::new();
-                let (pours, mut parent, main, _) = self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+                let (pours, mut parent, main, _) =
+                    self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
                 // A pad merged into its terminal has no nodes of its own to
                 // start a track from.
-                let own = |record: &SpokeRecord| record.pad == self.board.nets[net as usize].terminals[record.terminal].pad;
-                let Some(record) = report.iter().find(|record| own(record) && Self::spokes_short(record) > 0 && tried.get(&(record.terminal, record.layer)).copied().unwrap_or(0) < 2) else {
+                let own = |record: &SpokeRecord| {
+                    record.pad == self.board.nets[net as usize].terminals[record.terminal].pad
+                };
+                let Some(record) = report.iter().find(|record| {
+                    own(record)
+                        && Self::spokes_short(record) > 0
+                        && tried
+                            .get(&(record.terminal, record.layer))
+                            .copied()
+                            .unwrap_or(0)
+                            < 2
+                }) else {
                     break;
                 };
                 *tried.entry((record.terminal, record.layer)).or_default() += 1;
@@ -8839,8 +10284,15 @@ impl Router {
                 // centre the fill begins along them (its edge and the gap).
                 let slivers: Vec<(crate::geometry::Point, f64)> = {
                     let terminal = &self.board.nets[net as usize].terminals[record.terminal];
-                    let gap = self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer).map(|plane| plane.thermal_gap).fold(0.0f64, f64::max);
-                    let (_, _, geometry, _) = self.spoke_geometry(terminal.pad, terminal.anchor, gap);
+                    let gap = self
+                        .board
+                        .planes
+                        .iter()
+                        .filter(|plane| plane.net == net && plane.layer == layer)
+                        .map(|plane| plane.thermal_gap)
+                        .fold(0.0f64, f64::max);
+                    let (_, _, geometry, _) =
+                        self.spoke_geometry(terminal.pad, terminal.anchor, gap);
                     record
                         .outcomes
                         .iter()
@@ -8853,10 +10305,16 @@ impl Router {
                 let state = &self.nets[net as usize];
                 let own = OwnStamps::new(
                     &state.stamped,
-                    &[self.map_index(class, layer), self.diagonal_map(class, layer, 0), self.diagonal_map(class, layer, 1)],
+                    &[
+                        self.map_index(class, layer),
+                        self.diagonal_map(class, layer, 0),
+                        self.diagonal_map(class, layer, 1),
+                    ],
                     cells,
                 );
-                let free = |map: usize, cell: usize| self.occupancy[map][cell] as usize == own.contains(map, cell) as usize;
+                let free = |map: usize, cell: usize| {
+                    self.occupancy[map][cell] as usize == own.contains(map, cell) as usize
+                };
                 let statics = &self.statics[class];
                 let trace = self.map_index(class, layer);
                 // The shortest straight track into a kept piece, and into
@@ -8871,10 +10329,18 @@ impl Router {
                 // Into a piece joined to a pad of the net (KiCad keeps it),
                 // the main piece first.
                 let terminal_base = pours.pieces + 1;
-                let kept: HashSet<usize> = (0..state.terminal_nodes.len()).map(|terminal| find(&mut parent, terminal_base + terminal)).collect();
-                let starts: Vec<Node> = state.terminal_nodes[record.terminal].iter().copied().filter(|node| node.layer as usize == layer).collect();
+                let kept: HashSet<usize> = (0..state.terminal_nodes.len())
+                    .map(|terminal| find(&mut parent, terminal_base + terminal))
+                    .collect();
+                let starts: Vec<Node> = state.terminal_nodes[record.terminal]
+                    .iter()
+                    .copied()
+                    .filter(|node| node.layer as usize == layer)
+                    .collect();
                 for start in starts {
-                    if !statics.trace_allowed(layer, start.cell as usize, net) || !free(trace, start.cell as usize) {
+                    if !statics.trace_allowed(layer, start.cell as usize, net)
+                        || !free(trace, start.cell as usize)
+                    {
                         continue;
                     }
                     for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
@@ -8888,7 +10354,11 @@ impl Router {
                             }
                             let cell = (next_y * nx + next_x) as usize;
                             let diagonal_ok = if *dx != 0 && *dy != 0 {
-                                let (from, orientation) = if *dx > 0 { (previous, (*dy < 0) as usize) } else { (cell, (*dy > 0) as usize) };
+                                let (from, orientation) = if *dx > 0 {
+                                    (previous, (*dy < 0) as usize)
+                                } else {
+                                    (cell, (*dy > 0) as usize)
+                                };
                                 free(self.diagonal_map(class, layer, orientation), from)
                             } else {
                                 true
@@ -8900,11 +10370,16 @@ impl Router {
                             {
                                 break;
                             }
-                            path.push(Node { layer: layer as u8, cell: cell as u32 });
+                            path.push(Node {
+                                layer: layer as u8,
+                                cell: cell as u32,
+                            });
                             let piece = pours.label[layer][cell];
                             if piece != 0
                                 && kept.contains(&find(&mut parent, piece as usize))
-                                && seam_zone.is_none_or(|zone| self.in_zone_part(zone, self.grid.center_of(cell)))
+                                && seam_zone.is_none_or(|zone| {
+                                    self.in_zone_part(zone, self.grid.center_of(cell))
+                                })
                                 && probe.fill_at(layer, self.grid.center_of(cell))
                             {
                                 if best.as_ref().is_none_or(|best| path.len() < best.len()) {
@@ -8915,15 +10390,27 @@ impl Router {
                             // Into an island: one of its pieces, or the
                             // fill along a spoke into a sliver.
                             let along_sliver = || {
-                                let (from, to) = (self.grid.center_of(start.cell as usize), self.grid.center_of(cell));
+                                let (from, to) = (
+                                    self.grid.center_of(start.cell as usize),
+                                    self.grid.center_of(cell),
+                                );
                                 let length = crate::geometry::distance(from, to);
                                 length > 0.0
                                     && slivers.iter().any(|(direction, reach)| {
-                                        ((to[0] - from[0]) * direction[0] + (to[1] - from[1]) * direction[1]) / length > 0.99 && length >= *reach
+                                        ((to[0] - from[0]) * direction[0]
+                                            + (to[1] - from[1]) * direction[1])
+                                            / length
+                                            > 0.99
+                                            && length >= *reach
                                     })
                             };
-                            if ((piece != 0 && islands.contains(&piece)) || along_sliver()) && probe.fill_at(layer, self.grid.center_of(cell)) {
-                                if best_island.as_ref().is_none_or(|best| path.len() < best.len()) {
+                            if ((piece != 0 && islands.contains(&piece)) || along_sliver())
+                                && probe.fill_at(layer, self.grid.center_of(cell))
+                            {
+                                if best_island
+                                    .as_ref()
+                                    .is_none_or(|best| path.len() < best.len())
+                                {
                                     best_island = Some(path.clone());
                                 }
                                 break;
@@ -8935,9 +10422,16 @@ impl Router {
                 let label = &self.board.nets[net as usize].terminals[record.terminal].label;
                 if let Some(nodes) = best {
                     if self.config.verbose {
-                        eprintln!("manual spoke: {label} on layer {layer}, {} nodes", nodes.len());
+                        eprintln!(
+                            "manual spoke: {label} on layer {layer}, {} nodes",
+                            nodes.len()
+                        );
                     }
-                    self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
+                    self.nets[net as usize].branches.push(Branch {
+                        nodes,
+                        start_terminal: record.terminal as u16,
+                        end_terminal: PLANE_TERMINAL,
+                    });
                     self.stamp(net);
                     added += 1;
                     continue;
@@ -8948,15 +10442,27 @@ impl Router {
                     let anchor = self.board.nets[net as usize].terminals[record.terminal].anchor;
                     let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
                     for piece in &islands {
-                        anchors.entry(find(&mut parent, *piece as usize)).or_insert(anchor);
+                        anchors
+                            .entry(find(&mut parent, *piece as usize))
+                            .or_insert(anchor);
                     }
-                    let chosen = self.stitching_vias(net, &pours, &mut parent, main, &anchors, true);
+                    let chosen =
+                        self.stitching_vias(net, &pours, &mut parent, main, &anchors, true);
                     if let Some((layer, other, cell)) = chosen.first().copied() {
                         if self.config.verbose {
                             eprintln!("island via: {label} on layer {layer} to layer {other}");
                         }
                         self.nets[net as usize].branches.push(Branch {
-                            nodes: vec![Node { layer: layer as u8, cell: cell as u32 }, Node { layer: other as u8, cell: cell as u32 }],
+                            nodes: vec![
+                                Node {
+                                    layer: layer as u8,
+                                    cell: cell as u32,
+                                },
+                                Node {
+                                    layer: other as u8,
+                                    cell: cell as u32,
+                                },
+                            ],
                             start_terminal: PLANE_TERMINAL,
                             end_terminal: PLANE_TERMINAL,
                         });
@@ -8970,9 +10476,16 @@ impl Router {
                     && let Some(nodes) = best_island
                 {
                     if self.config.verbose {
-                        eprintln!("island stub: {label} on layer {layer}, {} nodes", nodes.len());
+                        eprintln!(
+                            "island stub: {label} on layer {layer}, {} nodes",
+                            nodes.len()
+                        );
                     }
-                    self.nets[net as usize].branches.push(Branch { nodes, start_terminal: record.terminal as u16, end_terminal: PLANE_TERMINAL });
+                    self.nets[net as usize].branches.push(Branch {
+                        nodes,
+                        start_terminal: record.terminal as u16,
+                        end_terminal: PLANE_TERMINAL,
+                    });
                     self.stamp(net);
                     added += 1;
                     continue;
@@ -8980,7 +10493,10 @@ impl Router {
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     eprintln!(
                         "manual spoke: none for {label} on layer {layer} ({} start nodes, {} islands)",
-                        self.nets[net as usize].terminal_nodes[record.terminal].iter().filter(|node| node.layer as usize == layer).count(),
+                        self.nets[net as usize].terminal_nodes[record.terminal]
+                            .iter()
+                            .filter(|node| node.layer as usize == layer)
+                            .count(),
                         islands.len()
                     );
                 }
@@ -9018,7 +10534,17 @@ impl Router {
                 continue;
             };
             let reach = gap + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
-            let thermal = |label: &str| self.board.isolated_pads.binary_search(&label.to_string()).is_err() && self.board.solid_pads.binary_search(&label.to_string()).is_err();
+            let thermal = |label: &str| {
+                self.board
+                    .isolated_pads
+                    .binary_search(&label.to_string())
+                    .is_err()
+                    && self
+                        .board
+                        .solid_pads
+                        .binary_search(&label.to_string())
+                        .is_err()
+            };
             for terminal in &description.terminals {
                 if !thermal(&terminal.label) {
                     continue;
@@ -9033,8 +10559,17 @@ impl Router {
             // too (an exposed pad's thermal vias, on the far side or inside
             // the pad).
             if self.config.inner_pads {
-                for merged in self.board.merged_pads.iter().filter(|merged| merged.net == net && merged.layers & (1 << layer) != 0) {
-                    if description.terminals.get(merged.host).is_some_and(|host| thermal(&host.label)) {
+                for merged in self
+                    .board
+                    .merged_pads
+                    .iter()
+                    .filter(|merged| merged.net == net && merged.layers & (1 << layer) != 0)
+                {
+                    if description
+                        .terminals
+                        .get(merged.host)
+                        .is_some_and(|host| thermal(&host.label))
+                    {
                         result[layer].push((merged.pad, reach));
                     }
                 }
@@ -9052,7 +10587,9 @@ impl Router {
             }
             for (pad, reach) in pads {
                 let pad = &self.board.obstacles[*pad];
-                let Some((x0, y0, x1, y1)) = self.grid.node_range(pad.shape.aabb().inflated(*reach)) else {
+                let Some((x0, y0, x1, y1)) =
+                    self.grid.node_range(pad.shape.aabb().inflated(*reach))
+                else {
                     continue;
                 };
                 for y in y0..=y1 {
@@ -9100,9 +10637,15 @@ impl Router {
                     for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0) {
                         for step in 0..=steps {
                             let t = step as f64 / steps as f64;
-                            let at = [start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t];
+                            let at = [
+                                start[0] + (end[0] - start[0]) * t,
+                                start[1] + (end[1] - start[1]) * t,
+                            ];
                             if let Some(cell) = self.grid.nearest_node(at) {
-                                let node = Node { layer: layer as u8, cell: cell as u32 };
+                                let node = Node {
+                                    layer: layer as u8,
+                                    cell: cell as u32,
+                                };
                                 if nodes.last() != Some(&node) {
                                     nodes.push(node);
                                 }
@@ -9112,10 +10655,17 @@ impl Router {
                 }
                 shape => {
                     let bounds = shape.aabb();
-                    let center = [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0];
+                    let center = [
+                        (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                        (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+                    ];
                     if let Some(cell) = self.grid.nearest_node(center) {
-                        for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0) {
-                            nodes.push(Node { layer: layer as u8, cell: cell as u32 });
+                        for layer in (0..layers).filter(|layer| obstacle.layers & (1 << layer) != 0)
+                        {
+                            nodes.push(Node {
+                                layer: layer as u8,
+                                cell: cell as u32,
+                            });
                         }
                     }
                 }
@@ -9133,13 +10683,15 @@ impl Router {
             let mut ends = [NO_TERMINAL, NO_TERMINAL];
             if let crate::geometry::Shape::Capsule { start, end, radius } = &obstacle.shape {
                 for (slot, point) in [*start, *end].into_iter().enumerate() {
-                    if let Some(terminal) = self.board.nets[net as usize]
-                        .terminals
-                        .iter()
-                        .position(|terminal| {
-                            let pad = &self.board.obstacles[terminal.pad];
-                            pad.layers & obstacle.layers != 0 && pad.shape.distance_to_point(point) <= *radius + 1.0e-6
-                        })
+                    if let Some(terminal) =
+                        self.board.nets[net as usize]
+                            .terminals
+                            .iter()
+                            .position(|terminal| {
+                                let pad = &self.board.obstacles[terminal.pad];
+                                pad.layers & obstacle.layers != 0
+                                    && pad.shape.distance_to_point(point) <= *radius + 1.0e-6
+                            })
                     {
                         ends[slot] = terminal as u16;
                     }
@@ -9147,9 +10699,15 @@ impl Router {
             }
             if let crate::geometry::Shape::Capsule { start, end, radius } = &obstacle.shape {
                 let index = self.nets[net as usize].branches.len();
-                self.nets[net as usize].adopted.insert(index, (*start, *end, *radius));
+                self.nets[net as usize]
+                    .adopted
+                    .insert(index, (*start, *end, *radius));
             }
-            self.nets[net as usize].branches.push(Branch { nodes, start_terminal: ends[0], end_terminal: ends[1] });
+            self.nets[net as usize].branches.push(Branch {
+                nodes,
+                start_terminal: ends[0],
+                end_terminal: ends[1],
+            });
         }
     }
 
@@ -9166,23 +10724,40 @@ impl Router {
             let mut spokes = Vec::new();
             let (pours, _, _, _) = self.analyze_pours_reporting(net, &|_| false, Some(&mut spokes));
             let mut rings: Vec<Vec<bool>> = (0..layers)
-                .map(|layer| if state.plane[layer].is_empty() { Vec::new() } else { vec![true; cells] })
+                .map(|layer| {
+                    if state.plane[layer].is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![true; cells]
+                    }
+                })
                 .collect();
             self.cut_thermal_rings(&self.thermal_ring_pads(net), &mut rings);
             let own = OwnStamps::new(
                 &state.stamped,
-                &(0..layers).filter(|layer| !state.plane[*layer].is_empty()).map(|layer| self.map_index(state.plane_class[layer], layer)).collect::<Vec<_>>(),
+                &(0..layers)
+                    .filter(|layer| !state.plane[*layer].is_empty())
+                    .map(|layer| self.map_index(state.plane_class[layer], layer))
+                    .collect::<Vec<_>>(),
                 cells,
             );
             let name = &self.board.nets[net as usize].name;
             let file_name: String = name
                 .chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '_' { c } else { '_' })
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             // Per pad and layer, the spokes as the model sees them: one
             // JSON object a line.
             {
-                let mut file = std::io::BufWriter::new(std::fs::File::create(directory.join(format!("{file_name}.spokes")))?);
+                let mut file = std::io::BufWriter::new(std::fs::File::create(
+                    directory.join(format!("{file_name}.spokes")),
+                )?);
                 for record in &spokes {
                     let terminal = &self.board.nets[net as usize].terminals[record.terminal];
                     let outcomes: Vec<String> = record
@@ -9217,9 +10792,17 @@ impl Router {
                     continue;
                 }
                 let mut flags = vec![0u8; cells];
-                for plane in self.board.planes.iter().filter(|plane| plane.net == net && plane.layer == layer && plane.connect) {
+                for plane in self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == layer && plane.connect)
+                {
                     let Some((x0, y0, x1, y1)) = self.grid.node_range(
-                        crate::geometry::Shape::Polygon { points: plane.polygon.clone() }.aabb(),
+                        crate::geometry::Shape::Polygon {
+                            points: plane.polygon.clone(),
+                        }
+                        .aabb(),
                     ) else {
                         continue;
                     };
@@ -9227,7 +10810,10 @@ impl Router {
                         for x in x0..=x1 {
                             let center = self.grid.center(x, y);
                             if crate::geometry::point_in_polygon(center, &plane.polygon)
-                                && !plane.excluded.iter().any(|other| crate::geometry::point_in_polygon(center, other))
+                                && !plane
+                                    .excluded
+                                    .iter()
+                                    .any(|other| crate::geometry::point_in_polygon(center, other))
                             {
                                 flags[self.grid.index(x, y)] |= 1;
                             }
@@ -9251,7 +10837,11 @@ impl Router {
                     }
                 }
                 for branch in &state.branches {
-                    for node in branch.nodes.iter().filter(|node| node.layer as usize == layer) {
+                    for node in branch
+                        .nodes
+                        .iter()
+                        .filter(|node| node.layer as usize == layer)
+                    {
                         flags[node.cell as usize] |= 32;
                     }
                 }
@@ -9298,7 +10888,11 @@ impl Router {
         let layers = self.board.layer_count;
         let via_reach = 0;
         let via_map = self.map_index(class_index, layers);
-        let own = OwnStamps::new(&self.nets[net as usize].stamped, &[via_map], self.grid.cells());
+        let own = OwnStamps::new(
+            &self.nets[net as usize].stamped,
+            &[via_map],
+            self.grid.cells(),
+        );
         // A via keeps the hole-to-hole distance from the net's vias
         // already there too: KiCad's rule holds within a net
         // (PolyKybd's stitches landed 0.1 mm from earlier ones).
@@ -9311,7 +10905,11 @@ impl Router {
                 }
                 let center = self.grid.center_of(pair[0].cell as usize);
                 let keep = spacing.max(class.via_diameter);
-                let bounds = crate::geometry::Aabb { minimum: center, maximum: center }.inflated(keep);
+                let bounds = crate::geometry::Aabb {
+                    minimum: center,
+                    maximum: center,
+                }
+                .inflated(keep);
                 if let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) {
                     for y in y0..=y1 {
                         for x in x0..=x1 {
@@ -9329,7 +10927,13 @@ impl Router {
                 .map(|layer| {
                     pours.label[layer]
                         .iter()
-                        .map(|piece| if *piece == 0 { 0 } else { find(parent, *piece as usize) })
+                        .map(|piece| {
+                            if *piece == 0 {
+                                0
+                            } else {
+                                find(parent, *piece as usize)
+                            }
+                        })
                         .collect()
                 })
                 .collect();
@@ -9348,11 +10952,16 @@ impl Router {
                     }
                     for other in (0..layers).filter(|other| *other != layer) {
                         let target = roots[other].get(cell).copied().unwrap_or(0);
-                        if target == 0 || target == *island || (main_only && target != main) || !pours.solid_around(&self.grid, other, cell, via_reach) {
+                        if target == 0
+                            || target == *island
+                            || (main_only && target != main)
+                            || !pours.solid_around(&self.grid, other, cell, via_reach)
+                        {
                             continue;
                         }
                         let bonus = if target == main { 0.0 } else { 5.0 };
-                        let distance = bonus + crate::geometry::distance(*anchor, self.grid.center_of(cell));
+                        let distance =
+                            bonus + crate::geometry::distance(*anchor, self.grid.center_of(cell));
                         let entry = best.entry(*island).or_insert((f64::INFINITY, 0, 0, 0));
                         if distance < entry.0 {
                             *entry = (distance, layer, other, cell);
@@ -9371,11 +10980,18 @@ impl Router {
         // Ties broken by the cell, then the island (two islands of one pad
         // on two layers share an anchor and a best cell): a hash map's
         // order must not decide.
-        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.3.cmp(&b.3)).then(a.4.cmp(&b.4)));
+        candidates.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap()
+                .then(a.3.cmp(&b.3))
+                .then(a.4.cmp(&b.4))
+        });
         for (_, layer, other, cell, _) in candidates {
             let at = self.grid.center_of(cell);
             if chosen.iter().any(|(_, _, placed)| {
-                *placed == cell || crate::geometry::distance(at, self.grid.center_of(*placed)) < spacing.max(class.via_diameter)
+                *placed == cell
+                    || crate::geometry::distance(at, self.grid.center_of(*placed))
+                        < spacing.max(class.via_diameter)
             }) {
                 continue;
             }
@@ -9406,24 +11022,45 @@ impl Router {
                 *uses.entry(*node).or_default() += 1;
             }
         }
-        let label = |node: &Node| pours.label[node.layer as usize].get(node.cell as usize).copied().unwrap_or(0);
+        let label = |node: &Node| {
+            pours.label[node.layer as usize]
+                .get(node.cell as usize)
+                .copied()
+                .unwrap_or(0)
+        };
         // (branch, from its end, nodes to drop)
         let mut cuts: Vec<(usize, bool, usize)> = Vec::new();
         for (index, branch) in state.branches.iter().enumerate().skip(state.fixed) {
             for at_end in [true, false] {
-                let terminal = if at_end { branch.end_terminal } else { branch.start_terminal };
+                let terminal = if at_end {
+                    branch.end_terminal
+                } else {
+                    branch.start_terminal
+                };
                 if terminal != PLANE_TERMINAL || branch.nodes.len() < 3 {
                     continue;
                 }
-                let nodes: Vec<&Node> = if at_end { branch.nodes.iter().rev().collect() } else { branch.nodes.iter().collect() };
+                let nodes: Vec<&Node> = if at_end {
+                    branch.nodes.iter().rev().collect()
+                } else {
+                    branch.nodes.iter().collect()
+                };
                 if label(nodes[0]) != 0 {
                     continue;
                 }
-                let Some(stop) = nodes.iter().position(|node| label(node) != 0 || uses.get(node).copied().unwrap_or(0) > 1) else {
+                let Some(stop) = nodes
+                    .iter()
+                    .position(|node| label(node) != 0 || uses.get(node).copied().unwrap_or(0) > 1)
+                else {
                     continue;
                 };
                 // Only back to a junction, the branch keeping some length.
-                if stop > 0 && uses.get(nodes[stop]).copied().unwrap_or(0) > 1 && label(nodes[stop]) == 0 && stop + 1 < nodes.len() && nodes[stop].layer == nodes[stop - 1].layer {
+                if stop > 0
+                    && uses.get(nodes[stop]).copied().unwrap_or(0) > 1
+                    && label(nodes[stop]) == 0
+                    && stop + 1 < nodes.len()
+                    && nodes[stop].layer == nodes[stop - 1].layer
+                {
                     cuts.push((index, at_end, stop));
                 }
             }
@@ -9518,9 +11155,15 @@ impl Router {
                             ends(branch.end_terminal),
                             branch.nodes.len(),
                             self.grid.center_of(first.cell as usize),
-                            pours.label[first.layer as usize].get(first.cell as usize).copied().unwrap_or(0),
+                            pours.label[first.layer as usize]
+                                .get(first.cell as usize)
+                                .copied()
+                                .unwrap_or(0),
                             self.grid.center_of(last.cell as usize),
-                            pours.label[last.layer as usize].get(last.cell as usize).copied().unwrap_or(0),
+                            pours.label[last.layer as usize]
+                                .get(last.cell as usize)
+                                .copied()
+                                .unwrap_or(0),
                             self.nets[net as usize].on_plane.get(*terminal).copied()
                         );
                     }
@@ -9560,13 +11203,17 @@ impl Router {
             let mut anchors: HashMap<usize, crate::geometry::Point> = HashMap::new();
             for terminal in &islands {
                 let island = find(&mut parent, terminal_base + terminal);
-                anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
+                anchors
+                    .entry(island)
+                    .or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
             }
             // A spoke island gets a via too: with copper of the net in it
             // KiCad keeps it, and the spoke counts.
             for (piece, terminal) in &spoke_islands {
                 let island = find(&mut parent, *piece);
-                anchors.entry(island).or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
+                anchors
+                    .entry(island)
+                    .or_insert(self.board.nets[net as usize].terminals[*terminal].anchor);
             }
             let chosen = self.stitching_vias(net, &pours, &mut parent, main, &anchors, false);
             if self.config.verbose && !spoke_islands.is_empty() {
@@ -9574,7 +11221,9 @@ impl Router {
                     .iter()
                     .filter(|(layer, _, cell)| {
                         let root = find(&mut parent, pours.label[*layer][*cell] as usize);
-                        spoke_islands.iter().any(|(piece, _)| find(&mut parent, *piece) == root)
+                        spoke_islands
+                            .iter()
+                            .any(|(piece, _)| find(&mut parent, *piece) == root)
                     })
                     .count();
                 eprintln!(
@@ -9800,7 +11449,8 @@ impl Router {
                 self.scratch.open_expansions += counters[3];
                 self.scratch.failed_searches += counters[4];
                 let before = self.geometric_cost(net);
-                let better = state.complete && self.geometric_cost_of(net, &state.branches) < before - 1.0e-6;
+                let better = state.complete
+                    && self.geometric_cost_of(net, &state.branches) < before - 1.0e-6;
                 if !better {
                     state.branches = self.nets[net as usize].branches.clone();
                     state.connected.fill(true);
@@ -9811,20 +11461,28 @@ impl Router {
                 self.stamp(net);
                 better
             } else {
-                let speculative_better =
-                    state.complete && self.geometric_cost_of(net, &state.branches) < self.geometric_cost(net) - 1.0e-6;
+                let speculative_better = state.complete
+                    && self.geometric_cost_of(net, &state.branches)
+                        < self.geometric_cost(net) - 1.0e-6;
                 let better = !self.clean_up_batch(&[net]).is_empty();
                 if valid {
                     // Checking: a trial that stands must be the one in turn.
                     let same = speculative_better == better
                         && (!better
                             || state.branches.len() == self.nets[net as usize].branches.len()
-                                && state.branches.iter().zip(&self.nets[net as usize].branches).all(|(a, b)| a.nodes == b.nodes));
+                                && state
+                                    .branches
+                                    .iter()
+                                    .zip(&self.nets[net as usize].branches)
+                                    .all(|(a, b)| a.nodes == b.nodes));
                     if same {
                         self.profile.speculation_kept += 1;
                     } else {
                         self.profile.speculation_wrong += 1;
-                        eprintln!("speculation check: clean-up of {} differs", self.board.nets[net as usize].name);
+                        eprintln!(
+                            "speculation check: clean-up of {} differs",
+                            self.board.nets[net as usize].name
+                        );
                     }
                 } else {
                     self.profile.speculation_redone += 1;
@@ -9846,7 +11504,10 @@ impl Router {
     fn clean_up_batch(&mut self, batch: &[NetId]) -> Vec<NetId> {
         let mut improved = Vec::new();
         let before: Vec<f64> = batch.iter().map(|net| self.geometric_cost(*net)).collect();
-        let saved: Vec<Vec<Branch>> = batch.iter().map(|net| self.nets[*net as usize].branches.clone()).collect();
+        let saved: Vec<Vec<Branch>> = batch
+            .iter()
+            .map(|net| self.nets[*net as usize].branches.clone())
+            .collect();
         for net in batch {
             self.rip_up(*net);
         }
@@ -9873,10 +11534,14 @@ impl Router {
                         // routes inside their own window stay clear
                         // of each other.
                         let window = this.window(*net, 1.0);
-                        let within = net_state.branches.iter().flat_map(|branch| &branch.nodes).all(|node| {
-                            let (x, y) = this.grid.xy(node.cell as usize);
-                            x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
-                        });
+                        let within = net_state
+                            .branches
+                            .iter()
+                            .flat_map(|branch| &branch.nodes)
+                            .all(|node| {
+                                let (x, y) = this.grid.xy(node.cell as usize);
+                                x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
+                            });
                         (net_state, within, expansions)
                     })
                 })
@@ -9890,7 +11555,8 @@ impl Router {
         }
         for (index, net) in batch.iter().enumerate() {
             let state = &self.nets[*net as usize];
-            if inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6 {
+            if inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6
+            {
                 improved.push(*net);
             } else {
                 let state = &mut self.nets[*net as usize];
@@ -9908,7 +11574,11 @@ impl Router {
     fn clean_up(&mut self, order: &[NetId]) -> usize {
         self.cleanup = true;
         let mut improvements = 0;
-        let mut pour_stranded = self.config.pour_aware_polish.then(|| self.pour_stranded()).filter(|counts| !counts.is_empty());
+        let mut pour_stranded = self
+            .config
+            .pour_aware_polish
+            .then(|| self.pour_stranded())
+            .filter(|counts| !counts.is_empty());
         let mut pour_check_seconds = 0.0;
         let mut pour_rejected = 0;
         let mut pour_analyses = 0usize;
@@ -9933,14 +11603,24 @@ impl Router {
         };
         let started = self.clock();
         let pour_work_before = self.pour_work_seconds();
-        let budget = self.config.cleanup_seconds.min(self.negotiation_seconds.max(60.0));
+        let budget = self
+            .config
+            .cleanup_seconds
+            .min(self.negotiation_seconds.max(60.0));
         'passes: for _ in 0..self.config.cleanup_passes {
             let mut improved = false;
-            let complete: Vec<NetId> = order.iter().copied().filter(|net| self.nets[*net as usize].complete).collect();
+            let complete: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|net| self.nets[*net as usize].complete)
+                .collect();
             // Nets whose windows do not overlap are cleaned up at once; a
             // new route that leaves its window is not kept.
             let batches: Vec<Vec<NetId>> = if self.config.parallel {
-                self.batches(&complete, 1.0).into_iter().map(|(members, _)| members).collect()
+                self.batches(&complete, 1.0)
+                    .into_iter()
+                    .map(|(members, _)| members)
+                    .collect()
             } else {
                 complete.iter().map(|net| vec![*net]).collect()
             };
@@ -9957,12 +11637,20 @@ impl Router {
                 // Single-net batches side by side, speculatively (see
                 // `clean_up_window`).
                 let mut end = index;
-                let window = std::env::var("PCB_ROUTER_CLEANUP_WINDOW").ok().and_then(|value| value.parse().ok()).unwrap_or(2 * threads);
-                while speculate && end < batches.len() && batches[end].len() == 1 && end - index < window {
+                let window = std::env::var("PCB_ROUTER_CLEANUP_WINDOW")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(2 * threads);
+                while speculate
+                    && end < batches.len()
+                    && batches[end].len() == 1
+                    && end - index < window
+                {
                     end += 1;
                 }
                 if end - index > 1 {
-                    let nets: Vec<NetId> = batches[index..end].iter().map(|batch| batch[0]).collect();
+                    let nets: Vec<NetId> =
+                        batches[index..end].iter().map(|batch| batch[0]).collect();
                     match self.clean_up_window(&nets, &started, budget, check) {
                         Some(found) => {
                             improvements += found;
@@ -9987,7 +11675,10 @@ impl Router {
                     break 'passes;
                 }
                 let before: Vec<f64> = batch.iter().map(|net| self.geometric_cost(*net)).collect();
-                let saved: Vec<Vec<Branch>> = batch.iter().map(|net| self.nets[*net as usize].branches.clone()).collect();
+                let saved: Vec<Vec<Branch>> = batch
+                    .iter()
+                    .map(|net| self.nets[*net as usize].branches.clone())
+                    .collect();
                 for net in &batch {
                     self.rip_up(*net);
                 }
@@ -10014,10 +11705,17 @@ impl Router {
                                 // routes inside their own window stay clear
                                 // of each other.
                                 let window = this.window(*net, 1.0);
-                                let within = net_state.branches.iter().flat_map(|branch| &branch.nodes).all(|node| {
-                                    let (x, y) = this.grid.xy(node.cell as usize);
-                                    x >= window.0 && x <= window.2 && y >= window.1 && y <= window.3
-                                });
+                                let within = net_state
+                                    .branches
+                                    .iter()
+                                    .flat_map(|branch| &branch.nodes)
+                                    .all(|node| {
+                                        let (x, y) = this.grid.xy(node.cell as usize);
+                                        x >= window.0
+                                            && x <= window.2
+                                            && y >= window.1
+                                            && y <= window.3
+                                    });
                                 (net_state, within, expansions)
                             })
                         })
@@ -10032,7 +11730,9 @@ impl Router {
                 let mut accepted: Vec<bool> = Vec::with_capacity(batch.len());
                 for (index, net) in batch.iter().enumerate() {
                     let state = &self.nets[*net as usize];
-                    let better = inside[index] && state.complete && self.geometric_cost(*net) < before[index] - 1.0e-6;
+                    let better = inside[index]
+                        && state.complete
+                        && self.geometric_cost(*net) < before[index] - 1.0e-6;
                     if !better {
                         let state = &mut self.nets[*net as usize];
                         state.branches = saved[index].clone();
@@ -10057,9 +11757,15 @@ impl Router {
                         if !accepted[index] {
                             continue;
                         }
-                        for node in saved[index].iter().chain(&self.nets[*net as usize].branches).flat_map(|branch| &branch.nodes) {
+                        for node in saved[index]
+                            .iter()
+                            .chain(&self.nets[*net as usize].branches)
+                            .flat_map(|branch| &branch.nodes)
+                        {
                             let (x, y) = self.grid.xy(node.cell as usize);
-                            changed = Some(changed.map_or((x, y, x, y), |(x0, y0, x1, y1)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y))));
+                            changed = Some(changed.map_or((x, y, x, y), |(x0, y0, x1, y1)| {
+                                (x0.min(x), y0.min(y), x1.max(x), y1.max(y))
+                            }));
                         }
                     }
                     let now: Vec<usize> = pour_nets
@@ -10067,10 +11773,16 @@ impl Router {
                         .zip(&pour_bounds)
                         .zip(stranded.iter())
                         .map(|((net, bounds), before)| {
-                            let near = batch.iter().enumerate().any(|(index, other)| accepted[index] && other == net)
+                            let near = batch
+                                .iter()
+                                .enumerate()
+                                .any(|(index, other)| accepted[index] && other == net)
                                 || match (changed, bounds) {
                                     (Some((x0, y0, x1, y1)), &Some((px0, py0, px1, py1))) => {
-                                        x0 <= px1 + pour_reach && px0 <= x1 + pour_reach && y0 <= py1 + pour_reach && py0 <= y1 + pour_reach
+                                        x0 <= px1 + pour_reach
+                                            && px0 <= x1 + pour_reach
+                                            && y0 <= py1 + pour_reach
+                                            && py0 <= y1 + pour_reach
                                     }
                                     _ => false,
                                 };
@@ -10083,7 +11795,11 @@ impl Router {
                         })
                         .collect();
                     pour_check_seconds += checked.elapsed().as_secs_f64();
-                    if now.iter().zip(stranded.iter()).any(|(now, before)| now > before) {
+                    if now
+                        .iter()
+                        .zip(stranded.iter())
+                        .any(|(now, before)| now > before)
+                    {
                         for (index, net) in batch.iter().enumerate() {
                             if accepted[index] {
                                 self.unstamp(*net);
@@ -10145,7 +11861,11 @@ impl Router {
                     self.board.nets[net as usize].name,
                     state.connected.iter().filter(|c| **c).count(),
                     state.connected.len(),
-                    if self.config.resolve_keeps_partial { "conflicted branches ripped up" } else { "ripped up" }
+                    if self.config.resolve_keeps_partial {
+                        "conflicted branches ripped up"
+                    } else {
+                        "ripped up"
+                    }
                 );
             }
             if self.config.resolve_keeps_partial {
@@ -10173,7 +11893,11 @@ impl Router {
                         state.connected.iter().filter(|c| **c).count(),
                         state.connected.len(),
                         state.branches.len(),
-                        if self.config.resolve_keeps_partial { ", kept" } else { ", ripped up" }
+                        if self.config.resolve_keeps_partial {
+                            ", kept"
+                        } else {
+                            ", ripped up"
+                        }
                     );
                 }
                 if !self.config.resolve_keeps_partial {
@@ -10190,7 +11914,11 @@ impl Router {
         // failing hard search sweeps four ever larger windows, 9 s a net on
         // a 4.8M-node board, 960 s for 107 nets. Nets it does not reach stay
         // ripped up (open, as they were in conflict).
-        let budget = if self.hopeless { 0.0 } else { self.negotiation_seconds.max(60.0) };
+        let budget = if self.hopeless {
+            0.0
+        } else {
+            self.negotiation_seconds.max(60.0)
+        };
         let started = std::time::Instant::now();
         let clock = self.clock();
         let mut skipped = 0;
@@ -10354,7 +12082,12 @@ impl Router {
                             && self.stub_keeps_edge(anchor, center, width)
                         {
                             stubs.push(route.segments.len());
-                            route.segments.push(Segment { layer: node.layer as usize, start: anchor, end: center, width });
+                            route.segments.push(Segment {
+                                layer: node.layer as usize,
+                                start: anchor,
+                                end: center,
+                                width,
+                            });
                             break;
                         }
                     }
@@ -10392,7 +12125,12 @@ impl Router {
             }
         }
         for (layer, start, end, width) in &state.inner_spokes {
-            route.segments.push(Segment { layer: *layer, start: *start, end: *end, width: *width });
+            route.segments.push(Segment {
+                layer: *layer,
+                start: *start,
+                end: *end,
+                width: *width,
+            });
         }
         (route, stubs)
     }
@@ -10418,7 +12156,10 @@ impl Router {
         let widths: Vec<f64> = if self.nets[net as usize].neck_zones.is_empty() {
             vec![rules.trace_width; nodes.len()]
         } else {
-            nodes.iter().map(|node| self.width_at(net, node.cell)).collect()
+            nodes
+                .iter()
+                .map(|node| self.width_at(net, node.cell))
+                .collect()
         };
         // A segment is as wide as its narrowest node: a run is cut at a
         // wide node next to a narrow one, so the wide segment ends at a
@@ -10430,9 +12171,13 @@ impl Router {
                 && delta(nodes[index - 1], nodes[index]) != delta(nodes[index], nodes[index + 1]);
             let last = index + 1 == nodes.len();
             let width_edge = widths[index] >= wide
-                && ((index + 1 < nodes.len() && widths[index + 1] < wide) || widths[index - 1] < wide);
+                && ((index + 1 < nodes.len() && widths[index + 1] < wide)
+                    || widths[index - 1] < wide);
             if turning || last || width_edge || junctions.contains(&nodes[index]) {
-                let width = widths[start..=index].iter().copied().fold(f64::INFINITY, f64::min);
+                let width = widths[start..=index]
+                    .iter()
+                    .copied()
+                    .fold(f64::INFINITY, f64::min);
                 route.segments.push(Segment {
                     layer: nodes[start].layer as usize,
                     start: self.grid.center_of(nodes[start].cell as usize),
@@ -10481,7 +12226,9 @@ mod tests {
             let (mut x, mut y) = (0i64, 0i64);
             let mut cells = vec![0u32];
             for _ in 0..60 {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 let (dx, dy) = DIRECTIONS[(state >> 61) as usize];
                 let (tx, ty) = (x + dx as i64, y + dy as i64);
                 if tx >= 0 && ty >= 0 && tx < nx && ty < ny {
@@ -10492,15 +12239,38 @@ mod tests {
             let (mut whole_marks, mut fresh_marks) = (vec![0u64; words], vec![0u64; words]);
             let (mut whole, mut ahead) = (Vec::new(), Vec::new());
             for (index, cell) in cells.iter().enumerate() {
-                mark_footprint(&mut whole_marks, words, &mut whole, 0, *cell, &disc_offsets, (1, 1), (nx, ny), fresh.reach);
+                mark_footprint(
+                    &mut whole_marks,
+                    words,
+                    &mut whole,
+                    0,
+                    *cell,
+                    &disc_offsets,
+                    (1, 1),
+                    (nx, ny),
+                    fresh.reach,
+                );
                 let offsets = if index == 0 {
                     &disc_offsets
                 } else {
                     let previous = cells[index - 1] as i64;
-                    let (dx, dy) = (*cell as i64 % nx - previous % nx, *cell as i64 / nx - previous / nx);
+                    let (dx, dy) = (
+                        *cell as i64 % nx - previous % nx,
+                        *cell as i64 / nx - previous / nx,
+                    );
                     &fresh.trace_to_trace[((dx + 1) * 3 + dy + 1) as usize]
                 };
-                mark_footprint(&mut fresh_marks, words, &mut ahead, 0, *cell, offsets, (1, 1), (nx, ny), fresh.reach);
+                mark_footprint(
+                    &mut fresh_marks,
+                    words,
+                    &mut ahead,
+                    0,
+                    *cell,
+                    offsets,
+                    (1, 1),
+                    (nx, ny),
+                    fresh.reach,
+                );
             }
             assert_eq!(whole, ahead);
             assert_eq!(whole_marks, fresh_marks);
@@ -10509,7 +12279,11 @@ mod tests {
         // stamps each whole).
         for radius in [0.1, 0.25, 0.33, 0.6, 1.4] {
             let bisector = diagonal_extra(radius, 0.1);
-            assert!(bisector.iter().all(|(i, j)| !bisector.contains(&(i + 1, j + 1))));
+            assert!(
+                bisector
+                    .iter()
+                    .all(|(i, j)| !bisector.contains(&(i + 1, j + 1)))
+            );
         }
     }
 
@@ -10531,9 +12305,14 @@ mod tests {
         let mut reference = std::collections::BinaryHeap::new();
         let mut state = 0x9e37_79b9_7f4a_7c15u64;
         for round in 0..20_000 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             if round % 3 == 2 {
-                assert_eq!(heap.pop(), reference.pop().map(|std::cmp::Reverse(key)| key));
+                assert_eq!(
+                    heap.pop(),
+                    reference.pop().map(|std::cmp::Reverse(key)| key)
+                );
             } else {
                 let key = state >> 40;
                 heap.push(key);
@@ -10555,7 +12334,9 @@ mod tests {
         let mut state = 0x2545_f491_4f6c_dd1du64;
         let mut last = 0u64;
         for round in 0..200_000u64 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             if round % 40_000 == 39_999 {
                 heap.clear();
                 reference.clear();
@@ -10609,17 +12390,40 @@ mod tests {
     /// that passes it closer than the clearance while both of the step's
     /// nodes keep it.
     fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
-        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let class = RuleClass {
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        };
         let mut obstacles = vec![
-            copper(Shape::Circle { center: [0.5, 7.5], radius: 0.3 }, 0, "P.1"),
-            copper(Shape::Circle { center: [7.5, 0.5], radius: 0.3 }, 1, "Q.1"),
+            copper(
+                Shape::Circle {
+                    center: [0.5, 7.5],
+                    radius: 0.3,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [7.5, 0.5],
+                    radius: 0.3,
+                },
+                1,
+                "Q.1",
+            ),
         ];
         // Walls with radius 0.1 along y = x +- 0.6364 (0.45 mm from the
         // diagonal y = x on both sides, perpendicular).
         let offset = 0.45 * std::f64::consts::SQRT_2;
         for sign in [-1.0, 1.0] {
             obstacles.push(copper(
-                Shape::Capsule { start: [-1.0, -1.0 + sign * offset], end: [9.0, 9.0 + sign * offset], radius: 0.1 },
+                Shape::Capsule {
+                    start: [-1.0, -1.0 + sign * offset],
+                    end: [9.0, 9.0 + sign * offset],
+                    radius: 0.1,
+                },
                 1,
                 "wall",
             ));
@@ -10629,15 +12433,27 @@ mod tests {
         // diagonal comes within 0.397 - 0.075 = 0.322 < 0.325 of the step
         // and 0.328 of either node.
         let middle = [3.05, 3.05];
-        let across = [-std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2];
+        let across = [
+            -std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ];
         if notch {
             obstacles.push(copper(
-                Shape::Circle { center: [middle[0] + across[0] * 0.397, middle[1] + across[1] * 0.397], radius: 0.075 },
+                Shape::Circle {
+                    center: [middle[0] + across[0] * 0.397, middle[1] + across[1] * 0.397],
+                    radius: 0.075,
+                },
                 1,
                 "notch",
             ));
         }
-        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() };
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal {
+            anchor: at,
+            layers: 1,
+            pad,
+            contact: None,
+            label: label.into(),
+        };
         let board = Board {
             layer_count: 1,
             outline: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 8.0], [0.0, 8.0]],
@@ -10648,8 +12464,16 @@ mod tests {
             neck_width: 0.25,
             obstacles,
             nets: vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [0.5, 7.5], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(1, [7.5, 0.5], "Q.1")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(0, [0.5, 7.5], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![terminal(1, [7.5, 0.5], "Q.1")],
+                },
             ],
             planes: vec![Plane {
                 net: 0,
@@ -10670,7 +12494,10 @@ mod tests {
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
         };
-        let config = Config { pitches: vec![0.1], ..Config::default() };
+        let config = Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        };
         (Router::new(&board, &config), middle)
     }
 
@@ -10678,12 +12505,26 @@ mod tests {
     /// and one near the left pad walled in by a keepout ring, which no
     /// track reaches.
     fn walled_in_pad(unreachable_terminals: bool) -> Router {
-        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let class = RuleClass {
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        };
         let pads = [[3.0, 10.0], [8.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
         let mut obstacles: Vec<Obstacle> = pads
             .iter()
             .enumerate()
-            .map(|(index, at)| copper(Shape::Circle { center: *at, radius: 0.3 }, 0, &format!("G.{index}")))
+            .map(|(index, at)| {
+                copper(
+                    Shape::Circle {
+                        center: *at,
+                        radius: 0.3,
+                    },
+                    0,
+                    &format!("G.{index}"),
+                )
+            })
             .collect();
         let keepout = |center: [f64; 2], half: [f64; 2]| Obstacle {
             shape: Shape::rectangle(center, half, 0.0),
@@ -10707,7 +12548,13 @@ mod tests {
         let terminals = pads
             .iter()
             .enumerate()
-            .map(|(index, at)| Terminal { anchor: *at, layers: 1, pad: index, contact: None, label: format!("G.{index}") })
+            .map(|(index, at)| Terminal {
+                anchor: *at,
+                layers: 1,
+                pad: index,
+                contact: None,
+                label: format!("G.{index}"),
+            })
             .collect();
         let board = Board {
             layer_count: 1,
@@ -10718,14 +12565,23 @@ mod tests {
             classes: vec![class],
             neck_width: 0.25,
             obstacles,
-            nets: vec![Net { name: "G".into(), class: 0, terminals }],
+            nets: vec![Net {
+                name: "G".into(),
+                class: 0,
+                terminals,
+            }],
             planes: Vec::new(),
             solid_pads: Vec::new(),
             isolated_pads: Vec::new(),
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
         };
-        let config = Config { pitches: vec![0.1], unreachable_terminals, resolve_keeps_partial: true, ..Config::default() };
+        let config = Config {
+            pitches: vec![0.1],
+            unreachable_terminals,
+            resolve_keeps_partial: true,
+            ..Config::default()
+        };
         Router::new(&board, &config)
     }
 
@@ -10760,7 +12616,13 @@ mod tests {
         assert!(!router.nets[0].complete);
         // The hard repair after negotiation keeps the incomplete net's tree
         // and only tries to join the rest to it.
-        let nodes = |router: &Router| router.nets[0].branches.iter().map(|branch| branch.nodes.clone()).collect::<Vec<_>>();
+        let nodes = |router: &Router| {
+            router.nets[0]
+                .branches
+                .iter()
+                .map(|branch| branch.nodes.clone())
+                .collect::<Vec<_>>()
+        };
         let before = nodes(&router);
         assert!(!before.is_empty());
         router.resolve_remaining(&[0]);
@@ -10771,7 +12633,12 @@ mod tests {
     /// One layer: net A along y = 10 from x = 3 over 15 to 27, nets B and
     /// C straight across its right half at x = 19 and 23.
     fn crossed_net(resolve_keeps_partial: bool) -> Router {
-        let class = RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 };
+        let class = RuleClass {
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        };
         let nets: [(&str, Vec<[f64; 2]>); 3] = [
             ("A", vec![[3.0, 10.0], [15.0, 10.0], [27.0, 10.0]]),
             ("B", vec![[19.0, 3.0], [19.0, 17.0]]),
@@ -10783,10 +12650,27 @@ mod tests {
             let mut terminals = Vec::new();
             for (index, at) in pads.iter().enumerate() {
                 let label = format!("{name}.{index}");
-                obstacles.push(copper(Shape::Circle { center: *at, radius: 0.3 }, id as NetId, &label));
-                terminals.push(Terminal { anchor: *at, layers: 1, pad: obstacles.len() - 1, contact: None, label });
+                obstacles.push(copper(
+                    Shape::Circle {
+                        center: *at,
+                        radius: 0.3,
+                    },
+                    id as NetId,
+                    &label,
+                ));
+                terminals.push(Terminal {
+                    anchor: *at,
+                    layers: 1,
+                    pad: obstacles.len() - 1,
+                    contact: None,
+                    label,
+                });
             }
-            board_nets.push(Net { name: (*name).into(), class: 0, terminals });
+            board_nets.push(Net {
+                name: (*name).into(),
+                class: 0,
+                terminals,
+            });
         }
         let board = Board {
             layer_count: 1,
@@ -10804,7 +12688,11 @@ mod tests {
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
         };
-        let config = Config { pitches: vec![0.1], resolve_keeps_partial, ..Config::default() };
+        let config = Config {
+            pitches: vec![0.1],
+            resolve_keeps_partial,
+            ..Config::default()
+        };
         Router::new(&board, &config)
     }
 
@@ -10820,14 +12708,22 @@ mod tests {
             }
             assert!(router.nets.iter().all(|state| state.complete));
             let conflicts: Vec<usize> = (0..3).map(|net| router.conflicts(net).len()).collect();
-            assert!(conflicts[0] > conflicts[1].max(conflicts[2]), "{conflicts:?}");
+            assert!(
+                conflicts[0] > conflicts[1].max(conflicts[2]),
+                "{conflicts:?}"
+            );
             // The left branch (3 to 15) is out of conflict. A net stuck in
             // conflict for eight iterations is ripped up whole by the
             // negotiation; the repair keeps what is out of conflict.
             let left: Vec<Vec<Node>> = router.nets[0]
                 .branches
                 .iter()
-                .filter(|branch| branch.nodes.iter().all(|node| router.grid.center_of(node.cell as usize)[0] < 16.0))
+                .filter(|branch| {
+                    branch
+                        .nodes
+                        .iter()
+                        .all(|node| router.grid.center_of(node.cell as usize)[0] < 16.0)
+                })
                 .map(|branch| branch.nodes.clone())
                 .collect();
             assert!(!left.is_empty());
@@ -10835,7 +12731,12 @@ mod tests {
             let before = router.scratch.searches;
             router.resolve_remaining(&[0, 1, 2]);
             searches.push(router.scratch.searches - before);
-            assert!(left.iter().all(|nodes| router.nets[0].branches.iter().any(|branch| branch.nodes == *nodes)));
+            assert!(left.iter().all(|nodes| {
+                router.nets[0]
+                    .branches
+                    .iter()
+                    .any(|branch| branch.nodes == *nodes)
+            }));
             // B and C stay as they were: only A was in the way.
             assert!(router.nets[1].complete && router.nets[2].complete);
         }
@@ -10854,17 +12755,29 @@ mod tests {
         router.probe(1.0e-3);
         let expansions = router.expansions();
         assert!(expansions > 0);
-        assert_eq!(router.work_seconds(), expansions as f64 / EXPANSIONS_PER_SECOND);
+        assert_eq!(
+            router.work_seconds(),
+            expansions as f64 / EXPANSIONS_PER_SECOND
+        );
         assert_eq!(router.profile.phase_expansions[0], expansions);
         assert!((router.profile.phase_search[0] - router.work_seconds()).abs() < 1.0e-12);
         let line = router.profile.rate_line();
-        assert!(line.starts_with(&format!("profile rate: phases {expansions} expansions in ")), "{line}");
-        assert!(line.contains(&format!("constant {:.0}", EXPANSIONS_PER_SECOND)), "{line}");
+        assert!(
+            line.starts_with(&format!("profile rate: phases {expansions} expansions in ")),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("constant {:.0}", EXPANSIONS_PER_SECOND)),
+            "{line}"
+        );
         // A probe allowed fewer expansions than one iteration takes stops
         // after that iteration: its limit is the seconds at the constant.
         let mut short = crossed_net(false);
         short.probe(1.0 / EXPANSIONS_PER_SECOND);
-        assert_eq!(short.config.negotiation_expansions, 0, "the probe restores the limit");
+        assert_eq!(
+            short.config.negotiation_expansions, 0,
+            "the probe restores the limit"
+        );
         assert!(short.expansions() <= expansions);
         assert!(short.iterations <= router.iterations);
     }
@@ -10879,16 +12792,21 @@ mod tests {
         // A caller's deadline far ahead: the wall-clock guard of `spent`
         // (`GUARD` times these microsecond budgets) stays out of it, so
         // only the work decides however busy the machine is.
-        router.config_mut().deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
+        router.config_mut().deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
         let fresh = router.clone();
         let clock = router.clock();
         let search = router.work_seconds();
         router.analyze_pours(0);
         router.analyze_pours_full(0, &|_| false);
-        let inside = router.nets[0].plane[0].iter().filter(|inside| **inside).count();
+        let inside = router.nets[0].plane[0]
+            .iter()
+            .filter(|inside| **inside)
+            .count();
         assert!(inside > 0);
         assert_eq!(router.pour_inside(0), inside);
-        let own = inside as u64 * POUR_NODE_NANOS + router.nets[0].stamped.len() as u64 * POUR_STAMP_NANOS;
+        let own = inside as u64 * POUR_NODE_NANOS
+            + router.nets[0].stamped.len() as u64 * POUR_STAMP_NANOS;
         assert_eq!(router.pour_analysis_nanos(0), own);
         let probe = router.probe_nanos();
         let expected = (2 * own + probe) as f64 / 1.0e9;
@@ -10936,7 +12854,10 @@ mod tests {
         let piece = |x: f64, y: f64| pours.label[0][grid.nearest_node([x, y]).unwrap()];
         // Both nodes of the step stay free; the step between them does not
         // keep the clearance, so the channel falls into two pieces there.
-        let (before, after) = ([middle[0] - 0.05, middle[1] - 0.05], [middle[0] + 0.05, middle[1] + 0.05]);
+        let (before, after) = (
+            [middle[0] - 0.05, middle[1] - 0.05],
+            [middle[0] + 0.05, middle[1] + 0.05],
+        );
         assert!(pours.solid[0][grid.nearest_node(before).unwrap()]);
         assert!(pours.solid[0][grid.nearest_node(after).unwrap()]);
         assert_ne!(piece(before[0], before[1]), piece(after[0], after[1]));
@@ -10973,14 +12894,25 @@ mod tests {
         }
     }
 
-    fn board(layer_count: usize, obstacles: Vec<Obstacle>, nets: Vec<Net>, planes: Vec<Plane>, solid_pads: Vec<String>) -> Board {
+    fn board(
+        layer_count: usize,
+        obstacles: Vec<Obstacle>,
+        nets: Vec<Net>,
+        planes: Vec<Plane>,
+        solid_pads: Vec<String>,
+    ) -> Board {
         Board {
             layer_count,
             outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
             edge_clearance: 0.1,
             hole_clearance: 0.25,
             hole_to_hole: 0.25,
-            classes: vec![RuleClass { trace_width: 0.25, clearance: 0.2, via_diameter: 0.6, via_drill: 0.3 }],
+            classes: vec![RuleClass {
+                trace_width: 0.25,
+                clearance: 0.2,
+                via_diameter: 0.6,
+                via_drill: 0.3,
+            }],
             neck_width: 0.25,
             obstacles,
             nets,
@@ -11000,35 +12932,80 @@ mod tests {
         // join its pad to the plane: the pad is routed again, to the main
         // piece; the other pad keeps its stub.
         let mut obstacles = vec![
-            copper(Shape::Circle { center: [2.0, 5.0], radius: 0.3 }, 0, "P.1"),
-            copper(Shape::Circle { center: [8.0, 5.0], radius: 0.3 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 5.0],
+                    radius: 0.3,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [8.0, 5.0],
+                    radius: 0.3,
+                },
+                0,
+                "P.2",
+            ),
         ];
         for obstacle in &mut obstacles {
             obstacle.layers = 0b01;
         }
-        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b01, pad, contact: None, label: label.into() };
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal {
+            anchor: at,
+            layers: 0b01,
+            pad,
+            contact: None,
+            label: label.into(),
+        };
         let board = board(
             2,
             obstacles,
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [2.0, 5.0], "P.1"), terminal(1, [8.0, 5.0], "P.2")] }],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [2.0, 5.0], "P.1"),
+                    terminal(1, [8.0, 5.0], "P.2"),
+                ],
+            }],
             vec![plane(0, 1, None)],
             Vec::new(),
         );
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
-        let node = |layer: u8, at: [f64; 2]| Node { layer, cell: grid.nearest_node(at).unwrap() as u32 };
+        let node = |layer: u8, at: [f64; 2]| Node {
+            layer,
+            cell: grid.nearest_node(at).unwrap() as u32,
+        };
         let stub = |pad: u16, from: [f64; 2], to: [f64; 2]| {
             let steps = ((to[0] - from[0]) / 0.1).round() as usize;
-            let mut nodes: Vec<Node> = (0..=steps).map(|step| node(0, [from[0] + 0.1 * step as f64, from[1]])).collect();
+            let mut nodes: Vec<Node> = (0..=steps)
+                .map(|step| node(0, [from[0] + 0.1 * step as f64, from[1]]))
+                .collect();
             nodes.push(node(1, to));
-            Branch { nodes, start_terminal: pad, end_terminal: PLANE_TERMINAL }
+            Branch {
+                nodes,
+                start_terminal: pad,
+                end_terminal: PLANE_TERMINAL,
+            }
         };
         let cut_off = [3.0, 5.0];
         {
             let state = &mut router.nets[0];
             assert!(!state.plane[1].is_empty());
             assert_eq!(state.on_plane, vec![false, false]);
-            state.branches = vec![stub(0, [2.0, 5.0], cut_off), stub(1, [8.0, 5.0], [9.0, 5.0])];
+            state.branches = vec![
+                stub(0, [2.0, 5.0], cut_off),
+                stub(1, [8.0, 5.0], [9.0, 5.0]),
+            ];
             // The main piece: the plane but around the first stub's via.
             let target: Vec<bool> = (0..grid.cells())
                 .map(|cell| crate::geometry::distance(grid.center_of(cell), cut_off) > 0.5)
@@ -11039,13 +13016,28 @@ mod tests {
         router.route_net_seq(0, 0.0, true, 1.0);
         let state = &router.nets[0];
         assert!(state.complete);
-        assert_eq!(state.branches.len(), 3, "{:?}", state.branches.iter().map(|branch| (branch.start_terminal, branch.end_terminal)).collect::<Vec<_>>());
+        assert_eq!(
+            state.branches.len(),
+            3,
+            "{:?}",
+            state
+                .branches
+                .iter()
+                .map(|branch| (branch.start_terminal, branch.end_terminal))
+                .collect::<Vec<_>>()
+        );
         // The new branch leaves pad 1's copper and ends on the main piece.
         let added = &state.branches[2];
         let end = *added.nodes.last().unwrap();
         assert_eq!(added.end_terminal, PLANE_TERMINAL);
         assert!(state.plane_target[end.layer as usize][end.cell as usize]);
-        assert!(added.nodes.iter().any(|node| state.branches[0].nodes.contains(node)) || added.start_terminal == 0);
+        assert!(
+            added
+                .nodes
+                .iter()
+                .any(|node| state.branches[0].nodes.contains(node))
+                || added.start_terminal == 0
+        );
     }
 
     #[test]
@@ -11057,26 +13049,65 @@ mod tests {
         // 0.2) to them: it keeps 0.425 mm from each. KiCad keeps none.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.75, 0.15]), 0, "P.1"),
-            copper(Shape::Circle { center: [8.5, 8.5], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [8.5, 8.5],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([5.0, 4.5], [1.25, 0.15]), 1, "Q.1"),
             copper(rect([5.0, 5.5], [1.25, 0.15]), 1, "Q.2"),
         ];
-        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() };
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal {
+            anchor: at,
+            layers: 1,
+            pad,
+            contact: None,
+            label: label.into(),
+        };
         let mut pour = plane(0, 0, Some((0.5, 0.5)));
         pour.class = 1;
         let mut board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [8.5, 8.5], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [5.0, 4.5], "Q.1"), terminal(3, [5.0, 5.5], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [8.5, 8.5], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(2, [5.0, 4.5], "Q.1"),
+                        terminal(3, [5.0, 5.5], "Q.2"),
+                    ],
+                },
             ],
             vec![pour],
             vec!["P.2".into()],
         );
-        board.classes.push(RuleClass { trace_width: 0.25, clearance: 0.3, via_diameter: 0.6, via_drill: 0.3 });
+        board.classes.push(RuleClass {
+            trace_width: 0.25,
+            clearance: 0.3,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        });
         let joined = |spoke_clearance: bool| {
-            let router = Router::new(&board, &Config { pitches: vec![0.1], spoke_clearance, ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    spoke_clearance,
+                    ..Config::default()
+                },
+            );
             let (pours, mut parent, _, _) = router.analyze_pours_full(0, &|_| false);
             let base = pours.pieces + 1;
             find(&mut parent, base) == find(&mut parent, base + 1)
@@ -11085,7 +13116,6 @@ mod tests {
         assert!(joined(false));
         assert!(!joined(true));
     }
-
 
     #[test]
     fn a_pad_whose_stub_is_its_only_copper_in_the_ring_rejoins_the_plane() {
@@ -11097,28 +13127,68 @@ mod tests {
         // analysis without the stub are looked up by its own pieces
         // (ASH-ART Qfwfq panicked: index 143 of 143).
         let mut obstacles = vec![
-            copper(Shape::Circle { center: [3.0, 5.0], radius: 0.3 }, 0, "P.1"),
-            copper(Shape::Circle { center: [7.0, 5.0], radius: 0.3 }, 0, "P.2"),
-            copper(Shape::Circle { center: [5.0, 8.0], radius: 0.3 }, 0, "P.3"),
+            copper(
+                Shape::Circle {
+                    center: [3.0, 5.0],
+                    radius: 0.3,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [7.0, 5.0],
+                    radius: 0.3,
+                },
+                0,
+                "P.2",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 8.0],
+                    radius: 0.3,
+                },
+                0,
+                "P.3",
+            ),
         ];
         for obstacle in &mut obstacles {
             obstacle.layers = 0b11;
         }
-        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b11, pad, contact: None, label: label.into() };
+        let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal {
+            anchor: at,
+            layers: 0b11,
+            pad,
+            contact: None,
+            label: label.into(),
+        };
         let board = board(
             2,
             obstacles,
             vec![Net {
                 name: "P".into(),
                 class: 0,
-                terminals: vec![terminal(2, [5.0, 8.0], "P.3"), terminal(1, [7.0, 5.0], "P.2"), terminal(0, [3.0, 5.0], "P.1")],
+                terminals: vec![
+                    terminal(2, [5.0, 8.0], "P.3"),
+                    terminal(1, [7.0, 5.0], "P.2"),
+                    terminal(0, [3.0, 5.0], "P.1"),
+                ],
             }],
             vec![plane(0, 0, Some((0.5, 0.5))), plane(0, 1, Some((0.5, 0.5)))],
             vec!["P.3".into()],
         );
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
-        let node = |layer: u8, x: f64| Node { layer, cell: grid.nearest_node([x, 5.0]).unwrap() as u32 };
+        let node = |layer: u8, x: f64| Node {
+            layer,
+            cell: grid.nearest_node([x, 5.0]).unwrap() as u32,
+        };
         {
             let state = &mut router.nets[0];
             assert!(state.on_plane[2]);
@@ -11143,12 +13213,19 @@ mod tests {
     /// union-find and the terminal base of the analysis.
     fn spoke_report(router: &Router, net: NetId) -> (Vec<SpokeRecord>, Vec<usize>, usize) {
         let mut report = Vec::new();
-        let (pours, parent, _, _) = router.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+        let (pours, parent, _, _) =
+            router.analyze_pours_reporting(net, &|_| false, Some(&mut report));
         (report, parent, pours.pieces + 1)
     }
 
     fn terminal(pad: usize, at: [f64; 2], label: &str) -> Terminal {
-        Terminal { anchor: at, layers: 1, pad, contact: None, label: label.into() }
+        Terminal {
+            anchor: at,
+            layers: 1,
+            pad,
+            contact: None,
+            label: label.into(),
+        }
     }
 
     #[test]
@@ -11160,23 +13237,52 @@ mod tests {
         // fill. P.2 is solid: the fill has an item.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([8.15, 5.0], [1.75, 4.0]), 1, "Q.1"),
         ];
         let board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [8.15, 5.0], "Q.1")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 8.0], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![terminal(2, [8.15, 5.0], "Q.1")],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
         let outcome = |kicad_spokes: bool| {
-            let router = Router::new(&board, &Config { pitches: vec![0.1], kicad_spokes, ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    kicad_spokes,
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            report.iter().find(|record| record.terminal == 0).unwrap().outcomes[0]
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes[0]
         };
         assert!(matches!(outcome(true), SpokeOutcome::Good(piece) if piece != 0));
         assert_eq!(outcome(false), SpokeOutcome::NoFill);
@@ -11200,24 +13306,74 @@ mod tests {
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [2.0, 2.0], "P.1"), terminal(1, [4.0, 2.0], "P.2"), terminal(2, [8.0, 8.0], "P.3")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.5, 8.0], "Q.1"), terminal(4, [8.5, 5.5], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [2.0, 2.0], "P.1"),
+                        terminal(1, [4.0, 2.0], "P.2"),
+                        terminal(2, [8.0, 8.0], "P.3"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.5, 8.0], "Q.1"),
+                        terminal(4, [8.5, 5.5], "Q.2"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             Vec::new(),
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, mut parent, base) = spoke_report(&router, 0);
-        let outcomes = |terminal: usize| report.iter().find(|record| record.terminal == terminal).unwrap().outcomes;
-        assert!(outcomes(0).iter().all(|outcome| matches!(outcome, SpokeOutcome::Good(_))));
-        assert!(outcomes(2).iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))));
+        let outcomes = |terminal: usize| {
+            report
+                .iter()
+                .find(|record| record.terminal == terminal)
+                .unwrap()
+                .outcomes
+        };
+        assert!(
+            outcomes(0)
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::Good(_)))
+        );
+        assert!(
+            outcomes(2)
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::Island(_)))
+        );
         assert_eq!(find(&mut parent, base), find(&mut parent, base + 1));
         assert_ne!(find(&mut parent, base), find(&mut parent, base + 2));
         // The old model: a piece without a track, a via or a solid pad is
         // an island to every pad.
-        let old = Router::new(&board, &Config { pitches: vec![0.1], kicad_spokes: false, ..Config::default() });
+        let old = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                kicad_spokes: false,
+                ..Config::default()
+            },
+        );
         let (report, _, _) = spoke_report(&old, 0);
-        assert!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))));
+        assert!(
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::Island(_)))
+        );
     }
 
     /// P.1 at the middle of a pour, walled in by Q on three sides (+x, +y
@@ -11226,7 +13382,14 @@ mod tests {
     fn one_spoke_board() -> Board {
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([6.0, 5.0], [0.25, 0.25]), 1, "Q.1"),
             copper(rect([5.0, 6.0], [0.25, 0.25]), 1, "Q.2"),
             copper(rect([5.0, 4.0], [0.25, 0.25]), 1, "Q.3"),
@@ -11235,8 +13398,23 @@ mod tests {
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [6.0, 5.0], "Q.1"), terminal(3, [5.0, 6.0], "Q.2"), terminal(4, [5.0, 4.0], "Q.3")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 8.0], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(2, [6.0, 5.0], "Q.1"),
+                        terminal(3, [5.0, 6.0], "Q.2"),
+                        terminal(4, [5.0, 4.0], "Q.3"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
@@ -11249,24 +13427,60 @@ mod tests {
         // pad and ends in fill as a spoke; a track that bends in the gap
         // does not count (its first segment ends outside the fill).
         let board = one_spoke_board();
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
-        let node = |at: [f64; 2]| Node { layer: 0, cell: grid.nearest_node(at).unwrap() as u32 };
-        let record = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        let node = |at: [f64; 2]| Node {
+            layer: 0,
+            cell: grid.nearest_node(at).unwrap() as u32,
+        };
+        let record = |router: &Router| {
+            spoke_report(router, 0)
+                .0
+                .into_iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+        };
         let before = record(&router);
-        assert_eq!(before.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_))).count(), 1);
+        assert_eq!(
+            before
+                .outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_)))
+                .count(),
+            1
+        );
         assert_eq!(Router::spokes_short(&before), 1);
         // Diagonally out of the pad, past the corners of Q, into the fill.
-        let straight: Vec<Node> = (0..=12).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
-        router.nets[0].branches = vec![Branch { nodes: straight, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+        let straight: Vec<Node> = (0..=12)
+            .map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64]))
+            .collect();
+        router.nets[0].branches = vec![Branch {
+            nodes: straight,
+            start_terminal: 0,
+            end_terminal: PLANE_TERMINAL,
+        }];
         let after = record(&router);
         assert_eq!(after.tracks, 1);
         assert_eq!(Router::spokes_short(&after), 0);
         // Bent inside the gap: the first run ends at (5.3, 5.3), in the
         // pad's relief.
-        let mut bent: Vec<Node> = (0..=3).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
-        bent.extend((1..=9).map(|step| node([5.3 + 0.1 * step as f64, 5.3 + 0.1 * (step / 2) as f64])));
-        router.nets[0].branches = vec![Branch { nodes: bent, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+        let mut bent: Vec<Node> = (0..=3)
+            .map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64]))
+            .collect();
+        bent.extend(
+            (1..=9).map(|step| node([5.3 + 0.1 * step as f64, 5.3 + 0.1 * (step / 2) as f64])),
+        );
+        router.nets[0].branches = vec![Branch {
+            nodes: bent,
+            start_terminal: 0,
+            end_terminal: PLANE_TERMINAL,
+        }];
         assert_eq!(record(&router).tracks, 0);
     }
 
@@ -11282,8 +13496,19 @@ mod tests {
         // 11). Equal priorities overlap: the lower zone then has all four,
         // the upper one still one. Manual spokes add a track that ends in
         // the upper zone's part.
-        let obstacles = vec![copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"), copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2")];
-        let high: Vec<crate::geometry::Point> = vec![[0.0, 5.4], [10.0, 5.4], [10.0, 10.0], [0.0, 10.0]];
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
+        ];
+        let high: Vec<crate::geometry::Point> =
+            vec![[0.0, 5.4], [10.0, 5.4], [10.0, 10.0], [0.0, 10.0]];
         let seamed = |above: bool| {
             let mut low = plane(0, 0, Some((0.3, 0.4)));
             if above {
@@ -11294,46 +13519,113 @@ mod tests {
             board(
                 1,
                 obstacles.clone(),
-                vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] }],
+                vec![Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 8.0], "P.2"),
+                    ],
+                }],
                 vec![low, upper],
                 vec!["P.2".into()],
             )
         };
-        let record = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        let record = |router: &Router| {
+            spoke_report(router, 0)
+                .0
+                .into_iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+        };
         for above in [true, false] {
             let board = seamed(above);
-            let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    ..Config::default()
+                },
+            );
             let before = record(&router);
-            assert_eq!(before.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_))).count(), 4, "{before:?}");
-            assert_eq!((before.seam_short, before.seam_zone, Router::spokes_short(&before)), (1, Some(1), 1), "{before:?}");
+            assert_eq!(
+                before
+                    .outcomes
+                    .iter()
+                    .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_)))
+                    .count(),
+                4,
+                "{before:?}"
+            );
+            assert_eq!(
+                (
+                    before.seam_short,
+                    before.seam_zone,
+                    Router::spokes_short(&before)
+                ),
+                (1, Some(1), 1),
+                "{before:?}"
+            );
             // The net's zones as one fill: four spokes.
-            let union = Router::new(&board, &Config { pitches: vec![0.1], zone_seams: false, ..Config::default() });
+            let union = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    zone_seams: false,
+                    ..Config::default()
+                },
+            );
             assert_eq!(Router::spokes_short(&record(&union)), 0);
         }
         // Only the upper zone: the pad lies outside it but for its +y
         // spoke, which crosses the ring there.
-        let mut router = Router::new(&seamed(true), &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &seamed(true),
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         assert_eq!(router.add_manual_spokes(), 1);
         let after = record(&router);
         // The track (its stub to the pad's edge ends in the -x spoke, in
         // the lower zone; its diagonal run in the upper zone's fill).
-        assert_eq!((after.seam_short, Router::spokes_short(&after)), (0, 0), "{after:?}");
+        assert_eq!(
+            (after.seam_short, Router::spokes_short(&after)),
+            (0, 0),
+            "{after:?}"
+        );
         let track = router.nets[0].branches.last().unwrap();
-        let end = router.grid().center_of(track.nodes.last().unwrap().cell as usize);
+        let end = router
+            .grid()
+            .center_of(track.nodes.last().unwrap().cell as usize);
         assert!(end[1] > 5.4, "{end:?}");
     }
 
     #[test]
     fn manual_spokes_add_a_track_from_a_starved_pad_into_the_main_piece() {
         let board = one_spoke_board();
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         assert_eq!(router.add_manual_spokes(), 1);
         let state = &router.nets[0];
         assert_eq!(state.branches.len(), 1);
         let branch = &state.branches[0];
-        assert_eq!((branch.start_terminal, branch.end_terminal), (0, PLANE_TERMINAL));
+        assert_eq!(
+            (branch.start_terminal, branch.end_terminal),
+            (0, PLANE_TERMINAL)
+        );
         assert!(router.branch_is_legal(0, branch));
-        let record = spoke_report(&router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap();
+        let record = spoke_report(&router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0)
+            .unwrap();
         assert_eq!(Router::spokes_short(&record), 0);
         // Nothing more to add.
         assert_eq!(router.add_manual_spokes(), 0);
@@ -11346,12 +13638,21 @@ mod tests {
         // same; the router lends the net its pour masks for the analysis.
         let mut board = one_spoke_board();
         board.planes[0].connect = false;
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         assert!(router.nets[0].plane.is_empty());
         assert_eq!(router.add_manual_spokes(), 1);
         assert!(router.nets[0].plane.is_empty());
         let branch = &router.nets[0].branches[0];
-        assert_eq!((branch.start_terminal, branch.end_terminal), (0, PLANE_TERMINAL));
+        assert_eq!(
+            (branch.start_terminal, branch.end_terminal),
+            (0, PLANE_TERMINAL)
+        );
         assert!(router.branch_is_legal(0, branch));
     }
 
@@ -11361,8 +13662,22 @@ mod tests {
     /// `both_layers`, P's pour covers layer 1 too, where nothing cuts it.
     fn island_board(both_layers: bool) -> Board {
         let mut obstacles = vec![
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.4 }, 0, "P.1"),
-            copper(Shape::Circle { center: [8.5, 8.5], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [8.5, 8.5],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([3.5, 5.0], [0.1, 1.6]), 1, "Q.1"),
             copper(rect([6.5, 5.0], [0.1, 1.6]), 1, "Q.2"),
             copper(rect([5.0, 3.5], [1.6, 0.1]), 1, "Q.3"),
@@ -11371,7 +13686,10 @@ mod tests {
         obstacles[0].layers = 0b11;
         obstacles[1].layers = 0b11;
         obstacles.push(Obstacle {
-            shape: Shape::Circle { center: [5.0, 5.0], radius: 0.2 },
+            shape: Shape::Circle {
+                center: [5.0, 5.0],
+                radius: 0.2,
+            },
             layers: 0b11,
             kind: ObstacleKind::Hole,
             net: Some(0),
@@ -11381,7 +13699,13 @@ mod tests {
             blocks_vias: true,
             label: "P.1 plated hole".into(),
         });
-        let through = |pad: usize, at: [f64; 2], label: &str| Terminal { anchor: at, layers: 0b11, pad, contact: None, label: label.into() };
+        let through = |pad: usize, at: [f64; 2], label: &str| Terminal {
+            anchor: at,
+            layers: 0b11,
+            pad,
+            contact: None,
+            label: label.into(),
+        };
         let mut planes = vec![plane(0, 0, Some((0.3, 0.4)))];
         if both_layers {
             planes.push(plane(0, 1, Some((0.3, 0.4))));
@@ -11390,11 +13714,20 @@ mod tests {
             2,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![through(0, [5.0, 5.0], "P.1"), through(1, [8.5, 8.5], "P.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![through(0, [5.0, 5.0], "P.1"), through(1, [8.5, 8.5], "P.2")],
+                },
                 Net {
                     name: "Q".into(),
                     class: 0,
-                    terminals: vec![terminal(2, [3.5, 5.0], "Q.1"), terminal(3, [6.5, 5.0], "Q.2"), terminal(4, [5.0, 3.5], "Q.3"), terminal(5, [5.0, 6.5], "Q.4")],
+                    terminals: vec![
+                        terminal(2, [3.5, 5.0], "Q.1"),
+                        terminal(3, [6.5, 5.0], "Q.2"),
+                        terminal(4, [5.0, 3.5], "Q.3"),
+                        terminal(5, [5.0, 6.5], "Q.4"),
+                    ],
                 },
             ],
             planes,
@@ -11408,13 +13741,29 @@ mod tests {
     /// up and out of the box.
     fn layer_one_track(router: &Router) -> Branch {
         let grid = router.grid();
-        let mut nodes: Vec<Node> = (0..=9).map(|step| Node { layer: 1, cell: grid.nearest_node([5.0 + 0.1 * step as f64, 5.0]).unwrap() as u32 }).collect();
-        nodes.extend((1..=30).map(|step| Node { layer: 1, cell: grid.nearest_node([5.9, 5.0 + 0.1 * step as f64]).unwrap() as u32 }));
-        Branch { nodes, start_terminal: 0, end_terminal: PLANE_TERMINAL }
+        let mut nodes: Vec<Node> = (0..=9)
+            .map(|step| Node {
+                layer: 1,
+                cell: grid.nearest_node([5.0 + 0.1 * step as f64, 5.0]).unwrap() as u32,
+            })
+            .collect();
+        nodes.extend((1..=30).map(|step| Node {
+            layer: 1,
+            cell: grid.nearest_node([5.9, 5.0 + 0.1 * step as f64]).unwrap() as u32,
+        }));
+        Branch {
+            nodes,
+            start_terminal: 0,
+            end_terminal: PLANE_TERMINAL,
+        }
     }
 
     fn island_record(router: &Router) -> SpokeRecord {
-        spoke_report(router, 0).0.into_iter().find(|record| record.terminal == 0 && record.layer == 0).unwrap()
+        spoke_report(router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0 && record.layer == 0)
+            .unwrap()
     }
 
     #[test]
@@ -11426,13 +13775,45 @@ mod tests {
         // joined a routed track to every piece its spokes reach.
         let board = island_board(false);
         let outcomes = |track_meets_spokes: bool| {
-            let mut router = Router::new(&board, &Config { pitches: vec![0.1], track_meets_spokes, ..Config::default() });
+            let mut router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    track_meets_spokes,
+                    ..Config::default()
+                },
+            );
             let centre = router.grid().nearest_node([5.0, 5.0]).unwrap() as u32;
-            router.nets[0].branches = vec![Branch { nodes: vec![Node { layer: 0, cell: centre }, Node { layer: 1, cell: centre }], start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+            router.nets[0].branches = vec![Branch {
+                nodes: vec![
+                    Node {
+                        layer: 0,
+                        cell: centre,
+                    },
+                    Node {
+                        layer: 1,
+                        cell: centre,
+                    },
+                ],
+                start_terminal: 0,
+                end_terminal: PLANE_TERMINAL,
+            }];
             island_record(&router).outcomes
         };
-        assert!(outcomes(true).iter().all(|outcome| matches!(outcome, SpokeOutcome::Island(_))), "{:?}", outcomes(true));
-        assert!(outcomes(false).iter().all(|outcome| matches!(outcome, SpokeOutcome::Good(_))), "{:?}", outcomes(false));
+        assert!(
+            outcomes(true)
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::Island(_))),
+            "{:?}",
+            outcomes(true)
+        );
+        assert!(
+            outcomes(false)
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::Good(_))),
+            "{:?}",
+            outcomes(false)
+        );
     }
 
     #[test]
@@ -11443,7 +13824,13 @@ mod tests {
         // stitch to: P.1 gets a track on layer 0 into its island, the
         // island holds two items and its spokes count.
         let board = island_board(false);
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         router.nets[0].branches = vec![layer_one_track(&router)];
         router.stamp(0);
         let before = island_record(&router);
@@ -11451,12 +13838,22 @@ mod tests {
         assert!(Router::spokes_short(&before) > 0, "{before:?}");
         assert_eq!(router.add_manual_spokes(), 1);
         let added = router.nets[0].branches.last().unwrap().clone();
-        assert_eq!((added.start_terminal, added.end_terminal), (0, PLANE_TERMINAL));
+        assert_eq!(
+            (added.start_terminal, added.end_terminal),
+            (0, PLANE_TERMINAL)
+        );
         assert!(added.nodes.iter().all(|node| node.layer == 0));
         assert!(router.branch_is_legal(0, &added));
         assert_eq!(Router::spokes_short(&island_record(&router)), 0);
         // Without island stubs nothing helps.
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], island_stubs: false, ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                island_stubs: false,
+                ..Config::default()
+            },
+        );
         router.nets[0].branches = vec![layer_one_track(&router)];
         router.stamp(0);
         assert_eq!(router.add_manual_spokes(), 0);
@@ -11468,7 +13865,13 @@ mod tests {
         // layer 1's fill (the main piece, which P.2 holds) joins the island
         // to the plane, and its spokes count.
         let board = island_board(true);
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         router.nets[0].branches = vec![layer_one_track(&router)];
         router.stamp(0);
         assert!(Router::spokes_short(&island_record(&router)) > 0);
@@ -11478,7 +13881,10 @@ mod tests {
         assert_eq!(via.nodes[0].cell, via.nodes[1].cell);
         assert_ne!(via.nodes[0].layer, via.nodes[1].layer);
         let at = router.grid().center_of(via.nodes[0].cell as usize);
-        assert!((3.6..6.4).contains(&at[0]) && (3.6..6.4).contains(&at[1]), "{at:?}");
+        assert!(
+            (3.6..6.4).contains(&at[0]) && (3.6..6.4).contains(&at[1]),
+            "{at:?}"
+        );
         assert_eq!(Router::spokes_short(&island_record(&router)), 0);
     }
 
@@ -11494,14 +13900,41 @@ mod tests {
         let board = board(
             1,
             obstacles,
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [4.0, 5.0], "P.1"), terminal(1, [5.3, 5.0], "P.2")] }],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [4.0, 5.0], "P.1"),
+                    terminal(1, [5.3, 5.0], "P.2"),
+                ],
+            }],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             Vec::new(),
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, mut parent, base) = spoke_report(&router, 0);
-        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes[0], SpokeOutcome::Pad(1));
-        assert_eq!(report.iter().find(|record| record.terminal == 1).unwrap().outcomes[1], SpokeOutcome::Pad(0));
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes[0],
+            SpokeOutcome::Pad(1)
+        );
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 1)
+                .unwrap()
+                .outcomes[1],
+            SpokeOutcome::Pad(0)
+        );
         assert_eq!(find(&mut parent, base), find(&mut parent, base + 1));
     }
 
@@ -11511,18 +13944,45 @@ mod tests {
         // the pad), less than the zone's 0.25 mm minimum: KiCad draws none.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.5, 0.1]), 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
         ];
         let board = board(
             1,
             obstacles,
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] }],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [2.0, 8.0], "P.2"),
+                ],
+            }],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, _, _) = spoke_report(&router, 0);
-        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes, [SpokeOutcome::NoFill; 4]);
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes,
+            [SpokeOutcome::NoFill; 4]
+        );
     }
 
     #[test]
@@ -11533,19 +13993,43 @@ mod tests {
         let obstacles = vec![
             copper(rect([3.7, 5.0], [1.0, 4.0]), 1, "Q.1"),
             copper(rect([6.4, 5.0], [1.0, 4.0]), 1, "Q.2"),
-            copper(Shape::Circle { center: [5.0, 9.5], radius: 0.2 }, 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 9.5],
+                    radius: 0.2,
+                },
+                0,
+                "P.1",
+            ),
         ];
         let board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(2, [5.0, 9.5], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(0, [3.7, 5.0], "Q.1"), terminal(1, [6.4, 5.0], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(2, [5.0, 9.5], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [3.7, 5.0], "Q.1"),
+                        terminal(1, [6.4, 5.0], "Q.2"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             Vec::new(),
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
         let state = &router.nets[0];
         assert!(!state.plane[0][grid.nearest_node([5.0, 5.0]).unwrap()]);
@@ -11568,7 +14052,14 @@ mod tests {
         let outcome = |clearance_override: Option<f64>| {
             let mut obstacles = vec![
                 copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
-                copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+                copper(
+                    Shape::Circle {
+                        center: [2.0, 8.0],
+                        radius: 0.4,
+                    },
+                    0,
+                    "P.2",
+                ),
                 copper(rect([6.15, 5.0], [0.15, 0.15]), 1, "Q.1"),
             ];
             obstacles[2].clearance_override = clearance_override;
@@ -11576,15 +14067,36 @@ mod tests {
                 1,
                 obstacles,
                 vec![
-                    Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
-                    Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [6.15, 5.0], "Q.1")] },
+                    Net {
+                        name: "P".into(),
+                        class: 0,
+                        terminals: vec![
+                            terminal(0, [5.0, 5.0], "P.1"),
+                            terminal(1, [2.0, 8.0], "P.2"),
+                        ],
+                    },
+                    Net {
+                        name: "Q".into(),
+                        class: 0,
+                        terminals: vec![terminal(2, [6.15, 5.0], "Q.1")],
+                    },
                 ],
                 vec![plane(0, 0, Some((0.3, 0.4)))],
                 vec!["P.2".into()],
             );
-            let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            report.iter().find(|record| record.terminal == 0).unwrap().outcomes[0]
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes[0]
         };
         assert!(!matches!(outcome(None), SpokeOutcome::Good(_)));
         assert!(matches!(outcome(Some(0.05)), SpokeOutcome::Good(piece) if piece != 0));
@@ -11597,35 +14109,94 @@ mod tests {
         // other's spoke, in the other pad's relief and short of room beside
         // Q.1. KiCad keeps both.
         let obstacles = vec![
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.35 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 3.65], radius: 0.35 }, 0, "P.2"),
-            copper(Shape::Circle { center: [6.2, 4.325], radius: 0.15 }, 1, "Q.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.35,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 3.65],
+                    radius: 0.35,
+                },
+                0,
+                "P.2",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [6.2, 4.325],
+                    radius: 0.15,
+                },
+                1,
+                "Q.1",
+            ),
         ];
         let board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [5.0, 3.65], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [6.2, 4.325], "Q.1")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [5.0, 3.65], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![terminal(2, [6.2, 4.325], "Q.1")],
+                },
             ],
             vec![plane(0, 0, Some((0.5, 0.5)))],
             Vec::new(),
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, mut parent, base) = spoke_report(&router, 0);
         // P.1's +x-y spoke (index 1) and P.2's +x+y (index 0).
-        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().outcomes[1], SpokeOutcome::Pad(1));
-        assert_eq!(report.iter().find(|record| record.terminal == 1).unwrap().outcomes[0], SpokeOutcome::Pad(0));
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes[1],
+            SpokeOutcome::Pad(1)
+        );
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 1)
+                .unwrap()
+                .outcomes[0],
+            SpokeOutcome::Pad(0)
+        );
         assert_eq!(find(&mut parent, base), find(&mut parent, base + 1));
     }
 
     #[test]
     fn a_turned_pads_spokes_turn_with_it() {
-        let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1.0e-9 && (a[1] - b[1]).abs() < 1.0e-9;
+        let close =
+            |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() < 1.0e-9 && (a[1] - b[1]).abs() < 1.0e-9;
         let d = std::f64::consts::FRAC_1_SQRT_2;
         // A 1.0 x 0.4 pad at 45 degrees: spokes along its own axes, its
         // local x turned as KiCad's RotatePoint turns it.
-        let frame = crate::board::PadSpokes { center: [0.0, 0.0], half: [0.5, 0.2], orientation: 45.0, spoke_angle: 90.0, circular: false };
+        let frame = crate::board::PadSpokes {
+            center: [0.0, 0.0],
+            half: [0.5, 0.2],
+            orientation: 45.0,
+            spoke_angle: 90.0,
+            circular: false,
+        };
         let spokes = frame.spokes(0.6);
         let along_x = spokes.iter().find(|spoke| close(spoke.0, [d, -d])).unwrap();
         assert!((along_x.1 - 0.5).abs() < 1.0e-9 && (along_x.2 - 1.1).abs() < 1.0e-9);
@@ -11633,7 +14204,11 @@ mod tests {
         assert!((along_y.1 - 0.2).abs() < 1.0e-9 && (along_y.2 - 0.8).abs() < 1.0e-9);
         // The same pad unturned with a 45 degree spoke angle: diagonal
         // spokes to its box grown by the reach.
-        let frame = crate::board::PadSpokes { orientation: 0.0, spoke_angle: 45.0, ..frame };
+        let frame = crate::board::PadSpokes {
+            orientation: 0.0,
+            spoke_angle: 45.0,
+            ..frame
+        };
         let spokes = frame.spokes(0.6);
         assert!(close(spokes[0].0, [d, d]));
         assert!((spokes[0].1 - 0.2 / d).abs() < 1.0e-9 && (spokes[0].2 - 0.8 / d).abs() < 1.0e-9);
@@ -11647,8 +14222,22 @@ mod tests {
         // on the back it lies inside the larger pad.
         let mut obstacles = vec![
             copper(rect([5.0, 5.0], [0.8, 0.4]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.4 }, 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
         ];
         obstacles[0].layers = 0b10;
         obstacles[1].layers = 0b11;
@@ -11660,21 +14249,58 @@ mod tests {
                 name: "P".into(),
                 class: 0,
                 terminals: vec![
-                    Terminal { anchor: [5.0, 5.0], layers: 0b10, pad: 0, contact: None, label: "P.1".into() },
-                    Terminal { anchor: [2.0, 8.0], layers: 0b11, pad: 2, contact: None, label: "P.2".into() },
+                    Terminal {
+                        anchor: [5.0, 5.0],
+                        layers: 0b10,
+                        pad: 0,
+                        contact: None,
+                        label: "P.1".into(),
+                    },
+                    Terminal {
+                        anchor: [2.0, 8.0],
+                        layers: 0b11,
+                        pad: 2,
+                        contact: None,
+                        label: "P.2".into(),
+                    },
                 ],
             }],
             vec![plane(0, 0, Some((0.3, 0.4))), plane(0, 1, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
-        board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad: 1, anchor: [5.0, 5.0], layers: 0b11 });
+        board.merged_pads.push(crate::board::MergedPad {
+            net: 0,
+            host: 0,
+            pad: 1,
+            anchor: [5.0, 5.0],
+            layers: 0b11,
+        });
         // Inside the larger pad too with `inner_pads`.
         for (inner_pads, layers) in [(false, vec![0]), (true, vec![0, 1])] {
-            let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads, ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    inner_pads,
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            let merged: Vec<usize> = report.iter().filter(|record| record.pad == 1).map(|record| record.layer).collect();
+            let merged: Vec<usize> = report
+                .iter()
+                .filter(|record| record.pad == 1)
+                .map(|record| record.layer)
+                .collect();
             assert_eq!(merged, layers);
-            assert!(report.iter().find(|record| record.pad == 1).unwrap().outcomes.iter().any(|outcome| matches!(outcome, SpokeOutcome::Good(_))));
+            assert!(
+                report
+                    .iter()
+                    .find(|record| record.pad == 1)
+                    .unwrap()
+                    .outcomes
+                    .iter()
+                    .any(|outcome| matches!(outcome, SpokeOutcome::Good(_)))
+            );
         }
     }
 
@@ -11690,36 +14316,99 @@ mod tests {
         // it starved. The outline holds both pads: no island.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.75, 5.75],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
             copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
             copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
         ];
         let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
-        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 0.25,
+            gap: 1.0,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+        });
         let mut board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(0, [5.0, 5.0], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.4, 5.5], "Q.1"),
+                        terminal(4, [5.5, 6.4], "Q.2"),
+                    ],
+                },
             ],
             planes,
             Vec::new(),
         );
         for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
-            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+            board.merged_pads.push(crate::board::MergedPad {
+                net: 0,
+                host: 0,
+                pad,
+                anchor,
+                layers: 1,
+            });
         }
-        let good = |record: &SpokeRecord| record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count() + record.crossings;
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let good = |record: &SpokeRecord| {
+            record
+                .outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+                .count()
+                + record.crossings
+        };
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, _, _) = spoke_report(&router, 0);
         let centre = report.iter().find(|record| record.pad == 1).unwrap();
         assert_eq!(good(centre), 4, "{:?}", centre.outcomes);
         let corner = report.iter().find(|record| record.pad == 2).unwrap();
         assert_eq!(good(corner), 1, "{:?}", corner.outcomes);
-        assert!(corner.outcomes.iter().all(|outcome| !matches!(outcome, SpokeOutcome::Island(_))));
+        assert!(
+            corner
+                .outcomes
+                .iter()
+                .all(|outcome| !matches!(outcome, SpokeOutcome::Island(_)))
+        );
         // Without `inner_pads` neither via is checked on the pad's layer.
-        let router = Router::new(&board, &Config { pitches: vec![0.1], inner_pads: false, ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                inner_pads: false,
+                ..Config::default()
+            },
+        );
         let (report, _, _) = spoke_report(&router, 0);
         assert!(report.iter().all(|record| record.pad == 0));
     }
@@ -11735,39 +14424,88 @@ mod tests {
         // its items, and the analysis's work counts them.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.75, 5.75],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
             copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
             copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
         ];
         let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
-        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 0.25,
+            gap: 1.0,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+        });
         let mut board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(0, [5.0, 5.0], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.4, 5.5], "Q.1"),
+                        terminal(4, [5.5, 6.4], "Q.2"),
+                    ],
+                },
             ],
             planes,
             Vec::new(),
         );
         for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
-            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+            board.merged_pads.push(crate::board::MergedPad {
+                net: 0,
+                host: 0,
+                pad,
+                anchor,
+                layers: 1,
+            });
         }
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let rings = router.thermal_ring_pads(0);
         let probe = fill::FillProbe::new(&router, 0, &rings);
         // One query beside Q.1 (a polygon of 4 vertices within reach).
         probe.fits(0, [7.0, 5.5], &[]);
         probe.charge();
-        let load = |counter: &std::sync::atomic::AtomicU64| counter.load(std::sync::atomic::Ordering::Relaxed);
+        let load = |counter: &std::sync::atomic::AtomicU64| {
+            counter.load(std::sync::atomic::Ordering::Relaxed)
+        };
         assert_eq!(load(&router.scratch.probe_queries), 1);
         let vertices = load(&router.scratch.probe_vertices);
         assert!(vertices >= 4 && vertices % 4 == 0, "{vertices}");
         let items = load(&router.scratch.probe_ops);
         assert!(items > 0);
-        assert_eq!(router.probe_nanos(), items * PROBE_ITEM_NANOS + PROBE_QUERY_NANOS + vertices * PROBE_VERTEX_NANOS);
+        assert_eq!(
+            router.probe_nanos(),
+            items * PROBE_ITEM_NANOS + PROBE_QUERY_NANOS + vertices * PROBE_VERTEX_NANOS
+        );
         // A point in P.1's ring tests the pad's polygon too.
         let before = router.probe_nanos();
         probe.in_ring(0, [6.2, 5.0]);
@@ -11775,12 +14513,21 @@ mod tests {
         assert!(load(&router.scratch.probe_vertices) > vertices);
         assert!(router.probe_nanos() > before);
         // The analysis charges its probe's queries and vertices as work.
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         router.analyze_pours(0);
         assert!(load(&router.scratch.probe_queries) > 0);
         assert!(load(&router.scratch.probe_vertices) > 0);
         let own = router.pour_analysis_nanos(0);
-        assert!((router.pour_work_seconds() - (own + router.probe_nanos()) as f64 / 1.0e9).abs() < 1.0e-12);
+        assert!(
+            (router.pour_work_seconds() - (own + router.probe_nanos()) as f64 / 1.0e9).abs()
+                < 1.0e-12
+        );
         assert!(router.probe_nanos() > load(&router.scratch.probe_ops) * PROBE_ITEM_NANOS);
     }
 
@@ -11797,28 +14544,73 @@ mod tests {
         // spokes and its own spokes cross the corner via's ring.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.75, 5.75],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
             copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
             copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
         ];
         let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
-        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 0.25,
+            gap: 1.0,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+        });
         planes[0].connect = false;
         let mut board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(0, [5.0, 5.0], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.4, 5.5], "Q.1"),
+                        terminal(4, [5.5, 6.4], "Q.2"),
+                    ],
+                },
             ],
             planes,
             Vec::new(),
         );
         for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
-            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+            board.merged_pads.push(crate::board::MergedPad {
+                net: 0,
+                host: 0,
+                pad,
+                anchor,
+                layers: 1,
+            });
         }
-        let good = |record: &SpokeRecord| record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))).count() + record.crossings;
+        let good = |record: &SpokeRecord| {
+            record
+                .outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_)))
+                .count()
+                + record.crossings
+        };
         let lent = |config: Config| {
             let mut router = Router::new(&board, &config);
             assert!(router.nets[0].plane.is_empty());
@@ -11827,7 +14619,10 @@ mod tests {
             router.nets[0].plane_class = plane_class;
             router
         };
-        let router = lent(Config { pitches: vec![0.1], ..Config::default() });
+        let router = lent(Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        });
         let probe_rings = router.thermal_ring_pads(0);
         let probe = fill::FillProbe::new(&router, 0, &probe_rings);
         assert!(probe.hatch(0).is_some());
@@ -11835,9 +14630,18 @@ mod tests {
         let centre = report.iter().find(|record| record.pad == 1).unwrap();
         assert_eq!(good(centre), 4, "{:?}", centre.outcomes);
         let corner = report.iter().find(|record| record.pad == 2).unwrap();
-        assert_eq!((good(corner), Router::spokes_short(corner)), (1, 1), "{:?}", corner.outcomes);
+        assert_eq!(
+            (good(corner), Router::spokes_short(corner)),
+            (1, 1),
+            "{:?}",
+            corner.outcomes
+        );
         // The old model: no hatch in the tracks rung, the zone solid.
-        let old = lent(Config { pitches: vec![0.1], tracks_rung_fill: false, ..Config::default() });
+        let old = lent(Config {
+            pitches: vec![0.1],
+            tracks_rung_fill: false,
+            ..Config::default()
+        });
         let old_rings = old.thermal_ring_pads(0);
         assert!(fill::FillProbe::new(&old, 0, &old_rings).hatch(0).is_none());
         let (report, _, _) = spoke_report(&old, 0);
@@ -11853,22 +14657,50 @@ mod tests {
         // junction, and KiCad's DRC tests the first one's end, in fill: a
         // spoke. Without the cut the run's end in Q.4 counts nothing.
         let mut board = one_spoke_board();
-        board.obstacles.push(copper(rect([7.5, 7.5], [0.3, 0.3]), 1, "Q.4"));
+        board
+            .obstacles
+            .push(copper(rect([7.5, 7.5], [0.3, 0.3]), 1, "Q.4"));
         let record = |config: Config| {
             let mut router = Router::new(&board, &config);
             let grid = router.grid().clone();
-            let node = |at: [f64; 2]| Node { layer: 0, cell: grid.nearest_node(at).unwrap() as u32 };
-            let straight: Vec<Node> = (0..=25).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
-            let side: Vec<Node> = (0..=10).map(|step| node([6.2, 6.2 + 0.1 * step as f64])).collect();
+            let node = |at: [f64; 2]| Node {
+                layer: 0,
+                cell: grid.nearest_node(at).unwrap() as u32,
+            };
+            let straight: Vec<Node> = (0..=25)
+                .map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64]))
+                .collect();
+            let side: Vec<Node> = (0..=10)
+                .map(|step| node([6.2, 6.2 + 0.1 * step as f64]))
+                .collect();
             router.nets[0].branches = vec![
-                Branch { nodes: straight, start_terminal: 0, end_terminal: PLANE_TERMINAL },
-                Branch { nodes: side, start_terminal: NO_TERMINAL, end_terminal: PLANE_TERMINAL },
+                Branch {
+                    nodes: straight,
+                    start_terminal: 0,
+                    end_terminal: PLANE_TERMINAL,
+                },
+                Branch {
+                    nodes: side,
+                    start_terminal: NO_TERMINAL,
+                    end_terminal: PLANE_TERMINAL,
+                },
             ];
-            spoke_report(&router, 0).0.into_iter().find(|record| record.terminal == 0).unwrap()
+            spoke_report(&router, 0)
+                .0
+                .into_iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
         };
-        let cut = record(Config { pitches: vec![0.1], ..Config::default() });
+        let cut = record(Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        });
         assert_eq!((cut.tracks, Router::spokes_short(&cut)), (1, 0));
-        let whole = record(Config { pitches: vec![0.1], track_end_junctions: false, ..Config::default() });
+        let whole = record(Config {
+            pitches: vec![0.1],
+            track_end_junctions: false,
+            ..Config::default()
+        });
         assert_eq!((whole.tracks, Router::spokes_short(&whole)), (0, 1));
     }
 
@@ -11880,28 +14712,78 @@ mod tests {
         // counts as a spoke) makes two, its copper inside the exposed pad's.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.25 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.75, 5.75], radius: 0.25 }, 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.75, 5.75],
+                    radius: 0.25,
+                },
+                0,
+                "P.1",
+            ),
             copper(rect([6.4, 5.5], [0.2, 1.5]), 1, "Q.1"),
             copper(rect([5.5, 6.4], [1.5, 0.2]), 1, "Q.2"),
         ];
         let mut planes = vec![plane(0, 0, Some((0.15, 0.3)))];
-        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.25, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 0.25,
+            gap: 1.0,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+        });
         let mut board = board(
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.4, 5.5], "Q.1"), terminal(4, [5.5, 6.4], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![terminal(0, [5.0, 5.0], "P.1")],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.4, 5.5], "Q.1"),
+                        terminal(4, [5.5, 6.4], "Q.2"),
+                    ],
+                },
             ],
             planes,
             Vec::new(),
         );
         for (pad, anchor) in [(1, [5.0, 5.0]), (2, [5.75, 5.75])] {
-            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+            board.merged_pads.push(crate::board::MergedPad {
+                net: 0,
+                host: 0,
+                pad,
+                anchor,
+                layers: 1,
+            });
         }
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
-        let corner = |router: &Router| spoke_report(router, 0).0.into_iter().find(|record| record.pad == 2).unwrap();
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let corner = |router: &Router| {
+            spoke_report(router, 0)
+                .0
+                .into_iter()
+                .find(|record| record.pad == 2)
+                .unwrap()
+        };
         assert_eq!(Router::spokes_short(&corner(&router)), 1);
         assert_eq!(router.add_inner_spokes(0), 1);
         let after = corner(&router);
@@ -11910,7 +14792,14 @@ mod tests {
         assert_eq!((layer, start), (0, [5.75, 5.75]));
         assert!(board.obstacles[0].shape.contains(end));
         assert!((width - 0.25).abs() < 1.0e-9);
-        assert!(router.materialize(0).0.segments.iter().any(|segment| segment.start == start && segment.end == end));
+        assert!(
+            router
+                .materialize(0)
+                .0
+                .segments
+                .iter()
+                .any(|segment| segment.start == start && segment.end == end)
+        );
         // Nothing more to add.
         assert_eq!(router.add_inner_spokes(0), 0);
     }
@@ -11925,28 +14814,82 @@ mod tests {
         // no finding either.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
-            copper(Shape::Circle { center: [5.6, 5.0], radius: 0.2 }, 0, "P.1"),
-            copper(Shape::Circle { center: [4.4, 4.4], radius: 0.2 }, 0, "P.1"),
-            copper(Shape::Circle { center: [8.0, 5.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [5.6, 5.0],
+                    radius: 0.2,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [4.4, 4.4],
+                    radius: 0.2,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [8.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
         ];
         // P.2, solid, is the fill's second item.
         let mut board = board(
             1,
             obstacles,
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(3, [8.0, 5.0], "P.2")] }],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(3, [8.0, 5.0], "P.2"),
+                ],
+            }],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
         for (pad, anchor) in [(1, [5.6, 5.0]), (2, [4.4, 4.4])] {
-            board.merged_pads.push(crate::board::MergedPad { net: 0, host: 0, pad, anchor, layers: 1 });
+            board.merged_pads.push(crate::board::MergedPad {
+                net: 0,
+                host: 0,
+                pad,
+                anchor,
+                layers: 1,
+            });
         }
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let (report, _, _) = spoke_report(&router, 0);
         let on_spoke = report.iter().find(|record| record.pad == 1).unwrap();
-        assert!(on_spoke.outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::NoFill)), "{:?}", on_spoke.outcomes);
+        assert!(
+            on_spoke
+                .outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::NoFill)),
+            "{:?}",
+            on_spoke.outcomes
+        );
         assert_eq!(on_spoke.crossings, 2);
         let off_spoke = report.iter().find(|record| record.pad == 2).unwrap();
-        assert!(off_spoke.outcomes.iter().all(|outcome| matches!(outcome, SpokeOutcome::NoFill)), "{:?}", off_spoke.outcomes);
+        assert!(
+            off_spoke
+                .outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::NoFill)),
+            "{:?}",
+            off_spoke.outcomes
+        );
         assert_eq!(off_spoke.crossings, 0);
     }
 
@@ -11962,7 +14905,14 @@ mod tests {
         let outcome = |walls: bool| {
             let mut obstacles = vec![
                 copper(rect([5.0, 5.0], [0.15, 0.4]), 0, "P.1"),
-                copper(Shape::Circle { center: [5.0, 1.5], radius: 0.4 }, 0, "P.2"),
+                copper(
+                    Shape::Circle {
+                        center: [5.0, 1.5],
+                        radius: 0.4,
+                    },
+                    0,
+                    "P.2",
+                ),
                 // The other spokes end in R's copper.
                 copper(rect([5.8, 5.0], [0.15, 0.3]), 2, "R.1"),
                 copper(rect([4.2, 5.0], [0.15, 0.3]), 2, "R.2"),
@@ -11970,26 +14920,76 @@ mod tests {
             ];
             let mut terminals_q = Vec::new();
             if walls {
-                obstacles.push(copper(Shape::Circle { center: [4.75, 4.55], radius: 0.05 }, 1, "Q.1"));
-                obstacles.push(copper(Shape::Circle { center: [5.25, 4.55], radius: 0.05 }, 1, "Q.2"));
-                terminals_q = vec![terminal(5, [4.75, 4.55], "Q.1"), terminal(6, [5.25, 4.55], "Q.2")];
+                obstacles.push(copper(
+                    Shape::Circle {
+                        center: [4.75, 4.55],
+                        radius: 0.05,
+                    },
+                    1,
+                    "Q.1",
+                ));
+                obstacles.push(copper(
+                    Shape::Circle {
+                        center: [5.25, 4.55],
+                        radius: 0.05,
+                    },
+                    1,
+                    "Q.2",
+                ));
+                terminals_q = vec![
+                    terminal(5, [4.75, 4.55], "Q.1"),
+                    terminal(6, [5.25, 4.55], "Q.2"),
+                ];
             }
             let board = board(
                 1,
                 obstacles,
                 vec![
-                    Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [5.0, 1.5], "P.2")] },
-                    Net { name: "Q".into(), class: 0, terminals: terminals_q },
-                    Net { name: "R".into(), class: 0, terminals: vec![terminal(2, [5.8, 5.0], "R.1"), terminal(3, [4.2, 5.0], "R.2"), terminal(4, [5.0, 6.1], "R.3")] },
+                    Net {
+                        name: "P".into(),
+                        class: 0,
+                        terminals: vec![
+                            terminal(0, [5.0, 5.0], "P.1"),
+                            terminal(1, [5.0, 1.5], "P.2"),
+                        ],
+                    },
+                    Net {
+                        name: "Q".into(),
+                        class: 0,
+                        terminals: terminals_q,
+                    },
+                    Net {
+                        name: "R".into(),
+                        class: 0,
+                        terminals: vec![
+                            terminal(2, [5.8, 5.0], "R.1"),
+                            terminal(3, [4.2, 5.0], "R.2"),
+                            terminal(4, [5.0, 6.1], "R.3"),
+                        ],
+                    },
                 ],
                 vec![plane(0, 0, Some((0.5, 0.4)))],
                 vec!["P.2".into()],
             );
-            let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            report.iter().find(|record| record.terminal == 0).unwrap().outcomes[3]
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes[3]
         };
-        assert!(matches!(outcome(true), SpokeOutcome::Island(_)), "{:?}", outcome(true));
+        assert!(
+            matches!(outcome(true), SpokeOutcome::Island(_)),
+            "{:?}",
+            outcome(true)
+        );
         assert!(matches!(outcome(false), SpokeOutcome::Good(_)));
     }
 
@@ -11999,8 +14999,22 @@ mod tests {
         // half a gap out the two spokes cross: KiCad's DRC counts both
         // crossings as P.3's spokes.
         let obstacles = vec![
-            copper(Shape::Circle { center: [5.0, 5.0], radius: 0.35 }, 0, "P.1"),
-            copper(Shape::Circle { center: [5.0, 6.35], radius: 0.35 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.35,
+                },
+                0,
+                "P.1",
+            ),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 6.35],
+                    radius: 0.35,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([6.0, 5.675], [0.2, 0.2]), 0, "P.3"),
         ];
         let board = board(
@@ -12009,15 +15023,30 @@ mod tests {
             vec![Net {
                 name: "P".into(),
                 class: 0,
-                terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [5.0, 6.35], "P.2"), terminal(2, [6.0, 5.675], "P.3")],
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [5.0, 6.35], "P.2"),
+                    terminal(2, [6.0, 5.675], "P.3"),
+                ],
             }],
             vec![plane(0, 0, Some((0.5, 0.5)))],
             Vec::new(),
         );
         let crossings = |foreign_spokes: bool| {
-            let router = Router::new(&board, &Config { pitches: vec![0.1], foreign_spokes, ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    foreign_spokes,
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            report.iter().find(|record| record.terminal == 2).unwrap().crossings
+            report
+                .iter()
+                .find(|record| record.terminal == 2)
+                .unwrap()
+                .crossings
         };
         assert_eq!(crossings(true), 2);
         assert_eq!(crossings(false), 0);
@@ -12030,15 +15059,39 @@ mod tests {
         // half the minimum width) from 0.125 to 1.125 mm; a web's width
         // along the fill's edge stays filled.
         let mut planes = vec![plane(0, 0, Some((0.3, 0.4)))];
-        planes[0].hatch = Some(crate::board::Hatch { thickness: 0.5, gap: 1.0, orientation: 0.0, smoothing_level: 0, smoothing_value: 0.0, min_hole_area: 0.3 });
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 0.5,
+            gap: 1.0,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+        });
         let board = board(
             1,
-            vec![copper(Shape::Circle { center: [8.0, 8.0], radius: 0.4 }, 0, "P.1")],
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [8.0, 8.0], "P.1")] }],
+            vec![copper(
+                Shape::Circle {
+                    center: [8.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.1",
+            )],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![terminal(0, [8.0, 8.0], "P.1")],
+            }],
             planes,
             vec!["P.1".into()],
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let rings = vec![Vec::new()];
         let probe = fill::FillProbe::new(&router, 0, &rings);
         assert!(probe.in_hatch_hole(0, [3.6, 3.6]));
@@ -12058,7 +15111,14 @@ mod tests {
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
             copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.2"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.3"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.3",
+            ),
             copper(rect([6.0, 5.0], [0.25, 0.25]), 1, "Q.1"),
             copper(rect([5.0, 6.0], [0.25, 0.25]), 1, "Q.2"),
             copper(rect([5.0, 4.0], [0.25, 0.25]), 1, "Q.3"),
@@ -12067,20 +15127,65 @@ mod tests {
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [5.0, 5.0], "P.2"), terminal(2, [2.0, 8.0], "P.3")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(3, [6.0, 5.0], "Q.1"), terminal(4, [5.0, 6.0], "Q.2"), terminal(5, [5.0, 4.0], "Q.3")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [5.0, 5.0], "P.2"),
+                        terminal(2, [2.0, 8.0], "P.3"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [6.0, 5.0], "Q.1"),
+                        terminal(4, [5.0, 6.0], "Q.2"),
+                        terminal(5, [5.0, 4.0], "Q.3"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.3".into()],
         );
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
-        let node = |at: [f64; 2]| Node { layer: 0, cell: grid.nearest_node(at).unwrap() as u32 };
-        let straight: Vec<Node> = (0..=12).map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64])).collect();
-        router.nets[0].branches = vec![Branch { nodes: straight, start_terminal: 0, end_terminal: PLANE_TERMINAL }];
+        let node = |at: [f64; 2]| Node {
+            layer: 0,
+            cell: grid.nearest_node(at).unwrap() as u32,
+        };
+        let straight: Vec<Node> = (0..=12)
+            .map(|step| node([5.0 + 0.1 * step as f64, 5.0 + 0.1 * step as f64]))
+            .collect();
+        router.nets[0].branches = vec![Branch {
+            nodes: straight,
+            start_terminal: 0,
+            end_terminal: PLANE_TERMINAL,
+        }];
         let (report, _, _) = spoke_report(&router, 0);
-        assert_eq!(report.iter().find(|record| record.terminal == 0).unwrap().tracks, 1);
-        assert_eq!(report.iter().find(|record| record.terminal == 1).unwrap().tracks, 1);
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .tracks,
+            1
+        );
+        assert_eq!(
+            report
+                .iter()
+                .find(|record| record.terminal == 1)
+                .unwrap()
+                .tracks,
+            1
+        );
     }
 
     #[test]
@@ -12093,16 +15198,37 @@ mod tests {
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
             copper(rect([5.0, 6.85], [0.3, 0.3]), 0, "P.2"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.3"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.3",
+            ),
         ];
         let board = board(
             1,
             obstacles,
-            vec![Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [5.0, 6.85], "P.2"), terminal(2, [2.0, 8.0], "P.3")] }],
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [5.0, 6.85], "P.2"),
+                    terminal(2, [2.0, 8.0], "P.3"),
+                ],
+            }],
             vec![plane(0, 0, Some((0.5, 0.4)))],
             vec!["P.3".into()],
         );
-        let router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let rings = router.thermal_ring_pads(0);
         let probe = fill::FillProbe::new(&router, 0, &rings);
         let end = [5.0, 5.0 + 0.3 + 0.5 + fill::KICAD_MAX_ERROR + 0.125];
@@ -12118,7 +15244,14 @@ mod tests {
         // spoke's middle line) found no brush there.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.28, 0.31]), 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 8.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 8.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([4.4, 5.3], [0.25, 0.5]), 1, "Q.1"),
             copper(rect([5.85, 5.0], [0.15, 0.3]), 2, "R.1"),
             copper(rect([5.0, 4.15], [0.3, 0.15]), 2, "R.2"),
@@ -12127,21 +15260,63 @@ mod tests {
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 8.0], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [4.4, 5.3], "Q.1")] },
-                Net { name: "R".into(), class: 0, terminals: vec![terminal(3, [5.85, 5.0], "R.1"), terminal(4, [5.0, 4.15], "R.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 8.0], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![terminal(2, [4.4, 5.3], "Q.1")],
+                },
+                Net {
+                    name: "R".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(3, [5.85, 5.0], "R.1"),
+                        terminal(4, [5.0, 4.15], "R.2"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
-        let mut router = Router::new(&board, &Config { pitches: vec![0.1], ..Config::default() });
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
         let grid = router.grid().clone();
-        let start = Node { layer: 0, cell: grid.nearest_node([5.0, 5.0]).unwrap() as u32 };
-        router.nets[0].branches = vec![Branch { nodes: vec![start], start_terminal: 0, end_terminal: NO_TERMINAL }];
-        router.nets[0].adopted.insert(0, ([5.0, 5.0], [4.86, 5.46], 0.05));
+        let start = Node {
+            layer: 0,
+            cell: grid.nearest_node([5.0, 5.0]).unwrap() as u32,
+        };
+        router.nets[0].branches = vec![Branch {
+            nodes: vec![start],
+            start_terminal: 0,
+            end_terminal: NO_TERMINAL,
+        }];
+        router.nets[0]
+            .adopted
+            .insert(0, ([5.0, 5.0], [4.86, 5.46], 0.05));
         let (report, _, _) = spoke_report(&router, 0);
         let record = report.iter().find(|record| record.terminal == 0).unwrap();
-        assert_eq!(record.outcomes.iter().filter(|outcome| matches!(outcome, SpokeOutcome::Good(_))).count(), 1, "{:?}", record.outcomes);
+        assert_eq!(
+            record
+                .outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, SpokeOutcome::Good(_)))
+                .count(),
+            1,
+            "{:?}",
+            record.outcomes
+        );
         assert_eq!(record.tracks, 1);
     }
 
@@ -12154,7 +15329,14 @@ mod tests {
         // right spoke counts too.
         let obstacles = vec![
             copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
-            copper(Shape::Circle { center: [2.0, 5.0], radius: 0.4 }, 0, "P.2"),
+            copper(
+                Shape::Circle {
+                    center: [2.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.2",
+            ),
             copper(rect([5.0, 2.15], [0.1, 2.15]), 1, "Q.1"),
             copper(rect([5.0, 7.85], [0.1, 2.15]), 1, "Q.2"),
         ];
@@ -12162,20 +15344,52 @@ mod tests {
             1,
             obstacles,
             vec![
-                Net { name: "P".into(), class: 0, terminals: vec![terminal(0, [5.0, 5.0], "P.1"), terminal(1, [2.0, 5.0], "P.2")] },
-                Net { name: "Q".into(), class: 0, terminals: vec![terminal(2, [5.0, 2.15], "Q.1"), terminal(3, [5.0, 7.85], "Q.2")] },
+                Net {
+                    name: "P".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 5.0], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(2, [5.0, 2.15], "Q.1"),
+                        terminal(3, [5.0, 7.85], "Q.2"),
+                    ],
+                },
             ],
             vec![plane(0, 0, Some((0.3, 0.4)))],
             vec!["P.2".into()],
         );
         let outcomes = |neck_joins: bool| {
-            let router = Router::new(&board, &Config { pitches: vec![0.1], neck_joins, ..Config::default() });
+            let router = Router::new(
+                &board,
+                &Config {
+                    pitches: vec![0.1],
+                    neck_joins,
+                    ..Config::default()
+                },
+            );
             let (report, _, _) = spoke_report(&router, 0);
-            report.iter().find(|record| record.terminal == 0).unwrap().outcomes
+            report
+                .iter()
+                .find(|record| record.terminal == 0)
+                .unwrap()
+                .outcomes
         };
         let joined = outcomes(true);
-        assert!(matches!(joined[0], SpokeOutcome::Good(_)) && matches!(joined[1], SpokeOutcome::Good(_)), "{joined:?}");
-        assert!(matches!(outcomes(false)[0], SpokeOutcome::Island(_)), "{:?}", outcomes(false));
+        assert!(
+            matches!(joined[0], SpokeOutcome::Good(_))
+                && matches!(joined[1], SpokeOutcome::Good(_)),
+            "{joined:?}"
+        );
+        assert!(
+            matches!(outcomes(false)[0], SpokeOutcome::Island(_)),
+            "{:?}",
+            outcomes(false)
+        );
     }
-
 }

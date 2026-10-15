@@ -68,7 +68,13 @@ fn jlcpcb_board(width: f64, height: f64, layers: usize, quantity: usize) -> f64 
 fn pcbway_board(width: f64, height: f64, layers: usize, quantity: usize) -> f64 {
     let total_m2 = width * height * quantity as f64 / 1.0e6;
     if width.max(height) <= 100.0 && quantity <= 10 {
-        if layers <= 2 { 5.0 } else if quantity <= 5 { 26.0 } else { 51.0 }
+        if layers <= 2 {
+            5.0
+        } else if quantity <= 5 {
+            26.0
+        } else {
+            51.0
+        }
     } else if layers <= 2 {
         37.0 + 99.0 * total_m2
     } else {
@@ -84,13 +90,21 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
     let drill = inputs.smallest_drill_mm.unwrap_or(0.3);
     let track = inputs.narrowest_track_mm.unwrap_or(0.2);
     let mut fabs = Vec::new();
-    let quote = |fab: &str, currency: &str, board: f64, surcharges: Vec<(String, f64)>, assembly: Option<f64>| {
-        let total = board + surcharges.iter().map(|(_, cost)| cost).sum::<f64>() + assembly.unwrap_or(0.0);
+    let quote = |fab: &str,
+                 currency: &str,
+                 board: f64,
+                 surcharges: Vec<(String, f64)>,
+                 assembly: Option<f64>| {
+        let total =
+            board + surcharges.iter().map(|(_, cost)| cost).sum::<f64>() + assembly.unwrap_or(0.0);
         KiCadFabQuote {
             fab: fab.into(),
             currency: currency.into(),
             board: cents(board),
-            surcharges: surcharges.into_iter().map(|(cause, cost)| (cause, cents(cost))).collect(),
+            surcharges: surcharges
+                .into_iter()
+                .map(|(cause, cost)| (cause, cents(cost)))
+                .collect(),
             assembly: assembly.map(cents),
             total: cents(total),
         }
@@ -103,16 +117,28 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
     } else if drill < 0.3 - 1e-9 {
         surcharges.push(("via drill under 0.3 mm".into(), 17.0));
     }
-    let tht = if inputs.tht_joints > 0 { 3.58 + 0.0164 * inputs.tht_joints as f64 * q } else { 0.0 };
+    let tht = if inputs.tht_joints > 0 {
+        3.58 + 0.0164 * inputs.tht_joints as f64 * q
+    } else {
+        0.0
+    };
     let smd = 0.0016 * inputs.smd_joints as f64 * q;
     let assembly = if inputs.smd_sides == 0 && inputs.tht_joints == 0 {
         None
     } else if inputs.smd_sides <= 1 {
         Some(9.71 + smd + tht)
     } else {
-        Some(33.77 * inputs.smd_sides as f64 + 1.53 * inputs.unique_parts as f64 + smd + tht + 14.93)
+        Some(
+            33.77 * inputs.smd_sides as f64 + 1.53 * inputs.unique_parts as f64 + smd + tht + 14.93,
+        )
     };
-    fabs.push(quote("JLCPCB", "USD", jlcpcb_board(w, h, layers, quantity), surcharges, assembly));
+    fabs.push(quote(
+        "JLCPCB",
+        "USD",
+        jlcpcb_board(w, h, layers, quantity),
+        surcharges,
+        assembly,
+    ));
 
     let mut surcharges = Vec::new();
     if drill < 0.2 - 1e-9 {
@@ -121,7 +147,13 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
     if track < 0.1 - 1e-9 {
         surcharges.push(("tracks under 4 mil".into(), 140.0));
     }
-    fabs.push(quote("PCBWay", "USD", pcbway_board(w, h, layers, quantity), surcharges, None));
+    fabs.push(quote(
+        "PCBWay",
+        "USD",
+        pcbway_board(w, h, layers, quantity),
+        surcharges,
+        None,
+    ));
 
     // Aisler: HASL rate for two layers within its rules, else ENIG.
     let rate = if layers > 2 {
@@ -132,7 +164,13 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
         0.097
     };
     let boards = 3.0 * (q / 3.0).ceil();
-    fabs.push(quote("Aisler", "EUR", 14.0 + rate * area_cm2 * boards, Vec::new(), None));
+    fabs.push(quote(
+        "Aisler",
+        "EUR",
+        14.0 + rate * area_cm2 * boards,
+        Vec::new(),
+        None,
+    ));
 
     let base = (58.0 + 0.13 * area_cm2 * q) * if layers > 2 { 1.47 } else { 1.0 };
     let mut surcharges = Vec::new();
@@ -169,7 +207,9 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
         ));
     }
     if drill < 0.3 - 1e-9 {
-        hints.push(format!("the smallest via drill is {drill} mm: 0.3 mm or more avoids $17-34 at JLCPCB"));
+        hints.push(format!(
+            "the smallest via drill is {drill} mm: 0.3 mm or more avoids $17-34 at JLCPCB"
+        ));
     }
     if inputs.vias_in_pads > 0 {
         hints.push(format!(
@@ -178,9 +218,16 @@ pub(crate) fn estimate(inputs: &CostInputs, quantity: usize) -> KiCadCost {
         ));
     }
     if inputs.smd_sides > 1 {
-        hints.push("SMD parts on both sides: one side allows JLCPCB Economic assembly, about $60 less".into());
+        hints.push(
+            "SMD parts on both sides: one side allows JLCPCB Economic assembly, about $60 less"
+                .into(),
+        );
     }
-    KiCadCost { quantity, fabs, hints }
+    KiCadCost {
+        quantity,
+        fabs,
+        hints,
+    }
 }
 
 #[cfg(test)]
@@ -189,19 +236,49 @@ mod tests {
 
     #[test]
     fn prices_follow_the_snapshot_and_its_cliffs() {
-        let small = CostInputs { width_mm: 50.0, height_mm: 50.0, layers: 2, ..Default::default() };
+        let small = CostInputs {
+            width_mm: 50.0,
+            height_mm: 50.0,
+            layers: 2,
+            ..Default::default()
+        };
         let cost = estimate(&small, 10);
-        let fab = |name: &str| cost.fabs.iter().find(|fab| fab.fab == name).unwrap().clone();
+        let fab = |name: &str| {
+            cost.fabs
+                .iter()
+                .find(|fab| fab.fab == name)
+                .unwrap()
+                .clone()
+        };
         assert_eq!(fab("JLCPCB").board, 5.0);
         assert_eq!(fab("PCBWay").board, 5.0);
         // Aisler: €14 + 0.067/cm² · 25 cm² · 12 boards.
         assert_eq!(fab("Aisler").board, cents(14.0 + 0.067 * 25.0 * 12.0));
         assert!(cost.hints.is_empty());
         // Just over 100 mm: PCBWay leaves its flat price.
-        let wide = CostInputs { width_mm: 101.0, height_mm: 100.0, layers: 2, ..Default::default() };
+        let wide = CostInputs {
+            width_mm: 101.0,
+            height_mm: 100.0,
+            layers: 2,
+            ..Default::default()
+        };
         let cost = estimate(&wide, 10);
-        assert!(cost.fabs.iter().find(|fab| fab.fab == "PCBWay").unwrap().board > 30.0);
-        assert_eq!(cost.fabs.iter().find(|fab| fab.fab == "JLCPCB").unwrap().board, 5.0);
+        assert!(
+            cost.fabs
+                .iter()
+                .find(|fab| fab.fab == "PCBWay")
+                .unwrap()
+                .board
+                > 30.0
+        );
+        assert_eq!(
+            cost.fabs
+                .iter()
+                .find(|fab| fab.fab == "JLCPCB")
+                .unwrap()
+                .board,
+            5.0
+        );
         assert_eq!(cost.hints.len(), 1);
         // Small drills and two assembly sides cost extra; vias in pads are
         // a hint (filling them is optional).

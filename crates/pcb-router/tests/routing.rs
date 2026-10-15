@@ -367,12 +367,24 @@ fn a_gap_of_exactly_two_clearances_holds_two_tracks_at_exactly_their_clearance()
     let mut config = config();
     config.pitches = vec![0.1];
     let result = route(&builder.board, &config);
-    assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed], "{:?}", result.status);
+    assert_eq!(
+        result.status,
+        vec![NetStatus::Routed, NetStatus::Routed],
+        "{:?}",
+        result.status
+    );
     let violations = verify(&builder.board, &result.routes);
     assert!(violations.is_empty(), "{violations:?}");
     // Both went through the gap, not around (there is no way around).
     for route in &result.routes {
-        assert!(route.segments.iter().any(|segment| segment.start[0].min(segment.end[0]) < 15.0 && segment.start[0].max(segment.end[0]) > 15.0 && (segment.start[1] - 10.0).abs() < gap));
+        assert!(
+            route
+                .segments
+                .iter()
+                .any(|segment| segment.start[0].min(segment.end[0]) < 15.0
+                    && segment.start[0].max(segment.end[0]) > 15.0
+                    && (segment.start[1] - 10.0).abs() < gap)
+        );
     }
 }
 
@@ -384,12 +396,24 @@ fn diagonal_steps_keep_their_clearance_from_nodes_beside_them() {
     let mut builder = Builder::new(24.0, 24.0, 1);
     for index in 0..6 {
         let y = 3.0 + index as f64 * 3.3;
-        builder.net(&format!("D{index}"), &[([2.0, y], 0b1), ([22.0, 24.0 - y], 0b1)]);
+        builder.net(
+            &format!("D{index}"),
+            &[([2.0, y], 0b1), ([22.0, 24.0 - y], 0b1)],
+        );
     }
     let result = route(&builder.board, &config());
     let violations = verify(&builder.board, &result.routes);
     assert!(violations.is_empty(), "{violations:?}");
-    assert!(result.status.iter().filter(|status| **status == NetStatus::Routed).count() >= 4, "{:?}", result.status);
+    assert!(
+        result
+            .status
+            .iter()
+            .filter(|status| **status == NetStatus::Routed)
+            .count()
+            >= 4,
+        "{:?}",
+        result.status
+    );
 }
 
 #[test]
@@ -416,13 +440,20 @@ fn parallel_diagonal_tracks_in_a_channel_keep_their_clearance() {
     ];
     for index in 0..3 {
         let offset = index as f64 * 1.5;
-        builder.net(&format!("P{index}"), &[([1.5, 1.5 + offset], 0b1), ([28.5, 25.5 + offset], 0b1)]);
+        builder.net(
+            &format!("P{index}"),
+            &[([1.5, 1.5 + offset], 0b1), ([28.5, 25.5 + offset], 0b1)],
+        );
     }
     let mut config = config();
     config.pitches = vec![0.127];
     let result = route(&builder.board, &config);
     let violations = verify(&builder.board, &result.routes);
     assert!(violations.is_empty(), "{violations:?}");
-    let routed = result.status.iter().filter(|status| **status == NetStatus::Routed).count();
+    let routed = result
+        .status
+        .iter()
+        .filter(|status| **status == NetStatus::Routed)
+        .count();
     assert!(routed >= 2, "{:?}", result.status);
 }

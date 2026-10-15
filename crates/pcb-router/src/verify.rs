@@ -54,7 +54,9 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
         .iter()
         .map(|class| class.clearance)
         .chain(board.obstacles.iter().map(|obstacle| {
-            obstacle.clearance.max(obstacle.clearance_override.unwrap_or(0.0))
+            obstacle
+                .clearance
+                .max(obstacle.clearance_override.unwrap_or(0.0))
         }))
         .fold(board.hole_clearance, f64::max);
 
@@ -154,8 +156,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
             let layer_mask = layer.map_or(board.all_layers(), |layer| 1 << layer);
             let report_layer = layer.unwrap_or(0);
 
-            let inside = point_in_polygon(start, &board.outline)
-                && point_in_polygon(end, &board.outline);
+            let inside =
+                point_in_polygon(start, &board.outline) && point_in_polygon(end, &board.outline);
             let edge_distance = polygon_edges(&board.outline)
                 .map(|(a, b)| segment_segment_distance(start, end, a, b))
                 .fold(f64::INFINITY, f64::min);
@@ -167,7 +169,11 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                 report_layer,
                 at,
                 board.edge_clearance,
-                if inside { edge_distance - radius } else { -radius },
+                if inside {
+                    edge_distance - radius
+                } else {
+                    -radius
+                },
             );
 
             let bounds = Aabb {
@@ -324,7 +330,10 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                     net,
                                     own_segment,
                                     None,
-                                    format!("via of {} (hole clearance)", board.nets[other as usize].name),
+                                    format!(
+                                        "via of {} (hole clearance)",
+                                        board.nets[other as usize].name
+                                    ),
                                     report_layer,
                                     at,
                                     board.hole_clearance,
@@ -337,7 +346,10 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 net,
                                 own_segment,
                                 None,
-                                format!("via hole of {} (hole clearance)", board.nets[other as usize].name),
+                                format!(
+                                    "via hole of {} (hole clearance)",
+                                    board.nets[other as usize].name
+                                ),
                                 report_layer,
                                 at,
                                 board.hole_clearance,

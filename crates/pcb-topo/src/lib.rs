@@ -65,8 +65,18 @@ impl Default for Config {
             seconds: 300.0,
             seed: 1,
             verbose: false,
-            weights: Weights { crossing: 2.0, via: 8.0, overflow: 50.0, history: 5.0, against: 1.6 },
-            costs: layers::Costs { via: 8.0, overflow: 50.0, against: 1.6 },
+            weights: Weights {
+                crossing: 2.0,
+                via: 8.0,
+                overflow: 50.0,
+                history: 5.0,
+                against: 1.6,
+            },
+            costs: layers::Costs {
+                via: 8.0,
+                overflow: 50.0,
+                against: 1.6,
+            },
             spacing: 2.0,
             improve_via: 25.0,
             improve_passes: 4,
@@ -105,14 +115,31 @@ fn layout(board: &Board, mesh: &mesh::Mesh, topology: &Topology) -> (Vec<Piece>,
         }
         let width = board.classes[path.class].trace_width;
         let terminals = &board.nets[path.net as usize].terminals;
-        let piece = |layer: usize, at: Point, pad: Option<usize>| Piece { wire, net: path.net, class: path.class, layer, width, points: vec![at], pads: [pad, None] };
-        let mut current = piece(path.layers[0], path.from, Some(terminals[path.terminals[0]].pad));
+        let piece = |layer: usize, at: Point, pad: Option<usize>| Piece {
+            wire,
+            net: path.net,
+            class: path.class,
+            layer,
+            width,
+            points: vec![at],
+            pads: [pad, None],
+        };
+        let mut current = piece(
+            path.layers[0],
+            path.from,
+            Some(terminals[path.terminals[0]].pad),
+        );
         for (step, &portal) in path.portals.iter().enumerate() {
             let point = topology.place(board, mesh, wire, portal);
             current.points.push(point);
             if path.via_at(step) {
                 pieces.push(current);
-                vias.push(PlacedVia { wire, net: path.net, class: path.class, at: point });
+                vias.push(PlacedVia {
+                    wire,
+                    net: path.net,
+                    class: path.class,
+                    at: point,
+                });
                 current = piece(path.layers[step + 1], point, None);
             }
         }
@@ -141,36 +168,69 @@ struct Attempt {
     hotspots: Vec<(usize, usize, Point, f64)>,
 }
 
-fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: Option<&str>) -> Attempt {
+fn realize_all(
+    board: &Board,
+    mesh: &mesh::Mesh,
+    topology: &Topology,
+    picture: Option<&str>,
+) -> Attempt {
     let (pieces, vias) = layout(board, mesh, topology);
     let realized = realize::realize(board, &pieces, &vias);
     let violations = verify(board, &realized.routes);
-    let mut bad: Vec<usize> = realized.failed.iter().map(|(piece, _)| pieces[*piece].wire).collect();
+    let mut bad: Vec<usize> = realized
+        .failed
+        .iter()
+        .map(|(piece, _)| pieces[*piece].wire)
+        .collect();
     let troubled = layers::troubled(board, mesh, topology);
     let (overflowing, overflowed) = topology.overflowing(board, mesh);
     if std::env::var_os("PCB_TOPO_DEBUG").is_some() {
         let free = |vertex: usize| mesh.via_site[vertex] && topology.occupant[vertex].is_none();
         let mut kinds = [0usize; 3];
         for &edge in &overflowed {
-            kinds[mesh.edges[edge].iter().filter(|&&vertex| free(vertex)).count()] += 1;
+            kinds[mesh.edges[edge]
+                .iter()
+                .filter(|&&vertex| free(vertex))
+                .count()] += 1;
         }
         eprintln!("  overflowing edges by free ends (0, 1, 2): {kinds:?}");
     }
     let unrouted = topology.wires.iter().filter(|wire| !wire.routed).count();
-    let trouble = [unrouted, troubled.len(), overflowing.len(), realized.failed.len(), violations.len()];
+    let trouble = [
+        unrouted,
+        troubled.len(),
+        overflowing.len(),
+        realized.failed.len(),
+        violations.len(),
+    ];
     bad.extend(troubled);
     bad.extend(overflowing);
     if std::env::var_os("PCB_TOPO_DEBUG").is_some() {
         // What kinds of failure, in short.
-        let mut kinds: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut kinds: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         for (_, failed) in &realized.failed {
             let reason = &failed.reason;
             let kind = if reason.starts_with("squeezed") {
                 let vias = reason.matches("via of").count();
-                let stacked = reason.contains("(r 1.9") || reason.contains("(r 2.") || reason.contains("(r 3.");
-                format!("squeezed, {vias} vias{}", if stacked { ", nested" } else { "" })
+                let stacked = reason.contains("(r 1.9")
+                    || reason.contains("(r 2.")
+                    || reason.contains("(r 3.");
+                format!(
+                    "squeezed, {vias} vias{}",
+                    if stacked { ", nested" } else { "" }
+                )
             } else {
-                reason.split(" (").next().unwrap_or(reason).split(" near").next().unwrap_or(reason).chars().take(40).collect::<String>()
+                reason
+                    .split(" (")
+                    .next()
+                    .unwrap_or(reason)
+                    .split(" near")
+                    .next()
+                    .unwrap_or(reason)
+                    .chars()
+                    .take(40)
+                    .collect::<String>()
             };
             *kinds.entry(kind).or_default() += 1;
         }
@@ -189,7 +249,10 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
         eprintln!("  failures: {kinds:?}");
         for (piece, failed) in realized.failed.iter().take(10) {
             let piece = &pieces[*piece];
-            eprintln!("  piece of wire {} ({}) on layer {}: {}", piece.wire, board.nets[piece.net as usize].name, piece.layer, failed.reason);
+            eprintln!(
+                "  piece of wire {} ({}) on layer {}: {}",
+                piece.wire, board.nets[piece.net as usize].name, piece.layer, failed.reason
+            );
         }
         for violation in violations.iter().take(10) {
             eprintln!(
@@ -208,7 +271,9 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
         let mut drawing = picture::Picture::new(board);
         drawing.obstacles(board);
         drawing.mesh(mesh);
-        drawing.wires(board, mesh, topology, &|wire, step| topology.wires[wire].layers.get(step).copied());
+        drawing.wires(board, mesh, topology, &|wire, step| {
+            topology.wires[wire].layers.get(step).copied()
+        });
         for via in &vias {
             drawing.circle(via.at, 0.3, "#e8c040", "#806010", 0.03);
         }
@@ -221,7 +286,16 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
     let mut hotspots: Vec<(usize, usize, Point, f64)> = realized
         .failed
         .iter()
-        .filter_map(|(piece, failed)| failed.at.map(|at| (pieces[*piece].wire, pieces[*piece].layer, at, failed.deficit)))
+        .filter_map(|(piece, failed)| {
+            failed.at.map(|at| {
+                (
+                    pieces[*piece].wire,
+                    pieces[*piece].layer,
+                    at,
+                    failed.deficit,
+                )
+            })
+        })
         .collect();
     for violation in &violations {
         let net = violation.net as usize;
@@ -233,7 +307,9 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
         bad.extend(own);
         hotspots.extend(own.map(|wire| (wire, violation.layer, violation.at, deficit)));
         if let Some((other_net, other_segment)) = violation.other_segment {
-            let other = realized.segment_wire[other_net as usize].get(other_segment).copied();
+            let other = realized.segment_wire[other_net as usize]
+                .get(other_segment)
+                .copied();
             bad.extend(other);
             hotspots.extend(other.map(|wire| (wire, violation.layer, violation.at, deficit)));
         }
@@ -245,8 +321,22 @@ fn realize_all(board: &Board, mesh: &mesh::Mesh, topology: &Topology, picture: O
     }
     bad.sort_unstable();
     bad.dedup();
-    let length = realized.routes.iter().flat_map(|route| &route.segments).map(|segment| distance(segment.start, segment.end)).sum();
-    Attempt { vias: vias.len(), routes: realized.routes, segment_wire: realized.segment_wire, via_wire: realized.via_wire, bad, length, trouble, hotspots }
+    let length = realized
+        .routes
+        .iter()
+        .flat_map(|route| &route.segments)
+        .map(|segment| distance(segment.start, segment.end))
+        .sum();
+    Attempt {
+        vias: vias.len(),
+        routes: realized.routes,
+        segment_wire: realized.segment_wire,
+        via_wire: realized.via_wire,
+        bad,
+        length,
+        trouble,
+        hotspots,
+    }
 }
 
 fn nearest_via(route: &NetRoute, owners: &[usize], at: Point) -> Option<usize> {
@@ -333,7 +423,10 @@ impl Run<'_> {
     fn terminal_layers(&self, topology: &Topology, wire: usize) -> (u32, u32) {
         let path = &topology.wires[wire];
         let terminals = &self.board.nets[path.net as usize].terminals;
-        (terminals[path.terminals[0]].layers, terminals[path.terminals[1]].layers)
+        (
+            terminals[path.terminals[0]].layers,
+            terminals[path.terminals[1]].layers,
+        )
     }
 
     fn out_of_time(&self) -> bool {
@@ -361,19 +454,33 @@ impl Run<'_> {
     /// layer, with congestion history, a rising price of overflow and
     /// oscillating weights; layers reassigned after each. Returns the best
     /// state seen and its topology.
-    fn repair(&mut self, topology: &mut Topology, rounds: usize, label: &str) -> (Attempt, Topology) {
+    fn repair(
+        &mut self,
+        topology: &mut Topology,
+        rounds: usize,
+        label: &str,
+    ) -> (Attempt, Topology) {
         let (board, mesh) = (self.board, self.mesh);
         let mut best: Option<(Attempt, Topology)> = None;
         for round in 0..=rounds {
             // The model first: no overflow, no same-layer crossing.
             let left = self.negotiate(topology, 12);
             let realizing = Instant::now();
-            let attempt = realize_all(board, mesh, topology, Some(&format!("{label}{:02}", round + 1)));
+            let attempt = realize_all(
+                board,
+                mesh,
+                topology,
+                Some(&format!("{label}{:02}", round + 1)),
+            );
             self.timing[2] += realizing.elapsed().as_secs_f64();
-            self.report(&format!("{label}round {round} (model: {left} wires left in overflow or conflict)"), &attempt);
+            self.report(
+                &format!("{label}round {round} (model: {left} wires left in overflow or conflict)"),
+                &attempt,
+            );
             self.rounds += 1;
             let better = best.as_ref().is_none_or(|(known, _)| {
-                (attempt.bad.len(), attempt.vias, attempt.length) < (known.bad.len(), known.vias, known.length)
+                (attempt.bad.len(), attempt.vias, attempt.length)
+                    < (known.bad.len(), known.vias, known.length)
             });
             let bad = attempt.bad.clone();
             let hotspots = attempt.hotspots.clone();
@@ -420,16 +527,42 @@ impl Run<'_> {
             let (start, end) = self.terminal_layers(topology, wire);
             let (from, to) = self.ends[wire];
             self.searches[0] += 1;
-            if !topology.route(board, mesh, wire, from, to, weights, Mode::Layered, start, end) {
+            if !topology.route(
+                board,
+                mesh,
+                wire,
+                from,
+                to,
+                weights,
+                Mode::Layered,
+                start,
+                end,
+            ) {
                 // No legal way on the layers as they are: route across and
                 // let the layer assignment part the crossings.
                 self.searches[1] += 1;
-                topology.route(board, mesh, wire, from, to, weights, Mode::Planar, start, end);
+                topology.route(
+                    board,
+                    mesh,
+                    wire,
+                    from,
+                    to,
+                    weights,
+                    Mode::Planar,
+                    start,
+                    end,
+                );
             }
         }
         self.timing[0] += searching.elapsed().as_secs_f64();
         let assigning = Instant::now();
-        layers::assign(board, mesh, topology, config.costs, config.seed.wrapping_add(self.rounds as u64));
+        layers::assign(
+            board,
+            mesh,
+            topology,
+            config.costs,
+            config.seed.wrapping_add(self.rounds as u64),
+        );
         self.timing[1] += assigning.elapsed().as_secs_f64();
         self.rounds += 1;
     }
@@ -467,8 +600,16 @@ impl Run<'_> {
     /// layers reassigned. Returns how many wires changed.
     fn improve(&mut self, topology: &mut Topology, pass: usize) -> usize {
         let (board, mesh, config) = (self.board, self.mesh, self.config);
-        let weights = Weights { crossing: 0.5, via: config.improve_via, overflow: 0.0, history: 0.0, against: config.weights.against };
-        let mut order: Vec<usize> = (0..topology.wires.len()).filter(|&wire| topology.wires[wire].routed).collect();
+        let weights = Weights {
+            crossing: 0.5,
+            via: config.improve_via,
+            overflow: 0.0,
+            history: 0.0,
+            against: config.weights.against,
+        };
+        let mut order: Vec<usize> = (0..topology.wires.len())
+            .filter(|&wire| topology.wires[wire].routed)
+            .collect();
         for index in (1..order.len()).rev() {
             let other = (self.random.next() % (index as u64 + 1)) as usize;
             order.swap(index, other);
@@ -480,14 +621,33 @@ impl Run<'_> {
             topology.rip_up(wire);
             let (start, end) = self.terminal_layers(topology, wire);
             let (from, to) = self.ends[wire];
-            let routed = topology.route(board, mesh, wire, from, to, weights, Mode::Strict, start, end);
+            let routed = topology.route(
+                board,
+                mesh,
+                wire,
+                from,
+                to,
+                weights,
+                Mode::Strict,
+                start,
+                end,
+            );
             if routed && topology.cost(board, mesh, wire, config.improve_via) + 1.0e-6 < old {
                 changed += 1;
             } else {
                 topology.restore(saved);
             }
         }
-        layers::assign(board, mesh, topology, layers::Costs { via: config.improve_via, ..config.costs }, config.seed.wrapping_add(1000 + pass as u64));
+        layers::assign(
+            board,
+            mesh,
+            topology,
+            layers::Costs {
+                via: config.improve_via,
+                ..config.costs
+            },
+            config.seed.wrapping_add(1000 + pass as u64),
+        );
         changed
     }
 }
@@ -500,27 +660,65 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     let mut topology = Topology::new(&mesh);
     let (wires, ends) = connections(board, &mesh);
     topology.wires = wires;
-    let mut run = Run { board, mesh: &mesh, config, ends, started, random: Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1), rounds: 0, timing: [0.0; 3], searches: [0; 2] };
+    let mut run = Run {
+        board,
+        mesh: &mesh,
+        config,
+        ends,
+        started,
+        random: Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
+        rounds: 0,
+        timing: [0.0; 3],
+        searches: [0; 2],
+    };
     // TopoR's order: the widest nets first, then the shortest connections.
     let mut order: Vec<usize> = (0..topology.wires.len()).collect();
     order.sort_by(|&a, &b| {
         let width = |wire: usize| board.classes[topology.wires[wire].class].trace_width;
         let span = |wire: usize| distance(topology.wires[wire].from, topology.wires[wire].to);
-        width(b).total_cmp(&width(a)).then(span(a).total_cmp(&span(b)))
+        width(b)
+            .total_cmp(&width(a))
+            .then(span(a).total_cmp(&span(b)))
     });
     for &wire in &order {
         let (start, end) = run.terminal_layers(&topology, wire);
         let (from, to) = run.ends[wire];
-        let routed = config.layered_start && topology.route(board, &mesh, wire, from, to, config.weights, Mode::Layered, start, end);
+        let routed = config.layered_start
+            && topology.route(
+                board,
+                &mesh,
+                wire,
+                from,
+                to,
+                config.weights,
+                Mode::Layered,
+                start,
+                end,
+            );
         if !routed {
-            topology.route(board, &mesh, wire, from, to, config.weights, Mode::Planar, start, end);
+            topology.route(
+                board,
+                &mesh,
+                wire,
+                from,
+                to,
+                config.weights,
+                Mode::Planar,
+                start,
+                end,
+            );
         }
     }
     if std::env::var_os("PCB_TOPO_DEBUG").is_some() {
         for (wire, path) in topology.wires.iter().enumerate() {
             if !path.routed {
                 let terminals = &board.nets[path.net as usize].terminals;
-                eprintln!("  unrouted wire {wire} ({}): {} to {}", board.nets[path.net as usize].name, terminals[path.terminals[0]].label, terminals[path.terminals[1]].label);
+                eprintln!(
+                    "  unrouted wire {wire} ({}): {} to {}",
+                    board.nets[path.net as usize].name,
+                    terminals[path.terminals[0]].label,
+                    terminals[path.terminals[1]].label
+                );
             }
         }
     }
@@ -552,7 +750,12 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 
     let (mut best, mut best_topology) = run.repair(&mut topology, config.iterations, "");
     // Improve, repair what that broke, keep it if the board got better.
-    let price = |attempt: &Attempt| (attempt.bad.len(), attempt.vias as f64 * config.improve_via + attempt.length);
+    let price = |attempt: &Attempt| {
+        (
+            attempt.bad.len(),
+            attempt.vias as f64 * config.improve_via + attempt.length,
+        )
+    };
     for pass in 0..config.improve_passes {
         if run.out_of_time() {
             break;
@@ -563,9 +766,13 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
             break;
         }
         let (attempt, repaired) = run.repair(&mut topology, 8, &format!("improve {pass} "));
-        let better = price(&attempt).0 < price(&best).0 || (price(&attempt).0 == price(&best).0 && price(&attempt).1 < price(&best).1 - 1.0e-6);
+        let better = price(&attempt).0 < price(&best).0
+            || (price(&attempt).0 == price(&best).0 && price(&attempt).1 < price(&best).1 - 1.0e-6);
         if config.verbose {
-            eprintln!("improve {pass}: {changed} wires rerouted, {}", if better { "kept" } else { "dropped" });
+            eprintln!(
+                "improve {pass}: {changed} wires rerouted, {}",
+                if better { "kept" } else { "dropped" }
+            );
         }
         if better {
             best = attempt;
@@ -602,14 +809,26 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     let mut status: Vec<NetStatus> = board
         .nets
         .iter()
-        .map(|net| if net.terminals.len() < 2 { NetStatus::Trivial } else { NetStatus::Routed })
+        .map(|net| {
+            if net.terminals.len() < 2 {
+                NetStatus::Trivial
+            } else {
+                NetStatus::Routed
+            }
+        })
         .collect();
     for (wire, path) in topology.wires.iter().enumerate() {
         if dropped.contains(&wire) {
             let entry = &mut status[path.net as usize];
             *entry = match entry {
-                NetStatus::Partial { unconnected_terminals } => NetStatus::Partial { unconnected_terminals: *unconnected_terminals + 1 },
-                _ => NetStatus::Partial { unconnected_terminals: 1 },
+                NetStatus::Partial {
+                    unconnected_terminals,
+                } => NetStatus::Partial {
+                    unconnected_terminals: *unconnected_terminals + 1,
+                },
+                _ => NetStatus::Partial {
+                    unconnected_terminals: 1,
+                },
             };
         }
     }
@@ -628,7 +847,12 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         );
     }
     RoutingResult {
-        grid: Grid { origin: [0.0, 0.0], pitch: 0.0, nx: 0, ny: 0 },
+        grid: Grid {
+            origin: [0.0, 0.0],
+            pitch: 0.0,
+            nx: 0,
+            ny: 0,
+        },
         congestion: Vec::new(),
         routes: routes.0,
         status,

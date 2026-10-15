@@ -15,9 +15,9 @@
 //! density 1; routing room comes from per-part halos, and filler charges
 //! decide how much of the remaining whitespace stays between the parts.
 
-use std::collections::BTreeMap;
 use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 pub struct GlobalConfig {
@@ -136,8 +136,12 @@ impl Field {
             }
         }
         let size = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
-        let frequency_x: Vec<f64> = (0..bins).map(|u| std::f64::consts::PI * u as f64 / size[0]).collect();
-        let frequency_y: Vec<f64> = (0..bins).map(|v| std::f64::consts::PI * v as f64 / size[1]).collect();
+        let frequency_x: Vec<f64> = (0..bins)
+            .map(|u| std::f64::consts::PI * u as f64 / size[0])
+            .collect();
+        let frequency_y: Vec<f64> = (0..bins)
+            .map(|v| std::f64::consts::PI * v as f64 / size[1])
+            .collect();
         let mut cosine_t = vec![0.0; bins * bins];
         let mut sine_x = vec![0.0; bins * bins];
         let mut sine_y = vec![0.0; bins * bins];
@@ -169,7 +173,9 @@ impl Field {
         let low = [center[0] - half[0], center[1] - half[1]];
         let high = [center[0] + half[0], center[1] + half[1]];
         let range = |axis: usize| {
-            let first = ((low[axis] - self.origin[axis]) / self.bin[axis]).floor().max(0.0);
+            let first = ((low[axis] - self.origin[axis]) / self.bin[axis])
+                .floor()
+                .max(0.0);
             let last = ((high[axis] - self.origin[axis]) / self.bin[axis])
                 .floor()
                 .min(self.bins as f64 - 1.0);
@@ -234,7 +240,11 @@ impl Field {
             let scale = |index: usize| if index == 0 { 1.0 } else { 2.0 } / n as f64;
             for (u, out) in row.iter_mut().enumerate() {
                 let frequency = self.frequency_x[u].powi(2) + self.frequency_y[v].powi(2);
-                *out = if u == 0 && v == 0 { 0.0 } else { *out * scale(u) * scale(v) / frequency };
+                *out = if u == 0 && v == 0 {
+                    0.0
+                } else {
+                    *out * scale(u) * scale(v) / frequency
+                };
             }
         }
         // Field = -grad(potential): sine along the differentiated axis.
@@ -251,7 +261,11 @@ impl Field {
                 }
             }
             let second = if along_x { &self.cosine } else { &self.sine_y };
-            let output = if along_x { &mut self.field_x } else { &mut self.field_y };
+            let output = if along_x {
+                &mut self.field_x
+            } else {
+                &mut self.field_y
+            };
             output.iter_mut().for_each(|value| *value = 0.0);
             for y in 0..n {
                 let row = &mut output[y * n..(y + 1) * n];
@@ -276,7 +290,11 @@ pub struct GlobalResult {
 /// How far a movable body's charge reaches beyond it: its halo, or half
 /// of it where neighbours share their halos (one halo per gap).
 fn halo_charge(problem: &Problem, component: &crate::problem::Component) -> f64 {
-    if problem.shared_halos { component.halo / 2.0 } else { component.halo }
+    if problem.shared_halos {
+        component.halo / 2.0
+    } else {
+        component.halo
+    }
 }
 
 pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
@@ -293,8 +311,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             for sy in 0..SAMPLES {
                 for sx in 0..SAMPLES {
                     let point = [
-                        field.origin[0] + (x as f64 + (sx as f64 + 0.5) / SAMPLES as f64) * field.bin[0],
-                        field.origin[1] + (y as f64 + (sy as f64 + 0.5) / SAMPLES as f64) * field.bin[1],
+                        field.origin[0]
+                            + (x as f64 + (sx as f64 + 0.5) / SAMPLES as f64) * field.bin[0],
+                        field.origin[1]
+                            + (y as f64 + (sy as f64 + 0.5) / SAMPLES as f64) * field.bin[1],
                     ];
                     outside += !point_in_polygon(point, &problem.outline) as usize;
                 }
@@ -306,8 +326,14 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     // A board with parts on both sides gets one density field per side:
     // a front part and a back part may share the same spot.
     use crate::problem::Side;
-    let two_sided = problem.components.iter().any(|component| component.side == Side::Front)
-        && problem.components.iter().any(|component| component.side == Side::Back);
+    let two_sided = problem
+        .components
+        .iter()
+        .any(|component| component.side == Side::Front)
+        && problem
+            .components
+            .iter()
+            .any(|component| component.side == Side::Back);
     let side_count = if two_sided { 2 } else { 1 };
     let fields_of = |side: Side| -> Vec<usize> {
         match side {
@@ -382,15 +408,24 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                     1.0
                 } else {
                     let whole = 4.0 * (half[0] + halo) * (half[1] + halo);
-                    (component.blocking_area() / whole.max(1.0e-9)).sqrt().min(1.0)
+                    (component.blocking_area() / whole.max(1.0e-9))
+                        .sqrt()
+                        .min(1.0)
                 },
             }
         })
         .collect();
-    let movable_area: f64 = bodies.iter().map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1]).sum();
-    let mut areas: Vec<f64> = bodies.iter().map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1]).collect();
+    let movable_area: f64 = bodies
+        .iter()
+        .map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1])
+        .sum();
+    let mut areas: Vec<f64> = bodies
+        .iter()
+        .map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1])
+        .collect();
     areas.sort_by(f64::total_cmp);
-    let trimmed = &areas[areas.len() / 10..(areas.len() * 9).div_ceil(10).max(areas.len() / 10 + 1)];
+    let trimmed =
+        &areas[areas.len() / 10..(areas.len() * 9).div_ceil(10).max(areas.len() / 10 + 1)];
     let filler_side = (trimmed.iter().sum::<f64>() / trimmed.len() as f64)
         .sqrt()
         .max(field.bin[0].min(field.bin[1]));
@@ -401,7 +436,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             .filter(|body| body.field == side)
             .map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1])
             .sum();
-        let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (side_free[side] - side_movable).max(0.0);
+        let filler_area =
+            config.whitespace_fill.clamp(0.0, 1.0) * (side_free[side] - side_movable).max(0.0);
         let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
         for _ in 0..filler_count {
             bodies.push(Body {
@@ -528,7 +564,15 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         crate::add_work((side_fixed.len() * n * n * n + bodies.len() + fixed_pins.len()) as u64);
         // The wires' room: each net's estimated wire area over its box.
         let demand: Vec<f64> = if config.routing_demand > 0.0 {
-            let mut boxes = vec![[f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]; nets];
+            let mut boxes = vec![
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY
+                ];
+                nets
+            ];
             let mut extend = |net: usize, at: Point| {
                 let bounds = &mut boxes[net];
                 bounds[0] = bounds[0].min(at[0]);
@@ -541,7 +585,13 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             }
             for (body, pins) in offsets.iter().enumerate() {
                 for (offset, net) in pins {
-                    extend(*net, [reference[body][0] + offset[0], reference[body][1] + offset[1]]);
+                    extend(
+                        *net,
+                        [
+                            reference[body][0] + offset[0],
+                            reference[body][1] + offset[1],
+                        ],
+                    );
                 }
             }
             let mut demand = vec![0.0; n * n];
@@ -554,7 +604,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                     ((bounds[3] - bounds[1]) / 2.0).max(field.bin[1] / 2.0),
                 ];
                 let center = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0];
-                let wire = 2.0 * (half[0] + half[1]) * config.track_pitch / layers * config.routing_demand;
+                let wire =
+                    2.0 * (half[0] + half[1]) * config.track_pitch / layers * config.routing_demand;
                 let share = wire / (4.0 * half[0] * half[1]);
                 field.overlap(center, half, |bin, area| demand[bin] += area * share);
             }
@@ -576,7 +627,11 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 }
             }
             let mut real = vec![0.0; n * n];
-            for (body, center) in bodies.iter().zip(&reference).filter(|(body, _)| body.field == side) {
+            for (body, center) in bodies
+                .iter()
+                .zip(&reference)
+                .filter(|(body, _)| body.field == side)
+            {
                 let (half, scale) = field.smoothed(body.charge_half());
                 field.overlap(*center, half, |bin, area| {
                     density[bin] += area * scale;
@@ -630,8 +685,14 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             }
             let weight = problem.net_weights[net];
             for axis in 0..2 {
-                let maximum = pins.iter().map(|(at, _)| at[axis]).fold(f64::NEG_INFINITY, f64::max);
-                let minimum = pins.iter().map(|(at, _)| at[axis]).fold(f64::INFINITY, f64::min);
+                let maximum = pins
+                    .iter()
+                    .map(|(at, _)| at[axis])
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let minimum = pins
+                    .iter()
+                    .map(|(at, _)| at[axis])
+                    .fold(f64::INFINITY, f64::min);
                 let (mut sum_high, mut weighted_high, mut sum_low, mut weighted_low) =
                     (0.0, 0.0, 0.0, 0.0);
                 for (at, _) in pins {
@@ -648,7 +709,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                     };
                     let high = ((at[axis] - maximum) / gamma).exp();
                     let low = ((minimum - at[axis]) / gamma).exp();
-                    let upper = high * ((1.0 + at[axis] / gamma) * sum_high - weighted_high / gamma)
+                    let upper = high
+                        * ((1.0 + at[axis] / gamma) * sum_high - weighted_high / gamma)
                         / (sum_high * sum_high);
                     let lower = low * ((1.0 - at[axis] / gamma) * sum_low + weighted_low / gamma)
                         / (sum_low * sum_low);
@@ -660,8 +722,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         if !problem.constraints.relations.is_empty() {
             let mut at = poses.clone();
             for (body, index) in movable.iter().enumerate() {
-                at[*index].position =
-                    problem.components[*index].position_for_center(reference[body], at[*index].angle);
+                at[*index].position = problem.components[*index]
+                    .position_for_center(reference[body], at[*index].angle);
             }
             let mut body_of = vec![usize::MAX; problem.components.len()];
             for (body, index) in movable.iter().enumerate() {
@@ -678,7 +740,10 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
 
         if iteration == 0 {
             let wire: f64 = wire_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
-            let charge: f64 = density_gradient.iter().map(|g| g[0].abs() + g[1].abs()).sum();
+            let charge: f64 = density_gradient
+                .iter()
+                .map(|g| g[0].abs() + g[1].abs())
+                .sum();
             lambda = if charge > 0.0 { wire / charge } else { 1.0 };
             if lambda == 0.0 {
                 lambda = 1.0e-3;
@@ -751,14 +816,21 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
 
         for (body, index) in movable.iter().enumerate() {
             let component = &problem.components[*index];
-            poses[*index].position = component.position_for_center(major[body], poses[*index].angle);
+            poses[*index].position =
+                component.position_for_center(major[body], poses[*index].angle);
         }
 
         // Discrete rotations once the parts have started to separate.
         if overflow < 0.75
             && config.rotation_interval > 0
             && iteration % config.rotation_interval == config.rotation_interval - 1
-            && choose_rotations(problem, &movable, &major, &mut poses, config.rotation_net_limit)
+            && choose_rotations(
+                problem,
+                &movable,
+                &major,
+                &mut poses,
+                config.rotation_net_limit,
+            )
         {
             offsets = pin_offsets(&poses);
             for (body, index) in movable.iter().enumerate() {

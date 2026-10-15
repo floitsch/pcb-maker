@@ -20,7 +20,9 @@ pub fn directory() -> Option<PathBuf> {
 }
 
 pub fn layer_colour(layer: usize) -> &'static str {
-    ["#d23c3c", "#3c64d2", "#2ca05a", "#d28c1e", "#8c3cd2", "#1eaab4"][layer % 6]
+    [
+        "#d23c3c", "#3c64d2", "#2ca05a", "#d28c1e", "#8c3cd2", "#1eaab4",
+    ][layer % 6]
 }
 
 /// A colour per net, for wires without a layer.
@@ -49,13 +51,20 @@ impl Picture {
             minimum = [0.0, 0.0];
             maximum = [100.0, 100.0];
         }
-        let mut picture = Self { minimum, maximum, body: String::new() };
+        let mut picture = Self {
+            minimum,
+            maximum,
+            body: String::new(),
+        };
         picture.polygon(&board.outline, "none", "#888", 0.1);
         picture
     }
 
     pub fn polygon(&mut self, points: &[Point], fill: &str, stroke: &str, width: f64) {
-        let list: Vec<String> = points.iter().map(|p| format!("{:.4},{:.4}", p[0], p[1])).collect();
+        let list: Vec<String> = points
+            .iter()
+            .map(|p| format!("{:.4},{:.4}", p[0], p[1]))
+            .collect();
         let _ = write!(
             self.body,
             r#"<polygon points="{}" fill="{fill}" stroke="{stroke}" stroke-width="{width}"/>"#,
@@ -64,7 +73,10 @@ impl Picture {
     }
 
     pub fn polyline(&mut self, points: &[Point], stroke: &str, width: f64, opacity: f64) {
-        let list: Vec<String> = points.iter().map(|p| format!("{:.4},{:.4}", p[0], p[1])).collect();
+        let list: Vec<String> = points
+            .iter()
+            .map(|p| format!("{:.4},{:.4}", p[0], p[1]))
+            .collect();
         let _ = write!(
             self.body,
             r#"<polyline points="{}" fill="none" stroke="{stroke}" stroke-width="{width}" stroke-opacity="{opacity}" stroke-linecap="round" stroke-linejoin="round"/>"#,
@@ -81,7 +93,10 @@ impl Picture {
     }
 
     pub fn text(&mut self, at: Point, size: f64, colour: &str, text: &str) {
-        let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let escaped = text
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
         let _ = write!(
             self.body,
             r#"<text x="{:.4}" y="{:.4}" font-size="{size}" fill="{colour}" font-family="sans-serif">{escaped}</text>"#,
@@ -117,7 +132,11 @@ impl Picture {
     /// The shared triangulation: constraint edges darker, via sites dotted.
     pub fn mesh(&mut self, mesh: &Mesh) {
         for (edge, [a, b]) in mesh.edges.iter().enumerate() {
-            let (colour, width) = if mesh.constraint[edge] { ("#999", 0.03) } else { ("#ddd", 0.02) };
+            let (colour, width) = if mesh.constraint[edge] {
+                ("#999", 0.03)
+            } else {
+                ("#ddd", 0.02)
+            };
             self.polyline(&[mesh.points[*a], mesh.points[*b]], colour, width, 1.0);
         }
         for (vertex, &point) in mesh.points.iter().enumerate() {
@@ -129,7 +148,13 @@ impl Picture {
 
     /// Topological wires through their crossing points; `layer_of(wire,
     /// step)` colours a stretch by the layer it is on, if known.
-    pub fn wires(&mut self, board: &Board, mesh: &Mesh, topology: &Topology, layer_of: &dyn Fn(usize, usize) -> Option<usize>) {
+    pub fn wires(
+        &mut self,
+        board: &Board,
+        mesh: &Mesh,
+        topology: &Topology,
+        layer_of: &dyn Fn(usize, usize) -> Option<usize>,
+    ) {
         for (wire, path) in topology.wires.iter().enumerate() {
             if !path.routed {
                 self.polyline(&[path.from, path.to], "#f0f", 0.05, 0.6);
@@ -154,7 +179,12 @@ impl Picture {
     pub fn copper(&mut self, routes: &[NetRoute], violations: &[Violation]) {
         for route in routes {
             for segment in &route.segments {
-                self.polyline(&[segment.start, segment.end], layer_colour(segment.layer), segment.width, 0.55);
+                self.polyline(
+                    &[segment.start, segment.end],
+                    layer_colour(segment.layer),
+                    segment.width,
+                    0.55,
+                );
             }
             for via in &route.vias {
                 self.circle(via.at, via.diameter / 2.0, "#e8c040", "#806010", 0.03);
@@ -172,7 +202,10 @@ impl Picture {
         let _ = std::fs::create_dir_all(&directory);
         let margin = 1.0;
         let (x, y) = (self.minimum[0] - margin, self.minimum[1] - margin);
-        let (width, height) = (self.maximum[0] - self.minimum[0] + 2.0 * margin, self.maximum[1] - self.minimum[1] + 2.0 * margin);
+        let (width, height) = (
+            self.maximum[0] - self.minimum[0] + 2.0 * margin,
+            self.maximum[1] - self.minimum[1] + 2.0 * margin,
+        );
         let pixels = 2400.0;
         let text = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x:.3} {y:.3} {width:.3} {height:.3}" width="{pixels}" height="{:.0}"><rect x="{x:.3}" y="{y:.3}" width="{width:.3}" height="{height:.3}" fill="white"/>{}</svg>"#,

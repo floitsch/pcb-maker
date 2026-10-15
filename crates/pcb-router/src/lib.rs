@@ -18,9 +18,8 @@ pub mod router;
 pub mod verify;
 
 pub use board::{
-    Board, ClassId, Hatch, LayerMask, MergedPad, Net, NetId, NetRoute, Obstacle, ObstacleKind, PadSpokes, Plane, RuleClass,
-    Segment,
-    Terminal, Via,
+    Board, ClassId, Hatch, LayerMask, MergedPad, Net, NetId, NetRoute, Obstacle, ObstacleKind,
+    PadSpokes, Plane, RuleClass, Segment, Terminal, Via,
 };
 pub use geometry::{Point, Shape};
 pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};

@@ -313,7 +313,13 @@ fn run_report_command_cached(
             crate::drc_cache::count_call();
             // The key is taken before KiCad runs: the inputs as given.
             cache.and_then(|directory| {
-                crate::drc_cache::DrcCache::for_run(directory.to_path_buf(), program, arguments, input, config_home)
+                crate::drc_cache::DrcCache::for_run(
+                    directory.to_path_buf(),
+                    program,
+                    arguments,
+                    input,
+                    config_home,
+                )
             })
         }
         ReportKind::Erc => None,
@@ -326,7 +332,10 @@ fn run_report_command_cached(
             match valid {
                 Ok(()) => {
                     crate::drc_cache::write_atomically(output, &bytes).map_err(|error| {
-                        format!("failed to publish native report {}: {error}", output.display())
+                        format!(
+                            "failed to publish native report {}: {error}",
+                            output.display()
+                        )
                     })?;
                     cache.count_hit();
                     return Ok(());
@@ -371,11 +380,23 @@ fn run_report_command_cached(
 /// that need its geometry (`necks`). Not cached: the cache keeps reports,
 /// not boards. The report goes to `report`.
 pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
-    let scratch = board.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let scratch = board
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let program = OsStr::new("kicad-cli");
     let mut command = Command::new(program);
     command
-        .args(["pcb", "drc", "--refill-zones", "--save-board", "--severity-error", "--format", "json", "--output"])
+        .args([
+            "pcb",
+            "drc",
+            "--refill-zones",
+            "--save-board",
+            "--severity-error",
+            "--format",
+            "json",
+            "--output",
+        ])
         .arg(report)
         .arg(board);
     crate::kicad_config::configure_drc(&mut command, program, board);
@@ -400,9 +421,13 @@ fn report_timeout() -> std::time::Duration {
 
 /// Runs `command` with its output in `scratch`, killed after
 /// `report_timeout()` and, on Linux, when this process dies.
-fn run_bounded(command: &mut Command, scratch: &Path) -> Result<(std::process::ExitStatus, String), String> {
+fn run_bounded(
+    command: &mut Command,
+    scratch: &Path,
+) -> Result<(std::process::ExitStatus, String), String> {
     let log = scratch.join("kicad-cli.log");
-    let file = fs::File::create(&log).map_err(|error| format!("failed to create {}: {error}", log.display()))?;
+    let file = fs::File::create(&log)
+        .map_err(|error| format!("failed to create {}: {error}", log.display()))?;
     let error_file = file.try_clone().map_err(|error| error.to_string())?;
     command.stdout(file).stderr(error_file);
     #[cfg(target_os = "linux")]
@@ -416,7 +441,9 @@ fn run_bounded(command: &mut Command, scratch: &Path) -> Result<(std::process::E
             });
         }
     }
-    let mut child = command.spawn().map_err(|error| format!("failed to run kicad-cli: {error}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to run kicad-cli: {error}"))?;
     let timeout = report_timeout();
     let started = std::time::Instant::now();
     let status = loop {
@@ -426,7 +453,10 @@ fn run_bounded(command: &mut Command, scratch: &Path) -> Result<(std::process::E
         if started.elapsed() > timeout {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(format!("kicad-cli timed out after {:.0} s", timeout.as_secs_f64()));
+            return Err(format!(
+                "kicad-cli timed out after {:.0} s",
+                timeout.as_secs_f64()
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     };
@@ -627,9 +657,24 @@ mod tests {
             write_report_script(&valid, 0)
         );
         let cli = fake_cli(&directory.0, &body);
-        let arguments = ["pcb", "drc", "--format", "json", "--severity-all", "--output"];
+        let arguments = [
+            "pcb",
+            "drc",
+            "--format",
+            "json",
+            "--severity-all",
+            "--output",
+        ];
         let run = |output: &Path| {
-            run_report_command_cached(cli.as_os_str(), &arguments, output, &board, Some(&cache), None).unwrap();
+            run_report_command_cached(
+                cli.as_os_str(),
+                &arguments,
+                output,
+                &board,
+                Some(&cache),
+                None,
+            )
+            .unwrap();
             fs::read(output).unwrap()
         };
         let kicad_runs = || fs::read_to_string(&runs).map_or(0, |text| text.lines().count());
@@ -640,15 +685,34 @@ mod tests {
         let second = run(&directory.0.join("second.json"));
         assert_eq!((kicad_runs(), entries()), (1, 1), "the second run is a hit");
         assert_eq!(first, second, "a hit gives the fresh report's bytes");
-        assert_eq!(super::super::read_json(&directory.0.join("second.json")).unwrap(), valid);
+        assert_eq!(
+            super::super::read_json(&directory.0.join("second.json")).unwrap(),
+            valid
+        );
         let after = crate::drc_cache::drc_cache_counts();
         assert!(after.calls >= counts.calls + 2 && after.hits >= counts.hits + 1);
         // One byte more in the board, or other arguments: a miss and a new entry.
         fs::write(&board, "(kicad_pcb (version 20240108)) \n").unwrap();
         run(&project.join("drc.json"));
         assert_eq!((kicad_runs(), entries()), (2, 2));
-        let refill = ["pcb", "drc", "--format", "json", "--severity-all", "--refill-zones", "--output"];
-        run_report_command_cached(cli.as_os_str(), &refill, &project.join("drc.json"), &board, Some(&cache), None).unwrap();
+        let refill = [
+            "pcb",
+            "drc",
+            "--format",
+            "json",
+            "--severity-all",
+            "--refill-zones",
+            "--output",
+        ];
+        run_report_command_cached(
+            cli.as_os_str(),
+            &refill,
+            &project.join("drc.json"),
+            &board,
+            Some(&cache),
+            None,
+        )
+        .unwrap();
         assert_eq!((kicad_runs(), entries()), (3, 3));
         // A corrupt entry is dropped and the DRC runs again.
         for entry in fs::read_dir(&cache).unwrap() {
@@ -656,12 +720,19 @@ mod tests {
         }
         run(&project.join("drc.json"));
         assert_eq!(kicad_runs(), 4);
-        assert_eq!(super::super::read_json(&project.join("drc.json")).unwrap(), valid);
+        assert_eq!(
+            super::super::read_json(&project.join("drc.json")).unwrap(),
+            valid
+        );
         // No temporary files are left next to the outputs or in the cache.
         for place in [&project, &cache, &directory.0] {
             for entry in fs::read_dir(place).unwrap() {
                 let name = entry.unwrap().file_name().into_string().unwrap();
-                assert!(!name.ends_with(".tmp"), "left {name} in {}", place.display());
+                assert!(
+                    !name.ends_with(".tmp"),
+                    "left {name} in {}",
+                    place.display()
+                );
             }
         }
     }
@@ -674,8 +745,15 @@ mod tests {
             {"violations": [finding("footprint_link_issues", "warning"), finding("lib_symbol_mismatch", "warning"),
                             finding("lib_symbol_issues", "error")]},
         ]});
-        let kinds: Vec<_> = erc_design_issues(&erc).iter().map(|finding| finding["type"].as_str().unwrap()).collect();
-        assert_eq!(kinds, ["pin_not_connected", "lib_symbol_issues"], "a library rule rated an error counts");
+        let kinds: Vec<_> = erc_design_issues(&erc)
+            .iter()
+            .map(|finding| finding["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            ["pin_not_connected", "lib_symbol_issues"],
+            "a library rule rated an error counts"
+        );
     }
 
     #[test]
@@ -688,7 +766,8 @@ mod tests {
         let board = project.join("board.kicad_pcb");
         fs::write(&board, "(kicad_pcb (version 20240108))\n").unwrap();
         fs::write(project.join("board.kicad_pro"), "{}\n").unwrap();
-        let home = crate::kicad_config::prepare(&directory.0.join("kicad-config"), "10.0.7").unwrap();
+        let home =
+            crate::kicad_config::prepare(&directory.0.join("kicad-config"), "10.0.7").unwrap();
         let runs = directory.0.join("runs");
         let body = format!(
             "if [ \"$1\" = version ]; then echo 10.0.7; exit 0; fi\n\
@@ -699,20 +778,65 @@ mod tests {
             runs = runs.display(),
         );
         let cli = fake_cli(&directory.0, &body);
-        let arguments = ["pcb", "drc", "--format", "json", "--severity-all", "--output"];
+        let arguments = [
+            "pcb",
+            "drc",
+            "--format",
+            "json",
+            "--severity-all",
+            "--output",
+        ];
         let output = project.join("drc.json");
-        let lines = || fs::read_to_string(&runs).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>();
+        let lines = || {
+            fs::read_to_string(&runs)
+                .unwrap_or_default()
+                .lines()
+                .map(String::from)
+                .collect::<Vec<_>>()
+        };
         let entries = || fs::read_dir(&cache).map_or(0, |entries| entries.count());
-        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), Some(&home)).unwrap();
+        run_report_command_cached(
+            cli.as_os_str(),
+            &arguments,
+            &output,
+            &board,
+            Some(&cache),
+            Some(&home),
+        )
+        .unwrap();
         assert_eq!(lines(), [format!("empty {}", home.display())]);
         assert_eq!(entries(), 1);
-        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), Some(&home)).unwrap();
-        assert_eq!((lines().len(), entries()), (1, 1), "the same configuration hits");
+        run_report_command_cached(
+            cli.as_os_str(),
+            &arguments,
+            &output,
+            &board,
+            Some(&cache),
+            Some(&home),
+        )
+        .unwrap();
+        assert_eq!(
+            (lines().len(), entries()),
+            (1, 1),
+            "the same configuration hits"
+        );
         // The user's configuration is another key: a miss, a KiCad run without the override.
-        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), None).unwrap();
+        run_report_command_cached(
+            cli.as_os_str(),
+            &arguments,
+            &output,
+            &board,
+            Some(&cache),
+            None,
+        )
+        .unwrap();
         let lines = lines();
         assert_eq!((lines.len(), entries()), (2, 2));
-        assert!(!lines[1].contains(&home.display().to_string()), "{}", lines[1]);
+        assert!(
+            !lines[1].contains(&home.display().to_string()),
+            "{}",
+            lines[1]
+        );
     }
 
     #[test]

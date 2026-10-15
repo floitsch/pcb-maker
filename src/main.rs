@@ -42,7 +42,10 @@ fn main() -> ExitCode {
             .map(|text| text.to_string())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "unknown panic".into());
-        let place = info.location().map(|location| format!(" at {}:{}", location.file(), location.line())).unwrap_or_default();
+        let place = info
+            .location()
+            .map(|location| format!(" at {}:{}", location.file(), location.line()))
+            .unwrap_or_default();
         if let Ok(mut first) = PANIC.lock()
             && first.is_none()
         {
@@ -57,11 +60,17 @@ fn main() -> ExitCode {
     let code = match outcome {
         Ok(code) => code,
         Err(_) => {
-            let message = PANIC.lock().ok().and_then(|first| first.clone()).unwrap_or_else(|| "unknown panic".into());
+            let message = PANIC
+                .lock()
+                .ok()
+                .and_then(|first| first.clone())
+                .unwrap_or_else(|| "unknown panic".into());
             // A closed stdout (`pcb-maker --help | head`) ends the process
             // quietly: exit 0, or the verdict's code when the run had one.
             if is_closed_stdout(&message) {
-                return ExitCode::from(agent_cli::decided_exit().unwrap_or(pcb_kicad::EXIT_COMPLETE));
+                return ExitCode::from(
+                    agent_cli::decided_exit().unwrap_or(pcb_kicad::EXIT_COMPLETE),
+                );
             }
             let message = format!("internal error (panic): {message}");
             agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, &message);
@@ -84,7 +93,10 @@ fn dispatch(arguments: Vec<String>) -> u8 {
     // pcb-maker <command> --help, pcb-maker help <command>.
     let asked = if command == "help" || command == "--help" || command == "-h" {
         Some(rest.first().cloned())
-    } else if rest.iter().any(|argument| argument == "--help" || argument == "-h") {
+    } else if rest
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
         Some(Some(command.clone()))
     } else {
         None
@@ -142,27 +154,47 @@ fn one_line(message: &str) -> String {
     let mut lines = message.lines().filter(|line| !line.trim().is_empty());
     let first = lines.next().unwrap_or("").to_string();
     let more = lines.count();
-    if more == 0 { first } else { format!("{first} (+{more} more lines)") }
+    if more == 0 {
+        first
+    } else {
+        format!("{first} (+{more} more lines)")
+    }
 }
 
 fn print_help() {
-    println!("pcb-maker: automatic placement and routing for KiCad boards, judged by KiCad's own ERC and DRC.\n");
+    println!(
+        "pcb-maker: automatic placement and routing for KiCad boards, judged by KiCad's own ERC and DRC.\n"
+    );
     println!("Commands for agents (pcb-maker <command> --help for its arguments and defaults):");
     for (name, line, _) in agent_cli::AGENT_COMMANDS {
         println!("  {name:<24} {line}");
     }
-    println!("\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, export-kicad-fab");
-    println!("(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 9 or newer) must be");
+    println!(
+        "\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, export-kicad-fab"
+    );
+    println!(
+        "(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 9 or newer) must be"
+    );
     println!("on the PATH.\n");
     println!("{}\n", agent_cli::EXIT_CODES);
     println!("Environment:");
     println!("  RAYON_NUM_THREADS          search threads of the router; default: every core.");
-    println!("  PCB_ROUTER_SEEDS           with router config auto: route that many ways and keep the best; default 1.");
-    println!("  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then the");
+    println!(
+        "  PCB_ROUTER_SEEDS           with router config auto: route that many ways and keep the best; default 1."
+    );
+    println!(
+        "  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then the"
+    );
     println!("                             router's own count); default unset.");
-    println!("  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset.");
-    println!("  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds of work; default 600.\n");
-    println!("Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,");
+    println!(
+        "  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset."
+    );
+    println!(
+        "  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds of work; default 600.\n"
+    );
+    println!(
+        "Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,"
+    );
     println!("4 panic):");
     for line in RESEARCH_USAGE {
         println!("  pcb-maker {line}");
@@ -2489,7 +2521,8 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             if arguments.next().is_some() {
                 return Err(usage.into());
             }
-            let report = pcb_kicad::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
+            let report =
+                pcb_kicad::shrink_kicad_board(Path::new(&source), Path::new(&output), factor)?;
             println!(
                 "wrote {output}: {:.1} x {:.1} mm -> {:.1} x {:.1} mm, {} footprints, {} pushed back inside: {}",
                 report.size_before_mm[0],
@@ -2559,7 +2592,9 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                             .ok_or_else(|| usage.to_string())?;
                     }
                     "--footprints-from" => {
-                        footprints_from = Some(std::path::PathBuf::from(arguments.next().ok_or_else(|| usage.to_string())?));
+                        footprints_from = Some(std::path::PathBuf::from(
+                            arguments.next().ok_or_else(|| usage.to_string())?,
+                        ));
                     }
                     _ => return Err(usage.into()),
                 }
@@ -2571,7 +2606,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 layers,
                 footprints_from.as_deref(),
             )?;
-            println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            );
             if !report.missing.is_empty() {
                 return Err(agent_cli::IMPORT_INCOMPLETE.into());
             }
@@ -2585,8 +2623,12 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             if arguments.next().is_some() {
                 return Err(usage.into());
             }
-            let report = pcb_kicad::export_kicad_fab(Path::new(&directory), &board_id, Path::new(&output))?;
-            println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+            let report =
+                pcb_kicad::export_kicad_fab(Path::new(&directory), &board_id, Path::new(&output))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            );
             Ok(())
         }
         "score-kicad-board" => {
@@ -2597,7 +2639,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 return Err(usage.into());
             }
             let report = pcb_kicad::score_kicad_board(Path::new(&directory), &board_id)?;
-            println!("{}", serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            );
             Ok(())
         }
         "describe-kicad-board" => {
@@ -2635,9 +2680,14 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let config = if let Some(path) = arguments.next() {
                 serde_json::from_str(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?
-            } else { pcb_kicad::KiCadRoutingCutConfig::default() };
-            if arguments.next().is_some() { return Err(usage.into()); }
-            let report = pcb_kicad::inspect_kicad_routing_cut(Path::new(&board), &connection, &config)?;
+            } else {
+                pcb_kicad::KiCadRoutingCutConfig::default()
+            };
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let report =
+                pcb_kicad::inspect_kicad_routing_cut(Path::new(&board), &connection, &config)?;
             write_serialized_result(&report, Some(&output))
         }
         "inspect-kicad-terminal-access" => {
@@ -2648,9 +2698,14 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let config = if let Some(path) = arguments.next() {
                 serde_json::from_str(&fs::read_to_string(&path).map_err(|error| error.to_string())?)
                     .map_err(|error| error.to_string())?
-            } else { pcb_kicad::KiCadGridRouteConfig::default() };
-            if arguments.next().is_some() { return Err(usage.into()); }
-            let report = pcb_kicad::inspect_kicad_terminal_access(Path::new(&board), &connection, &config)?;
+            } else {
+                pcb_kicad::KiCadGridRouteConfig::default()
+            };
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let report =
+                pcb_kicad::inspect_kicad_terminal_access(Path::new(&board), &connection, &config)?;
             write_serialized_result(&report, Some(&output))
         }
         "relax-kicad-joint-routes" => {
@@ -2660,14 +2715,31 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let target = arguments.next().ok_or_else(|| usage.to_string())?;
             let config_path = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() { return Err(usage.into()); }
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
             let config: pcb_kicad::KiCadJointRelaxationConfig = serde_json::from_str(
-                &fs::read_to_string(&config_path).map_err(|error| error.to_string())?
-            ).map_err(|error| error.to_string())?;
-            let result = pcb_kicad::relax_kicad_joint_routes(Path::new(&source), &board_id, Path::new(&target), &config, Path::new(&output))?;
-            println!("joint status={:?}; selected={}", result.status, result.selected_directory.display());
+                &fs::read_to_string(&config_path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let result = pcb_kicad::relax_kicad_joint_routes(
+                Path::new(&source),
+                &board_id,
+                Path::new(&target),
+                &config,
+                Path::new(&output),
+            )?;
+            println!(
+                "joint status={:?}; selected={}",
+                result.status,
+                result.selected_directory.display()
+            );
             if result.status != pcb_kicad::KiCadJointRelaxationStatus::Admitted {
-                return Err(format!("joint insertion {:?}: {}", result.status, result.reason.as_deref().unwrap_or("not admitted")));
+                return Err(format!(
+                    "joint insertion {:?}: {}",
+                    result.status,
+                    result.reason.as_deref().unwrap_or("not admitted")
+                ));
             }
             Ok(())
         }
@@ -2677,12 +2749,16 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let candidate = arguments.next().ok_or(usage)?;
             let config_path = arguments.next().ok_or(usage)?;
             let output = arguments.next().ok_or(usage)?;
-            if arguments.next().is_some() { return Err(usage.into()); }
-            let config: pcb_kicad::KiCadGridRouteConfig = serde_json::from_str(
-                &fs::read_to_string(&config_path).map_err(|e| e.to_string())?
-            ).map_err(|e| e.to_string())?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let config: pcb_kicad::KiCadGridRouteConfig =
+                serde_json::from_str(&fs::read_to_string(&config_path).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
             let report = pcb_kicad::inspect_kicad_route_obstructions(
-                Path::new(&board), Path::new(&candidate), &config
+                Path::new(&board),
+                Path::new(&candidate),
+                &config,
             )?;
             write_serialized_result(&report, Some(&output))
         }
@@ -2705,16 +2781,28 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let model = arguments.next().ok_or_else(|| usage.to_string())?;
             let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            let score = pcb_kicad::score_kicad_congestion(Path::new(&source), &board_id, Path::new(&model), &router)?;
-            println!("{}", serde_json::to_string(&score).map_err(|error| error.to_string())?);
+            let score = pcb_kicad::score_kicad_congestion(
+                Path::new(&source),
+                &board_id,
+                Path::new(&model),
+                &router,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string(&score).map_err(|error| error.to_string())?
+            );
             Ok(())
         }
         "score-congestion-sample" => {
             let usage = "usage: pcb-maker score-congestion-sample <sample.json> <model.onnx>";
             let sample = arguments.next().ok_or_else(|| usage.to_string())?;
             let model = arguments.next().ok_or_else(|| usage.to_string())?;
-            let (open, overflow, planes) = pcb_kicad::score_congestion_sample(Path::new(&sample), Path::new(&model))?;
-            println!("{}", serde_json::json!({"open": open, "overflow": overflow, "planes": planes}));
+            let (open, overflow, planes) =
+                pcb_kicad::score_congestion_sample(Path::new(&sample), Path::new(&model))?;
+            println!(
+                "{}",
+                serde_json::json!({"open": open, "overflow": overflow, "planes": planes})
+            );
             Ok(())
         }
         "export-congestion-sample" => {
@@ -2724,14 +2812,24 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let job: pcb_kicad::KiCadCongestionJob = match arguments.next() {
                 Some(path) => serde_json::from_str(
-                    &std::fs::read_to_string(&path).map_err(|error| format!("failed to read {path}: {error}"))?,
+                    &std::fs::read_to_string(&path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
                 )
                 .map_err(|error| format!("failed to parse {path}: {error}"))?,
                 None => Default::default(),
             };
             let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            let reports = pcb_kicad::export_congestion_samples(Path::new(&source), &board_id, Path::new(&output), &job, &router)?;
-            println!("{}", serde_json::to_string(&reports).map_err(|error| error.to_string())?);
+            let reports = pcb_kicad::export_congestion_samples(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &job,
+                &router,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string(&reports).map_err(|error| error.to_string())?
+            );
             Ok(())
         }
         "swap-kicad-pins" => {
@@ -2777,7 +2875,12 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            pcb_kicad::dump_kicad_pour_map(Path::new(&source), &board_id, Path::new(&output), &config)
+            pcb_kicad::dump_kicad_pour_map(
+                Path::new(&source),
+                &board_id,
+                Path::new(&output),
+                &config,
+            )
         }
         "repair-kicad-necks" => {
             let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto] (changes the directory in place)";
@@ -2785,7 +2888,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             let config = board_router_config(arguments.next().as_deref(), &directory, &board_id)?;
             let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
-            println!("{}", serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?
+            );
             Ok(())
         }
         "bench-search" => {
@@ -2797,7 +2903,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| usage.to_string())?;
             let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
-            println!("{}", pcb_kicad::bench_kicad_search(Path::new(&source), &board_id, iterations, &config)?);
+            println!(
+                "{}",
+                pcb_kicad::bench_kicad_search(Path::new(&source), &board_id, iterations, &config)?
+            );
             Ok(())
         }
         "route-kicad-board-freerouting" => {
@@ -2975,16 +3084,34 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board = arguments.next().ok_or_else(|| usage.to_string())?;
             let request = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() { return Err(usage.into()); }
-            let config = serde_json::from_str(&fs::read_to_string(&request).map_err(|e| e.to_string())?)
-                .map_err(|e| format!("invalid island bridge request: {e}"))?;
-            let result = pcb_kicad::bridge_kicad_open_connections(Path::new(&source), &board, &config, Path::new(&output))?;
-            println!("{}: {} bridges admitted, {} opens; selected {}", result.status, result.admitted_bridges,
-                result.selected_native.selected_net_unconnected_items, result.selected_directory.display());
-            if result.status == "complete" && result.source_unchanged && result.selected_native.complete {
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let config =
+                serde_json::from_str(&fs::read_to_string(&request).map_err(|e| e.to_string())?)
+                    .map_err(|e| format!("invalid island bridge request: {e}"))?;
+            let result = pcb_kicad::bridge_kicad_open_connections(
+                Path::new(&source),
+                &board,
+                &config,
+                Path::new(&output),
+            )?;
+            println!(
+                "{}: {} bridges admitted, {} opens; selected {}",
+                result.status,
+                result.admitted_bridges,
+                result.selected_native.selected_net_unconnected_items,
+                result.selected_directory.display()
+            );
+            if result.status == "complete"
+                && result.source_unchanged
+                && result.selected_native.complete
+            {
                 Ok(())
             } else {
-                Err(result.reason.unwrap_or_else(|| "native island bridge operation remains incomplete".into()))
+                Err(result
+                    .reason
+                    .unwrap_or_else(|| "native island bridge operation remains incomplete".into()))
             }
         }
         "propose-kicad-pad-pair-route" => {
@@ -2992,15 +3119,24 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board = arguments.next().ok_or_else(|| usage.to_string())?;
             let request = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() { return Err(usage.into()); }
-            let config = serde_json::from_str(&fs::read_to_string(&request).map_err(|e| e.to_string())?)
-                .map_err(|e| format!("invalid pad-pair request: {e}"))?;
-            let result = pcb_kicad::propose_kicad_pad_pair_route(Path::new(&board), &config, Path::new(&output))?;
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let config =
+                serde_json::from_str(&fs::read_to_string(&request).map_err(|e| e.to_string())?)
+                    .map_err(|e| format!("invalid pad-pair request: {e}"))?;
+            let result = pcb_kicad::propose_kicad_pad_pair_route(
+                Path::new(&board),
+                &config,
+                Path::new(&output),
+            )?;
             if result.route_found && result.source_unchanged {
                 println!("wrote {output}: provisional bridge found; native admission required");
                 Ok(())
             } else {
-                Err(result.error.unwrap_or_else(|| "pad-pair proposal failed or source changed".into()))
+                Err(result
+                    .error
+                    .unwrap_or_else(|| "pad-pair proposal failed or source changed".into()))
             }
         }
         "route-kicad-connection" => {
@@ -6416,10 +6552,16 @@ fn board_router_config(
             if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
                 config.skip_native_verification = true;
             }
-            if let Some(batch) = std::env::var("PCB_JACOBI_BATCH").ok().and_then(|v| v.parse().ok()) {
+            if let Some(batch) = std::env::var("PCB_JACOBI_BATCH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+            {
                 config.jacobi_batch = Some(batch);
             }
-            if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS").ok().and_then(|v| v.parse().ok()) {
+            if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+            {
                 config.seeds = Some(seeds);
             }
             Ok(config)
@@ -6466,4 +6608,3 @@ fn board_router_config(
         }
     }
 }
-

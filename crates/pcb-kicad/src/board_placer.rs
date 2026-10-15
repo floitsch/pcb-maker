@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::placement_constraints::{
-    KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_keepouts, apply_outline,
-    apply_sides, constraint_report, natural, resolve_constraints,
+    KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_keepouts,
+    apply_outline, apply_sides, constraint_report, natural, resolve_constraints,
 };
 use pcb_placer as core;
 
@@ -277,9 +277,16 @@ fn default_routing_room_all_parts() -> bool {
 
 /// The placer's routing-room settings (`KiCadBoardPlacerConfig::routing_room`):
 /// every net is demand but those a pour carries.
-fn routing_room(config: &KiCadBoardPlacerConfig, lowered: &LoweredPlacement) -> Option<core::room::RoutingRoom> {
+fn routing_room(
+    config: &KiCadBoardPlacerConfig,
+    lowered: &LoweredPlacement,
+) -> Option<core::room::RoutingRoom> {
     config.routing_room.then(|| core::room::RoutingRoom {
-        net_demand: lowered.poured.iter().map(|poured| if *poured { 0.0 } else { 1.0 }).collect(),
+        net_demand: lowered
+            .poured
+            .iter()
+            .map(|poured| if *poured { 0.0 } else { 1.0 })
+            .collect(),
         share: config.routing_room_share,
         floor: config.routing_room_floor,
         most: config.routing_room_most,
@@ -409,10 +416,16 @@ pub struct KiCadBoardPlacerResult {
 /// (between non-alphanumerics) naming a switcher's switch node, feedback or
 /// bootstrap, an RF or antenna feed, or a crystal pin.
 fn keep_short(name: &str) -> bool {
-    const TOKENS: [&str; 14] =
-        ["SW", "LX", "FB", "VFB", "BST", "BOOT", "RF", "ANT", "XTAL", "XIN", "XOUT", "XI", "XO", "OSC"];
+    const TOKENS: [&str; 14] = [
+        "SW", "LX", "FB", "VFB", "BST", "BOOT", "RF", "ANT", "XTAL", "XIN", "XOUT", "XI", "XO",
+        "OSC",
+    ];
     name.split(|character: char| !character.is_ascii_alphanumeric())
-        .any(|token| TOKENS.iter().any(|wanted| token.eq_ignore_ascii_case(wanted)))
+        .any(|token| {
+            TOKENS
+                .iter()
+                .any(|wanted| token.eq_ignore_ascii_case(wanted))
+        })
 }
 
 /// Whether a net (by its raw name) connects parts; see `routable_net`.
@@ -439,7 +452,9 @@ pub(super) fn holes_in_courtyards_error(project: &Path) -> bool {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .is_some_and(|project| {
             let severities = &project["board"]["design_settings"]["rule_severities"];
-            ["pth_inside_courtyard", "npth_inside_courtyard"].iter().any(|rule| severities[rule].as_str() == Some("error"))
+            ["pth_inside_courtyard", "npth_inside_courtyard"]
+                .iter()
+                .any(|rule| severities[rule].as_str() == Some("error"))
         })
 }
 
@@ -493,7 +508,10 @@ pub(crate) fn local_body(footprint: &Expr) -> Result<([f64; 2], [f64; 2], bool),
 /// graphic (line, rectangle, arc, circle or polygon) with its stroke;
 /// `None` for anything else.
 fn graphic_box(child: &Expr) -> Result<Option<[f64; 4]>, String> {
-    if !matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")) {
+    if !matches!(
+        child.head(),
+        Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")
+    ) {
         return Ok(None);
     }
     let width = child
@@ -506,11 +524,19 @@ fn graphic_box(child: &Expr) -> Result<Option<[f64; 4]>, String> {
     if child.head() == Some("fp_circle") {
         let center = form_xy(child, "center")?;
         let radius = distance_squared(center, form_xy(child, "end")?).sqrt();
-        points.extend([[center[0] - radius, center[1] - radius], [center[0] + radius, center[1] + radius]]);
+        points.extend([
+            [center[0] - radius, center[1] - radius],
+            [center[0] + radius, center[1] + radius],
+        ]);
     }
     points.extend(outline::pts_points(child)?);
     let bounds = points.into_iter().fold(
-        [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
         |bounds, point| {
             [
                 bounds[0].min(point[0] - width / 2.0),
@@ -542,13 +568,20 @@ fn tight_body(footprint: &Expr, skip: Option<&str>) -> Result<Option<[f64; 4]>, 
 
 /// The box around the graphics on layers ending in `outline` and the pads,
 /// whether it is a disc, and how many outline graphics there are.
-fn body_with_outline(footprint: &Expr, outline: &str) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
+fn body_with_outline(
+    footprint: &Expr,
+    outline: &str,
+) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
     body_on_side(footprint, outline, None)
 }
 
 /// `body_with_outline` leaving out the outline and mask graphics on the
 /// layers of one side (`"F."` or `"B."`).
-fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
+fn body_on_side(
+    footprint: &Expr,
+    outline: &str,
+    skip: Option<&str>,
+) -> Result<([f64; 2], [f64; 2], bool, usize), String> {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     let mut include = |point: [f64; 2], radius: f64| {
@@ -565,7 +598,8 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
     // of other parts under it). They are part of the body, tight or not.
     let counts = |child: &Expr| {
         form_atom(child, "layer", 1).is_some_and(|layer| {
-            (layer.ends_with(outline) || layer.ends_with(".Mask")) && !skip.is_some_and(|side| layer.starts_with(side))
+            (layer.ends_with(outline) || layer.ends_with(".Mask"))
+                && !skip.is_some_and(|side| layer.starts_with(side))
         })
     };
     for child in footprint.children() {
@@ -595,13 +629,12 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
                 let (sin, cos) = quarter_sin_cos(-(at[2] - footprint_angle));
                 // Copper must keep a hole's local clearance, so no other
                 // part's pads may come that close either.
-                let keep_away = if child.children().get(2).and_then(Expr::atom)
-                    == Some("np_thru_hole")
-                {
-                    local_clearance::pad_clearance(child, footprint)?
-                } else {
-                    0.0
-                };
+                let keep_away =
+                    if child.children().get(2).and_then(Expr::atom) == Some("np_thru_hole") {
+                        local_clearance::pad_clearance(child, footprint)?
+                    } else {
+                        0.0
+                    };
                 let half = [
                     (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0 + keep_away,
                     (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0 + keep_away,
@@ -624,7 +657,10 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
                 ];
                 for corner in [[-1.0, -1.0], [1.0, 1.0]] {
                     include(
-                        [center[0] + corner[0] * half[0], center[1] + corner[1] * half[1]],
+                        [
+                            center[0] + corner[0] * half[0],
+                            center[1] + corner[1] * half[1],
+                        ],
                         0.0,
                     );
                 }
@@ -632,7 +668,13 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
                 // switch: a 0.7 mm anchor and a ring of 3.1 mm radius around
                 // the switch centre), in the pad's own frame.
                 for (point, radius) in custom_pad_points(child) {
-                    include([at[0] + cos * point[0] - sin * point[1], at[1] + sin * point[0] + cos * point[1]], radius);
+                    include(
+                        [
+                            at[0] + cos * point[0] - sin * point[1],
+                            at[1] + sin * point[0] + cos * point[1],
+                        ],
+                        radius,
+                    );
                 }
             }
             _ => {}
@@ -642,8 +684,10 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
         // Neither courtyard nor pads: copper artwork (a logo on copper)
         // still takes its room.
         for child in footprint.children() {
-            if !(matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
+            if !(matches!(
+                child.head(),
+                Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")
+            ) && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".Cu")))
             {
                 continue;
             }
@@ -672,7 +716,10 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
     // A single circular courtyard containing all pads is a disc.
     let round = circles == 1 && straight == 0 && (size[0] - size[1]).abs() < 1.0e-6;
     Ok((
-        [(minimum[0] + maximum[0]) / 2.0, (minimum[1] + maximum[1]) / 2.0],
+        [
+            (minimum[0] + maximum[0]) / 2.0,
+            (minimum[1] + maximum[1]) / 2.0,
+        ],
         size,
         round,
         circles + straight,
@@ -681,7 +728,10 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
 
 /// Moves a footprint to `pose`, keeping pad and text angles (which KiCad
 /// stores as absolute values) consistent. Returns the written pose.
-pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Result<[f64; 3], String> {
+pub(super) fn write_footprint_pose(
+    footprint: &mut Expr,
+    pose: core::Pose,
+) -> Result<[f64; 3], String> {
     let current = form_at(footprint)?;
     let at = [
         (pose.position[0] * 1.0e6).round() / 1.0e6,
@@ -696,7 +746,10 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
     if (at[0] != current[0] || at[1] != current[1] || delta != 0.0)
         && let Expr::List(children) = footprint
     {
-        for child in children.iter_mut().filter(|child| child.head() == Some("zone")) {
+        for child in children
+            .iter_mut()
+            .filter(|child| child.head() == Some("zone"))
+        {
             move_points(child, current, at);
         }
     }
@@ -710,7 +763,11 @@ pub(super) fn write_footprint_pose(footprint: &mut Expr, pose: core::Pose) -> Re
                 let child_at = form_at(child)?;
                 set_form_at(
                     child,
-                    [child_at[0], child_at[1], normalize_angle(child_at[2] + delta)],
+                    [
+                        child_at[0],
+                        child_at[1],
+                        normalize_angle(child_at[2] + delta),
+                    ],
                 )?;
             }
         }
@@ -725,11 +782,17 @@ fn move_points(node: &mut Expr, from: [f64; 3], to: [f64; 3]) {
         return;
     };
     if items.first().and_then(Expr::atom) == Some("xy") {
-        let value = |items: &[Expr], index: usize| items.get(index).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok());
+        let value = |items: &[Expr], index: usize| {
+            items
+                .get(index)
+                .and_then(Expr::atom)
+                .and_then(|atom| atom.parse::<f64>().ok())
+        };
         if let (Some(x), Some(y)) = (value(items, 1), value(items, 2)) {
             let local = core::problem::rotate([x - from[0], y - from[1]], from[2]);
             let board = core::problem::rotate(local, -to[2]);
-            let round = |value: f64| Expr::Atom((((value * 1.0e6).round() / 1.0e6) + 0.0).to_string());
+            let round =
+                |value: f64| Expr::Atom((((value * 1.0e6).round() / 1.0e6) + 0.0).to_string());
             items[1] = round(to[0] + board[0]);
             items[2] = round(to[1] + board[1]);
         }
@@ -758,7 +821,9 @@ fn custom_pad_points(pad: &Expr) -> Vec<([f64; 2], f64)> {
             .max(0.0);
         match primitive.head() {
             Some("gr_circle") => {
-                if let (Ok(center), Ok(end)) = (form_xy(primitive, "center"), form_xy(primitive, "end")) {
+                if let (Ok(center), Ok(end)) =
+                    (form_xy(primitive, "center"), form_xy(primitive, "end"))
+                {
                     points.push((center, distance_squared(center, end).sqrt() + width / 2.0));
                 }
             }
@@ -781,7 +846,15 @@ fn pad_extent(pad: &Expr) -> [f64; 2] {
     let size = form_xy(pad, "size").unwrap_or([0.0, 0.0]);
     let drill: Vec<f64> = pad
         .child("drill")
-        .map(|drill| drill.children().iter().skip(1).filter_map(Expr::atom).filter_map(|atom| atom.parse().ok()).collect())
+        .map(|drill| {
+            drill
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .filter_map(|atom| atom.parse().ok())
+                .collect()
+        })
         .unwrap_or_default();
     let drill = match drill.as_slice() {
         [diameter] => [*diameter, *diameter],
@@ -796,7 +869,11 @@ fn pad_extent(pad: &Expr) -> [f64; 2] {
 /// suits; up to 4.7 µF within `decoupling_mm` (2.5 mm) of the pin, bulk capacitors within
 /// 5 mm. Crystals go within 3 mm of the IC pins they drive. Capacitors that a user
 /// constraint names, fixed ones and ones a row carries keep to those.
-fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Result<Vec<core::constraints::Relation>, String> {
+fn decoupling_relations(
+    pcb: &Expr,
+    problem: &core::Problem,
+    near_mm: f64,
+) -> Result<Vec<core::constraints::Relation>, String> {
     use crate::quality::{capacitance, ground, rail_name};
     use core::constraints::{Anchor, Relation};
     struct Supply {
@@ -804,7 +881,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         offset: [f64; 2],
         net: String,
     }
-    let footprints: Vec<&Expr> = pcb.children().iter().filter(|item| item.head() == Some("footprint")).collect();
+    let footprints: Vec<&Expr> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .collect();
     // A user's "near that part" leaves room for "at its supply pin";
     // anything else a user said about a capacitor stands.
     let named: BTreeSet<usize> = problem
@@ -812,15 +893,31 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         .relations
         .iter()
         .filter_map(|relation| match relation {
-            Relation::Near { anchor: Anchor::Body(_), .. } => None,
-            Relation::Near { anchor: Anchor::Area(_, _, _, half), .. } if *half != [0.0, 0.0] => None,
+            Relation::Near {
+                anchor: Anchor::Body(_),
+                ..
+            } => None,
+            Relation::Near {
+                anchor: Anchor::Area(_, _, _, half),
+                ..
+            } if *half != [0.0, 0.0] => None,
             other => other.parts()[0],
         })
         .chain(problem.constraints.edges.iter().map(|(part, _, _)| *part))
         .chain(problem.constraints.regions.iter().map(|(part, _)| *part))
-        .chain(problem.constraints.followers.iter().map(|follower| follower.part))
+        .chain(
+            problem
+                .constraints
+                .followers
+                .iter()
+                .map(|follower| follower.part),
+        )
         .collect();
-    let prefix = |reference: &str| reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_').to_string();
+    let prefix = |reference: &str| {
+        reference
+            .trim_end_matches(|c: char| c.is_ascii_digit() || c == '_')
+            .to_string()
+    };
     let mut supplies: Vec<Supply> = Vec::new();
     // Capacitors between ground and another net: decoupling when that net
     // is a rail (by name, or an IC's supply pin is on it).
@@ -845,13 +942,22 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
                 let at = form_at(pad).unwrap_or([0.0; 3]);
                 // The pin function without KiCad's appended pin number.
                 let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
-                let function = function.rsplit_once('_').filter(|(_, number)| number.chars().all(|c| c.is_ascii_digit())).map_or(function, |(name, _)| name);
+                let function = function
+                    .rsplit_once('_')
+                    .filter(|(_, number)| number.chars().all(|c| c.is_ascii_digit()))
+                    .map_or(function, |(name, _)| name);
                 let function = function.to_ascii_uppercase();
-                let switch = matches!(function.as_str(), "SW" | "LX" | "SWITCH" | "PH" | "SWN" | "SWP" | "BST" | "VSW")
-                    || function.starts_with("SW") && function[2..].chars().all(|c| c.is_ascii_digit())
-                    || function.starts_with("LX") && function[2..].chars().all(|c| c.is_ascii_digit());
+                let switch = matches!(
+                    function.as_str(),
+                    "SW" | "LX" | "SWITCH" | "PH" | "SWN" | "SWP" | "BST" | "VSW"
+                ) || function.starts_with("SW")
+                    && function[2..].chars().all(|c| c.is_ascii_digit())
+                    || function.starts_with("LX")
+                        && function[2..].chars().all(|c| c.is_ascii_digit());
                 (
-                    node_net(pad).filter(|raw| placer_net(raw)).map(|raw| normalize_net(raw).to_string()),
+                    node_net(pad)
+                        .filter(|raw| placer_net(raw))
+                        .map(|raw| normalize_net(raw).to_string()),
                     [at[0], at[1]],
                     form_atom(pad, "pintype", 1) == Some("power_in"),
                     switch,
@@ -861,22 +967,35 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         let value = footprint
             .children()
             .iter()
-            .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Value"))
+            .find(|item| {
+                item.head() == Some("property")
+                    && item.children().get(1).and_then(Expr::atom) == Some("Value")
+            })
             .and_then(|item| item.children().get(2).and_then(Expr::atom))
             .unwrap_or("")
             .to_ascii_uppercase();
         let protector = crate::quality::esd_protector(&value)
             && !problem.components[index].fixed
             && !named.contains(&index);
-        if matches!(prefix(&reference).as_str(), "J" | "P" | "CN" | "CON" | "USB") {
+        if matches!(
+            prefix(&reference).as_str(),
+            "J" | "P" | "CN" | "CON" | "USB"
+        ) {
             for (net, offset, _, _) in &pads {
                 if let Some(net) = net.as_ref().filter(|net| !ground(net)) {
-                    connector_pads.entry(net.clone()).or_default().push((index, *offset));
+                    connector_pads
+                        .entry(net.clone())
+                        .or_default()
+                        .push((index, *offset));
                 }
             }
         }
         if protector {
-            let nets: Vec<String> = pads.iter().filter_map(|(net, _, _, _)| net.clone()).filter(|net| !ground(net)).collect();
+            let nets: Vec<String> = pads
+                .iter()
+                .filter_map(|(net, _, _, _)| net.clone())
+                .filter(|net| !ground(net))
+                .collect();
             protectors.push((index, nets));
             continue;
         }
@@ -887,18 +1006,33 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
                     let Some(net) = net else {
                         continue;
                     };
-                    ic_pads.entry(net.clone()).or_default().push((index, *offset));
+                    ic_pads
+                        .entry(net.clone())
+                        .or_default()
+                        .push((index, *offset));
                     if *switch {
-                        switch_pads.entry(net.clone()).or_default().push((index, *offset));
+                        switch_pads
+                            .entry(net.clone())
+                            .or_default()
+                            .push((index, *offset));
                     }
                     // One anchor per rail and IC: its first supply pin.
                     if !ground(net) && (*power || rail_name(net)) && seen.insert(net.clone()) {
-                        supplies.push(Supply { part: index, offset: *offset, net: net.clone() });
+                        supplies.push(Supply {
+                            part: index,
+                            offset: *offset,
+                            net: net.clone(),
+                        });
                     }
                 }
             }
             _ if {
-                let name = footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_ascii_lowercase();
+                let name = footprint
+                    .children()
+                    .get(1)
+                    .and_then(Expr::atom)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
                 prefix(&reference) == "Y" || name.contains("crystal") || name.contains("resonator")
             } =>
             {
@@ -941,7 +1075,10 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
                 let value = footprint
                     .children()
                     .iter()
-                    .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Value"))
+                    .find(|item| {
+                        item.head() == Some("property")
+                            && item.children().get(1).and_then(Expr::atom) == Some("Value")
+                    })
                     .and_then(|item| item.children().get(2).and_then(Expr::atom))
                     .unwrap_or("");
                 let bulk = capacitance(value).is_some_and(|farads| farads >= 4.7e-6);
@@ -962,7 +1099,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
         if anchors.is_empty() {
             continue;
         }
-        relations.push(Relation::NearAny { part: index, anchors, max: if bulk { 5.0 } else { near_mm } });
+        relations.push(Relation::NearAny {
+            part: index,
+            anchors,
+            max: if bulk { 5.0 } else { near_mm },
+        });
     }
     // A switcher's inductor at the IC's switch pin: a small hot loop. Only
     // where a pin function says the pin switches (a supply filter's
@@ -975,7 +1116,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
             .map(|(ic, offset)| Anchor::Point(*ic, *offset))
             .collect();
         if !anchors.is_empty() {
-            relations.push(Relation::NearAny { part: index, anchors, max: 3.0 });
+            relations.push(Relation::NearAny {
+                part: index,
+                anchors,
+                max: 3.0,
+            });
         }
     }
     // ESD protection at the connector pins it guards: a surge should meet
@@ -987,7 +1132,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
             .map(|(connector, offset)| Anchor::Point(*connector, *offset))
             .collect();
         if !anchors.is_empty() {
-            relations.push(Relation::NearAny { part: index, anchors, max: 3.0 });
+            relations.push(Relation::NearAny {
+                part: index,
+                anchors,
+                max: 3.0,
+            });
         }
     }
     // A crystal close to the IC pins it drives (short, quiet oscillator
@@ -995,7 +1144,11 @@ fn decoupling_relations(pcb: &Expr, problem: &core::Problem, near_mm: f64) -> Re
     for (index, nets) in crystals {
         for net in nets {
             for (ic, offset) in ic_pads.get(&net).into_iter().flatten() {
-                relations.push(Relation::Near { part: index, anchor: Anchor::Point(*ic, *offset), max: 3.0 });
+                relations.push(Relation::Near {
+                    part: index,
+                    anchor: Anchor::Point(*ic, *offset),
+                    max: 3.0,
+                });
             }
         }
     }
@@ -1012,7 +1165,10 @@ fn pads_in_pin_rows(centers: &[[f64; 2]]) -> bool {
     const TOLERANCE: f64 = 0.05;
     let mut pads: Vec<[f64; 2]> = Vec::new();
     for center in centers {
-        if !pads.iter().any(|pad| (pad[0] - center[0]).abs() < 1.0e-3 && (pad[1] - center[1]).abs() < 1.0e-3) {
+        if !pads
+            .iter()
+            .any(|pad| (pad[0] - center[0]).abs() < 1.0e-3 && (pad[1] - center[1]).abs() < 1.0e-3)
+        {
             pads.push(*center);
         }
     }
@@ -1026,7 +1182,10 @@ fn pads_in_pin_rows(centers: &[[f64; 2]]) -> bool {
         let mut lines: Vec<(f64, Vec<usize>)> = Vec::new();
         for (index, pad) in pads.iter().enumerate() {
             let across = pad[1 - axis];
-            match lines.iter_mut().find(|(at, _)| (at - across).abs() <= TOLERANCE) {
+            match lines
+                .iter_mut()
+                .find(|(at, _)| (at - across).abs() <= TOLERANCE)
+            {
                 Some((_, line)) => line.push(index),
                 None => lines.push((across, vec![index])),
             }
@@ -1068,13 +1227,15 @@ fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>
         }
     };
     for child in footprint.children() {
-        if !form_atom(child, "layer", 1)
-            .is_some_and(|layer| layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side)))
-        {
+        if !form_atom(child, "layer", 1).is_some_and(|layer| {
+            layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side))
+        }) {
             continue;
         }
         match child.head() {
-            Some("fp_line" | "fp_arc") => chain(&outline::outline_points(child)?, false, &mut edges),
+            Some("fp_line" | "fp_arc") => {
+                chain(&outline::outline_points(child)?, false, &mut edges)
+            }
             Some("fp_rect") => {
                 let (a, b) = (form_xy(child, "start")?, form_xy(child, "end")?);
                 chain(&[a, [b[0], a[1]], b, [a[0], b[1]]], true, &mut edges);
@@ -1102,8 +1263,11 @@ fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>
     for span in heights.windows(2) {
         let (low, high) = (span[0], span[1]);
         let middle = (low + high) / 2.0;
-        let mut crossing: Vec<([f64; 2], [f64; 2])> =
-            edges.iter().copied().filter(|(a, b)| (a[1] > middle) != (b[1] > middle)).collect();
+        let mut crossing: Vec<([f64; 2], [f64; 2])> = edges
+            .iter()
+            .copied()
+            .filter(|(a, b)| (a[1] > middle) != (b[1] > middle))
+            .collect();
         if crossing.len() % 2 != 0 {
             return Ok(Vec::new());
         }
@@ -1112,7 +1276,9 @@ fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>
             let left = x_at(pair[0], low).min(x_at(pair[0], high));
             let right = x_at(pair[1], low).max(x_at(pair[1], high));
             match slabs.iter_mut().find(|slab| {
-                (slab[3] - low).abs() < 1.0e-6 && (slab[0] - left).abs() < 1.0e-6 && (slab[2] - right).abs() < 1.0e-6
+                (slab[3] - low).abs() < 1.0e-6
+                    && (slab[0] - left).abs() < 1.0e-6
+                    && (slab[2] - right).abs() < 1.0e-6
             }) {
                 Some(slab) => slab[3] = high,
                 None => slabs.push([left, low, right, high]),
@@ -1133,7 +1299,10 @@ fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
 }
 
 /// `courtyard_shapes` leaving out the courtyard on one side's layers.
-fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec<[f64; 4]>, bool), String> {
+fn courtyard_shapes_on_side(
+    footprint: &Expr,
+    skip: Option<&str>,
+) -> Result<(Vec<[f64; 4]>, bool), String> {
     let mut degrees: Vec<([f64; 2], usize)> = Vec::new();
     let mut shapes: Vec<(Vec<[f64; 2]>, [f64; 4])> = Vec::new();
     let grow = |bounds: &mut [f64; 4], point: [f64; 2], radius: f64| {
@@ -1142,11 +1311,16 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
         bounds[2] = bounds[2].max(point[0] + radius);
         bounds[3] = bounds[3].max(point[1] + radius);
     };
-    let empty = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let empty = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     for child in footprint.children() {
-        if !form_atom(child, "layer", 1)
-            .is_some_and(|layer| layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side)))
-        {
+        if !form_atom(child, "layer", 1).is_some_and(|layer| {
+            layer.ends_with(".CrtYd") && !skip.is_some_and(|side| layer.starts_with(side))
+        }) {
             continue;
         }
         let mut bounds = empty;
@@ -1158,7 +1332,10 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
                 }
                 ends = vec![form_xy(child, "start")?, form_xy(child, "end")?];
                 for end in &ends {
-                    match degrees.iter_mut().find(|(point, _)| distance_squared(*point, *end) < 1.0e-6) {
+                    match degrees
+                        .iter_mut()
+                        .find(|(point, _)| distance_squared(*point, *end) < 1.0e-6)
+                    {
                         Some((_, degree)) => *degree += 1,
                         None => degrees.push((*end, 1)),
                     }
@@ -1170,7 +1347,11 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
             }
             Some("fp_circle") => {
                 let center = form_xy(child, "center")?;
-                grow(&mut bounds, center, distance_squared(center, form_xy(child, "end")?).sqrt());
+                grow(
+                    &mut bounds,
+                    center,
+                    distance_squared(center, form_xy(child, "end")?).sqrt(),
+                );
             }
             Some("fp_poly") => {
                 for point in outline::pts_points(child)? {
@@ -1181,9 +1362,14 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
         }
         // Merge with every shape sharing an end point.
         let touches = |points: &[[f64; 2]]| {
-            ends.iter().any(|end| points.iter().any(|point| distance_squared(*end, *point) < 1.0e-6))
+            ends.iter().any(|end| {
+                points
+                    .iter()
+                    .any(|point| distance_squared(*end, *point) < 1.0e-6)
+            })
         };
-        let (mut merged, rest): (Vec<_>, Vec<_>) = shapes.drain(..).partition(|(points, _)| touches(points));
+        let (mut merged, rest): (Vec<_>, Vec<_>) =
+            shapes.drain(..).partition(|(points, _)| touches(points));
         shapes = rest;
         let mut points = ends.clone();
         for (other_points, other_bounds) in merged.drain(..) {
@@ -1197,7 +1383,10 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
     if shapes.len() < 2 {
         return Ok((Vec::new(), malformed));
     }
-    Ok((shapes.into_iter().map(|(_, bounds)| bounds).collect(), malformed))
+    Ok((
+        shapes.into_iter().map(|(_, bounds)| bounds).collect(),
+        malformed,
+    ))
 }
 
 /// Whether a footprint sits on the bottom side. Its SMD pads decide when
@@ -1205,13 +1394,24 @@ fn courtyard_shapes_on_side(footprint: &Expr, skip: Option<&str>) -> Result<(Vec
 /// the front while their copper is on the back.
 pub(crate) fn on_back(footprint: &Expr) -> bool {
     let (mut front, mut back) = (0, 0);
-    for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+    for pad in footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("pad"))
+    {
         if pad.children().get(2).and_then(Expr::atom) != Some("smd") {
             continue;
         }
         let layers: Vec<&str> = pad
             .child("layers")
-            .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+            .map(|layers| {
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .collect()
+            })
             .unwrap_or_default();
         front += layers.contains(&"F.Cu") as usize;
         back += layers.contains(&"B.Cu") as usize;
@@ -1228,7 +1428,12 @@ pub(crate) fn on_back(footprint: &Expr) -> bool {
 /// barrel jack's body), if one side clearly does.
 pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, String> {
     let footprint_angle = form_at(footprint)?[2];
-    let mut courtyard = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+    let mut courtyard = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
     let mut pads = courtyard;
     let grow = |bounds: &mut [f64; 4], point: [f64; 2], half: [f64; 2]| {
         bounds[0] = bounds[0].min(point[0] - half[0]);
@@ -1237,7 +1442,8 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
         bounds[3] = bounds[3].max(point[1] + half[1]);
     };
     for child in footprint.children() {
-        let on_courtyard = form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd"));
+        let on_courtyard =
+            form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd"));
         match child.head() {
             Some("fp_line" | "fp_rect" | "fp_arc") if on_courtyard => {
                 for point in outline::outline_points(child)? {
@@ -1286,10 +1492,17 @@ fn footprint_keepout_box(footprint: &Expr, at: [f64; 3]) -> Result<Option<[f64; 
         .iter()
         .filter(|child| child.head() == Some("zone") && child.child("keepout").is_some())
     {
-        let Some(points) = zone.child("polygon").and_then(|polygon| polygon.child("pts")) else {
+        let Some(points) = zone
+            .child("polygon")
+            .and_then(|polygon| polygon.child("pts"))
+        else {
             continue;
         };
-        for point in points.children().iter().filter(|child| child.head() == Some("xy")) {
+        for point in points
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("xy"))
+        {
             let board = [
                 expression_coordinate(point, 1, "keepout x")?,
                 expression_coordinate(point, 2, "keepout y")?,
@@ -1387,7 +1600,15 @@ pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
 /// `None` for other zones.
 fn rule_area_obstacle(
     item: &Expr,
-) -> Result<Option<(core::Component, core::Pose, pcb_router::geometry::Aabb, bool)>, String> {
+) -> Result<
+    Option<(
+        core::Component,
+        core::Pose,
+        pcb_router::geometry::Aabb,
+        bool,
+    )>,
+    String,
+> {
     let Some(keepout) = item.child("keepout") else {
         return Ok(None);
     };
@@ -1396,11 +1617,18 @@ fn rule_area_obstacle(
     if !bodies && !pads {
         return Ok(None);
     }
-    let Some(polygon) = item.child("polygon").and_then(|polygon| polygon.child("pts")) else {
+    let Some(polygon) = item
+        .child("polygon")
+        .and_then(|polygon| polygon.child("pts"))
+    else {
         return Ok(None);
     };
     let mut points = Vec::new();
-    for point in polygon.children().iter().filter(|child| child.head() == Some("xy")) {
+    for point in polygon
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("xy"))
+    {
         let coordinate = |index: usize| -> Result<f64, String> {
             point
                 .children()
@@ -1414,18 +1642,33 @@ fn rule_area_obstacle(
     }
     let Some(bounds) = points
         .iter()
-        .map(|xy| pcb_router::geometry::Aabb { minimum: *xy, maximum: *xy })
+        .map(|xy| pcb_router::geometry::Aabb {
+            minimum: *xy,
+            maximum: *xy,
+        })
         .reduce(pcb_router::geometry::Aabb::union)
     else {
         return Ok(None);
     };
     let layers: Vec<&str> = item
         .child("layers")
-        .map(|layers| layers.children().iter().skip(1).filter_map(Expr::atom).collect())
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect()
+        })
         .or_else(|| form_atom(item, "layer", 1).map(|layer| vec![layer]))
         .unwrap_or_default();
-    let all = layers.iter().any(|layer| layer.starts_with('*') || *layer == "F&B.Cu");
-    let side = match (all || layers.contains(&"F.Cu"), all || layers.contains(&"B.Cu")) {
+    let all = layers
+        .iter()
+        .any(|layer| layer.starts_with('*') || *layer == "F&B.Cu");
+    let side = match (
+        all || layers.contains(&"F.Cu"),
+        all || layers.contains(&"B.Cu"),
+    ) {
         (true, false) => core::Side::Front,
         (false, true) => core::Side::Back,
         // Inner layers only: no part sits there, but a through-hole pad
@@ -1439,7 +1682,10 @@ fn rule_area_obstacle(
     let component = core::Component {
         name: "keepout".into(),
         body_center: [0.0, 0.0],
-        body_size: [bounds.maximum[0] - bounds.minimum[0], bounds.maximum[1] - bounds.minimum[1]],
+        body_size: [
+            bounds.maximum[0] - bounds.minimum[0],
+            bounds.maximum[1] - bounds.minimum[1],
+        ],
         round: false,
         halo: 0.0,
         pins: Vec::new(),
@@ -1460,7 +1706,10 @@ fn rule_area_obstacle(
         tight_hollow: Vec::new(),
     };
     let pose = core::Pose {
-        position: [(bounds.minimum[0] + bounds.maximum[0]) / 2.0, (bounds.minimum[1] + bounds.maximum[1]) / 2.0],
+        position: [
+            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+        ],
         angle: 0.0,
     };
     Ok(Some((component, pose, bounds, bodies)))
@@ -1502,7 +1751,9 @@ fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
     // The pieces the fixed parts of each group sit on.
     let piece_of = |problem: &core::Problem, part: usize| {
         let center = problem.components[part].center(problem.poses[part]);
-        problem.pieces.iter().position(|b| center[0] >= b[0] && center[0] <= b[2] && center[1] >= b[1] && center[1] <= b[3])
+        problem.pieces.iter().position(|b| {
+            center[0] >= b[0] && center[0] <= b[2] && center[1] >= b[1] && center[1] <= b[3]
+        })
     };
     let mut anchors: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for part in 0..footprints {
@@ -1514,11 +1765,26 @@ fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
         }
     }
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-        eprintln!("pieces: {} pieces, net groups anchored on them {:?}", problem.pieces.len(), anchors.values().map(|pieces| pieces.len()).collect::<Vec<_>>());
+        eprintln!(
+            "pieces: {} pieces, net groups anchored on them {:?}",
+            problem.pieces.len(),
+            anchors
+                .values()
+                .map(|pieces| pieces.len())
+                .collect::<Vec<_>>()
+        );
     }
-    let constrained: BTreeSet<usize> = problem.constraints.regions.iter().map(|(part, _)| *part).collect();
+    let constrained: BTreeSet<usize> = problem
+        .constraints
+        .regions
+        .iter()
+        .map(|(part, _)| *part)
+        .collect();
     for part in 0..footprints {
-        if problem.components[part].fixed || problem.components[part].pins.is_empty() || constrained.contains(&part) {
+        if problem.components[part].fixed
+            || problem.components[part].pins.is_empty()
+            || constrained.contains(&part)
+        {
             continue;
         }
         let group = root(&mut parent, part);
@@ -1574,7 +1840,10 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for part in 0..footprints {
         if !problem.components[part].pins.is_empty() {
-            groups.entry(root(&mut parent, part)).or_default().push(part);
+            groups
+                .entry(root(&mut parent, part))
+                .or_default()
+                .push(part);
         }
     }
     if groups.len() < 2 {
@@ -1583,8 +1852,15 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     // A copy: a group whose references (with pin counts) another group
     // repeats.
     let signature = |members: &[usize]| -> Vec<(String, usize)> {
-        let mut parts: Vec<(String, usize)> =
-            members.iter().map(|part| (problem.components[*part].name.clone(), problem.components[*part].pins.len())).collect();
+        let mut parts: Vec<(String, usize)> = members
+            .iter()
+            .map(|part| {
+                (
+                    problem.components[*part].name.clone(),
+                    problem.components[*part].pins.len(),
+                )
+            })
+            .collect();
         parts.sort();
         parts
     };
@@ -1594,8 +1870,16 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     }
     let body_box = |problem: &core::Problem, part: usize| {
         let component = &problem.components[part];
-        let (center, half) = (component.center(problem.poses[part]), component.half_extent(problem.poses[part].angle));
-        [center[0] - half[0], center[1] - half[1], center[0] + half[0], center[1] + half[1]]
+        let (center, half) = (
+            component.center(problem.poses[part]),
+            component.half_extent(problem.poses[part].angle),
+        );
+        [
+            center[0] - half[0],
+            center[1] - half[1],
+            center[0] + half[0],
+            center[1] + half[1],
+        ]
     };
     // Each copy's fixed parts' box, and its movable parts.
     let mut copies: Vec<([f64; 4], Vec<usize>)> = Vec::new();
@@ -1603,12 +1887,22 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
         if kinds[&signature(members)] < 2 {
             continue;
         }
-        let mut anchor = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut anchor = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         let mut movable = Vec::new();
         for &part in members {
             if problem.components[part].fixed {
                 let b = body_box(problem, part);
-                anchor = [anchor[0].min(b[0]), anchor[1].min(b[1]), anchor[2].max(b[2]), anchor[3].max(b[3])];
+                anchor = [
+                    anchor[0].min(b[0]),
+                    anchor[1].min(b[1]),
+                    anchor[2].max(b[2]),
+                    anchor[3].max(b[3]),
+                ];
             } else {
                 movable.push(part);
             }
@@ -1622,7 +1916,12 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     }
     // The copies' fixed parts must keep apart: interleaved copies have no
     // region of their own.
-    let gap = |a: &[f64; 4], b: &[f64; 4]| -> [f64; 2] { [(b[0] - a[2]).max(a[0] - b[2]), (b[1] - a[3]).max(a[1] - b[3])] };
+    let gap = |a: &[f64; 4], b: &[f64; 4]| -> [f64; 2] {
+        [
+            (b[0] - a[2]).max(a[0] - b[2]),
+            (b[1] - a[3]).max(a[1] - b[3]),
+        ]
+    };
     for (index, (a, _)) in copies.iter().enumerate() {
         for (b, _) in &copies[index + 1..] {
             let [x, y] = gap(a, b);
@@ -1632,7 +1931,12 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
         }
     }
     let bounds = problem.bounds();
-    let constrained: BTreeSet<usize> = problem.constraints.regions.iter().map(|(part, _)| *part).collect();
+    let constrained: BTreeSet<usize> = problem
+        .constraints
+        .regions
+        .iter()
+        .map(|(part, _)| *part)
+        .collect();
     // The copies repeat one layout, so each copy's region lies around its
     // fixed parts as the board lies around all copies' fixed parts: a cut
     // halfway between two copies' fixed parts moves by half the difference
@@ -1641,14 +1945,29 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     // 2.3 mm from the board's top edge, 40.5 mm from its bottom) through
     // their own parts: 162 of the designer's 630 movable parts lay outside
     // their copy's region, none with the shift.
-    let all = copies.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, (a, _)| {
-        [b[0].min(a[0]), b[1].min(a[1]), b[2].max(a[2]), b[3].max(a[3])]
-    });
+    let all = copies.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |b, (a, _)| {
+            [
+                b[0].min(a[0]),
+                b[1].min(a[1]),
+                b[2].max(a[2]),
+                b[3].max(a[3]),
+            ]
+        },
+    );
     let shift = [
         ((bounds[2] - all[2]) - (all[0] - bounds[0])) / 2.0,
         ((bounds[3] - all[3]) - (all[1] - bounds[1])) / 2.0,
     ];
-    let cut = |before: f64, after: f64, axis: usize| ((before + after) / 2.0 + shift[axis]).clamp(before, after);
+    let cut = |before: f64, after: f64, axis: usize| {
+        ((before + after) / 2.0 + shift[axis]).clamp(before, after)
+    };
     let mut regions = Vec::new();
     for (index, (anchor, _)) in copies.iter().enumerate() {
         let mut region = bounds;
@@ -1689,8 +2008,14 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
         eprintln!(
             "copies: {} copies held apart ({} movable parts), regions {:?}",
             copies.len(),
-            copies.iter().map(|(_, movable)| movable.len()).sum::<usize>(),
-            regions.iter().map(|r| r.map(|v| (v * 10.0).round() / 10.0)).collect::<Vec<_>>()
+            copies
+                .iter()
+                .map(|(_, movable)| movable.len())
+                .sum::<usize>(),
+            regions
+                .iter()
+                .map(|r| r.map(|v| (v * 10.0).round() / 10.0))
+                .collect::<Vec<_>>()
         );
     }
     copies.len()
@@ -1724,7 +2049,9 @@ fn bus_rows(
     let mut named: Vec<String> = Vec::new();
     fn strings(value: &serde_json::Value, into: &mut Vec<String>) {
         match value {
-            serde_json::Value::String(text) => into.push(text.split(':').next().unwrap_or("").to_string()),
+            serde_json::Value::String(text) => {
+                into.push(text.split(':').next().unwrap_or("").to_string())
+            }
             serde_json::Value::Array(items) => items.iter().for_each(|item| strings(item, into)),
             serde_json::Value::Object(map) => map.values().for_each(|item| strings(item, into)),
             _ => {}
@@ -1744,15 +2071,25 @@ fn bus_rows(
     for reference in &references[..footprints] {
         *copies.entry(reference.as_str()).or_default() += 1;
     }
-    let footprint_items: Vec<&Expr> = pcb.children().iter().filter(|item| item.head() == Some("footprint")).collect();
+    let footprint_items: Vec<&Expr> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .collect();
     let mut pin_count: BTreeMap<&str, usize> = BTreeMap::new();
     let mut pads: Vec<BTreeMap<String, &str>> = Vec::new();
     for footprint in &footprint_items {
         let mut own = BTreeMap::new();
-        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
             let (Some(number), Some(net)) = (
                 pad.children().get(1).and_then(Expr::atom),
-                node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net),
+                node_net(pad)
+                    .filter(|raw| placer_net(raw))
+                    .map(normalize_net),
             ) else {
                 continue;
             };
@@ -1769,14 +2106,19 @@ fn bus_rows(
         if component.fixed
             || pads[part].len() < 8
             || copies[references[part].as_str()] > 1
-            || named.iter().any(|pattern| glob_matches(pattern, &references[part]))
+            || named
+                .iter()
+                .any(|pattern| glob_matches(pattern, &references[part]))
         {
             continue;
         }
         let Some(library) = footprint_items[part].children().get(1).and_then(Expr::atom) else {
             continue;
         };
-        kinds.entry((library.to_string(), component.side == core::Side::Back)).or_default().push(part);
+        kinds
+            .entry((library.to_string(), component.side == core::Side::Back))
+            .or_default()
+            .push(part);
     }
     let bounds = problem.bounds();
     let board = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
@@ -1787,7 +2129,9 @@ fn bus_rows(
         let shared = |a: usize, b: usize| {
             pads[a]
                 .iter()
-                .filter(|(number, net)| pin_count[**net] <= 40 && pads[b].get(*number) == Some(*net))
+                .filter(|(number, net)| {
+                    pin_count[**net] <= 40 && pads[b].get(*number) == Some(*net)
+                })
                 .count()
         };
         let mut parent: Vec<usize> = (0..parts.len()).collect();
@@ -1830,7 +2174,10 @@ fn bus_rows(
             // designers' SOP and TSOP banks: 4.4-5.9 mm apart); so spaced,
             // homebrew_486's eight SRAMs found no legal spot as a block,
             // and closer they cost two connections and 360 vias.
-            if !members.iter().all(|part| !problem.components[*part].far_side.is_empty()) {
+            if !members
+                .iter()
+                .all(|part| !problem.components[*part].far_side.is_empty())
+            {
                 continue;
             }
             let gap = (leader.halo * (1.0 - fraction) * gap_scale).max(problem.spacing);
@@ -1838,9 +2185,14 @@ fn bus_rows(
             // row's axis is in the board's frame at the leader's angle.
             let size = leader.body_size;
             let short_x = size[0] <= size[1];
-            let (along, across) = if short_x { (size[0], size[1]) } else { (size[1], size[0]) };
+            let (along, across) = if short_x {
+                (size[0], size[1])
+            } else {
+                (size[1], size[0])
+            };
             let (pitch, line_pitch) = (along + gap, across + gap);
-            let quarter = ((problem.poses[members[0]].angle / 90.0).round() as i64).rem_euclid(2) == 1;
+            let quarter =
+                ((problem.poses[members[0]].angle / 90.0).round() as i64).rem_euclid(2) == 1;
             let axis = if short_x != quarter { "x" } else { "y" };
             // Lines: the block's shape closest to the board's (either way
             // round, as the row turns).
@@ -1848,17 +2200,27 @@ fn bus_rows(
             let fit = |lines: usize| {
                 let columns = count.div_ceil(lines);
                 let (a, b) = (columns as f64 * pitch, lines as f64 * line_pitch);
-                (a / board[0]).max(b / board[1]).min((b / board[0]).max(a / board[1]))
+                (a / board[0])
+                    .max(b / board[1])
+                    .min((b / board[0]).max(a / board[1]))
             };
-            let lines = (1..=count).min_by(|a, b| fit(*a).total_cmp(&fit(*b)).then(a.cmp(b))).unwrap_or(1);
+            let lines = (1..=count)
+                .min_by(|a, b| fit(*a).total_cmp(&fit(*b)).then(a.cmp(b)))
+                .unwrap_or(1);
             if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
                 eprintln!(
                     "bus row: {:?} pitch {pitch:.2} mm, lines {lines} ({line_pitch:.2} mm), shared {fraction:.2}, axis {axis}",
-                    members.iter().map(|part| references[*part].as_str()).collect::<Vec<_>>()
+                    members
+                        .iter()
+                        .map(|part| references[*part].as_str())
+                        .collect::<Vec<_>>()
                 );
             }
             rows.push(KiCadRowConstraint {
-                parts: members.iter().map(|part| references[*part].clone()).collect(),
+                parts: members
+                    .iter()
+                    .map(|part| references[*part].clone())
+                    .collect(),
                 pitch_mm: pitch,
                 axis: Some(axis.to_string()),
                 columns: (lines > 1).then(|| count.div_ceil(lines)),
@@ -1908,7 +2270,11 @@ pub(super) fn lower_placement(
         3..=5 => (copper_layers - 1) as f64,
         _ => (copper_layers - 2) as f64,
     };
-    let via_room = if config.supply_via_room { config.supply_via_room_mm.unwrap_or(0.8) } else { 0.0 };
+    let via_room = if config.supply_via_room {
+        config.supply_via_room_mm.unwrap_or(0.8)
+    } else {
+        0.0
+    };
     let mask_growth = mask_opening_growth(pcb, config);
     for footprint in pcb
         .children()
@@ -1927,8 +2293,11 @@ pub(super) fn lower_placement(
         // the designer put between them).
         let courtyard_on = |prefix: &str| {
             footprint.children().iter().any(|child| {
-                matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.starts_with(prefix) && layer.ends_with(".CrtYd"))
+                matches!(
+                    child.head(),
+                    Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")
+                ) && form_atom(child, "layer", 1)
+                    .is_some_and(|layer| layer.starts_with(prefix) && layer.ends_with(".CrtYd"))
             })
         };
         // A part without SMD pads whose only courtyard is on the other side
@@ -1938,14 +2307,16 @@ pub(super) fn lower_placement(
             let back = on_back(footprint);
             let (own, other) = if back { ("B.", "F.") } else { ("F.", "B.") };
             let smd = footprint.children().iter().any(|child| {
-                child.head() == Some("pad") && child.children().get(2).and_then(Expr::atom) == Some("smd")
+                child.head() == Some("pad")
+                    && child.children().get(2).and_then(Expr::atom) == Some("smd")
             });
             back != (!smd && !courtyard_on(own) && courtyard_on(other))
         };
         let (own_prefix, other_prefix) = if back { ("B.", "F.") } else { ("F.", "B.") };
         let mut far_courtyard = None;
         if courtyard_on(own_prefix) && courtyard_on(other_prefix) {
-            let (center, size, own_round, _) = body_on_side(footprint, ".CrtYd", Some(other_prefix))?;
+            let (center, size, own_round, _) =
+                body_on_side(footprint, ".CrtYd", Some(other_prefix))?;
             if !own_round {
                 body_center = center;
                 body_size = size;
@@ -1954,13 +2325,22 @@ pub(super) fn lower_placement(
                 .children()
                 .iter()
                 .filter(|child| {
-                    form_atom(child, "layer", 1).is_some_and(|layer| layer.starts_with(other_prefix) && layer.ends_with(".CrtYd"))
+                    form_atom(child, "layer", 1).is_some_and(|layer| {
+                        layer.starts_with(other_prefix) && layer.ends_with(".CrtYd")
+                    })
                 })
                 .map(graphic_box)
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten()
-                .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+                .reduce(|a, b| {
+                    [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ]
+                })
                 // Where the project lets courtyards overlap, KiCad does not
                 // check the other side's either (ErgoSNM's diodes sit in
                 // the keys' socket outlines on the back).
@@ -1976,7 +2356,13 @@ pub(super) fn lower_placement(
         // mounting hole's or an SMD part's plated holes hold none.
         let attributes: Vec<&str> = footprint
             .child("attr")
-            .map(|attr| attr.children().iter().skip(1).filter_map(Expr::atom).collect())
+            .map(|attr| {
+                attr.children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .collect()
+            })
             .unwrap_or_default();
         let leaded_part = attributes.contains(&"through_hole");
         let unattributed = footprint.child("attr").is_none();
@@ -1995,7 +2381,8 @@ pub(super) fn lower_placement(
             .iter()
             .filter(|child| child.head() == Some("pad"))
         {
-            if let (Some(name), Ok(at)) = (pad.children().get(1).and_then(Expr::atom), form_at(pad)) {
+            if let (Some(name), Ok(at)) = (pad.children().get(1).and_then(Expr::atom), form_at(pad))
+            {
                 named.entry(name.to_string()).or_insert([at[0], at[1]]);
             }
             let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
@@ -2009,7 +2396,10 @@ pub(super) fn lower_placement(
             // the copper clearance to the box, so the box takes the rest.
             let keep_away = if pad_type == "np_thru_hole" {
                 local_clearance::pad_clearance(pad, footprint)?
-                    .max(config.hole_clearance_mm.unwrap_or(0.0) - config.copper_clearance_mm.unwrap_or(0.2))
+                    .max(
+                        config.hole_clearance_mm.unwrap_or(0.0)
+                            - config.copper_clearance_mm.unwrap_or(0.2),
+                    )
                     .max(0.0)
             } else {
                 0.0
@@ -2043,7 +2433,10 @@ pub(super) fn lower_placement(
             // A custom pad's copper is its primitives too (OpenFC's test
             // pads: a 1 mm anchor and a 2.2 x 1.6 polygon).
             for (point, radius) in custom_pad_points(pad) {
-                let at = [pad_at[0] + cos * point[0] - sin * point[1], pad_at[1] + sin * point[0] + cos * point[1]];
+                let at = [
+                    pad_at[0] + cos * point[0] - sin * point[1],
+                    pad_at[1] + sin * point[0] + cos * point[1],
+                ];
                 pad_box = [
                     pad_box[0].min(at[0] - radius),
                     pad_box[1].min(at[1] - radius),
@@ -2053,11 +2446,21 @@ pub(super) fn lower_placement(
             }
             // The hole alone (no clearance ring), at the pad's anchor.
             let hole_half = (half[0] - keep_away).min(half[1] - keep_away).max(0.0);
-            let hole_box = [pad_at[0] - hole_half, pad_at[1] - hole_half, pad_at[0] + hole_half, pad_at[1] + hole_half];
+            let hole_box = [
+                pad_at[0] - hole_half,
+                pad_at[1] - hole_half,
+                pad_at[0] + hole_half,
+                pad_at[1] + hole_half,
+            ];
             own_pads.push(pad_box);
             pin_centers.push([pad_at[0], pad_at[1]]);
             let on_other_side = pad.child("layers").is_some_and(|layers| {
-                layers.children().iter().skip(1).filter_map(Expr::atom).any(|layer| layer == other_copper || layer == "F&B.Cu")
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .any(|layer| layer == other_copper || layer == "F&B.Cu")
             });
             if matches!(pad_type, "thru_hole" | "np_thru_hole") || on_other_side {
                 through = true;
@@ -2069,9 +2472,16 @@ pub(super) fn lower_placement(
                 // courtyards (then the hole itself keeps off them too).
                 let drill = pad
                     .child("drill")
-                    .and_then(|drill| drill.children().iter().skip(1).find_map(|item| item.atom()?.parse::<f64>().ok()))
+                    .and_then(|drill| {
+                        drill
+                            .children()
+                            .iter()
+                            .skip(1)
+                            .find_map(|item| item.atom()?.parse::<f64>().ok())
+                    })
                     .unwrap_or(0.0);
-                let lead = pad_type == "thru_hole" && (leaded_part || (unattributed && drill >= 0.6));
+                let lead =
+                    pad_type == "thru_hole" && (leaded_part || (unattributed && drill >= 0.6));
                 if lead {
                     far_side.push(pad_box);
                 } else {
@@ -2081,7 +2491,10 @@ pub(super) fn lower_placement(
                     }
                 }
             }
-            let Some(net) = node_net(pad).filter(|raw| placer_net(raw)).map(normalize_net) else {
+            let Some(net) = node_net(pad)
+                .filter(|raw| placer_net(raw))
+                .map(normalize_net)
+            else {
                 continue;
             };
             if via_room > 0.0 && pad_type == "smd" && pour_nets.contains(net) {
@@ -2105,7 +2518,12 @@ pub(super) fn lower_placement(
             for pad in &supply_pads {
                 // The side the pad lies nearest to; a pad deep inside the
                 // body (an exposed pad) takes its via inside itself.
-                let gaps = [pad[0] - body[0], pad[1] - body[1], body[2] - pad[2], body[3] - pad[3]];
+                let gaps = [
+                    pad[0] - body[0],
+                    pad[1] - body[1],
+                    body[2] - pad[2],
+                    body[3] - pad[3],
+                ];
                 let (side, gap) = gaps
                     .iter()
                     .copied()
@@ -2134,7 +2552,11 @@ pub(super) fn lower_placement(
         } else {
             (core::Side::Front, core::Side::Back)
         };
-        let other_mask = if other_copper == "F.Cu" { "F.Mask" } else { "B.Mask" };
+        let other_mask = if other_copper == "F.Cu" {
+            "F.Mask"
+        } else {
+            "B.Mask"
+        };
         let mut own_graphics = false;
         let mut own_graphic_boxes = Vec::new();
         // The mask openings on the part's side, grown to KiCad's mask
@@ -2172,8 +2594,11 @@ pub(super) fn lower_placement(
         // origin.
         let artwork = !footprint.children().iter().any(|child| {
             child.head() == Some("pad")
-                || (matches!(child.head(), Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly"))
-                    && form_atom(child, "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd")))
+                || (matches!(
+                    child.head(),
+                    Some("fp_line" | "fp_rect" | "fp_arc" | "fp_circle" | "fp_poly")
+                ) && form_atom(child, "layer", 1)
+                    .is_some_and(|layer| layer.ends_with(".CrtYd")))
         });
         // A through-hole part sits on its footprint's side; on the other
         // side only its holes and pads (`far_side`) are in the way, and its
@@ -2194,7 +2619,9 @@ pub(super) fn lower_placement(
         let angle_options = if config.keep_rotation {
             vec![at[2]]
         } else {
-            let mut angles: Vec<f64> = (0..4).map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64)).collect();
+            let mut angles: Vec<f64> = (0..4)
+                .map(|quarter| normalize_angle(at[2] + 90.0 * quarter as f64))
+                .collect();
             // A part at an odd angle (a thumb cluster's keys at -30) may
             // also turn square to the board: the placer's bodies are boxes
             // around the turned part, half as large again at 30 degrees
@@ -2215,8 +2642,20 @@ pub(super) fn lower_placement(
             0.0
         } else {
             let mut pads = own_pads.iter().fold(
-                [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
-                |bounds, pad| [bounds[0].min(pad[0]), bounds[1].min(pad[1]), bounds[2].max(pad[2]), bounds[3].max(pad[3])],
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ],
+                |bounds, pad| {
+                    [
+                        bounds[0].min(pad[0]),
+                        bounds[1].min(pad[1]),
+                        bounds[2].max(pad[2]),
+                        bounds[3].max(pad[3]),
+                    ]
+                },
             );
             // Copper graphics of the footprint count as copper too.
             for child in footprint.children() {
@@ -2238,13 +2677,19 @@ pub(super) fn lower_placement(
                 body_center[0] + body_size[0] / 2.0,
                 body_center[1] + body_size[1] / 2.0,
             ];
-            [pads[0] - body[0], pads[1] - body[1], body[2] - pads[2], body[3] - pads[3]]
-                .into_iter()
-                .fold(f64::INFINITY, f64::min)
-                .max(0.0)
+            [
+                pads[0] - body[0],
+                pads[1] - body[1],
+                body[2] - pads[2],
+                body[3] - pads[3],
+            ]
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
+            .max(0.0)
         };
         let both_courtyards = courtyard_on(own_prefix) && courtyard_on(other_prefix);
-        let mut courtyard = courtyard_shapes_on_side(footprint, both_courtyards.then_some(other_prefix))?;
+        let mut courtyard =
+            courtyard_shapes_on_side(footprint, both_courtyards.then_some(other_prefix))?;
         // A courtyard far from rectangular (a hot-swap socket's outline)
         // blocks with its own shape, as strips, and the pads: ghoul's
         // designer put resistor networks, regulators and mounting holes in
@@ -2255,7 +2700,8 @@ pub(super) fn lower_placement(
         // KiCad checks its copper, not a box around it (hackclub
         // keyboar_'s Kailh sockets have no courtyard; the designer put
         // every switch's diode between its pads).
-        let courtless = !courtyard_on("F.") && !courtyard_on("B.") && !own_pads.is_empty() && !artwork;
+        let courtless =
+            !courtyard_on("F.") && !courtyard_on("B.") && !own_pads.is_empty() && !artwork;
         // Unless its pads stand in rows of pins: then a body fills their
         // box (`solid_pin_rows`), and the part blocks with that box.
         let solid = courtless && config.solid_pin_rows && pads_in_pin_rows(&pin_centers);
@@ -2264,8 +2710,20 @@ pub(super) fn lower_placement(
             // reach past it.
             if !own_graphic_boxes.is_empty() {
                 let pads = own_pads.iter().fold(
-                    [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
-                    |bounds, pad| [bounds[0].min(pad[0]), bounds[1].min(pad[1]), bounds[2].max(pad[2]), bounds[3].max(pad[3])],
+                    [
+                        f64::INFINITY,
+                        f64::INFINITY,
+                        f64::NEG_INFINITY,
+                        f64::NEG_INFINITY,
+                    ],
+                    |bounds, pad| {
+                        [
+                            bounds[0].min(pad[0]),
+                            bounds[1].min(pad[1]),
+                            bounds[2].max(pad[2]),
+                            bounds[3].max(pad[3]),
+                        ]
+                    },
                 );
                 shaped = vec![pads];
                 shaped.extend(own_graphic_boxes.iter().copied());
@@ -2296,7 +2754,12 @@ pub(super) fn lower_placement(
                         body_center[1] + body_size[1] / 2.0 + mask_growth,
                     ];
                     shaped.extend(own_mask_boxes.iter().map(|opening| {
-                        [opening[0].max(body[0]), opening[1].max(body[1]), opening[2].min(body[2]), opening[3].min(body[3])]
+                        [
+                            opening[0].max(body[0]),
+                            opening[1].max(body[1]),
+                            opening[2].min(body[2]),
+                            opening[3].min(body[3]),
+                        ]
                     }));
                 }
             }
@@ -2327,12 +2790,24 @@ pub(super) fn lower_placement(
             side,
             fixed: false,
             angle_options,
-            far_side: if through || far_graphics { far_side } else { Vec::new() },
+            far_side: if through || far_graphics {
+                far_side
+            } else {
+                Vec::new()
+            },
             far_copper,
-            far_courtyard: if artwork { Vec::new() } else { far_courtyard.into_iter().collect() },
+            far_courtyard: if artwork {
+                Vec::new()
+            } else {
+                far_courtyard.into_iter().collect()
+            },
             hollow: shaped,
             tight: if config.tight_bodies == Some(true) {
-                tight_body(footprint, (courtyard_on(own_prefix) && courtyard_on(other_prefix)).then_some(other_prefix))?
+                tight_body(
+                    footprint,
+                    (courtyard_on(own_prefix) && courtyard_on(other_prefix))
+                        .then_some(other_prefix),
+                )?
             } else {
                 None
             },
@@ -2348,17 +2823,26 @@ pub(super) fn lower_placement(
             position: [at[0], at[1]],
             angle: at[2],
         });
-        identities.push(footprint.children().get(1).and_then(Expr::atom).map(|id| ChannelIdentity {
-            sheet: form_atom(footprint, "sheetname", 1).unwrap_or("").to_string(),
-            file: form_atom(footprint, "sheetfile", 1).unwrap_or("").to_string(),
-            footprint: id.to_string(),
-            value: footprint
-                .children()
-                .iter()
-                .find(|item| item.head() == Some("property") && item.children().get(1).and_then(Expr::atom) == Some("Value"))
-                .and_then(|item| item.children().get(2).and_then(Expr::atom))
-                .unwrap_or("")
-                .to_string(),
+        identities.push(footprint.children().get(1).and_then(Expr::atom).map(|id| {
+            ChannelIdentity {
+                sheet: form_atom(footprint, "sheetname", 1)
+                    .unwrap_or("")
+                    .to_string(),
+                file: form_atom(footprint, "sheetfile", 1)
+                    .unwrap_or("")
+                    .to_string(),
+                footprint: id.to_string(),
+                value: footprint
+                    .children()
+                    .iter()
+                    .find(|item| {
+                        item.head() == Some("property")
+                            && item.children().get(1).and_then(Expr::atom) == Some("Value")
+                    })
+                    .and_then(|item| item.children().get(2).and_then(Expr::atom))
+                    .unwrap_or("")
+                    .to_string(),
+            }
         }));
         references.push(reference);
         uuids.push(footprint_uuid(footprint));
@@ -2376,12 +2860,17 @@ pub(super) fn lower_placement(
     // in it).
     let footprint_count = components.len();
     let mut keepouts: Vec<pcb_router::geometry::Aabb> = Vec::new();
-    for item in pcb.children().iter().filter(|item| item.head() == Some("zone")) {
+    for item in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("zone"))
+    {
         let Some((component, pose, bounds, bodies)) = rule_area_obstacle(item)? else {
             continue;
         };
         // A part inside a constraint keepout is not there on purpose.
-        if bodies && !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)) {
+        if bodies && !form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME))
+        {
             keepouts.push(bounds);
         }
         components.push(component);
@@ -2401,7 +2890,14 @@ pub(super) fn lower_placement(
     let outer_copper = |item: &Expr| -> Vec<usize> {
         let names: Vec<&str> = match form_atom(item, "layer", 1) {
             Some(name) => vec![name],
-            None => item.child("layers").map(Expr::children).unwrap_or_default().iter().skip(1).filter_map(Expr::atom).collect(),
+            None => item
+                .child("layers")
+                .map(Expr::children)
+                .unwrap_or_default()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect(),
         };
         // A mask opening too: a part's pads under it would bridge (Sisu's
         // "REV B2" on B.Mask got two parts' pads in layout).
@@ -2417,14 +2913,16 @@ pub(super) fn lower_placement(
         sides.dedup();
         sides
     };
-    for (item, layer) in pcb
-        .children()
-        .iter()
-        .flat_map(|item| outer_copper(item).into_iter().map(move |layer| (item, layer)))
-    {
+    for (item, layer) in pcb.children().iter().flat_map(|item| {
+        outer_copper(item)
+            .into_iter()
+            .map(move |layer| (item, layer))
+    }) {
         let on_mask = matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask"));
-        if !matches!(item.head(), Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly"))
-            && !(on_mask && item.head() == Some("gr_text"))
+        if !matches!(
+            item.head(),
+            Some("gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly")
+        ) && !(on_mask && item.head() == Some("gr_text"))
         {
             continue;
         }
@@ -2480,8 +2978,7 @@ pub(super) fn lower_placement(
     // Cutouts are board edge too: parts keep the edge margin from them.
     // Those an `outline` constraint cut (the board's own graphics, which
     // it replaced) keep bodies off as well.
-    let outline_given =
-        matches!(&config.constraints, Some(KiCadConstraintsSource::Inline(constraints)) if constraints.outline.is_some());
+    let outline_given = matches!(&config.constraints, Some(KiCadConstraintsSource::Inline(constraints)) if constraints.outline.is_some());
     let mut solid_cutouts = Vec::new();
     for (number, cutout) in loops.cutouts.iter().enumerate() {
         let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -2557,7 +3054,11 @@ pub(super) fn lower_placement(
         .zip(&names)
         .map(|(pins, name)| {
             let weight = (3.0 / (*pins as f64 - 1.0).max(1.0)).min(1.0);
-            if keep_short(name) { 3.0 * weight } else { weight }
+            if keep_short(name) {
+                3.0 * weight
+            } else {
+                weight
+            }
         })
         .collect();
     let mut problem = core::Problem {
@@ -2594,10 +3095,18 @@ pub(super) fn lower_placement(
         let on_edge = !core::legal::body_inside_outline(&problem, index, problem.poses[index])
             || in_keepout
             || (connector[index]
-                && core::legal::body_near_outline(&problem, index, problem.poses[index], config.edge_keep_mm));
+                && core::legal::body_near_outline(
+                    &problem,
+                    index,
+                    problem.poses[index],
+                    config.edge_keep_mm,
+                ));
         let default_fixed = locked[index] || problem.components[index].pins.is_empty() || on_edge;
         problem.components[index].fixed = config.fixed.contains(reference)
-            || config.fixed_patterns.iter().any(|pattern| glob_matches(pattern, reference))
+            || config
+                .fixed_patterns
+                .iter()
+                .any(|pattern| glob_matches(pattern, reference))
             || (default_fixed && !config.free.contains(reference));
     }
     let user_constraints = match &config.constraints {
@@ -2605,7 +3114,14 @@ pub(super) fn lower_placement(
         _ => None,
     };
     let automatic_rows = if config.bus_rows {
-        bus_rows(pcb, &problem, &references, footprint_count, user_constraints, config.bus_row_gap_scale)
+        bus_rows(
+            pcb,
+            &problem,
+            &references,
+            footprint_count,
+            user_constraints,
+            config.bus_row_gap_scale,
+        )
     } else {
         Vec::new()
     };
@@ -2615,26 +3131,34 @@ pub(super) fn lower_placement(
         constraints
     });
     let constraint_warnings = match (&config.constraints, &with_rows) {
-        (_, Some(constraints)) | (Some(KiCadConstraintsSource::Inline(constraints)), None) => apply_constraints(
-            &mut problem,
-            &references,
-            &pad_offsets,
-            &pad_boxes,
-            &keepout_boxes,
-            &mouths,
-            &locked,
-            &uuids,
-            constraints,
-            config.constraint_weight,
-        )?,
+        (_, Some(constraints)) | (Some(KiCadConstraintsSource::Inline(constraints)), None) => {
+            apply_constraints(
+                &mut problem,
+                &references,
+                &pad_offsets,
+                &pad_boxes,
+                &keepout_boxes,
+                &mouths,
+                &locked,
+                &uuids,
+                constraints,
+                config.constraint_weight,
+            )?
+        }
         (None, None) => Vec::new(),
         (Some(KiCadConstraintsSource::File(path)), None) => {
-            return Err(format!("constraints file {} was not resolved", path.display()));
+            return Err(format!(
+                "constraints file {} was not resolved",
+                path.display()
+            ));
         }
     };
     // A polygon outline: parts held at an edge keep to the nearest side of
     // the polygon that faces it.
-    if user_constraints.and_then(|constraints| constraints.outline.as_ref()).is_some_and(|outline| outline.polygonal()) {
+    if user_constraints
+        .and_then(|constraints| constraints.outline.as_ref())
+        .is_some_and(|outline| outline.polygonal())
+    {
         problem.constraints.sides = core::constraints::outline_sides(&loops.piece_loops);
     }
     // Fixed parts on top of each other place and route without a word,
@@ -2643,7 +3167,11 @@ pub(super) fn lower_placement(
     // stack fresh from a netlist that the default rules had fixed).
     let mut stacked_warnings = Vec::new();
     {
-        let fixed: Vec<usize> = (0..footprint_count).filter(|index| problem.components[*index].fixed && !problem.components[*index].pins.is_empty()).collect();
+        let fixed: Vec<usize> = (0..footprint_count)
+            .filter(|index| {
+                problem.components[*index].fixed && !problem.components[*index].pins.is_empty()
+            })
+            .collect();
         for (a, first) in fixed.iter().enumerate() {
             for second in &fixed[a + 1..] {
                 let (ca, cb) = (&problem.components[*first], &problem.components[*second]);
@@ -2653,9 +3181,14 @@ pub(super) fn lower_placement(
                 let (pa, pb) = (problem.poses[*first], problem.poses[*second]);
                 let (center_a, half_a) = (ca.center(pa), ca.half_extent(pa.angle));
                 let (center_b, half_b) = (cb.center(pb), cb.half_extent(pb.angle));
-                let overlap = (0..2).all(|axis| (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05);
+                let overlap = (0..2).all(|axis| {
+                    (center_a[axis] - center_b[axis]).abs() < half_a[axis] + half_b[axis] - 0.05
+                });
                 if overlap {
-                    stacked_warnings.push(format!("fixed parts {} and {} overlap", references[*first], references[*second]));
+                    stacked_warnings.push(format!(
+                        "fixed parts {} and {} overlap",
+                        references[*first], references[*second]
+                    ));
                 }
             }
         }
@@ -2667,8 +3200,17 @@ pub(super) fn lower_placement(
     // keepout moves with it: it blocks the other side as far-side box, or,
     // where it forbids pads but not footprints, as far-side copper
     // (MokyaLora's U.FL on the back keeps pads out on the front).
-    for (index, footprint) in pcb.children().iter().filter(|item| item.head() == Some("footprint")).enumerate() {
-        for zone in footprint.children().iter().filter(|child| child.head() == Some("zone")) {
+    for (index, footprint) in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
+    {
+        for zone in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("zone"))
+        {
             let Some((component, pose, _, bodies)) = rule_area_obstacle(zone)? else {
                 continue;
             };
@@ -2677,19 +3219,46 @@ pub(super) fn lower_placement(
                 problem.poses.push(pose);
                 references.push("keepout".into());
                 source_at.push([0.0; 3]);
-            } else if component.side.collides(match problem.components[index].side {
-                core::Side::Front => core::Side::Back,
-                core::Side::Back => core::Side::Front,
-                _ => core::Side::Neither,
-            }) {
+            } else if component
+                .side
+                .collides(match problem.components[index].side {
+                    core::Side::Front => core::Side::Back,
+                    core::Side::Back => core::Side::Front,
+                    _ => core::Side::Neither,
+                })
+            {
                 let at = source_at[index];
                 let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
-                let corners = [[-half[0], -half[1]], [half[0], -half[1]], [half[0], half[1]], [-half[0], half[1]]];
-                let local = corners
-                    .map(|corner| core::problem::rotate([pose.position[0] + corner[0] - at[0], pose.position[1] + corner[1] - at[1]], at[2]));
+                let corners = [
+                    [-half[0], -half[1]],
+                    [half[0], -half[1]],
+                    [half[0], half[1]],
+                    [-half[0], half[1]],
+                ];
+                let local = corners.map(|corner| {
+                    core::problem::rotate(
+                        [
+                            pose.position[0] + corner[0] - at[0],
+                            pose.position[1] + corner[1] - at[1],
+                        ],
+                        at[2],
+                    )
+                });
                 let local = local.iter().fold(
-                    [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY],
-                    |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
+                    [
+                        f64::INFINITY,
+                        f64::INFINITY,
+                        f64::NEG_INFINITY,
+                        f64::NEG_INFINITY,
+                    ],
+                    |b, p| {
+                        [
+                            b[0].min(p[0]),
+                            b[1].min(p[1]),
+                            b[2].max(p[0]),
+                            b[3].max(p[1]),
+                        ]
+                    },
                 );
                 if bodies {
                     problem.components[index].far_side.push(local);
@@ -2738,10 +3307,24 @@ pub(super) fn lower_placement(
 
 /// A box turned by `angle` (a quarter turn or any other) about the origin.
 fn turned_box(b: [f64; 4], angle: f64) -> [f64; 4] {
-    let corners = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(|corner| core::problem::rotate(corner, angle));
-    corners.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |acc, c| {
-        [acc[0].min(c[0]), acc[1].min(c[1]), acc[2].max(c[0]), acc[3].max(c[1])]
-    })
+    let corners = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
+        .map(|corner| core::problem::rotate(corner, angle));
+    corners.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |acc, c| {
+            [
+                acc[0].min(c[0]),
+                acc[1].min(c[1]),
+                acc[2].max(c[0]),
+                acc[3].max(c[1]),
+            ]
+        },
+    )
 }
 
 /// The repeated channels of a board: groups of sheet instances of one
@@ -2757,27 +3340,46 @@ pub(super) fn channel_groups(lowered: &LoweredPlacement) -> Vec<Vec<Vec<usize>>>
         if identity.sheet.is_empty() || identity.sheet == "/" || identity.file.is_empty() {
             continue;
         }
-        instances.entry((identity.sheet.clone(), identity.file.clone())).or_default().push(index);
+        instances
+            .entry((identity.sheet.clone(), identity.file.clone()))
+            .or_default()
+            .push(index);
     }
     // Instances by file and signature (what parts they hold).
-    let mut by_signature: BTreeMap<(String, Vec<(String, String, bool)>), Vec<Vec<usize>>> = BTreeMap::new();
+    let mut by_signature: BTreeMap<(String, Vec<(String, String, bool)>), Vec<Vec<usize>>> =
+        BTreeMap::new();
     for ((_, file), mut members) in instances {
         if members.len() < 3 {
             continue;
         }
         let identity = |index: usize| lowered.identities[index].as_ref().unwrap();
         members.sort_by(|a, b| {
-            (&identity(*a).footprint, &identity(*a).value, natural(&lowered.references[*a]))
-                .cmp(&(&identity(*b).footprint, &identity(*b).value, natural(&lowered.references[*b])))
+            (
+                &identity(*a).footprint,
+                &identity(*a).value,
+                natural(&lowered.references[*a]),
+            )
+                .cmp(&(
+                    &identity(*b).footprint,
+                    &identity(*b).value,
+                    natural(&lowered.references[*b]),
+                ))
         });
         let signature: Vec<(String, String, bool)> = members
             .iter()
             .map(|index| {
                 let component = &problem.components[*index];
-                (identity(*index).footprint.clone(), identity(*index).value.clone(), component.side == core::Side::Back)
+                (
+                    identity(*index).footprint.clone(),
+                    identity(*index).value.clone(),
+                    component.side == core::Side::Back,
+                )
             })
             .collect();
-        by_signature.entry((file, signature)).or_default().push(members);
+        by_signature
+            .entry((file, signature))
+            .or_default()
+            .push(members);
     }
     let mut groups = Vec::new();
     for (_, instances) in by_signature {
@@ -2786,13 +3388,18 @@ pub(super) fn channel_groups(lowered: &LoweredPlacement) -> Vec<Vec<Vec<usize>>>
         }
         // Every part movable, and the nets wired alike: the first
         // instance's nets map one to one onto each other's.
-        let movable = instances.iter().flatten().all(|index| !problem.components[*index].fixed);
+        let movable = instances
+            .iter()
+            .flatten()
+            .all(|index| !problem.components[*index].fixed);
         let alike = instances[1..].iter().all(|other| {
             let mut map: BTreeMap<usize, usize> = BTreeMap::new();
             instances[0].iter().zip(other).all(|(a, b)| {
                 let (pins_a, pins_b) = (&problem.components[*a].pins, &problem.components[*b].pins);
                 pins_a.len() == pins_b.len()
-                    && pins_a.iter().zip(pins_b).all(|(pin_a, pin_b)| *map.entry(pin_a.net).or_insert(pin_b.net) == pin_b.net)
+                    && pins_a.iter().zip(pins_b).all(|(pin_a, pin_b)| {
+                        *map.entry(pin_a.net).or_insert(pin_b.net) == pin_b.net
+                    })
             })
         });
         if movable && alike {
@@ -2805,7 +3412,11 @@ pub(super) fn channel_groups(lowered: &LoweredPlacement) -> Vec<Vec<Vec<usize>>>
 /// From a placement of the whole board: every instance of every group
 /// arranged like the group's best-packed instance (the one whose own nets
 /// are shortest), as offsets and angles relative to its first part.
-pub(super) fn channel_templates(lowered: &LoweredPlacement, groups: &[Vec<Vec<usize>>], poses: &[core::Pose]) -> Vec<ChannelInstance> {
+pub(super) fn channel_templates(
+    lowered: &LoweredPlacement,
+    groups: &[Vec<Vec<usize>>],
+    poses: &[core::Pose],
+) -> Vec<ChannelInstance> {
     let problem = &lowered.problem;
     let mut templates = Vec::new();
     for instances in groups {
@@ -2818,16 +3429,30 @@ pub(super) fn channel_templates(lowered: &LoweredPlacement, groups: &[Vec<Vec<us
                     for (index, component) in problem.components.iter().enumerate() {
                         for pin in &component.pins {
                             let at = component.pin_position(pin, poses[index]);
-                            let entry = boxes.entry(pin.net).or_insert([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]);
+                            let entry = boxes.entry(pin.net).or_insert([
+                                f64::INFINITY,
+                                f64::INFINITY,
+                                f64::NEG_INFINITY,
+                                f64::NEG_INFINITY,
+                            ]);
                             if inside.contains(&index) {
-                                *entry = [entry[0].min(at[0]), entry[1].min(at[1]), entry[2].max(at[0]), entry[3].max(at[1])];
+                                *entry = [
+                                    entry[0].min(at[0]),
+                                    entry[1].min(at[1]),
+                                    entry[2].max(at[0]),
+                                    entry[3].max(at[1]),
+                                ];
                             } else {
                                 // A net leaving the instance is not its own.
                                 *entry = [f64::NAN; 4];
                             }
                         }
                     }
-                    boxes.values().filter(|b| b[0].is_finite()).map(|b| (b[2] - b[0]) + (b[3] - b[1])).sum()
+                    boxes
+                        .values()
+                        .filter(|b| b[0].is_finite())
+                        .map(|b| (b[2] - b[0]) + (b[3] - b[1]))
+                        .sum()
                 };
                 local(a).total_cmp(&local(b))
             })
@@ -2837,8 +3462,14 @@ pub(super) fn channel_templates(lowered: &LoweredPlacement, groups: &[Vec<Vec<us
             .iter()
             .map(|member| {
                 let pose = poses[*member];
-                let delta = [pose.position[0] - leader.position[0], pose.position[1] - leader.position[1]];
-                (core::problem::rotate(delta, leader.angle), (pose.angle - leader.angle).rem_euclid(360.0))
+                let delta = [
+                    pose.position[0] - leader.position[0],
+                    pose.position[1] - leader.position[1],
+                ];
+                (
+                    core::problem::rotate(delta, leader.angle),
+                    (pose.angle - leader.angle).rem_euclid(360.0),
+                )
             })
             .collect();
         for members in instances {
@@ -2852,14 +3483,27 @@ pub(super) fn channel_templates(lowered: &LoweredPlacement, groups: &[Vec<Vec<us
                         .iter()
                         .map(|member| {
                             let pose = poses[*member];
-                            let delta = [pose.position[0] - leader.position[0], pose.position[1] - leader.position[1]];
-                            (*member, core::problem::rotate(delta, leader.angle), (pose.angle - leader.angle).rem_euclid(360.0))
+                            let delta = [
+                                pose.position[0] - leader.position[0],
+                                pose.position[1] - leader.position[1],
+                            ];
+                            (
+                                *member,
+                                core::problem::rotate(delta, leader.angle),
+                                (pose.angle - leader.angle).rem_euclid(360.0),
+                            )
                         })
                         .collect(),
                 );
                 continue;
             }
-            templates.push(members.iter().zip(&arrangement).map(|(member, (offset, angle))| (*member, *offset, *angle)).collect());
+            templates.push(
+                members
+                    .iter()
+                    .zip(&arrangement)
+                    .map(|(member, (offset, angle))| (*member, *offset, *angle))
+                    .collect(),
+            );
         }
     }
     templates
@@ -2876,14 +3520,28 @@ fn apply_channels(
     channels: &[ChannelInstance],
 ) -> Result<(), String> {
     for instance in channels {
-        let Some(&(leader, _, _)) = instance.first() else { continue };
+        let Some(&(leader, _, _)) = instance.first() else {
+            continue;
+        };
         if instance.iter().any(|(member, _, _)| {
-            problem.constraints.followers.iter().any(|follower| follower.part == *member || follower.leader == *member)
+            problem
+                .constraints
+                .followers
+                .iter()
+                .any(|follower| follower.part == *member || follower.leader == *member)
                 || problem.components[*member].fixed
         }) {
-            return Err(format!("channel of {} overlaps a row or a fixed part", references[leader]));
+            return Err(format!(
+                "channel of {} overlaps a row or a fixed part",
+                references[leader]
+            ));
         }
-        let mut body = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        let mut body = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
         let mut tight = body;
         let mut carried = problem.components[leader].clone();
         carried.pins.clear();
@@ -2904,7 +3562,12 @@ fn apply_channels(
             // in the leader's frame (see `Problem::sync_followers`).
             let place = |b: &[f64; 4]| -> [f64; 4] {
                 let turned = turned_box(*b, -angle);
-                [turned[0] + offset[0], turned[1] + offset[1], turned[2] + offset[0], turned[3] + offset[1]]
+                [
+                    turned[0] + offset[0],
+                    turned[1] + offset[1],
+                    turned[2] + offset[0],
+                    turned[3] + offset[1],
+                ]
             };
             let own_body = place(&[
                 component.body_center[0] - component.body_size[0] / 2.0,
@@ -2912,46 +3575,81 @@ fn apply_channels(
                 component.body_center[0] + component.body_size[0] / 2.0,
                 component.body_center[1] + component.body_size[1] / 2.0,
             ]);
-            body = [body[0].min(own_body[0]), body[1].min(own_body[1]), body[2].max(own_body[2]), body[3].max(own_body[3])];
+            body = [
+                body[0].min(own_body[0]),
+                body[1].min(own_body[1]),
+                body[2].max(own_body[2]),
+                body[3].max(own_body[3]),
+            ];
             // At the tight level the members are tight too (ESC mini's
             // boards fit only so).
             let own_tight = component.tight.map_or(own_body, |t| place(&t));
-            tight = [tight[0].min(own_tight[0]), tight[1].min(own_tight[1]), tight[2].max(own_tight[2]), tight[3].max(own_tight[3])];
+            tight = [
+                tight[0].min(own_tight[0]),
+                tight[1].min(own_tight[1]),
+                tight[2].max(own_tight[2]),
+                tight[3].max(own_tight[3]),
+            ];
             if same_side {
                 carried.hollow.push(own_body);
                 carried.tight_hollow.push(own_tight);
-                carried.far_side.extend(component.far_side.iter().map(place));
-                carried.far_copper.extend(component.far_copper.iter().map(place));
-                carried.far_courtyard.extend(component.far_courtyard.iter().map(place));
+                carried
+                    .far_side
+                    .extend(component.far_side.iter().map(place));
+                carried
+                    .far_copper
+                    .extend(component.far_copper.iter().map(place));
+                carried
+                    .far_courtyard
+                    .extend(component.far_courtyard.iter().map(place));
             } else {
                 carried.far_side.push(own_body);
-                carried.hollow.extend(component.far_side.iter().chain(&component.far_copper).map(place));
+                carried.hollow.extend(
+                    component
+                        .far_side
+                        .iter()
+                        .chain(&component.far_copper)
+                        .map(place),
+                );
             }
             carried.pins.extend(component.pins.iter().map(|pin| {
                 let at = core::problem::rotate(pin.offset, -angle);
-                core::Pin { offset: [at[0] + offset[0], at[1] + offset[1]], net: pin.net }
+                core::Pin {
+                    offset: [at[0] + offset[0], at[1] + offset[1]],
+                    net: pin.net,
+                }
             }));
             carried.pads.extend(pad_boxes[*member].iter().map(place));
             carried.halo = carried.halo.max(component.halo);
             carried.edge_inset = carried.edge_inset.min(component.edge_inset);
             if *member != leader {
-                problem.constraints.followers.push(core::constraints::Follower {
-                    part: *member,
-                    leader,
-                    offset: *offset,
-                    angle: *angle,
-                });
+                problem
+                    .constraints
+                    .followers
+                    .push(core::constraints::Follower {
+                        part: *member,
+                        leader,
+                        offset: *offset,
+                        angle: *angle,
+                    });
             }
         }
         carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
         carried.body_size = [body[2] - body[0], body[3] - body[1]];
         carried.round = false;
-        carried.tight = (carried.tight_hollow.len() == carried.hollow.len() && !carried.tight_hollow.is_empty()).then_some(tight);
+        carried.tight = (carried.tight_hollow.len() == carried.hollow.len()
+            && !carried.tight_hollow.is_empty())
+        .then_some(tight);
         carried.courtyards.clear();
         carried.holes_inside = true;
         if carried.hollow.is_empty() {
             // Everything on the other side: the leader's own side is free.
-            carried.hollow.push([carried.body_center[0], carried.body_center[1], carried.body_center[0], carried.body_center[1]]);
+            carried.hollow.push([
+                carried.body_center[0],
+                carried.body_center[1],
+                carried.body_center[0],
+                carried.body_center[1],
+            ]);
         }
         if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
             eprintln!(
@@ -3012,9 +3710,15 @@ fn choose_any_edges(
     let directory = std::env::temp_dir().join(format!(
         "pcb-maker-any-edge-{}-{}",
         std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
     ));
-    let polygonal = constraints.outline.as_ref().is_some_and(|outline| outline.polygonal());
+    let polygonal = constraints
+        .outline
+        .as_ref()
+        .is_some_and(|outline| outline.polygonal());
     let trial = place_kicad_board(source_directory, board_id, &directory, &free);
     let loops = fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
         .ok()
@@ -3026,16 +3730,34 @@ fn choose_any_edges(
         _ => Vec::new(),
     };
     let bounds = loops.map(|loops| {
-        loops.outline.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, p| {
-            [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
-        })
+        loops.outline.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |b, p| {
+                [
+                    b[0].min(p[0]),
+                    b[1].min(p[1]),
+                    b[2].max(p[0]),
+                    b[3].max(p[1]),
+                ]
+            },
+        )
     });
     let _ = fs::remove_dir_all(&directory);
     let trial = trial?;
-    let bounds = bounds.ok_or("\"edge\": \"any\" needs a board outline (or an `outline` constraint)")?;
+    let bounds =
+        bounds.ok_or("\"edge\": \"any\" needs a board outline (or an `outline` constraint)")?;
     let mut chosen = BTreeMap::new();
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
-        for entry in constraints.edge.iter_mut().filter(|entry| entry.edge == "any") {
+        for entry in constraints
+            .edge
+            .iter_mut()
+            .filter(|entry| entry.edge == "any")
+        {
             let placed = trial
                 .footprints
                 .iter()
@@ -3043,12 +3765,18 @@ fn choose_any_edges(
                 .ok_or_else(|| format!("constraint names unknown part {:?}", entry.part))?;
             let ([x, y], [half_x, half_y]) = (placed.body_center, placed.body_half);
             let along_x = half_x >= half_y;
-            let box_distances = [x - half_x - bounds[0], y - half_y - bounds[1], bounds[2] - x - half_x, bounds[3] - y - half_y];
+            let box_distances = [
+                x - half_x - bounds[0],
+                y - half_y - bounds[1],
+                bounds[2] - x - half_x,
+                bounds[3] - y - half_y,
+            ];
             let distance = |slot: usize, edge: core::constraints::Edge| {
                 if sides.is_empty() {
                     box_distances[slot]
                 } else {
-                    core::constraints::side_distance(&sides, edge, [x, y], [half_x, half_y]).unwrap_or(f64::INFINITY)
+                    core::constraints::side_distance(&sides, edge, [x, y], [half_x, half_y])
+                        .unwrap_or(f64::INFINITY)
                 }
             };
             use core::constraints::Edge;
@@ -3058,8 +3786,13 @@ fn choose_any_edges(
                 ("right", distance(2, Edge::Right), !along_x),
                 ("bottom", distance(3, Edge::Bottom), along_x),
             ];
-            let cost = |(_, distance, along): &(&str, f64, bool)| distance - if *along { 1.0 } else { 0.0 };
-            let (name, _, _) = edges.iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).expect("four edges");
+            let cost = |(_, distance, along): &(&str, f64, bool)| {
+                distance - if *along { 1.0 } else { 0.0 }
+            };
+            let (name, _, _) = edges
+                .iter()
+                .min_by(|a, b| cost(a).total_cmp(&cost(b)))
+                .expect("four edges");
             entry.edge = name.to_string();
             chosen.insert(entry.part.clone(), name.to_string());
         }
@@ -3073,11 +3806,19 @@ fn choose_any_edges(
 /// The movable parts' poses in the designer's board (by reference, in
 /// order for repeated references); fixed parts keep their own.
 fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<core::Pose>, String> {
-    let text = fs::read_to_string(designer).map_err(|error| format!("{}: {error}", designer.display()))?;
+    let text =
+        fs::read_to_string(designer).map_err(|error| format!("{}: {error}", designer.display()))?;
     let pcb = crate::canonical_order::parse_board(&text)?;
     let mut at_by_reference: BTreeMap<String, Vec<[f64; 3]>> = BTreeMap::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
-        at_by_reference.entry(footprint_reference(footprint).unwrap_or_default()).or_default().push(form_at(footprint)?);
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        at_by_reference
+            .entry(footprint_reference(footprint).unwrap_or_default())
+            .or_default()
+            .push(form_at(footprint)?);
     }
     let mut poses = lowered.problem.poses.clone();
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
@@ -3087,7 +3828,10 @@ fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<cor
         }
         let nth = seen.entry(reference.clone()).or_default();
         if let Some(at) = at_by_reference.get(reference).and_then(|ats| ats.get(*nth)) {
-            poses[index] = core::Pose { position: [at[0], at[1]], angle: at[2] };
+            poses[index] = core::Pose {
+                position: [at[0], at[1]],
+                angle: at[2],
+            };
         }
         *nth += 1;
     }
@@ -3101,7 +3845,12 @@ fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<cor
 /// `PCB_PLACER_DESIGNER`), the relaxation level, how crowded the global
 /// placement is at that level, and per movable part how far each stage
 /// moved it and what it met where the annealer left it.
-fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], anneal: &core::anneal::AnnealConfig, path: &Path) -> Result<(), String> {
+fn trace_placements(
+    lowered: &LoweredPlacement,
+    placements: &[core::Placement],
+    anneal: &core::anneal::AnnealConfig,
+    path: &Path,
+) -> Result<(), String> {
     let designer = match std::env::var_os("PCB_PLACER_DESIGNER") {
         Some(designer) => Some(designer_poses(lowered, Path::new(&designer))?),
         None => None,
@@ -3123,11 +3872,21 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
                 if pins.len() < 2 {
                     return 0.0;
                 }
-                let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+                let mut b = [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ];
                 for (component, pin) in pins {
                     let c = &base.components[*component];
                     let at = c.pin_position(&c.pins[*pin], poses[*component]);
-                    b = [b[0].min(at[0]), b[1].min(at[1]), b[2].max(at[0]), b[3].max(at[1])];
+                    b = [
+                        b[0].min(at[0]),
+                        b[1].min(at[1]),
+                        b[2].max(at[0]),
+                        b[3].max(at[1]),
+                    ];
                 }
                 base.net_weights[net] * ((b[2] - b[0]) + (b[3] - b[1]))
             })
@@ -3147,8 +3906,15 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
     for placement in placements {
         let mut relaxed = base.clone();
         placement.relaxation.apply(&mut relaxed);
-        let stages: Vec<(&str, &Vec<core::Pose>)> = placement.stage_poses.iter().map(|(name, poses)| (*name, poses)).collect();
-        let lengths: Vec<(&str, Vec<f64>)> = stages.iter().map(|(name, poses)| (*name, net_lengths(poses))).collect();
+        let stages: Vec<(&str, &Vec<core::Pose>)> = placement
+            .stage_poses
+            .iter()
+            .map(|(name, poses)| (*name, poses))
+            .collect();
+        let lengths: Vec<(&str, Vec<f64>)> = stages
+            .iter()
+            .map(|(name, poses)| (*name, net_lengths(poses)))
+            .collect();
         let designer_lengths = designer.as_ref().map(|poses| net_lengths(poses));
         // Crowding: the share of movable parts that meet another part or
         // leave the board at each stage, at the level the placement ended
@@ -3169,7 +3935,10 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
                 area += 4.0 * grown[0] * grown[1];
                 let center = component.center(poses[index]);
                 for other in 0..count {
-                    if other == index || relaxed.components[other].copper_only || component.copper_only {
+                    if other == index
+                        || relaxed.components[other].copper_only
+                        || component.copper_only
+                    {
                         continue;
                     }
                     let theirs = &relaxed.components[other];
@@ -3177,10 +3946,16 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
                         continue;
                     }
                     let other_half = theirs.half_extent(poses[other].angle);
-                    let other_margin = if theirs.fixed { relaxed.spacing / 2.0 } else { theirs.halo + relaxed.spacing / 2.0 };
+                    let other_margin = if theirs.fixed {
+                        relaxed.spacing / 2.0
+                    } else {
+                        theirs.halo + relaxed.spacing / 2.0
+                    };
                     let other_center = theirs.center(poses[other]);
-                    let w = grown[0] + other_half[0] + other_margin - (center[0] - other_center[0]).abs();
-                    let h = grown[1] + other_half[1] + other_margin - (center[1] - other_center[1]).abs();
+                    let w = grown[0] + other_half[0] + other_margin
+                        - (center[0] - other_center[0]).abs();
+                    let h = grown[1] + other_half[1] + other_margin
+                        - (center[1] - other_center[1]).abs();
                     if w > 0.0 && h > 0.0 {
                         // Movable pairs count once.
                         overlap += if theirs.fixed { w * h } else { w * h / 2.0 };
@@ -3198,15 +3973,20 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
         let stage_of = |name: &str| stages.iter().position(|(stage, _)| *stage == name);
         // What the annealer itself sees there (a conflict it does not see
         // is a mismatch of the two models).
-        let anneal_overlaps = stage_of("annealed").map(|stage| core::anneal::overlaps(&relaxed, stages[stage].1, anneal));
+        let anneal_overlaps = stage_of("annealed")
+            .map(|stage| core::anneal::overlaps(&relaxed, stages[stage].1, anneal));
         let mut parts = Vec::new();
         for index in 0..count {
             let component = &relaxed.components[index];
             if component.fixed {
                 continue;
             }
-            let centers: Vec<[f64; 2]> = stages.iter().map(|(_, poses)| component.center(poses[index])).collect();
-            let cost = |lengths: &[f64]| -> f64 { incident[index].iter().map(|net| lengths[*net]).sum() };
+            let centers: Vec<[f64; 2]> = stages
+                .iter()
+                .map(|(_, poses)| component.center(poses[index]))
+                .collect();
+            let cost =
+                |lengths: &[f64]| -> f64 { incident[index].iter().map(|net| lengths[*net]).sum() };
             let mut entry = serde_json::json!({
                 "reference": lowered.references[index],
                 "pins": component.pins.len(),
@@ -3225,23 +4005,40 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
             // What the part met where the annealer left it.
             if let Some(annealed) = stage_of("annealed").map(|stage| stages[stage].1) {
                 let mut met = Vec::new();
-                if !core::legal::is_legal(&relaxed, annealed, index, annealed[index], std::iter::empty()) {
+                if !core::legal::is_legal(
+                    &relaxed,
+                    annealed,
+                    index,
+                    annealed[index],
+                    std::iter::empty(),
+                ) {
                     met.push("outline or hard constraint".to_string());
                 }
                 for other in 0..count {
                     if other == index {
                         continue;
                     }
-                    if let Some(kind) = core::legal::conflict_kind(&relaxed, annealed, index, annealed[index], other) {
+                    if let Some(kind) = core::legal::conflict_kind(
+                        &relaxed,
+                        annealed,
+                        index,
+                        annealed[index],
+                        other,
+                    ) {
                         met.push(format!(
                             "{}{}: {kind}",
                             lowered.references[other],
-                            if relaxed.components[other].fixed { " (fixed)" } else { "" }
+                            if relaxed.components[other].fixed {
+                                " (fixed)"
+                            } else {
+                                ""
+                            }
                         ));
                     }
                 }
                 entry["met_annealed"] = serde_json::json!(met);
-                entry["anneal_overlap"] = serde_json::json!(anneal_overlaps.as_ref().map(|overlaps| overlaps[index]));
+                entry["anneal_overlap"] =
+                    serde_json::json!(anneal_overlaps.as_ref().map(|overlaps| overlaps[index]));
             }
             parts.push(entry);
         }
@@ -3264,19 +4061,25 @@ fn trace_placements(lowered: &LoweredPlacement, placements: &[core::Placement], 
             "parts": parts,
         }));
     }
-    let text = serde_json::to_string(&serde_json::json!({"seeds": seeds})).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string(&serde_json::json!({"seeds": seeds}))
+        .map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), String> {
     let mut problem = lowered.problem.clone();
     let poses = designer_poses(lowered, designer)?;
-    eprintln!("designer: wirelength {:.1} mm at these poses", problem.wirelength(&poses));
+    eprintln!(
+        "designer: wirelength {:.1} mm at these poses",
+        problem.wirelength(&poses)
+    );
     let level = std::env::var("PCB_PLACER_DESIGNER_LEVEL").unwrap_or_default();
     if level != "full" {
         problem.spacing = problem.min_spacing;
         problem.grid = problem.grid.min(0.1);
-        problem.edge_margin = problem.edge_margin.min((problem.constraints.copper_edge + 0.05).min(problem.edge_margin));
+        problem.edge_margin = problem
+            .edge_margin
+            .min((problem.constraints.copper_edge + 0.05).min(problem.edge_margin));
         problem.constraints.courtyard_spacing = level == "touch";
         problem.constraints.courtyard_spacing = level == "touch";
         for component in &mut problem.components {
@@ -3288,7 +4091,17 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
     }
     let count = problem.components.len();
     let bounds = problem.bounds();
-    eprintln!("designer: outline bounds {bounds:?}, {} pieces, edge margin {}, {} points: {:?}", problem.pieces.len(), problem.edge_margin, problem.outline.len(), problem.outline.iter().step_by((problem.outline.len() / 40).max(1)).collect::<Vec<_>>());
+    eprintln!(
+        "designer: outline bounds {bounds:?}, {} pieces, edge margin {}, {} points: {:?}",
+        problem.pieces.len(),
+        problem.edge_margin,
+        problem.outline.len(),
+        problem
+            .outline
+            .iter()
+            .step_by((problem.outline.len() / 40).max(1))
+            .collect::<Vec<_>>()
+    );
     let mut illegal = 0;
     let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
     for index in 0..count {
@@ -3296,14 +4109,20 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
             continue;
         }
         let mut reasons = Vec::new();
-        let outside = !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::empty());
+        let outside =
+            !core::legal::is_legal(&problem, &poses, index, poses[index], std::iter::empty());
         if outside {
             reasons.push("outline or hard constraint".to_string());
             *kinds.entry("outline or hard constraint").or_insert(0usize) += 1;
         }
         for other in (0..count).filter(|other| !outside && *other != index) {
-            if let Some(kind) = core::legal::conflict_kind(&problem, &poses, index, poses[index], other) {
-                reasons.push(format!("{} ({:?}): {kind}", lowered.references[other], problem.components[other].side));
+            if let Some(kind) =
+                core::legal::conflict_kind(&problem, &poses, index, poses[index], other)
+            {
+                reasons.push(format!(
+                    "{} ({:?}): {kind}",
+                    lowered.references[other], problem.components[other].side
+                ));
                 *kinds.entry(kind).or_insert(0usize) += 1;
             }
         }
@@ -3321,7 +4140,9 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
             );
         }
     }
-    eprintln!("designer: {illegal} movable parts illegal at the designer's poses (level {level:?}); conflicts by kind {kinds:?}");
+    eprintln!(
+        "designer: {illegal} movable parts illegal at the designer's poses (level {level:?}); conflicts by kind {kinds:?}"
+    );
     Ok(())
 }
 
@@ -3347,7 +4168,9 @@ pub(crate) struct SeedRace<T> {
 pub(crate) fn pool_makespan(works: &[u64], threads: usize) -> u64 {
     let mut free = vec![0u64; threads.max(1)];
     for work in works {
-        let earliest = (0..free.len()).min_by_key(|thread| free[*thread]).unwrap_or(0);
+        let earliest = (0..free.len())
+            .min_by_key(|thread| free[*thread])
+            .unwrap_or(0);
         free[earliest] += work;
     }
     free.into_iter().max().unwrap_or(0)
@@ -3371,7 +4194,11 @@ pub(crate) fn race_seeds<T: Send>(
     work: impl Fn(&T) -> u64,
     run: impl Fn(u64) -> T + Sync,
 ) -> SeedRace<T> {
-    let mut race = SeedRace { kept: Vec::new(), run: 0, pool_work: 0 };
+    let mut race = SeedRace {
+        kept: Vec::new(),
+        run: 0,
+        pool_work: 0,
+    };
     let mut used = 0u64;
     let mut next = 0u64;
     while next < seeds {
@@ -3401,7 +4228,8 @@ pub(crate) fn race_seeds<T: Send>(
         race.pool_work += pool_makespan(&batch_works, REFERENCE_THREADS);
         next += batch;
         // The next seed would not be kept either: it does not run.
-        if spent || (race.kept.len() as u64 >= minimum && limit.is_some_and(|limit| used >= limit)) {
+        if spent || (race.kept.len() as u64 >= minimum && limit.is_some_and(|limit| used >= limit))
+        {
             break;
         }
     }
@@ -3410,10 +4238,15 @@ pub(crate) fn race_seeds<T: Send>(
 
 /// Runs `run` on every index of `range` with `threads` threads, each taking
 /// the next index as it frees; the results in index order.
-fn run_pool<T: Send>(range: std::ops::Range<u64>, threads: usize, run: &(impl Fn(u64) -> T + Sync)) -> Vec<T> {
+fn run_pool<T: Send>(
+    range: std::ops::Range<u64>,
+    threads: usize,
+    run: &(impl Fn(u64) -> T + Sync),
+) -> Vec<T> {
     let count = (range.end - range.start) as usize;
     let next = std::sync::atomic::AtomicU64::new(range.start);
-    let slots: Vec<std::sync::Mutex<Option<T>>> = (0..count).map(|_| std::sync::Mutex::new(None)).collect();
+    let slots: Vec<std::sync::Mutex<Option<T>>> =
+        (0..count).map(|_| std::sync::Mutex::new(None)).collect();
     std::thread::scope(|scope| {
         for _ in 0..threads.clamp(1, count.max(1)) {
             scope.spawn(|| {
@@ -3423,14 +4256,20 @@ fn run_pool<T: Send>(range: std::ops::Range<u64>, threads: usize, run: &(impl Fn
                         break;
                     }
                     let result = run(index);
-                    *slots[(index - range.start) as usize].lock().expect("placement slot") = Some(result);
+                    *slots[(index - range.start) as usize]
+                        .lock()
+                        .expect("placement slot") = Some(result);
                 }
             });
         }
     });
     slots
         .into_iter()
-        .map(|slot| slot.into_inner().expect("placement slot").expect("placement thread"))
+        .map(|slot| {
+            slot.into_inner()
+                .expect("placement slot")
+                .expect("placement thread")
+        })
         .collect()
 }
 
@@ -3443,13 +4282,20 @@ pub fn place_kicad_board(
     let started = std::time::Instant::now();
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     // Errors up to the lowering are the input's (`input_error`).
-    let source = fs::read_to_string(&source_board)
-        .map_err(|error| crate::verdict::input_error(format!("failed to read {}: {error}", source_board.display())))?;
-    let mut pcb = crate::canonical_order::parse_board(&source).map_err(crate::verdict::input_error)?;
-    let mut config = resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
+    let source = fs::read_to_string(&source_board).map_err(|error| {
+        crate::verdict::input_error(format!(
+            "failed to read {}: {error}",
+            source_board.display()
+        ))
+    })?;
+    let mut pcb =
+        crate::canonical_order::parse_board(&source).map_err(crate::verdict::input_error)?;
+    let mut config =
+        resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
     // Parts added by the import (`add`) stay where the entry puts them.
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
-        crate::placement_constraints::expand_additions(constraints, &pcb).map_err(crate::verdict::input_error)?;
+        crate::placement_constraints::expand_additions(constraints, &pcb)
+            .map_err(crate::verdict::input_error)?;
     }
     if config.copper_clearance_mm.is_none()
         || config.copper_edge_clearance_mm.is_none()
@@ -3457,7 +4303,11 @@ pub fn place_kicad_board(
         || (config.mask_openings && config.solder_mask_to_copper_mm.is_none())
         || (config.supply_via_room && config.supply_via_room_mm.is_none())
     {
-        let rules = project_rules::resolve_project_rules(&source_directory.join(format!("{board_id}.kicad_pro")), &source_board).ok();
+        let rules = project_rules::resolve_project_rules(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+            &source_board,
+        )
+        .ok();
         if config.copper_clearance_mm.is_none() {
             config.copper_clearance_mm = rules.as_ref().map(largest_clearance);
         }
@@ -3471,28 +4321,39 @@ pub fn place_kicad_board(
             config.supply_via_room_mm = rules.as_ref().map(via_room).filter(|room| *room > 0.0);
         }
         if config.solder_mask_to_copper_mm.is_none() {
-            config.solder_mask_to_copper_mm = rules.as_ref().and_then(|rules| rules.solder_mask_to_copper_mm);
+            config.solder_mask_to_copper_mm = rules
+                .as_ref()
+                .and_then(|rules| rules.solder_mask_to_copper_mm);
         }
     }
     if config.tight_bodies.is_none() {
-        config.tight_bodies = Some(courtyards_may_overlap(&source_directory.join(format!("{board_id}.kicad_pro"))));
+        config.tight_bodies = Some(courtyards_may_overlap(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ));
     }
     if config.holes_in_courtyards_error.is_none() {
-        config.holes_in_courtyards_error =
-            Some(holes_in_courtyards_error(&source_directory.join(format!("{board_id}.kicad_pro"))));
+        config.holes_in_courtyards_error = Some(holes_in_courtyards_error(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ));
     }
-    let edges_chosen = choose_any_edges(source_directory, board_id, &mut config).map_err(crate::verdict::input_error)?;
+    let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)
+        .map_err(crate::verdict::input_error)?;
     let config = &config;
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
         && let Some(outline) = &constraints.outline
     {
         let mut part_area = 0.0;
-        for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+        for footprint in pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+        {
             let (_, size, _) = local_body(footprint).map_err(crate::verdict::input_error)?;
             part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
         }
-        outline_size = Some(apply_outline(&mut pcb, outline, part_area).map_err(crate::verdict::input_error)?);
+        outline_size =
+            Some(apply_outline(&mut pcb, outline, part_area).map_err(crate::verdict::input_error)?);
     }
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
         apply_keepouts(&mut pcb, &constraints.keepout).map_err(crate::verdict::input_error)?;
@@ -3513,7 +4374,9 @@ pub fn place_kicad_board(
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
     placer_config.anneal.deadline = config.deadline;
-    placer_config.work_limit = config.work_seconds.map(|seconds| (seconds.max(0.0) * core::WORK_PER_SECOND) as u64);
+    placer_config.work_limit = config
+        .work_seconds
+        .map(|seconds| (seconds.max(0.0) * core::WORK_PER_SECOND) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.routing_room = routing_room(config, &lowered);
@@ -3539,22 +4402,43 @@ pub fn place_kicad_board(
     let seeds_work = std::cell::Cell::new(0u64);
     let seeds_run = std::cell::Cell::new(0u64);
     let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
-        let race = race_seeds(seeds, minimum_seeds, placer_config.work_limit, threads, |placement: &core::Placement| placement.work, |offset| {
-            let mut seeded = placer_config.clone();
-            seeded.global.seed = config.seed + offset;
-            seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-            core::place(problem, &seeded)
-        });
+        let race = race_seeds(
+            seeds,
+            minimum_seeds,
+            placer_config.work_limit,
+            threads,
+            |placement: &core::Placement| placement.work,
+            |offset| {
+                let mut seeded = placer_config.clone();
+                seeded.global.seed = config.seed + offset;
+                seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+                core::place(problem, &seeded)
+            },
+        );
         pool_work.set(pool_work.get() + race.pool_work);
-        seeds_work.set(seeds_work.get() + race.kept.iter().map(|(_, placement)| placement.work).sum::<u64>());
+        seeds_work.set(
+            seeds_work.get()
+                + race
+                    .kept
+                    .iter()
+                    .map(|(_, placement)| placement.work)
+                    .sum::<u64>(),
+        );
         seeds_run.set(seeds_run.get() + race.run);
-        let mut placements: Vec<(u64, core::Placement)> =
-            race.kept.into_iter().map(|(offset, placement)| (config.seed + offset, placement)).collect();
+        let mut placements: Vec<(u64, core::Placement)> = race
+            .kept
+            .into_iter()
+            .map(|(offset, placement)| (config.seed + offset, placement))
+            .collect();
         // A placement that needed courtyards touching (the last relaxation
         // level) is a last resort: it ranks below every legal one that did
         // not, however short its wires.
         let key = |placement: &core::Placement| {
-            let missed: f64 = placement.constraints.iter().map(|status| status.violation).sum();
+            let missed: f64 = placement
+                .constraints
+                .iter()
+                .map(|status| status.violation)
+                .sum();
             (
                 placement.unplaced.len() + placement.illegal.len(),
                 placement.relaxation.courtyard_spacing as usize,
@@ -3564,14 +4448,22 @@ pub fn place_kicad_board(
             )
         };
         // Stable: a tie goes to the earlier seed.
-        placements.sort_by(|(_, a), (_, b)| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal));
+        placements.sort_by(|(_, a), (_, b)| {
+            key(a)
+                .partial_cmp(&key(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         placements
     };
     // Repeated channels: a first placement, with every instance's parts
     // pulled together by a net of their own, shows which instance packs
     // best; every instance then takes that arrangement as one rigid part
     // and the board is placed again. Kept when every part finds room.
-    let groups = if config.replicate_channels { channel_groups(&lowered) } else { Vec::new() };
+    let groups = if config.replicate_channels {
+        channel_groups(&lowered)
+    } else {
+        Vec::new()
+    };
     let mut placements = if groups.is_empty() {
         place_seeds(&lowered.problem)
     } else {
@@ -3581,7 +4473,10 @@ pub fn place_kicad_board(
             cohesive.net_weights.push(0.5);
             for member in members {
                 let component = &mut cohesive.components[*member];
-                component.pins.push(core::Pin { offset: component.body_center, net });
+                component.pins.push(core::Pin {
+                    offset: component.body_center,
+                    net,
+                });
             }
         }
         place_seeds(&cohesive)
@@ -3593,7 +4488,11 @@ pub fn place_kicad_board(
                 "channels: {} ({} instances of {} parts): placed alike",
                 groups.len(),
                 templates.len(),
-                groups.iter().map(|instances| instances[0].len()).max().unwrap_or(0)
+                groups
+                    .iter()
+                    .map(|instances| instances[0].len())
+                    .max()
+                    .unwrap_or(0)
             );
             let replicated = lower_placement(&pcb, config, &templates)?;
             let again = place_seeds(&replicated.problem);
@@ -3608,16 +4507,28 @@ pub fn place_kicad_board(
                     .chain(&again[0].1.illegal)
                     .map(|index| replicated.references[*index].as_str())
                     .collect();
-                eprintln!("channels: the replicated placement left {stuck:?} without room; the free one stands");
+                eprintln!(
+                    "channels: the replicated placement left {stuck:?} without room; the free one stands"
+                );
             }
         }
     }
-    let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) = placements.into_iter().unzip();
+    let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) =
+        placements.into_iter().unzip();
     if let Some(trace) = std::env::var_os("PCB_PLACER_TRACE") {
-        trace_placements(&lowered, &placements, &placer_config.anneal, Path::new(&trace))?;
+        trace_placements(
+            &lowered,
+            &placements,
+            &placer_config.anneal,
+            Path::new(&trace),
+        )?;
     }
-    let work_seconds =
-        placements.iter().map(|placement| placement.work).max().unwrap_or(0) as f64 / core::WORK_PER_SECOND;
+    let work_seconds = placements
+        .iter()
+        .map(|placement| placement.work)
+        .max()
+        .unwrap_or(0) as f64
+        / core::WORK_PER_SECOND;
     let seeds_placed = placements.len();
     let placement = placements.remove(0);
     // The other legal placements, for layout to race when the best one by
@@ -3626,7 +4537,11 @@ pub fn place_kicad_board(
         .into_iter()
         .filter(|other| other.unplaced.is_empty() && other.illegal.is_empty())
         .map(|other| {
-            let missed = other.constraints.iter().map(|status| status.violation).sum();
+            let missed = other
+                .constraints
+                .iter()
+                .map(|status| status.violation)
+                .sum();
             (other.poses, other.relaxation, missed)
         })
         .collect();
@@ -3681,7 +4596,13 @@ pub fn place_kicad_board(
                 Some(own) => component.pin_position(own, placement.poses[index]),
                 None => {
                     let local = form_at(pad)?;
-                    component.pin_position(&core::Pin { offset: [local[0], local[1]], net: 0 }, placement.poses[index])
+                    component.pin_position(
+                        &core::Pin {
+                            offset: [local[0], local[1]],
+                            net: 0,
+                        },
+                        placement.poses[index],
+                    )
                 }
             };
             if distance_squared(written, expected).sqrt() > 1.0e-5 {
@@ -3774,7 +4695,10 @@ pub fn place_kicad_board(
             let name = &lowered.references[*index];
             if constraints.edges.iter().any(|(part, _, _)| part == index)
                 || constraints.regions.iter().any(|(part, _)| part == index)
-                || constraints.overhangs.iter().any(|(part, _, _)| part == index)
+                || constraints
+                    .overhangs
+                    .iter()
+                    .any(|(part, _, _)| part == index)
             {
                 hints.push(format!(
                     "{name} is held by an edge, region or overhang constraint: loosen it (a larger max_mm or region)"
@@ -3881,24 +4805,47 @@ mod tests {
             let mut outcomes = Vec::new();
             for threads in [1, 2, 3, 4, 8, 16] {
                 let ran = std::sync::Mutex::new(Vec::new());
-                let race = race_seeds(works.len() as u64, 3, limit, threads, |result: &(u64, u64)| result.1, |seed| {
-                    // Later seeds finish first.
-                    std::thread::sleep(std::time::Duration::from_micros(300 * (works.len() as u64 - seed)));
-                    ran.lock().unwrap().push(seed);
-                    (seed, works[seed as usize])
-                });
+                let race = race_seeds(
+                    works.len() as u64,
+                    3,
+                    limit,
+                    threads,
+                    |result: &(u64, u64)| result.1,
+                    |seed| {
+                        // Later seeds finish first.
+                        std::thread::sleep(std::time::Duration::from_micros(
+                            300 * (works.len() as u64 - seed),
+                        ));
+                        ran.lock().unwrap().push(seed);
+                        (seed, works[seed as usize])
+                    },
+                );
                 let kept: Vec<u64> = race.kept.iter().map(|(offset, _)| *offset).collect();
-                assert_eq!(kept, sequential(limit), "limit {limit:?}, {threads} threads");
+                assert_eq!(
+                    kept,
+                    sequential(limit),
+                    "limit {limit:?}, {threads} threads"
+                );
                 assert!(race.kept.iter().all(|(offset, (seed, _))| offset == seed));
                 let mut ran = ran.into_inner().unwrap();
                 ran.sort();
                 assert_eq!(ran.len() as u64, race.run);
                 outcomes.push((ran, race.pool_work));
             }
-            assert!(outcomes.windows(2).all(|pair| pair[0] == pair[1]), "limit {limit:?}: {outcomes:?}");
+            assert!(
+                outcomes.windows(2).all(|pair| pair[0] == pair[1]),
+                "limit {limit:?}: {outcomes:?}"
+            );
         }
         // Up to the limit: the kept seeds and no more ran.
-        let race = race_seeds(works.len() as u64, 3, Some(150), 4, |result: &u64| *result, |seed| works[seed as usize]);
+        let race = race_seeds(
+            works.len() as u64,
+            3,
+            Some(150),
+            4,
+            |result: &u64| *result,
+            |seed| works[seed as usize],
+        );
         assert_eq!(race.kept.len(), 4);
         assert_eq!(race.pool_work, 70 + 20);
         assert_eq!(pool_makespan(&[4, 4, 4], REFERENCE_THREADS), 4);
@@ -3908,11 +4855,24 @@ mod tests {
 
     #[test]
     fn nets_named_for_a_switch_node_feedback_rf_or_crystal_are_kept_short() {
-        for name in ["Net-(U9-FB)", "Net-(U1-SW)", "/RF/ANT", "Net-(J2-RF)", "Net-(U3-XOUT)", "/Supply/5V_BOOT"] {
+        for name in [
+            "Net-(U9-FB)",
+            "Net-(U1-SW)",
+            "/RF/ANT",
+            "Net-(J2-RF)",
+            "Net-(U3-XOUT)",
+            "/Supply/5V_BOOT",
+        ] {
             assert!(keep_short(name), "{name}");
         }
         // A key switch, a supply, a signal that merely contains the letters.
-        for name in ["Net-(SW1-Pad2)", "+3V3", "/SWDIO", "Net-(U4-COL0)", "/FBUS_TX"] {
+        for name in [
+            "Net-(SW1-Pad2)",
+            "+3V3",
+            "/SWDIO",
+            "Net-(U4-COL0)",
+            "/FBUS_TX",
+        ] {
             assert!(!keep_short(name), "{name}");
         }
     }
@@ -3941,9 +4901,16 @@ mod tests {
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
         let problem = &lowered.problem;
         let logo = &problem.components[0];
-        assert_eq!(logo.side, core::Side::Back, "artwork occupies the side of its copper");
+        assert_eq!(
+            logo.side,
+            core::Side::Back,
+            "artwork occupies the side of its copper"
+        );
         assert_eq!(problem.components[1].side, core::Side::Front);
-        assert_eq!(problem.components[1].far_copper, vec![[-3.0, -3.0, 3.0, 3.0]]);
+        assert_eq!(
+            problem.components[1].far_copper,
+            vec![[-3.0, -3.0, 3.0, 3.0]]
+        );
         let part = 2;
         assert_eq!(problem.components[part].side, core::Side::Back);
         let mut poses = problem.poses.clone();
@@ -3951,7 +4918,10 @@ mod tests {
         // Over the logo's copper, and under the other part's mask opening.
         for position in [[10.0, 10.5], [30.0, 12.0]] {
             poses[part].position = position;
-            assert!(core::legal::illegal_components(problem, &poses).contains(&part), "{position:?}");
+            assert!(
+                core::legal::illegal_components(problem, &poses).contains(&part),
+                "{position:?}"
+            );
         }
         // A front part may sit over the logo: its copper is on the back.
         let mut front = problem.components[part].clone();
@@ -3993,7 +4963,9 @@ mod tests {
         let (back, front) = (1, 2);
         let mut poses = problem.poses.clone();
         assert!(core::legal::illegal_components(problem, &poses).is_empty());
-        let legal = |poses: &[core::Pose], part: usize| !core::legal::illegal_components(problem, poses).contains(&part);
+        let legal = |poses: &[core::Pose], part: usize| {
+            !core::legal::illegal_components(problem, poses).contains(&part)
+        };
         // Pads in the pad keepout: not legal; the body reaching over its
         // edge with the pads outside: legal.
         poses[back].position = [10.0, 15.0];
@@ -4057,8 +5029,12 @@ mod tests {
         let (ufl, front) = (0, 1);
         assert!(!problem.components[ufl].fixed);
         let mut poses = problem.poses.clone();
-        poses[ufl] = core::Pose { position: [30.0, 15.0], angle: 90.0 };
-        let legal = |poses: &[core::Pose]| core::legal::illegal_components(problem, poses).is_empty();
+        poses[ufl] = core::Pose {
+            position: [30.0, 15.0],
+            angle: 90.0,
+        };
+        let legal =
+            |poses: &[core::Pose]| core::legal::illegal_components(problem, poses).is_empty();
         // The keepout's first pad sits 2 mm along the U.FL's x axis: turned
         // by 90 degrees, 2 mm above it (y grows downwards).
         poses[front].position = [30.5, 13.0];
@@ -4066,7 +5042,12 @@ mod tests {
         poses[front].position = [30.5, 18.0];
         assert!(legal(&poses), "the keepout is off the front part's pads");
         // The written board carries the keepout along.
-        let mut footprint = pcb.children().iter().find(|item| item.head() == Some("footprint")).unwrap().clone();
+        let mut footprint = pcb
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("footprint"))
+            .unwrap()
+            .clone();
         write_footprint_pose(&mut footprint, poses[ufl]).unwrap();
         let zone = footprint.child("zone").unwrap();
         let points: Vec<[f64; 2]> = zone
@@ -4076,9 +5057,17 @@ mod tests {
             .children()
             .iter()
             .filter(|child| child.head() == Some("xy"))
-            .map(|point| [point.children()[1].atom().unwrap().parse().unwrap(), point.children()[2].atom().unwrap().parse().unwrap()])
+            .map(|point| {
+                [
+                    point.children()[1].atom().unwrap().parse().unwrap(),
+                    point.children()[2].atom().unwrap().parse().unwrap(),
+                ]
+            })
             .collect();
-        assert_eq!(points, vec![[29.0, 14.0], [29.0, 12.0], [31.0, 12.0], [31.0, 14.0]]);
+        assert_eq!(
+            points,
+            vec![[29.0, 14.0], [29.0, 12.0], [31.0, 12.0], [31.0, 14.0]]
+        );
     }
 
     #[test]
@@ -4113,7 +5102,10 @@ mod tests {
                 (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 5 "E"))))"#,
         )
         .unwrap();
-        let config = KiCadBoardPlacerConfig { keep_on_pieces: true, ..KiCadBoardPlacerConfig::default() };
+        let config = KiCadBoardPlacerConfig {
+            keep_on_pieces: true,
+            ..KiCadBoardPlacerConfig::default()
+        };
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         let problem = &lowered.problem;
         assert_eq!(problem.pieces.len(), 2);
@@ -4122,7 +5114,15 @@ mod tests {
         regions.sort_by_key(|(part, _)| *part);
         assert_eq!(regions, vec![(1, right), (2, right)]);
         // On by default; `keep_on_pieces: false` switches it off.
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig { keep_on_pieces: false, ..KiCadBoardPlacerConfig::default() }, &[]).unwrap();
+        let lowered = lower_placement(
+            &pcb,
+            &KiCadBoardPlacerConfig {
+                keep_on_pieces: false,
+                ..KiCadBoardPlacerConfig::default()
+            },
+            &[],
+        )
+        .unwrap();
         assert!(lowered.problem.constraints.regions.is_empty());
     }
 
@@ -4166,24 +5166,46 @@ mod tests {
         };
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         let problem = &lowered.problem;
-        assert_eq!(problem.pieces, vec![[0.0, 0.0, 60.0, 30.0], [70.0, 0.0, 90.0, 20.0]]);
+        assert_eq!(
+            problem.pieces,
+            vec![[0.0, 0.0, 60.0, 30.0], [70.0, 0.0, 90.0, 20.0]]
+        );
         // Two pieces' sides: six and four.
         assert_eq!(problem.constraints.sides.len(), 10);
         // The window keeps bodies off, J2's slot copper only.
-        let holes: Vec<usize> = (0..problem.components.len()).filter(|index| problem.components[*index].copper_only).collect();
+        let holes: Vec<usize> = (0..problem.components.len())
+            .filter(|index| problem.components[*index].copper_only)
+            .collect();
         assert_eq!(holes.len(), 2);
         assert_eq!(problem.constraints.solid_cutouts.len(), 1);
         let window = &problem.components[problem.constraints.solid_cutouts[0]];
         assert_eq!(window.body_size, [4.0, 4.0]);
-        assert_eq!(problem.poses[problem.constraints.solid_cutouts[0]].position, [74.0, 4.0]);
+        assert_eq!(
+            problem.poses[problem.constraints.solid_cutouts[0]].position,
+            [74.0, 4.0]
+        );
         // R1 is on J1's piece.
-        let r1 = lowered.references.iter().position(|reference| reference == "R1").unwrap();
-        assert!(problem.constraints.regions.contains(&(r1, [70.0, 0.0, 90.0, 20.0])), "{:?}", problem.constraints.regions);
+        let r1 = lowered
+            .references
+            .iter()
+            .position(|reference| reference == "R1")
+            .unwrap();
+        assert!(
+            problem
+                .constraints
+                .regions
+                .contains(&(r1, [70.0, 0.0, 90.0, 20.0])),
+            "{:?}",
+            problem.constraints.regions
+        );
         // A rectangle keeps the box's sides and has no solid cutouts.
         let rectangle: KiCadPlacementConstraints =
             serde_json::from_str(r#"{"version": 1, "outline": {"width": 60, "height": 30, "x": 0, "y": 0, "corner_radius": 2}}"#).unwrap();
         apply_outline(&mut pcb, rectangle.outline.as_ref().unwrap(), 0.0).unwrap();
-        let config = KiCadBoardPlacerConfig { constraints: Some(KiCadConstraintsSource::Inline(rectangle)), ..KiCadBoardPlacerConfig::default() };
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(rectangle)),
+            ..KiCadBoardPlacerConfig::default()
+        };
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         assert!(lowered.problem.constraints.sides.is_empty());
         assert!(lowered.problem.constraints.solid_cutouts.is_empty());
@@ -4224,7 +5246,10 @@ mod tests {
         let mut regions = problem.constraints.regions.clone();
         regions.sort_by_key(|(part, _)| *part);
         // J1 bodies end at 12 and start at 88: the cut is at 50.
-        assert_eq!(regions, vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]);
+        assert_eq!(
+            regions,
+            vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]
+        );
         // Each copy's parts start global placement at their region's centre.
         let mut starts = problem.constraints.starts.clone();
         starts.sort_by_key(|(part, _)| *part);
@@ -4236,23 +5261,68 @@ mod tests {
         // fixed parts (55 mm apart: 23 mm right of the first copy's).
         let regions_of = |first: f64, second: f64| {
             let pcb = board(&format!("{}\n{}", copy(0, first), copy(1, second)));
-            let mut regions = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions;
+            let mut regions = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[])
+                .unwrap()
+                .problem
+                .constraints
+                .regions;
             regions.sort_by_key(|(part, _)| *part);
             regions
         };
-        assert_eq!(regions_of(5.0, 55.0), vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]);
-        assert_eq!(regions_of(5.0, 25.0), vec![(1, [0.0, 0.0, 23.0, 30.0]), (3, [23.0, 0.0, 100.0, 30.0])]);
+        assert_eq!(
+            regions_of(5.0, 55.0),
+            vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]
+        );
+        assert_eq!(
+            regions_of(5.0, 25.0),
+            vec![(1, [0.0, 0.0, 23.0, 30.0]), (3, [23.0, 0.0, 100.0, 30.0])]
+        );
         // Switched off, or a single copy, or copies whose nets join: none.
-        let off = KiCadBoardPlacerConfig { keep_copies: false, ..KiCadBoardPlacerConfig::default() };
-        assert!(lower_placement(&pcb, &off, &[]).unwrap().problem.constraints.regions.is_empty());
+        let off = KiCadBoardPlacerConfig {
+            keep_copies: false,
+            ..KiCadBoardPlacerConfig::default()
+        };
+        assert!(
+            lower_placement(&pcb, &off, &[])
+                .unwrap()
+                .problem
+                .constraints
+                .regions
+                .is_empty()
+        );
         let single = board(&copy(0, 10.0));
-        assert!(lower_placement(&single, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+        assert!(
+            lower_placement(&single, &KiCadBoardPlacerConfig::default(), &[])
+                .unwrap()
+                .problem
+                .constraints
+                .regions
+                .is_empty()
+        );
         let shared = board(&format!("{}\n{}", copy(0, 10.0), copy(0, 90.0)));
-        assert!(lower_placement(&shared, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+        assert!(
+            lower_placement(&shared, &KiCadBoardPlacerConfig::default(), &[])
+                .unwrap()
+                .problem
+                .constraints
+                .regions
+                .is_empty()
+        );
         // Parts that are not copies of each other (another reference) stay
         // free too: a board of two circuits is not a panel.
-        let other = board(&format!("{}\n{}", copy(0, 10.0), copy(1, 90.0).replace("\"R1\"", "\"R2\"")));
-        assert!(lower_placement(&other, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions.is_empty());
+        let other = board(&format!(
+            "{}\n{}",
+            copy(0, 10.0),
+            copy(1, 90.0).replace("\"R1\"", "\"R2\"")
+        ));
+        assert!(
+            lower_placement(&other, &KiCadBoardPlacerConfig::default(), &[])
+                .unwrap()
+                .problem
+                .constraints
+                .regions
+                .is_empty()
+        );
     }
 
     #[test]
@@ -4279,14 +5349,22 @@ mod tests {
         let config = KiCadBoardPlacerConfig::default();
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         let net_of = |reference: &str, pad: usize| {
-            let index = lowered.references.iter().position(|name| name == reference).unwrap();
+            let index = lowered
+                .references
+                .iter()
+                .position(|name| name == reference)
+                .unwrap();
             lowered.problem.components[index].pins[pad].net
         };
         assert!(lowered.poured[net_of("R1", 1)], "{:?}", lowered.poured);
         assert!(!lowered.poured[net_of("R1", 0)] && !lowered.poured[net_of("R2", 1)]);
         // Off by default; on, the demand leaves GND out.
         assert!(routing_room(&config, &lowered).is_none());
-        let on = KiCadBoardPlacerConfig { routing_room: true, routing_room_share: 0.75, ..config };
+        let on = KiCadBoardPlacerConfig {
+            routing_room: true,
+            routing_room_share: 0.75,
+            ..config
+        };
         let room = routing_room(&on, &lowered).unwrap();
         assert_eq!(room.net_demand[net_of("R1", 1)], 0.0);
         assert_eq!(room.net_demand[net_of("R1", 0)], 1.0);
@@ -4325,7 +5403,10 @@ mod tests {
         ))
         .unwrap();
         let constraints: crate::placement_constraints::KiCadPlacementConstraints =
-            serde_json::from_str(r#"{"version": 1, "near": [{"part": "U4", "part_of": "R1", "max_mm": 5}]}"#).unwrap();
+            serde_json::from_str(
+                r#"{"version": 1, "near": [{"part": "U4", "part_of": "R1", "max_mm": 5}]}"#,
+            )
+            .unwrap();
         let config = KiCadBoardPlacerConfig {
             bus_rows: true,
             constraints: Some(KiCadConstraintsSource::Inline(constraints)),
@@ -4333,15 +5414,23 @@ mod tests {
         };
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         let problem = &lowered.problem;
-        let followers: Vec<(usize, usize, [f64; 2])> =
-            problem.constraints.followers.iter().map(|follower| (follower.part, follower.leader, follower.offset)).collect();
+        let followers: Vec<(usize, usize, [f64; 2])> = problem
+            .constraints
+            .followers
+            .iter()
+            .map(|follower| (follower.part, follower.leader, follower.offset))
+            .collect();
         // U2 and U3 follow U1, stacked along the sockets' short side (y)
         // with the spacing between them: every bus pad lines up.
         assert_eq!(followers.len(), 2, "{followers:?}");
         let pitch = 2.0 + problem.spacing;
         for (index, (part, leader, offset)) in followers.iter().enumerate() {
             assert_eq!((*part, *leader), (index + 1, 0));
-            assert!(offset[0].abs() < 1.0e-9 && (offset[1].abs() - (index + 1) as f64 * pitch).abs() < 1.0e-9, "{offset:?}");
+            assert!(
+                offset[0].abs() < 1.0e-9
+                    && (offset[1].abs() - (index + 1) as f64 * pitch).abs() < 1.0e-9,
+                "{offset:?}"
+            );
         }
         // The block may take quarter turns.
         assert_eq!(problem.components[0].angle_options.len(), 4);
@@ -4377,7 +5466,10 @@ mod tests {
         ))
         .unwrap();
         let constraints: crate::placement_constraints::KiCadPlacementConstraints =
-            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["J1", "J2"], "pitch_mm": 12}]}"#).unwrap();
+            serde_json::from_str(
+                r#"{"version": 1, "row": [{"parts": ["J1", "J2"], "pitch_mm": 12}]}"#,
+            )
+            .unwrap();
         let config = KiCadBoardPlacerConfig {
             constraints: Some(KiCadConstraintsSource::Inline(constraints)),
             ..KiCadBoardPlacerConfig::default()
@@ -4385,7 +5477,8 @@ mod tests {
         let lowered = lower_placement(&pcb, &config, &[]).unwrap();
         let problem = &lowered.problem;
         let mut poses = problem.poses.clone();
-        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&2);
+        let legal =
+            |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&2);
         // J2 sits at x 22: in its notch legal, in its L not.
         poses[2].position = [22.0 + 2.5, 15.0 - 2.5];
         assert!(legal(&poses));
@@ -4412,9 +5505,13 @@ mod tests {
         .unwrap();
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
         let problem = &lowered.problem;
-        assert!(!problem.components[0].hollow.is_empty(), "the L blocks with its own shape");
+        assert!(
+            !problem.components[0].hollow.is_empty(),
+            "the L blocks with its own shape"
+        );
         let mut poses = problem.poses.clone();
-        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
+        let legal =
+            |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
         // In the notch (local x 1..5, y -5..1): legal; in the L: not.
         poses[1].position = [20.0 + 2.5, 15.0 - 2.5];
         assert!(legal(&poses));
@@ -4450,12 +5547,21 @@ mod tests {
                 (pad "2" smd rect (at 0.95 0) (size 1 1.45) (layers "F.Cu" "F.Paste" "F.Mask") (net 4 "GND"))))"#,
         )
         .unwrap();
-        let config = KiCadBoardPlacerConfig { fixed: vec!["J2".into()], ..KiCadBoardPlacerConfig::default() };
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["J2".into()],
+            ..KiCadBoardPlacerConfig::default()
+        };
         let mut placement = lower_placement(&pcb, &config, &[]).unwrap();
         let (j2, c) = (0, 1);
-        assert_eq!(placement.references[..2], ["J2".to_string(), "C61".to_string()]);
+        assert_eq!(
+            placement.references[..2],
+            ["J2".to_string(), "C61".to_string()]
+        );
         assert!(placement.problem.components[j2].fixed);
-        assert!(!placement.problem.components[j2].hollow.is_empty(), "J2 blocks with its courtyard's shape");
+        assert!(
+            !placement.problem.components[j2].hollow.is_empty(),
+            "J2 blocks with its courtyard's shape"
+        );
         // A point of J2's own frame on the board.
         let at = |problem: &core::Problem, local: [f64; 2]| {
             let pose = problem.poses[j2];
@@ -4466,14 +5572,24 @@ mod tests {
             placement.problem.components[j2].fixed = fixed;
             let problem = &placement.problem;
             let mut poses = problem.poses.clone();
-            let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&c);
-            let seen = |poses: &[core::Pose]| core::anneal::overlaps(problem, poses, &core::anneal::AnnealConfig::default())[c];
+            let legal = |poses: &[core::Pose]| {
+                !core::legal::illegal_components(problem, poses).contains(&c)
+            };
+            let seen = |poses: &[core::Pose]| {
+                core::anneal::overlaps(problem, poses, &core::anneal::AnnealConfig::default())[c]
+            };
             // Where C61 was: deep inside the polygon, 13 mm from the
             // courtyard; and under the small rectangle beside the pins.
             for local in [[0.0, 25.0], [8.0, 15.0], [0.0, 2.0]] {
                 poses[c].position = at(problem, local);
-                assert!(!legal(&poses), "fixed {fixed}: under the opening at {local:?}");
-                assert!(seen(&poses) > 0.0, "fixed {fixed}: the annealer sees the opening at {local:?}");
+                assert!(
+                    !legal(&poses),
+                    "fixed {fixed}: under the opening at {local:?}"
+                );
+                assert!(
+                    seen(&poses) > 0.0,
+                    "fixed {fixed}: the annealer sees the opening at {local:?}"
+                );
             }
             // Beside the polygon (its edge at local x 11.43): legal.
             poses[c].position = at(problem, [16.0, 25.0]);
@@ -4481,7 +5597,15 @@ mod tests {
             assert_eq!(seen(&poses), 0.0);
         }
         // Off, the shape is the courtyard and the pads alone, as before.
-        let off = lower_placement(&pcb, &KiCadBoardPlacerConfig { mask_openings: false, ..config.clone() }, &[]).unwrap();
+        let off = lower_placement(
+            &pcb,
+            &KiCadBoardPlacerConfig {
+                mask_openings: false,
+                ..config.clone()
+            },
+            &[],
+        )
+        .unwrap();
         let mut poses = off.problem.poses.clone();
         poses[c].position = at(&off.problem, [0.0, 25.0]);
         assert!(!core::legal::illegal_components(&off.problem, &poses).contains(&c));
@@ -4496,13 +5620,22 @@ mod tests {
             ..KiCadBoardPlacerConfig::default()
         };
         // SNSP: everything 0, the clearance decides.
-        assert_eq!(mask_opening_growth(&board("(pad_to_mask_clearance 0)"), &config(0.2, Some(0.0))), 0.0);
+        assert_eq!(
+            mask_opening_growth(&board("(pad_to_mask_clearance 0)"), &config(0.2, Some(0.0))),
+            0.0
+        );
         // eternal-keypad: a web of 0.25 and an expansion of 0.051 against
         // a clearance of 0.1995.
-        let keypad = mask_opening_growth(&board("(pad_to_mask_clearance 0.051) (solder_mask_min_width 0.25)"), &config(0.1995, None));
+        let keypad = mask_opening_growth(
+            &board("(pad_to_mask_clearance 0.051) (solder_mask_min_width 0.25)"),
+            &config(0.1995, None),
+        );
         assert!((keypad - 0.1015).abs() < 1.0e-9, "{keypad}");
         // A mask-to-copper clearance larger than the web and expansion.
-        let covered = mask_opening_growth(&board("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1)"), &config(0.2, Some(0.3)));
+        let covered = mask_opening_growth(
+            &board("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1)"),
+            &config(0.2, Some(0.3)),
+        );
         assert!((covered - 0.1).abs() < 1.0e-9, "{covered}");
     }
 
@@ -4530,7 +5663,10 @@ mod tests {
         .unwrap();
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
         let problem = &lowered.problem;
-        assert!(!problem.components[0].hollow.is_empty(), "no courtyard: the pads block");
+        assert!(
+            !problem.components[0].hollow.is_empty(),
+            "no courtyard: the pads block"
+        );
         assert!(core::legal::illegal_components(problem, &problem.poses).is_empty());
         // Half as far apart, the pads meet.
         let mut poses = problem.poses.clone();
@@ -4558,7 +5694,8 @@ mod tests {
         let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
         let problem = &lowered.problem;
         let mut poses = problem.poses.clone();
-        let legal = |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
+        let legal =
+            |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&1);
         // Between the pads, clear of the hole: legal (KiCad checks copper).
         poses[1].position = [20.0, 15.0 - 4.0];
         assert!(legal(&poses));
@@ -4572,22 +5709,54 @@ mod tests {
     #[test]
     fn pads_in_rows_of_pins_mean_a_body_fills_their_box() {
         let grid = |columns: &[f64], rows: &[f64]| -> Vec<[f64; 2]> {
-            columns.iter().flat_map(|x| rows.iter().map(move |y| [*x, *y])).collect()
+            columns
+                .iter()
+                .flat_map(|x| rows.iter().map(move |y| [*x, *y]))
+                .collect()
         };
         // A 2 x 3 header, an SOIC-8, a card slot's two rows.
         assert!(pads_in_pin_rows(&grid(&[-2.54, 0.0, 2.54], &[-1.27, 1.27])));
-        assert!(pads_in_pin_rows(&grid(&[-2.7, 2.7], &[-1.905, -0.635, 0.635, 1.905])));
-        assert!(pads_in_pin_rows(&grid(&(0..31).map(|i| i as f64 * 2.54).collect::<Vec<_>>(), &[-5.08, 0.0])));
+        assert!(pads_in_pin_rows(&grid(
+            &[-2.7, 2.7],
+            &[-1.905, -0.635, 0.635, 1.905]
+        )));
+        assert!(pads_in_pin_rows(&grid(
+            &(0..31).map(|i| i as f64 * 2.54).collect::<Vec<_>>(),
+            &[-5.08, 0.0]
+        )));
         // A QFP's four sides of 0.5 mm pitch with an exposed pad.
-        let mut quad: Vec<[f64; 2]> = (0..8).map(|i| -1.75 + 0.5 * i as f64).flat_map(|t| [[-4.0, t], [4.0, t], [t, -4.0], [t, 4.0]]).collect();
+        let mut quad: Vec<[f64; 2]> = (0..8)
+            .map(|i| -1.75 + 0.5 * i as f64)
+            .flat_map(|t| [[-4.0, t], [4.0, t], [t, -4.0], [t, 4.0]])
+            .collect();
         quad.push([0.0, 0.0]);
         assert!(pads_in_pin_rows(&quad));
         // A key switch (ULK's PG1316: six pads over 14 mm), a hot-swap
         // socket, a two-pad part, a pad stacked on itself.
-        assert!(!pads_in_pin_rows(&[[-6.35, -6.0], [-6.35, 6.0], [-2.5, 2.65], [2.5, 2.65], [6.35, -6.0], [6.35, 6.0]]));
-        assert!(!pads_in_pin_rows(&[[-7.56, -2.54], [-5.08, 0.0], [-3.81, -2.54], [0.0, 0.0], [2.54, -5.08], [5.08, 0.0], [6.29, -5.08]]));
+        assert!(!pads_in_pin_rows(&[
+            [-6.35, -6.0],
+            [-6.35, 6.0],
+            [-2.5, 2.65],
+            [2.5, 2.65],
+            [6.35, -6.0],
+            [6.35, 6.0]
+        ]));
+        assert!(!pads_in_pin_rows(&[
+            [-7.56, -2.54],
+            [-5.08, 0.0],
+            [-3.81, -2.54],
+            [0.0, 0.0],
+            [2.54, -5.08],
+            [5.08, 0.0],
+            [6.29, -5.08]
+        ]));
         assert!(!pads_in_pin_rows(&[[-0.5, 0.0], [0.5, 0.0]]));
-        assert!(!pads_in_pin_rows(&[[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [1.0, 0.0]]));
+        assert!(!pads_in_pin_rows(&[
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 0.0]
+        ]));
     }
 
     #[test]
@@ -4597,8 +5766,15 @@ mod tests {
         let mut pads = String::new();
         for i in 0..6 {
             let t = -1.25 + 0.5 * i as f64;
-            for (x, y, w, h) in [(-5.0, t, 1.2, 0.3), (5.0, t, 1.2, 0.3), (t, -5.0, 0.3, 1.2), (t, 5.0, 0.3, 1.2)] {
-                pads += &format!(r#"(pad "{i}" smd rect (at {x} {y}) (size {w} {h}) (layers "F.Cu") (net 1 "A"))"#);
+            for (x, y, w, h) in [
+                (-5.0, t, 1.2, 0.3),
+                (5.0, t, 1.2, 0.3),
+                (t, -5.0, 0.3, 1.2),
+                (t, 5.0, 0.3, 1.2),
+            ] {
+                pads += &format!(
+                    r#"(pad "{i}" smd rect (at {x} {y}) (size {w} {h}) (layers "F.Cu") (net 1 "A"))"#
+                );
             }
         }
         let pcb = parse(&format!(
@@ -4619,8 +5795,14 @@ mod tests {
             poses[1].position = [20.0, 15.0];
             !core::legal::illegal_components(problem, &poses).contains(&1)
         };
-        assert!(!inside(&KiCadBoardPlacerConfig::default()), "the body fills the pad ring");
-        let off = KiCadBoardPlacerConfig { solid_pin_rows: false, ..KiCadBoardPlacerConfig::default() };
+        assert!(
+            !inside(&KiCadBoardPlacerConfig::default()),
+            "the body fills the pad ring"
+        );
+        let off = KiCadBoardPlacerConfig {
+            solid_pin_rows: false,
+            ..KiCadBoardPlacerConfig::default()
+        };
         assert!(inside(&off), "off: only the pads block");
     }
 
@@ -4638,7 +5820,9 @@ mod tests {
                     );
                 }
             }
-            format!(r#"(footprint "Slot" (layer "F.Cu") (at 10 {y}) (property "Reference" "{reference}") (attr through_hole) {pads})"#)
+            format!(
+                r#"(footprint "Slot" (layer "F.Cu") (at 10 {y}) (property "Reference" "{reference}") (attr through_hole) {pads})"#
+            )
         };
         let pcb = parse(&format!(
             r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
@@ -4657,7 +5841,10 @@ mod tests {
             !core::legal::illegal_components(problem, &poses).contains(&1)
         };
         assert!(!interleaved(&KiCadBoardPlacerConfig::default()));
-        assert!(interleaved(&KiCadBoardPlacerConfig { solid_pin_rows: false, ..KiCadBoardPlacerConfig::default() }));
+        assert!(interleaved(&KiCadBoardPlacerConfig {
+            solid_pin_rows: false,
+            ..KiCadBoardPlacerConfig::default()
+        }));
     }
 
     #[test]
@@ -4674,7 +5861,10 @@ mod tests {
         )
         .unwrap();
         let constraints: crate::placement_constraints::KiCadPlacementConstraints =
-            serde_json::from_str(r#"{"version": 1, "edge": [{"part": "P4", "edge": "left", "max_mm": 1.5}]}"#).unwrap();
+            serde_json::from_str(
+                r#"{"version": 1, "edge": [{"part": "P4", "edge": "left", "max_mm": 1.5}]}"#,
+            )
+            .unwrap();
         let config = KiCadBoardPlacerConfig {
             constraints: Some(KiCadConstraintsSource::Inline(constraints)),
             copper_edge_clearance_mm: Some(0.0),
@@ -4711,15 +5901,27 @@ mod tests {
                     (pad "2" smd rect (at 2.5 0) (size 0.8 0.9) (layers "B.Cu") (net 3 "C"))))"#,
             )
             .unwrap();
-            let config = KiCadBoardPlacerConfig { holes_in_courtyards_error: Some(holes_error), ..Default::default() };
+            let config = KiCadBoardPlacerConfig {
+                holes_in_courtyards_error: Some(holes_error),
+                ..Default::default()
+            };
             lower_placement(&pcb, &config, &[]).unwrap()
         };
         let lowered = board(false);
         let problem = &lowered.problem;
-        assert!(problem.components[0].far_side.is_empty() && problem.components[0].far_copper.len() == 2);
-        assert_eq!(problem.components[1].far_side.len(), 2, "the header's leads");
+        assert!(
+            problem.components[0].far_side.is_empty()
+                && problem.components[0].far_copper.len() == 2
+        );
+        assert_eq!(
+            problem.components[1].far_side.len(),
+            2,
+            "the header's leads"
+        );
         let mut poses = problem.poses.clone();
-        let legal = |problem: &core::Problem, poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&2);
+        let legal = |problem: &core::Problem, poses: &[core::Pose]| {
+            !core::legal::illegal_components(problem, poses).contains(&2)
+        };
         // The back part's body over the reversible part's back pads, its
         // own pads clear of them: not an error.
         poses[2].position = [15.0, 15.0];
@@ -4735,22 +5937,38 @@ mod tests {
     #[test]
     fn a_courtyard_drawn_as_several_shapes_keeps_them_apart() {
         let rectangle = |x0: f64, y0: f64, x1: f64, y1: f64| {
-            [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
-                .iter()
-                .map(|[a, b, c, d]| format!("(fp_line (start {a} {b}) (end {c} {d}) (layer \"F.CrtYd\"))"))
-                .collect::<String>()
+            [
+                [x0, y0, x1, y0],
+                [x1, y0, x1, y1],
+                [x1, y1, x0, y1],
+                [x0, y1, x0, y0],
+            ]
+            .iter()
+            .map(|[a, b, c, d]| {
+                format!("(fp_line (start {a} {b}) (end {c} {d}) (layer \"F.CrtYd\"))")
+            })
+            .collect::<String>()
         };
         // An outline marking two connectors: two rectangles, lines in any order.
         let mut lines = rectangle(0.0, 0.0, 10.0, 5.0);
         lines.insert_str(0, &rectangle(40.0, 30.0, 50.0, 40.0));
-        let footprint = parse(&format!("(footprint \"Board\" (layer \"F.Cu\") (at 0 0) {lines})")).unwrap();
+        let footprint = parse(&format!(
+            "(footprint \"Board\" (layer \"F.Cu\") (at 0 0) {lines})"
+        ))
+        .unwrap();
         let (mut shapes, malformed) = courtyard_shapes(&footprint).unwrap();
         assert!(!malformed);
         shapes.sort_by(|a, b| a[0].total_cmp(&b[0]));
-        assert_eq!(shapes, vec![[0.0, 0.0, 10.0, 5.0], [40.0, 30.0, 50.0, 40.0]]);
+        assert_eq!(
+            shapes,
+            vec![[0.0, 0.0, 10.0, 5.0], [40.0, 30.0, 50.0, 40.0]]
+        );
         // One rectangle is one shape: the body covers it.
-        let footprint =
-            parse(&format!("(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {})", rectangle(0.0, 0.0, 2.0, 1.0))).unwrap();
+        let footprint = parse(&format!(
+            "(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {})",
+            rectangle(0.0, 0.0, 2.0, 1.0)
+        ))
+        .unwrap();
         assert_eq!(courtyard_shapes(&footprint).unwrap(), (Vec::new(), false));
         // A zero-length line at a corner: KiCad cannot build it.
         let footprint = parse(&format!(
@@ -4775,7 +5993,13 @@ mod channel_tests {
             body_size: [2.0, 1.0],
             round: false,
             halo: 0.0,
-            pins: pins.into_iter().map(|(x, net)| core::Pin { offset: [x, 0.0], net }).collect(),
+            pins: pins
+                .into_iter()
+                .map(|(x, net)| core::Pin {
+                    offset: [x, 0.0],
+                    net,
+                })
+                .collect(),
             side: core::Side::Front,
             fixed: false,
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
@@ -4801,9 +6025,19 @@ mod channel_tests {
             part("B2", vec![(-0.5, 3), (0.5, 4)]),
             part("C2", vec![(-0.5, 4)]),
         ];
-        let poses = [[0.0, 0.0], [3.0, 0.0], [6.0, 0.0], [20.0, 20.0], [20.0, 30.0], [30.0, 30.0]]
-            .map(|position| core::Pose { position, angle: 0.0 })
-            .to_vec();
+        let poses = [
+            [0.0, 0.0],
+            [3.0, 0.0],
+            [6.0, 0.0],
+            [20.0, 20.0],
+            [20.0, 30.0],
+            [30.0, 30.0],
+        ]
+        .map(|position| core::Pose {
+            position,
+            angle: 0.0,
+        })
+        .to_vec();
         let identities = ["A1", "B1", "C1", "A2", "B2", "C2"]
             .iter()
             .map(|name| {
@@ -4830,7 +6064,10 @@ mod channel_tests {
                 shared_halos: false,
                 pieces: Vec::new(),
             },
-            references: ["A1", "B1", "C1", "A2", "B2", "C2"].iter().map(|s| s.to_string()).collect(),
+            references: ["A1", "B1", "C1", "A2", "B2", "C2"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             source_at: vec![[0.0; 3]; 6],
             constraint_warnings: Vec::new(),
             routing_layers: 2.0,
@@ -4847,8 +6084,22 @@ mod channel_tests {
         let templates = channel_templates(&lowered, &groups, &lowered.problem.poses);
         // Instance 1 is the compact one: both take its arrangement.
         assert_eq!(templates.len(), 2);
-        assert_eq!(templates[0], vec![(0, [0.0, 0.0], 0.0), (1, [3.0, 0.0], 0.0), (2, [6.0, 0.0], 0.0)]);
-        assert_eq!(templates[1], vec![(3, [0.0, 0.0], 0.0), (4, [3.0, 0.0], 0.0), (5, [6.0, 0.0], 0.0)]);
+        assert_eq!(
+            templates[0],
+            vec![
+                (0, [0.0, 0.0], 0.0),
+                (1, [3.0, 0.0], 0.0),
+                (2, [6.0, 0.0], 0.0)
+            ]
+        );
+        assert_eq!(
+            templates[1],
+            vec![
+                (3, [0.0, 0.0], 0.0),
+                (4, [3.0, 0.0], 0.0),
+                (5, [6.0, 0.0], 0.0)
+            ]
+        );
         let mut problem = lowered.problem.clone();
         let pad_boxes: Vec<Vec<[f64; 4]>> = vec![vec![[-1.0, -0.5, 1.0, 0.5]]; 6];
         apply_channels(&mut problem, &lowered.references, &pad_boxes, &templates).unwrap();
@@ -4880,7 +6131,11 @@ mod glob_tests {
         assert!(glob_matches("U*", "U12"));
         assert!(glob_matches("R?", "R1") && !glob_matches("R?", "R12"));
         assert!(glob_matches("REF**", "REF**_2"));
-        assert!(glob_matches("REF\\*\\*", "REF**") && !glob_matches("REF\\*\\*", "REF**_2") && !glob_matches("REF\\*\\*", "REF12"));
+        assert!(
+            glob_matches("REF\\*\\*", "REF**")
+                && !glob_matches("REF\\*\\*", "REF**_2")
+                && !glob_matches("REF\\*\\*", "REF12")
+        );
     }
 }
 
@@ -4898,12 +6153,28 @@ mod order_tests {
             }
             items.concat()
         };
-        let part = |reference: &str, uuid: &str, at: [f64; 2], pads: Vec<String>, half: [f64; 2]| {
+        let part = |reference: &str,
+                    uuid: &str,
+                    at: [f64; 2],
+                    pads: Vec<String>,
+                    half: [f64; 2]| {
             let graphics = vec![
-                format!(r#"(fp_rect (start {} {}) (end {} {}) (layer "F.CrtYd") (uuid "{uuid}-c"))"#, -half[0], -half[1], half[0], half[1]),
-                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s1"))"#, -half[0], -half[1], half[0], -half[1]),
-                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s2"))"#, -half[0], half[1], half[0], half[1]),
-                format!(r#"(fp_line (start {} {}) (end {} {}) (layer "F.Fab") (uuid "{uuid}-f"))"#, -half[0], 0.0, half[0], 0.0),
+                format!(
+                    r#"(fp_rect (start {} {}) (end {} {}) (layer "F.CrtYd") (uuid "{uuid}-c"))"#,
+                    -half[0], -half[1], half[0], half[1]
+                ),
+                format!(
+                    r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s1"))"#,
+                    -half[0], -half[1], half[0], -half[1]
+                ),
+                format!(
+                    r#"(fp_line (start {} {}) (end {} {}) (layer "F.SilkS") (uuid "{uuid}-s2"))"#,
+                    -half[0], half[1], half[0], half[1]
+                ),
+                format!(
+                    r#"(fp_line (start {} {}) (end {} {}) (layer "F.Fab") (uuid "{uuid}-f"))"#,
+                    -half[0], 0.0, half[0], 0.0
+                ),
             ];
             format!(
                 r#"(footprint "Lib:{reference}" (layer "F.Cu") (uuid "{uuid}") (at {} {})
@@ -4915,23 +6186,44 @@ mod order_tests {
             )
         };
         let pad = |number: &str, x: f64, y: f64, net: usize| {
-            format!(r#"(pad "{number}" smd rect (at {x} {y}) (size 0.6 0.9) (layers "F.Cu") (net {net} "N{net}"))"#)
+            format!(
+                r#"(pad "{number}" smd rect (at {x} {y}) (size 0.6 0.9) (layers "F.Cu") (net {net} "N{net}"))"#
+            )
         };
         let mut footprints = Vec::new();
         let chip: Vec<String> = (1..=8)
             .map(|pin| {
-                let (x, y) = if pin <= 4 { (-2.5, pin as f64 - 2.5) } else { (2.5, 6.5 - pin as f64) };
+                let (x, y) = if pin <= 4 {
+                    (-2.5, pin as f64 - 2.5)
+                } else {
+                    (2.5, 6.5 - pin as f64)
+                };
                 pad(&pin.to_string(), x, y, pin)
             })
             .collect();
         footprints.push(part("U1", "a1", [25.0, 20.0], chip, [3.5, 2.5]));
         for index in 1..=8 {
-            let pads = vec![pad("1", -0.8, 0.0, index), pad("2", 0.8, 0.0, index % 8 + 1)];
-            footprints.push(part(&format!("R{index}"), &format!("b{index}"), [5.0 + 4.0 * index as f64, 35.0], pads, [1.5, 0.8]));
+            let pads = vec![
+                pad("1", -0.8, 0.0, index),
+                pad("2", 0.8, 0.0, index % 8 + 1),
+            ];
+            footprints.push(part(
+                &format!("R{index}"),
+                &format!("b{index}"),
+                [5.0 + 4.0 * index as f64, 35.0],
+                pads,
+                [1.5, 0.8],
+            ));
         }
         for index in 1..=3 {
             let pads = vec![pad("1", -0.8, 0.0, index * 2), pad("2", 0.8, 0.0, 9)];
-            footprints.push(part(&format!("C{index}"), &format!("c{index}"), [45.0, 5.0 + 4.0 * index as f64], pads, [1.5, 0.8]));
+            footprints.push(part(
+                &format!("C{index}"),
+                &format!("c{index}"),
+                [45.0, 5.0 + 4.0 * index as f64],
+                pads,
+                [1.5, 0.8],
+            ));
         }
         format!(
             r#"(kicad_pcb (version 20240108)
@@ -4939,7 +6231,9 @@ mod order_tests {
             (net 0 "") {}
             (gr_rect (start 0 0) (end 50 40) (layer "Edge.Cuts"))
             {})"#,
-            (1..=9).map(|net| format!(r#"(net {net} "N{net}")"#)).collect::<String>(),
+            (1..=9)
+                .map(|net| format!(r#"(net {net} "N{net}")"#))
+                .collect::<String>(),
             order(footprints)
         )
     }
@@ -4950,23 +6244,44 @@ mod order_tests {
         assert_ne!(forward, backward);
         let config = KiCadBoardPlacerConfig::default();
         // As read, the parts come in the file's order.
-        let raw = |text: &str| lower_placement(&parse(text).unwrap(), &config, &[]).unwrap().references;
+        let raw = |text: &str| {
+            lower_placement(&parse(text).unwrap(), &config, &[])
+                .unwrap()
+                .references
+        };
         assert_ne!(raw(&forward), raw(&backward));
         // In the canonical order the problems are the same.
         let lowered = |text: &str| {
-            let lowered = lower_placement(&crate::canonical_order::parse_board(text).unwrap(), &config, &[]).unwrap();
+            let lowered = lower_placement(
+                &crate::canonical_order::parse_board(text).unwrap(),
+                &config,
+                &[],
+            )
+            .unwrap();
             (lowered.references.clone(), format!("{:?}", lowered.problem))
         };
         let (references, problem) = lowered(&forward);
-        assert_eq!(references, ["C1", "C2", "C3", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "U1"]);
+        assert_eq!(
+            references,
+            [
+                "C1", "C2", "C3", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "U1"
+            ]
+        );
         assert_eq!((references, problem), lowered(&backward));
     }
 
     #[test]
     fn a_placement_does_not_depend_on_the_order_of_the_file() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("pcb-maker-order-{}-{nonce}", std::process::id()));
-        let config = KiCadBoardPlacerConfig { placement_seeds: 2, ..KiCadBoardPlacerConfig::default() };
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("pcb-maker-order-{}-{nonce}", std::process::id()));
+        let config = KiCadBoardPlacerConfig {
+            placement_seeds: 2,
+            ..KiCadBoardPlacerConfig::default()
+        };
         let mut placed = Vec::new();
         for (name, reversed) in [("forward", false), ("backward", true)] {
             let source = root.join(format!("{name}-source"));
@@ -4974,8 +6289,16 @@ mod order_tests {
             fs::write(source.join("board.kicad_pcb"), board(reversed)).unwrap();
             let output = root.join(format!("{name}-placed"));
             let result = place_kicad_board(&source, "board", &output, &config).unwrap();
-            assert!(result.unplaced.is_empty() && result.illegal.is_empty(), "{:?} {:?}", result.unplaced, result.illegal);
-            placed.push((result.wirelength_final_mm, fs::read_to_string(output.join("board.kicad_pcb")).unwrap()));
+            assert!(
+                result.unplaced.is_empty() && result.illegal.is_empty(),
+                "{:?} {:?}",
+                result.unplaced,
+                result.illegal
+            );
+            placed.push((
+                result.wirelength_final_mm,
+                fs::read_to_string(output.join("board.kicad_pcb")).unwrap(),
+            ));
         }
         let _ = fs::remove_dir_all(&root);
         // The same poses, and the same board written: the output is in the

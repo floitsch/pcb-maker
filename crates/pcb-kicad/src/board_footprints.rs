@@ -57,11 +57,20 @@ pub(crate) enum Found {
 
 impl BoardFootprints {
     pub fn read(file: &Path) -> Result<Self, String> {
-        let text = fs::read_to_string(file)
-            .map_err(|error| crate::verdict::input_error(format!("--footprints-from: failed to read {}: {error}", file.display())))?;
-        let board = parse(&text).map_err(|error| crate::verdict::input_error(format!("--footprints-from {}: {error}", file.display())))?;
+        let text = fs::read_to_string(file).map_err(|error| {
+            crate::verdict::input_error(format!(
+                "--footprints-from: failed to read {}: {error}",
+                file.display()
+            ))
+        })?;
+        let board = parse(&text).map_err(|error| {
+            crate::verdict::input_error(format!("--footprints-from {}: {error}", file.display()))
+        })?;
         if board.head() != Some("kicad_pcb") {
-            return Err(crate::verdict::input_error(format!("--footprints-from {}: not a KiCad board", file.display())));
+            return Err(crate::verdict::input_error(format!(
+                "--footprints-from {}: not a KiCad board",
+                file.display()
+            )));
         }
         let footprints = board
             .children()
@@ -70,26 +79,46 @@ impl BoardFootprints {
             .map(|footprint| BoardFootprint {
                 reference: footprint_reference(footprint).unwrap_or_default(),
                 path: form_atom(footprint, "path", 1).map(str::to_owned),
-                id: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
+                id: footprint
+                    .children()
+                    .get(1)
+                    .and_then(Expr::atom)
+                    .unwrap_or("")
+                    .to_string(),
                 uuid: footprint_uuid(footprint),
                 expr: footprint.clone(),
             })
             .collect();
-        Ok(Self { file: file.to_path_buf(), footprints })
+        Ok(Self {
+            file: file.to_path_buf(),
+            footprints,
+        })
     }
 
     /// The symbol's own footprint on the board: by its path, else by its
     /// reference when one footprint has it and that footprint is not linked
     /// to another of the schematic's symbols (`claimed`, their paths: a
     /// board renumbered after the schematic). Any footprint name.
-    pub fn own(&self, path: Option<&str>, reference: &str, claimed: &BTreeSet<String>) -> Option<&BoardFootprint> {
+    pub fn own(
+        &self,
+        path: Option<&str>,
+        reference: &str,
+        claimed: &BTreeSet<String>,
+    ) -> Option<&BoardFootprint> {
         if let Some(path) = path
-            && let Some(found) = self.footprints.iter().find(|footprint| footprint.path.as_deref() == Some(path))
+            && let Some(found) = self
+                .footprints
+                .iter()
+                .find(|footprint| footprint.path.as_deref() == Some(path))
         {
             return Some(found);
         }
         let mut same = self.footprints.iter().filter(|footprint| {
-            footprint.reference == reference && !footprint.path.as_ref().is_some_and(|path| claimed.contains(path))
+            footprint.reference == reference
+                && !footprint
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| claimed.contains(path))
         });
         match (same.next(), same.next()) {
             (Some(found), None) => Some(found),
@@ -113,17 +142,32 @@ impl BoardFootprints {
             return Some((own, Found::Own));
         }
         if by_name {
-            return self.footprints.iter().find(|footprint| footprint.name() == name).map(|footprint| (footprint, Found::ByName));
+            return self
+                .footprints
+                .iter()
+                .find(|footprint| footprint.name() == name)
+                .map(|footprint| (footprint, Found::ByName));
         }
         None
     }
 
     /// The footprint `reference`; where the reference repeats (mounting
     /// holes all called `H`, `REF**`), the one at `at`.
-    pub fn by_reference(&self, reference: &str, at: Option<[f64; 2]>) -> Result<&BoardFootprint, String> {
-        let same: Vec<&BoardFootprint> = self.footprints.iter().filter(|footprint| footprint.reference == reference).collect();
+    pub fn by_reference(
+        &self,
+        reference: &str,
+        at: Option<[f64; 2]>,
+    ) -> Result<&BoardFootprint, String> {
+        let same: Vec<&BoardFootprint> = self
+            .footprints
+            .iter()
+            .filter(|footprint| footprint.reference == reference)
+            .collect();
         match (at, same.as_slice()) {
-            (_, []) => Err(format!("{} has no footprint {reference}", self.file.display())),
+            (_, []) => Err(format!(
+                "{} has no footprint {reference}",
+                self.file.display()
+            )),
             (_, [one]) => Ok(one),
             (None, _) => Err(format!(
                 "{} has {} footprints {reference}: say which with x and y where the board has it (origin absolute)",
@@ -132,8 +176,19 @@ impl BoardFootprints {
             )),
             (Some(at), _) => same
                 .into_iter()
-                .find(|footprint| form_at(&footprint.expr).is_ok_and(|own| (own[0] - at[0]).abs() < 1e-3 && (own[1] - at[1]).abs() < 1e-3))
-                .ok_or_else(|| format!("{} has no footprint {reference} at {} {}", self.file.display(), at[0], at[1])),
+                .find(|footprint| {
+                    form_at(&footprint.expr).is_ok_and(|own| {
+                        (own[0] - at[0]).abs() < 1e-3 && (own[1] - at[1]).abs() < 1e-3
+                    })
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "{} has no footprint {reference} at {} {}",
+                        self.file.display(),
+                        at[0],
+                        at[1]
+                    )
+                }),
         }
     }
 }
@@ -150,7 +205,11 @@ fn normal_angle(angle: f64) -> f64 {
 
 fn number(value: f64) -> Expr {
     let rounded = (value * 1e6).round() / 1e6;
-    Expr::Atom(if rounded == 0.0 { "0".into() } else { rounded.to_string() })
+    Expr::Atom(if rounded == 0.0 {
+        "0".into()
+    } else {
+        rounded.to_string()
+    })
 }
 
 /// Adds `turn` to the angle of an item's `(at x y [angle])` (pads and
@@ -160,7 +219,10 @@ fn turn_at(item: &mut Expr, turn: f64) {
     let Some(Expr::List(at)) = parts.iter_mut().find(|part| part.head() == Some("at")) else {
         return;
     };
-    let angle = at.get(3).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok());
+    let angle = at
+        .get(3)
+        .and_then(Expr::atom)
+        .and_then(|atom| atom.parse::<f64>().ok());
     let unlocked = at.iter().any(|value| value.atom() == Some("unlocked"));
     let new = normal_angle(angle.unwrap_or(0.0) + turn);
     at.truncate(3);
@@ -177,8 +239,14 @@ fn map_zone_points(zone: &mut Expr, map: &dyn Fn([f64; 2]) -> [f64; 2]) {
     let Expr::List(items) = zone else { return };
     if items.first().and_then(Expr::atom) == Some("xy") {
         if let (Some(x), Some(y)) = (
-            items.get(1).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()),
-            items.get(2).and_then(Expr::atom).and_then(|atom| atom.parse::<f64>().ok()),
+            items
+                .get(1)
+                .and_then(Expr::atom)
+                .and_then(|atom| atom.parse::<f64>().ok()),
+            items
+                .get(2)
+                .and_then(Expr::atom)
+                .and_then(|atom| atom.parse::<f64>().ok()),
         ) {
             let [x, y] = map([x, y]);
             items[1] = number(x);
@@ -225,7 +293,16 @@ pub(crate) fn library_form(footprint: &Expr, name: &str) -> Result<Expr, String>
     items.retain(|item| {
         !matches!(
             item.head(),
-            Some("at" | "uuid" | "tstamp" | "tedit" | "path" | "sheetname" | "sheetfile" | "locked" | "placed")
+            Some(
+                "at" | "uuid"
+                    | "tstamp"
+                    | "tedit"
+                    | "path"
+                    | "sheetname"
+                    | "sheetfile"
+                    | "locked"
+                    | "placed"
+            )
         ) && !matches!(item.atom(), Some("locked" | "placed"))
     });
     for item in items.iter_mut() {
@@ -264,12 +341,20 @@ pub(crate) fn posed(footprint: &Expr, at: [f64; 3]) -> Result<Expr, String> {
     };
     repose(&mut items[2..], at[2], &to_board);
     items.retain(|item| item.head() != Some("at"));
-    let layer = items.iter().position(|item| item.head() == Some("layer")).map_or(2, |index| index + 1);
+    let layer = items
+        .iter()
+        .position(|item| item.head() == Some("layer"))
+        .map_or(2, |index| index + 1);
     let angle = normal_angle(at[2]);
     let pose = if angle == 0.0 {
         format!("(at {} {})", encode(&number(at[0])), encode(&number(at[1])))
     } else {
-        format!("(at {} {} {})", encode(&number(at[0])), encode(&number(at[1])), encode(&number(angle)))
+        format!(
+            "(at {} {} {})",
+            encode(&number(at[0])),
+            encode(&number(at[1])),
+            encode(&number(angle))
+        )
     };
     items.insert(layer, parse(&pose)?);
     Ok(footprint)
@@ -279,10 +364,18 @@ pub(crate) fn posed(footprint: &Expr, at: [f64; 3]) -> Result<Expr, String> {
 /// own frame, and its pad count.
 pub(crate) fn body_size(footprint: &Expr) -> Option<([f64; 2], usize)> {
     // The body is read from a footprint on a board: at the origin.
-    let footprint = if footprint.child("at").is_some() { footprint.clone() } else { posed(footprint, [0.0; 3]).ok()? };
+    let footprint = if footprint.child("at").is_some() {
+        footprint.clone()
+    } else {
+        posed(footprint, [0.0; 3]).ok()?
+    };
     let footprint = &footprint;
     let (_, size, _) = crate::board_placer::local_body(footprint).ok()?;
-    let pads = footprint.children().iter().filter(|item| item.head() == Some("pad")).count();
+    let pads = footprint
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("pad"))
+        .count();
     Some((size, pads))
 }
 
@@ -318,7 +411,9 @@ mod tests {
         // back, linked to a symbol, pads on nets.
         let mut board = posed(&library, [50.0, 30.0, 30.0]).unwrap();
         crate::flip::flip_footprint(&mut board).unwrap();
-        let Expr::List(items) = &mut board else { unreachable!() };
+        let Expr::List(items) = &mut board else {
+            unreachable!()
+        };
         items.insert(3, parse(r#"(path "/abc")"#).unwrap());
         items.insert(3, parse(r#"(uuid "1234")"#).unwrap());
         for item in items.iter_mut().filter(|item| item.head() == Some("pad")) {
@@ -329,17 +424,39 @@ mod tests {
         assert_eq!(form_atom(&board, "layer", 1), Some("B.Cu"));
         let back = library_form(&board, "Lib:Part").unwrap();
         assert_eq!(form_atom(&back, "layer", 1), Some("F.Cu"));
-        assert!(back.child("at").is_none() && back.child("path").is_none() && back.child("uuid").is_none());
-        let pads: Vec<&Expr> = back.children().iter().filter(|item| item.head() == Some("pad")).collect();
+        assert!(
+            back.child("at").is_none()
+                && back.child("path").is_none()
+                && back.child("uuid").is_none()
+        );
+        let pads: Vec<&Expr> = back
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+            .collect();
         let at = |pad: &Expr| form_at(pad).unwrap();
-        assert!(near(at(pads[0])[0], -1.0) && near(at(pads[0])[1], 0.0) && near(at(pads[0])[2], 0.0), "{:?}", at(pads[0]));
-        assert!(near(at(pads[1])[0], 1.0) && near(at(pads[1])[1], 0.5) && near(at(pads[1])[2], 90.0), "{:?}", at(pads[1]));
+        assert!(
+            near(at(pads[0])[0], -1.0) && near(at(pads[0])[1], 0.0) && near(at(pads[0])[2], 0.0),
+            "{:?}",
+            at(pads[0])
+        );
+        assert!(
+            near(at(pads[1])[0], 1.0) && near(at(pads[1])[1], 0.5) && near(at(pads[1])[2], 90.0),
+            "{:?}",
+            at(pads[1])
+        );
         assert!(pads.iter().all(|pad| pad.child("net").is_none()));
         assert_eq!(form_atom(pads[0], "layers", 1), Some("F.Cu"));
         let zone = encode(back.child("zone").unwrap());
-        assert!(zone.contains("(xy 2 -1)") && zone.contains("(xy 3 1)"), "{zone}");
+        assert!(
+            zone.contains("(xy 2 -1)") && zone.contains("(xy 3 1)"),
+            "{zone}"
+        );
         // The body is the library's.
-        assert_eq!(body_size(&back).map(|(size, pads)| ([size[0].round(), size[1].round()], pads)), Some(([4.0, 2.0], 2)));
+        assert_eq!(
+            body_size(&back).map(|(size, pads)| ([size[0].round(), size[1].round()], pads)),
+            Some(([4.0, 2.0], 2))
+        );
     }
 
     #[test]

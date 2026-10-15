@@ -142,14 +142,22 @@ fn global_placement_starts_parts_where_a_start_says() {
     // where they started.
     let mut problem = chain(12);
     for index in 2..8 {
-        problem.constraints.regions.push((index, [0.0, 0.0, 40.0, 50.0]));
+        problem
+            .constraints
+            .regions
+            .push((index, [0.0, 0.0, 40.0, 50.0]));
     }
     for index in 8..14 {
-        problem.constraints.regions.push((index, [40.0, 0.0, 80.0, 50.0]));
+        problem
+            .constraints
+            .regions
+            .push((index, [40.0, 0.0, 80.0, 50.0]));
     }
     let mut config = Config::new().global;
     config.max_iterations = 1;
-    let centre = |problem: &Problem, poses: &[Pose], index: usize| problem.components[index].center(poses[index]);
+    let centre = |problem: &Problem, poses: &[Pose], index: usize| {
+        problem.components[index].center(poses[index])
+    };
     let common = pcb_placer::global::global_place(&problem, &config);
     for index in 8..14 {
         problem.constraints.starts.push((index, [60.0, 25.0]));
@@ -157,14 +165,26 @@ fn global_placement_starts_parts_where_a_start_says() {
     let started = pcb_placer::global::global_place(&problem, &config);
     for index in 8..14 {
         let [x, y] = centre(&problem, &started.poses, index);
-        assert!((x - 60.0).abs() < 6.0 && (y - 25.0).abs() < 6.0, "R{} at {x}, {y}", index - 2);
-        assert!(centre(&problem, &common.poses, index)[0] < 50.0, "R{} began at the common start", index - 2);
+        assert!(
+            (x - 60.0).abs() < 6.0 && (y - 25.0).abs() < 6.0,
+            "R{} at {x}, {y}",
+            index - 2
+        );
+        assert!(
+            centre(&problem, &common.poses, index)[0] < 50.0,
+            "R{} began at the common start",
+            index - 2
+        );
     }
     // The parts without a start begin at the common start, as before (the
     // step after it moves them differently: the chain pulls).
     for index in 2..8 {
         let [x, _] = centre(&problem, &started.poses, index);
-        assert!((x - centre(&problem, &common.poses, index)[0]).abs() < 1.0, "R{} at {x}", index - 2);
+        assert!(
+            (x - centre(&problem, &common.poses, index)[0]).abs() < 1.0,
+            "R{} at {x}",
+            index - 2
+        );
     }
 }
 
@@ -175,7 +195,10 @@ fn edge_and_region_constraints_are_kept() {
     // R5 (index 7) must touch the top edge, R8 (index 10) stay in the
     // bottom-right corner box.
     problem.constraints.edges.push((7, Edge::Top, 0.5));
-    problem.constraints.regions.push((10, [60.0, 35.0, 80.0, 50.0]));
+    problem
+        .constraints
+        .regions
+        .push((10, [60.0, 35.0, 80.0, 50.0]));
     problem.constraints.relation_weight = 4.0;
     let placement = place(&problem, &Config::new());
     assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
@@ -244,17 +267,35 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         // A through-hole part on the front with one 2 mm hole at its centre.
         part(Side::Front, vec![[-1.0, -1.0, 1.0, 1.0]]),
         // An SMD part on the back.
-        Component { body_size: [3.0, 3.0], ..part(Side::Back, Vec::new()) },
+        Component {
+            body_size: [3.0, 3.0],
+            ..part(Side::Back, Vec::new())
+        },
         // Artwork: occupies nothing.
-        Component { body_size: [20.0, 20.0], ..part(Side::Neither, Vec::new()) },
+        Component {
+            body_size: [20.0, 20.0],
+            ..part(Side::Neither, Vec::new())
+        },
     ];
-    problem.poses = vec![Pose { position: [40.0, 25.0], angle: 0.0 }; 3];
+    problem.poses = vec![
+        Pose {
+            position: [40.0, 25.0],
+            angle: 0.0
+        };
+        3
+    ];
     problem.spacing = 0.2;
     // Under the body but away from the hole: legal.
-    let beside = Pose { position: [44.0, 25.0], angle: 0.0 };
+    let beside = Pose {
+        position: [44.0, 25.0],
+        angle: 0.0,
+    };
     assert!(is_legal(&problem, &problem.poses, 1, beside, 0..3));
     // On the hole: not legal.
-    let on_hole = Pose { position: [40.5, 25.0], angle: 0.0 };
+    let on_hole = Pose {
+        position: [40.5, 25.0],
+        angle: 0.0,
+    };
     assert!(!is_legal(&problem, &problem.poses, 1, on_hole, 0..3));
 }
 
@@ -287,14 +328,32 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
-    let shield = Component { hollow: vec![[-9.0, -1.0, -7.0, 1.0]], ..part(20.0, true) };
+    let shield = Component {
+        hollow: vec![[-9.0, -1.0, -7.0, 1.0]],
+        ..part(20.0, true)
+    };
     problem.components = vec![shield, part(2.0, false)];
     problem.poses = vec![
-        Pose { position: [25.0, 25.0], angle: 0.0 },
-        Pose { position: [25.0, 25.0], angle: 0.0 },
+        Pose {
+            position: [25.0, 25.0],
+            angle: 0.0,
+        },
+        Pose {
+            position: [25.0, 25.0],
+            angle: 0.0,
+        },
     ];
     let legal = |problem: &Problem, x: f64| {
-        is_legal(problem, &problem.poses, 1, Pose { position: [x, 25.0], angle: 0.0 }, 0..2)
+        is_legal(
+            problem,
+            &problem.poses,
+            1,
+            Pose {
+                position: [x, 25.0],
+                angle: 0.0,
+            },
+            0..2,
+        )
     };
     // Inside the outline is fine; on the pad is not.
     assert!(legal(&problem, 25.0));
@@ -318,7 +377,10 @@ fn tight_bodies_are_the_last_resort() {
         body_size: [4.0, 4.0],
         round: false,
         halo: 0.0,
-        pins: vec![Pin { offset: [0.0, 0.0], net }],
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net,
+        }],
         side: Side::Front,
         fixed: false,
         angle_options: vec![0.0],
@@ -339,7 +401,13 @@ fn tight_bodies_are_the_last_resort() {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
         components: vec![part(0), part(0)],
         net_weights: vec![1.0],
-        poses: vec![Pose { position: [3.5, 2.0], angle: 0.0 }; 2],
+        poses: vec![
+            Pose {
+                position: [3.5, 2.0],
+                angle: 0.0
+            };
+            2
+        ],
         spacing: 0.2,
         grid: 0.1,
         edge_margin: 0.0,
@@ -350,7 +418,11 @@ fn tight_bodies_are_the_last_resort() {
         constraints: Default::default(),
     };
     let placement = place(&problem, &Config::new());
-    assert!(placement.unplaced.is_empty() && placement.illegal.is_empty(), "{:?}", placement.unplaced);
+    assert!(
+        placement.unplaced.is_empty() && placement.illegal.is_empty(),
+        "{:?}",
+        placement.unplaced
+    );
     assert!(placement.relaxation.tight);
     // Without them, one part finds no place.
     for component in &mut problem.components {
@@ -389,16 +461,37 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
     };
     // A 2 mm hole in the board, and a 10 mm connector with a pad at its
     // left end.
-    let cutout = Component { copper_only: true, ..part(2.0, Side::Both, true) };
-    let connector = Component { pads: vec![[-5.0, -1.0, -3.0, 1.0]], ..part(10.0, Side::Front, false) };
+    let cutout = Component {
+        copper_only: true,
+        ..part(2.0, Side::Both, true)
+    };
+    let connector = Component {
+        pads: vec![[-5.0, -1.0, -3.0, 1.0]],
+        ..part(10.0, Side::Front, false)
+    };
     problem.components = vec![cutout, connector];
     problem.poses = vec![
-        Pose { position: [25.0, 25.0], angle: 0.0 },
-        Pose { position: [25.0, 25.0], angle: 0.0 },
+        Pose {
+            position: [25.0, 25.0],
+            angle: 0.0,
+        },
+        Pose {
+            position: [25.0, 25.0],
+            angle: 0.0,
+        },
     ];
     problem.edge_margin = 0.5;
     let legal = |problem: &Problem, x: f64| {
-        is_legal(problem, &problem.poses, 1, Pose { position: [x, 25.0], angle: 0.0 }, 0..2)
+        is_legal(
+            problem,
+            &problem.poses,
+            1,
+            Pose {
+                position: [x, 25.0],
+                angle: 0.0,
+            },
+            0..2,
+        )
     };
     // Body over the hole, pad 3 mm away: fine.
     assert!(legal(&problem, 23.0));
@@ -438,10 +531,31 @@ fn a_cutout_the_user_cut_keeps_bodies_off() {
     };
     // A triangular window (its box 4 x 4 mm) and a 2 mm part.
     let window = vec![[23.0, 23.0], [27.0, 23.0], [23.0, 27.0]];
-    let cutout = Component { copper_only: true, cutout_outline: window, ..part(4.0, Side::Both, true) };
+    let cutout = Component {
+        copper_only: true,
+        cutout_outline: window,
+        ..part(4.0, Side::Both, true)
+    };
     problem.components = vec![cutout, part(2.0, Side::Front, false)];
-    problem.poses = vec![Pose { position: [25.0, 25.0], angle: 0.0 }; 2];
-    let legal = |problem: &Problem, at: [f64; 2]| is_legal(problem, &problem.poses, 1, Pose { position: at, angle: 0.0 }, 0..2);
+    problem.poses = vec![
+        Pose {
+            position: [25.0, 25.0],
+            angle: 0.0
+        };
+        2
+    ];
+    let legal = |problem: &Problem, at: [f64; 2]| {
+        is_legal(
+            problem,
+            &problem.poses,
+            1,
+            Pose {
+                position: at,
+                angle: 0.0,
+            },
+            0..2,
+        )
+    };
     // A designer's slot: the body may reach over it.
     assert!(legal(&problem, [24.0, 24.0]));
     problem.constraints.solid_cutouts = vec![0];
@@ -459,22 +573,53 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
     // mm, 20 mm lower. A part held at the top, wired to a part in the
     // right block, sits under the step (y = 20), not at the box's top
     // (y = 0, off the board there).
-    let outline = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [60.0, 20.0], [60.0, 40.0], [0.0, 40.0]];
+    let outline = vec![
+        [0.0, 0.0],
+        [20.0, 0.0],
+        [20.0, 20.0],
+        [60.0, 20.0],
+        [60.0, 40.0],
+        [0.0, 40.0],
+    ];
     let sides = outline_sides(std::slice::from_ref(&outline));
     let count = |edge: Edge| sides.iter().filter(|(facing, _)| *facing == edge).count();
-    assert_eq!([count(Edge::Left), count(Edge::Top), count(Edge::Right), count(Edge::Bottom)], [1, 2, 2, 1]);
+    assert_eq!(
+        [
+            count(Edge::Left),
+            count(Edge::Top),
+            count(Edge::Right),
+            count(Edge::Bottom)
+        ],
+        [1, 2, 2, 1]
+    );
     // Either way round the loop.
     let reversed: Vec<_> = outline.iter().rev().copied().collect();
     let again = outline_sides(&[reversed]);
-    assert_eq!(again.iter().filter(|(facing, _)| *facing == Edge::Top).count(), 2);
+    assert_eq!(
+        again
+            .iter()
+            .filter(|(facing, _)| *facing == Edge::Top)
+            .count(),
+        2
+    );
     // Under the step, 1 mm below it; in the left arm, 3 mm below its top;
     // beside the step's end, missed by how far the body misses it.
-    assert!((side_distance(&sides, Edge::Top, [40.0, 23.0], [2.0, 2.0]).unwrap() - 1.0).abs() < 1.0e-9);
-    assert!((side_distance(&sides, Edge::Top, [10.0, 5.0], [2.0, 2.0]).unwrap() - 3.0).abs() < 1.0e-9);
-    assert!((side_distance(&sides, Edge::Right, [40.0, 30.0], [2.0, 2.0]).unwrap() - 18.0).abs() < 1.0e-9);
+    assert!(
+        (side_distance(&sides, Edge::Top, [40.0, 23.0], [2.0, 2.0]).unwrap() - 1.0).abs() < 1.0e-9
+    );
+    assert!(
+        (side_distance(&sides, Edge::Top, [10.0, 5.0], [2.0, 2.0]).unwrap() - 3.0).abs() < 1.0e-9
+    );
+    assert!(
+        (side_distance(&sides, Edge::Right, [40.0, 30.0], [2.0, 2.0]).unwrap() - 18.0).abs()
+            < 1.0e-9
+    );
     // A slanted side faces where its normal points most: a triangle.
     let triangle = outline_sides(&[vec![[0.0, 0.0], [10.0, 0.0], [0.0, 30.0]]]);
-    assert_eq!(triangle.iter().map(|(edge, _)| *edge).collect::<Vec<_>>(), vec![Edge::Top, Edge::Right, Edge::Left]);
+    assert_eq!(
+        triangle.iter().map(|(edge, _)| *edge).collect::<Vec<_>>(),
+        vec![Edge::Top, Edge::Right, Edge::Left]
+    );
 
     let part = Component {
         name: "J1".into(),
@@ -482,7 +627,10 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
         body_size: [4.0, 4.0],
         round: false,
         halo: 0.0,
-        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net: 0,
+        }],
         side: Side::Front,
         fixed: false,
         angle_options: vec![0.0],
@@ -501,9 +649,25 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
     };
     let mut problem = Problem {
         outline,
-        components: vec![part.clone(), Component { name: "U1".into(), fixed: true, ..part }],
+        components: vec![
+            part.clone(),
+            Component {
+                name: "U1".into(),
+                fixed: true,
+                ..part
+            },
+        ],
         net_weights: vec![1.0],
-        poses: vec![Pose { position: [30.0, 30.0], angle: 0.0 }, Pose { position: [45.0, 32.0], angle: 0.0 }],
+        poses: vec![
+            Pose {
+                position: [30.0, 30.0],
+                angle: 0.0,
+            },
+            Pose {
+                position: [45.0, 32.0],
+                angle: 0.0,
+            },
+        ],
         spacing: 0.2,
         grid: 0.1,
         edge_margin: 0.0,
@@ -523,7 +687,10 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
     let placement = place(&problem, &Config::new());
     assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
     let [x, y] = placement.poses[0].position;
-    assert!((20.0..=20.5).contains(&(y - 2.0)) && x - 2.0 >= 20.0, "J1 at {x}, {y}");
+    assert!(
+        (20.0..=20.5).contains(&(y - 2.0)) && x - 2.0 >= 20.0,
+        "J1 at {x}, {y}"
+    );
 }
 
 #[test]
@@ -535,7 +702,10 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         body_size: [4.0, 4.0],
         round: false,
         halo: 0.0,
-        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net: 0,
+        }],
         side: Side::Front,
         fixed: false,
         angle_options: vec![0.0],
@@ -556,7 +726,13 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
         components: vec![part(), part()],
         net_weights: vec![1.0],
-        poses: vec![Pose { position: [30.0, 20.0], angle: 0.0 }; 2],
+        poses: vec![
+            Pose {
+                position: [30.0, 20.0],
+                angle: 0.0
+            };
+            2
+        ],
         spacing: 0.5,
         grid: 0.5,
         edge_margin: 0.5,
@@ -566,12 +742,18 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         pieces: Vec::new(),
         constraints: Default::default(),
     };
-    problem.constraints.relations.push(Relation::Apart { part: 0, anchor: 1, min: 15.0 });
+    problem.constraints.relations.push(Relation::Apart {
+        part: 0,
+        anchor: 1,
+        min: 15.0,
+    });
     problem.constraints.relation_weight = 50.0;
     let placement = place(&problem, &Config::new());
     assert!(placement.unplaced.is_empty());
     let [a, b] = [placement.poses[0].position, placement.poses[1].position];
-    let gap = ((a[0] - b[0]).abs() - 4.0).max(0.0).hypot(((a[1] - b[1]).abs() - 4.0).max(0.0));
+    let gap = ((a[0] - b[0]).abs() - 4.0)
+        .max(0.0)
+        .hypot(((a[1] - b[1]).abs() - 4.0).max(0.0));
     assert!(gap >= 15.0 - 0.1, "gap {gap}");
     assert!(placement.constraints.iter().all(|status| status.satisfied));
 }
@@ -585,7 +767,16 @@ fn parts_of_a_kind_are_turned_alike() {
         body_size: [3.0, 1.5],
         round: false,
         halo: 0.0,
-        pins: vec![Pin { offset: [-1.0, 0.0], net }, Pin { offset: [1.0, 0.0], net: net + 1 }],
+        pins: vec![
+            Pin {
+                offset: [-1.0, 0.0],
+                net,
+            },
+            Pin {
+                offset: [1.0, 0.0],
+                net: net + 1,
+            },
+        ],
         side: Side::Front,
         fixed: false,
         angle_options: vec![0.0, 90.0, 180.0, 270.0],
@@ -607,9 +798,18 @@ fn parts_of_a_kind_are_turned_alike() {
         components: vec![part(0), part(2), part(4)],
         net_weights: vec![1.0; 6],
         poses: vec![
-            Pose { position: [10.0, 10.0], angle: 0.0 },
-            Pose { position: [20.0, 10.0], angle: 0.0 },
-            Pose { position: [30.0, 10.0], angle: 90.0 },
+            Pose {
+                position: [10.0, 10.0],
+                angle: 0.0,
+            },
+            Pose {
+                position: [20.0, 10.0],
+                angle: 0.0,
+            },
+            Pose {
+                position: [30.0, 10.0],
+                angle: 90.0,
+            },
         ],
         spacing: 0.5,
         grid: 0.5,
@@ -638,7 +838,10 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         body_size: [4.0, 4.0],
         round: false,
         halo: 0.0,
-        pins: vec![Pin { offset: [0.0, 0.0], net: 0 }],
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net: 0,
+        }],
         side: Side::Front,
         fixed: false,
         angle_options: vec![0.0],
@@ -668,9 +871,25 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
             [20.0, 20.0],
             [0.0, 20.0],
         ],
-        components: vec![part.clone(), Component { name: "U1".into(), fixed: true, ..part }],
+        components: vec![
+            part.clone(),
+            Component {
+                name: "U1".into(),
+                fixed: true,
+                ..part
+            },
+        ],
         net_weights: vec![1.0],
-        poses: vec![Pose { position: [8.0, 10.0], angle: 0.0 }, Pose { position: [5.0, 10.0], angle: 0.0 }],
+        poses: vec![
+            Pose {
+                position: [8.0, 10.0],
+                angle: 0.0,
+            },
+            Pose {
+                position: [5.0, 10.0],
+                angle: 0.0,
+            },
+        ],
         spacing: 0.2,
         grid: 0.1,
         edge_margin: 0.0,
@@ -720,16 +939,30 @@ fn parts_turned_by_odd_angles_meet_as_turned_rectangles() {
     let (sin, cos) = (-30.0f64).to_radians().sin_cos();
     let (ex, ey) = ([cos, sin], [-sin, cos]);
     let local = |u: f64, v: f64| [40.0 + u * ex[0] + v * ey[0], 25.0 + u * ex[1] + v * ey[1]];
-    let at = |v: f64| Pose { position: local(0.0, v), angle: 30.0 };
+    let at = |v: f64| Pose {
+        position: local(0.0, v),
+        angle: 30.0,
+    };
     problem.poses = vec![at(0.0), at(3.0)];
     // Side by side 3 mm apart: the bars (2 mm wide) keep 1 mm, while the
     // boxes around them (10.7 x 6.7 mm) overlap.
-    assert!(is_legal(&problem, &problem.poses, 1, problem.poses[1], 0..2));
+    assert!(is_legal(
+        &problem,
+        &problem.poses,
+        1,
+        problem.poses[1],
+        0..2
+    ));
     // 2.1 mm apart: closer than the spacing.
     assert!(!is_legal(&problem, &problem.poses, 1, at(2.1), 0..2));
     // A board turned like the bars: a bar along its edge is on the board,
     // though the box around it is not.
-    problem.outline = vec![local(-15.0, -15.0), local(15.0, -15.0), local(15.0, 15.0), local(-15.0, 15.0)];
+    problem.outline = vec![
+        local(-15.0, -15.0),
+        local(15.0, -15.0),
+        local(15.0, 15.0),
+        local(-15.0, 15.0),
+    ];
     problem.poses = vec![at(-10.0), at(13.5)];
     assert!(is_legal(&problem, &problem.poses, 1, at(13.5), 0..2));
     assert!(!is_legal(&problem, &problem.poses, 1, at(14.5), 0..2));
@@ -770,9 +1003,18 @@ fn across_the_board() -> Problem {
             far_courtyard: Vec::new(),
             ..part(Side::Front, [10.0, 10.0])
         },
-        Component { pads: vec![[-1.5, -1.5, 1.5, 1.5]], ..part(Side::Back, [3.0, 3.0]) },
+        Component {
+            pads: vec![[-1.5, -1.5, 1.5, 1.5]],
+            ..part(Side::Back, [3.0, 3.0])
+        },
     ];
-    problem.poses = vec![Pose { position: [40.0, 25.0], angle: 0.0 }; 2];
+    problem.poses = vec![
+        Pose {
+            position: [40.0, 25.0],
+            angle: 0.0
+        };
+        2
+    ];
     problem.spacing = 0.5;
     problem.min_spacing = 0.2;
     problem
@@ -785,11 +1027,17 @@ fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() 
     let problem = across_the_board();
     let at = |x: f64, y: f64| {
         let mut poses = problem.poses.clone();
-        poses[1] = Pose { position: [x, y], angle: 0.0 };
+        poses[1] = Pose {
+            position: [x, y],
+            angle: 0.0,
+        };
         poses
     };
     let old = AnnealConfig::default();
-    let legal = AnnealConfig { legal_far_side: true, ..AnnealConfig::default() };
+    let legal = AnnealConfig {
+        legal_far_side: true,
+        ..AnnealConfig::default()
+    };
     // 0.3 mm from the hole (the spacing is 0.5): the old model sees
     // nothing closer than half the spacing.
     let near_hole = at(42.8, 25.0);
@@ -824,15 +1072,27 @@ fn shared_halos_keep_the_larger_halo_between_neighbours() {
     // Bodies 1.2 mm apart: the halos' sum and the spacing want 1.45, the
     // larger halo and the spacing 1.15.
     let poses = vec![
-        Pose { position: [40.0, 25.0], angle: 0.0 },
-        Pose { position: [43.2, 25.0], angle: 0.0 },
+        Pose {
+            position: [40.0, 25.0],
+            angle: 0.0,
+        },
+        Pose {
+            position: [43.2, 25.0],
+            angle: 0.0,
+        },
     ];
     assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
     problem.shared_halos = true;
     assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
     assert!(is_legal(&problem, &poses, 0, poses[0], 0..2));
     // 1.1 mm apart is too close either way.
-    let closer = vec![poses[0], Pose { position: [43.1, 25.0], angle: 0.0 }];
+    let closer = vec![
+        poses[0],
+        Pose {
+            position: [43.1, 25.0],
+            angle: 0.0,
+        },
+    ];
     assert!(!is_legal(&problem, &closer, 1, closer[1], 0..2));
     // A disc beside a rectangle's corner: the same answer from either side
     // (growing one body by the halo instead of the gap was not).
@@ -840,7 +1100,13 @@ fn shared_halos_keep_the_larger_halo_between_neighbours() {
     problem.components[1].body_size = [2.0, 2.0];
     for step in 0..40 {
         let offset = 1.5 + 0.02 * step as f64;
-        let poses = vec![poses[0], Pose { position: [40.0 + 1.0 + offset * 0.7, 25.0 + 0.5 + offset * 0.7], angle: 0.0 }];
+        let poses = vec![
+            poses[0],
+            Pose {
+                position: [40.0 + 1.0 + offset * 0.7, 25.0 + 0.5 + offset * 0.7],
+                angle: 0.0,
+            },
+        ];
         assert_eq!(
             is_legal(&problem, &poses, 0, poses[0], 0..2),
             is_legal(&problem, &poses, 1, poses[1], 0..2),
@@ -870,7 +1136,10 @@ fn busy_chain() -> Problem {
     for index in 0..6 {
         let component = &mut problem.components[2 + index];
         for wire in 0..6 {
-            component.pins.push(Pin { offset: [0.0, -1.0 + 0.4 * wire as f64], net: base + wire });
+            component.pins.push(Pin {
+                offset: [0.0, -1.0 + 0.4 * wire as f64],
+                net: base + wire,
+            });
         }
     }
     problem.net_weights.extend(std::iter::repeat_n(1.0, 6));
@@ -885,11 +1154,18 @@ fn routing_room_gives_the_busy_parts_the_halos_and_stays_legal() {
     use pcb_placer::room::RoutingRoom;
     let problem = busy_chain();
     let mut config = Config::new();
-    config.routing_room = Some(RoutingRoom { net_demand: vec![1.0; problem.net_weights.len()], ..Default::default() });
+    config.routing_room = Some(RoutingRoom {
+        net_demand: vec![1.0; problem.net_weights.len()],
+        ..Default::default()
+    });
     let placement = place(&problem, &config);
     assert!(placement.unplaced.is_empty());
     assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
-    let halos = placement.relaxation.halos.as_ref().expect("routing room set the halos");
+    let halos = placement
+        .relaxation
+        .halos
+        .as_ref()
+        .expect("routing room set the halos");
     // The bundle's parts have more halo than before, the quiet ones less.
     let busy: f64 = (2..8).map(|index| halos[index]).sum::<f64>() / 6.0;
     let quiet: f64 = (8..16).map(|index| halos[index]).sum::<f64>() / 8.0;
@@ -898,7 +1174,10 @@ fn routing_room_gives_the_busy_parts_the_halos_and_stays_legal() {
     assert!(busy > 0.65, "{halos:?}");
     // The fixed connectors keep theirs; nothing exceeds twice the old halo.
     assert_eq!((halos[0], halos[1]), (0.0, 0.0));
-    assert!(halos.iter().all(|halo| *halo <= 2.0 * 0.65 + 1.0e-9), "{halos:?}");
+    assert!(
+        halos.iter().all(|halo| *halo <= 2.0 * 0.65 + 1.0e-9),
+        "{halos:?}"
+    );
     // The relaxation applies the same halos to the unscaled problem, as
     // the layout's moves see it.
     let mut again = problem.clone();
@@ -906,7 +1185,10 @@ fn routing_room_gives_the_busy_parts_the_halos_and_stays_legal() {
     for (component, halo) in again.components.iter().zip(halos.iter()) {
         assert_eq!(component.halo, *halo);
     }
-    let placed = Problem { poses: placement.poses.clone(), ..again };
+    let placed = Problem {
+        poses: placement.poses.clone(),
+        ..again
+    };
     assert!(pcb_placer::legal::illegal_components(&placed, &placement.poses).is_empty());
 }
 
@@ -918,7 +1200,10 @@ fn without_routing_room_the_placement_is_unchanged() {
     // A plane on every net leaves no demand: the halos stay as they were
     // (the median is zero), and no second pass runs.
     let mut config = Config::new();
-    config.routing_room = Some(pcb_placer::room::RoutingRoom { net_demand: vec![0.0; problem.net_weights.len()], ..Default::default() });
+    config.routing_room = Some(pcb_placer::room::RoutingRoom {
+        net_demand: vec![0.0; problem.net_weights.len()],
+        ..Default::default()
+    });
     let second = place(&problem, &config);
     assert!(second.illegal.is_empty());
     assert!(second.relaxation.halos.is_none());
@@ -960,7 +1245,10 @@ fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
     let mut problem = chain(1);
     problem.components = vec![switch.clone(), switch.clone()];
     problem.spacing = 0.5;
-    let at = |x: f64| Pose { position: [x, 25.0], angle: 0.0 };
+    let at = |x: f64| Pose {
+        position: [x, 25.0],
+        angle: 0.0,
+    };
     problem.poses = vec![at(30.0), at(42.0)];
     // 12 mm apart the sockets (9 mm wide) keep 3 mm, but the front squares
     // overlap by 2 mm.
@@ -1015,7 +1303,11 @@ fn a_board_without_room_says_no_at_once() {
     assert!(!placement.unplaced.is_empty());
     // Little work: one global placement and a legalisation near where it
     // put the parts.
-    assert!((placement.work as f64) < 5.0 * pcb_placer::WORK_PER_SECOND, "work {}", placement.work);
+    assert!(
+        (placement.work as f64) < 5.0 * pcb_placer::WORK_PER_SECOND,
+        "work {}",
+        placement.work
+    );
     // Eight fit (two rows of four); the placer seats at least some.
     assert!(placement.unplaced.len() < 10, "{:?}", placement.unplaced);
     // Room enough (four rows of 6 on 110 x 75 mm): no fast no.
@@ -1047,8 +1339,18 @@ fn the_work_budget_is_kept_inside_the_passes() {
     config.work_limit = Some(limit);
     let placement = place(&problem, &config);
     assert!(!placement.overfull);
-    eprintln!("work without a limit {}, with {}, global {global}", free.work, placement.work);
-    assert!(free.work - global > 10 * limit, "the test needs a board whose passes take long");
+    eprintln!(
+        "work without a limit {}, with {}, global {global}",
+        free.work, placement.work
+    );
+    assert!(
+        free.work - global > 10 * limit,
+        "the test needs a board whose passes take long"
+    );
     // What follows the global placement overruns by one hurried pass.
-    assert!(placement.work - global < 5 * limit, "work {} (global {global}) against a limit of {limit}", placement.work);
+    assert!(
+        placement.work - global < 5 * limit,
+        "work {} (global {global}) against a limit of {limit}",
+        placement.work
+    );
 }

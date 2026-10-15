@@ -36,13 +36,29 @@ impl Grid {
 
     fn range(&self, center: Point, half: Point) -> (usize, usize, usize, usize) {
         let clamp = |value: f64, count: usize| {
-            if value.is_nan() { 0 } else { (value.floor().max(0.0) as usize).min(count - 1) }
+            if value.is_nan() {
+                0
+            } else {
+                (value.floor().max(0.0) as usize).min(count - 1)
+            }
         };
         (
-            clamp((center[0] - half[0] - self.origin[0]) / self.cell, self.columns),
-            clamp((center[1] - half[1] - self.origin[1]) / self.cell, self.rows),
-            clamp((center[0] + half[0] - self.origin[0]) / self.cell, self.columns),
-            clamp((center[1] + half[1] - self.origin[1]) / self.cell, self.rows),
+            clamp(
+                (center[0] - half[0] - self.origin[0]) / self.cell,
+                self.columns,
+            ),
+            clamp(
+                (center[1] - half[1] - self.origin[1]) / self.cell,
+                self.rows,
+            ),
+            clamp(
+                (center[0] + half[0] - self.origin[0]) / self.cell,
+                self.columns,
+            ),
+            clamp(
+                (center[1] + half[1] - self.origin[1]) / self.cell,
+                self.rows,
+            ),
         )
     }
 

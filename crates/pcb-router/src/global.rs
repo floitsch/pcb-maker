@@ -93,7 +93,10 @@ impl GlobalPlan {
             }
             total
         };
-        let mut capacity = [vec![vec![0.0; tiles]; inputs.layers], vec![vec![0.0; tiles]; inputs.layers]];
+        let mut capacity = [
+            vec![vec![0.0; tiles]; inputs.layers],
+            vec![vec![0.0; tiles]; inputs.layers],
+        ];
         let mut open = vec![vec![false; tiles]; inputs.layers];
         let mut via = vec![vec![false; tiles]; inputs.layers];
         for layer in 0..inputs.layers {
@@ -102,19 +105,27 @@ impl GlobalPlan {
                 for tx in 0..tiles_x {
                     let tile = ty * tiles_x + tx;
                     let (x0, y0) = (tx * inputs.tile, ty * inputs.tile);
-                    let (x1, y1) = ((x0 + inputs.tile).min(inputs.nx), (y0 + inputs.tile).min(inputs.ny));
+                    let (x1, y1) = (
+                        (x0 + inputs.tile).min(inputs.nx),
+                        (y0 + inputs.tile).min(inputs.ny),
+                    );
                     open[layer][tile] = (y0..y1).any(|y| (x0..x1).any(|x| free[y * inputs.nx + x]));
-                    via[layer][tile] = (y0..y1).any(|y| (x0..x1).any(|x| inputs.via_free[y * inputs.nx + x] && free[y * inputs.nx + x]));
+                    via[layer][tile] = (y0..y1).any(|y| {
+                        (x0..x1)
+                            .any(|x| inputs.via_free[y * inputs.nx + x] && free[y * inputs.nx + x])
+                    });
                     // The boundary to the right: the last column of this
                     // tile (a track crossing it passes a node there that is
                     // free, and so is its neighbour to the right).
                     if tx + 1 < tiles_x {
                         let x = x1 - 1;
-                        capacity[0][layer][tile] = fit(&mut (y0..y1).map(|y| free[y * inputs.nx + x] && free[y * inputs.nx + x + 1]));
+                        capacity[0][layer][tile] = fit(&mut (y0..y1)
+                            .map(|y| free[y * inputs.nx + x] && free[y * inputs.nx + x + 1]));
                     }
                     if ty + 1 < tiles_y {
                         let y = y1 - 1;
-                        capacity[1][layer][tile] = fit(&mut (x0..x1).map(|x| free[y * inputs.nx + x] && free[(y + 1) * inputs.nx + x]));
+                        capacity[1][layer][tile] = fit(&mut (x0..x1)
+                            .map(|x| free[y * inputs.nx + x] && free[(y + 1) * inputs.nx + x]));
                     }
                 }
             }
@@ -246,7 +257,9 @@ impl GlobalPlan {
                         continue;
                     }
                     let over = (self.usage[direction][layer][boundary] + demand - room).max(0.0);
-                    let step = self.tile_mm * (1.0 + self.history[direction][layer][boundary]) * (1.0 + present * over);
+                    let step = self.tile_mm
+                        * (1.0 + self.history[direction][layer][boundary])
+                        * (1.0 + present * over);
                     let next_state = layer * tiles + next;
                     let total = here + step;
                     if total < cost[next_state] {
@@ -317,7 +330,9 @@ impl GlobalPlan {
         for direction in 0..2 {
             for layer in 0..self.layers {
                 for tile in 0..self.tiles() {
-                    if self.usage[direction][layer][tile] > self.room(direction, layer, tile) + 1.0e-3 {
+                    if self.usage[direction][layer][tile]
+                        > self.room(direction, layer, tile) + 1.0e-3
+                    {
                         found.push((direction, layer, tile));
                     }
                 }
@@ -349,14 +364,19 @@ impl GlobalPlan {
             }
             pending = (0..self.nets.len())
                 .filter(|&net| {
-                    self.nets[net].crossings.iter().any(|crossing| over.contains(crossing))
+                    self.nets[net]
+                        .crossings
+                        .iter()
+                        .any(|crossing| over.contains(crossing))
                 })
                 .collect();
             present *= 1.8;
         }
         self.overflowing()
             .iter()
-            .map(|&(direction, layer, tile)| self.usage[direction][layer][tile] - self.room(direction, layer, tile))
+            .map(|&(direction, layer, tile)| {
+                self.usage[direction][layer][tile] - self.room(direction, layer, tile)
+            })
             .sum()
     }
 
@@ -395,7 +415,8 @@ impl GlobalPlan {
         for (direction, boundary) in boundaries {
             if self.usage[direction][layer][boundary] > 0.0 {
                 self.learned[direction][layer][boundary] =
-                    (self.learned[direction][layer][boundary] + amount).min(self.capacity[direction][layer][boundary]);
+                    (self.learned[direction][layer][boundary] + amount)
+                        .min(self.capacity[direction][layer][boundary]);
                 self.history[direction][layer][boundary] += 1.0;
             }
         }
@@ -421,7 +442,10 @@ mod tests {
 
     fn net(plan_tiles_x: usize, from: (usize, usize), to: (usize, usize)) -> GlobalNet {
         GlobalNet {
-            terminals: vec![vec![from.1 * plan_tiles_x + from.0], vec![to.1 * plan_tiles_x + to.0]],
+            terminals: vec![
+                vec![from.1 * plan_tiles_x + from.0],
+                vec![to.1 * plan_tiles_x + to.0],
+            ],
             demand: 1.0,
             ..GlobalNet::default()
         }
@@ -430,7 +454,17 @@ mod tests {
     #[test]
     fn capacities_count_tracks_through_gaps() {
         let (free, via) = board(4);
-        let inputs = Inputs { nx: 64, ny: 32, tile: 16, pitch: 0.1, layers: 1, free: vec![&free], via_free: &via, room: 0.2, via_cost: 1.0 };
+        let inputs = Inputs {
+            nx: 64,
+            ny: 32,
+            tile: 16,
+            pitch: 0.1,
+            layers: 1,
+            free: vec![&free],
+            via_free: &via,
+            room: 0.2,
+            via_cost: 1.0,
+        };
         let plan = GlobalPlan::new(&inputs, Vec::new());
         // The wall is at columns 31 and 32: the boundary between tiles 1 and
         // 2 (column 47/48) is open, the one between 0 and 1 (15/16) too, and
@@ -445,14 +479,34 @@ mod tests {
     #[test]
     fn negotiation_spreads_nets_over_the_capacity() {
         let (free, via) = board(4);
-        let inputs = Inputs { nx: 64, ny: 32, tile: 16, pitch: 0.1, layers: 1, free: vec![&free], via_free: &via, room: 0.2, via_cost: 1.0 };
+        let inputs = Inputs {
+            nx: 64,
+            ny: 32,
+            tile: 16,
+            pitch: 0.1,
+            layers: 1,
+            free: vec![&free],
+            via_free: &via,
+            room: 0.2,
+            via_cost: 1.0,
+        };
         let nets = (0..3).map(|_| net(4, (0, 0), (3, 0))).collect();
         let mut plan = GlobalPlan::new(&inputs, nets);
         let overflow = plan.negotiate(&[0, 1, 2], 20);
         // Only two tracks fit through the gap: the third cannot be placed.
         assert!(overflow > 0.0);
         let (free, via) = board(8);
-        let inputs = Inputs { nx: 64, ny: 32, tile: 16, pitch: 0.1, layers: 1, free: vec![&free], via_free: &via, room: 0.2, via_cost: 1.0 };
+        let inputs = Inputs {
+            nx: 64,
+            ny: 32,
+            tile: 16,
+            pitch: 0.1,
+            layers: 1,
+            free: vec![&free],
+            via_free: &via,
+            room: 0.2,
+            via_cost: 1.0,
+        };
         let nets = (0..3).map(|_| net(4, (0, 0), (3, 0))).collect();
         let mut plan = GlobalPlan::new(&inputs, nets);
         assert_eq!(plan.negotiate(&[0, 1, 2], 20), 0.0);

@@ -2,8 +2,8 @@
 
 //! Bounded two-net displacement followed by transactional restoration.
 //! Intermediate boards are evidence only; admission uses the original parent.
-use super::*;
 use super::connection_insertion::directory_sha256;
+use super::*;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]

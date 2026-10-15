@@ -20,7 +20,10 @@ pub enum Side {
 impl Side {
     /// Front against back: only far-side boxes can meet.
     pub fn opposite(self, other: Side) -> bool {
-        matches!((self, other), (Side::Front, Side::Back) | (Side::Back, Side::Front))
+        matches!(
+            (self, other),
+            (Side::Front, Side::Back) | (Side::Back, Side::Front)
+        )
     }
 
     pub fn collides(self, other: Side) -> bool {
@@ -154,7 +157,10 @@ impl Problem {
             let leader = poses[follower.leader];
             let offset = rotate(follower.offset, -leader.angle);
             poses[follower.part] = Pose {
-                position: [leader.position[0] + offset[0], leader.position[1] + offset[1]],
+                position: [
+                    leader.position[0] + offset[0],
+                    leader.position[1] + offset[1],
+                ],
                 angle: (leader.angle + follower.angle).rem_euclid(360.0),
             };
         }
@@ -266,7 +272,8 @@ impl Component {
     /// pads and its courtyard's separate shapes (holes may not lie inside a
     /// courtyard).
     pub fn hollow_for(&self, other: &Component) -> bool {
-        !self.hollow.is_empty() && (!other.has_holes() || self.holes_inside || self.courtyards.len() > 1)
+        !self.hollow.is_empty()
+            && (!other.has_holes() || self.holes_inside || self.courtyards.len() > 1)
     }
 
     /// Board-space boxes (centre, half extent) the part blocks `other`
@@ -284,7 +291,10 @@ impl Component {
         if self.hollow.is_empty() {
             self.body_size[0] * self.body_size[1]
         } else {
-            self.hollow.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum()
+            self.hollow
+                .iter()
+                .map(|b| (b[2] - b[0]) * (b[3] - b[1]))
+                .sum()
         }
     }
 
@@ -298,7 +308,10 @@ impl Component {
         boxes
             .iter()
             .map(|local| {
-                let center = self.offset([(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0], pose.angle);
+                let center = self.offset(
+                    [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+                    pose.angle,
+                );
                 let half = [(local[2] - local[0]) / 2.0, (local[3] - local[1]) / 2.0];
                 let (sin, cos) = (-pose.angle).to_radians().sin_cos();
                 (
@@ -328,7 +341,11 @@ impl Problem {
     /// (`Component::far_courtyard`): both reach beyond their bodies, so
     /// `far_reach` once more; nothing on boards without such parts.
     pub fn far_courtyard_reach(&self) -> f64 {
-        if self.components.iter().any(|component| !component.far_courtyard.is_empty()) {
+        if self
+            .components
+            .iter()
+            .any(|component| !component.far_courtyard.is_empty())
+        {
             self.far_reach()
         } else {
             0.0
@@ -350,17 +367,30 @@ impl Problem {
                     .chain(&component.courtyards)
                     .chain(&component.tight_hollow)
                     .map(move |far| {
-                    let farthest = [[far[0], far[1]], [far[2], far[1]], [far[2], far[3]], [far[0], far[3]]]
+                        let farthest = [
+                            [far[0], far[1]],
+                            [far[2], far[1]],
+                            [far[2], far[3]],
+                            [far[0], far[3]],
+                        ]
                         .iter()
-                        .map(|corner| (corner[0] - component.body_center[0]).hypot(corner[1] - component.body_center[1]))
+                        .map(|corner| {
+                            (corner[0] - component.body_center[0])
+                                .hypot(corner[1] - component.body_center[1])
+                        })
                         .fold(0.0, f64::max);
-                    // Inside the body at every angle: no reach.
-                    let inside = far[0] >= component.body_center[0] - component.body_size[0] / 2.0
-                        && far[1] >= component.body_center[1] - component.body_size[1] / 2.0
-                        && far[2] <= component.body_center[0] + component.body_size[0] / 2.0
-                        && far[3] <= component.body_center[1] + component.body_size[1] / 2.0;
-                    if inside { 0.0 } else { (farthest - shortest).max(0.0) }
-                })
+                        // Inside the body at every angle: no reach.
+                        let inside = far[0]
+                            >= component.body_center[0] - component.body_size[0] / 2.0
+                            && far[1] >= component.body_center[1] - component.body_size[1] / 2.0
+                            && far[2] <= component.body_center[0] + component.body_size[0] / 2.0
+                            && far[3] <= component.body_center[1] + component.body_size[1] / 2.0;
+                        if inside {
+                            0.0
+                        } else {
+                            (farthest - shortest).max(0.0)
+                        }
+                    })
             })
             .fold(0.0, f64::max)
     }

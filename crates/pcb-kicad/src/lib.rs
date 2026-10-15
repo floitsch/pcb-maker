@@ -31,34 +31,50 @@ mod local_clearance;
 mod native_report;
 mod necks;
 pub use necks::{NeckRepair, repair_kicad_necks};
+mod check_work;
 mod drc_cache;
 mod kicad_config;
-mod check_work;
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
-mod pad_layer_contacts;
 mod electrical_terminals;
+mod pad_layer_contacts;
 use electrical_terminals::ElectricalTerminal;
 mod terminal_access;
 pub use terminal_access::inspect_kicad_terminal_access;
 mod routing_cut;
 pub use routing_cut::{KiCadRoutingCutConfig, KiCadRoutingCutReport, inspect_kicad_routing_cut};
 mod joint_relaxation;
-pub use joint_relaxation::{KiCadJointRelaxationConfig, KiCadJointSolverConfig, KiCadJointRelaxationStatus, KiCadJointRelaxationResult, relax_kicad_joint_routes};
-mod roundrect_pad;
+pub use joint_relaxation::{
+    KiCadJointRelaxationConfig, KiCadJointRelaxationResult, KiCadJointRelaxationStatus,
+    KiCadJointSolverConfig, relax_kicad_joint_routes,
+};
 mod pad_pair;
-pub use pad_pair::{KiCadPadReference, KiCadPadPairRoutingConfig, KiCadPadPairRouteProposal, propose_kicad_pad_pair_route};
+mod roundrect_pad;
+pub use pad_pair::{
+    KiCadPadPairRouteProposal, KiCadPadPairRoutingConfig, KiCadPadReference,
+    propose_kicad_pad_pair_route,
+};
 mod island_bridge;
-pub use island_bridge::{KiCadIslandBridgeConfig, KiCadIslandBridgeResult, bridge_kicad_open_connections};
+pub use island_bridge::{
+    KiCadIslandBridgeConfig, KiCadIslandBridgeResult, bridge_kicad_open_connections,
+};
 mod route_obstructions;
-pub use route_obstructions::{KiCadRouteObstructionContact, KiCadRouteObstructionReport, KiCadRouteObstructionStatus, inspect_kicad_route_obstructions};
+pub use route_obstructions::{
+    KiCadRouteObstructionContact, KiCadRouteObstructionReport, KiCadRouteObstructionStatus,
+    inspect_kicad_route_obstructions,
+};
+mod compound_recovery;
 mod partial_ripup;
 mod restoration_recovery;
-mod compound_recovery;
-pub use compound_recovery::{KiCadCompoundRecoveryConfig, KiCadCompoundRecoveryResult, KiCadSequentialCompoundEvidence};
-pub use restoration_recovery::{KiCadRestorationRecoveryConfig, KiCadRestorationEvidence, KiCadChangedRouteReceipt};
+pub use compound_recovery::{
+    KiCadCompoundRecoveryConfig, KiCadCompoundRecoveryResult, KiCadSequentialCompoundEvidence,
+};
+pub use restoration_recovery::{
+    KiCadChangedRouteReceipt, KiCadRestorationEvidence, KiCadRestorationRecoveryConfig,
+};
 mod route_failure;
 pub use route_failure::{
-    KiCadRouteError, KiCadRouteSearchFailure, KiCadRouteSearchFailureKind, KiCadRouteTerminalContext,
+    KiCadRouteError, KiCadRouteSearchFailure, KiCadRouteSearchFailureKind,
+    KiCadRouteTerminalContext,
 };
 mod coupled_vias;
 #[cfg(test)]
@@ -74,17 +90,23 @@ mod verification_preview;
 mod via_discovery;
 pub use coupled_vias::{KiCadCoupledViaConfig, refine_kicad_vias};
 use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
-pub use native_report::{drc_design_issues, erc_design_issues, is_erc_library_warning, is_library_metadata_warning};
+pub use native_report::{
+    drc_design_issues, erc_design_issues, is_erc_library_warning, is_library_metadata_warning,
+};
 pub use silkscreen::repair_kicad_silkscreen;
 pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunities};
 mod adaptive_routing;
 mod board_layout;
-mod congestion_samples;
 mod congestion_rank;
-pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
-pub use congestion_samples::{KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation, export_congestion_samples};
+mod congestion_samples;
 pub use board_layout::{
-    KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial, KiCadSwappable, layout_kicad_board,
+    KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
+    KiCadSwappable, layout_kicad_board,
+};
+pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
+pub use congestion_samples::{
+    KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation,
+    export_congestion_samples,
 };
 mod board_placer;
 mod canonical_order;
@@ -94,9 +116,10 @@ pub use board_placer::{
 mod board_router;
 mod verdict;
 pub use verdict::{
-    DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference, KiCadRunFacts, KiCadRunStatus,
-    KiCadVerdict, decide, error_verdict, input_error, is_cosmetic, is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings,
-    room_action, route_facts, split_findings, tally_drc, wall_cuts,
+    DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference,
+    KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, error_verdict, input_error, is_cosmetic,
+    is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings, room_action,
+    route_facts, split_findings, tally_drc, wall_cuts,
 };
 mod describe;
 mod flip;
@@ -114,14 +137,15 @@ mod board_footprints;
 mod key_matrix;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
-pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from};
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
+pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from};
 mod placement_constraints;
 mod placement_room;
-pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub use placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, read_placement_constraints,
+    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints,
+    read_placement_constraints,
 };
+pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 mod outline;
 mod pin_swap;
 pub use pin_swap::{
@@ -131,11 +155,12 @@ pub use pin_swap::{
 mod shrink;
 pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
-pub use project_rules::resolve_project_rules;
 pub use board_router::{
-    KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadPourMode,
-    KiCadBoardRouterViolation, bench_kicad_search, dump_kicad_pour_map, route_kicad_board, write_kicad_board_without_tracks,
+    KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
+    KiCadPourMode, bench_kicad_search, dump_kicad_pour_map, route_kicad_board,
+    write_kicad_board_without_tracks,
 };
+pub use project_rules::resolve_project_rules;
 mod semantic_template;
 mod sequential_order_search;
 mod sequential_resume;
@@ -1355,7 +1380,8 @@ pub struct KiCadConnectionSummary {
 
 impl KiCadConnectionSummary {
     pub fn electrical_terminal_count(&self) -> usize {
-        self.electrical_terminal_count.unwrap_or(self.distinct_pad_centers)
+        self.electrical_terminal_count
+            .unwrap_or(self.distinct_pad_centers)
     }
 }
 
@@ -1701,11 +1727,14 @@ pub fn inspect_kicad_routable_connections(
             let pad_at = form_at(pad)?;
             let offset = rotate_vector([pad_at[0], pad_at[1]], -footprint_at[2]);
             let center = [footprint_at[0] + offset[0], footprint_at[1] + offset[1]];
-            let group = centers.entry(connection.to_string()).or_default()
+            let group = centers
+                .entry(connection.to_string())
+                .or_default()
                 .entry(Point(
                     (center[0] * 1_000_000.0).round() as i64,
                     (center[1] * 1_000_000.0).round() as i64,
-                )).or_insert(([false; 2], false));
+                ))
+                .or_insert(([false; 2], false));
             let layers = pad_copper_layers(pad);
             group.0[0] |= layers[0];
             group.0[1] |= layers[1];
@@ -1716,9 +1745,13 @@ pub fn inspect_kicad_routable_connections(
         .into_iter()
         .filter_map(|connection| {
             let distinct_pad_centers = centers.get(&connection).map_or(0, BTreeMap::len);
-            let electrical_terminal_count: usize = centers.get(&connection).into_iter()
+            let electrical_terminal_count: usize = centers
+                .get(&connection)
+                .into_iter()
                 .flat_map(|groups| groups.values())
-                .map(|(layers, plated)| electrical_terminals::contact_layers(*layers, *plated).len())
+                .map(|(layers, plated)| {
+                    electrical_terminals::contact_layers(*layers, *plated).len()
+                })
                 .sum();
             (electrical_terminal_count >= 2).then_some(KiCadConnectionSummary {
                 connection,
@@ -2456,8 +2489,7 @@ pub struct VerificationReport {
 pub const KICAD_VERIFICATION_CACHE_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CACHE";
 pub const KICAD_VERIFICATION_CACHE_EVENTS_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CACHE_EVENTS";
 const KICAD_VERIFICATION_CACHE_SCHEMA_VERSION: u32 = 1;
-const KICAD_VERIFICATION_POLICY: &str =
-    "verify-materialized-rung-v2:erc-without-library-warnings:drc-all:schematic-parity:intentional-no-connect-groups";
+const KICAD_VERIFICATION_POLICY: &str = "verify-materialized-rung-v2:erc-without-library-warnings:drc-all:schematic-parity:intentional-no-connect-groups";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -4171,7 +4203,9 @@ fn assess_verification_reports(
         .flat_map(|sheet| sheet["violations"].as_array().into_iter().flatten())
         .filter(|finding| is_erc_library_warning(finding))
     {
-        *erc_library_warnings.entry(finding["type"].as_str().unwrap_or("").to_string()).or_default() += 1;
+        *erc_library_warnings
+            .entry(finding["type"].as_str().unwrap_or("").to_string())
+            .or_default() += 1;
     }
     let schematic_parity_issues = drc["schematic_parity"].as_array().map_or(0, Vec::len);
     let mut drc_design_violations = 0;
@@ -4805,7 +4839,13 @@ fn route_materialized_connection_with_yielding_detailed(
     yielding_connections: &[String],
     config: &KiCadGridRouteConfig,
 ) -> Result<KiCadRouteCandidate, KiCadRouteError> {
-    route_materialized_connection_inspected(pcb_path, connection, yielding_connections, config, None)
+    route_materialized_connection_inspected(
+        pcb_path,
+        connection,
+        yielding_connections,
+        config,
+        None,
+    )
 }
 
 fn route_materialized_connection_inspected(
@@ -4815,7 +4855,14 @@ fn route_materialized_connection_inspected(
     config: &KiCadGridRouteConfig,
     inspector: Option<&mut routing_cut::Inspector>,
 ) -> Result<KiCadRouteCandidate, KiCadRouteError> {
-    route_materialized_connection_selected(pcb_path, connection, yielding_connections, config, inspector, None)
+    route_materialized_connection_selected(
+        pcb_path,
+        connection,
+        yielding_connections,
+        config,
+        inspector,
+        None,
+    )
 }
 
 fn route_materialized_connection_selected(
@@ -4964,26 +5011,29 @@ fn route_materialized_connection_selected(
         .iter()
         .map(|contact| {
             let terminal = contact.at;
-            let mut grid = match snapped_grid_position(terminal, [min_x, min_y], config, width, height) {
-                Ok(grid) => grid,
-                Err(error) => {
-                    if config.terminal_contact_policy == KiCadTerminalContactPolicy::FirstPadContact {
-                        let options = terminal_access::copper_options(
-                            &model,
-                            contact,
-                            [min_x, min_y],
-                            [width, height],
-                            config,
-                            |p| blocked[p.layer * plane + p.y * width + p.x],
-                        )?;
-                        if !options.is_empty() {
-                            terminal_access_recoveries += 1;
-                            return Ok(options);
+            let mut grid =
+                match snapped_grid_position(terminal, [min_x, min_y], config, width, height) {
+                    Ok(grid) => grid,
+                    Err(error) => {
+                        if config.terminal_contact_policy
+                            == KiCadTerminalContactPolicy::FirstPadContact
+                        {
+                            let options = terminal_access::copper_options(
+                                &model,
+                                contact,
+                                [min_x, min_y],
+                                [width, height],
+                                config,
+                                |p| blocked[p.layer * plane + p.y * width + p.x],
+                            )?;
+                            if !options.is_empty() {
+                                terminal_access_recoveries += 1;
+                                return Ok(options);
+                            }
                         }
+                        return Err(error);
                     }
-                    return Err(error);
-                }
-            };
+                };
             let layers = contact.layers;
             grid.layer = preferred_terminal_layer(layers).ok_or_else(|| {
                 format!("connection {connection:?} terminal pad has no supported copper layer")
@@ -5280,9 +5330,7 @@ fn route_materialized_connection_selected(
                 grid_position_at(grid_path[0], [min_x, min_y], config.resolution_mm)
             };
             let start_pad = (!shared_tree || branch_index == 0)
-                .then(|| {
-                    terminal_copper_geometry_at(&model, terminals[root], grid_path[0].layer)
-                })
+                .then(|| terminal_copper_geometry_at(&model, terminals[root], grid_path[0].layer))
                 .flatten();
             let finish_pad = terminal_copper_geometry_at(
                 &model,
@@ -5702,7 +5750,9 @@ pub fn diagnose_kicad_yielding_connections(
                 Err(error) => routing_cut_error = Some(error),
             }
         } else {
-            routing_cut_error = Some("no grid-disconnected branch failure is available for boundary inspection".into());
+            routing_cut_error = Some(
+                "no grid-disconnected branch failure is available for boundary inspection".into(),
+            );
         }
     }
     hints.extend(config.preferred_yielding_connections.iter().cloned());
@@ -6072,12 +6122,13 @@ fn import_route_candidate_from_expr(
             .keys()
             .copied()
             .filter(|node| {
-                contact.layers[node.layer] && pads.iter().any(|pad| {
-                    pad.layers[node.layer]
-                        && pad
-                            .geometry
-                            .contains(node.at(), trace_width_mm.unwrap_or(0.0) / 2.0)
-                })
+                contact.layers[node.layer]
+                    && pads.iter().any(|pad| {
+                        pad.layers[node.layer]
+                            && pad
+                                .geometry
+                                .contains(node.at(), trace_width_mm.unwrap_or(0.0) / 2.0)
+                    })
             })
             .collect::<BTreeSet<_>>();
         if matches.is_empty() {
@@ -8897,8 +8948,12 @@ fn copy_directory_entries(source: &Path, destination: &Path, root: &Path) -> Res
             if fs::canonicalize(entry.path()).is_ok_and(|path| root.starts_with(path)) {
                 continue;
             }
-            fs::create_dir(&target)
-                .map_err(|error| format!("failed to create KiCad action artifact {}: {error}", target.display()))?;
+            fs::create_dir(&target).map_err(|error| {
+                format!(
+                    "failed to create KiCad action artifact {}: {error}",
+                    target.display()
+                )
+            })?;
             copy_directory_entries(&entry.path(), &target, root)?;
         } else if file_type.is_file() {
             fs::copy(entry.path(), &target).map_err(|error| {
@@ -11089,12 +11144,15 @@ fn insert_materialized_grid_path_contacts(
         // A moved endpoint can still be a retained via or lie on its anchor
         // connector. Check actual same-layer copper before discarding it.
         let endpoint = index == 0 || index + 1 == grid_path.len();
-        let represented = !endpoint || materialized_path.iter().any(|point| {
-            point.layer == layer && distance_squared(at, point.at) <= 1.0e-12
-        }) || materialized_path.windows(2).any(|pair| {
-            pair[0].layer == layer && pair[1].layer == layer
-                && route_point_on_segment(at, pair[0].at, pair[1].at)
-        });
+        let represented = !endpoint
+            || materialized_path
+                .iter()
+                .any(|point| point.layer == layer && distance_squared(at, point.at) <= 1.0e-12)
+            || materialized_path.windows(2).any(|pair| {
+                pair[0].layer == layer
+                    && pair[1].layer == layer
+                    && route_point_on_segment(at, pair[0].at, pair[1].at)
+            });
         if represented {
             tree.insert(grid_position_key(position), position);
         }
@@ -11920,12 +11978,18 @@ fn rule_area_layer_mask(zone: &Expr) -> Result<[bool; 2], String> {
 /// even-odd point test and the edge distances treat as the ring it is.
 fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
     let mut polygons: Vec<Vec<[f64; 2]>> = Vec::new();
-    for polygon in zone.children().iter().filter(|item| item.head() == Some("polygon")) {
+    for polygon in zone
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("polygon"))
+    {
         // Sides drawn as arcs (Telemetry's GND zones along its round
         // edge), flattened as KiCad's filler does (ClearArcs); they were
         // left out, the zone then a polygon through the other corners
         // (`PCB_KICAD_OLD_ZONE_ARCS` for A/B).
-        let arcs = polygon.child("pts").is_some_and(|pts| pts.children().iter().any(|item| item.head() == Some("arc")));
+        let arcs = polygon
+            .child("pts")
+            .is_some_and(|pts| pts.children().iter().any(|item| item.head() == Some("arc")));
         if arcs && std::env::var_os("PCB_KICAD_OLD_ZONE_ARCS").is_none() {
             let points = outline::pts_points(polygon)?;
             if points.len() >= 3 {
@@ -11958,13 +12022,17 @@ fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
         }
     }
     let mut polygons = polygons.into_iter();
-    let mut outline = polygons.next().ok_or_else(|| "rule area polygon has fewer than three points".to_string())?;
+    let mut outline = polygons
+        .next()
+        .ok_or_else(|| "rule area polygon has fewer than three points".to_string())?;
     for hole in polygons {
         let (i, j) = (0..outline.len())
             .flat_map(|i| (0..hole.len()).map(move |j| (i, j)))
             .min_by(|(a, b), (c, d)| {
-                let da = (outline[*a][0] - hole[*b][0]).powi(2) + (outline[*a][1] - hole[*b][1]).powi(2);
-                let dc = (outline[*c][0] - hole[*d][0]).powi(2) + (outline[*c][1] - hole[*d][1]).powi(2);
+                let da =
+                    (outline[*a][0] - hole[*b][0]).powi(2) + (outline[*a][1] - hole[*b][1]).powi(2);
+                let dc =
+                    (outline[*c][0] - hole[*d][0]).powi(2) + (outline[*c][1] - hole[*d][1]).powi(2);
                 da.partial_cmp(&dc).unwrap()
             })
             .unwrap();
@@ -12036,7 +12104,10 @@ fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad, String> {
         "trapezoid" => {
             // KiCad's corners (PAD::BuildPadPolygon), with half the delta.
             let delta = form_xy(pad, "rect_delta").unwrap_or([0.0, 0.0]);
-            let (half, d) = ([size[0] / 2.0, size[1] / 2.0], [delta[0] / 2.0, delta[1] / 2.0]);
+            let (half, d) = (
+                [size[0] / 2.0, size[1] / 2.0],
+                [delta[0] / 2.0, delta[1] / 2.0],
+            );
             let corners = [
                 [-half[0] - d[1], half[1] + d[0]],
                 [-half[0] + d[1], -half[1] - d[0]],
@@ -12194,13 +12265,22 @@ fn custom_pad_geometry(
                                     .ok_or_else(|| format!("custom-pad arc has no {head}"))
                                     .and_then(|form| local_point(form, head))
                             };
-                            for at in outline::arc_points(corner("start")?, corner("mid")?, corner("end")?) {
+                            for at in outline::arc_points(
+                                corner("start")?,
+                                corner("mid")?,
+                                corner("end")?,
+                            ) {
                                 if points.last() != Some(&at) {
                                     points.push(at);
                                 }
                             }
                         }
-                        _ => return Err("custom-pad polygon contains a point that is neither xy nor arc".into()),
+                        _ => {
+                            return Err(
+                                "custom-pad polygon contains a point that is neither xy nor arc"
+                                    .into(),
+                            );
+                        }
                     }
                 }
                 if points.len() < 3 {
@@ -15624,14 +15704,8 @@ mod tests {
             } else {
                 ([[0.0, 0.0], [3.0, 0.0]], [Some(&pad), None])
             };
-            let (path, segments, vias) = materialize_grid_path(
-                "SMD",
-                &grid_path,
-                terminals,
-                pads,
-                [0.0, 0.0],
-                &config,
-            );
+            let (path, segments, vias) =
+                materialize_grid_path("SMD", &grid_path, terminals, pads, [0.0, 0.0], &config);
             assert_eq!(vias.len(), 1);
             assert_eq!(vias[0].at, [0.5, 0.0]);
             let terminal = if reversed { path.last() } else { path.first() }.unwrap();

@@ -76,7 +76,9 @@ pub fn playback_html(problem: &Problem, frames: &[Frame], title: &str) -> String
         ));
     }
     data.push_str("]}");
-    TEMPLATE.replace("__TITLE__", title).replace("__DATA__", &data)
+    TEMPLATE
+        .replace("__TITLE__", title)
+        .replace("__DATA__", &data)
 }
 
 const TEMPLATE: &str = r##"<!doctype html>

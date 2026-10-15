@@ -62,16 +62,31 @@ fn distance(a: Point, b: Point) -> f64 {
 const SIDE: f64 = 0.8;
 
 fn key(point: Point) -> (i64, i64) {
-    ((point[0] * 1.0e6).round() as i64, (point[1] * 1.0e6).round() as i64)
+    (
+        (point[0] * 1.0e6).round() as i64,
+        (point[1] * 1.0e6).round() as i64,
+    )
 }
 
 /// Points where a via of every class keeps its clearances, on a triangular
 /// lattice of the via pitch; where the board is open (more than `spacing`
 /// of room), only every few lattice points.
 fn via_sites(board: &Board, index: &Index, spacing: f64) -> Vec<Point> {
-    let radius = board.classes.iter().map(|class| class.via_diameter / 2.0).fold(0.0, f64::max);
-    let drill = board.classes.iter().map(|class| class.via_drill).fold(0.0, f64::max);
-    let clearance = board.classes.iter().map(|class| class.clearance).fold(0.0, f64::max);
+    let radius = board
+        .classes
+        .iter()
+        .map(|class| class.via_diameter / 2.0)
+        .fold(0.0, f64::max);
+    let drill = board
+        .classes
+        .iter()
+        .map(|class| class.via_drill)
+        .fold(0.0, f64::max);
+    let clearance = board
+        .classes
+        .iter()
+        .map(|class| class.clearance)
+        .fold(0.0, f64::max);
     if radius <= 0.0 {
         return Vec::new();
     }
@@ -97,8 +112,13 @@ fn via_sites(board: &Board, index: &Index, spacing: f64) -> Vec<Point> {
                 continue;
             }
             let gap = match obstacle.kind {
-                ObstacleKind::Copper => clearance.max(obstacle.clearance).max(obstacle.clearance_override.unwrap_or(0.0)),
-                ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance).max(board.hole_to_hole + drill / 2.0 - radius),
+                ObstacleKind::Copper => clearance
+                    .max(obstacle.clearance)
+                    .max(obstacle.clearance_override.unwrap_or(0.0)),
+                ObstacleKind::Hole => board
+                    .hole_clearance
+                    .max(obstacle.clearance)
+                    .max(board.hole_to_hole + drill / 2.0 - radius),
                 ObstacleKind::Keepout => 0.0,
             };
             room = room.min(obstacle.shape.distance_to_point(point) - radius - gap);
@@ -148,7 +168,11 @@ pub fn polygons_of(shape: &Shape) -> Vec<Vec<Point>> {
             let r = circumscribed(*radius);
             let direction = [end[0] - start[0], end[1] - start[1]];
             let length = (direction[0].powi(2) + direction[1].powi(2)).sqrt();
-            let base = if length > 1.0e-9 { direction[1].atan2(direction[0]) } else { 0.0 };
+            let base = if length > 1.0e-9 {
+                direction[1].atan2(direction[0])
+            } else {
+                0.0
+            };
             let mut points = Vec::new();
             // Half circle around `end` (from -90° to +90° of the direction),
             // then around `start` (from +90° to +270°).
@@ -156,7 +180,8 @@ pub fn polygons_of(shape: &Shape) -> Vec<Vec<Point>> {
             // to the round end, and the straight sides lie just outside.
             for (center, from) in [(*end, -0.5), (*start, 0.5)] {
                 for index in 0..=SIDES / 2 {
-                    let angle = base + std::f64::consts::PI * (from + index as f64 / (SIDES / 2) as f64);
+                    let angle =
+                        base + std::f64::consts::PI * (from + index as f64 / (SIDES / 2) as f64);
                     points.push([center[0] + r * angle.cos(), center[1] + r * angle.sin()]);
                 }
             }
@@ -205,23 +230,41 @@ impl Index {
             let bounds = obstacle.shape.aabb();
             let x0 = ((bounds.minimum[0] - minimum[0]) / cell).floor().max(0.0) as usize;
             let y0 = ((bounds.minimum[1] - minimum[1]) / cell).floor().max(0.0) as usize;
-            let x1 = (((bounds.maximum[0] - minimum[0]) / cell).floor().max(0.0) as usize).min(nx - 1);
-            let y1 = (((bounds.maximum[1] - minimum[1]) / cell).floor().max(0.0) as usize).min(ny - 1);
+            let x1 =
+                (((bounds.maximum[0] - minimum[0]) / cell).floor().max(0.0) as usize).min(nx - 1);
+            let y1 =
+                (((bounds.maximum[1] - minimum[1]) / cell).floor().max(0.0) as usize).min(ny - 1);
             for y in y0.min(ny - 1)..=y1 {
                 for x in x0.min(nx - 1)..=x1 {
                     cells[y * nx + x].push(index);
                 }
             }
         }
-        Self { origin: minimum, cell, nx, ny, cells }
+        Self {
+            origin: minimum,
+            cell,
+            nx,
+            ny,
+            cells,
+        }
     }
 
     /// Obstacles whose bounding box may contain `point` (within `reach`).
     pub fn near(&self, point: Point, reach: f64) -> Vec<usize> {
-        let x0 = ((point[0] - reach - self.origin[0]) / self.cell).floor().max(0.0) as usize;
-        let y0 = ((point[1] - reach - self.origin[1]) / self.cell).floor().max(0.0) as usize;
-        let x1 = (((point[0] + reach - self.origin[0]) / self.cell).floor().max(0.0) as usize).min(self.nx - 1);
-        let y1 = (((point[1] + reach - self.origin[1]) / self.cell).floor().max(0.0) as usize).min(self.ny - 1);
+        let x0 = ((point[0] - reach - self.origin[0]) / self.cell)
+            .floor()
+            .max(0.0) as usize;
+        let y0 = ((point[1] - reach - self.origin[1]) / self.cell)
+            .floor()
+            .max(0.0) as usize;
+        let x1 = (((point[0] + reach - self.origin[0]) / self.cell)
+            .floor()
+            .max(0.0) as usize)
+            .min(self.nx - 1);
+        let y1 = (((point[1] + reach - self.origin[1]) / self.cell)
+            .floor()
+            .max(0.0) as usize)
+            .min(self.ny - 1);
         let mut found = Vec::new();
         for y in y0.min(self.ny - 1)..=y1 {
             for x in x0.min(self.nx - 1)..=x1 {
@@ -242,7 +285,8 @@ impl Mesh {
     /// in open areas pass several small faces: room for vias between the
     /// wires they cross). A `spacing` of 0 adds none.
     pub fn build(board: &Board, index: &Index, spacing: f64) -> Self {
-        let mut cdt: ConstrainedDelaunayTriangulation<Vertex> = ConstrainedDelaunayTriangulation::new();
+        let mut cdt: ConstrainedDelaunayTriangulation<Vertex> =
+            ConstrainedDelaunayTriangulation::new();
         let mut rings: Vec<Vec<Point>> = Vec::new();
         rings.push(board.outline.clone());
         for obstacle in &board.obstacles {
@@ -262,7 +306,12 @@ impl Mesh {
             }
             let handles: Vec<_> = points
                 .iter()
-                .filter_map(|point| cdt.insert(Vertex { position: Point2::new(point[0], point[1]) }).ok())
+                .filter_map(|point| {
+                    cdt.insert(Vertex {
+                        position: Point2::new(point[0], point[1]),
+                    })
+                    .ok()
+                })
                 .collect();
             for index in 0..handles.len() {
                 let (from, to) = (handles[index], handles[(index + 1) % handles.len()]);
@@ -277,7 +326,9 @@ impl Mesh {
         if spacing > 0.0 && board.outline.len() >= 3 {
             site_positions = via_sites(board, index, spacing);
             for &point in &site_positions {
-                let _ = cdt.insert(Vertex { position: Point2::new(point[0], point[1]) });
+                let _ = cdt.insert(Vertex {
+                    position: Point2::new(point[0], point[1]),
+                });
             }
         }
         let points: Vec<Point> = cdt
@@ -304,7 +355,9 @@ impl Mesh {
             for directed in face.adjacent_edges() {
                 let (from, to) = (directed.from().fix().index(), directed.to().fix().index());
                 let edge = directed.as_undirected().fix().index();
-                let slot = (0..3).find(|&i| vertices[i] == from && vertices[(i + 1) % 3] == to).expect("face edge");
+                let slot = (0..3)
+                    .find(|&i| vertices[i] == from && vertices[(i + 1) % 3] == to)
+                    .expect("face edge");
                 ids[slot] = edge;
                 // The face lies to the left of its counter-clockwise edges.
                 let side = if edges[edge] == [from, to] { 0 } else { 1 };
@@ -328,8 +381,12 @@ impl Mesh {
                     .collect(),
             );
         }
-        let sites: std::collections::HashSet<(i64, i64)> = site_positions.iter().map(|&point| key(point)).collect();
-        let via_site: Vec<bool> = points.iter().map(|&point| sites.contains(&key(point))).collect();
+        let sites: std::collections::HashSet<(i64, i64)> =
+            site_positions.iter().map(|&point| key(point)).collect();
+        let via_site: Vec<bool> = points
+            .iter()
+            .map(|&point| sites.contains(&key(point)))
+            .collect();
         let mut vertex_faces = vec![Vec::new(); points.len()];
         for (face, vertices) in faces.iter().enumerate() {
             for &vertex in vertices {
@@ -365,7 +422,8 @@ impl Mesh {
                             for &obstacle in &vertex_obstacles[end] {
                                 let obstacle: &pcb_router::Obstacle = &board.obstacles[obstacle];
                                 if obstacle.layers & (1 << layer) != 0 && obstacle.blocks_tracks {
-                                    length = length.min(obstacle.shape.distance_to_point(points[other]));
+                                    length =
+                                        length.min(obstacle.shape.distance_to_point(points[other]));
                                 }
                             }
                         }
@@ -441,7 +499,9 @@ impl Mesh {
         let mut found = None;
         for face in 0..self.faces.len() {
             let [a, b, c] = self.faces[face].map(|vertex| self.points[vertex]);
-            let side = |p: Point, q: Point| (q[0] - p[0]) * (point[1] - p[1]) - (q[1] - p[1]) * (point[0] - p[0]);
+            let side = |p: Point, q: Point| {
+                (q[0] - p[0]) * (point[1] - p[1]) - (q[1] - p[1]) * (point[0] - p[0])
+            };
             if side(a, b) >= -1.0e-12 && side(b, c) >= -1.0e-12 && side(c, a) >= -1.0e-12 {
                 if pad.is_none_or(|pad| self.face_blockers[face].contains(&pad)) {
                     return Some(face);
@@ -451,7 +511,6 @@ impl Mesh {
         }
         found
     }
-
 }
 
 fn ring_distance(point: Point, ring: &[Point]) -> f64 {

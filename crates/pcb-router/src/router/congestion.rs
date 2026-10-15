@@ -110,7 +110,11 @@ impl Router {
         let mut net_complete = Vec::with_capacity(self.nets.len());
         let mut net_conflicted = Vec::with_capacity(self.nets.len());
         for (net, state) in self.nets.iter().enumerate() {
-            let conflicts = if state.routable { self.conflicts(net as u32) } else { Vec::new() };
+            let conflicts = if state.routable {
+                self.conflicts(net as u32)
+            } else {
+                Vec::new()
+            };
             for (layer, cell) in &conflicts {
                 conflict[layer * tiles + tile_of(*cell as usize)] += 1.0;
             }
@@ -146,13 +150,20 @@ impl Router {
                 }
             }
         }
-        let tile_history: Vec<f32> = self.tile_history.iter().take(layers + 1).flat_map(|values| values.iter().copied()).collect();
+        let tile_history: Vec<f32> = self
+            .tile_history
+            .iter()
+            .take(layers + 1)
+            .flat_map(|values| values.iter().copied())
+            .collect();
         // The class most nets route with.
         let mut counts = vec![0usize; self.board.classes.len()];
         for net in &self.board.nets {
             counts[net.class] += 1;
         }
-        let class = (0..counts.len()).max_by_key(|class| (counts[*class], usize::MAX - class)).unwrap_or(0);
+        let class = (0..counts.len())
+            .max_by_key(|class| (counts[*class], usize::MAX - class))
+            .unwrap_or(0);
         let mut claimed = vec![0.0f32; layers * tiles];
         let mut routable = vec![0.0f32; layers * tiles];
         for layer in 0..layers {
@@ -163,7 +174,8 @@ impl Router {
                 let width = (nx - x * TILE).min(TILE);
                 let height = (self.grid.ny - y * TILE).min(TILE);
                 routable[layer * tiles + tile] = free[tile] as f32 / (width * height) as f32;
-                claimed[layer * tiles + tile] = taken[tile].min(free[tile]) as f32 / free[tile].max(1) as f32;
+                claimed[layer * tiles + tile] =
+                    taken[tile].min(free[tile]) as f32 / free[tile].max(1) as f32;
             }
         }
         CongestionLabels {

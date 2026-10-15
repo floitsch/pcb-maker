@@ -36,7 +36,10 @@ pub struct KiCadSwapCandidate {
 fn general_purpose(function: &str) -> Option<String> {
     let digits = |text: &str| !text.is_empty() && text.chars().all(|c| c.is_ascii_digit());
     // KiCad 10 appends the pin number (`GPIO12_5`).
-    let function = function.rsplit_once('_').filter(|(_, number)| digits(number)).map_or(function, |(name, _)| name);
+    let function = function
+        .rsplit_once('_')
+        .filter(|(_, number)| digits(number))
+        .map_or(function, |(name, _)| name);
     if function.strip_prefix("GPIO").is_some_and(digits) {
         return Some("GPIO*".into());
     }
@@ -45,10 +48,14 @@ fn general_purpose(function: &str) -> Option<String> {
     }
     let mut characters = function.chars();
     match (characters.next(), characters.next()) {
-        (Some('P'), Some(port @ 'A'..='K')) if digits(characters.as_str()) => Some(format!("P{port}*")),
+        (Some('P'), Some(port @ 'A'..='K')) if digits(characters.as_str()) => {
+            Some(format!("P{port}*"))
+        }
         (Some('P'), Some(port @ '0'..='9')) => {
             let rest = characters.as_str();
-            rest.strip_prefix('.').is_some_and(digits).then(|| format!("P{port}.*"))
+            rest.strip_prefix('.')
+                .is_some_and(digits)
+                .then(|| format!("P{port}.*"))
         }
         _ => None,
     }
@@ -125,13 +132,21 @@ fn property(footprint: &Expr, name: &str) -> String {
         .unwrap_or_default()
 }
 
-pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoardDescription, String> {
+pub fn describe_kicad_board(
+    directory: &Path,
+    board_id: &str,
+) -> Result<KiCadBoardDescription, String> {
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
-    let text = fs::read_to_string(&board_path).map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
+    let text = fs::read_to_string(&board_path)
+        .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = parse(&text)?;
     let board_edge = pcb.children().iter().any(|item| {
         item.head().is_some_and(|head| head.starts_with("gr_"))
-            && item.child("layer").and_then(|layer| layer.children().get(1)).and_then(Expr::atom) == Some("Edge.Cuts")
+            && item
+                .child("layer")
+                .and_then(|layer| layer.children().get(1))
+                .and_then(Expr::atom)
+                == Some("Edge.Cuts")
     });
     let outline = outline::board_loops(&pcb).ok().map(|loops| {
         let mut minimum = [f64::INFINITY; 2];
@@ -152,17 +167,28 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
         }
     });
     let layers = board_router::LayerTable::from_pcb(&pcb)?;
-    let rules = project_rules::resolve_project_rules(&directory.join(format!("{board_id}.kicad_pro")), &board_path).ok();
+    let rules = project_rules::resolve_project_rules(
+        &directory.join(format!("{board_id}.kicad_pro")),
+        &board_path,
+    )
+    .ok();
     let mut footprints = Vec::new();
     let mut nets: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // General-purpose pads per part: (part, value, pad, function, glob, net).
     let mut general: Vec<(String, String, String, String, String, String)> = Vec::new();
-    for footprint in pcb.children().iter().filter(|item| item.head() == Some("footprint")) {
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let (center, size, round_body) = local_body(footprint)?;
         let at = form_at(footprint)?;
         let (sin, cos) = (-at[2]).to_radians().sin_cos();
-        let offset = [center[0] * cos - center[1] * sin, center[0] * sin + center[1] * cos];
+        let offset = [
+            center[0] * cos - center[1] * sin,
+            center[0] * sin + center[1] * cos,
+        ];
         let middle = [at[0] + offset[0], at[1] + offset[1]];
         let half = [
             (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
@@ -177,27 +203,63 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
         ];
         let mut pads = Vec::new();
         let mut through_hole = false;
-        for pad in footprint.children().iter().filter(|child| child.head() == Some("pad")) {
-            let name = pad.children().get(1).and_then(Expr::atom).unwrap_or("").to_string();
-            through_hole |= matches!(pad.children().get(2).and_then(Expr::atom), Some("thru_hole" | "np_thru_hole"));
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            let name = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
+            through_hole |= matches!(
+                pad.children().get(2).and_then(Expr::atom),
+                Some("thru_hole" | "np_thru_hole")
+            );
             let net = node_net(pad)
                 .filter(|raw| board_router::routable_net(raw))
                 .map(|raw| normalize_net(raw).to_string());
             if let Some(net) = &net {
-                nets.entry(net.clone()).or_default().push(format!("{reference}:{name}"));
+                nets.entry(net.clone())
+                    .or_default()
+                    .push(format!("{reference}:{name}"));
                 let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
                 if let Some(glob) = general_purpose(function) {
-                    general.push((reference.clone(), property(footprint, "Value"), name.clone(), function.to_string(), glob, net.clone()));
+                    general.push((
+                        reference.clone(),
+                        property(footprint, "Value"),
+                        name.clone(),
+                        function.to_string(),
+                        glob,
+                        net.clone(),
+                    ));
                 }
             }
             pads.push((name, net));
         }
         footprints.push(KiCadDescribedFootprint {
             value: property(footprint, "Value"),
-            footprint: footprint.children().get(1).and_then(Expr::atom).unwrap_or("").to_string(),
+            footprint: footprint
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string(),
             at,
-            side: if crate::board_placer::on_back(footprint) { "back" } else { "front" }.into(),
-            layer: if form_atom(footprint, "layer", 1) == Some("B.Cu") { "B.Cu" } else { "F.Cu" }.into(),
+            side: if crate::board_placer::on_back(footprint) {
+                "back"
+            } else {
+                "front"
+            }
+            .into(),
+            layer: if form_atom(footprint, "layer", 1) == Some("B.Cu") {
+                "B.Cu"
+            } else {
+                "F.Cu"
+            }
+            .into(),
             size_mm: [round(size[0]), round(size[1])],
             body_corners: [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]
                 .iter()
@@ -209,11 +271,15 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
                     ]
                 })
                 .collect(),
-            body_circle: round_body.then(|| ([round(middle[0]), round(middle[1])], round(size[0] / 2.0))),
+            body_circle: round_body
+                .then(|| ([round(middle[0]), round(middle[1])], round(size[0] / 2.0))),
             body,
             through_hole,
             locked: footprint.child("locked").is_some()
-                || footprint.children().iter().any(|child| child.atom() == Some("locked")),
+                || footprint
+                    .children()
+                    .iter()
+                    .any(|child| child.atom() == Some("locked")),
             pads,
             uuid: footprint_uuid(footprint),
             reference,
@@ -223,9 +289,12 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
         .into_iter()
         .map(|(name, mut pads)| {
             pads.sort();
-            let rule = rules
-                .as_ref()
-                .and_then(|rules| rules.connection_rules.get(&name).or(rules.default_rules.as_ref()));
+            let rule = rules.as_ref().and_then(|rules| {
+                rules
+                    .connection_rules
+                    .get(&name)
+                    .or(rules.default_rules.as_ref())
+            });
             KiCadDescribedNet {
                 track_width_mm: rule.map(|rule| rule.trace_width_mm),
                 clearance_mm: rule.map(|rule| rule.clearance_mm),
@@ -240,14 +309,25 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
     for (part, value, pad, function, glob, net) in general {
         let prefix = part.trim_end_matches(|c: char| c.is_ascii_digit());
         if matches!(prefix, "J" | "P" | "CN" | "CON" | "X" | "USB")
-            || nets.iter().find(|described| described.name == net).is_none_or(|described| described.pads.len() < 2)
+            || nets
+                .iter()
+                .find(|described| described.name == net)
+                .is_none_or(|described| described.pads.len() < 2)
         {
             continue;
         }
-        let index = match swap_candidates.iter().position(|candidate| candidate.part == part) {
+        let index = match swap_candidates
+            .iter()
+            .position(|candidate| candidate.part == part)
+        {
             Some(index) => index,
             None => {
-                swap_candidates.push(KiCadSwapCandidate { part, value, pins: Vec::new(), connected: Vec::new() });
+                swap_candidates.push(KiCadSwapCandidate {
+                    part,
+                    value,
+                    pins: Vec::new(),
+                    connected: Vec::new(),
+                });
                 swap_candidates.len() - 1
             }
         };
@@ -274,10 +354,23 @@ mod tests {
 
     #[test]
     fn general_purpose_pins_by_function() {
-        for (function, glob) in [("GPIO12", "GPIO*"), ("GPIO12_5", "GPIO*"), ("IO5", "IO*"), ("PA3", "PA*"), ("PB12_40", "PB*"), ("P0.13", "P0.*")] {
-            assert_eq!(general_purpose(function).as_deref(), Some(glob), "{function}");
+        for (function, glob) in [
+            ("GPIO12", "GPIO*"),
+            ("GPIO12_5", "GPIO*"),
+            ("IO5", "IO*"),
+            ("PA3", "PA*"),
+            ("PB12_40", "PB*"),
+            ("P0.13", "P0.*"),
+        ] {
+            assert_eq!(
+                general_purpose(function).as_deref(),
+                Some(glob),
+                "{function}"
+            );
         }
-        for function in ["GND", "VDD", "PAD", "IO", "PA", "P0", "EN", "GPIO", "IO12/ADC", "PWR"] {
+        for function in [
+            "GND", "VDD", "PAD", "IO", "PA", "P0", "EN", "GPIO", "IO12/ADC", "PWR",
+        ] {
             assert_eq!(general_purpose(function), None, "{function}");
         }
     }

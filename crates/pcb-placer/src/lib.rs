@@ -132,7 +132,14 @@ impl Relaxation {
         for (index, component) in problem.components.iter_mut().enumerate() {
             component.halo = match self.halos.as_ref().and_then(|halos| halos.get(index)) {
                 Some(halo) => *halo,
-                None => component.halo * if component.pins.len() >= MANY_PINS { self.halo_scale } else { self.small_halo_scale },
+                None => {
+                    component.halo
+                        * if component.pins.len() >= MANY_PINS {
+                            self.halo_scale
+                        } else {
+                            self.small_halo_scale
+                        }
+                }
             };
             if !self.edge_inset {
                 component.edge_inset = 0.0;
@@ -230,8 +237,11 @@ pub fn least_extents(component: &Component) -> [f64; 2] {
 pub fn strips_hold(parts: &[[f64; 2]], size: [f64; 2]) -> bool {
     for axis in 0..2 {
         // Lines across `axis`: the parts' extents across them, then along.
-        let mut sorted: Vec<[f64; 2]> =
-            parts.iter().map(|extent| [extent[1 - axis], extent[axis]]).filter(|extent| extent[0] > 0.0).collect();
+        let mut sorted: Vec<[f64; 2]> = parts
+            .iter()
+            .map(|extent| [extent[1 - axis], extent[axis]])
+            .filter(|extent| extent[0] > 0.0)
+            .collect();
         sorted.sort_by(|a, b| b[0].total_cmp(&a[0]));
         let mut sum = 0.0;
         for [across, along] in sorted {
@@ -256,8 +266,16 @@ fn strips_overfull(problem: &Problem) -> bool {
         return false;
     }
     let bounds = problem.bounds();
-    let reach = problem.components.iter().map(|component| component.edge_inset).fold(0.0f64, f64::max).max(0.0);
-    let size = [bounds[2] - bounds[0] + 2.0 * reach, bounds[3] - bounds[1] + 2.0 * reach];
+    let reach = problem
+        .components
+        .iter()
+        .map(|component| component.edge_inset)
+        .fold(0.0f64, f64::max)
+        .max(0.0);
+    let size = [
+        bounds[2] - bounds[0] + 2.0 * reach,
+        bounds[3] - bounds[1] + 2.0 * reach,
+    ];
     let constraints = &problem.constraints;
     [Side::Front, Side::Back].into_iter().any(|side| {
         let parts: Vec<[f64; 2]> = problem
@@ -287,7 +305,10 @@ fn free_areas(problem: &Problem) -> [f64; 2] {
     let bounds = problem.bounds();
     let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
     let cell = (width.max(height) / 200.0).max(1.0e-6);
-    let (nx, ny) = ((width / cell).ceil().max(1.0) as usize, (height / cell).ceil().max(1.0) as usize);
+    let (nx, ny) = (
+        (width / cell).ceil().max(1.0) as usize,
+        (height / cell).ceil().max(1.0) as usize,
+    );
     let mut covered = [vec![false; nx * ny], vec![false; nx * ny]];
     for (component, pose) in problem.components.iter().zip(&problem.poses) {
         if !component.fixed || component.copper_only || component.side == Side::Neither {
@@ -304,9 +325,11 @@ fn free_areas(problem: &Problem) -> [f64; 2] {
             _ => &[0, 1],
         };
         for (center, half) in boxes {
-            let x0 = (((center[0] - half[0] - bounds[0]) / cell).floor().max(0.0) as usize).min(nx - 1);
+            let x0 =
+                (((center[0] - half[0] - bounds[0]) / cell).floor().max(0.0) as usize).min(nx - 1);
             let x1 = (((center[0] + half[0] - bounds[0]) / cell).ceil().max(0.0) as usize).min(nx);
-            let y0 = (((center[1] - half[1] - bounds[1]) / cell).floor().max(0.0) as usize).min(ny - 1);
+            let y0 =
+                (((center[1] - half[1] - bounds[1]) / cell).floor().max(0.0) as usize).min(ny - 1);
             let y1 = (((center[1] + half[1] - bounds[1]) / cell).ceil().max(0.0) as usize).min(ny);
             for y in y0..y1 {
                 for x in x0..x1 {
@@ -320,7 +343,10 @@ fn free_areas(problem: &Problem) -> [f64; 2] {
     let mut free = [0.0; 2];
     for y in 0..ny {
         for x in 0..nx {
-            let point = [bounds[0] + (x as f64 + 0.5) * cell, bounds[1] + (y as f64 + 0.5) * cell];
+            let point = [
+                bounds[0] + (x as f64 + 0.5) * cell,
+                bounds[1] + (y as f64 + 0.5) * cell,
+            ];
             if !crate::problem::point_in_polygon(point, &problem.outline) {
                 continue;
             }
@@ -343,7 +369,11 @@ fn free_areas(problem: &Problem) -> [f64; 2] {
 /// and cutouts as taken, left Sisu, link and katia without any halo.)
 fn fit_halos(problem: &Problem, limit: f64) -> (Problem, [f64; 2]) {
     let scale_of = |component: &crate::problem::Component, scales: [f64; 2]| {
-        if component.pins.len() >= MANY_PINS { scales[1] } else { scales[0] }
+        if component.pins.len() >= MANY_PINS {
+            scales[1]
+        } else {
+            scales[0]
+        }
     };
     let free = free_areas(problem).map(|area| area.max(1.0e-9));
     let utilization = |scales: [f64; 2]| -> f64 {
@@ -517,7 +547,11 @@ fn halos_area(problem: &Problem) -> f64 {
 
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The pin-count halos as asked for, before the board's fit.
-    let requested: Vec<f64> = problem.components.iter().map(|component| component.halo).collect();
+    let requested: Vec<f64> = problem
+        .components
+        .iter()
+        .map(|component| component.halo)
+        .collect();
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();
     let wirelength_initial = fitted.wirelength(&fitted.poses);
@@ -532,8 +566,13 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let mut anneal_config = config.anneal.clone();
     anneal_config.stop_at_work = stop_at_work.or(anneal_config.stop_at_work);
     let out_of_budget = || {
-        config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
-            || anneal_config.stop_at_work.is_some_and(|stop| work() >= stop)
+        config
+            .anneal
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+            || anneal_config
+                .stop_at_work
+                .is_some_and(|stop| work() >= stop)
     };
     // The passes check the budget inside too (a part without room
     // searched the whole board at every level: urchin on 80 x 40 mm took
@@ -559,8 +598,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // allows (the full margin is room for routing too). Last, where the
     // board's rules let courtyards overlap: bodies without the courtyard's
     // margin.
-    let inset = problem.components.iter().any(|component| component.edge_inset > 0.0);
-    let tight = problem.components.iter().any(|component| component.tight.is_some());
+    let inset = problem
+        .components
+        .iter()
+        .any(|component| component.edge_inset > 0.0);
+    let tight = problem
+        .components
+        .iter()
+        .any(|component| component.tight.is_some());
     // Halos go in steps: halved, then only the many-pin parts' (whose
     // escapes need the room most), then all. The last number is the factor
     // on the other parts' halos.
@@ -585,7 +630,18 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
     let mut levels: Vec<(f64, f64, f64, bool, bool, bool, f64, f64)> = levels
         .into_iter()
-        .map(|(halo, spacing, grid, inset, tight, small)| (halo, spacing, grid, inset, tight, false, problem.edge_margin, small))
+        .map(|(halo, spacing, grid, inset, tight, small)| {
+            (
+                halo,
+                spacing,
+                grid,
+                inset,
+                tight,
+                false,
+                problem.edge_margin,
+                small,
+            )
+        })
         .collect();
     if rule_margin < problem.edge_margin {
         levels.push((0.0, 0.0, fine, true, tight, false, rule_margin, 0.0));
@@ -607,7 +663,17 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let mut annealed_shape: Option<(f64, bool)> = None;
     let level_count = levels.len();
     // The problem at a level: its halos, spacing, grid and bodies.
-    let relax = |level: usize, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor): (f64, f64, f64, bool, bool, bool, f64, f64)| {
+    let relax = |level: usize,
+                 (
+        halo_scale,
+        spacing_scale,
+        grid,
+        inset,
+        tight,
+        edge_copper,
+        edge_rule,
+        small_factor,
+    ): (f64, f64, f64, bool, bool, bool, f64, f64)| {
         let mut relaxed = problem.clone();
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
@@ -640,18 +706,33 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         side_overfull(&last, false) || strips_overfull(&last)
     };
     let mut overfull_sides = false;
-    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor)) in
-        levels.into_iter().enumerate()
+    for (
+        level,
+        (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
+    ) in levels.into_iter().enumerate()
     {
         // Past the caller's deadline the best placement so far stands.
         if best.is_some() && out_of_budget() {
             break;
         }
-        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
+        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some()
+        {
             // Same as the previous level.
             continue;
         }
-        let relaxed = relax(level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor));
+        let relaxed = relax(
+            level,
+            (
+                halo_scale,
+                spacing_scale,
+                grid,
+                inset,
+                tight,
+                edge_copper,
+                edge_rule,
+                small_factor,
+            ),
+        );
         // Bodies that need more room than a side has cannot all be placed
         // at this level: on to a looser one (OpenESC's boards, packed with
         // overlapping courtyards, fit only with tight bodies; every level
@@ -672,7 +753,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         // on 80 x 40 mm took more than ten minutes before).
         if hopeless {
             if debug {
-                eprintln!("placer: the last level is overfull too: no packing fits, the parts are seated where there is room");
+                eprintln!(
+                    "placer: the last level is overfull too: no packing fits, the parts are seated where there is room"
+                );
             }
             overfull_sides = true;
             STOP.with(|stop| stop.set(Some(work())));
@@ -703,7 +786,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             && !known_failed.is_empty()
         {
             let mut kept = known_poses.clone();
-            let keep: Vec<usize> = (0..relaxed.components.len()).filter(|index| !known_failed.contains(index)).collect();
+            let keep: Vec<usize> = (0..relaxed.components.len())
+                .filter(|index| !known_failed.contains(index))
+                .collect();
             let keeping_mark = mark();
             let mut failed = legal::legalize_keeping(&relaxed, &mut kept, known_failed, &keep);
             phase_line(debug, "legalize keeping", keeping_mark);
@@ -714,7 +799,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 phase_line(debug, "evict", evict_mark);
                 if again.len() < failed.len() {
                     if debug {
-                        eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
+                        eprintln!(
+                            "placer: eviction seated {} of {} parts",
+                            failed.len() - again.len(),
+                            failed.len()
+                        );
                     }
                     kept = evicted;
                     failed = again;
@@ -811,7 +900,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             phase_line(debug, "evict", evict_mark);
             if again.len() < failed.len() {
                 if debug {
-                    eprintln!("placer: eviction seated {} of {} parts", failed.len() - again.len(), failed.len());
+                    eprintln!(
+                        "placer: eviction seated {} of {} parts",
+                        failed.len() - again.len(),
+                        failed.len()
+                    );
                 }
                 poses = evicted;
                 failed = again;
@@ -819,7 +912,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
             failed.len() < unplaced.len()
-                || (failed.len() == unplaced.len() && problem.wirelength(&poses) < problem.wirelength(kept))
+                || (failed.len() == unplaced.len()
+                    && problem.wirelength(&poses) < problem.wirelength(kept))
         });
         let done = failed.is_empty();
         if better {
@@ -858,18 +952,28 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let finishing = std::time::Instant::now();
     finish(&relaxed, &mut poses, config.refine_passes, debug);
     if debug {
-        eprintln!("placer: refinement and relation repair {:.1}s", finishing.elapsed().as_secs_f64());
+        eprintln!(
+            "placer: refinement and relation repair {:.1}s",
+            finishing.elapsed().as_secs_f64()
+        );
     }
     // Routing room: the halos follow the routing demand around each part
     // at this placement, and the parts anneal again from here.
     let room_halos = match &config.routing_room {
         Some(room)
             if unplaced.is_empty()
-                && relaxed.components.iter().any(|component| !component.fixed && component.halo > 0.0)
+                && relaxed
+                    .components
+                    .iter()
+                    .any(|component| !component.fixed && component.halo > 0.0)
                 && !out_of_budget() =>
         {
             let halos = room::halos(&relaxed, &poses, room, &requested);
-            let unchanged = relaxed.components.iter().zip(&halos).all(|(component, halo)| component.halo == *halo);
+            let unchanged = relaxed
+                .components
+                .iter()
+                .zip(&halos)
+                .all(|(component, halo)| component.halo == *halo);
             (!unchanged).then_some(halos)
         }
         _ => None,
@@ -905,11 +1009,17 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 break;
             }
             for index in &failed {
-                let halo = if fallback { relaxed.components[*index].halo.min(halos[*index]) } else { 0.0 };
+                let halo = if fallback {
+                    relaxed.components[*index].halo.min(halos[*index])
+                } else {
+                    0.0
+                };
                 halos[*index] = halo;
                 roomy.components[*index].halo = halo;
             }
-            let keep: Vec<usize> = (0..roomy.components.len()).filter(|index| !failed.contains(index)).collect();
+            let keep: Vec<usize> = (0..roomy.components.len())
+                .filter(|index| !failed.contains(index))
+                .collect();
             let mut retry = again.clone();
             let still = legal::legalize_keeping(&roomy, &mut retry, &failed, &keep);
             if still.len() < failed.len() {
@@ -922,8 +1032,16 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 "placer: routing room: {unseated} parts without room after legalizing; halo area {:.0} to {:.0} mm2, {} parts without halo (before {}); {} failed",
                 halos_area(&relaxed),
                 halos_area(&roomy),
-                roomy.components.iter().filter(|component| !component.fixed && component.halo == 0.0).count(),
-                relaxed.components.iter().filter(|component| !component.fixed && component.halo == 0.0).count(),
+                roomy
+                    .components
+                    .iter()
+                    .filter(|component| !component.fixed && component.halo == 0.0)
+                    .count(),
+                relaxed
+                    .components
+                    .iter()
+                    .filter(|component| !component.fixed && component.halo == 0.0)
+                    .count(),
                 failed.len()
             );
         }
@@ -959,11 +1077,19 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 met.push("outline or hard constraint".into());
             }
             for other in 0..problem.components.len() {
-                if other != index && let Some(kind) = legal::conflict_kind(problem, &poses, index, poses[index], other) {
+                if other != index
+                    && let Some(kind) =
+                        legal::conflict_kind(problem, &poses, index, poses[index], other)
+                {
                     met.push(format!("{} {kind}", problem.components[other].name));
                 }
             }
-            eprintln!("placer: illegal {} at {:?}: {}", problem.components[index].name, poses[index], met.join(", "));
+            eprintln!(
+                "placer: illegal {} at {:?}: {}",
+                problem.components[index].name,
+                poses[index],
+                met.join(", ")
+            );
         }
     }
     let constraints = constraints::report(problem, &poses);

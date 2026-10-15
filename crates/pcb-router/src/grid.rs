@@ -61,7 +61,11 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
         .iter()
         .map(|class| class.trace_width)
         .fold(f64::INFINITY, f64::min)
-        .min(if board.neck_width > 0.0 { board.neck_width } else { f64::INFINITY });
+        .min(if board.neck_width > 0.0 {
+            board.neck_width
+        } else {
+            f64::INFINITY
+        });
     let clearance = board
         .classes
         .iter()
@@ -76,15 +80,23 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
         .flat_map(|net| net.terminals.iter())
         .map(|terminal| {
             let pad = &board.obstacles[terminal.pad];
-            (terminal.anchor, pad.shape.aabb(), pad.clearance.max(clearance))
+            (
+                terminal.anchor,
+                pad.shape.aabb(),
+                pad.clearance.max(clearance),
+            )
         })
         .collect();
     // Row and column neighbours within 2 mm, through a coarse hash.
     let cell = 2.0;
-    let mut buckets: std::collections::HashMap<(i64, i64), Vec<usize>> = std::collections::HashMap::new();
+    let mut buckets: std::collections::HashMap<(i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
     for (index, (anchor, _, _)) in pads.iter().enumerate() {
         buckets
-            .entry(((anchor[0] / cell).floor() as i64, (anchor[1] / cell).floor() as i64))
+            .entry((
+                (anchor[0] / cell).floor() as i64,
+                (anchor[1] / cell).floor() as i64,
+            ))
             .or_default()
             .push(index);
     }
@@ -92,7 +104,10 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
     let neighbours: Vec<Vec<(usize, usize, bool)>> = (0..pads.len())
         .map(|index| {
             let anchor = pads[index].0;
-            let (bx, by) = ((anchor[0] / cell).floor() as i64, (anchor[1] / cell).floor() as i64);
+            let (bx, by) = (
+                (anchor[0] / cell).floor() as i64,
+                (anchor[1] / cell).floor() as i64,
+            );
             let mut found = Vec::new();
             for dx in -1..=1 {
                 for dy in -1..=1 {
@@ -105,7 +120,11 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
                         }
                         let other_anchor = pads[other].0;
                         let separation = [other_anchor[0] - anchor[0], other_anchor[1] - anchor[1]];
-                        let axis = if separation[0].abs() >= separation[1].abs() { 0 } else { 1 };
+                        let axis = if separation[0].abs() >= separation[1].abs() {
+                            0
+                        } else {
+                            1
+                        };
                         if separation[1 - axis].abs() <= 0.05 && separation[axis].abs() <= cell {
                             found.push((other, axis, separation[axis] > 0.0));
                         }
@@ -218,14 +237,22 @@ impl Grid {
             .flat_map(|net| {
                 net.terminals.iter().map(|terminal| {
                     let bounds = board.obstacles[terminal.pad].shape.aabb();
-                    let extent = [bounds.maximum[0] - bounds.minimum[0], bounds.maximum[1] - bounds.minimum[1]];
-                    (terminal.anchor, extent.map(|width| if width < 0.35 { 1.0 } else { 0.0 }))
+                    let extent = [
+                        bounds.maximum[0] - bounds.minimum[0],
+                        bounds.maximum[1] - bounds.minimum[1],
+                    ];
+                    (
+                        terminal.anchor,
+                        extent.map(|width| if width < 0.35 { 1.0 } else { 0.0 }),
+                    )
                 })
             })
             .collect();
         for axis in 0..2 {
             if anchors.iter().all(|(_, weight)| weight[axis] == 0.0) {
-                anchors.iter_mut().for_each(|(_, weight)| weight[axis] = 1.0);
+                anchors
+                    .iter_mut()
+                    .for_each(|(_, weight)| weight[axis] = 1.0);
             }
         }
         let mut bounds = Aabb {
@@ -240,7 +267,11 @@ impl Grid {
         }
         let channels = tight_channels(board);
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
-            eprintln!("lattice: {} tight channels, {} pad anchors", channels.len(), anchors.len());
+            eprintln!(
+                "lattice: {} tight channels, {} pad anchors",
+                channels.len(),
+                anchors.len()
+            );
             for (axis, centre, slack) in channels.iter().take(6) {
                 eprintln!("  channel axis {axis} at {centre:.3} slack {slack:.3}");
             }
@@ -409,7 +440,11 @@ impl FillTrace {
     }
 
     fn bytes(&self) -> usize {
-        self.differs.iter().map(|layer| layer.capacity() * 8).sum::<usize>() + self.values.capacity() * 16
+        self.differs
+            .iter()
+            .map(|layer| layer.capacity() * 8)
+            .sum::<usize>()
+            + self.values.capacity() * 16
     }
 }
 
@@ -513,7 +548,8 @@ impl StaticMaps {
         // a motor's shield pad under a mask opening looked cut off from its
         // ground pour, which KiCad fills there).
         let mask_opening = |obstacle: &&crate::board::Obstacle| {
-            obstacle.kind == ObstacleKind::Keepout && obstacle.label.starts_with("solder mask opening")
+            obstacle.kind == ObstacleKind::Keepout
+                && obstacle.label.starts_with("solder mask opening")
         };
         // A pad's own clearance override replaces the zone's clearance in
         // KiCad's fill also where it is smaller than this class's (which
@@ -522,16 +558,29 @@ impl StaticMaps {
         let overridden = |obstacle: &&crate::board::Obstacle| {
             obstacle.kind == ObstacleKind::Copper
                 && !mask_opening(obstacle)
-                && board.fill_clearance(&rules, obstacle) < board.copper_clearance(&rules, obstacle) - 1.0e-9
+                && board.fill_clearance(&rules, obstacle)
+                    < board.copper_clearance(&rules, obstacle) - 1.0e-9
         };
         let ordered: Vec<&crate::board::Obstacle> = board
             .obstacles
             .iter()
             .filter(|obstacle| !mask_opening(obstacle) && !overridden(obstacle))
-            .chain(board.obstacles.iter().filter(|obstacle| overridden(obstacle)))
-            .chain(board.obstacles.iter().filter(|obstacle| mask_opening(obstacle)))
+            .chain(
+                board
+                    .obstacles
+                    .iter()
+                    .filter(|obstacle| overridden(obstacle)),
+            )
+            .chain(
+                board
+                    .obstacles
+                    .iter()
+                    .filter(|obstacle| mask_opening(obstacle)),
+            )
             .collect();
-        let first_apart = ordered.iter().position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
+        let first_apart = ordered
+            .iter()
+            .position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
         // `PCB_ROUTER_OLD_POLYGON_DISTANCES` measures every node edge by
         // edge again (A/B: the maps are the same).
         let polygon_fields = std::env::var_os("PCB_ROUTER_OLD_POLYGON_DISTANCES").is_none();
@@ -550,9 +599,15 @@ impl StaticMaps {
                 ObstacleKind::Copper => {
                     let clearance = board.copper_clearance(&rules, obstacle);
                     // Copper keeps the hole clearance from a via's drill too.
-                    (half_width + clearance, (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_clearance))
+                    (
+                        half_width + clearance,
+                        (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_clearance),
+                    )
                 }
-                ObstacleKind::Keepout => (half_width + obstacle.clearance, via_radius + obstacle.clearance),
+                ObstacleKind::Keepout => (
+                    half_width + obstacle.clearance,
+                    via_radius + obstacle.clearance,
+                ),
                 ObstacleKind::Hole => {
                     let clearance = board.hole_clearance.max(obstacle.clearance);
                     (
@@ -572,7 +627,10 @@ impl StaticMaps {
             // (ULK's 454-corner cutout: 15 s a class, 60-190 s a lattice).
             let field = match &obstacle.shape {
                 Shape::Polygon { points } if points.len() >= FIELD_CORNERS && polygon_fields => {
-                    let via_range = obstacle.blocks_vias.then(|| grid.node_range(bounds.inflated(via_reach))).flatten();
+                    let via_range = obstacle
+                        .blocks_vias
+                        .then(|| grid.node_range(bounds.inflated(via_reach)))
+                        .flatten();
                     let trace_range = obstacle
                         .blocks_tracks
                         .then(|| grid.node_range(bounds.inflated(trace_reach + margin)))
@@ -581,7 +639,14 @@ impl StaticMaps {
                         .into_iter()
                         .flatten()
                         .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
-                        .map(|range| PolygonField::new(grid, points, range, via_reach.max(trace_reach + margin)))
+                        .map(|range| {
+                            PolygonField::new(
+                                grid,
+                                points,
+                                range,
+                                via_reach.max(trace_reach + margin),
+                            )
+                        })
                 }
                 _ => None,
             };
@@ -613,12 +678,15 @@ impl StaticMaps {
                                 via_owner[index] = match (own_vias, own_hole) {
                                     (Some(net), _)
                                         if !via_blocked[index]
-                                            && obstacle.shape.contains_disc(center, via_radius + SAFETY) =>
+                                            && obstacle
+                                                .shape
+                                                .contains_disc(center, via_radius + SAFETY) =>
                                     {
                                         owner16(net)
                                     }
                                     (_, Some(net))
-                                        if !via_blocked[index] || via_owner[index] == owner16(net) =>
+                                        if !via_blocked[index]
+                                            || via_owner[index] == owner16(net) =>
                                     {
                                         owner16(net)
                                     }
@@ -650,7 +718,9 @@ impl StaticMaps {
                             if !edge_zone[index] {
                                 if let Some(fill) = &mut fill_trace {
                                     match fill_reach {
-                                        Some(reach) if distance < reach => fill.claim(layer, index, obstacle.net),
+                                        Some(reach) if distance < reach => {
+                                            fill.claim(layer, index, obstacle.net)
+                                        }
                                         _ => fill.remember(layer, index, trace[layer][index]),
                                     }
                                 }
@@ -683,7 +753,11 @@ impl StaticMaps {
             }
             fill.values.shrink_to_fit();
         }
-        assert!(board.layer_count <= 32, "{} copper layers", board.layer_count);
+        assert!(
+            board.layer_count <= 32,
+            "{} copper layers",
+            board.layer_count
+        );
         let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
         if searched {
             for (layer, map) in trace.iter().enumerate() {
@@ -736,7 +810,9 @@ impl StaticMaps {
     /// Bytes held by the per-node maps.
     pub fn bytes(&self) -> usize {
         fn of<T>(maps: &[Vec<T>]) -> usize {
-            maps.iter().map(|map| map.capacity() * std::mem::size_of::<T>()).sum()
+            maps.iter()
+                .map(|map| map.capacity() * std::mem::size_of::<T>())
+                .sum()
         }
         of(&self.trace)
             + of(&self.edge_block)
@@ -807,13 +883,19 @@ impl PolygonField {
                 let point = grid.center(x, y)[0];
                 // `point_in_polygon`: inside where an odd number of
                 // crossings lie beyond the point.
-                let beyond = crossings.len() - crossings.partition_point(|crossing| !(point < *crossing));
+                let beyond =
+                    crossings.len() - crossings.partition_point(|crossing| !(point < *crossing));
                 if beyond % 2 == 1 {
                     distances[(y - y0) * width + x - x0] = 0.0;
                 }
             }
         }
-        Self { x0, y0, width, distances }
+        Self {
+            x0,
+            y0,
+            width,
+            distances,
+        }
     }
 
     fn distance(&self, x: usize, y: usize) -> f64 {
@@ -855,7 +937,10 @@ mod tests {
             .map(|index| {
                 let angle = index as f64 / count as f64 * std::f64::consts::TAU;
                 let radius = if index % 2 == 0 { outer } else { inner };
-                [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]
+                [
+                    center[0] + radius * angle.cos(),
+                    center[1] + radius * angle.sin(),
+                ]
             })
             .collect()
     }
@@ -872,10 +957,23 @@ mod tests {
             (star([7.0, 6.0], 64, 5.0, 3.5), 0.45),
             (star([6.93, 5.97], 200, 4.0, 3.9), 0.3),
             // A cutout whose corners sit on lattice rows and columns.
-            (vec![[2.0375, 2.0875], [11.0375, 2.0875], [11.0375, 9.0875], [6.0375, 4.0875], [2.0375, 9.0875]], 0.25),
+            (
+                vec![
+                    [2.0375, 2.0875],
+                    [11.0375, 2.0875],
+                    [11.0375, 9.0875],
+                    [6.0375, 4.0875],
+                    [2.0375, 9.0875],
+                ],
+                0.25,
+            ),
         ] {
-            let shape = Shape::Polygon { points: points.clone() };
-            let range = grid.node_range(shape.aabb().inflated(cap)).expect("on the lattice");
+            let shape = Shape::Polygon {
+                points: points.clone(),
+            };
+            let range = grid
+                .node_range(shape.aabb().inflated(cap))
+                .expect("on the lattice");
             let field = PolygonField::new(&grid, &points, range, cap);
             let (x0, y0, x1, y1) = range;
             let mut inside = 0;
