@@ -3,11 +3,11 @@
 """Runs the agent-style layout tasks of tasks.json.
 
     benchmarks/agent-tasks/run.py <output> [--only NAME...] [--binary PATH]
-    benchmarks/agent-tasks/run.py <output> --tier quick --jobs 12 --binary PATH
-    benchmarks/agent-tasks/run.py <output> --tier short --jobs 6 --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier quick --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier short --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier quick --route-from build/quick30-x782 --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier quick --only A B --splice-from build/quick30-x782.log
-    benchmarks/agent-tasks/run.py <output> --tier schematic --jobs 6 --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier schematic --binary PATH
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -52,6 +52,15 @@ import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
 TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json"}
+# A tier's default parallelism (no --jobs and --threads given): this many
+# search threads a board and the physical cores / this many boards at once.
+# A layout is the same at any thread count, so this only sets the wall: the
+# short tier on x1151 (2026-10-16, under the lock, one run each, all rows
+# identical, none cut) took 448 s at 16 x 1, 401 s at 8 x 2, 570 s at 4 x 4
+# and 482 s at 6 x 4; its longest board (WLED_Matrix: 433, 339 and 327 s)
+# bounds it, and its placement pool and parallel batches gain from a second
+# thread (README.md, "How to measure").
+TIER_THREADS = 2
 # The harness's timeout less this is scaled with the budget: KiCad's checks
 # and the file work do not shrink with it.
 FIXED_TIMEOUT_SECONDS = 300
@@ -799,6 +808,16 @@ def default_threads(jobs, cores):
     return max(1, min(4, cores // jobs))
 
 
+def parallelism(tiered, jobs, threads, cores):
+    """Jobs, threads (None: as default_threads decides) and where they came
+    from: a tier given neither runs TIER_THREADS a board and cores /
+    TIER_THREADS boards at once ("tier default"); otherwise what was given,
+    jobs 1 if not ("command line")."""
+    if tiered and jobs is None and threads is None:
+        return max(1, cores // TIER_THREADS), TIER_THREADS, "tier default"
+    return jobs or 1, threads, "command line"
+
+
 def spliced_rows(path, names):
     """The rows of `names` in an earlier log (compare.rows_of: a log or an
     output directory), the last of each board, marked spliced."""
@@ -819,10 +838,13 @@ def main():
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--placer", type=json.loads, default={},
                         help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
-    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--jobs", type=int, default=None,
+                        help="boards at once (default: with --tier and no --threads the physical cores / "
+                             "TIER_THREADS, else 1)")
     parser.add_argument("--threads", type=int, default=None,
-                        help="search threads per board (RAYON_NUM_THREADS; default with several jobs: "
-                             "the physical cores shared among them, at most 4; with one job: all)")
+                        help="search threads per board (RAYON_NUM_THREADS; default with --tier and no --jobs: "
+                             "TIER_THREADS; else with several jobs the physical cores shared among them, "
+                             "at most 4; with one job: all)")
     parser.add_argument("--min-free-gb", type=float, default=12.0,
                         help="start a board only when this much memory stays available after the "
                              "expected peaks of it and the boards running (0: always)")
@@ -864,6 +886,10 @@ def main():
     # 16 cores of a 5950X (beside other agents) ran the search 1.3-1.6 times
     # slower than its work counted, so that 8 of its 17 cut rows were load.
     arguments.physical_cores = physical_cores()
+    # A tier given neither --jobs nor --threads runs at its default
+    # parallelism; either one given keeps the older defaults for the other.
+    arguments.jobs, arguments.threads, arguments.parallelism = parallelism(
+        tier is not None, arguments.jobs, arguments.threads, arguments.physical_cores)
     if arguments.threads is None:
         # Beyond a few threads a board routes hardly faster (k30-SBC: 34.2,
         # 32.4 and 31.3 s of search on 1, 2 and 4) but every thread holds a
@@ -877,7 +903,7 @@ def main():
         print(f"warning: {arguments.jobs} jobs exceed the {arguments.physical_cores} physical cores",
               file=sys.stderr)
     print(f"{arguments.jobs} jobs, {arguments.threads or 'all'} search threads each, "
-          f"{arguments.physical_cores} physical cores", file=sys.stderr)
+          f"{arguments.physical_cores} physical cores ({arguments.parallelism})", file=sys.stderr)
     # Every row and the summary name the task list (compare.py checks that
     # two runs used the same: quick30-x768 on v5 against x776 on v6 looked
     # like a routing change).
@@ -968,7 +994,10 @@ def main():
                    tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
                    # Search threads per board (None: all CPUs, one job) and
                    # the cores they share.
-                   jobs=arguments.jobs, threads=arguments.threads, physical_cores=arguments.physical_cores)
+                   jobs=arguments.jobs, threads=arguments.threads, physical_cores=arguments.physical_cores,
+                   # Whether jobs and threads were the tier's default
+                   # (TIER_THREADS) or given.
+                   parallelism=arguments.parallelism)
     if arguments.schematic:
         # Where the flow stopped, by stage (schematic tier).
         stages = {}

@@ -3325,9 +3325,10 @@ fn diagnose_designer(lowered: &LoweredPlacement, designer: &Path) -> Result<(), 
     Ok(())
 }
 
-/// The machine the work clock is calibrated on (the router's
-/// `EXPANSIONS_PER_SECOND`: an idle 8-core machine): the placement race's
-/// seeds count as its threads would run them.
+/// The threads of the reference machine the placement race's seeds count
+/// as running on (a pool this wide, whatever the process's threads). The
+/// router's `EXPANSIONS_PER_SECOND` is calibrated on one search thread;
+/// this pool width is the placement's own convention.
 pub(crate) const REFERENCE_THREADS: usize = 8;
 
 /// A placement race's outcome (`race_seeds`).

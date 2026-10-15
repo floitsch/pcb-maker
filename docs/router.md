@@ -671,7 +671,7 @@ thread frees; they are judged in seed order as if one ran after the
 other, and the batches they start in are sized from the kept seeds' work,
 so the seeds run, the seeds kept and the placement do not depend on the
 threads. The clock counts the kept seeds as the reference machine runs
-them (eight threads, the router's calibration: `pool_work_seconds`); the
+them (a pool of eight threads, `REFERENCE_THREADS`: `pool_work_seconds`); the
 part beyond the longest seed (`work_seconds`) counts toward that end, not
 toward the budgets. Until 2026-10-14 the seeds ran in waves as wide as the
 machine's cores, each as long as its slowest seed, and the waves' work
@@ -732,6 +732,44 @@ wall time runs 10-40 % ahead of search and pour work), the pour analyses
 in the ladder's and the layout's work tallies and in `deadline_work`
 (those still count search expansions), and the manual spokes' fill
 probe.
+
+**The search's calibration** (2026-10-16). `EXPANSIONS_PER_SECOND` is
+the reference's rate: search expansions per second of a router's phases
+(negotiation, resolve, clean-up, via reduction, thermal spokes,
+stitching: their wall clock without the pour analyses, which count by
+their own model) on the 5950X nearly idle (load under 10 at the start),
+one search thread (`RAYON_NUM_THREADS=1`), route mode on the v16
+placements. Measured on x1150 (main 8e8b4ba plus the `profile rate:`
+line), each board pinned to eight physical cores (the ladder's probes and
+rungs still run side by side as std threads), five routers summed on Sisu
+and jetson:
+
+| board | expansions | phase seconds | per second | inside `search` | pour work / wall |
+|---|---|---|---|---|---|
+| Castor | 611.7M | 183.4 | 3.34M | 3.81M | 29.1 / 19.4 s (1.50) |
+| jetson | 3555.5M | 1101.2 | 3.23M | 3.57M | 16.4 / 16.1 s (1.02) |
+| k30-SBC | 638.5M | 195.2 | 3.27M | 3.58M | none |
+| Sisu | 2458.5M | 801.4 | 3.07M | 3.49M | 33.6 / 30.6 s (1.10) |
+| urchin | 56.2M | 20.3 | 2.78M | 3.17M | none |
+| spell_tome | 2.3M | 1.0 | 2.27M | 3.27M | 1.6 / 1.7 s (0.93) |
+
+The median, 3.15M, is the constant since 2026-10-16 (it was 2.0e6, an
+idle eight-core machine's negotiation before four speed rounds): a
+second of work is now a second of the phases' wall clock on the
+reference at one thread, where it was 0.6-0.7 s. Every budget in
+seconds buys about 1.57 times the expansions it bought. Inside `search`
+alone the rate is 10-15 % higher (the phases' rest: the corridor planner,
+rip-up, stamping, conflict bookkeeping). `PCB_ROUTER_SEARCH_RATE=1`
+times every search for that column; the verbose `profile rate:` line
+prints the phases' expansions and seconds, the pour analyses' work and
+wall, and the constant. The pour model (`POUR_*`) was checked, not
+changed: work over wall 0.93-1.10 on spell_tome, Sisu and jetson, 1.50 on
+Castor (its analyses ran faster idle than in their loaded calibration).
+The reference is the fastest the machine runs a thread: under a tier's
+load (all cores busy, SMT siblings, the all-core clock) the same work
+takes longer, and the layout's wall guard (1.1 times the budget) has
+less room than before; see benchmarks/agent-tasks/README.md, "How to
+measure", for the tiers' parallelism.
 
 **After the guard** (2026-10-15): once the layout's wall-clock deadline
 has passed, the layout goes straight to finishing (`WallStop`,

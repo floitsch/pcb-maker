@@ -103,8 +103,8 @@ board that could be placed legally was routed clean.
 
 ## How to measure
 
-Since x747 a layout is deterministic for a given input, binary and thread
-count unless the wall clock cuts it (docs/router.md, "Determinism and the
+Since x747 a layout is deterministic for a given input and binary (and
+since the placement pool, whatever its thread count) unless the wall clock cuts it (docs/router.md, "Determinism and the
 wall clock"; such rows carry `cut`, compare.py marks them CUT). One run per
 side answers a quality question: a repeat gives the same rows. The
 benchmark, not the machine, was the bottleneck (a quick tier about an hour
@@ -112,7 +112,7 @@ at 6 jobs, a full sweep five hours, tiers serialised, pairs doubling every
 measurement). The discipline:
 
 - **Iterate on the short tier** (`--tier short`, 12 boards at a third of
-  the budget, about ten minutes at 6 jobs; section below). It holds the
+  the budget, about seven minutes at the tier default of 8 x 2; section below). It holds the
   boards whose results flip; a change that moves nothing there will
   rarely move the quick tier.
 - **Merge gate: the 30-board quick tier at the full budget** (`--tier
@@ -168,6 +168,38 @@ measurement). The discipline:
   only with the load under 40 (`uptime`) and more than 20 GB available
   (`free -g`). Results above a load of about 45 are unsound (the layout's
   wall-clock guard fires and the rows are CUT).
+- **Parallelism: tiers default to 2 search threads a board and physical
+  cores / 2 boards at once** (8 x 2 on the 5950X; `TIER_THREADS` in
+  run.py, since 2026-10-16; `--jobs` or `--threads` given override it,
+  and either one alone keeps the older defaults for the other). A layout's
+  rows do not depend on its thread count: the placement pool's kept seeds
+  and charge are thread-independent and routing is single-net batches.
+  Checked on x1151 (2026-10-16): urchin, USB_Cable_Tester and reCamera
+  laid out at 1, 2 and 4 threads (`PCB_ROUTER_NO_WALL_GUARD=1`) gave
+  byte-identical source, placed and result boards and identical rows; the
+  fingerprints matched but for one rung of reCamera's last wave at 4
+  threads, started beside another and dropped unjudged at the deadline
+  (memory decides how many rungs run side by side, not which are
+  judged). The whole short tier at 6 x 4, 16 x 1, 8 x 2 and 4 x 4 gave the
+  same 12 rows (routed, KiCad's findings, vias, length, work seconds,
+  first-route open terminals), none cut. So rows are comparable across
+  thread counts, as long as no row is CUT (the wall guard is the one thing
+  the threads and the load can still change); CPU and wall seconds are not
+  comparable. Should a later change make a layout depend on its threads
+  again, this stops holding: compare at the same `--threads` then. The
+  short tier's wall, one run each under the lock (load 9-25):
+
+  | jobs x threads | wall s | CPU s | board seconds summed | WLED_Matrix (longest) s |
+  | --- | ---: | ---: | ---: | ---: |
+  | 16 x 1 | 448 | 3562 | 2732 | 433 |
+  | 8 x 2 | **401** | 3263 | 2006 | 339 |
+  | 4 x 4 | 570 | 3305 | 1877 | 327 |
+  | 6 x 4 (old habit, oversubscribed) | 482 | 4143 | 2258 | 406 |
+
+  The tier is as long as its longest board, and a board gains from a
+  second thread (the placement pool runs its seeds on the search threads,
+  and the negotiation's few parallel batches) but hardly from more; 6 x 4
+  asks 24 threads of 16 cores.
 
 ## The quick tier (`--tier quick`)
 
@@ -177,7 +209,7 @@ judges a feature in about half an hour by running many small boards side
 by side, and is meant to be diffed against its last run with `compare.py`.
 
 ```sh
-benchmarks/agent-tasks/run.py build/quick-x161 --tier quick --jobs 8 \
+benchmarks/agent-tasks/run.py build/quick-x161 --tier quick \
   --binary build/bin/pcb-maker-x161 > build/quick-x161.log
 benchmarks/agent-tasks/compare.py build/quick-x160.log build/quick-x161.log --markdown
 ```
@@ -222,8 +254,10 @@ the old 37, 8 jobs, load about 45, and the v13 sweep):
 
 How the runner shares the machine:
 
-- `--threads` (default with several jobs: the physical cores / jobs, at
-  most 4, at least 1; since 2026-10-15, before the logical CPUs / jobs)
+- `--threads` (a tier's default: `TIER_THREADS`, 2, with the physical
+  cores / 2 jobs, "How to measure"; otherwise, with several jobs: the
+  physical cores / jobs, at most 4, at least 1; since 2026-10-15, before
+  the logical CPUs / jobs)
   sets the router's search threads (`RAYON_NUM_THREADS`). Threads hardly
   speed a board up (k30-SBC's negotiation: 34.2, 32.4 and 31.3 s of search
   on 1, 2 and 4 threads) but each holds a search scratch of the board's
@@ -234,11 +268,11 @@ How the runner shares the machine:
   search 1.3-1.6 times slower than its counted work, and 8 of its 17 cut
   rows were that load. The physical cores come from /sys (else `lscpu`);
   an explicit `--jobs` x `--threads` above them is kept but warned about,
-  and `summary.json` records `jobs`, `threads` and `physical_cores`. The
-  thread count is part of a layout's input (a layout is deterministic per
-  thread count): compare runs at the same `--threads`, so give it
-  explicitly against logs made before this default (the short tier at 6
-  jobs ran 4 threads, the default now gives 2).
+  and `summary.json` records `jobs`, `threads`, `physical_cores` and
+  `parallelism` ("tier default" or "command line"). Since the placement
+  pool (2026-10-14) a layout does not depend on its thread count ("How to
+  measure"): rows of runs at other `--threads` compare, CPU and wall
+  seconds do not.
 - `--min-free-gb` is kept free after the expected peaks of the boards
   running: a board is admitted when the memory available, less what the
   running boards are still expected to grow by (their `peak_rss_mb` in
@@ -316,7 +350,7 @@ work budget, about ten minutes at 6 jobs. Use the quick tier at the full
 budget as the merge gate ("How to measure").
 
 ```sh
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x791 --tier short --jobs 6 \
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x791 --tier short \
   --binary build/bin/pcb-maker-x791 > build/short-x791.log
 benchmarks/agent-tasks/compare.py build/bench-short/short-x791.log build/short-x791.log
 ```
@@ -513,7 +547,7 @@ The run ends with the stages' counts (`stopped at: ...`) and the summed
 missing footprints and parity findings, also in summary.json.
 
 ```sh
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/sch-x1002 --tier schematic --jobs 6 \
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/sch-x1002 --tier schematic \
   --binary build/bin/pcb-maker-x1002 > build/sch-x1002.log
 ```
 

@@ -4313,6 +4313,110 @@ Binaries x1130 (the branch on 8216bc9, measured), x1131 (rebased on
 build/sch-x1130.log; runs in build/orient-search/ (`out-*` layouts,
 `seeds1`-`seeds3` placements and their tables `seeds*.txt`).
 
+## Committed on 2026-10-16 (calibration and tier parallelism)
+
+Two measurements, one constant and one runner default. Binaries: x1150
+(main 8e8b4ba plus the `profile rate:` line, for the rates), x1151 (main
+aacdd28 plus the new constant: the commit's code). Scripts and logs in the
+worktree `pcb-maker-calib` (`build/rate`, `build/det`, `build/par`); tier
+logs `build/short-x1151*.log` in the main tree.
+
+**`EXPANSIONS_PER_SECOND` 2.0e6 to 3.15e6.** Measured at one search
+thread (`RAYON_NUM_THREADS=1`) in route mode on the v16 placements, two
+boards at a time, each pinned to eight physical cores (`taskset -c 0-7`
+and `8-15`), started at a load under 10 (10-17 while they ran, other
+agents included). New verbose line `profile rate:` per router: the
+phases' expansions over their wall seconds without the pour analyses
+(what a work second stands for in the phase budgets), the pour analyses'
+work and wall, and with `PCB_ROUTER_SEARCH_RATE=1` the rate inside
+`search` alone (it times every search; off, a branch per search):
+
+| board | routers | expansions | phase s | per second | inside `search` | pour work / wall |
+|---|---|---|---|---|---|---|
+| Castor | 1 | 611.7M | 183.4 | 3.34M | 3.81M | 29.1 / 19.4 (1.50) |
+| jetson | 5 | 3555.5M | 1101.2 | 3.23M | 3.57M | 16.4 / 16.1 (1.02) |
+| k30-SBC | 1 | 638.5M | 195.2 | 3.27M | 3.58M | - |
+| Sisu | 5 | 2458.5M | 801.4 | 3.07M | 3.49M | 33.6 / 30.6 (1.10) |
+| urchin | 1 | 56.2M | 20.3 | 2.78M | 3.17M | - |
+| spell_tome | 1 | 2.3M | 1.0 | 2.27M | 3.27M | 1.6 / 1.7 (0.93) |
+
+Median 3.15M (Sisu 3.07, jetson 3.23): the constant is 3.15e6, 1.57 times
+the old one, not the 5-10 % the search-core note guessed (that was one
+speed round; the 2.0e6 was an eight-core negotiation's rate from before
+all four rounds, and the one-thread rates the core agent saw were bench
+runs under load 14-30 with lattice builds included). A budget in seconds
+now buys 1.57 times the expansions, and on the reference a work second
+is a second of the phases' wall clock (it was 0.6-0.7 s). The pour model
+is left: work / wall 0.93-1.10 but Castor's 1.50 (idle, its analyses ran
+faster than in their loaded calibration of x1013). Unit test
+`a_budget_in_seconds_buys_expansions_at_the_calibration` (a probe's limit
+is its seconds at the constant; work, the profile's phase expansions and
+the `profile rate:` line count the same expansions). The placement
+pool's `REFERENCE_THREADS` (8) is the placement's own convention, not the
+router's calibration; its comment and docs/router.md say so now.
+
+Short tier, `--jobs 6 --threads 4` under the lock, x1151 against
+`build/short-x1130.log` (x1132's tree, the coordinator's reference):
+compare.py better 1, same 11, worse 0; unconnected 32 to 30, passes 6 to
+6, new errors 3 to 3, vias 1130 to 1178, length 20777 to 21528 mm, work
+2840 to 2327 s, CPU 3116 to 4143 s, cut 0 to 0, first-route open
+terminals 59 to 52; wall 554 to 482 s (load differed). Eleven rows
+identical in routed, KiCad's findings, vias, length and first-route open
+terminals; their work seconds fall (eternal-keypad 177 to 118, OpenFC 584
+to 394, USB_Keypad 451 to 288: the same expansions at the higher rate)
+and their CPU rises where a budget ran out (reCamera 397 to 662 s, WLED
+614 to 778: more search for the same budget, the same board). One row
+moved, by more work per budget: MIDAS-MK1.1 149/156 to 150/156, KiCad
+unconnected 13 to 11, vias 198 to 246, 3421 to 4173 mm, first-route open
+22 to 15 (its first route negotiated with 1.57 times the expansions).
+Wall clock: a layout now spends about its budget in wall time on an idle
+core, so the wall guard (1.1 times) has much less room than before under
+load; no row was cut in any run below (load 9-25), but a loaded machine
+(v16's load 16-35 at five jobs of four threads) would cut rows that the
+old constant's 35 % slack hid. Keep tiers at the default parallelism and
+under the lock.
+
+**Thread independence, checked.** urchin, USB_Cable_Tester and reCamera
+laid out with x1151 at 1, 2 and 4 threads (`--tier short --only ...
+--jobs 3`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`):
+prepared source boards, placed boards and result boards byte-identical
+(md5), rows identical (work 60.7 / 119.1 / 385.2 s at every count). The
+fingerprints match on urchin and USB_Cable_Tester; on reCamera at 4
+threads the ladder's last 0.05 mm wave ran two rungs side by side where
+1 and 2 threads ran one, and the second (fingerprints `46eced3e...`,
+`27ace45f...`) was dropped unjudged at the deadline: CPU spent, nothing
+judged or counted (the memory free decides how many rungs run side by
+side, not which are judged). And the whole short
+tier at 6 x 4, 16 x 1, 8 x 2 and 4 x 4 gave the same 12 rows.
+
+**Tier parallelism** (x1151, short tier, one run each under the lock,
+started at load 9-12, mem 21-29 GB):
+
+| jobs x threads | wall s | CPU s | board s summed | WLED_Matrix s | cut |
+|---|---|---|---|---|---|
+| 16 x 1 | 448 | 3562 | 2732 | 433 | 0 |
+| 8 x 2 | 401 | 3263 | 2006 | 339 | 0 |
+| 4 x 4 | 570 | 3305 | 1877 | 327 | 0 |
+| 6 x 4 (above) | 482 | 4143 | 2258 | 406 | 0 |
+
+The tier is as long as its longest board, WLED_Matrix (the runner starts
+it first), and a board gains from a second thread (the placement pool
+runs its seeds on the search threads; the negotiation's few parallel
+batches) but little from more, while 16 x 1 shares the cores so that
+every board runs slower (2732 board seconds against 2006). Chosen: 8 x 2,
+run.py `TIER_THREADS = 2` with physical cores / 2 jobs as the default of
+every tier (quick, short, schematic) when neither `--jobs` nor
+`--threads` is given; either given keeps the old defaults for the other.
+`summary.json` records `parallelism` ("tier default" or "command
+line") beside `jobs`, `threads`, `physical_cores`; README "How to measure"
+says rows compare across thread counts while the check above holds.
+`benchmarks/agent-tasks/test_run.py` (4 tests). One run per
+configuration: 16 x 1 against 8 x 2 is 47 s, within what the load can
+move; the quick tier (30 boards, more throughput than critical path) was
+not measured and may prefer 16 x 1.
+
+`cargo test --release -p pcb-router -p pcb-kicad` passes.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

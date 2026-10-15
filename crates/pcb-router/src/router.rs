@@ -470,15 +470,22 @@ struct Node {
 }
 
 const NO_TERMINAL: u16 = u16::MAX;
-/// Search expansions an idle 8-core machine does per second of negotiation
-/// (ATAT1800: 52M in 29 s; Interf-U: 19M in 7.8 s), to turn a time budget
-/// into work, and how much longer than that the clock may run before it
-/// stops a negotiation anyway (a loaded machine).
 /// How far an escape stub may come short of a clearance: floating point
 /// noise, far below the verifier's tolerance and KiCad's DRC epsilon.
 const STUB_FIT: f64 = 1.0e-6;
 
-pub const EXPANSIONS_PER_SECOND: f64 = 2.0e6;
+/// Search expansions per second of a router's phases (their wall clock
+/// without the pour analyses, which count by their own model) on the
+/// reference: the 5950X nearly idle, one search thread (`RAYON_NUM_THREADS`
+/// 1), route mode. It turns a time budget into work. Calibrated 2026-10-15
+/// on x1150 (docs/router.md, "Determinism and the wall clock"): the median
+/// of Castor 3.34M, jetson 3.23M, k30-SBC 3.27M, Sisu 3.07M, urchin 2.78M
+/// and spell_tome 2.27M a second. It was 2.0e6 (an idle eight-core
+/// machine's negotiation, ATAT1800: 52M in 29 s), stale by four speed
+/// rounds.
+pub const EXPANSIONS_PER_SECOND: f64 = 3.15e6;
+/// How much longer than its work the clock may run before it stops a
+/// route-mode negotiation anyway (a loaded machine).
 pub const GUARD: f64 = 4.0;
 /// The pour analysis's work (`analyze_pours`, one thread), in nanoseconds
 /// of an idle machine: per lattice node inside the net's pour (the fill
@@ -1393,6 +1400,20 @@ struct Profile {
     phase_pour_work: [f64; PHASES.len()],
     phase_pour_wall: [f64; PHASES.len()],
     phase_wall: [f64; PHASES.len()],
+    /// Per phase: the search expansions (`phase_search` without the
+    /// division, for the `profile rate:` line).
+    phase_expansions: [u64; PHASES.len()],
+    /// With `PCB_ROUTER_SEARCH_RATE`: nanoseconds inside `search` and the
+    /// expansions done there (it runs on `&self`, also side by side).
+    search_nanos: Arc<std::sync::atomic::AtomicU64>,
+    search_expansions: Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Whether `search` times itself (`PCB_ROUTER_SEARCH_RATE`, for
+/// calibrating `EXPANSIONS_PER_SECOND`: the `profile rate:` line).
+fn search_rate_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PCB_ROUTER_SEARCH_RATE").is_some())
 }
 
 static BUILD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1409,8 +1430,8 @@ pub fn build_totals() -> (u64, f64) {
 const PHASES: [&str; 6] = ["negotiation", "resolve", "clean-up", "via reduction", "thermal spokes", "stitching"];
 
 /// A phase's start for the profile: search work, pour work, pour wall
-/// nanoseconds, wall clock.
-type PhaseMark = (f64, f64, u64, std::time::Instant);
+/// nanoseconds, wall clock, search expansions.
+type PhaseMark = (f64, f64, u64, std::time::Instant, u64);
 
 impl Profile {
     /// Per phase: wall seconds, search work, pour analyses' wall seconds
@@ -1430,6 +1451,27 @@ impl Profile {
             })
             .collect();
         format!("profile work: {}", phases.join("; "))
+    }
+
+    /// The search's rate (`EXPANSIONS_PER_SECOND` measured): the phases'
+    /// expansions over their wall seconds without the pour analyses' (which
+    /// count by their own model), and with `PCB_ROUTER_SEARCH_RATE` the
+    /// expansions over the seconds inside `search` alone.
+    fn rate_line(&self) -> String {
+        use std::sync::atomic::Ordering::Relaxed;
+        let expansions: u64 = self.phase_expansions.iter().sum();
+        let wall: f64 = self.phase_wall.iter().sum::<f64>() - self.phase_pour_wall.iter().sum::<f64>();
+        let pour_wall: f64 = self.phase_pour_wall.iter().sum();
+        let pour_work: f64 = self.phase_pour_work.iter().sum();
+        let inside = self.search_nanos.load(Relaxed) as f64 / 1.0e9;
+        let inside_expansions = self.search_expansions.load(Relaxed);
+        let rate = |count: u64, seconds: f64| if seconds > 0.0 { count as f64 / seconds } else { 0.0 };
+        format!(
+            "profile rate: phases {expansions} expansions in {wall:.3}s without pour analyses ({:.0}/s, constant {:.0}); pour {pour_work:.3}s work in {pour_wall:.3}s wall; inside the search {inside_expansions} expansions in {inside:.3}s ({:.0}/s)",
+            rate(expansions, wall),
+            EXPANSIONS_PER_SECOND,
+            rate(inside_expansions, inside),
+        )
     }
 
     fn line(&self, search: f64, stamp: f64) -> String {
@@ -3710,6 +3752,7 @@ impl Router {
     ) -> Option<Vec<Node>> {
         scratch.searches += 1;
         let expansions_before = scratch.expansions;
+        let timed = search_rate_enabled().then(std::time::Instant::now);
         let generation = scratch.next_generation();
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
@@ -4153,6 +4196,11 @@ impl Router {
         }
 
         scratch.heap = heap;
+        if let Some(started) = timed {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.profile.search_nanos.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+            self.profile.search_expansions.fetch_add(scratch.expansions - expansions_before, Relaxed);
+        }
         if scratch.corridor.is_none() {
             scratch.open_searches += 1;
             scratch.open_expansions += scratch.expansions - expansions_before;
@@ -4808,6 +4856,7 @@ impl Router {
             self.pour_work_seconds(),
             self.scratch.pour_nanos.load(std::sync::atomic::Ordering::Relaxed),
             std::time::Instant::now(),
+            self.scratch.expansions,
         )
     }
 
@@ -4818,6 +4867,7 @@ impl Router {
         self.profile.phase_pour_work[phase] += now.1 - mark.1;
         self.profile.phase_pour_wall[phase] += (now.2 - mark.2) as f64 / 1.0e9;
         self.profile.phase_wall[phase] += mark.3.elapsed().as_secs_f64();
+        self.profile.phase_expansions[phase] += now.4 - mark.4;
     }
 
     /// The pour analyses' work so far, in seconds of an idle machine
@@ -6595,6 +6645,7 @@ impl Router {
         if self.config.verbose {
             eprintln!("{}", self.profile.line(self.search_seconds, self.stamp_seconds));
             eprintln!("{}", self.profile.work_line());
+            eprintln!("{}", self.profile.rate_line());
         }
         RoutingResult {
             diagnostics,
@@ -10542,6 +10593,31 @@ mod tests {
         // Ripped up whole, A searched its left branch again (and found the
         // same one on this empty left half).
         assert!(searches[1] < searches[0], "{searches:?}");
+    }
+
+    #[test]
+    fn a_budget_in_seconds_buys_expansions_at_the_calibration() {
+        // A budget of seconds is `EXPANSIONS_PER_SECOND` expansions a
+        // second, and the work and the `profile rate:` line count the same
+        // expansions back: the calibration enters only through the
+        // constant.
+        let mut router = crossed_net(false);
+        router.probe(1.0e-3);
+        let expansions = router.expansions();
+        assert!(expansions > 0);
+        assert_eq!(router.work_seconds(), expansions as f64 / EXPANSIONS_PER_SECOND);
+        assert_eq!(router.profile.phase_expansions[0], expansions);
+        assert!((router.profile.phase_search[0] - router.work_seconds()).abs() < 1.0e-12);
+        let line = router.profile.rate_line();
+        assert!(line.starts_with(&format!("profile rate: phases {expansions} expansions in ")), "{line}");
+        assert!(line.contains(&format!("constant {:.0}", EXPANSIONS_PER_SECOND)), "{line}");
+        // A probe allowed fewer expansions than one iteration takes stops
+        // after that iteration: its limit is the seconds at the constant.
+        let mut short = crossed_net(false);
+        short.probe(1.0 / EXPANSIONS_PER_SECOND);
+        assert_eq!(short.config.negotiation_expansions, 0, "the probe restores the limit");
+        assert!(short.expansions() <= expansions);
+        assert!(short.iterations <= router.iterations);
     }
 
     #[test]
