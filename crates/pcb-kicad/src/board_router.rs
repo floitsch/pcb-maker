@@ -2225,6 +2225,24 @@ pub(crate) fn narrow_step_reserve(first_attempt_work: f64, share: f64, cap: f64)
     (first_attempt_work * share).max(120.0).min(cap)
 }
 
+/// The least work kept for the narrow-signal step when the reserve is a
+/// floor: the step's own minimum (`narrow_step_minimum`, 180 s) and its
+/// clean-up at its negotiation's floor (60 s). TelemetryOnboard (v16)
+/// kept 120 s, had 153 s left, and the step that completes it never ran.
+pub(crate) const NARROW_RESERVE_FLOOR: f64 = 240.0;
+
+/// `narrow_step_reserve` as a floor: at least `NARROW_RESERVE_FLOOR`, at
+/// most `cap`, and none at all when the cap leaves less than the step
+/// needs to run (`narrow_step_minimum`): a reserve the step can never use
+/// would only take work from the rungs.
+pub(crate) fn narrow_step_reserve_floored(first_attempt_work: f64, share: f64, cap: f64) -> f64 {
+    if share <= 0.0 {
+        return 0.0;
+    }
+    let kept = (first_attempt_work * share).max(NARROW_RESERVE_FLOOR).min(cap);
+    if kept < narrow_step_minimum(kept) { 0.0 } else { kept }
+}
+
 /// The work the narrow-signal step needs left to run, with `kept` kept
 /// for it: half of that, and at least three times its negotiation's floor
 /// of 60 s (repair and polish take up to twice the negotiation again).
@@ -2239,6 +2257,37 @@ pub(crate) fn narrow_step_minimum(kept: f64) -> f64 {
 pub(crate) fn narrow_step_negotiation(work_left: f64, own: Option<f64>) -> f64 {
     let share = (work_left / 3.0).clamp(60.0, 900.0);
     own.map_or(share, |own| own.min(share))
+}
+
+/// `narrow_step_negotiation`, at least what the ladder's first attempt
+/// negotiated (`first`), bounded by the work kept for the step and by
+/// half of what is left (the hard repair after the negotiation needs as
+/// much: a deadline inside the negotiation leaves every net in conflict
+/// open). DSP-ADAU1452's step, varying a finer rung with a smaller
+/// budget, got less negotiation than the first attempt had.
+pub(crate) fn narrow_step_negotiation_floored(work_left: f64, own: Option<f64>, first: f64, kept: f64) -> f64 {
+    narrow_step_negotiation(work_left, own).max(first.min(kept).min(0.5 * work_left))
+}
+
+/// Whether an attempt projected to take `cost` of work may start with
+/// `work_left` left and `reserve` kept for the narrow-signal step: only if
+/// the reserve stays whole after it (an attempt counts at least 120 s).
+pub(crate) fn fits_before_reserve(work_left: f64, reserve: f64, cost: f64) -> bool {
+    work_left - reserve >= cost.max(120.0)
+}
+
+/// The work an attempt on a lattice of `pitch` mm is projected to take
+/// from one of `work` on `previous` mm: a lattice grows with the square of
+/// the pitch ratio.
+pub(crate) fn projected_attempt_work(work: f64, previous: f64, pitch: f64) -> f64 {
+    if pitch > 0.0 && pitch < previous { work * (previous / pitch).powi(2) } else { work }
+}
+
+/// The work deadline of each of `routers` routers whose work counts
+/// together (seeds side by side) when the work kept for the narrow-signal
+/// step may not be touched: their share of what is left beyond it.
+pub(crate) fn deadline_before_reserve(work_left: f64, reserve: f64, routers: usize) -> f64 {
+    ((work_left - reserve) / routers.max(1) as f64).max(0.0)
 }
 
 /// `config` as the narrow-signal step routes it: signal nets at the
@@ -2499,6 +2548,8 @@ pub fn route_kicad_board(
     // deadline only in its negotiation; MokyaLora's last rung started at
     // 1560 s and ran to 1890 s, past the harness's limit).
     let last_attempt_work = std::cell::Cell::new(120.0f64);
+    // Its lattice pitch (0: none yet), for projecting a finer rung.
+    let last_attempt_pitch = std::cell::Cell::new(0.0f64);
     let work_left = || config.deadline_work.map_or(f64::INFINITY, |left| left - ladder_work_now.get());
     // The final narrow-signal (or minimum-clearance) step comes after
     // every rung and seed round; with a work deadline (the layout's
@@ -2518,6 +2569,17 @@ pub fn route_kicad_board(
     let reserve_cap = config.deadline_work.map_or(0.0, |left| (0.4 * left).min(600.0));
     let mut reserve_set = false;
     let no_time_for_another = || work_left() - reserve.get() < last_attempt_work.get().max(120.0);
+    // The reserve is a floor (2026-10-15): once kept, no rung, finer pitch
+    // or seed round starts unless its projected work leaves the whole
+    // reserve, and none may run into it (their work deadlines end where
+    // it begins); the step negotiates at least what the first attempt did.
+    // It used to be checked against the last attempt's work only, so a
+    // finer pitch (four times a rung at half the pitch) or a rung run to
+    // the pitch's deadline could eat it, and the step needed half of it.
+    // `PCB_LADDER_OLD_RESERVE` restores that.
+    let reserve_floor = std::env::var_os("PCB_LADDER_OLD_RESERVE").is_none();
+    // What the ladder's first attempt negotiated (its budget, in work).
+    let mut first_negotiation = 0.0f64;
     // Large multilayer boards: no fixed split of the budget suits them all
     // (one needs 600 s of negotiation in its first rung, another the last
     // rungs). Every rung negotiates briefly first; the one with the fewest
@@ -2698,7 +2760,8 @@ pub fn route_kicad_board(
             if config.deadline_work.is_some() {
                 router.config_mut().deadline_work = Some(work_of(probed) + work_left().max(0.0));
             }
-            let routed = router.resume((remaining / 3.0).clamp(60.0, 900.0));
+            let resumed = (remaining / 3.0).clamp(60.0, 900.0);
+            let routed = router.resume(resumed);
             let router_expansions = router.expansions();
             ladder_work += work_of(router_expansions - probed);
             ladder_work_now.set(ladder_work);
@@ -2740,9 +2803,15 @@ pub fn route_kicad_board(
             );
             slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
             last_attempt_work.set(work_of(router_expansions));
+            last_attempt_pitch.set(result.grid_pitch_mm);
             if reserve_wanted && !reserve_set && opens.0 > 0 {
                 reserve_set = true;
-                reserve.set(narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap));
+                first_negotiation = probe_seconds + resumed;
+                reserve.set(if reserve_floor {
+                    narrow_step_reserve_floored(work_of(router_expansions), reserve_share, reserve_cap)
+                } else {
+                    narrow_step_reserve(work_of(router_expansions), reserve_share, reserve_cap)
+                });
                 eprintln!(
                     "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {:.0} s)",
                     reserve.get(),
@@ -2824,8 +2893,15 @@ pub fn route_kicad_board(
             }
             attempt.run_work = Some((ladder_budget, pitch_left));
             // Every rung of the pitch stops where the run's work ends as
-            // the pitch starts (decided before they run, as the budget).
-            attempt.router_deadline_work = config.deadline_work.map(|_| pitch_work_left);
+            // the pitch starts (decided before they run, as the budget),
+            // less the work kept for the narrow-signal step.
+            attempt.router_deadline_work = config.deadline_work.map(|_| {
+                if reserve_floor && reserve.get() > 0.0 {
+                    deadline_before_reserve(pitch_work_left, reserve.get(), 1)
+                } else {
+                    pitch_work_left
+                }
+            });
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
             }
@@ -2839,7 +2915,19 @@ pub fn route_kicad_board(
         let mut ran: Vec<Option<Result<KiCadBoardRouterResult, String>>> = (0..modes.len()).map(|_| None).collect();
         for (position, &mode) in candidates.iter().enumerate() {
             let (connect, skeleton, exclusive, plane_stubs) = &modes[mode];
-            if best.is_some() && (past_deadline() || no_time_for_another()) {
+            // With work kept for the narrow-signal step, the rung's work
+            // as projected from the last attempt (on a finer lattice, by
+            // the square of the pitch ratio: DSP-ADAU1452's 0.05 mm rung
+            // after its 0.075 mm rungs) must leave all of it.
+            let short_of_work = if reserve_floor && reserve.get() > 0.0 {
+                let cost = pitch.as_ref().map_or(last_attempt_work.get(), |pitch| {
+                    projected_attempt_work(last_attempt_work.get(), last_attempt_pitch.get(), pitch[0])
+                });
+                !fits_before_reserve(work_left(), reserve.get(), cost)
+            } else {
+                no_time_for_another()
+            };
+            if best.is_some() && (past_deadline() || short_of_work) {
                 eprintln!("deadline reached: no further attempts");
                 skipped.push("further rungs of the attempt ladder did not run: the run's end was near (its deadline, or too little work left for another attempt)".into());
                 break 'ladder;
@@ -2960,6 +3048,11 @@ pub fn route_kicad_board(
                 seeded.seeds = Some(retry);
                 seeded.seeds_side_by_side = Some(retry_side_by_side);
                 seeded.first_seed = Some(1);
+                // Their work counts `retry` times: each stops at its share
+                // of what is left beyond the reserve.
+                if reserve_floor && reserve.get() > 0.0 {
+                    seeded.router_deadline_work = Some(deadline_before_reserve(work_left(), reserve.get(), retry));
+                }
                 let retry_directory = output_directory.with_extension("seeds");
                 if retry_directory.exists() {
                     fs::remove_dir_all(&retry_directory).map_err(|error| error.to_string())?;
@@ -3001,9 +3094,15 @@ pub fn route_kicad_board(
                 result.routing_seconds
             );
             last_attempt_work.set(attempt_seconds);
+            last_attempt_pitch.set(result.grid_pitch_mm);
             if reserve_wanted && !reserve_set && opens.0 > 0 {
                 reserve_set = true;
-                reserve.set(narrow_step_reserve(attempt_seconds, reserve_share, reserve_cap));
+                first_negotiation = attempt.negotiation_seconds.unwrap_or(900.0);
+                reserve.set(if reserve_floor {
+                    narrow_step_reserve_floored(attempt_seconds, reserve_share, reserve_cap)
+                } else {
+                    narrow_step_reserve(attempt_seconds, reserve_share, reserve_cap)
+                });
                 eprintln!(
                     "ladder: {:.0} s of work kept for the narrow-signal step ({:.0} s left, the attempt took {attempt_seconds:.0} s)",
                     reserve.get(),
@@ -3031,6 +3130,12 @@ pub fn route_kicad_board(
                 best_seeded = seeds_tried || attempt.seeds.unwrap_or(1) > 1;
             } else if directory.exists() {
                 fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+            }
+            // A complete board needs no narrow-signal step: what was kept
+            // for it is the next rung's again (a clean skeleton rung).
+            if reserve_floor && best.as_ref().is_some_and(|(opens, _)| opens.0 == 0) && reserve.get() > 0.0 {
+                eprintln!("ladder: the board is complete: the {:.0} s kept for the narrow-signal step are released", reserve.get());
+                reserve.set(0.0);
             }
             // Another way of connecting the pours is always worth trying
             // while connections are open (a complete board matters more
@@ -3094,6 +3199,9 @@ pub fn route_kicad_board(
         seeded.seeds = Some(retry);
         seeded.seeds_side_by_side = Some(side_by_side);
         seeded.first_seed = Some(next_seed);
+        if reserve_floor && reserve.get() > 0.0 {
+            seeded.router_deadline_work = Some(deadline_before_reserve(work_left(), reserve.get(), retry));
+        }
         next_seed += retry as u64;
         if scratch.exists() {
             fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
@@ -3132,7 +3240,11 @@ pub fn route_kicad_board(
     let step_has_time = || if kept > 0.0 { work_left() >= narrow_step_minimum(kept) } else { !no_time_for_another() };
     let step_budget = |step: &mut KiCadBoardRouterConfig| {
         if kept > 0.0 {
-            step.negotiation_seconds = Some(narrow_step_negotiation(work_left(), step.negotiation_seconds));
+            step.negotiation_seconds = Some(if reserve_floor {
+                narrow_step_negotiation_floored(work_left(), step.negotiation_seconds, first_negotiation, kept)
+            } else {
+                narrow_step_negotiation(work_left(), step.negotiation_seconds)
+            });
             step.run_work = Some((ladder_budget, work_left().max(0.0)));
             // The attempt it varies may carry its pitch's work deadline,
             // taken when that pitch started: the step's is what is left now.
@@ -4580,6 +4692,76 @@ mod narrow_step_tests {
         // Never more than the attempt it varies had.
         assert_eq!(narrow_step_negotiation(450.0, Some(100.0)), 100.0);
         assert_eq!(narrow_step_negotiation(450.0, Some(200.0)), 150.0);
+    }
+
+    #[test]
+    fn the_step_negotiates_at_least_what_the_first_attempt_did_within_the_reserve() {
+        // A finer rung with 60 s of negotiation is the best attempt; the
+        // first attempt negotiated 120 s, 300 s kept and 330 s left.
+        assert_eq!(narrow_step_negotiation(330.0, Some(60.0)), 60.0);
+        assert_eq!(narrow_step_negotiation_floored(330.0, Some(60.0), 120.0, 300.0), 120.0);
+        // Bounded by the reserve and by half of what is left.
+        assert_eq!(narrow_step_negotiation_floored(1000.0, Some(60.0), 400.0, 250.0), 250.0);
+        assert_eq!(narrow_step_negotiation_floored(300.0, Some(60.0), 400.0, 600.0), 150.0);
+        // Never less than before.
+        assert_eq!(narrow_step_negotiation_floored(900.0, None, 100.0, 300.0), 300.0);
+        assert_eq!(narrow_step_negotiation_floored(900.0, None, 0.0, 300.0), 300.0);
+    }
+
+    #[test]
+    fn the_floored_reserve_is_enough_for_the_step_to_run() {
+        // TelemetryOnboard: a short first attempt kept 120 s, below the
+        // step's 180 s minimum; as a floor it keeps 240 s.
+        assert_eq!(narrow_step_reserve(100.0, 0.75, 600.0), 120.0);
+        assert!(narrow_step_reserve(100.0, 0.75, 600.0) < narrow_step_minimum(120.0));
+        let kept = narrow_step_reserve_floored(100.0, 0.75, 600.0);
+        assert_eq!(kept, NARROW_RESERVE_FLOOR);
+        assert!(kept >= narrow_step_minimum(kept));
+        // Share and cap as before.
+        assert_eq!(narrow_step_reserve_floored(400.0, 0.75, 600.0), 300.0);
+        assert_eq!(narrow_step_reserve_floored(1000.0, 0.75, 600.0), 600.0);
+        assert_eq!(narrow_step_reserve_floored(400.0, 0.0, 600.0), 0.0);
+        // A cap under the floor still keeps what the step can use...
+        assert_eq!(narrow_step_reserve_floored(100.0, 0.75, 200.0), 200.0);
+        // ...and nothing when the step could never run on it.
+        assert_eq!(narrow_step_reserve_floored(100.0, 0.75, 150.0), 0.0);
+        // Whatever the first attempt, a kept reserve lets the step run.
+        for work in [10.0, 100.0, 320.0, 500.0, 2000.0] {
+            for cap in [100.0, 179.0, 180.0, 240.0, 400.0, 600.0] {
+                let kept = narrow_step_reserve_floored(work, 0.75, cap);
+                assert!(kept == 0.0 || kept >= narrow_step_minimum(kept), "{work} {cap}");
+            }
+        }
+    }
+
+    #[test]
+    fn no_attempt_starts_into_the_reserve() {
+        // DSP-ADAU1452: 300 s kept, 450 s left, the last 0.075 mm rung took
+        // 100 s: another rung at that pitch fits, one at 0.05 mm (225 s
+        // projected) does not.
+        let next = projected_attempt_work(100.0, 0.075, 0.075);
+        assert_eq!(next, 100.0);
+        assert!(fits_before_reserve(450.0, 300.0, next));
+        let finer = projected_attempt_work(100.0, 0.075, 0.05);
+        assert!((finer - 225.0).abs() < 1.0e-9);
+        assert!(!fits_before_reserve(450.0, 300.0, finer));
+        // A coarser or equal pitch is not scaled down.
+        assert_eq!(projected_attempt_work(100.0, 0.075, 0.1), 100.0);
+        // An attempt counts at least 120 s.
+        assert!(!fits_before_reserve(400.0, 300.0, 30.0));
+        assert!(fits_before_reserve(420.0, 300.0, 30.0));
+        // The whole reserve, not half of it: 150 s left beyond half of a
+        // 300 s reserve is not enough for a 130 s rung.
+        assert!(!fits_before_reserve(300.0, 300.0, 130.0));
+    }
+
+    #[test]
+    fn attempts_stop_where_the_reserve_begins() {
+        assert_eq!(deadline_before_reserve(700.0, 300.0, 1), 400.0);
+        // Four seeds side by side: their work counts four times.
+        assert_eq!(deadline_before_reserve(700.0, 300.0, 4), 100.0);
+        assert_eq!(deadline_before_reserve(200.0, 300.0, 1), 0.0);
+        assert_eq!(deadline_before_reserve(700.0, 300.0, 0), 400.0);
     }
 
     #[test]

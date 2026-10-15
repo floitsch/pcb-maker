@@ -1928,7 +1928,7 @@ place" are the CLI exit-code commit's verdicts for the same failure.
    a board whose first attempt is short keeps a reserve the step can
    never use (Telemetry lost its pass to this; route mode's step
    completes it). Raise the floor to 180 s, or let the step run on what
-   was kept.
+   was kept. Done: "Committed on 2026-10-15 (narrow reserve floor)".
 9. Placement seeds per budget (hackrf, reCamera, WLED_Matrix,
    4in1-mini): seed-repeated pairs of x723 and main's placer to see
    whether fewer seeds is the loss; if so, the placement budget in the
@@ -2557,6 +2557,107 @@ hackrf and 4in1-mini (probe 36 for a placement that routes to 0-1; probe
 101 for the one that ends 8 worse than the probe-109 one). The designer's
 ceiling (18 unconnected over the six against 69-75) is in 4in1-mini (5 vs
 48-56) and hackrf's vias (277 vs 603-701).
+
+## Committed on 2026-10-15 (narrow reserve floor)
+
+The layout ladder's reservation for the narrow-signal step
+(`narrow_step_reserve`, "ladder reservation" above) was not a floor: a
+rung, a finer pitch or a seed round started when the work left beyond
+the reserve covered the last attempt's work, a finer pitch costs about
+the square of the pitch ratio more, a rung's work deadline was the
+pitch's whole work left (the reserve included), and the step then needed
+only half of the reserve. Worse, the reserve's own floor (120 s) was
+below the step's minimum (`narrow_step_minimum`, 180 s), so a board with
+a short first attempt kept a reserve the step could never use:
+TelemetryOnboard (v16 triage) kept 120 s, its three 0.05 mm rungs ran
+(none better than the 0.075 mm tracks rung), 105 s were left, the step did not run and the
+board ended 1 unconnected (v15 passed with the step).
+
+Changed (crates/pcb-kicad/src/board_router.rs), only where the ladder
+keeps a reserve (a work deadline, i.e. a layout, and a project where the
+step applies):
+
+- The reserve is at least `NARROW_RESERVE_FLOOR` (240 s: the step's
+  180 s minimum and its clean-up at the negotiation's 60 s floor), at
+  most the cap as before (0.4 of the work left, 600 s), and none when
+  the cap is under the step's minimum (`narrow_step_reserve_floored`).
+- A further rung starts only if its projected work leaves the whole
+  reserve (`fits_before_reserve`; the last attempt's work, times the
+  square of the pitch ratio on a finer lattice, `projected_attempt_work`,
+  at least 120 s). The seed retries and seed rounds were already checked
+  against the whole reserve.
+- Work deadlines end where the reserve begins (`deadline_before_reserve`):
+  a rung's at the pitch's work left less the reserve, each seed's at its
+  share (seeds side by side count once each) of the work left less the
+  reserve. A rung that stops at the deadline only does so where it would
+  otherwise have eaten into the reserve.
+- The step negotiates at least what the ladder's first attempt negotiated
+  (its budget: the probe and its continuation, or the first rung's),
+  bounded by the reserve and half of what is left
+  (`narrow_step_negotiation_floored`).
+- A board the ladder completes (a clean skeleton rung that goes on to
+  the next rung) releases the reserve.
+- The step still runs with half the reserve and at least 180 s left (a
+  rung can still overrun its projection inside its deadline).
+
+`PCB_LADDER_OLD_RESERVE` restores the old rules. Route mode keeps no
+reserve and is unchanged, as are projects without the step and the
+direct narrow-signal attempt of far-open boards (its configuration is
+already narrow, so the step does not apply to it).
+
+Layout runs, tasks v6, four threads, one run per side, unpinned; before
+x941 (main at ad4362f), after x960 (this on 1223878; the polygon field
+of 6aa79de changes no map; x961 is the commit rebased onto 6099e13,
+whose neck repair acts only on boards with connection_width errors, none
+of these). KiCad's unconnected and new errors, vias,
+the layout's work (s); "same board" means the routed .kicad_pcb is byte
+for byte the same:
+
+| board | path | before | after |
+| --- | --- | --- | --- |
+| TelemetryOnboard | ladder, step applies | 1 / 0 / 102 / 1379, step skipped (105 s left of 120 kept) | **0 / 0 / 99 / 1196, passes**: 240 s kept, the 0.05 mm rungs did not start, the step ran (139 s of work, router 0 open) |
+| MokyaLora | ladder, step applies | 0 / 0 / 333 / 1365, passes | same board, 1206 s: 240 s kept, the one-seed round of the best rung (1 open, about 160 s of work) did not start |
+| A13 module | direct narrow attempt | 17 / 3 / 488 / 1653 | same board |
+| vaio_re | direct narrow attempt | 15 / 0 / 716 / 1263 | same board |
+| DSP-ADAU1452 | direct narrow attempt | 65 / 0 / 220 / 1276 | same board |
+| Castor | no step | 0 / 0 / 167 / 924 | same board |
+| keyboar_ | no step | 0 / 0 / 39 / 275 | same board |
+
+No row was cut. module, vaio_re and DSP take the direct narrow-signal
+attempt since x855 and never reach a ladder with a reserve, so this change
+cannot touch them (their x941 numbers differ from x892's in the "after
+the narrow attempt" table through the commits between, not this one).
+
+DSP-ADAU1452 cold route (designer placement, no copper, route mode,
+1200 s ladder, 4 threads): x940 1 unconnected, x960 the same board
+(same attempts, 60 vias). It was not a reserve problem: route mode keeps
+no reserve, and the step was not short of work. Its log (x903, x940,
+x960): the best attempt before the step is the 0.075 mm tracks rung (20
+open, 115 vias, ahead of the connect rung's 20 open and 135 vias on
+vias); the step varies it, its negotiation reaches 1 net in conflict at
+iteration 10, sits there to the price cap and stops on the stall at the
+cap (`stall_at_cap` 12) after 25 iterations, with 16 s of negotiation
+work of a budget of at least 60 s; the repair leaves 2 open. x817's step varied
+the 0.075 mm connect rung (22 open against tracks' 24), completed in its
+negotiation, and 96 of its 142 s of work were the via reduction of a
+complete board. The 0.05 mm rung came after the best attempt was chosen
+and only spent ladder work. What would help there is a step that tries
+the other pour mode or the runner-up attempt when it stalls, not more
+work.
+
+Short tier x960 against build/short-x941.log (tasks v6): all 12 rows
+identical (vias, length, work, KiCad's findings; 35 unconnected, 12 new
+errors, 1129 vias, 2671 s of work; CPU 3913 to 3349 s is load). No
+short-tier board keeps a reserve (no "kept for the narrow-signal step"
+line in any layout log).
+
+Unit tests: `the_floored_reserve_is_enough_for_the_step_to_run`,
+`no_attempt_starts_into_the_reserve`,
+`attempts_stop_where_the_reserve_begins`,
+`the_step_negotiates_at_least_what_the_first_attempt_did_within_the_reserve`.
+Logs: worktree pcb-maker-reserve2, build/runs (rows.py prints the rows
+with the ladder's reserve, rungs and step lines; cold-x960 the cold
+route), build/short-x960.log.
 
 ## Open problems, ranked
 

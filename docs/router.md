@@ -517,13 +517,22 @@ rungs used to leave the step nothing (the A13 module: 126 open to 17 by
 the step in one run, not run in the next). There, when the step applies,
 the ladder keeps work back for it once its first attempt has run
 (`narrow_reserve_share` of that attempt's work, default 0.75, at least
-120 s, at most 0.4 of the work left at the start and 600 s;
-`PCB_NARROW_RESERVE` overrides the share): each further rung, the seed
-retries and the seed rounds see the work left without it. The step then
+240 s, at most 0.4 of the work left at the start and 600 s, none when
+that cap is under the step's 180 s minimum; `PCB_NARROW_RESERVE`
+overrides the share). The reservation is a floor (2026-10-15): a further
+rung, a finer pitch, the seed retries or a seed round starts only if its
+projected work (the last attempt's, times the square of the pitch ratio
+on a finer lattice; seeds count once each) leaves all of it, and their
+work deadlines end where it begins (seeds side by side each their share).
+A board the ladder completes releases it. The step then
 runs if half the reservation and at least 180 s are still there, and
 negotiates a third of what is left (60-900 s, never more than the
-attempt it varies), with its router's work deadline at what is left, so
-it ends inside the layout's end. Its work counts in the ladder's
+attempt it varies), but at least what the ladder's first attempt
+negotiated, within the reservation and half of what is left, with its
+router's work deadline at what is left, so it ends inside the layout's
+end (`PCB_LADDER_OLD_RESERVE` restores the reservation before 2026-10-15:
+at least 120 s, checked against the last attempt's work, the step's
+negotiation from what is left only). Its work counts in the ladder's
 (`work_seconds`), and when it does not run `skipped` says why. Boards
 where the step does not apply, and route mode, are unchanged.
 
