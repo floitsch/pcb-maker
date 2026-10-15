@@ -1132,3 +1132,61 @@ Twisted-Fields__rp2040-motor-controller__RP2040_base                 |          
 vd-rd__sbc_allwinner_a13__module                                     |            221/223 8 +1e |           186/223 81 +1e |   1227
 0xCB-dev__0xCB-1337__panel                                           |          145/188 129 +2e |              137/188 210 |   1720
 Huaqiu-Electronics__ecad-viewer__video                               |              253/371 315 |              252/371 499 |   1673
+
+## Freerouting against our cold route, x738 (2026-10-15)
+
+Same setup as the 2026-10-09 round: the designer's placement with every
+track, via and copper zone removed, 1500 s wall each, Freerouting 2.2.4
+headless through `benchmarks/github/freerouting.py` (now with `-Xmx4g`; an
+A/B on hackrf showed the limit costs no CPU, and no board hit it), both
+results judged by KiCad's DRC with `--severity-all` against the same
+baseline. Our side is pcb-maker-x738 on all 109 boards. Boards ran side by
+side (4 jobs, at most 2 Freerouting JVMs and 2 routes at a time), with the
+load recorded per row. Freerouting timeouts at a load above 45 were rerun,
+and eight boards Freerouting had finished last round but timed out on here
+were rerun once Freerouting-only (four then finished).
+
+| | x738 round | x136/x155 round (2026-10-09) |
+|---|---|---|
+| Freerouting finished / timed out / failed | 67 / 36 / 6 | 70 / 34 / 5 |
+| fewer unconnected: pcb-maker / Freerouting | 47 / 6 | 49 / 6 |
+| fewer DRC errors: pcb-maker / Freerouting | 33 / 1 | 33 / 0 |
+| verdict (unconnected, then errors): ours / FR / tie | 53 / 6 / 8 | 56 / 6 / 8 |
+| both finished: unconnected FR / ours | 873 / 184 | 913 / 206 |
+| both finished: DRC errors FR / ours | 1857 / 8 | 2041 / 15 |
+| both finished: clean boards FR / ours | 8 / 51 | 8 / 50 |
+| both finished: vias FR / ours | 5708 / 6785 | 6575 / 7205 |
+| both finished: length FR / ours | 409.5 / 409.2 m | 461.4 / 460.4 m |
+| both finished: CPU FR / ours | 62688 s / 40885 s | not recorded |
+| clean boards over all 109, FR / ours | 8 / 62 | 8 / 60 |
+| our unconnected over all 109 | 4785 | 4577 |
+
+Freerouting finished 67, timed out 36, failed 6 (keyboar_, formerly a
+"timeout", is a DSN its parser cannot read: a part number with a backtick
+loops it forever). On the 67 boards both finish, pcb-maker has fewer
+unconnected on 47 and Freerouting on 6; length is equal and we use 19 %
+more vias, at 0.65 times Freerouting's CPU seconds (ours including its own
+KiCad checks; Freerouting burns about 2 CPU seconds per wall second even
+with `-mt 1`). No board flipped sides; the verdict changes are boards where
+Freerouting has a result in one round and not in the other (0xCB pcb-panel,
+video, osprey, bumwings core: timeouts now; eurorack-pmod: finished now).
+Freerouting's wall time on one board varies by more than two times between
+runs (hackrf's first pass took 386 s in one run and more than 900 s in two
+others), so its timeouts near the limit are noisy.
+
+Against the x136/x155 round our cold route is better on 16 boards, the same
+on 82 and worse on 11 (4577 to 4785 unconnected): SNSP-CPU-01 55 to 178
+(all GND; the router reports 362 of 363 connections routed while KiCad
+finds 178 unconnected terminals) and MegaDrive 95 to 137 repeat exactly
+when run alone, and katia (84 to 183) is cut by the 1800 s wall in both of
+its runs at a 14.9 GB peak. Better rows include vaio 26 to 8, the A13
+module 22 to 9, DSP 7 to 0 and mackerel-30's 13 errors to 0.
+
+The runner changes (CPU, load and tier per row, the jobs file,
+`--resume`/`--redo`, `--java-heap`, stall detection, `--severity-all`)
+landed in ef980b2; the DRC-cache round made both DRCs go through
+`pcb-maker drc-kicad-board` when the binary has it (047f6ff; x738 has not,
+so this round used kicad-cli on both sides). Logs:
+`build/github-freerouting-x738.log`, reruns `-fr2.log` and `-katia.log`,
+table `-compare.txt`. Reproduce the summary with
+`freerouting_compare.py build/github-freerouting-x738.log build/github-freerouting-x738.log build/github-freerouting-x738-fr2.log --ours-splice build/github-freerouting-x738-katia.log --previous-ours build/github-ours-cold-all.log --previous-freerouting build/github-freerouting.log build/github-freerouting-2.log build/github-freerouting-3.log`.

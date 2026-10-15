@@ -1402,6 +1402,20 @@ ended at 577 of 1500 s): a class-width ladder after it with what is left;
 a mode choice for the attempt (the first route's pour mode now; tracks
 probed better on module, koeg and DSP); the via hole-clearance rounding.
 
+## Freerouting refresh on x738 (2026-10-15, no code changed)
+
+docs/benchmarks.md "Freerouting against our cold route, x738". Same picture
+as the 2026-10-09 round (47 / 6 fewer unconnected, 51 / 8 clean where both
+finish, 0.65x Freerouting's CPU), no board flipped sides. Our cold route
+regressed on 11 boards since x136/x155: SNSP-CPU-01 55 to 178 open (all
+GND; 362 of 363 connections "routed" while KiCad finds 178 unconnected
+terminals: our connectivity and KiCad's disagree) and MegaDrive 95 to 137
+repeat on a calm machine; katia hits the 1800 s wall at 14.9 GB. Assigned
+to a cold-route regression agent (x900+). Fairness: Freerouting timeouts
+above load 45 rerun, eight boards rerun Freerouting-only, 4 GB heap shown
+harmless by A/B, keyboar_ is a parser hang (backtick in a part number), not
+a timeout.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

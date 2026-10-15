@@ -29,10 +29,10 @@ Not finished, but already useful.
   ([results](docs/benchmarks.md#layout-sweep-v14-2026-10-10-the-16-seed-race-the-placers-fixes-tasks-v6)).
 - **Against Freerouting** on the same 109 boards with only the copper
   removed (the designer's placement kept, 1500 s each): Freerouting finishes
-  70 and times out on 34; where it finishes, pcb-maker leaves fewer
-  connections open on 49 boards and Freerouting on 6, with 50 boards clean
-  against 8
-  ([table](docs/benchmarks.md#freerouting-against-our-cold-route-on-the-harvested-boards-2026-10-09)).
+  67 and times out on 36; where it finishes, pcb-maker leaves fewer
+  connections open on 47 boards and Freerouting on 6, with 51 boards clean
+  against 8, at 0.65 times Freerouting's CPU
+  ([table](docs/benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
   way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
   PCBench's Freerouting run 526 (85 %); vias about half and copper 93 % of
