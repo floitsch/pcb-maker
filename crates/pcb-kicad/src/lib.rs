@@ -29,6 +29,8 @@ pub use connection_rules::KiCadConnectionRoutingRules;
 mod grid_alignment;
 mod local_clearance;
 mod native_report;
+mod necks;
+pub use necks::{NeckRepair, repair_kicad_necks};
 mod drc_cache;
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
 mod pad_layer_contacts;

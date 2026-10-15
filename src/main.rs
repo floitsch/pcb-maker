@@ -2769,6 +2769,15 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             pcb_kicad::dump_kicad_pour_map(Path::new(&source), &board_id, Path::new(&output), &config)
         }
+        "repair-kicad-necks" => {
+            let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto] (changes the directory in place)";
+            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config = board_router_config(arguments.next().as_deref(), &directory, &board_id)?;
+            let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
+            println!("{}", serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?);
+            Ok(())
+        }
         "bench-search" => {
             let usage = "usage: pcb-maker bench-search <source-directory> <board-id> <iterations> [config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;

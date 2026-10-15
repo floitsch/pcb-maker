@@ -328,6 +328,25 @@ fn run_report_command_cached(
     })
 }
 
+/// Refills the zones of `board` with kicad-cli's DRC (which also rebuilds
+/// teardrops) and saves the board in place: KiCad's own fill, for checks
+/// that need its geometry (`necks`). Not cached: the cache keeps reports,
+/// not boards. The report goes to `report`.
+pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
+    let scratch = board.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let (status, transcript) = run_bounded(
+        Command::new("kicad-cli")
+            .args(["pcb", "drc", "--refill-zones", "--save-board", "--severity-error", "--format", "json", "--output"])
+            .arg(report)
+            .arg(board),
+        scratch,
+    )?;
+    if !status.success() {
+        return Err(format!("kicad-cli failed with {status}: {transcript}"));
+    }
+    Ok(())
+}
+
 /// Seconds a kicad-cli report may take (`PCB_KICAD_TIMEOUT`, default 900):
 /// a zone refill on 0xCB's panel never finished, and the hung process
 /// outlived the router by hours.

@@ -486,6 +486,10 @@ pub struct KiCadBoardRouterResult {
     /// the ladder's budget was used`). Empty on a complete board.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<String>,
+    /// KiCad's connection_width necks and the tracks laid over them
+    /// (`necks`), when its DRC reported any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub neck_repair: Option<crate::necks::NeckRepair>,
 }
 
 /// Why a routing is not complete, for whoever has to fix the board.
@@ -3320,6 +3324,7 @@ pub fn route_kicad_board(
             }
         }
     }
+    repair_necks(&mut result, output_directory, board_id, config)?;
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder_work;
     // What did not run matters only to a board left incomplete.
@@ -3771,6 +3776,7 @@ pub(super) fn finish_routed_board(
         cut: Vec::new(),
         work_seconds: 0.0,
         skipped: Vec::new(),
+        neck_repair: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(
@@ -3779,6 +3785,28 @@ pub(super) fn finish_routed_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(report)
+}
+
+/// Lays tracks over KiCad's connection_width necks on the finished board
+/// in `directory` (`necks::repair_connection_width`) and, when the board
+/// changed, takes its new native check and starved thermals.
+pub(crate) fn repair_necks(
+    result: &mut KiCadBoardRouterResult,
+    directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+) -> Result<(), String> {
+    if config.skip_native_verification {
+        return Ok(());
+    }
+    if let Some(repair) = crate::necks::repair_connection_width(directory, board_id, config)? {
+        if repair.kept {
+            result.native = Some(verify_materialized_rung(directory, board_id)?);
+            result.diagnostics.starved_thermals = starved_thermal_diagnostics(directory);
+        }
+        result.neck_repair = Some(repair);
+    }
+    Ok(())
 }
 
 /// Number of `starved_thermal` findings in the directory's native DRC report.

@@ -1576,6 +1576,14 @@ pub fn layout_kicad_board(
             routed.work_seconds = after_work;
         }
     }
+    // KiCad's connection_width necks on the board kept (a no-op when the
+    // route mode ladder above has repaired it already).
+    crate::board_router::repair_necks(&mut routed, &output_directory.join("result"), board_id, router_config)?;
+    if routed.neck_repair.as_ref().is_some_and(|repair| repair.kept) {
+        let report_path = output_directory.join("result").join("board-router.json");
+        fs::write(&report_path, serde_json::to_string_pretty(&routed).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+    }
     // The placement file should show the final poses too.
     {
         let mut placed_pcb = pcb.clone();
