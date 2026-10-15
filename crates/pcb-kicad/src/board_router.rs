@@ -1007,25 +1007,27 @@ fn lower_board(
         Ok(id)
     };
 
-    // A pad's solder mask aperture (the pad grown by its mask margin) bares
-    // the copper around it: another net's copper within the mask web of it
-    // bridges. Only margins that reach past the copper clearance matter.
-    let board_mask_margin = pcb.child("setup").and_then(|setup| form_f64(setup, "solder_mask_margin", 1).ok()).unwrap_or(0.0);
-    // KiCad's own name for the board's mask expansion. (The copper pads'
-    // aperture rule above reads `solder_mask_margin`, which KiCad's setup
-    // does not write; left as it is, measured with it.)
+    // A pad's solder mask aperture (the pad grown by its mask expansion)
+    // bares the copper around it: another net's copper near it bridges.
+    // Only reaches past the copper clearance matter. The board's mask
+    // expansion is `pad_to_mask_clearance` (KiCad's setup has no
+    // `solder_mask_margin`; the rule below read that key until 2026-10-15,
+    // so only pads and footprints with their own margin had an aperture).
     let board_pad_to_mask = pcb.child("setup").and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok()).unwrap_or(0.0);
-    let pad_mask_reach = pcb
+    let min_mask_web = pcb
         .child("setup")
         .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
-        .map_or(0.0, |width| width / 2.0 + 0.01);
+        .unwrap_or(0.0)
+        .max(0.0);
+    let pad_mask_reach = if min_mask_web > 0.0 { min_mask_web / 2.0 + 0.01 } else { 0.0 };
+    let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
+    let tented = vias_tented(pcb);
     let smallest_clearance = config
         .connection_rules
         .values()
         .chain(config.default_rules.iter())
         .map(|rules| rules.clearance_mm)
         .fold(f64::INFINITY, f64::min);
-    let outer_layers: core::LayerMask = 1 | (1 << layers.len().saturating_sub(1));
     for item in pcb.children() {
         match item.head() {
             Some("footprint") => {
@@ -1194,30 +1196,71 @@ fn lower_board(
                         label: label.clone(),
                     });
                     // The pad's mask aperture, where it reaches past the
-                    // copper clearance (a "Hole, 3mm" footprint: a ring of
-                    // small pads with 0.1 mm margins whose apertures merge
-                    // into a mask-free annulus; a track keeping the copper
-                    // clearance from each small pad ran inside it and
-                    // bridged). A mask opening of the pad's net.
-                    let mask_margin = form_f64(pad, "solder_mask_margin", 1)
+                    // copper clearance. A mask opening of the pad's net; its
+                    // own net's copper never bridges (KiCad skips pairs of
+                    // one net). KiCad's bridge test (10.0.7,
+                    // DRC_TEST_PROVIDER_SOLDER_MASK): covered copper (a
+                    // track, a tented via) bridges within the project's
+                    // solder-mask-to-copper clearance plus the pad's
+                    // expansion (OpenESC 4in1's J1: margin 0.102 mm plus
+                    // 0.005, tracks 0.105 mm from the pads bridged); an
+                    // untented via is an opening itself and bridges within
+                    // the minimum web plus both expansions. Kept from
+                    // before, for a pad or footprint margin of its own:
+                    // the margin plus half the web (a "Hole, 3mm"
+                    // footprint, a ring of small pads with 0.1 mm margins
+                    // whose apertures merge into a mask-free annulus).
+                    let local_margin = form_f64(pad, "solder_mask_margin", 1)
                         .ok()
-                        .or_else(|| form_f64(item, "solder_mask_margin", 1).ok())
-                        .unwrap_or(board_mask_margin);
-                    if mask_margin > 0.0
-                        && mask_margin + pad_mask_reach > smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY)) - 1.0e-9
-                        && pad_layers & outer_layers != 0
-                    {
-                        obstacles.push(core::Obstacle {
+                        .or_else(|| form_f64(item, "solder_mask_margin", 1).ok());
+                    let expansion = local_margin.unwrap_or(board_pad_to_mask);
+                    let web_reach = local_margin.filter(|margin| *margin > 0.0).map_or(0.0, |margin| margin + pad_mask_reach);
+                    let covered = web_reach.max(mask_to_copper + expansion);
+                    let floor = smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY)) - 1.0e-9;
+                    let mask_names: Vec<&str> = pad
+                        .child("layers")
+                        .map(Expr::children)
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .collect();
+                    let sides = [
+                        (0usize, mask_names.iter().any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"))),
+                        (layers.len() - 1, mask_names.iter().any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"))),
+                    ];
+                    for (index, (side, open)) in sides.into_iter().enumerate() {
+                        if !open || pad_layers & (1 << side) == 0 || (index == 1 && side == 0) {
+                            continue;
+                        }
+                        let via_reach = if tented[index] {
+                            covered
+                        } else {
+                            web_reach.max(min_mask_web + expansion + board_pad_to_mask)
+                        };
+                        let aperture = |clearance: f64, blocks_tracks: bool, blocks_vias: bool| core::Obstacle {
                             shape: shape(&lowered.geometry),
-                            layers: pad_layers & outer_layers,
+                            layers: 1 << side,
                             kind: core::ObstacleKind::Keepout,
                             net,
-                            clearance: mask_margin + pad_mask_reach,
+                            clearance,
                             clearance_override: None,
-                            blocks_tracks: true,
-                            blocks_vias: true,
+                            blocks_tracks,
+                            blocks_vias,
                             label: format!("{label} mask aperture"),
-                        });
+                        };
+                        if (via_reach - covered).abs() < 1.0e-9 {
+                            if covered > floor {
+                                obstacles.push(aperture(covered, true, true));
+                            }
+                        } else {
+                            if covered > floor {
+                                obstacles.push(aperture(covered, true, false));
+                            }
+                            if via_reach > floor {
+                                obstacles.push(aperture(via_reach, false, true));
+                            }
+                        }
                     }
                     // Other nets keep the hole clearance from a plated hole
                     // too, which reaches past a thin annular ring (a thermal
@@ -1486,7 +1529,6 @@ fn lower_board(
     // exposes copper within the project's solder-mask-to-copper clearance
     // plus the aperture's expansion, and never less than the web rule
     // above.
-    let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
     for (shapes, layer, kind, margin, expansion) in mask_openings {
         let reach = (mask_reach + margin).max(mask_to_copper + expansion);
         let bounds = shapes.iter().skip(1).fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb())).inflated(margin);
@@ -1926,99 +1968,25 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon"))) =>
         {
             let cache = item.child("render_cache").unwrap();
-            cache
+            let mut glyphs: Vec<core::Shape> = cache
                 .children()
                 .iter()
                 .filter(|child| child.head() == Some("polygon"))
                 .map(|polygon| Ok(core::Shape::Polygon { points: rule_area_like_points(polygon)? }))
-                .collect::<Result<_, String>>()?
+                .collect::<Result<_, String>>()?;
+            // KiCad draws the glyphs from the font, not from the cache: a
+            // face it does not have is replaced (OpenESC's "ESC" in Tokyo
+            // on B.Mask, drawn in a stand-in 2 mm wider than its cache, over
+            // a track and a via that kept clear of the cached glyphs; the
+            // nine cached mask texts of the corpus reach 0.7 to 2.9 mm past
+            // their caches). On a mask layer the stroke font's box, which
+            // holds all nine within 0.06 mm, is part of the opening too.
+            if matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask")) {
+                glyphs.push(stroke_text_box(item)?);
+            }
+            glyphs
         }
-        Some("gr_text") => {
-            let at = form_at(item)?;
-            let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
-            let font = item
-                .child("effects")
-                .and_then(|effects| effects.child("font"));
-            let size = font
-                .and_then(|font| form_xy(font, "size").ok())
-                .unwrap_or([1.0, 1.0]);
-            let thickness = font
-                .and_then(|font| form_f64(font, "thickness", 1).ok())
-                .unwrap_or(0.15);
-            // KiCad's stroke font, measured on its own plots: glyph
-            // advances in units of the font width (`i` 0.48 ... `m` 1.33);
-            // capitals and digits are one font height tall, descenders
-            // reach 0.3 below, and lines are 1.6 heights apart. The sum
-            // gets 8 % on top so the box stays outside every measured text.
-            let advance = |character: char| match character {
-                'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
-                'l' => 0.52,
-                't' | 'f' => 0.57,
-                'r' => 0.62,
-                '(' | ')' | '[' | ']' | '{' | '}' => 0.67,
-                'J' | '_' | ' ' | '"' => 0.76,
-                'A' => 0.86,
-                'N' | 'w' => 1.05,
-                'M' | 'W' | '%' => 1.14,
-                '-' => 1.24,
-                '@' => 1.29,
-                'm' => 1.33,
-                _ => 1.0,
-            };
-            let lines = text.split("\\n").count().max(1) as f64;
-            let widest = text
-                .split("\\n")
-                .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
-                .fold(0.0, f64::max);
-            let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
-            let half = [
-                (widest * size[1] + thickness) / 2.0,
-                (lines - 1.0) * 1.62 * size[0] / 2.0 + (if descends { 0.8 } else { 0.5 }) * size[0] + thickness / 2.0,
-            ];
-            let justify: Vec<&str> = item
-                .child("effects")
-                .and_then(|effects| effects.child("justify"))
-                .map(|justify| {
-                    justify
-                        .children()
-                        .iter()
-                        .skip(1)
-                        .filter_map(Expr::atom)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let shift = if justify.contains(&"left") {
-                half[0]
-            } else if justify.contains(&"right") {
-                -half[0]
-            } else {
-                0.0
-            };
-            let shift = if justify.contains(&"mirror") {
-                -shift
-            } else {
-                shift
-            };
-            // Top and bottom put the anchor on that side of the box.
-            let rise = if justify.contains(&"top") {
-                half[1]
-            } else if justify.contains(&"bottom") {
-                -half[1]
-            } else {
-                0.0
-            };
-            let offset = rotate_vector([shift, rise], -at[2]);
-            // KiCad's glyphs reach a little past this model across the
-            // line (SNSP's bold "SNSP" on B.Cu 0.17 mm past the box of a
-            // 2.5 mm text, jetson-nano's title 0.03 mm): some room on both
-            // sides.
-            let half = [half[0], half[1] + 0.08 * size[0]];
-            vec![core::Shape::rectangle(
-                [at[0] + offset[0], at[1] + offset[1]],
-                half,
-                -at[2],
-            )]
-        }
+        Some("gr_text") => vec![stroke_text_box(item)?],
         _ => Vec::new(),
     };
     // A knockout text is a copper plate with the glyphs cut out: its
@@ -2045,6 +2013,115 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         }]);
     }
     Ok(shapes)
+}
+
+/// The box KiCad's stroke font fills with a text, from its anchor, size,
+/// thickness and justification.
+fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
+    let at = form_at(item)?;
+    let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
+    let font = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"));
+    let size = font
+        .and_then(|font| form_xy(font, "size").ok())
+        .unwrap_or([1.0, 1.0]);
+    let thickness = font
+        .and_then(|font| form_f64(font, "thickness", 1).ok())
+        .unwrap_or(0.15);
+    // KiCad's stroke font, measured on its own plots: glyph
+    // advances in units of the font width (`i` 0.48 ... `m` 1.33);
+    // capitals and digits are one font height tall, descenders
+    // reach 0.3 below, and lines are 1.6 heights apart. The sum
+    // gets 8 % on top so the box stays outside every measured text.
+    let advance = |character: char| match character {
+        'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
+        'l' => 0.52,
+        't' | 'f' => 0.57,
+        'r' => 0.62,
+        '(' | ')' | '[' | ']' | '{' | '}' => 0.67,
+        'J' | '_' | ' ' | '"' => 0.76,
+        'A' => 0.86,
+        'N' | 'w' => 1.05,
+        'M' | 'W' | '%' => 1.14,
+        '-' => 1.24,
+        '@' => 1.29,
+        'm' => 1.33,
+        _ => 1.0,
+    };
+    let lines = text.split("\\n").count().max(1) as f64;
+    let widest = text
+        .split("\\n")
+        .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
+        .fold(0.0, f64::max);
+    let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
+    let half = [
+        (widest * size[1] + thickness) / 2.0,
+        (lines - 1.0) * 1.62 * size[0] / 2.0 + (if descends { 0.8 } else { 0.5 }) * size[0] + thickness / 2.0,
+    ];
+    let justify: Vec<&str> = item
+        .child("effects")
+        .and_then(|effects| effects.child("justify"))
+        .map(|justify| {
+            justify
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect()
+        })
+        .unwrap_or_default();
+    let shift = if justify.contains(&"left") {
+        half[0]
+    } else if justify.contains(&"right") {
+        -half[0]
+    } else {
+        0.0
+    };
+    let shift = if justify.contains(&"mirror") {
+        -shift
+    } else {
+        shift
+    };
+    // Top and bottom put the anchor on that side of the box.
+    let rise = if justify.contains(&"top") {
+        half[1]
+    } else if justify.contains(&"bottom") {
+        -half[1]
+    } else {
+        0.0
+    };
+    let offset = rotate_vector([shift, rise], -at[2]);
+    // KiCad's glyphs reach a little past this model across the
+    // line (SNSP's bold "SNSP" on B.Cu 0.17 mm past the box of a
+    // 2.5 mm text, jetson-nano's title 0.03 mm): some room on both
+    // sides.
+    let half = [half[0], half[1] + 0.08 * size[0]];
+    Ok(core::Shape::rectangle([at[0] + offset[0], at[1] + offset[1]], half, -at[2]))
+}
+
+/// Whether the board tents its vias on the front and on the back, as KiCad
+/// 10 reads the setup: `(tenting (front yes) (back yes))` (a side left out
+/// is not tented), KiCad 9's `(tenting front back)` or `(tenting none)`, and
+/// before either the plot setting `(viasonmask yes)` for untented vias. A
+/// board that says nothing tents them (KiCad's default).
+pub(crate) fn vias_tented(pcb: &Expr) -> [bool; 2] {
+    let Some(setup) = pcb.child("setup") else {
+        return [true, true];
+    };
+    if let Some(tenting) = setup.child("tenting") {
+        let rest = tenting.children().get(1..).unwrap_or_default();
+        if rest.iter().any(|child| child.atom().is_some()) {
+            let named = |side: &str| rest.iter().any(|child| child.atom() == Some(side));
+            return [named("front"), named("back")];
+        }
+        let yes = |side: &str| matches!(form_atom(tenting, side, 1), Some("yes" | "true"));
+        return [yes("front"), yes("back")];
+    }
+    match setup.child("pcbplotparams").and_then(|plot| form_atom(plot, "viasonmask", 1)) {
+        Some("yes" | "true") => [false, false],
+        _ => [true, true],
+    }
 }
 
 /// A rule area that keeps zone fills out (`(copperpour not_allowed)`): its
@@ -4640,6 +4717,130 @@ mod pour_request_tests {
         close(lowered("(solder_mask_margin 0.2)", Some(0.05), false), 0.05 + 0.2);
         close(lowered("", None, false), 0.075);
         close(lowered("", Some(0.05), true), 0.075);
+    }
+
+    #[test]
+    fn a_pads_mask_aperture_keeps_the_mask_to_copper_clearance_and_an_untented_via_the_web() {
+        // KiCad 10.0.7's bridge test around a pad of another net: covered
+        // copper (a track, a tented via) within the solder-mask-to-copper
+        // clearance plus the pad's mask expansion bridges; an untented via
+        // within the minimum web plus both expansions. OpenESC 4in1's J1:
+        // pads with a 0.102 mm margin, the project's 0.005 mm, classes of
+        // 0.09 mm; tracks kept 0.105 mm and bridged.
+        let lowered = |setup: &str, margin: &str, mask_to_copper: Option<f64>, clearance: f64| {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+                  (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+                  (setup {setup})
+                  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                  (footprint "J" (layer "B.Cu") (at 10 5) (property "Reference" "J1")
+                    (pad "8" smd rect (at 0 0) (size 0.6 1.55) (layers "B.Cu" "B.Mask" "B.Paste") (net "/M4") {margin})
+                    (pad "7" smd rect (at -1 0) (size 0.6 1.55) (layers "B.Cu" "B.Mask" "B.Paste") (net "/M3") {margin})
+                    (pad "9" smd rect (at 1 0) (size 0.6 1.55) (layers "B.Cu") (net "/M3") {margin})))"#
+            ))
+            .unwrap();
+            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.09, clearance_mm: clearance, via_size_mm: 0.45, via_drill_mm: 0.2 };
+            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: mask_to_copper, ..KiCadBoardRouterConfig::default() };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            let mut apertures: Vec<(String, f64, bool, bool, u32)> = board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label.ends_with("mask aperture"))
+                .map(|obstacle| (obstacle.label.clone(), obstacle.clearance, obstacle.blocks_tracks, obstacle.blocks_vias, obstacle.layers))
+                .collect();
+            apertures.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)));
+            apertures
+        };
+        let close = |value: f64, expected: f64| assert!((value - expected).abs() < 1.0e-9, "{value} against {expected}");
+        // J1: margin plus the project's clearance, for tracks and the
+        // (tented) vias alike, on the back only; pad 9 has no mask opening.
+        let j1 = lowered("(pad_to_mask_clearance 0)", "(solder_mask_margin 0.102)", Some(0.005), 0.09);
+        assert_eq!(j1.len(), 2, "{j1:?}");
+        for (label, clearance, tracks, vias, layers) in &j1 {
+            assert!(label.starts_with("J1.7") || label.starts_with("J1.8"), "{label}");
+            close(*clearance, 0.107);
+            assert!(*tracks && *vias);
+            assert_eq!(*layers, 0b10);
+        }
+        // Before, the margin alone: tracks at 0.105 mm passed.
+        // The board's expansion is `pad_to_mask_clearance`.
+        let board = lowered("(pad_to_mask_clearance 0.1)", "", Some(0.05), 0.1);
+        assert_eq!(board.len(), 2);
+        close(board[0].1, 0.15);
+        // Untented vias are openings: the web plus both expansions (the
+        // pad's and the board's for the via), apart from the tracks' rule.
+        let untented = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting none)", "", Some(0.0), 0.04);
+        assert_eq!(untented.len(), 4, "{untented:?}");
+        close(untented[0].1, 0.05);
+        assert!(untented[0].2 && !untented[0].3);
+        close(untented[1].1, 0.1 + 0.05 + 0.05);
+        assert!(!untented[1].2 && untented[1].3);
+        // KiCad 10's own form, the back side untented.
+        let back = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front yes) (back no))", "", Some(0.0), 0.04);
+        assert_eq!(back.len(), 4);
+        let front = lowered("(pad_to_mask_clearance 0.05) (solder_mask_min_width 0.1) (tenting (front no) (back yes))", "", Some(0.0), 0.04);
+        assert_eq!(front.len(), 2);
+        // Within the copper clearance, nothing.
+        assert!(lowered("(pad_to_mask_clearance 0.05)", "", Some(0.05), 0.2).is_empty());
+    }
+
+    #[test]
+    fn at_snsps_values_a_via_by_another_nets_pad_bridges_no_mask() {
+        // SNSP-CPU-01: tented vias (front yes, back yes), no mask expansion,
+        // no minimum web, no solder-mask-to-copper clearance, so KiCad's
+        // bridge test needs copper to touch: a via of another net next to
+        // a pad (0.8 mm via, a 2 mm THT pad, 0.2 mm clearance) is held by
+        // the copper clearance alone, untented or not. Its 13 bridges in
+        // route mode are pads of other parts placed under J2's F.Mask
+        // polygon (C63, C64, C66) and the GND fill there.
+        for tenting in ["(tenting (front yes) (back yes))", "(tenting none)"] {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+                  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+                  (setup (pad_to_mask_clearance 0) {tenting})
+                  (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                  (footprint "J" (layer "F.Cu") (at 5 5) (property "Reference" "J2")
+                    (pad "1" thru_hole rect (at 0 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net "VCC"))
+                    (pad "4" thru_hole rect (at 2.54 0) (size 2 2) (drill 1) (layers "*.Cu" "*.Mask") (net "GND"))))"#
+            ))
+            .unwrap();
+            let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.25, clearance_mm: 0.2, via_size_mm: 0.8, via_drill_mm: 0.4 };
+            let config = KiCadBoardRouterConfig { default_rules: Some(rules), solder_mask_to_copper_mm: Some(0.0), ..KiCadBoardRouterConfig::default() };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            assert!(!board.obstacles.iter().any(|obstacle| obstacle.label.ends_with("mask aperture")));
+        }
+    }
+
+    #[test]
+    fn via_tenting_is_read_as_kicad_10_reads_it() {
+        let tented = |setup: &str| vias_tented(&parse(&format!("(kicad_pcb (setup {setup}))")).unwrap());
+        assert_eq!(tented(""), [true, true]);
+        assert_eq!(tented("(tenting (front yes) (back yes))"), [true, true]);
+        assert_eq!(tented("(tenting (front yes))"), [true, false]);
+        assert_eq!(tented("(tenting front back)"), [true, true]);
+        assert_eq!(tented("(tenting back)"), [false, true]);
+        assert_eq!(tented("(tenting none)"), [false, false]);
+        assert_eq!(tented("(pcbplotparams (viasonmask false))"), [true, true]);
+        assert_eq!(tented("(pcbplotparams (viasonmask yes))"), [false, false]);
+    }
+
+    #[test]
+    fn a_cached_text_on_a_mask_layer_also_opens_the_stroke_fonts_box() {
+        // OpenESC 4in1-mini's "ESC" in Tokyo on B.Mask: KiCad drew it in a
+        // stand-in face 2 mm wider than its cached glyphs.
+        let text = |layer: &str| {
+            format!(
+                r#"(gr_text "ESC" (at 72.27 41.77 0) (layer "{layer}") (effects (font (face "Tokyo") (size 2.5 2.5) (thickness 0.3)) (justify left bottom mirror))
+                  (render_cache "ESC" 0 (polygon (pts (xy 70.7 39.3) (xy 71.3 39.3) (xy 71.4 40.9) (xy 70.7 40.9)))))"#
+            )
+        };
+        let mask = copper_graphic_shapes(&parse(&text("B.Mask")).unwrap()).unwrap();
+        assert_eq!(mask.len(), 2);
+        // The track at (68.17, 39.05) and the via at (69.47, 38.75) that
+        // bridged were inside KiCad's glyphs.
+        assert!(mask.iter().any(|shape| shape.contains([68.17, 39.05])));
+        assert!(mask.iter().any(|shape| shape.distance_to_point([69.47, 38.75]) < 0.225));
+        assert_eq!(copper_graphic_shapes(&parse(&text("B.Cu")).unwrap()).unwrap().len(), 1);
     }
 
     #[test]
