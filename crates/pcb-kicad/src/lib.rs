@@ -73,7 +73,7 @@ mod verification_preview;
 mod via_discovery;
 pub use coupled_vias::{KiCadCoupledViaConfig, refine_kicad_vias};
 use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
-pub use native_report::{drc_design_issues, is_library_metadata_warning};
+pub use native_report::{drc_design_issues, erc_design_issues, is_erc_library_warning, is_library_metadata_warning};
 pub use silkscreen::repair_kicad_silkscreen;
 pub use via_discovery::{KiCadViaDiscoveryConfig, discover_kicad_via_opportunities};
 mod adaptive_routing;
@@ -2443,13 +2443,17 @@ pub struct VerificationReport {
     pub selected_net_unconnected_items: usize,
     pub intentional_no_connect_groups: usize,
     pub library_metadata_warnings: usize,
+    /// ERC's library warnings by type (`is_erc_library_warning`), not in
+    /// `erc_violations`.
+    #[serde(default)]
+    pub erc_library_warnings: BTreeMap<String, usize>,
 }
 
 pub const KICAD_VERIFICATION_CACHE_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CACHE";
 pub const KICAD_VERIFICATION_CACHE_EVENTS_ENV: &str = "PCB_MAKER_KICAD_VERIFICATION_CACHE_EVENTS";
 const KICAD_VERIFICATION_CACHE_SCHEMA_VERSION: u32 = 1;
 const KICAD_VERIFICATION_POLICY: &str =
-    "verify-materialized-rung-v1:erc-all:drc-all:schematic-parity:intentional-no-connect-groups";
+    "verify-materialized-rung-v2:erc-without-library-warnings:drc-all:schematic-parity:intentional-no-connect-groups";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -4154,12 +4158,17 @@ fn assess_verification_reports(
         ReportKind::Drc,
         Path::new(&format!("{board_id}.kicad_pcb")),
     )?;
-    let erc_violations = erc["sheets"]
+    let erc_violations = erc_design_issues(erc).len();
+    let mut erc_library_warnings = BTreeMap::<String, usize>::new();
+    for finding in erc["sheets"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(|sheet| sheet["violations"].as_array().map_or(0, Vec::len))
-        .sum();
+        .flat_map(|sheet| sheet["violations"].as_array().into_iter().flatten())
+        .filter(|finding| is_erc_library_warning(finding))
+    {
+        *erc_library_warnings.entry(finding["type"].as_str().unwrap_or("").to_string()).or_default() += 1;
+    }
     let schematic_parity_issues = drc["schematic_parity"].as_array().map_or(0, Vec::len);
     let mut drc_design_violations = 0;
     let mut library_metadata_warnings = 0;
@@ -4192,6 +4201,7 @@ fn assess_verification_reports(
         selected_net_unconnected_items,
         intentional_no_connect_groups,
         library_metadata_warnings,
+        erc_library_warnings,
     };
     Ok(report)
 }

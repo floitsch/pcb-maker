@@ -419,7 +419,11 @@ else `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`), which holds
 empty `fp-lib-table` and `sym-lib-table`. Every finding but the
 `lib_footprint_*` warnings is the same. The user's configuration is kept
 when the project sets a `lib_footprint_*` severity to `error`, and with
-`PCB_MAKER_KICAD_USER_LIBS=1`. ERC runs on the user's configuration.
+`PCB_MAKER_KICAD_USER_LIBS=1`. ERC runs the same way (its library rules
+`lib_symbol_issues`, `lib_symbol_mismatch`, `footprint_link_issues`):
+these three warnings depend on the libraries installed, so
+`verification.json` leaves them out of `erc_violations` and counts them by
+type in `erc_library_warnings`.
 
 The other commands exit 0 when done, 1 when their result is incomplete
 (`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with

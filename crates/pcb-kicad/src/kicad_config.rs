@@ -18,11 +18,11 @@
 //! The user's configuration is kept when `PCB_MAKER_KICAD_USER_LIBS=1`, when
 //! the board's project sets a `lib_footprint_*` severity to `error` (its
 //! library findings would then count), when the project file cannot be
-//! read as JSON, and when the directory cannot be prepared. ERC keeps the
-//! user's configuration: with empty tables `lib_symbol_issues`,
-//! `lib_symbol_mismatch` and `footprint_link_issues` change (warnings, but
-//! `erc_violations` counts every ERC finding; docs/handover.md, "KiCad
-//! check cost").
+//! read as JSON, and when the directory cannot be prepared. ERC runs the
+//! same way, its library rules being `lib_symbol_issues`,
+//! `lib_symbol_mismatch` and `footprint_link_issues` (under `erc`): as
+//! warnings they change with the libraries and are not counted
+//! (`is_erc_library_warning`).
 
 use std::{
     ffi::OsStr,
@@ -33,6 +33,11 @@ use std::{
 
 /// Set to anything but `0` to run kicad-cli on the user's own libraries.
 pub(crate) const USER_LIBS_ENV: &str = "PCB_MAKER_KICAD_USER_LIBS";
+
+const DRC_SEVERITIES: &str = "/board/design_settings/rule_severities";
+const DRC_LIBRARY_RULES: [&str; 2] = ["lib_footprint_issues", "lib_footprint_mismatch"];
+const ERC_SEVERITIES: &str = "/erc/rule_severities";
+const ERC_LIBRARY_RULES: [&str; 3] = ["lib_symbol_issues", "lib_symbol_mismatch", "footprint_link_issues"];
 
 const FOOTPRINT_TABLE: &str = "(fp_lib_table\n\t(version 7)\n)\n";
 const SYMBOL_TABLE: &str = "(sym_lib_table\n\t(version 7)\n)\n";
@@ -59,10 +64,16 @@ fn warn(message: &str) {
 /// `KICAD_CONFIG_HOME` for a DRC of `input` by `program`, or `None` to keep
 /// the user's configuration.
 pub(crate) fn drc_config_home(program: &OsStr, input: &Path) -> Option<PathBuf> {
+    config_home(program, input, DRC_SEVERITIES, &DRC_LIBRARY_RULES)
+}
+
+/// `KICAD_CONFIG_HOME` for a kicad-cli report on `input` whose library
+/// rules are `rules` under `section` of the project file.
+fn config_home(program: &OsStr, input: &Path, severities: &str, rules: &[&str]) -> Option<PathBuf> {
     if variable(USER_LIBS_ENV).is_some_and(|value| value != "0") {
         return None;
     }
-    if project_counts_library_findings(input) {
+    if project_counts_library_findings(input, severities, rules) {
         return None;
     }
     let root = cache_root_from_env()?;
@@ -79,6 +90,14 @@ pub(crate) fn drc_config_home(program: &OsStr, input: &Path) -> Option<PathBuf> 
     }
 }
 
+/// `KICAD_CONFIG_HOME` for an ERC of the schematic `input`, or `None` to
+/// keep the user's configuration: as for the DRC, with the ERC's library
+/// rules (`lib_symbol_issues`, `lib_symbol_mismatch`,
+/// `footprint_link_issues`) in place of the footprint ones.
+pub(crate) fn erc_config_home(program: &OsStr, input: &Path) -> Option<PathBuf> {
+    config_home(program, input, ERC_SEVERITIES, &ERC_LIBRARY_RULES)
+}
+
 /// Points `command`, a kicad-cli DRC of `input`, at the configuration
 /// without libraries when [`drc_config_home`] gives one.
 pub(crate) fn configure_drc(command: &mut std::process::Command, program: &OsStr, input: &Path) {
@@ -87,10 +106,10 @@ pub(crate) fn configure_drc(command: &mut std::process::Command, program: &OsStr
     }
 }
 
-/// Whether the project next to `input` sets a `lib_footprint_*` severity
-/// to `error`, or cannot be read (both keep the user's libraries). No
-/// project file is KiCad's defaults: warnings.
-fn project_counts_library_findings(input: &Path) -> bool {
+/// Whether the project next to `input` sets one of `rules` (under the JSON
+/// pointer `severities`) to `error`, or cannot be read (both keep the
+/// user's libraries). No project file is KiCad's defaults: warnings.
+fn project_counts_library_findings(input: &Path, severities: &str, rules: &[&str]) -> bool {
     let project = input.with_extension("kicad_pro");
     let Ok(text) = fs::read_to_string(&project) else {
         return project.exists();
@@ -98,11 +117,9 @@ fn project_counts_library_findings(input: &Path) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
         return true;
     };
-    value["board"]["design_settings"]["rule_severities"]
-        .as_object()
-        .is_some_and(|severities| {
-            severities.iter().any(|(name, severity)| name.starts_with("lib_footprint") && severity == "error")
-        })
+    value.pointer(severities).and_then(|severities| severities.as_object()).is_some_and(|severities| {
+        severities.iter().any(|(name, severity)| rules.contains(&name.as_str()) && severity == "error")
+    })
 }
 
 /// KiCad's settings directory name for `version` (`10.0.7` -> `10.0`).
@@ -161,7 +178,8 @@ mod tests {
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).unwrap();
         let board = directory.join("board.kicad_pcb");
-        assert!(!project_counts_library_findings(&board), "no project: KiCad's defaults");
+        let counts = |board: &Path| project_counts_library_findings(board, DRC_SEVERITIES, &DRC_LIBRARY_RULES);
+        assert!(!counts(&board), "no project: KiCad's defaults");
         let project = directory.join("board.kicad_pro");
         let with = |severity: &str| {
             format!(
@@ -169,13 +187,19 @@ mod tests {
             )
         };
         fs::write(&project, with("warning")).unwrap();
-        assert!(!project_counts_library_findings(&board));
+        assert!(!counts(&board));
         fs::write(&project, with("ignore")).unwrap();
-        assert!(!project_counts_library_findings(&board));
+        assert!(!counts(&board));
         fs::write(&project, with("error")).unwrap();
-        assert!(project_counts_library_findings(&board));
+        assert!(counts(&board));
+        // ERC's rules sit elsewhere in the project file.
+        let schematic = directory.join("board.kicad_sch");
+        assert!(!project_counts_library_findings(&schematic, ERC_SEVERITIES, &ERC_LIBRARY_RULES));
+        fs::write(&project, "{\"erc\": {\"rule_severities\": {\"footprint_link_issues\": \"error\"}}}").unwrap();
+        assert!(project_counts_library_findings(&schematic, ERC_SEVERITIES, &ERC_LIBRARY_RULES));
+        assert!(!counts(&board));
         fs::write(&project, "{").unwrap();
-        assert!(project_counts_library_findings(&board), "unreadable: keep the user's libraries");
+        assert!(counts(&board), "unreadable: keep the user's libraries");
         let _ = fs::remove_dir_all(&directory);
     }
 }

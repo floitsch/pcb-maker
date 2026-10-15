@@ -3622,10 +3622,53 @@ tasks v7, load 18-42), x1095 against build/sch-x1100.log:
   DRC override of 2ab5ef5 plus the pad check.
 
 Tests: `cargo test --release -p pcb-kicad` (344) and `-p pcb-maker --test
-cli_exit_codes --test agent_walkthrough` (7 and 2) pass. Not covered:
-`sch export netlist` in the import, the preview SVG export and the fab
-exports still run on the user's configuration. They may load the symbol
-libraries; this was not measured.
+cli_exit_codes --test agent_walkthrough` (7 and 2) pass.
+
+**ERC without the global libraries (x1098 on c9fe4de).** Decision: ERC's
+`lib_symbol_issues`, `lib_symbol_mismatch` and `footprint_link_issues`
+warnings are library metadata. They depend on the libraries installed where
+KiCad runs: coco2 had 240 `lib_symbol_mismatch` under the user's
+configuration, which is wrong for a verdict.
+- `is_erc_library_warning` and `erc_design_issues` (native_report.rs,
+  exported) keep them out of verification.json's `erc_violations`. They are
+  counted by type in the new `erc_library_warnings`, which defaults empty
+  when reading older files.
+- The same filter applies to the introduced-ERC comparisons in
+  sequential_router.rs and pcb-benchmark.
+- A library rule that a project rates `error` still counts, and such a
+  project keeps the user's libraries (`erc.rule_severities`, as for the
+  DRC).
+- ERC (`sch erc` through `run_kicad_report`) now runs with the same
+  `KICAD_CONFIG_HOME`. `PCB_MAKER_KICAD_USER_LIBS=1` restores the user's.
+- The verification cache's policy is now
+  `verify-materialized-rung-v2:erc-without-library-warnings:...`, so cached
+  verifications with the old count are not reused.
+- Before this change, `erc_violations` included these warnings: coco2
+  counted 295 where it now counts 0.
+
+Judge (`judge_verification.py`, `results/verification-x1098-2026-10-15.log`):
+`verify-kicad-rung` with every cache off on the twelve schematic-tier
+results of x1095 and on Castor's designer schematic beside its v16 board,
+user configuration against empty tables:
+- `erc_violations` is identical on all 13, and so is `complete` (false on
+  all 13, for DRC or parity reasons).
+- The library warnings appear only in `erc_library_warnings`, for example
+  OpenFC {lib_symbol_issues 2, lib_symbol_mismatch 23} against
+  {footprint_link_issues 86, lib_symbol_issues 303, lib_symbol_mismatch 17}.
+- The only other field that differs is the DRC's `library_metadata_warnings`
+  (its `lib_footprint_*` warnings).
+- The whole check (ERC plus DRC) drops from 8.7-29.2 s / 20-50 CPU s /
+  2.2-2.5 GB to 3.7-21.5 s / 3.4-27 CPU s / 0.3-0.8 GB.
+- The walkthrough test's parity assertions pass. New unit test:
+  `erc_library_warnings_are_not_design_issues`.
+- `cargo test --release -p pcb-kicad` (345) and `-p pcb-maker --test
+  cli_exit_codes --test agent_walkthrough` (7 and 2) pass.
+
+Still on the user's configuration, unmeasured: the import's `sch export
+netlist` (its netlist's `libraries` section may name the user's library
+URIs), the preview SVG export (`verification_preview.rs`), the fab exports
+(`fab_export.rs`), and the other `kicad-cli` calls in lib.rs (lines near
+2881, 4407 and 13627 at c9fe4de).
 
 ## Committed on 2026-10-15 (solder mask bridges, x1050-x1054)
 

@@ -1071,12 +1071,7 @@ fn verify_sequential_candidate(
 }
 
 fn schematic_erc_issues(report: &serde_json::Value) -> Vec<&serde_json::Value> {
-    report["sheets"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|sheet| report_array(sheet, "violations"))
-        .collect()
+    crate::erc_design_issues(report)
 }
 
 fn report_array<'a>(report: &'a serde_json::Value, key: &str) -> Vec<&'a serde_json::Value> {

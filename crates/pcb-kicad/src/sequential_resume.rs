@@ -314,6 +314,7 @@ mod tests {
             selected_net_unconnected_items: 1,
             intentional_no_connect_groups: 0,
             library_metadata_warnings: 0,
+            erc_library_warnings: Default::default(),
         };
         KiCadSequentialRouteStep {
             ordinal,

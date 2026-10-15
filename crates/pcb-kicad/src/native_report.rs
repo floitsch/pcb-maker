@@ -27,6 +27,32 @@ pub fn is_library_metadata_warning(finding: &Value) -> bool {
     ) && finding["severity"] == "warning"
 }
 
+/// Whether a validated ERC finding is library metadata: a warning about a
+/// symbol's library (`lib_symbol_issues`: not in the table, or not found;
+/// `lib_symbol_mismatch`: differs from the library) or a symbol's
+/// footprint link (`footprint_link_issues`). These depend on the libraries
+/// installed where KiCad runs, not on the design, and pcb-maker runs ERC
+/// without the global libraries (`kicad_config`), so they are kept out of
+/// `erc_violations` and counted in `erc_library_warnings`.
+pub fn is_erc_library_warning(finding: &Value) -> bool {
+    matches!(
+        finding["type"].as_str(),
+        Some("lib_symbol_issues" | "lib_symbol_mismatch" | "footprint_link_issues")
+    ) && finding["severity"] == "warning"
+}
+
+/// Design findings of an already validated ERC report: every sheet's
+/// violations but the library warnings.
+pub fn erc_design_issues(report: &Value) -> Vec<&Value> {
+    report["sheets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|sheet| sheet["violations"].as_array().into_iter().flatten())
+        .filter(|finding| !is_erc_library_warning(finding))
+        .collect()
+}
+
 /// Design findings from an already validated native DRC report. Metadata
 /// warnings remain available in the original report and verification counts.
 pub fn drc_design_issues(report: &Value) -> Vec<&Value> {
@@ -231,9 +257,10 @@ pub(super) fn run_kicad_report(
     input: &Path,
 ) -> Result<(), String> {
     let program = OsStr::new("kicad-cli");
-    // DRC only: ERC's library warnings change too and are not checked yet.
+    // ERC too: its library warnings are not counted (`is_erc_library_warning`).
     let config_home = match arguments.get(..2) {
         Some(["pcb", "drc"]) => crate::kicad_config::drc_config_home(program, input),
+        Some(["sch", "erc"]) => crate::kicad_config::erc_config_home(program, input),
         _ => None,
     };
     run_report_command_cached(
@@ -637,6 +664,18 @@ mod tests {
                 assert!(!name.ends_with(".tmp"), "left {name} in {}", place.display());
             }
         }
+    }
+
+    #[test]
+    fn erc_library_warnings_are_not_design_issues() {
+        let finding = |kind: &str, severity: &str| json!({"type": kind, "severity": severity, "description": "", "items": []});
+        let erc = json!({"sheets": [
+            {"violations": [finding("lib_symbol_issues", "warning"), finding("pin_not_connected", "error")]},
+            {"violations": [finding("footprint_link_issues", "warning"), finding("lib_symbol_mismatch", "warning"),
+                            finding("lib_symbol_issues", "error")]},
+        ]});
+        let kinds: Vec<_> = erc_design_issues(&erc).iter().map(|finding| finding["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["pin_not_connected", "lib_symbol_issues"], "a library rule rated an error counts");
     }
 
     #[test]
