@@ -150,7 +150,7 @@
     "static": "rev1.0/static-lib/static.pretty"
    },
    "library_fixes": {
-    "MX_Only": "afterdark-rev1.0/static-lib/static.pretty"
+    "MX_Only": "rev1.0/static-lib/static.pretty"
    },
    "footprints": {
     "named": 18,
@@ -1308,7 +1308,7 @@
    "symbol_libraries": [],
    "footprint_libraries": {},
    "library_fixes": {
-    "RP2040_minimal": "debugger/RP2040_minimal.pretty",
+    "RP2040_minimal": "RP2040_minimal.pretty",
     "driver_module": "parts/driver_module.pretty",
     "parts": "parts"
    },
@@ -1327,7 +1327,7 @@
    ],
    "status": "ok",
    "files": 18,
-   "size": 1349053,
+   "size": 1349120,
    "schematic": "repo/RP2040_base/RP2040_base.kicad_sch"
   },
   "antmicro__jetson-nano-baseboard__jetson-nano-baseboard": {
@@ -2641,7 +2641,7 @@
    "spdx": null,
    "licence": {
     "allowed": true,
-    "why": "pcb/LICENSE: GPL (non-commercial)",
+    "why": "pcb/LICENSE: AGPL",
     "files": [
      "pcb/LICENSE"
     ]
@@ -2880,7 +2880,7 @@
    },
    "licence": {
     "allowed": true,
-    "why": "COPYING.NEWLIB: LGPL",
+    "why": "COPYING.NEWLIB: free software licence",
     "files": [
      "COPYING.NEWLIB",
      "LICENCE.adventure",
@@ -3035,7 +3035,7 @@
     "MX_Alps_Hybrid": "kicad/pcb_36key/library/MX_Alps_Hybrid.pretty"
    },
    "library_fixes": {
-    "modified_footrprints": "kicad/pcb/library/modified_footprints.pretty"
+    "modified_footrprints": "kicad/pcb_36key/library/modified_footprints.pretty"
    },
    "footprints": {
     "named": 20,
@@ -3192,7 +3192,7 @@
    },
    "licence": {
     "allowed": true,
-    "why": "LICENSE: Creative Commons",
+    "why": "LICENSE: CERN OHL",
     "files": [
      "LICENSE",
      "LICENSE-CC-BY-SA-4.0.txt",
@@ -4033,7 +4033,7 @@
    "spdx": "NOASSERTION",
    "licence": {
     "allowed": true,
-    "why": "LICENSE.md: Creative Commons",
+    "why": "LICENSE.md: CERN OHL",
     "files": [
      "LICENSE.md",
      "hardware/mainboard/LICENSE"

@@ -405,7 +405,16 @@ def harvest(board, refresh):
             for path in files_by_name.get(name_, []):
                 holders[posixpath.dirname(path)] = holders.get(posixpath.dirname(path), 0) + 1
         candidates += sorted(holders, key=lambda folder: -holders[folder])
-        best = max(candidates, key=lambda folder: sum(f"{folder}/{n}.kicad_mod" in sizes for n in names), default=None)
+        # The folder with most of the names; among equals the one nearest
+        # the project (a repository of several boards keeps a copy of a
+        # library per board), then by name.
+        def near(folder):
+            common = posixpath.commonpath([folder, project_dir]) if project_dir else ""
+            return len(common.split("/")) if common else 0
+
+        best = max(sorted(set(candidates)),
+                   key=lambda folder: (sum(f"{folder}/{n}.kicad_mod" in sizes for n in names), near(folder)),
+                   default=None)
         if best is None or not any(f"{best}/{n}.kicad_mod" in sizes for n in names):
             return None
         return best

@@ -1,5 +1,5 @@
 {
- "description": "Schematic tier: 12 harvested boards with a usable schematic (harvest_schematics.py), each imported from its schematic with import-kicad-netlist, given the task list's constraints (moved onto the new footprints by schematic.py), laid out at a third of the work budget and checked with drc-kicad-board. Chosen for mixed size (8 two-layer, 2 four-layer, 2 six-layer; 25 to 443 parts) and for what each exercises in the import (why). Per board: layers, sheets, parts on the designer's board and from the import, board-only parts, footprints missing before the libraries were added, the v16 layout sweep's full-budget seconds and work, and seconds (the expected time at a third of the budget, which orders the runner) and peak_rss_mb (the memory gate) from the tier's first run. README.md, 'The schematic tier'.",
+ "description": "Schematic tier: 12 harvested boards with a usable schematic (harvest_schematics.py), each imported from its schematic with import-kicad-netlist, given the task list's constraints (moved onto the new footprints by schematic.py), laid out at a third of the work budget and checked with drc-kicad-board. Chosen for mixed size (8 two-layer, 2 four-layer, 2 six-layer; 25 to 443 parts) and for what each exercises in the import (why). Per board: layers, sheets, parts on the designer's board and from the import, board-only parts, footprints missing before the libraries were added, the v16 layout sweep's full-budget seconds and work, and seconds (the expected time at a third of the budget, which orders the runner) and peak_rss_mb (the memory gate) from the tier's first run (x1002, 2026-10-15, 4 jobs x 2 threads, build/sch-x1002.log), whose rows are under x1002. README.md, 'The schematic tier'.",
  "tasks": "build/github-tasks-v7/tasks.json",
  "budget_scale": 0.3333,
  "boards": {
@@ -13,8 +13,17 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 80.1,
    "full_budget_work_v16": 30.7,
-   "seconds": 40,
-   "peak_rss_mb": 458
+   "seconds": 33.0,
+   "peak_rss_mb": 1261,
+   "x1002": {
+    "routed": "18/18",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 10,
+    "parity": 0,
+    "stopped": null,
+    "pass": true
+   }
   },
   "duckyb__urchin__main": {
    "layers": 2,
@@ -26,8 +35,19 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 79.6,
    "full_budget_work_v16": 97.3,
-   "seconds": 40,
-   "peak_rss_mb": 871
+   "seconds": 50.6,
+   "peak_rss_mb": 1219,
+   "x1002": {
+    "routed": "68/68",
+    "unconnected": 0,
+    "errors": {
+     "copper_edge_clearance": 3
+    },
+    "vias": 41,
+    "parity": 6,
+    "stopped": "drc",
+    "pass": false
+   }
   },
   "CDFER__Business-Cards__USB_Keypad": {
    "layers": 2,
@@ -39,8 +59,17 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 211.2,
    "full_budget_work_v16": 512.7,
-   "seconds": 106,
-   "peak_rss_mb": 1223
+   "seconds": 179.6,
+   "peak_rss_mb": 2200,
+   "x1002": {
+    "routed": "37/39",
+    "unconnected": 2,
+    "errors": {},
+    "vias": 77,
+    "parity": 0,
+    "stopped": "routing",
+    "pass": false
+   }
   },
   "0xCB-dev__0xCB-Static__0xcb-static": {
    "layers": 2,
@@ -52,8 +81,17 @@
    "missing_before_libraries": 43,
    "full_budget_seconds_v16": 245.7,
    "full_budget_work_v16": 141.0,
-   "seconds": 123,
-   "peak_rss_mb": 1198
+   "seconds": 88.0,
+   "peak_rss_mb": 2203,
+   "x1002": {
+    "routed": "74/74",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 0,
+    "parity": 1,
+    "stopped": null,
+    "pass": true
+   }
   },
   "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
    "layers": 2,
@@ -65,8 +103,19 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 374.3,
    "full_budget_work_v16": 314.2,
-   "seconds": 187,
-   "peak_rss_mb": 2167
+   "seconds": 275.2,
+   "peak_rss_mb": 3481,
+   "x1002": {
+    "routed": "76/76",
+    "unconnected": 0,
+    "errors": {
+     "copper_edge_clearance": 1
+    },
+    "vias": 78,
+    "parity": 1,
+    "stopped": "drc",
+    "pass": false
+   }
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
    "layers": 2,
@@ -78,8 +127,19 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 97.6,
    "full_budget_work_v16": 85.1,
-   "seconds": 49,
-   "peak_rss_mb": 3360
+   "seconds": 323.2,
+   "peak_rss_mb": 4534,
+   "x1002": {
+    "routed": "80/81",
+    "unconnected": 1,
+    "errors": {
+     "copper_edge_clearance": 1
+    },
+    "vias": 87,
+    "parity": 0,
+    "stopped": "routing",
+    "pass": false
+   }
   },
   "headblockhead__slab-pcb__slab-pcb-left": {
    "layers": 2,
@@ -91,8 +151,17 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 548.0,
    "full_budget_work_v16": 440.1,
-   "seconds": 274,
-   "peak_rss_mb": 2222
+   "seconds": 182.9,
+   "peak_rss_mb": 2198,
+   "x1002": {
+    "routed": "76/76",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 261,
+    "parity": 6,
+    "stopped": null,
+    "pass": true
+   }
   },
   "baldengineer__bit-preserve__coco2": {
    "layers": 2,
@@ -104,8 +173,24 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 1061.0,
    "full_budget_work_v16": 853.6,
-   "seconds": 530,
-   "peak_rss_mb": 3944
+   "seconds": 244.0,
+   "peak_rss_mb": 2242,
+   "x1002": {
+    "routed": "159/159",
+    "unconnected": 87,
+    "errors": {
+     "solder_mask_bridge": 199,
+     "hole_to_hole": 48,
+     "courtyards_overlap": 78,
+     "shorting_items": 199,
+     "hole_clearance": 24,
+     "clearance": 73
+    },
+    "vias": 254,
+    "parity": 1,
+    "stopped": "routing",
+    "pass": false
+   }
   },
   "maniekx86__M8SBC-486__homebrew_486": {
    "layers": 4,
@@ -117,8 +202,17 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 1255.5,
    "full_budget_work_v16": 914.7,
-   "seconds": 628,
-   "peak_rss_mb": 3202
+   "seconds": 279.0,
+   "peak_rss_mb": 2810,
+   "x1002": {
+    "routed": "191/191",
+    "unconnected": 0,
+    "errors": {},
+    "vias": 907,
+    "parity": 0,
+    "stopped": null,
+    "pass": true
+   }
   },
   "OpenDrone-hw__OpenFC-Lite__OpenFC": {
    "layers": 6,
@@ -130,8 +224,20 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 396.4,
    "full_budget_work_v16": 563.1,
-   "seconds": 198,
-   "peak_rss_mb": 708
+   "seconds": 199.3,
+   "peak_rss_mb": 2224,
+   "x1002": {
+    "routed": "76/78",
+    "unconnected": 17,
+    "errors": {
+     "clearance": 3,
+     "annular_width": 4
+    },
+    "vias": 155,
+    "parity": 0,
+    "stopped": "routing",
+    "pass": false
+   }
   },
   "tengigabytes__MokyaLora__MokyaLora": {
    "layers": 6,
@@ -143,8 +249,19 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 974.8,
    "full_budget_work_v16": 1366.4,
-   "seconds": 487,
-   "peak_rss_mb": 3281
+   "seconds": 384.5,
+   "peak_rss_mb": 2491,
+   "x1002": {
+    "routed": "261/262",
+    "unconnected": 1,
+    "errors": {
+     "courtyards_overlap": 1
+    },
+    "vias": 395,
+    "parity": 0,
+    "stopped": "routing",
+    "pass": false
+   }
   },
   "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard": {
    "layers": 4,
@@ -156,8 +273,17 @@
    "missing_before_libraries": 0,
    "full_budget_seconds_v16": 1596.7,
    "full_budget_work_v16": 1330.8,
-   "seconds": 550,
-   "peak_rss_mb": 3882
+   "seconds": 273.1,
+   "peak_rss_mb": 2215,
+   "x1002": {
+    "routed": "106/108",
+    "unconnected": 3,
+    "errors": {},
+    "vias": 136,
+    "parity": 16,
+    "stopped": "routing",
+    "pass": false
+   }
   }
  }
 }
