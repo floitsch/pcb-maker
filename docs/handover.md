@@ -1400,7 +1400,64 @@ castor-x862), short tier build/short-x855.log.
 Left: the narrow attempt does not use all the work on every board (Hub
 ended at 577 of 1500 s): a class-width ladder after it with what is left;
 a mode choice for the attempt (the first route's pour mode now; tracks
-probed better on module, koeg and DSP); the via hole-clearance rounding.
+probed better on module, koeg and DSP); the via hole-clearance rounding
+(not rounding: "hole clearance" below).
+
+## Committed on 2026-10-15 (hole clearance)
+
+Jetson's 8 hole_clearance findings (x855 layout) are one 3V3_SYS via at
+(133.219, 122.186), 0.769 from the centre of J2's PTH pad 1 (GND; 0.75
+copper, 0.55 drill). KiCad measures the via's copper (0.25 radius) to the
+pad's hole (0.275 radius): 0.769 - 0.25 - 0.275 = 0.2438 where the
+project's `min_hole_clearance` is 0.25; it lists the pair 8 times. To the
+pad's copper the via kept 0.144 (0.125 needed), hole to hole 0.419 (0.25).
+Not lattice rounding (the via sits on a 0.127 node, the pad off the
+lattice; 0.775 needed, 0.75 kept) and not the narrow width: since b6e3530
+a routed pad's plated hole was a hole obstacle of its net that blocked
+other nets' tracks but not their vias ("vias stay with the pad copper
+rule"), so vias kept only clearance plus copper, which with a 0.1 ring
+and 0.125 clearance is 0.025 short of the hole clearance. The verifier
+skipped it too (`blocks_vias` false), hence 0 internal violations.
+
+Fix (crates/pcb-kicad/src/board_router.rs, crates/pcb-router/src/grid.rs):
+the plated hole blocks vias; the static via map exempts the pad's own net
+through `via_owner` where only the hole reaches (its copper still blocks
+the own net as before). KiCad does not test a net's own copper against its
+holes (every track to a THT pad ends on its drill; none of the 700-odd
+hole_clearance findings in the recent drc.json files under build/ pairs
+items of one net). The verifier now checks other nets' vias against these
+holes. Unit test `other_nets_vias_keep_the_hole_clearance_from_a_plated_hole`
+(J2's geometry: lowering, static map for both nets, verifier 0.2439
+against 0.25); it fails on x855 at the lowering and without the grid
+change at the own-net exemption.
+
+How common: the only finding of this kind in our routers' output. Of 3269
+drc.json files of the last six days under build/ and the worktrees
+(references and Freerouting left out), hole_clearance findings with a via,
+track or zone are this via alone (jetson's x850, x851, x852 and x855
+layouts). build/github-layout-v15 (100 boards) and v16 (39 so far): 20 and
+9 boards with hole_clearance, every one footprint-intrinsic (pad to NPTH
+of the same part, pad holes within J2, MX switch pins), none new against
+the designer (v15's rows: no new hole_clearance).
+
+Jetson in route mode, the a-x855 placement, the layout's narrow attempt
+(`use_narrow_signals`, pours connect, no refine pitches, no retry seeds,
+four threads; clean-up at its default 180 s, the 60 s cap is not a file
+setting), three negotiation budgets per side since the result is chaotic
+(identical up to iteration 48 at 405 s, where the via first differs):
+
+| negotiation | x855 unconnected | x855 via findings | x880 unconnected | x880 via findings |
+| --- | --- | --- | --- | --- |
+| 380 s | 18 | 8 | 17 | 0 |
+| 405 s | 11 | 8 | 16 | 0 |
+| 430 s | 19 | 0 | 15 | 0 |
+
+Sum 48 against 48; the other findings equal on all six (clearance 2,
+courtyards_overlap 1, starved_thermal 4, the designer's 36
+hole_clearance). Short tier x880 against build/short-x855.log (tasks v6):
+all 12 rows identical (42 unconnected, 6 errors, 1176 vias, 22032 mm,
+work 2390 s); none of its boards had a via in that ring.
+Logs: build/repro in the hole-clearance worktree, build/short-x880.log.
 
 ## Freerouting refresh on x738 (2026-10-15, no code changed)
 
