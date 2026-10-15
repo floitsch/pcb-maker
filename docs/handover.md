@@ -1702,6 +1702,21 @@ DSP 228 s) nothing runs; a tracks attempt first instead of connect where
 tracks wins (vaio_re) needs a predictor the probe is not. The ordinary
 ladder fallback's work is still counted only when kept.
 
+## Layout sweep v16 (2026-10-15, x862)
+
+docs/benchmarks.md "Layout sweep v16": 44 of 109 pass (v15 45), unconnected
+3868 to 3527, new errors 289 to 82, better 13 / same 58 / worse 13, 17 rows
+cut by the wall clock at load 16 to 35, which says a phase's wall runs well
+ahead of its counted work on a quiet machine (KiCad DRC inside the layout
+is not counted; the pool's charge is a reference 8-thread pool; candidates).
+New timeouts ULK and poly_kybd_split72_left, the 0xCB pcb-panel ends on
+kicad-cli's 900 s zone refill, SmartSpin2k and OpenESC panels stop with
+parts the placer refuses. A triage agent (x930+) has the cut rows, the
+timeouts, the worse rows and the panels; its section "Triage of v16"
+follows. x862 predates the first-route budget (x855), hole clearance
+(x881), router overhead (x872), pour recalibration (x817) and the second
+narrow attempt (x893); the next sweep carries them.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

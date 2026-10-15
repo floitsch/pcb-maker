@@ -1190,3 +1190,35 @@ so this round used kicad-cli on both sides). Logs:
 `build/github-freerouting-x738.log`, reruns `-fr2.log` and `-katia.log`,
 table `-compare.txt`. Reproduce the summary with
 `freerouting_compare.py build/github-freerouting-x738.log build/github-freerouting-x738.log build/github-freerouting-x738-fr2.log --ours-splice build/github-freerouting-x738-katia.log --previous-ours build/github-ours-cold-all.log --previous-freerouting build/github-freerouting.log build/github-freerouting-2.log build/github-freerouting-3.log`.
+
+## Layout sweep v16 (2026-10-15)
+
+`build/github-layout-v16.log`, binary x862 (main 068de8b: determinism,
+fill rounds two and three, CLI exit codes, DRC cache, placer fixes, ladder
+reservation, clean-up work accounting, inner spokes, hatched zones in the
+tracks rung; it predates the first-route budget, the hole-clearance fix,
+the router overhead round and the second narrow attempt), tasks v6, 5 jobs
+beside other agents (load 16 to 35 for most rows), 20876 s wall.
+
+| | v15 (x723) | v16 (x862) |
+|---|---|---|
+| pass | 45 of 109 | 44 of 109 |
+| unconnected (all rows) | 3868 | 3527 |
+| new DRC errors | 289 | 82 |
+| vias | 25759 | 25335 |
+| CPU s (unpaired) | 189814 | 145292 |
+| rows cut by the wall clock | not reported | 17 |
+| rows without a result | 9 | 10 |
+
+Better 13, same 58, worse 13, 13 cut rows left out of that count. Large
+moves: video 499 to 300 open, SNSP-CPU-01 246 to 168, RP2040_base 173 to
+96, 0xCB panel 210 to 86 (cut), woagboard 26 open and 26 errors to 8 and
+1 (cut), SUMEC 28 to 18, Hub 35 to 30; katia now finishes (104 open);
+molecule 5x4_wave places legally. Worse: ULK and poly_kybd_split72_left
+now time out, the 0xCB pcb-panel ends on kicad-cli's 900 s zone refill,
+SmartSpin2k_Panelized and OpenESC 4in1-panel stop with parts the placer
+refuses, Quanta75 Bare 123 to 132 open (errors 73 to 6), split42_right 46
+to 61 (cut). The 17 cut rows at modest load say some phase's wall runs
+well ahead of its counted work; triage assigned (docs/handover.md
+"Triage of v16"). Compare with
+`python3 benchmarks/agent-tasks/compare.py build/github-layout-v15.log build/github-layout-v16.log`.
