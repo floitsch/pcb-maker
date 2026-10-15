@@ -27,7 +27,15 @@ Each neck is named by its sides (what cut the copper at each of the two
 vertices: another net's pad, track or via, the board edge, the net's own
 thermal relief, a hatch hole, the zone's outline) and by what of the net
 lies at its middle (a spoke or the thermal ring of a pad of the net, the
-pad itself, a track or via of the net, plain fill).
+pad itself, a track or via of the net, plain fill). A "gap" is a pair
+across empty space: KiCad's test is local (the vertices see each other
+from inside), so a slot narrower than the limit between two parts of one
+outline counts as a neck as well.
+
+Usage for the census of 2026-10-15: the designer boards of the tasks with
+`min_connection` set (benchmarks/real/external/github/<name>) and our
+results (build/github-layout-v16/<name>/layout/result, the tiers' result
+directories); `--json` keeps every neck with its vertices.
 """
 
 import argparse
@@ -489,13 +497,16 @@ def necks_of(board):
                     bx, by = points[second]
                     width = math.hypot(ax - bx, ay - by)
                     sides, middle, teardrop = classify(board, zones, layer, netcode, items, shapes, ax, ay, bx, by)
+                    # KiCad pairs vertices across a narrow gap between two
+                    # parts of one outline too (its test is local).
+                    gap = not poly.Contains(pcbnew.VECTOR2I(int((ax + bx) / 2), int((ay + by) / 2)))
                     net = board.FindNet(netcode)
                     rows.append({
                         "net": net.GetNetname() if net else str(netcode), "layer": layer_name,
                         "width": round(width / NM, 4),
                         "x": round((ax + bx) / 2 / NM, 3), "y": round((ay + by) / 2 / NM, 3),
                         "a": [round(ax / NM, 4), round(ay / NM, 4)], "b": [round(bx / NM, 4), round(by / NM, 4)],
-                        "sides": sides, "middle": middle, "teardrop": teardrop,
+                        "sides": sides, "middle": middle, "teardrop": teardrop, "gap": gap,
                     })
     return {"necks": rows}
 
@@ -510,7 +521,9 @@ def find_board(argument):
 def kind_of(neck):
     """A short class of the neck for the summary."""
     sides, middle = neck["sides"], neck["middle"]
-    if middle.startswith("spoke"):
+    if neck.get("gap"):
+        kind = "gap"
+    elif middle.startswith("spoke"):
         kind = "spoke"
     elif middle.startswith("ring"):
         kind = "thermal ring"

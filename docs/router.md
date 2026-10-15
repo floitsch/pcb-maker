@@ -425,6 +425,61 @@ two items and the DRC counts its spokes. The stub changes no connection
 (the island hung on the pad already); it is what KiCad's rule asks for.
 k30's tracks rung: 14 starved thermals to 1; mackerel-30's: 19 to 3.
 
+### KiCad's connection width (necks)
+
+KiCad's `connection_width` check (drc_test_provider_connection_width.cpp,
+10.0.7) runs only when the board setup has a minimum connection width
+(`min_connection`, 0 by default) or a custom `connection_width` rule; the
+netclasses have none. Per net and copper layer it unites every zone fill
+(teardrops are zones), track, flashed via and flashed pad
+(`TransformShapeToPolygon`, `ERROR_OUTSIDE`, `ARC_HIGH_DEF`), fractures
+the union and walks each outline (`POLYGON_TEST`, a `VERTEX_SET`): at every
+concave vertex it looks for the nearest other vertex of the same outline
+that is not its neighbour, nearer than the minimum less twice (DRC epsilon
+0.0005 + the board's max error + the fill's extra margin 0.0005 mm), seen
+from inside, with the outline bulging further than that in x and in y on
+both sides of the cut (`isSubstantial`). Each pair is a finding; its width
+is the two vertices' distance, its place their midpoint (not in the JSON
+report). Nothing is ignored but rule areas; a pad's own copper is part of
+the union. `experiments/pour-fidelity/necks.py` reproduces the check
+vertex for vertex on kicad-cli's own fill (`--refill-zones --save-board`)
+and names each neck; it agrees with KiCad's report on every board that has
+findings (OpenESC's 199 are KiCad's error cap). KiCad's test is local:
+it also pairs vertices across a narrow gap between two parts of one
+outline.
+
+KiCad's filler removes necks narrower than the zone's minimum thickness
+(deflate and inflate, again after other nets' zones are knocked out), so
+on a solid zone with `min_thickness` at least the minimum connection width
+there are none from the fill. What it does not prune, and what the census
+finds: in hatched zones the thermal rings (added after the pruning), the
+border it restores around another net's teardrop in the iterative refill
+(issue 24758, a band of the minimum thickness clipped to the unhatched
+fill), and pad corners against hatch holes; and tracks narrower than the
+minimum (a warning on OpenESC). kicad-cli's DRC with `--refill-zones`
+also rebuilds the teardrops of every pad that has them enabled, which the
+router's pour model knows nothing of.
+
+So the router does not predict them; it repairs them with KiCad's fill
+(`necks.rs`, on; `PCB_KICAD_NO_NECK_REPAIR`). When the final DRC reports
+connection_width errors (errors only: the check's severity is the
+project's, warning on most boards), kicad-cli refills and saves a copy of
+the board, the net's copper on the layer (KiCad's fill outlines, the
+net's pads, tracks and vias) is drawn on a 4 micron raster tile by tile,
+and the passages narrower than the limit that lead to copper wider than
+it on both sides are found from the distance map (a pixel whose wider
+neighbours form two arcs, one each way along the passage). Over each a
+track of the net as wide as the minimum runs along the passage into the
+wide copper on both sides, where it keeps the net classes' clearances to
+other copper and other nets' fills (their teardrops), the hole clearance
+to drills and the edge clearance; shifted sideways or shortened when not.
+The board is checked again; the tracks are kept while the necks go down
+and no other error type or the unconnected count goes up, all together or,
+failing that, by halves (at most six checks). The raster finds the same
+necks KiCad reports on WLED_Matrix and USB_Keypad (7 of 7, 12 of 13, 3 of
+3, 4 of 4). `pcb-maker repair-kicad-necks <dir> <id>` runs it on a routed
+directory; the result's `board-router.json` has `neck_repair`.
+
 ### Plane skeleton (fallback)
 
 When a pour ends up shredded by the signal routing, stitching after the fact

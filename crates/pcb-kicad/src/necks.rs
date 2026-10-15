@@ -258,15 +258,27 @@ fn rasterize(copper: &Copper, origin: core::Point, width: usize, height: usize) 
     filled
 }
 
-/// The necks of one tile, found as KiCad's check sees them: a narrow
-/// place joining two parts of the copper that are each wider than `limit`
-/// somewhere. The copper's pixels are taken from the widest inward (by
-/// their distance to the edge) and joined to the parts they touch; a pixel
-/// narrower than half the limit that joins two parts both wider than the
-/// limit is a neck (the saddle of the distance map). Only necks in the
-/// tile's core (`margin` pixels in from each edge) are returned, each with
-/// a track along the passage to wide copper on both sides.
+/// The necks of one tile. KiCad's check pairs vertices of one outline
+/// closer than the limit with the outline bulging past it on both sides:
+/// a narrow passage of copper between wider copper (repaired here), and
+/// as well a narrow gap between two parts of the net's copper (a slot
+/// between two lobes of a fill, a track of the net beside its fill), not
+/// repaired.
 fn tile_necks(filled: &[bool], width: usize, height: usize, origin: core::Point, limit: f64, margin: usize) -> Vec<Neck> {
+    // The gaps would be the saddles of the space between the copper; they
+    // are left alone: tried, the space's saddles were mostly gaps KiCad
+    // does not report (USB_Keypad: 20 candidates for 3 gaps, 7 to 6
+    // necks against 7 to 3 without them).
+    saddles(filled, width, height, origin, limit, margin)
+}
+
+/// The saddles of `filled`'s distance map: pixels of a passage narrower
+/// than `limit` that leads to room wider than it both ways. Pixels are
+/// taken from the widest inward (by their distance to the edge); a pixel
+/// whose wider neighbours form two arcs lies in such a passage. Only those
+/// in the tile's core (`margin` pixels in from each edge) are returned,
+/// each with a track along the passage into the wide room on both sides.
+fn saddles(filled: &[bool], width: usize, height: usize, origin: core::Point, limit: f64, margin: usize) -> Vec<Neck> {
     let radius = limit / 2.0 / PIXEL;
     let mut inside: Vec<f64> = filled.iter().map(|&copper| if copper { FAR } else { 0.0 }).collect();
     distance_transform(&mut inside, width, height);

@@ -2357,6 +2357,93 @@ except the `constraints` count on MIDAS-MK1.1 (3 to 6), OpenFC (25 to
 now; nothing missed changed.
 Snapshot `build/bin/pcb-maker-x948` (x940 was taken by another agent);
 after the rebase on ad4362f, x949.
+## Committed on 2026-10-15 (connection width)
+
+KiCad's `connection_width` (drc_test_provider_connection_width.cpp, 10.0.7,
+fetched from the 10.0.7 tag): runs only with a board-setup
+`min_connection` (KiCad's default 0) or a custom rule, never from a
+netclass. Per net and copper layer it unites zone fills (teardrops
+included), tracks, flashed vias and flashed pads, fractures the union and
+pairs each concave vertex with the nearest non-neighbouring vertex of the
+same outline closer than the minimum less 2 x (DRC epsilon 0.0005 + max
+error + extra fill margin 0.0005) = 0.115 mm for 0.127, seen from inside
+at that vertex, with the outline bulging past the limit in x and y on both
+sides. Vertex based and local: it also flags narrow gaps between two
+parts of one outline ("gap" below). Position is not in the JSON.
+`experiments/pour-fidelity/necks.py` reproduces it vertex for vertex on
+kicad-cli's own fill (`--refill-zones --save-board`) and agrees with
+KiCad on every board with findings (OpenESC's 199 are KiCad's cap).
+Severity is the project's: error only on three corpus boards (CDFER
+WLED_Matrix 0.127, USB_Keypad 0.127, USB_Cable_Tester 0.1); 15 others
+have it as a warning.
+
+Why our pour model misses them: kicad-cli's DRC with `--refill-zones`
+first rebuilds teardrops for every pad with teardrops enabled (WLED: 3
+zones become 636), and the necks are KiCad filler leftovers its
+min-thickness pruning does not reach, all in hatched zones: the thermal
+rings (added after pruning), the minimum-width border the iterative
+refill restores around other nets' teardrop knockouts, pad corners
+against hatch holes. Census (necks.py; build/necks/designer.txt,
+results.txt, route.json, gaps.json):
+
+| board | KiCad | kinds |
+|---|---|---|
+| designer WLED_Matrix | 4 | fill between pads / by a track (2 near other nets' teardrops), 2 gaps |
+| designer USB_Keypad | 9 | fill near teardrops 5, thermal ring 2, by a track 2; 2 gaps |
+| our WLED, v16 / short-x903 / short-x921 / short-x941 | 4 / 13 / 7 / 13 | GND F.Cu at the RGB LEDs' pad 3: pad copper or relief against hatch holes and the LED's own pad 1, a ring, fill near teardrops |
+| our USB_Keypad, v16 / x903 / x921 / route x941 | 3 / 4 / 3 / 7 | GND F.Cu fill near teardrops, 3 of route's 7 are gaps |
+| warnings: 0xCB pcb (ours) | 14 | thermal rings against other nets' copper |
+| warnings: OpenESC 4in1, 4in1-mini (ours) | 199 cap (855, 1090) | our own tracks narrower than 0.16 |
+| warnings: reCamera, MegaDrive, BAGEL, OpenESC designer | 1-30 | own tracks, a via, fill between pads |
+
+Not modelled in the pour: it would need KiCad's teardrop generator and
+its hatched iterative refill (polygon booleans the router does not have).
+Built instead: a repair with KiCad's fill (`necks.rs`, on,
+`PCB_KICAD_NO_NECK_REPAIR`; docs/router.md "KiCad's connection width").
+When the final DRC has connection_width errors, kicad-cli refills and
+saves a copy, the net's copper (fill outlines, pads, tracks, vias) is
+rasterised at 4 microns, and saddles of the distance map (a pixel
+narrower than the limit whose wider neighbours form two arcs, leading to
+copper wider than the limit both ways within 0.5 mm) are the necks; on
+the boards above it finds exactly KiCad's passages (7/7, 12/13 with one
+duplicate pair, 3/3, 4/4). A track of the net, minimum wide, runs along
+each into wide copper where it keeps class, hole, edge and other-fill
+clearances (shifted or shortened if not); the board is checked again and
+the tracks kept while connection_width drops and nothing else (error
+types, unconnected) rises, by halves if all together fail (at most six
+DRCs). Gaps are not repaired: the space's saddles were mostly gaps KiCad
+does not report (Keypad: 20 candidates, 7 to 6 instead of 7 to 3). A
+track that removes a Keypad neck sometimes adds a zone-zone unconnected
+item in KiCad (not understood; the halving drops it). Cost: two to six
+kicad-cli runs, 45-90 s wall, only on boards with such errors; a hook in
+route_kicad_board's end and in the layout's end (a `necks.json` marker
+stops a second try); `pcb-maker repair-kicad-necks <dir> <id>` runs it on
+a routed directory; `board-router.json` gets `neck_repair`.
+
+Numbers (x950; the commit's binary x951 is the same code plus comments):
+
+- Route mode on the v16 placements, tasks v6, x941 against x950
+  (build/necks-route-x9{41,50}.log): WLED_Matrix connection_width 4 to 0
+  (5 tracks), USB_Keypad 7 to 3 (4 tracks; the 3 left are gaps),
+  USB_Cable_Tester none; unconnected, vias, other errors identical.
+- Short tier (flock, tasks v6) x941 against x950 (build/short-x941.log,
+  build/short-x950.log): new errors 12 to 3, unconnected 35 to 35, vias
+  1129 to 1129, passes 6 to 6, work 2671 to 2671 s, cut 0. Changed rows:
+  WLED_Matrix connection_width 13 to 1 (12 tracks; new errors +11 to +2,
+  the copper_edge_clearance it had), USB_Keypad 4 to 2 (2 tracks kept,
+  under the designer's 9 either way). Every other row identical; the
+  rows' length is the router's (the repair tracks, under a millimetre a
+  board, are not in it). CPU WLED 609 to 637 s, Keypad 517 to 591 s (not
+  a pinned pair).
+- Starved-thermal census (census.py, fill3 KiCad cache, 44 boards) with
+  x950: 162 predicted / 7 missed / 26 false alarms / 2 not modelled, as
+  x912 (the router is untouched).
+- Unit tests `a_thin_bridge_between_two_wide_parts_is_a_neck_a_wide_one_and_a_spike_are_not`,
+  `findings_are_read_from_kicads_report`, `a_repair_track_keeps_its_clearances`.
+
+Open: gaps (fill them along the slot, with KiCad's "same outline"
+condition); the Keypad unconnected item; the WLED neck the repair leaves
+(0.070 at a repair track, x950 short tier).
 
 ## Open problems, ranked
 
