@@ -478,7 +478,13 @@ measured with the layout:
    entries in `constraints.json` (`from_board`, at the designer's spot, the
    pads on the imported board's names of their nets; a reference the
    designer's board repeats gets a new one, `REF**_1`), and the import runs
-   again to put them on the board (since x1071).
+   again to put them on the board (since x1071). Since x1100 the
+   designer's zones go on the board as the layout tier keeps them
+   (`strip-kicad-tracks` of the designer's board: every rule area and the
+   pours that cover a good part of the board, unfilled), each pour on the
+   imported board's name of its net (row field `zones`), and the outline's
+   shapes and the footprints taken from the board keep the designer's ids,
+   so that the project's DRC exclusions still apply.
 3. **Layout** with `layout-kicad-board <project> <board-id> <out> auto <project>/layout.json`
    at the tier's budget (a third, as the short tier), then
    **`drc-kicad-board`** on the result.
@@ -494,11 +500,12 @@ Each row has the layout row's fields and:
 
 | Field | Meaning |
 | --- | --- |
-| `stopped`, `why` | The first stage that fell short: `import` (an import error, or footprints missing: the layout still runs without them), `constraints` (they could not be written, or the layout called them an input error), `placement` (parts without a legal place, constraints missed), `routing` (connections open, by KiCad or the router), `drc` (new errors, or no report); null when the board passed. |
+| `stopped`, `why` | The first stage that fell short: `import` (an import error, or footprints missing: the layout still runs without them), `constraints` (they could not be written, or the layout called them an input error), `placement` (parts without a legal place, constraints missed), `routing` (KiCad's unconnected items, as the pass rule; before x1100 also the router's open connections, so MokyaLora's pass said `routing`), `drc` (new errors, or no report); null when the board passed. |
 | `import` | The import's exit code, `missing_first` (footprints missing before libraries were added) and `libraries_added`. |
 | `missing`, `missing_parts`, `substituted`, `unmatched_pins` | The import's report, after the libraries were added. |
 | `from_board`, `board_versions`, `drifted`, `drifted_footprints` | Footprints taken from the designer's board for want of a library, the board's versions used over the library's, and the library footprints that differ from the board's by more than a fifth on a side or in pad count (the first twelve lines). |
 | `parts` | `designer` and `imported` parts, `matched` (by path or reference), `copied` (board-only netless footprints), `added` (board-only footprints with nets, by `add`), `renamed` (references that differ between board and schematic), `board_only` and `schematic_only` (the first twelve), `dropped` (task entries for a reference the designer's board repeats without a uuid). |
+| `zones` | The designer's zones copied (pours and rule areas, since x1100). |
 | `parity`, `parity_by_type` | KiCad's schematic parity findings on the result. |
 | `drc_line` | `drc-kicad-board`'s line. |
 
@@ -606,6 +613,24 @@ Missing footprints 0 in both runs; parity 31 to 40. The import of all 79
 schematics (`experiments/schematic-import/import_all.py`): complete 34 to
 77, missing footprints 1740 to 10 (handover, "import footprints from the
 board").
+
+**x1100 (the designer's DRC exclusions and zones), 2026-10-15**, 6 jobs x 4
+threads as x1071, under the lock, load 12-32: **8/12 pass, 684 s wall**
+(x1071: 5/12, 1168 s). `build/sch-x1100.log`; unconnected 9 to 8, new
+errors 5 to 0, vias 2877 to 3577, work 2247 to 3710 s. Every row changed
+but spell_tome's:
+
+| Board | x1071 | x1100 | Why |
+| --- | --- | --- | --- |
+| urchin main | 68/68, copper_edge_clearance 3 | **passed** | The designer excludes 5 pads over the edge (`drc_exclusions`, by edge and pad id); the drawn outline and the board's footprints had new ids, so 3 came back. Both keep the designer's ids now. |
+| le_chiffre 36keys | 76/76, copper_edge_clearance 1, 52 vias | **passed**, 62 vias | The same, by the outline's id (its KiCad 7 pads kept their `tstamp` by accident). The GND pours copied. |
+| MokyaLora | 261/262, KiCad 1, courtyards_overlap 1 | **passed** (261/262, KiCad 0), 420 vias | R34 (0 ohm) and R35 (DNP) overlap by design, excluded by footprint id. The open pad is Mtr2's shield (a custom pad the router never reaches, as in the layout tier); the designer's GND pour on six layers joins it, as in the layout tier. At the full budget without the pour (x1072) it stayed open: not the budget. |
+| slab-pcb-left | 74/76, KiCad 2, 419 vias | 75/76, KiCad 1, 474 vias | The budget: at `--budget-scale 1` it passes without the pours (x1072, 718 s of work) and with them (x1100, 332 vias; the layout tier 315). |
+| OpenFC | 80/82, KiCad 2 | 81/82, KiCad 2 | U10 (SOT-23-5 on the back) as in the layout tier: v16 81/82 at the full budget, the short tier's x976 81/82 KiCad 2, the layout tier at a third on x1100 81/82 KiCad 2. 9 zones copied. |
+| TelemetryOnboard | 106/108, KiCad 2 | 106/108, KiCad 3 | The USB-C pair and U1's RX4; the layout tier at a third on x1100 107/108 KiCad 2, v16 at the full budget 107/108 KiCad 1. 43 zones copied (36 rule areas). |
+| USB_Keypad | 37/39, KiCad 2, 94 vias | 37/39, KiCad 2, 110 vias | The layout tier's loss: a decoupling capacitor at -1.9, 12.7 (C11 in v16, C15 in x903 and here), its GND pad off the hatched pour and its 3.3 V pad short of its track. |
+| coco2 | passed, 661 vias | passed, 1144 vias | Its GNDS pours (177 vias on GNDS, 23 before). The layout tier at a third gives 573 vias and 22,373 mm against 26,093: the stack keeps the designer's orientations, the import puts every part at 0 degrees; with the designer's angles on the imported board the same layout gives 549 vias and 22,505 mm, with the stack's position alone 1144 and 26,093 (the placement follows the orientations it starts from). |
+| homebrew_486, bumwings, 0xcb-static | passed | passed | The pours: vias 907 to 1008, 11 to 17, 1 to 2. |
 
 ## Route mode (`--route-from`)
 

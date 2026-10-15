@@ -3675,6 +3675,96 @@ Unit tests: `a_pads_mask_aperture_keeps_the_mask_to_copper_clearance_and_an_unte
 build/mask{,2,3}-*.log, build/short-x1053.log, build/short-x1054.log,
 build/mask-census-*.json, build/mask-thermal-census-x1054.txt.
 
+## Committed on 2026-10-15 (schematic tier failures)
+
+Triage of the seven failing rows of the schematic tier's x1071
+(`build/sch-x1071.log`). Binaries: x1100 (the branch on f1698bf, measured),
+x1101 (rebased on 8136361, main's x1055), x1102 (rebased on 2ab5ef5,
+main's x1093); no tier on either. Runs, one per
+side: the boards at the full budget (`--budget-scale 1`) on x1072 (main's
+code: MokyaLora, slab-pcb-left) and x1100 (slab-pcb-left), the layout tier
+at a third on x1100 (tasks v7: coco2, OpenFC, TelemetryOnboard;
+`build/schfail-layout-third-x1100.log`), the layout tier's v16 and x903
+rows.
+
+| Board (x1071) | Mechanism | Specific to the schematic flow? | Done |
+| --- | --- | --- | --- |
+| urchin, copper_edge_clearance 3 | The designer's `.kicad_pro` excludes 5 pads over the edge (`copper_edge_clearance\|x\|y\|<edge id>\|<pad id>`); the tier drew the outline with ids of its own and the import gave the board's footprints new pad ids, so 3 of the 5 came back as new errors (the designer's run counts 2, the other 3 being excluded). Our edge floor and the outline's position were not it: rules (0 mm) and geometry identical. | Yes (ids) | Fixed: passes |
+| le_chiffre, copper_edge_clearance 1 | The same: one excluded pad, its KiCad 7 pad `tstamp` kept by accident (the renewal only knew `uuid`), the outline's id new. | Yes | Fixed: passes |
+| MokyaLora, KiCad 1 unconnected | Mtr2's shield pad (a custom pad with primitives, GND, on the back): the router never reaches it (261/262 in the layout tier too), KiCad joins it through the designer's GND pour on six layers, which the tier did not copy (it got the router's automatic In1/In4 planes). At the full budget without it (x1072): still open. | Yes (zones) | Fixed: passes |
+| MokyaLora, courtyards_overlap 1 | R34 (0 ohm) and R35 (DNP) at the same spot by design, excluded by footprint ids in the project. | Yes (ids) | Fixed |
+| slab-pcb-left, KiCad 2 | The budget: at the full budget it passes without the pours (x1072, 76/76, 718 s of work) and with them (x1100, 76/76, 332 vias; the layout tier v16 315). | No | Budget (x1100 at a third: 75/76, KiCad 1) |
+| USB_Keypad, KiCad 2 | The layout tier's own loss at every budget: a decoupling capacitor at -1.9, 12.7 (C11 in v16, C15 in x903 and x1100), its GND pad off the hatched pour, its 3.3 V pad short of its track. | No | - |
+| OpenFC, KiCad 2 | U10 (SOT-23-5 on the back): v16 81/82 at the full budget (U10 pad 5), short-x976 81/82 KiCad 2, the layout tier at a third on x1100 81/82 KiCad 2; with the designer's pours a GND island on B.Cu (zone to zone) and U10's pad 5. | No | - |
+| TelemetryOnboard, KiCad 2 | The routing at the budget: the USB-C pair and U1's pins; the layout tier at a third 107/108 KiCad 2, v16 at the full budget 107/108 KiCad 1 (J1's D+ pair). | No | - |
+
+Candidates ruled out: the generated `fixed`/`place`, `edge`, `back`/`front`
+and `add` entries (the failing parts were at the designer's spots and
+sides, footprints identical to the designer's; the drawn outline identical
+shape for shape on urchin), drift (none on these boards but OpenFC's four,
+which cost nothing since x1071).
+
+**Fixes:**
+- *The designer's DRC exclusions apply* (`netlist_import.rs`,
+  `kept_uuid`): with `--footprints-from`, a symbol's own footprint (and a
+  `from_board` `add`) keeps the board footprint's uuid and its pads' and
+  drawings' ids, the first time that board footprint is used (a copy of
+  it as a template for another part gets new ones), as KiCad's "Update
+  PCB from Schematic" keeps them. Library footprints renew `tstamp` ids
+  too (KiCad 6 and 7 files): every instance of one had the same ids.
+  `schematic.edge_cuts` keeps each Edge.Cuts shape's id (`uuid` or
+  `tstamp`). docs/agents.md says so. Test
+  `footprints_from_the_board_keep_their_ids_for_the_drc_exclusions`
+  (the board's ids kept for the own footprint and the add, new ones for a
+  copy, the KiCad 6 library's tstamps renewed, no id twice; fails on the
+  old code twice over).
+- *The designer's zones* (`schematic.zones`, run.py): the designer's board
+  through `strip-kicad-tracks` (what the layout tier keeps: rule areas and
+  the pours covering a good part of the board, unfilled), its zones in
+  KiCad 10's syntax (`(net "GND")`, `uuid`) on the imported board's names
+  of their nets (`designer_matches`, shared with `additions`). Rows have
+  `zones` (1 to 43 per board). A tier-generation gap: every one of the 12
+  boards has pours (2-layer boards were routed without any, 4- and
+  6-layer ones with the router's automatic planes) and 4 have rule areas
+  (TelemetryOnboard 36, MokyaLora 10). All 12 generated boards load in
+  KiCad (kicad-cli DRC exit 0, every pour's net on the board).
+- *`stopped` follows the pass rule*: `routing` only on KiCad's unconnected
+  items (MokyaLora passed at 261/262 with KiCad at 0 but said `routing`).
+- Tests `benchmarks/agent-tasks/test_schematic.py` (outline ids, zones in
+  KiCad 10's syntax on the imported nets, rule areas without a net, a
+  net no pad shows keeps its name, KiCad 10 designer zones).
+
+**Schematic tier** x1100 against `build/sch-x1071.log`, 6 jobs x 4 threads,
+under the lock, load 12-32: **5/12 to 8/12** (684 s wall against 1168),
+unconnected 9 to 8, new errors 5 to 0, vias 2877 to 3577, work 2247 to
+3710 s, cut 0. Passes: urchin and le_chiffre (exclusions), MokyaLora (the
+pour and the exclusion). Every row but spell_tome's changed, each
+explained in the tier README ("x1100"): the pours add vias (coco2 661 to
+1144, homebrew_486 907 to 1008, USB_Keypad 94 to 110) and work (the router
+analyses pours; slab-pcb-left 74/76 to 75/76, TelemetryOnboard KiCad 2 to
+3, OpenFC 80/82 to 81/82).
+
+coco2's vias against the layout tier at a third (573 vias, 22,373 mm
+against 1144 and 26,093): not the pours (GNDS vias 177 against 140) but
+the orientations. The same imported coco2 board laid out again by hand
+(x1100, a third, 4 threads) with every movable part stacked at the
+layout tier's point gives the tier's row exactly (1144, 26,093); with the
+designer's angles set on the parts (pads turned with them) 549 vias and
+22,505 mm. The layout tier's stack keeps the designer's orientations, the
+import puts every part at 0 degrees, and the placement follows the
+orientations it starts from. Open problem 9, item 8.
+
+**Short tier** (tasks v6, `--threads 4 --jobs 2`, under the lock) x1100
+against `build/short-x976.log`: 12 of 12 rows identical (routed, vias,
+length, work, KiCad; unconnected 35, new errors 3, 1129 vias, passes 6,
+work 3236 s, cut 0). The import and the
+schematic tier's scripts are not on the layout tier's path.
+
+`cargo test --release -p pcb-kicad` (342 on x1102), `agent_walkthrough` and
+`cli_exit_codes` pass. Logs: build/sch-x1100.log, build/schfail-full-x1072.log,
+build/schfail-full-x1100.log, build/schfail-four-x1100.log (the first
+four boards), build/schfail-layout-third-x1100.log, build/short-x1100.log.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
@@ -3849,6 +3939,22 @@ build/mask-census-*.json, build/mask-thermal-census-x1054.txt.
       finds out of KiCad 10's order or form, where it can. Small.
    7. *Panels and boards without a schematic of their own* (10 boards,
       plus two panels whose schematic is a single copy): not targets.
+   8. *The import puts every part at 0 degrees, and the placement follows
+      the orientations it starts from* (2026-10-15, schematic tier
+      failures): coco2 laid out from the imported board gives 1144 vias
+      and 26,093 mm, with the designer's angles set on the same imported
+      board 549 vias and 22,505 mm (the layout tier, whose stack keeps
+      the designer's angles: 573, 22,373). So the layout tier is helped by
+      the designer's orientations, and an agent's own board is not.
+      Proposal: the placement race seeds orientations of its own (per
+      part, the angle that shortens its nets to the parts already placed,
+      or the angles of the part's neighbours of one footprint), measured
+      on the schematic tier and on the layout tier with the stack's
+      angles zeroed. Medium.
+   9. *The schematic tier's remaining failures are the layout tier's*
+      (x1100): OpenFC's U10 on the back, TelemetryOnboard's USB-C pair,
+      USB_Keypad's capacitor at -1.9, 12.7, slab-pcb-left's budget (passes
+      at the full budget).
 
 ## Where things are
 
