@@ -2706,7 +2706,7 @@ regions do not change (0.1 mm display), the 0xCB panel's cut moves from
 82.7 to 82.0 (the board's middle). In addition each confined part starts
 global placement at its region's centre (`Constraints::starts`, read by
 `global_place`; parts without one start as before). place-kicad-board on
-v16's prepared SmartSpin2k (4 threads): x990 78 unplaced; the shifted
+v16's prepared SmartSpin2k (4 threads): x990 57 parts without a legal place; the shifted
 regions alone complete (final wirelength 14217 mm); shifted regions and
 starts complete (12219 mm). Only boards where keep_copies fires change:
 by a replica of its test over the 109 tasks of v7, SmartSpin2k and the
