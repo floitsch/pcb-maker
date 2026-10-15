@@ -1538,12 +1538,12 @@ mod tests {
         let written = serde_json::to_string(&constraints.edge[1]).unwrap();
         assert!(!written.contains("uuid"), "{written}");
 
-        let (mut problem, mut references, pads) = problem();
+        let (mut fresh, mut references, pads) = super::tests::problem();
         references[2] = "C1".to_string();
         let unknown: KiCadPlacementConstraints =
             serde_json::from_str(r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "uuid": "aaaa"}]}"#).unwrap();
         let error = apply_constraints(
-            &mut problem,
+            &mut fresh,
             &references,
             &pads,
             &[Vec::new(), Vec::new(), Vec::new()],
