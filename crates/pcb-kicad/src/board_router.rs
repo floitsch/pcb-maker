@@ -882,7 +882,7 @@ fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, Stri
     let Some(&diameter) = values.first().filter(|diameter| **diameter > 0.0) else {
         return Ok(None);
     };
-    let (sin, cos) = (-form_at(pad)?[2]).to_radians().sin_cos();
+    let (sin, cos) = quarter_sin_cos(-form_at(pad)?[2]);
     Ok(Some(match values.get(1) {
         Some(&height) if (height - diameter).abs() > 1.0e-9 => {
             let (long, short) = (diameter.max(height), diameter.min(height));
@@ -1755,7 +1755,7 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
     let offset = match pad.child("drill").filter(|drill| drill.child("offset").is_some()) {
         Some(drill) => {
             let (x, y) = (form_f64(drill, "offset", 1).unwrap_or(0.0), form_f64(drill, "offset", 2).unwrap_or(0.0));
-            let (sine, cosine) = (-pad_at[2]).to_radians().sin_cos();
+            let (sine, cosine) = quarter_sin_cos(-pad_at[2]);
             [x * cosine - y * sine, x * sine + y * cosine]
         }
         None => [0.0, 0.0],

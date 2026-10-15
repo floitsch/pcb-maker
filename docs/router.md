@@ -793,6 +793,21 @@ margin: video's placement took 980-1275 s of wall clock for 193 s of work
 on four pinned cores beside other jobs), and the harness's timeout. Both
 are reported as above.
 
+**The order of the file** (2026-10-16): the lowering takes pads and
+obstacles in the order the board holds them, and that order reached the
+board (homebrew_486's race kept another seed from a file that differed
+from another in pcbnew's order of each footprint's graphics). Every
+command that places or routes sorts the board as it reads it
+(`canonical_order::parse_board`): footprints by reference (natural
+order), then uuid; in each footprint the pads by number, then position,
+the graphics by layer and content, the zones by content, each kind in
+the places it held. So two saves of one board (KiCad's, the import's,
+the schematic flow's) route alike, and the boards written are in that
+order (the placed and the routed board are byte-identical from any input
+order). Top-level graphics, zones, tracks and the net list are not
+sorted (KiCad's save sorts those too, by uuid; nothing measured here
+followed them).
+
 ## Known limits / next steps
 
 - Two copper layers, through vias only (the core is N-layer; the adapter is

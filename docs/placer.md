@@ -528,9 +528,11 @@ now (C3 at 90 rather than 270, D4 one key pitch over).
   never changes a footprint's side by itself (`back`/`front` constraints
   do, see [constraints.md](constraints.md)), so the orientation search
   has no mirror to try.
-- The placement depends on the order of the footprints in the file (as
-  chaotically as it did on the start angles); the router on the order of
-  a footprint's graphics.
+- The board's top-level items (graphics, zones, tracks, the net list)
+  are taken in the file's order; only the footprints and their own items
+  are sorted (see "Order independence" above). Nothing measured follows
+  them yet; a save that changes numbers (pcbnew writes -180 for 180)
+  is another input, not another order.
 - Constraints: see [constraints.md](constraints.md). No alignment
   constraints yet.
 - Congestion drives nudges of individual parts, but does not yet feed the

@@ -592,7 +592,7 @@ fn body_on_side(footprint: &Expr, outline: &str, skip: Option<&str>) -> Result<(
                 let at = form_at(child)?;
                 let size = pad_extent(child);
                 // Pad angles are absolute; bring the pad box into the local frame.
-                let (sin, cos) = (-(at[2] - footprint_angle)).to_radians().sin_cos();
+                let (sin, cos) = quarter_sin_cos(-(at[2] - footprint_angle));
                 // Copper must keep a hole's local clearance, so no other
                 // part's pads may come that close either.
                 let keep_away = if child.children().get(2).and_then(Expr::atom)
@@ -1252,7 +1252,7 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
             Some("pad") => {
                 let at = form_at(child)?;
                 let size = form_xy(child, "size").unwrap_or([0.0, 0.0]);
-                let (sin, cos) = (-(at[2] - footprint_angle)).to_radians().sin_cos();
+                let (sin, cos) = quarter_sin_cos(-(at[2] - footprint_angle));
                 grow(
                     &mut pads,
                     [at[0], at[1]],
@@ -2003,7 +2003,7 @@ pub(super) fn lower_placement(
             // footprint's frame.
             let pad_at = form_at(pad)?;
             let size = pad_extent(pad);
-            let (sin, cos) = (-(pad_at[2] - at[2])).to_radians().sin_cos();
+            let (sin, cos) = quarter_sin_cos(-(pad_at[2] - at[2]));
             // A non-plated hole keeps its own clearance, and the board's
             // hole clearance, from other copper: the clearance tests add
             // the copper clearance to the box, so the box takes the rest.

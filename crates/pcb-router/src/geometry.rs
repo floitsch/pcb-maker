@@ -52,9 +52,26 @@ impl Aabb {
     }
 }
 
+/// The sine and cosine of an angle in degrees, exact for quarter turns: a
+/// board file says 180 or -180, 270 or -90 for one angle, and the rounding
+/// of `to_radians().sin_cos()` differs between them (the sign of 1e-16).
+pub fn degrees_sin_cos(degrees: f64) -> (f64, f64) {
+    let quarter = (degrees / 90.0).round();
+    if (degrees - quarter * 90.0).abs() < 1.0e-9 {
+        match (quarter as i64).rem_euclid(4) {
+            0 => (0.0, 1.0),
+            1 => (1.0, 0.0),
+            2 => (0.0, -1.0),
+            _ => (-1.0, 0.0),
+        }
+    } else {
+        degrees.rem_euclid(360.0).to_radians().sin_cos()
+    }
+}
+
 impl Shape {
     pub fn rectangle(center: Point, half_size: Point, angle_degrees: f64) -> Self {
-        let (sin, cos) = angle_degrees.to_radians().sin_cos();
+        let (sin, cos) = degrees_sin_cos(angle_degrees);
         let corner = |x: f64, y: f64| {
             [
                 center[0] + x * cos - y * sin,

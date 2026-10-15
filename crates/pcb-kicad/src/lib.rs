@@ -11541,10 +11541,10 @@ impl ObstacleGeometry {
                 half_size,
                 angle_degrees,
             } => {
-                let radians = angle_degrees.to_radians();
+                let (sine, cosine) = quarter_sin_cos(*angle_degrees);
                 let extent = [
-                    radians.cos().abs() * half_size[0] + radians.sin().abs() * half_size[1],
-                    radians.sin().abs() * half_size[0] + radians.cos().abs() * half_size[1],
+                    cosine.abs() * half_size[0] + sine.abs() * half_size[1],
+                    sine.abs() * half_size[0] + cosine.abs() * half_size[1],
                 ];
                 GeometryAabb {
                     minimum: [center[0] - extent[0], center[1] - extent[1]],
@@ -12480,10 +12480,15 @@ fn form_at(node: &Expr) -> Result<[f64; 3], String> {
     ])
 }
 
+/// The sine and cosine of an angle in degrees, exact for quarter turns
+/// (`pcb_router::geometry::degrees_sin_cos`): one angle written 180 or
+/// -180, 270 or -90 by two saves lowers alike.
+fn quarter_sin_cos(degrees: f64) -> (f64, f64) {
+    pcb_router::geometry::degrees_sin_cos(degrees)
+}
+
 fn rotate_vector(vector: [f64; 2], degrees: f64) -> [f64; 2] {
-    let radians = degrees.to_radians();
-    let cosine = radians.cos();
-    let sine = radians.sin();
+    let (sine, cosine) = quarter_sin_cos(degrees);
     [
         vector[0] * cosine - vector[1] * sine,
         vector[0] * sine + vector[1] * cosine,
