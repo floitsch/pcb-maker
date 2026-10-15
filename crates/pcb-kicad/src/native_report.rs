@@ -351,9 +351,7 @@ pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), St
         .args(["pcb", "drc", "--refill-zones", "--save-board", "--severity-error", "--format", "json", "--output"])
         .arg(report)
         .arg(board);
-    if let Some(home) = crate::kicad_config::drc_config_home(program, board) {
-        command.env("KICAD_CONFIG_HOME", home);
-    }
+    crate::kicad_config::configure_drc(&mut command, program, board);
     let (status, transcript) = run_bounded(&mut command, scratch)?;
     if !status.success() {
         return Err(format!("kicad-cli failed with {status}: {transcript}"));

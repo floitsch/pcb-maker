@@ -1309,12 +1309,12 @@ fn own_pad_gaps(board: &Expr, project: &Path, board_id: &str) -> Result<BTreeMap
     fs::write(&board, format!("{}\n", encode(&spread))).map_err(|error| format!("failed to write {}: {error}", board.display()))?;
     let report = directory.join("drc.json");
     // Without kicad-cli (a netlist from elsewhere) there is no check.
-    let Ok(output) = Command::new("kicad-cli")
-        .args(["pcb", "drc", "--format", "json", "--severity-error", "-o"])
-        .arg(&report)
-        .arg(&board)
-        .output()
-    else {
+    // Only clearance findings are read: KiCad's configuration without
+    // libraries (`kicad_config`) spares the footprint library load.
+    let mut command = Command::new("kicad-cli");
+    command.args(["pcb", "drc", "--format", "json", "--severity-error", "-o"]).arg(&report).arg(&board);
+    crate::kicad_config::configure_drc(&mut command, std::ffi::OsStr::new("kicad-cli"), &board);
+    let Ok(output) = command.output() else {
         let _ = fs::remove_dir_all(&directory);
         return Ok(BTreeMap::new());
     };

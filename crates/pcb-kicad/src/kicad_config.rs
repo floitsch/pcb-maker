@@ -19,8 +19,10 @@
 //! the board's project sets a `lib_footprint_*` severity to `error` (its
 //! library findings would then count), when the project file cannot be
 //! read as JSON, and when the directory cannot be prepared. ERC keeps the
-//! user's configuration: its library warnings change too and have not been
-//! checked.
+//! user's configuration: with empty tables `lib_symbol_issues`,
+//! `lib_symbol_mismatch` and `footprint_link_issues` change (warnings, but
+//! `erc_violations` counts every ERC finding; docs/handover.md, "KiCad
+//! check cost").
 
 use std::{
     ffi::OsStr,
@@ -74,6 +76,14 @@ pub(crate) fn drc_config_home(program: &OsStr, input: &Path) -> Option<PathBuf> 
             warn(&error);
             None
         }
+    }
+}
+
+/// Points `command`, a kicad-cli DRC of `input`, at the configuration
+/// without libraries when [`drc_config_home`] gives one.
+pub(crate) fn configure_drc(command: &mut std::process::Command, program: &OsStr, input: &Path) {
+    if let Some(home) = drc_config_home(program, input) {
+        command.env("KICAD_CONFIG_HOME", home);
     }
 }
 

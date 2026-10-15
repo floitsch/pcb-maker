@@ -3574,6 +3574,59 @@ missed everywhere (designer checks 1.5-14.8 s). The per-check CPU saving
 is the six-board table above. Tier wall 1161 s.
 build/short-x1091.log.
 
+**Follow-up: ERC checked, import DRC configured (x1095 on cc9c4df, x1096
+rebased on 8216bc9).**
+
+The DRC that `netlist_import.rs` runs for the pad check now takes the
+library-free configuration (`kicad_config::configure_drc`, which
+`run_kicad_save_board` uses too). It reads only clearance findings.
+
+ERC stays on the user's configuration. I ran `sch erc --format json
+--severity-all` on the designer schematics of the twelve schematic-tier
+boards and Castor's, user configuration against empty tables
+(`judge_erc.py`, `results/erc-2026-10-15.log`):
+- Every type is identical except three warnings: `lib_symbol_issues`,
+  `lib_symbol_mismatch` and `footprint_link_issues`. They change on all
+  thirteen.
+- The ERC drops from 2.0-6.3 s / 6-13 CPU s / 1.2-1.5 GB to 0.4-2.7 s /
+  0.4-2.7 CPU s / 0.26-0.37 GB.
+- The condition "only `lib_*` types differ" fails on
+  `footprint_link_issues`.
+- More important, `erc_violations` in verification.json counts every ERC
+  finding, warnings included, and `complete` needs it to be 0. With empty
+  tables the totals rise: spell_tome 0 to 38, TelemetryOnboard 3 to 351,
+  homebrew_486 19 to 436. spell_tome's verification would no longer be
+  complete.
+
+So moving ERC means first deciding that these three warnings are library
+metadata, like `is_library_metadata_warning` for the DRC, and leaving them
+out of `erc_violations`. That changes what verification.json counts (it
+already depends on the libraries installed: `lib_symbol_mismatch` 240 on
+coco2 under the user's configuration). It is not done.
+
+Schematic tier under the lock (`--jobs 6 --threads 4 --min-free-gb 20`,
+tasks v7, load 18-42), x1095 against build/sch-x1100.log:
+- All 12 rows are identical except time, memory and the DRC cache line.
+  8 pass. Objectives are the same: unconnected 8, new errors 0, 3577 vias,
+  92070 mm, work 3710 s.
+- Parity is identical per row (40 issues: OpenFC 5, TelemetryOnboard 16,
+  slab-pcb-left 6, urchin 6, bumwings 7).
+- Errors, unconnected items and warnings in every `drc_line` are the same.
+  Only the cosmetic counts differ: x1100's reports had the user's
+  `lib_footprint_*` warnings.
+- Peak RSS: OpenFC 2246 to 1270 MB, USB_Keypad 2292 to 1280, spell_tome
+  2185 to 1263, 0xcb-static 2273 to 1360, TelemetryOnboard 2263 to 1975.
+  The others are their layout's.
+- CPU 5208 to 5024 s.
+- x1100 shows the user's library warnings, so most of this saving is the
+  DRC override of 2ab5ef5 plus the pad check.
+
+Tests: `cargo test --release -p pcb-kicad` (344) and `-p pcb-maker --test
+cli_exit_codes --test agent_walkthrough` (7 and 2) pass. Not covered:
+`sch export netlist` in the import, the preview SVG export and the fab
+exports still run on the user's configuration. They may load the symbol
+libraries; this was not measured.
+
 ## Committed on 2026-10-15 (solder mask bridges, x1050-x1054)
 
 The premise (our vias bridge pads of other nets) does not hold: no via-pad
