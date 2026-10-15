@@ -2658,6 +2658,98 @@ Unit tests: `the_floored_reserve_is_enough_for_the_step_to_run`,
 Logs: worktree pcb-maker-reserve2, build/runs (rows.py prints the rows
 with the ladder's reserve, rungs and step lines; cold-x960 the cold
 route), build/short-x960.log.
+## Committed on 2026-10-15 (panel fixes)
+
+The two panel defects of the v16 triage (part 4). x1000 = this on
+9ce95b1; x1001 = the same after the rebase on 6099e13 (necks only).
+
+**1. Entries for a repeated reference name their footprint by uuid.**
+The task generator writes an edge and rotation entry only for the copies
+the designer put at an edge, in board order; x792's in-turn rule bound the
+n-th entry to the n-th footprint of that reference, so the entries landed
+on other copies. Now an `edge`, `rotation` or `place` entry may carry
+`uuid` (the footprint's `uuid`, `tstamp` in KiCad 5-7 files;
+`describe-kicad-board` lists it): it binds that footprint, a uuid no
+footprint of the reference has is an error, and entries without one keep
+the in-turn rule (hand-written constraints; docs/constraints.md).
+`from_pcbench.py` writes `uuid` for every entry of a repeated reference.
+**Tasks v7** (`build/github-tasks-v7`, the existing generator with
+`--corpus` on the absolute-path copy of boards.json, x1000's
+describe-kicad-board): tasks.json byte-identical to v6, 103 constraint
+files identical, six differ only by uuids (the five molecules and
+OpenESC's 4in1-panel, one entry). Binaries before x1000 reject v7's six
+files (unknown field `uuid`); the other 103 are v6's.
+Judge, every part fixed at the designer's spots (`move_all` off, the
+task's constraints, place-kicad-board): missed constraints x990 on v6 /
+x1000 on v7: 4x4 29 / 0 (17 of them on J1, J3, J4, the triage's count;
+the rest on J5, J6), 4x5 31 / 0, 5x2_shifted 14 / 0, 5x4_wave 10 / 0,
+7x5_wave_left 19 / 0. With J5, J6 and J9 free (the rest fixed): 5x4_wave
+and 7x5_wave_left complete; 4x4 (J5, J6), 4x5 (J5, J6) and 5x2 (J5)
+still find no legal place for some back connectors. That is geometry, not
+binding: at the designer's poses (`PCB_PLACER_DESIGNER`) neighbouring
+tiles' J5 and J6 lie 0.03 mm apart on the back (centres 2.03 mm, pad
+bodies 2 mm wide) and the edge tiles' J5 0.016 mm from the board edge
+(the copper-to-edge floor is 0.02 mm).
+
+**2. keep_copies regions follow the copies' layout, and copies start in
+their own region.** SmartSpin2k's 57 unplaced parts were the rule's, not
+only the start's: its fixed parts sit at the top of each copy (2.3 mm
+from the board's top edge, 40.5 mm from its bottom), so the cut halfway
+between two copies' fixed parts ran through a copy's own parts: 162 of
+the designer's 630 movable parts lay outside their copy's region
+(the 3 x 3 copies got rows 50.7, 65.3 and 88.9 mm high). The cut now
+moves from halfway by half the difference of the board's margins beyond
+all copies' fixed parts, clamped between the two copies (each copy's
+region lies around its fixed parts as the board lies around all of
+them): 0 of 630 outside, rows of 67.6, 65.3 and 72 mm. The 0xCB pcb-panel's
+regions do not change (0.1 mm display), the 0xCB panel's cut moves from
+82.7 to 82.0 (the board's middle). In addition each confined part starts
+global placement at its region's centre (`Constraints::starts`, read by
+`global_place`; parts without one start as before). place-kicad-board on
+v16's prepared SmartSpin2k (4 threads): x990 78 unplaced; the shifted
+regions alone complete (final wirelength 14217 mm); shifted regions and
+starts complete (12219 mm). Only boards where keep_copies fires change:
+by a replica of its test over the 109 tasks of v7, SmartSpin2k and the
+two 0xCB panels.
+
+**Layouts, one run each** (four threads, jobs of two, load 12-30; tasks
+v6 for x990, v7 for x1000; placed = movable parts with a legal place):
+
+| board | before | x1000 |
+| --- | --- | --- |
+| SmartSpin2k_Panelized | x990: 57 parts without a legal place (exit 1, 185 s) | 630/630 placed, 568/585 routed, KiCad 19 unconnected, 0 new errors (the designer's 199 invalid_outline subtracted), 1036 vias, 1218 s of work, not cut, 924 s |
+| poly_kb_molecule_4x4 | v16: 4 unplaced, 8 illegal (J5, J6, SW1) | 157/160 (J5, J6 twice), no constraint missed |
+| poly_kb_molecule_4x5 | v16: 6 unplaced, 17 illegal | 190/196 (J3, J5 three times, J6 twice, SW1) |
+| poly_kb_molecule_5x2_shifted | v16: 2 unplaced (J5, J6) | 129/130 (J5) |
+| poly_kb_molecule_5x4_wave | v16: placed, 2/28 routed, 499 unconnected, 5 starved | placed, 3/28 routed, 499 unconnected, 6 starved_thermal, 501 vias, 937 s |
+| poly_kb_molecule_7x5_wave_left | v16: 1 unplaced (J9) | 234/235 (J9) |
+| OpenESC 4in1-panel (information) | v16: 207 parts (load 54) | 199 parts without a legal place: crowding (one net group, no copies) |
+
+The molecules now place the designer's fixed parts' edges right, but
+from the stack the back connectors still need the designer's 0.03 mm
+gaps (above); the next step there is pad-level spacing for same-net
+pads of neighbouring parts on one side, not constraints. 5x4_wave's 499
+unconnected are its routing (25 of 28 connections open in both).
+
+**Identity.** place-kicad-board with the short tier's prepared sources
+and layout.json (build/short-x941, tasks v6), x990 against x1000:
+byte-identical boards on spell_tome_bottom, USB_Cable_Tester, urchin,
+eternal-keypad, OpenFC and Blue_Line. Short tier on x1000 (tasks v6, 2
+jobs x 4 threads, under the lock, `build/short-x1000.log`) against
+build/short-x941.log: compare.py same 12, unconnected 35 to 35, passes 6
+to 6, new errors 12, vias 1129, length 22253 mm, work 2671 s, first-route
+open terminals 61; every layout's placed board and result board
+byte-identical. The only row field that differs is `constraints` on
+MIDAS-MK1.1 (3 to 6), OpenFC (25 to 50) and reCamera (1 to 2): x941
+(ad4362f) predates the placement room commit, which lists the tasks'
+`rotation` entries (as x948 against x921).
+
+Unit tests: `a_repeated_reference_entry_with_a_uuid_names_that_footprint`
+(placement_constraints), the shifted cut and the starts in
+`copies_of_a_tabbed_panel_keep_their_parts` (board_placer),
+`global_placement_starts_parts_where_a_start_says` (pcb-placer tests).
+Logs: build/panels-x1000.log, build/panels-ss-x990.log,
+build/panels-ss-x1000.log. Snapshots x1000, x1001.
 
 ## Open problems, ranked
 

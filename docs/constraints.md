@@ -39,7 +39,15 @@ takes the constraints inline.
 ```
 
 Parts are named by reference. `fixed`, `back`, `front`, `hollow` and the
-`parts` of `region`, `group` and `row` also take glob patterns (`*`, `?`). Coordinates are millimetres, in KiCad's orientation: y grows
+`parts` of `region`, `group` and `row` also take glob patterns (`*`, `?`).
+A reference several footprints share (a panel's copies) names all of them
+in `fixed` and the other lists; an `edge`, `rotation` or `place` entry for
+it is about one footprint: the one whose `uuid` the entry gives
+(`{"part": "J3", "edge": "left", "uuid": "0000...613f4ae5"}`; the
+footprint's `uuid`, or `tstamp` in KiCad 5 to 7 files, as
+`describe-kicad-board` lists it), or without one, in turn: the n-th entry
+of that kind for the reference is about its n-th footprint in board
+order. A `uuid` no footprint of that reference has is an error. Coordinates are millimetres, in KiCad's orientation: y grows
 downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |

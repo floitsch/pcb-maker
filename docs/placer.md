@@ -331,15 +331,31 @@ what a seed does.
   can (KiKit names a copy's nets `Board_N-...`). Where two or more net
   groups hold the same references (with pin counts), each with fixed
   parts whose boxes do not overlap, every movable part of a copy gets a
-  region: the board's box cut halfway between its copy's fixed parts and
-  each other copy's, on the axis they are farther apart. Boards whose
+  region: the board's box cut between its copy's fixed parts and each
+  other copy's, on the axis they are farther apart. Boards whose
   nets form one group (all others, and panels whose copies share net
   names: the PolyKybd molecules, OpenESC's 4in1 panel) do not change.
+  Since 2026-10-15 the cut is halfway moved by half the difference of the
+  board's margins beyond all copies' fixed parts (kept between the two
+  copies): the copies repeat one layout, so each copy's region lies around
+  its fixed parts as the board lies around all of them. Halfway alone cut
+  SmartSpin2k's copies (fixed parts at each copy's top, 2.3 mm from the
+  board's top edge and 40.5 mm from its bottom) through their own parts:
+  162 of the designer's 630 movable parts outside their copy's region,
+  none now; the 0xCB panels' cuts move by at most 0.75 mm. Each copy's
+  parts also start global placement at their region's centre
+  (`Constraints::starts`) instead of the common start, which clamped the
+  other copies' parts against their regions' near borders.
 - **A repeated reference** in a constraint (panels repeat every
-  reference) names its parts in turn: the n-th edge, rotation or place
-  entry for J3 is about the n-th J3 in board order. All of them used to
-  land on the first J3 (one connector asked to touch the left, top and
-  bottom edges at once).
+  reference): an edge, rotation or place entry with a `uuid` is about the
+  footprint with that uuid (`describe-kicad-board` lists them; the task
+  generator writes one for every entry of a repeated reference). Without
+  one, the entries name the parts in turn: the n-th edge, rotation or
+  place entry for J3 is about the n-th J3 in board order. All of them
+  used to land on the first J3 (one connector asked to touch the left,
+  top and bottom edges at once); in turn, a task with entries only for
+  the copies at an edge bound them to other copies (the molecules' fixed
+  J1, J3 and J4 missed 17 edges by whole tile pitches).
 - **Courtyards on the far side of parts on one side**
   (`Component::far_courtyard`): a back-mounted hot-swap switch has its
   14 mm square on the front; KiCad checks it against the front

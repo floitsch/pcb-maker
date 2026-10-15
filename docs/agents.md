@@ -66,8 +66,9 @@ The file lists what constraints refer to:
   and the box is only footprints' slots and cut-outs, as on a fresh
   import: give the board its size with `outline` in `constraints.json`);
 - every footprint with reference, value, library name, position, side,
-  size, whether it is through-hole or locked, and its pads with their
-  nets;
+  size, whether it is through-hole or locked, its `uuid` (which footprint
+  an entry for a repeated reference means, [constraints.md](constraints.md)),
+  and its pads with their nets;
 - every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
   width and clearance;
 - `swap_candidates`: parts whose general-purpose pins the layout could

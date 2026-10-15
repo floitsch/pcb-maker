@@ -44,7 +44,10 @@ benchmarks/agent-tasks/run.py build/agent-tasks
 ([../pcbench/README.md](../pcbench/README.md) prepares them).
 
 - **Kept from the design:** the outline, and every connector the designer
-  placed within 2 mm of an edge, on that edge and in its orientation.
+  placed within 2 mm of an edge, on that edge and in its orientation
+  (where a reference repeats, a panel's copies, each entry names its
+  footprint by `uuid`; since tasks v7, `build/github-tasks-v7`, which is
+  v6 with these uuids on six panels).
 - **Kept where they are:** parts hanging over the outline, and parts whose
   courtyard holds other parts (a shield's outline, a module above parts),
   which become `hollow`: other parts may sit inside them.
