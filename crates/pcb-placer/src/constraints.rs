@@ -150,6 +150,13 @@ pub struct Constraints {
     /// part may take): the placer never breaks them, they are only
     /// reported (`report_kept`), so that an agent sees them kept.
     pub kept: Vec<Kept>,
+    /// Where global placement starts a part instead of the common start
+    /// (fixed parts' pins and the board's centre): the centre of the region
+    /// a panel copy's parts are confined to. Started at one point in one
+    /// copy's region, the other copies' parts were clamped against their
+    /// regions' near borders, piled up there, and 57 of SmartSpin2k's found
+    /// no legal place.
+    pub starts: Vec<(usize, Point)>,
 }
 
 /// A constraint kept by construction: `side`, the side the part (or the

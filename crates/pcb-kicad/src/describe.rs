@@ -73,6 +73,10 @@ pub struct KiCadDescribedOutline {
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadDescribedFootprint {
     pub reference: String,
+    /// The footprint's `uuid` (`tstamp` in older files): it tells apart
+    /// footprints sharing a reference (a panel's copies), and a constraint
+    /// entry for such a reference names its footprint by it.
+    pub uuid: Option<String>,
     pub value: String,
     pub footprint: String,
     /// Origin and orientation, as KiCad stores them.
@@ -203,6 +207,7 @@ pub fn describe_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadBoa
             locked: footprint.child("locked").is_some()
                 || footprint.children().iter().any(|child| child.atom() == Some("locked")),
             pads,
+            uuid: footprint_uuid(footprint),
             reference,
         });
     }

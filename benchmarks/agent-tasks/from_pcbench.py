@@ -16,6 +16,7 @@ constraints file per board; run them with
 `benchmarks/agent-tasks/run.py <out> --tasks <output-dir>/tasks.json`."""
 
 import argparse
+import collections
 import json
 import re
 import subprocess
@@ -214,6 +215,17 @@ def main():
             severity = "error"
         overlap_allowed = severity != "error"
         footprints = [f for f in description["footprints"] if f["reference"]]
+        # A reference several footprints share (a panel's copies): its
+        # entries name their footprint by uuid; without one the placer
+        # binds the n-th entry to the n-th such footprint in board order,
+        # and entries exist only for the copies at an edge.
+        counts = collections.Counter(f["reference"] for f in footprints)
+        repeated = {reference for reference, count in counts.items() if count > 1}
+
+        def instance(footprint):
+            uuid = footprint.get("uuid")
+            return {"uuid": uuid} if uuid and footprint["reference"] in repeated else {}
+
         for footprint in footprints:
             body = footprint["body"]
             inside = [other for other in footprints if other is not footprint
@@ -274,8 +286,9 @@ def main():
                      "left": not long_horizontal, "right": not long_horizontal}
             side, distance = min(distances.items(), key=lambda item: (round(item[1], 2), not along[item[0]]))
             if distance <= arguments.reach:
-                edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2)})
-                rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360})
+                edges.append({"part": footprint["reference"], "edge": side, "max_mm": round(distance + 0.5, 2),
+                              **instance(footprint)})
+                rotations.append({"part": footprint["reference"], "angle": footprint["at"][2] % 360, **instance(footprint)})
         constraints = {"version": 1, "move_all": True, "fixed": fixed, "edge": edges, "rotation": rotations}
         if hollow:
             constraints["hollow"] = hollow

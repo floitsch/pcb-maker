@@ -1494,8 +1494,10 @@ fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
 /// `Board_N-...`), and the copies' groups hold the same references. Where
 /// two or more such groups each have fixed parts and the boxes of those
 /// do not overlap, every movable part of a copy stays in its copy's
-/// region: the board's box, cut halfway between the copy's fixed parts
-/// and every other copy's, on the axis they are farther apart. On the
+/// region: the board's box, cut between the copy's fixed parts and every
+/// other copy's, on the axis they are farther apart (halfway, moved by
+/// half the difference of the board's margins beyond all copies' fixed
+/// parts), and starts there (global placement begins at its centre). On the
 /// 0xCB pcb-panel (four copies, one piece) 15-22 parts of one copy landed
 /// on another's area. Boards whose nets form one group (most boards, and
 /// panels whose copies share net names) are left alone. Returns the
@@ -1588,6 +1590,22 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     }
     let bounds = problem.bounds();
     let constrained: BTreeSet<usize> = problem.constraints.regions.iter().map(|(part, _)| *part).collect();
+    // The copies repeat one layout, so each copy's region lies around its
+    // fixed parts as the board lies around all copies' fixed parts: a cut
+    // halfway between two copies' fixed parts moves by half the difference
+    // of the board's margins beyond them (kept between the two). Halfway
+    // alone cut SmartSpin2k's copies (fixed parts at the top of each copy,
+    // 2.3 mm from the board's top edge, 40.5 mm from its bottom) through
+    // their own parts: 162 of the designer's 630 movable parts lay outside
+    // their copy's region, none with the shift.
+    let all = copies.iter().fold([f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY], |b, (a, _)| {
+        [b[0].min(a[0]), b[1].min(a[1]), b[2].max(a[2]), b[3].max(a[3])]
+    });
+    let shift = [
+        ((bounds[2] - all[2]) - (all[0] - bounds[0])) / 2.0,
+        ((bounds[3] - all[3]) - (all[1] - bounds[1])) / 2.0,
+    ];
+    let cut = |before: f64, after: f64, axis: usize| ((before + after) / 2.0 + shift[axis]).clamp(before, after);
     let mut regions = Vec::new();
     for (index, (anchor, _)) in copies.iter().enumerate() {
         let mut region = bounds;
@@ -1598,22 +1616,29 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
             let [x, y] = gap(anchor, theirs);
             if x >= y {
                 if theirs[0] >= anchor[2] {
-                    region[2] = region[2].min((anchor[2] + theirs[0]) / 2.0);
+                    region[2] = region[2].min(cut(anchor[2], theirs[0], 0));
                 } else {
-                    region[0] = region[0].max((theirs[2] + anchor[0]) / 2.0);
+                    region[0] = region[0].max(cut(theirs[2], anchor[0], 0));
                 }
             } else if theirs[1] >= anchor[3] {
-                region[3] = region[3].min((anchor[3] + theirs[1]) / 2.0);
+                region[3] = region[3].min(cut(anchor[3], theirs[1], 1));
             } else {
-                region[1] = region[1].max((theirs[3] + anchor[1]) / 2.0);
+                region[1] = region[1].max(cut(theirs[3], anchor[1], 1));
             }
         }
         regions.push(region);
     }
+    // Each copy's parts start in their own region (its centre): from the
+    // common start (a netlist's stack, the fixed pins' centroid) global
+    // placement clamped the other copies' parts against their regions'
+    // near borders, where they piled up (SmartSpin2k: 57 parts without a
+    // legal place).
     for ((_, movable), region) in copies.iter().zip(&regions) {
+        let centre = [(region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0];
         for &part in movable {
             if !constrained.contains(&part) {
                 problem.constraints.regions.push((part, *region));
+                problem.constraints.starts.push((part, centre));
             }
         }
     }
@@ -1816,6 +1841,9 @@ pub(super) fn lower_placement(
     let mut references = Vec::new();
     let mut source_at = Vec::new();
     let mut locked = Vec::new();
+    // Each footprint's uuid: entries for a repeated reference name their
+    // footprint by it.
+    let mut uuids = Vec::new();
     let mut connector = Vec::new();
     // Every pad by name, for constraints that point at a pin, and the
     // footprint's own keepout zones (an antenna), for overhang constraints.
@@ -2256,6 +2284,7 @@ pub(super) fn lower_placement(
                 .to_string(),
         }));
         references.push(reference);
+        uuids.push(footprint_uuid(footprint));
         source_at.push(at);
         pad_offsets.push(named);
         pad_boxes.push(own_pads);
@@ -2508,6 +2537,7 @@ pub(super) fn lower_placement(
             &keepout_boxes,
             &mouths,
             &locked,
+            &uuids,
             constraints,
             config.constraint_weight,
         )?,
@@ -4016,6 +4046,23 @@ mod tests {
         regions.sort_by_key(|(part, _)| *part);
         // J1 bodies end at 12 and start at 88: the cut is at 50.
         assert_eq!(regions, vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]);
+        // Each copy's parts start global placement at their region's centre.
+        let mut starts = problem.constraints.starts.clone();
+        starts.sort_by_key(|(part, _)| *part);
+        assert_eq!(starts, vec![(1, [25.0, 15.0]), (3, [75.0, 15.0])]);
+        // Copies whose fixed parts sit at their left end (SmartSpin2k's at
+        // the top): the cut moves by half the difference of the board's
+        // margins beyond them (3 mm left, 43 mm right: 20 mm) from halfway
+        // (30) to 50, where the copies meet; it stays between the copies'
+        // fixed parts (55 mm apart: 23 mm right of the first copy's).
+        let regions_of = |first: f64, second: f64| {
+            let pcb = board(&format!("{}\n{}", copy(0, first), copy(1, second)));
+            let mut regions = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap().problem.constraints.regions;
+            regions.sort_by_key(|(part, _)| *part);
+            regions
+        };
+        assert_eq!(regions_of(5.0, 55.0), vec![(1, [0.0, 0.0, 50.0, 30.0]), (3, [50.0, 0.0, 100.0, 30.0])]);
+        assert_eq!(regions_of(5.0, 25.0), vec![(1, [0.0, 0.0, 23.0, 30.0]), (3, [23.0, 0.0, 100.0, 30.0])]);
         // Switched off, or a single copy, or copies whose nets join: none.
         let off = KiCadBoardPlacerConfig { keep_copies: false, ..KiCadBoardPlacerConfig::default() };
         assert!(lower_placement(&pcb, &off, &[]).unwrap().problem.constraints.regions.is_empty());

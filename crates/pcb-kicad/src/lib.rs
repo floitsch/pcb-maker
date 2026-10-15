@@ -13732,6 +13732,16 @@ fn footprint_reference(node: &Expr) -> Option<String> {
     })
 }
 
+/// A footprint's own identity: its `uuid` (KiCad 8 on) or `tstamp` (KiCad
+/// 5 to 7), which stays with it when it moves and tells apart footprints
+/// that share a reference (a panel's copies).
+fn footprint_uuid(node: &Expr) -> Option<String> {
+    node.children().iter().find_map(|item| match item.head()? {
+        "uuid" | "tstamp" => Some(item.children().get(1)?.atom()?.to_string()),
+        _ => None,
+    })
+}
+
 fn schematic_component_fields(root: &Expr) -> BTreeMap<String, BTreeMap<String, String>> {
     root.children()
         .iter()

@@ -133,6 +133,42 @@ fn dense_board_still_becomes_legal() {
 }
 
 #[test]
+fn global_placement_starts_parts_where_a_start_says() {
+    // A panel's copies: R0-R5 confined to the left half, R6-R11 to the
+    // right; the right ones start at their region's centre instead of the
+    // common start (the fixed pins' centroid and the board's centre, at
+    // x = 40: clamped against the region's near border, where they piled
+    // up on SmartSpin2k). One step of global placement leaves them near
+    // where they started.
+    let mut problem = chain(12);
+    for index in 2..8 {
+        problem.constraints.regions.push((index, [0.0, 0.0, 40.0, 50.0]));
+    }
+    for index in 8..14 {
+        problem.constraints.regions.push((index, [40.0, 0.0, 80.0, 50.0]));
+    }
+    let mut config = Config::new().global;
+    config.max_iterations = 1;
+    let centre = |problem: &Problem, poses: &[Pose], index: usize| problem.components[index].center(poses[index]);
+    let common = pcb_placer::global::global_place(&problem, &config);
+    for index in 8..14 {
+        problem.constraints.starts.push((index, [60.0, 25.0]));
+    }
+    let started = pcb_placer::global::global_place(&problem, &config);
+    for index in 8..14 {
+        let [x, y] = centre(&problem, &started.poses, index);
+        assert!((x - 60.0).abs() < 6.0 && (y - 25.0).abs() < 6.0, "R{} at {x}, {y}", index - 2);
+        assert!(centre(&problem, &common.poses, index)[0] < 50.0, "R{} began at the common start", index - 2);
+    }
+    // The parts without a start begin at the common start, as before (the
+    // step after it moves them differently: the chain pulls).
+    for index in 2..8 {
+        let [x, _] = centre(&problem, &started.poses, index);
+        assert!((x - centre(&problem, &common.poses, index)[0]).abs() < 1.0, "R{} at {x}", index - 2);
+    }
+}
+
+#[test]
 fn edge_and_region_constraints_are_kept() {
     use pcb_placer::constraints::Edge;
     let mut problem = chain(12);

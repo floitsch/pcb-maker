@@ -120,6 +120,12 @@ pub struct KiCadPlaceConstraint {
     /// For `x`/`y`, as for regions: `board` (default) or `absolute`.
     #[serde(default)]
     pub origin: Option<String>,
+    /// Which of several footprints sharing `part`'s reference (a panel's
+    /// copies) this entry is about: the footprint's `uuid` (`tstamp` in
+    /// older files). Without it, the n-th entry of this kind for a
+    /// repeated reference is about its n-th footprint in board order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 /// Parts in a line at a fixed pitch, turned alike (LED bars, key rows, test
@@ -205,6 +211,12 @@ pub struct KiCadRotationConstraint {
     /// Allowed orientations, instead of a single `angle`.
     #[serde(default)]
     pub angles: Vec<f64>,
+    /// Which of several footprints sharing `part`'s reference (a panel's
+    /// copies) this entry is about: the footprint's `uuid` (`tstamp` in
+    /// older files). Without it, the n-th entry of this kind for a
+    /// repeated reference is about its n-th footprint in board order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -228,6 +240,12 @@ pub struct KiCadEdgeConstraint {
     /// Not supported yet: reported as a warning.
     #[serde(default)]
     pub opening_outwards: Option<bool>,
+    /// Which of several footprints sharing `part`'s reference (a panel's
+    /// copies) this entry is about: the footprint's `uuid` (`tstamp` in
+    /// older files). Without it, the n-th entry of this kind for a
+    /// repeated reference is about its n-th footprint in board order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -807,6 +825,7 @@ pub(super) fn apply_constraints(
     keepouts: &[Option<[f64; 4]>],
     mouths: &[Option<[f64; 2]>],
     locked: &[bool],
+    uuids: &[Option<String>],
     constraints: &KiCadPlacementConstraints,
     weight: f64,
 ) -> Result<Vec<String>, String> {
@@ -829,19 +848,35 @@ pub(super) fn apply_constraints(
             None => Ok(index),
         }
     };
-    // A reference several parts share (a panel's copies) names them in
-    // turn: the n-th entry of one kind for it is about its n-th part in
-    // board order (from_pcbench writes an entry per footprint). All of
-    // them on its first part asked one connector to touch the left, top
-    // and bottom edges at once (the molecule panels' J3 to J6).
-    let instance = |reference: &str, used: &mut BTreeMap<String, usize>| -> Result<usize, String> {
+    // A reference several parts share (a panel's copies): an entry with a
+    // `uuid` is about the footprint with that uuid (from_pcbench writes
+    // one for every entry of a repeated reference). Without one, they are
+    // named in turn: the n-th such entry of one kind for it is about its
+    // n-th part in board order (hand-written constraints). All of them on
+    // its first part asked one connector to touch the left, top and bottom
+    // edges at once (the molecule panels' J3 to J6); in turn, the entries
+    // of a task that writes them only for the copies at an edge bound
+    // other copies (the molecules' fixed J1, J3 and J4 missed 17 edges by
+    // whole tile pitches).
+    let instance = |reference: &str, uuid: Option<&str>, used: &mut BTreeMap<String, usize>| -> Result<usize, String> {
         let parts: Vec<usize> = (0..footprints).filter(|index| references[*index] == reference).collect();
-        if parts.len() < 2 {
-            return find(reference);
-        }
-        let count = used.entry(reference.to_string()).or_default();
-        let index = parts[*count % parts.len()];
-        *count += 1;
+        let index = if let Some(uuid) = uuid {
+            if parts.is_empty() {
+                return find(reference);
+            }
+            *parts
+                .iter()
+                .find(|index| uuids.get(**index).and_then(Option::as_deref).is_some_and(|own| own.eq_ignore_ascii_case(uuid)))
+                .ok_or_else(|| format!("constraint names {reference} with uuid {uuid:?}, which no footprint {reference} has"))?
+        } else {
+            if parts.len() < 2 {
+                return find(reference);
+            }
+            let count = used.entry(reference.to_string()).or_default();
+            let index = parts[*count % parts.len()];
+            *count += 1;
+            index
+        };
         match leaders.get(&index) {
             Some(leader) => Err(format!(
                 "{reference} is carried by its row: constrain the row's first part, {}",
@@ -862,7 +897,7 @@ pub(super) fn apply_constraints(
 
     let mut used = BTreeMap::new();
     for rotation in &constraints.rotation {
-        let index = instance(&rotation.part, &mut used)?;
+        let index = instance(&rotation.part, rotation.uuid.as_deref(), &mut used)?;
         let mut angles = rotation.angles.clone();
         angles.extend(rotation.angle);
         if angles.is_empty() {
@@ -895,7 +930,7 @@ pub(super) fn apply_constraints(
     };
     let mut used = BTreeMap::new();
     for entry in &constraints.place {
-        let index = instance(&entry.part, &mut used)?;
+        let index = instance(&entry.part, entry.uuid.as_deref(), &mut used)?;
         match (&entry.at, entry.x, entry.y) {
             (Some(at), None, None) => {
                 let word = match at.as_str() {
@@ -962,7 +997,7 @@ pub(super) fn apply_constraints(
     }
     let mut used = BTreeMap::new();
     for entry in &constraints.edge {
-        let index = instance(&entry.part, &mut used)?;
+        let index = instance(&entry.part, entry.uuid.as_deref(), &mut used)?;
         let reach = entry.max_mm.unwrap_or(if entry.flush { 0.0 } else { 1.0 });
         problem.constraints.edges.push((index, edge(&entry.edge)?, reach.max(0.0) + 1.0e-3));
         if let Some(overhang) = &entry.overhang {
@@ -1392,6 +1427,7 @@ mod tests {
                 &[None, None, None],
                 &[None, None, None],
                 &[false, false, false],
+                &[None, None, None],
                 &constraints,
                 10.0,
             )?;
@@ -1413,6 +1449,7 @@ mod tests {
                 &[None, None, None],
                 &[None, None, None],
                 &[false, false, false],
+                &[None, None, None],
                 &constraints,
                 10.0,
             )
@@ -1450,6 +1487,7 @@ mod tests {
             &[None, None, None],
             &[None, None, None],
             &[false, false, false],
+            &[None, None, None],
             &constraints,
             10.0,
         )
@@ -1458,6 +1496,66 @@ mod tests {
         assert_eq!(edges, vec![(1, Edge::Left), (2, Edge::Right)]);
         assert_eq!(problem.components[1].angle_options, vec![90.0]);
         assert_eq!(problem.components[2].angle_options, vec![0.0]);
+    }
+
+    #[test]
+    fn a_repeated_reference_entry_with_a_uuid_names_that_footprint() {
+        // The molecule panels' tasks list edge entries only for the copies
+        // at an edge, not in board order, and some copies have none: in
+        // turn, the first entry bound the first copy. By uuid each entry
+        // binds its own footprint, whatever the order; entries without one
+        // still take the parts in turn (hand-written constraints), and a
+        // uuid no such footprint has is an error.
+        let (mut problem, mut references, pads) = problem();
+        references[2] = "C1".to_string();
+        let uuids = [Some("aaaa".to_string()), Some("b1".to_string()), Some("C2".to_string())];
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1,
+                "edge": [{"part": "C1", "edge": "top", "uuid": "c2"}, {"part": "C1", "edge": "left"},
+                         {"part": "C1", "edge": "bottom", "uuid": "c2"}],
+                "rotation": [{"part": "C1", "angle": 90, "uuid": "c2"}],
+                "place": [{"part": "C1", "at": "right", "uuid": "b1"}]}"#,
+        )
+        .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &uuids,
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        let edges: Vec<(usize, Edge)> = problem.constraints.edges.iter().map(|(part, edge, _)| (*part, *edge)).collect();
+        assert_eq!(edges, vec![(1, Edge::Right), (2, Edge::Top), (1, Edge::Left), (2, Edge::Bottom)]);
+        assert_eq!(problem.components[2].angle_options, vec![90.0]);
+        assert_ne!(problem.components[1].angle_options, vec![90.0]);
+        // Written back as read: no uuid where the entry had none.
+        let written = serde_json::to_string(&constraints.edge[1]).unwrap();
+        assert!(!written.contains("uuid"), "{written}");
+
+        let (mut problem, mut references, pads) = problem();
+        references[2] = "C1".to_string();
+        let unknown: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "edge": [{"part": "C1", "edge": "top", "uuid": "aaaa"}]}"#).unwrap();
+        let error = apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &uuids,
+            &unknown,
+            10.0,
+        )
+        .unwrap_err();
+        assert!(error.contains("uuid \"aaaa\""), "{error}");
     }
 
     #[test]
@@ -1638,6 +1736,7 @@ mod tests {
             // C1 opens towards -x in its own frame.
             &[None, Some([-1.0, 0.0]), None],
             &[false, false, false],
+            &[None, None, None],
             &constraints,
             10.0,
         )
@@ -1698,6 +1797,7 @@ mod tests {
             &[None, None, None],
             &[None, None, None],
             &[false, false, false],
+            &[None, None, None],
             &constraints,
             10.0,
         )
@@ -1730,6 +1830,7 @@ mod tests {
             &[None, None, None, None],
             &[None, None, None, None],
             &[false, false, false, false],
+            &[None, None, None, None],
             &constraints,
             10.0,
         )

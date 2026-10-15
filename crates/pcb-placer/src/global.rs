@@ -15,6 +15,7 @@
 //! density 1; routing room comes from per-part halos, and filler charges
 //! decide how much of the remaining whitespace stays between the parts.
 
+use std::collections::BTreeMap;
 use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 
@@ -440,10 +441,12 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         board_center
     };
     let size = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
+    let starts: BTreeMap<usize, Point> = problem.constraints.starts.iter().copied().collect();
     let mut major: Vec<Point> = bodies
         .iter()
         .map(|body| {
-            if body.component.is_some() {
+            if let Some(index) = body.component {
+                let start = starts.get(&index).copied().unwrap_or(start);
                 [
                     start[0] + (random.next() - 0.5) * 0.05 * size[0],
                     start[1] + (random.next() - 0.5) * 0.05 * size[1],
