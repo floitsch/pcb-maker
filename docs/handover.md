@@ -1791,7 +1791,8 @@ No single phase explains them; four holes, by size:
   or its file size (correlation 0.02 each); hatched zones (the panel,
   Batch_1, WLED_Matrix, capybully) and the load dominate. Counting the
   measured wall would make the layout follow the load. Not changed;
-  options below.
+  options below. Done since: a charge per check from a constant and the
+  hatch holes ("Committed on 2026-10-15 (KiCad check work)").
 - **The search's work rate under the sweep's load.** On the boards that
   spend the whole budget (the four PolyKybd halves, link, motherboard,
   MegaDrive, Quanta75 Bare) negotiation and repair run 1.3-1.6 times
@@ -1918,7 +1919,9 @@ place" are the CLI exit-code commit's verdicts for the same failure.
    and check only the candidates that could win, or charge a check from
    a per-board model of zone fill (hatched zones dominate; pads and tracks
    do not predict it), or store the check's seconds in the DRC cache and
-   charge them on a hit as on a miss once known.
+   charge them on a hit as on a miss once known. Done: the gate
+   ("wall guard stop, fewer layout checks") and the modelled charge
+   ("KiCad check work").
 5. Repeated-reference edge constraints (molecules): match entries to
    instances; then the four molecule panels can place.
 6. Keep_copies start positions (SmartSpin2k).
@@ -3159,7 +3162,7 @@ Wall 1702 to 1946 s summed over the rows (the cache made the checks
 against x1020's run). build/short-x976.log.
 
 Not done: the uncached KiCad check's time is still not work (the gate cuts
-the number of checks, not their charge); the ladder's first board is always
+the number of checks, not their charge; done since: "KiCad check work"); the ladder's first board is always
 checked (it is the ladder's measure), even where it cannot beat the
 layout's board.
 
@@ -4640,6 +4643,189 @@ and `own_claimed` already do this for the kept ones) would let one diff
 cancel them, but every reader of the occupancy during the search (the
 tile planner, the conflict and history bookkeeping, pour checks) must see
 the same values, a semantic change not attempted here.
+
+## Committed on 2026-10-15 (KiCad check work)
+
+Item 4 of the v16 triage's ranked list, second half: KiCad's checks inside
+a layout (the board kept after the moves and the polish, the final
+ladder's checked attempts, the neck repair's checks and its KiCad fill)
+cost 3 to 60 s of wall each uncached and under a second from the DRC
+cache, and none of it was work, so the layout's end in work came at wall
+times that followed the cache and the board. Binaries: x1080 (the change
+on 84fcc3b, first calibration), x1081 (rebased on aacdd28, recalibrated,
+budget-guard floor), x1082 (rebased on 015676c), x1083 (on 28b9bf8,
+the short tier), x1084 (on 1a5e0f6, the commit's code).
+
+**The charge** (check_work.rs; docs/router.md "KiCad's checks as work").
+Every check counts a cost modelled from the board file alone, read before
+the layout starts: `CHECK_SECONDS` (3.6 s) plus
+`SECONDS_PER_THOUSAND_HATCH_HOLES` (1.7 s) per thousand holes of the
+board's hatched copper zones (zone area on each copper layer over the
+square of hatch thickness plus gap), at most 50 s. It does not depend on
+whether the cache answered, so a warm run makes every decision a cold run
+makes. It goes into the ladder's single work tally (`ladder_work_now`: the
+ladder's budget, `spent`, `deadline_work`), into the layout's `work`
+(the kept board's check, before the final ladder's deadline is taken) and
+into `routed.work_seconds` (the neck repair after the ladder). The
+reservation arithmetic keeps the step's own check: the narrow-signal
+reserve is the step's routing reserve plus one check (`reserve_with_check`),
+a rung or seed round starts only if its projected work and its check leave
+the reserve whole (`fits_before_reserve(work_left - check, ...)`, the seed
+rounds' `affordable`), and every router's work deadline ends one check
+before the ladder's end (rungs, seeds, the probed rung's continuation, the
+step: `routing_left`). The continuation's seeds multiply their routing,
+not their checks (`seeds_work`). Route mode (no layout) charges nothing
+and is unchanged. Reported: `layout: a KiCad check counts S s of work (N
+hatched zones, H hatch holes)` at the start, `check work N x S s = T s`
+on `layout: done`, `kicad_check_seconds`, `kicad_checks_charged`,
+`kicad_check_work_seconds` in board-layout.json (and the last two per
+ladder in board-router.json), `kicad_check_work_seconds` in the verdict
+and run.py's rows. Not reserved: the first route, moves and polish are
+still armed at the layout's end, so a layout that spends all of it before
+the ladder ends one check past its budget in work (the check is counted,
+the wall guard has its 10 %).
+
+**Measured check times.** v16 sweep logs (x862, uncached `board check`
+lines over 2 s): 191 checks on 59 boards, pooled median 9.3 s (mean
+15.6); per board, the 51 boards without hatched zones 8.0 s (quartiles
+6.2 / 14.2), the 8 hatched 29.8 s (4.8 to 49.4). The short tier's cold run
+(build/drccache/short-cold, x801): 53 checks, pooled median 9.4 s, plain
+boards 5.6 s, hatched 23.8 s. Every routed v16 board and short-tier board
+checked again one at a time, uncached (`drc-kicad-board`,
+PCB_MAKER_NO_CACHE=1): x978 at load 20-48, plain median 5.3 s (58 boards);
+x1093 (library-free kicad-cli config) at load 14-50, plain median 3.6 s
+(quartiles 2.8 / 7.2, slowest 28 s), 0.69 of x978 per board; a spot check
+of 23 boards on x1132 found no change beyond the load (the same board 32 s
+at load 10, 55 s at load 21). The slow plain boards are ULK (27 s), koeg
+(26-33 s), ghoul (18-22 s): complex outlines, which the model does not
+see. Hatch holes explain the hatched boards: least squares 1.73 s per
+thousand on x1093 (1.57 on the v16 logs), correlation 0.90 between model
+and measured on the nine hatched boards (Batch_1 30500 holes 60 s at load
+18-36, qfwfq 14500 22 s, capybully 10600 25 s, the 0xCB panel 8100 in
+four zones 29 s, WLED_Matrix 7200 14-34 s with the load, USB_Keypad 6600
+9 s, stm32 chiffre 6800 on one layer 4 s, 0xCB-1337 2000 2 s). Over all
+boards the model's median relative error is 0.48 (as a constant's: the
+plain boards' spread), its summed absolute error 308 s against 384 s for
+a constant. A first fit read only the first points of each zone polygon
+(half of every rectangle's area) and gave 2.7 s per thousand; x1080 has
+that, with 7 s a check (the pre-x1093 median).
+
+**Judge, eight boards, layout mode, 4 threads, one run per side, both
+sides side by side** (x978 against x1080 on 84fcc3b; rows in
+build/checkwork/judge-{x978,x1080}-{cold,warm}.log). Cold is an empty cache
+directory of the run's own (`PCB_MAKER_CACHE_DIR`), so every check runs
+KiCad and fills it (0 hits in every cold row); warm reuses it. unconnected /
+errors / vias / work / wall / cut / KiCad checks (hits, kicad-cli seconds) /
+charged check work:
+
+| board | x978 cold | x978 warm | x1080 cold | x1080 warm |
+|---|---|---|---|---|
+| ghoul | 6 / 0 / 385 / 1152 / 962 / no / 3 (0, 86 s) | same board, 1152 / 775 / no / 3 (3, 2 s) | 6 / 0 / 385 / 1043 / 869 / no / 3 (0, 74 s) / 21 | same board, 1043 / 640 / no / 3 (3, 2 s) / 21 |
+| 0xCB panel | 118 / 0 / 248 / 1191 / 1113 / no / 4 (0, 176 s) | same, 1191 / 758 / no / 4 (4, 3 s) | 118 / 0 / 248 / 1108 / 929 / no / 4 (0, 154 s) / 116 | same, 1108 / 702 / no / 4 (4, 2 s) / 116 |
+| Batch_1 | 491 / 0 / 384 / 1471 / 1158 / no / 2 (0, 114 s) | same, 1471 / 1376 / no / 2 (2, 3 s) | 491 / 0 / 384 / 1359 / 1110 / no / 2 (0, 108 s) / 100 | same, 1359 / 1380 / no / 2 (2, 3 s) / 100 |
+| ULK | 4 / 0 / 130 / 1478 / 1616 / no / 7 (0, 196 s) | same, 1478 / 1285 / no / 7 (7, 5 s) | 4 / 0 / 130 / 1527 / 1496 / no / 7 (0, 218 s) / 49 | same, 1527 / 1293 / no / 7 (7, 6 s) / 49 |
+| woagboard | 5 / 1 / 185 / 1540 / 1395 / no / 8 (0, 60 s) | same, 1540 / 1406 / no / 8 (8, 5 s) | 5 / 1 / 185 / 1596 / 1547 / no / 8 (0, 64 s) / 56 | same, 1596 / 1658 / deadline,layout / 8 (8, 5 s) / 56 |
+| MokyaLora | 0 / 0 / 333 / 1206 / 634 / no / 3 (0, 21 s) | same, 1206 / 660 / no | 0 / 0 / 333 / 1227 / 616 / no / 3 (0, 22 s) / 21 | same, 1227 / 666 / no / 21 |
+| zpn_devboard | 0 / 0 / 417 / 522 / 512 / no / 1 (0, 7 s) | same, 522 / 503 / no | 0 / 0 / 417 / 529 / 521 / no / 1 (0, 6 s) / 7 | same, 529 / 499 / no / 7 |
+| Castor | 0 / 0 / 167 / 924 / 650 / no / 2 (0, 9 s) | same, 924 / 754 / no | 0 / 0 / 167 / 938 / 686 / no / 2 (0, 9 s) / 14 | same, 938 / 773 / no / 14 |
+
+The kept board (the result's .kicad_pcb, byte for byte) is the same on all
+eight boards across the four runs, and each binary's work is the same warm
+and cold. Where x1080's work is lower the charge ended the ladder earlier,
+dropping only attempts that were not checked and could not be kept: ghoul
+one 0.075 mm skeleton rung (router count 14, cannot win), the panel the
+0.075 mm skeleton and tracks rungs (unchecked), Batch_1 the seed retry and
+the tracks rung after its skeleton rung (Batch_1's 50 s checks); ULK's and
+woagboard's ladders ran the same attempts, the finer pitches with a little
+less negotiation (woagboard's unchecked 0.05 mm rungs 79 / 90 open by the
+router against 75 / 86). Cut: none, but woagboard warm on x1080: the wall
+guard (1650 s) fired in its last rung and skipped the neck repair, which
+had nothing to keep on this board (the same board as the cold run); that
+run's search was slower than its work under the load (1658 s of wall for
+1596 s of work; its cold twin 1547 s), not its checks (5 s of kicad-cli).
+The checks' uncounted wall on the cold runs, summed: x978 669 s of
+kicad-cli, none counted; x1080 655 s, 384 s counted (ghoul 74 / 21, panel
+154 / 116, Batch_1 108 / 100, ULK 218 / 49, woagboard 64 / 56). Wall minus
+work over the eight cold rows went from -1443 to -1552 s; per board it
+shrank where the uncounted checks were largest (the panel -78 to -179,
+ULK +138 to -31) and did not on ghoul, Batch_1 and woagboard (-190 to
+-174, -314 to -249, -145 to -48), whose ladders changed and whose wall
+follows the load (work above wall: seeds and probes side by side count
+each router's work).
+
+**Judge again on the 3.15e6 calibration** (x1152, main 015676c, against
+x1082, the change on it; cold as above, same conditions; rows in
+build/checkwork/judge-{x1152,x1082}-cold.log). A work second is now a wall
+second of an idle core, so the uncounted checks are a larger share of the
+slack:
+
+| board | x1152 cold | x1082 cold |
+|---|---|---|
+| ghoul | 6 / 0 / 338 / 1144 / 1189 / no / 6 (0, 125 s) | same board, 1166 / 1188 / no / 6 (0, 129 s) / 22 |
+| 0xCB panel | 97 / 0 / 242 / 1145 / 1075 / no / 5 (0, 133 s) | same board, 1117 / 1080 / no / 5 (0, 137 s) / 87 |
+| Batch_1 | 471 / 0 / 388 / 1492 / 1752 / deadline,layout / 4 (0, 132 s) | 438 / 0 / 508 / 1461 / 1495 / no / 3 (0, 103 s) / 150 |
+| ULK | 2 / 0 / 121 / 1066 / 1371 / no / 7 (0, 162 s) | same board, 1091 / 1322 / no / 7 (0, 163 s) / 25 |
+| woagboard | 16 / 0 / 172 / 1196 / 1673 / deadline,layout / 7 (0, 41 s) | same board, 1113 / 1455 / no / 6 (0, 36 s) / 22 |
+| MokyaLora | 0 / 0 / 341 / 1241 / 936 / no / 3 (0, 14 s) | same board, 1252 / 936 / no / 3 (0, 14 s) / 11 |
+| zpn_devboard | 0 / 0 / 367 / 453 / 495 / no / 1 (0, 4 s) | same board, 457 / 498 / no / 1 (0, 4 s) / 4 |
+| Castor | 0 / 0 / 207 / 610 / 559 / no / 2 (0, 4 s) | same board, 617 / 562 / no / 2 (0, 4 s) / 7 |
+
+Cut 2 to 0. On x1152 the wall guard cut Batch_1 in its 0.05 mm rung (181
+s of that router's work, three checks of 30-36 s before it uncounted) and
+skipped the neck repair; x1082 counts 50 s a check there, ends the ladder
+after the 0.075 mm pitch by work and keeps another board, 438 unconnected
+against 471 (508 vias against 388; the cut run's board is the one that
+depends on the load). woagboard: x1152's guard cut its last 0.05 mm
+tracks rung and skipped the neck repair; x1082 skips one check and ends
+by work, the same board. The six other boards keep their board; the work
+rises by the charge (ghoul, ULK, MokyaLora, zpn, Castor); on the panel
+the 0.075 mm seed retry no longer fits with its check before the reserve
+and a 0.05 mm rung runs instead (unchecked, 110 open by the router), work
+1145 to 1117 s. Wall minus work over the eight rows
+703 to 263 s (Batch_1 261 to 34, woagboard 478 to 342, ULK 305 to 231,
+ghoul 45 to 22). The warm runs of this pair were stopped for time; warm
+against cold was checked on x1080 above (same boards, same work).
+
+**Short tier** (flock, tasks v6, `--jobs 2 --threads 4`), x1081 against
+build/short-x1130.log (main aacdd28, same thread count): all 12 rows
+identical (unconnected 32, new errors 3, 1130 vias, 20777 mm, passes 6,
+cut 0). Work 2840 to 3139 s: each row rises by its charge (3.6 s a check;
+7.0 s on 0xCB-1337, 2000 hatch holes; 15.9 s on WLED_Matrix, 14.9 s on
+USB_Keypad) except two whose ladders ended earlier: WLED_Matrix +72 s for
+159 s charged (8 checks: the ladder stopped before the 0.075 mm pitch,
+whose two rungs were not checked, 7 and 8 open by the router, and so
+could not be kept), USB_Keypad +161 s for 342 s charged (21 checks,
+15 of them the neck repair's after the ladder; the ladder stopped before
+the 0.05 mm seed retry and tracks rung, both unchecked). KiCad checks the
+same on every row (41). build/short-x1081.log.
+
+Again on main 28b9bf8 (x1083, the change on it) against
+build/short-x1161.log (x1161, same thread count): all 12 rows identical
+(unconnected 19, new errors 2, 1134 vias, 21228 mm, passes 7, cut 0).
+Work 2103 to 2501 s, every row by exactly its charge (3.6 s a check; 7.0
+on 0xCB-1337, 15.9 on WLED_Matrix's 9 checks = 159 s, 14.9 on
+USB_Keypad's 10 = 179 s); no ladder ended earlier on these placements;
+KiCad checks the same on every row (35). build/short-x1083.log.
+
+**Budget guard floor** (router.rs, `BUDGET_GUARD_FLOOR` 5 s,
+`budget_guard_fires`): in route mode a phase budget is cut by the wall
+clock at four times the budget, so a budget under about half a second was
+cut before its first pour analysis (a second of wall on Batch_1: "budget
+guard: 0 s of wall clock for a budget of 0 s of work"); the guard now
+waits at least 5 s. Unit test
+`a_tiny_budget_has_the_guard_floor_before_its_wall_guard`. Layouts are
+unaffected (their routers have a deadline, which replaces this guard).
+
+Unit tests: check_work.rs (the constant on a board without hatch, hatch
+holes from area, layers and pitch, the cap, `checks_count_the_same_work_cached_or_not`),
+`the_reserve_covers_the_steps_own_check` (board_router.rs),
+`seeds_multiply_their_routing_not_their_checks` (board_layout.rs);
+`cargo test --release -p pcb-kicad -p pcb-router` passes.
+
+Not done: the model does not see what makes ULK, koeg and ghoul slow
+(complex outlines, 18-33 s a check at 3.6 s charged); a term from the
+outline's corner count would be the next input to try. The first route,
+moves and polish do not reserve the kept board's check.
 
 ## Open problems, ranked
 
