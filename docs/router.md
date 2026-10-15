@@ -617,9 +617,9 @@ were measured and lost (docs/handover.md, "after the narrow attempt");
 `skipped` says when the attempt did not run.
 
 **KiCad's checks in the ladder** (2026-10-15). Every attempt routes
-without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board,
-not counted as work); the ladder then checks only the attempts that could
-still win (`CheckGate` in board_router.rs). An attempt's open count is the
+without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board;
+in a layout counted as modelled work, below); the ladder then checks only
+the attempts that could still win (`CheckGate` in board_router.rs). An attempt's open count is the
 router's (unconnected terminals and internal violations) plus KiCad's
 unconnected items, so the router's count is a lower bound with no slack:
 an attempt whose router count is above the best checked board's open
@@ -635,6 +635,31 @@ checked. Past the wall-clock deadline no
 further attempt starts, so an attempt is checked only if it could beat
 both the ladder's best and the layout's board (`kicad_kept`); a ladder
 board left unchecked is never kept by the layout.
+
+**KiCad's checks as work** (2026-10-15, check_work.rs). In a layout every
+KiCad check (the board kept after the moves and the polish, each checked
+attempt of the final ladder, the neck repair's checks and its KiCad fill)
+counts a modelled cost in the layout's work: `CHECK_SECONDS` (3.6 s) plus
+`SECONDS_PER_THOUSAND_HATCH_HOLES` (1.7 s) per thousand holes of the
+board's hatched copper zones (area on each copper layer over the square of
+the hatch pitch), at most 50 s; the inputs come from the board file before
+the layout starts (`layout: a KiCad check counts ...`). The cost does not
+depend on whether the DRC cache answered the check, so a warm run ends
+where a cold one does; a check the gate skips counts nothing. In
+the ladder it is in its work tally (`spent`, the ladder's budget,
+`deadline_work`) and in its arithmetic: the work kept for the
+narrow-signal step is the step's reserve plus one check
+(`reserve_with_check`), an attempt starts only if its projected work and
+its check leave the reserve whole, and every router's work deadline (the
+rungs', the seeds', the probed rung's continuation, the step's) ends a
+check before the ladder's end. The ladder reports it apart
+(`kicad_check_work_seconds`, `kicad_checks_charged` in board-router.json),
+the layout too (`kicad_check_seconds`, `kicad_checks_charged`,
+`kicad_check_work_seconds` in board-layout.json; the verdict's
+`kicad_check_work_seconds`; `check work N x S s = T s` on the
+`layout: done` line). Route mode (no layout) counts none: its ladder is
+unchanged. The model, measured: docs/handover.md, "Committed on
+2026-10-15 (KiCad check work)".
 
 ## Via reduction
 
@@ -653,9 +678,12 @@ same input and thread count give the same board however busy the machine
 is (`PCB_ROUTER_FINGERPRINT` prints phase fingerprints to compare runs).
 The wall clock only guards: in route mode at `GUARD` (4) times a budget
 (the attempt ladder's own budget only once the wall clock over 4 is ahead
-of its work by more than a twentieth of that budget: the work counts only
-search expansions, not KiCad's checks), in a layout at its deadline, 1.1
-times its budget (`WALL_GUARD`). Where
+of its work by more than a twentieth of that budget: in route mode the
+work counts only search expansions, not KiCad's checks), in a layout at
+its deadline, 1.1 times its budget (`WALL_GUARD`). A layout counts each
+KiCad check at a cost modelled from the board, the same cached or not
+("KiCad's checks as work" above), so its end in work no longer leaves
+10 to 50 s of uncounted wall clock per check. Where
 the wall clock, not the work, stops something, the run says so once per
 kind in its log (`wall guard: the wall clock cut the run short (...)`)
 and in its report (`cut` in `board-router.json` and `board-layout.json`,

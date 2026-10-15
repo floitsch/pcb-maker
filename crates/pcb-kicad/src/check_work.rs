@@ -21,25 +21,31 @@ use super::*;
 use crate::board_router::{LayerTable, pours};
 
 /// The modelled seconds of one check of a board without hatched zones:
-/// the median of the uncached checks measured on such boards (per board:
-/// 8.0 s over 51 boards of the v16 sweep's logs, 5.6 s over 8 of the
-/// short tier's cold run, 5.3 s over 58 checked again; 7.1 s pooled).
-/// The spread is wide (a quartile 4 s, another 11 to 14 s) and follows
-/// nothing the board file tells: pads, tracks, vias and file size
-/// correlate at 0.02 (the v16 triage).
-pub(crate) const CHECK_SECONDS: f64 = 7.0;
+/// the median uncached check on such boards, measured with x1093's
+/// kicad-cli settings (a library-free configuration, about 0.69 of the
+/// time before it per board): 3.6 s over 58 boards (the v16 sweep's
+/// routed boards and the short tier's, checked again one at a time at a
+/// load of 14 to 50; quartiles 2.8 and 7.2 s, the slowest 28 s). Before
+/// that configuration: 8.0 s over 51 boards in the v16 sweep's logs
+/// (load 16 to 35), 5.6 s over 8 in the short tier's cold run, 5.3 s
+/// checked again. The spread follows nothing the board file tells: pads,
+/// tracks, vias and file size correlate at 0.02 (the v16 triage); ULK,
+/// ghoul and koeg (complex outlines, 18 to 33 s) are the slow plain ones.
+pub(crate) const CHECK_SECONDS: f64 = 3.6;
 
 /// The seconds a thousand holes of hatched copper add to a check (the
 /// holes of a hatched zone: its area on each of its copper layers over
 /// the square of the hatch pitch, thickness plus gap). Least squares over
-/// the hatched boards' checks beyond `CHECK_SECONDS` (2.67): Batch_1's
-/// 15000 holes 41 to 49 s, WLED_Matrix's and USB_Keypad's 3300 to 3600
-/// 14 to 24 s, 0xCB-1337's 1000 3 to 6 s; the stm32 chiffre boards
-/// (6800 holes, 6 to 10 s) are the exception it does not follow.
-pub(crate) const SECONDS_PER_THOUSAND_HATCH_HOLES: f64 = 2.7;
+/// the nine hatched boards' checks beyond `CHECK_SECONDS` with x1093:
+/// 1.73, correlation 0.90 with the measured times (Batch_1's 30500 holes
+/// 60 s, qfwfq's 14500 22 s, capybully's 10600 25 s, the 0xCB panel's
+/// 8100 in four zones 29 s, WLED_Matrix's 7200 14 to 34 s with the load,
+/// USB_Keypad's 6600 9 s, the stm32 chiffre boards' 6800 on one layer
+/// 4 s, 0xCB-1337's 2000 2 s). Before x1093: 1.57 over the v16 logs.
+pub(crate) const SECONDS_PER_THOUSAND_HATCH_HOLES: f64 = 1.7;
 
 /// At most this much a check counts, whatever the hatch (the slowest
-/// boards measured took about 50 s under load).
+/// checks measured took 50 to 60 s, under load).
 pub(crate) const MAX_CHECK_SECONDS: f64 = 50.0;
 
 /// What the model reads from a board: its hatched copper zones and their

@@ -487,6 +487,19 @@ pub const EXPANSIONS_PER_SECOND: f64 = 3.15e6;
 /// How much longer than its work the clock may run before it stops a
 /// route-mode negotiation anyway (a loaded machine).
 pub const GUARD: f64 = 4.0;
+/// The wall clock a phase budget always has before its guard (`spent`)
+/// may stop it: `GUARD` times a budget under about half a second is less
+/// than one pour analysis takes on a big board (a second of wall), so the
+/// guard cut such a phase before any work was done ("budget guard: 0 s of
+/// wall clock for a budget of 0 s of work", Batch_1 in route mode).
+pub const BUDGET_GUARD_FLOOR: f64 = 5.0;
+
+/// Whether a phase budget of `budget` work seconds is over by the wall
+/// clock after `elapsed` seconds: `GUARD` times the budget, but never
+/// before `BUDGET_GUARD_FLOOR`.
+pub(crate) fn budget_guard_fires(elapsed: f64, budget: f64) -> bool {
+    elapsed > (budget * GUARD).max(BUDGET_GUARD_FLOOR)
+}
 /// The pour analysis's work (`analyze_pours`, one thread), in nanoseconds
 /// of an idle machine: per lattice node inside the net's pour (the fill
 /// mask and its labelling), per stamp of the net (its own copper, masked
@@ -5064,12 +5077,13 @@ impl Router {
     }
 
     /// Whether `budget` (work seconds) is spent since `clock`; the wall
-    /// clock stops it too, at `GUARD` times the budget.
+    /// clock stops it too, at `GUARD` times the budget and at least
+    /// `BUDGET_GUARD_FLOOR` (`budget_guard_fires`).
     fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
         if self.budget_work() - clock.0 > budget || self.past_work_deadline() {
             return true;
         }
-        if self.wall_guard() && clock.1.elapsed().as_secs_f64() > budget * GUARD {
+        if self.wall_guard() && budget_guard_fires(clock.1.elapsed().as_secs_f64(), budget) {
             note_wall_cut(
                 "budget guard",
                 format_args!("{:.0} s of wall clock for a budget of {budget:.0} s of work, {:.0} s of it done", clock.1.elapsed().as_secs_f64(), self.budget_work() - clock.0),
@@ -10497,6 +10511,18 @@ mod tests {
             let bisector = diagonal_extra(radius, 0.1);
             assert!(bisector.iter().all(|(i, j)| !bisector.contains(&(i + 1, j + 1))));
         }
+    }
+
+    #[test]
+    fn a_tiny_budget_has_the_guard_floor_before_its_wall_guard() {
+        // Batch_1 in route mode: a budget of 0.2 s used to be cut by the
+        // guard at 0.8 s, inside its first pour analysis.
+        assert!(!budget_guard_fires(0.9, 0.2));
+        assert!(!budget_guard_fires(BUDGET_GUARD_FLOOR, 0.0));
+        assert!(budget_guard_fires(BUDGET_GUARD_FLOOR + 0.1, 0.0));
+        // A budget above the floor keeps its four times.
+        assert!(!budget_guard_fires(39.0, 10.0));
+        assert!(budget_guard_fires(41.0, 10.0));
     }
 
     #[test]

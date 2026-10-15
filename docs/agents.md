@@ -394,6 +394,7 @@ A finished run also carries it as `verdict` in its report:
 | `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. |
 | `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
 | `work_seconds`, `wall_seconds` | The work done (seconds of an idle machine, what budgets count) and the wall clock. |
+| `kicad_check_work_seconds` | Layouts: the part of `work_seconds` that is KiCad's checks inside the layout (the board kept, the final ladder's attempts, the neck repair), each counted at a cost modelled from the board, the same whether the DRC cache answered it or not. |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
 | `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
