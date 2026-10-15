@@ -221,6 +221,9 @@ pub fn resolve_project_rules(
         hole_clearance_mm: rules["min_hole_clearance"].as_f64().unwrap_or(0.25),
         hole_to_hole_clearance_mm: rules["min_hole_to_hole"].as_f64().unwrap_or(0.25),
         solder_mask_to_copper_mm: rules["solder_mask_to_copper_clearance"].as_f64(),
+        solder_mask_bridge_severity: project["board"]["design_settings"]["rule_severities"]["solder_mask_bridge"]
+            .as_str()
+            .map(str::to_owned),
         min_connection_mm: floor,
         connection_width_severity: (minimum("min_connection") > 0.0).then(|| severity.unwrap_or_else(|| "warning".into())),
         ..KiCadBoardRouterConfig::default()

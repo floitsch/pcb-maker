@@ -270,6 +270,13 @@ pub struct KiCadBoardRouterConfig {
     /// 0.05 + 0.05 mm).
     #[serde(default)]
     pub solder_mask_to_copper_mm: Option<f64>,
+    /// The project's severity of solder_mask_bridge findings (`error`,
+    /// `warning`, `ignore`; KiCad's default is an error). Below an error
+    /// the designer accepted bridges, and the router keeps its looser
+    /// mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the
+    /// exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected).
+    #[serde(default)]
+    pub solder_mask_bridge_severity: Option<String>,
     /// Pads KiCad finds short of thermal spokes (where only one fits, as on
     /// fine-pitch pins) get a solid zone connection in the result, and the
     /// board is verified again. Off by default: thermal reliefs are there
@@ -1022,6 +1029,9 @@ fn lower_board(
     let pad_mask_reach = if min_mask_web > 0.0 { min_mask_web / 2.0 + 0.01 } else { 0.0 };
     let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
     let tented = vias_tented(pcb);
+    // KiCad's exact rule where its bridges are errors; the rule of before
+    // where the designer rated them lower.
+    let strict_mask = !matches!(config.solder_mask_bridge_severity.as_deref(), Some("warning" | "ignore"));
     let smallest_clearance = config
         .connection_rules
         .values()
@@ -1215,7 +1225,7 @@ fn lower_board(
                         .or_else(|| form_f64(item, "solder_mask_margin", 1).ok());
                     let expansion = local_margin.unwrap_or(board_pad_to_mask);
                     let web_reach = local_margin.filter(|margin| *margin > 0.0).map_or(0.0, |margin| margin + pad_mask_reach);
-                    let covered = web_reach.max(mask_to_copper + expansion);
+                    let covered = if strict_mask { web_reach.max(mask_to_copper + expansion) } else { web_reach };
                     let floor = smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY)) - 1.0e-9;
                     let mask_names: Vec<&str> = pad
                         .child("layers")
@@ -1230,10 +1240,13 @@ fn lower_board(
                         (layers.len() - 1, mask_names.iter().any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"))),
                     ];
                     for (index, (side, open)) in sides.into_iter().enumerate() {
+                        // The looser rule: every outer copper layer of the
+                        // pad, mask layer or not, both sides in one.
+                        let open = open || !strict_mask;
                         if !open || pad_layers & (1 << side) == 0 || (index == 1 && side == 0) {
                             continue;
                         }
-                        let via_reach = if tented[index] {
+                        let via_reach = if tented[index] || !strict_mask {
                             covered
                         } else {
                             web_reach.max(min_mask_web + expansion + board_pad_to_mask)
@@ -1399,6 +1412,7 @@ fn lower_board(
                     let net = node_net(item).filter(|raw| routable_net(raw)).map(|raw| normalize_net(raw).to_string());
                     copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
                 }
+                let shapes = if strict_mask && !sides.is_empty() { mask_graphic_shapes(item)? } else { shapes };
                 // KiCad's bridge test grows a shape by its mask expansion,
                 // a text by nothing.
                 let expansion = if item.head() == Some("gr_text") {
@@ -1968,23 +1982,12 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon"))) =>
         {
             let cache = item.child("render_cache").unwrap();
-            let mut glyphs: Vec<core::Shape> = cache
+            cache
                 .children()
                 .iter()
                 .filter(|child| child.head() == Some("polygon"))
                 .map(|polygon| Ok(core::Shape::Polygon { points: rule_area_like_points(polygon)? }))
-                .collect::<Result<_, String>>()?;
-            // KiCad draws the glyphs from the font, not from the cache: a
-            // face it does not have is replaced (OpenESC's "ESC" in Tokyo
-            // on B.Mask, drawn in a stand-in 2 mm wider than its cache, over
-            // a track and a via that kept clear of the cached glyphs; the
-            // nine cached mask texts of the corpus reach 0.7 to 2.9 mm past
-            // their caches). On a mask layer the stroke font's box, which
-            // holds all nine within 0.06 mm, is part of the opening too.
-            if matches!(form_atom(item, "layer", 1), Some("F.Mask" | "B.Mask")) {
-                glyphs.push(stroke_text_box(item)?);
-            }
-            glyphs
+                .collect::<Result<_, String>>()?
         }
         Some("gr_text") => vec![stroke_text_box(item)?],
         _ => Vec::new(),
@@ -2011,6 +2014,26 @@ pub(super) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
                 [low[0] - thickness, high[1] + thickness],
             ],
         }]);
+    }
+    Ok(shapes)
+}
+
+/// The shapes of a board graphic on a mask layer as KiCad's bridge test
+/// sees them. KiCad draws a cached text's glyphs from the font, not from
+/// the cache, and a face it does not have is replaced (OpenESC's "ESC" in
+/// Tokyo on B.Mask, drawn in a stand-in 2 mm wider than its cache, over a
+/// track and a via that kept clear of the cached glyphs; the nine cached
+/// mask texts of the corpus reach 0.7 to 2.9 mm past their caches): the
+/// stroke font's box, which holds all nine within 0.06 mm, is part of the
+/// opening too.
+fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    let mut shapes = copper_graphic_shapes(item)?;
+    let cached = item.head() == Some("gr_text")
+        && item
+            .child("render_cache")
+            .is_some_and(|cache| cache.children().iter().any(|child| child.head() == Some("polygon")));
+    if cached {
+        shapes.push(stroke_text_box(item)?);
     }
     Ok(shapes)
 }
@@ -2054,7 +2077,9 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
         .split("\\n")
         .map(|line| 1.08 * line.chars().map(advance).sum::<f64>())
         .fold(0.0, f64::max);
-    let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
+    // Symbols outside ASCII reach as far (eurorack-pmod's "⇒⊕⊥∃⊢≢" on
+    // F.Mask: 0.73 mm across the line of a 1 mm text).
+    let descends = text.chars().any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';') || !c.is_ascii());
     let half = [
         (widest * size[1] + thickness) / 2.0,
         (lines - 1.0) * 1.62 * size[0] / 2.0 + (if descends { 0.8 } else { 0.5 }) * size[0] + thickness / 2.0,
@@ -4788,6 +4813,56 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn below_an_error_the_pad_apertures_keep_the_rule_of_before() {
+        // OpenESC rates solder_mask_bridge a warning: J1's apertures keep
+        // the margin alone (0.102 mm), on both sides at once as before.
+        let pcb = parse(
+            r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (setup (pad_to_mask_clearance 0))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (gr_text "ESC" (at 5 5 0) (layer "B.Mask") (effects (font (face "Tokyo") (size 2.5 2.5) (thickness 0.3)))
+                (render_cache "ESC" 0 (polygon (pts (xy 4.5 4.5) (xy 5.5 4.5) (xy 5.5 5.5) (xy 4.5 5.5)))))
+              (footprint "J" (layer "B.Cu") (at 10 5) (property "Reference" "J1")
+                (pad "8" smd rect (at 0 0) (size 0.6 1.55) (layers "B.Cu" "B.Mask" "B.Paste") (net "/M4") (solder_mask_margin 0.102))
+                (pad "7" smd rect (at -1 0) (size 0.6 1.55) (layers "B.Cu" "B.Mask" "B.Paste") (net "/M3") (solder_mask_margin 0.102))))"#,
+        )
+        .unwrap();
+        let rules = KiCadConnectionRoutingRules { trace_width_mm: 0.09, clearance_mm: 0.09, via_size_mm: 0.45, via_drill_mm: 0.2 };
+        let lowered = |severity: Option<&str>| {
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(rules.clone()),
+                solder_mask_to_copper_mm: Some(0.005),
+                solder_mask_bridge_severity: severity.map(str::to_owned),
+                ..KiCadBoardRouterConfig::default()
+            };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            let apertures: Vec<f64> =
+                board.obstacles.iter().filter(|obstacle| obstacle.label.ends_with("mask aperture")).map(|obstacle| obstacle.clearance).collect();
+            let text = board.obstacles.iter().filter(|obstacle| obstacle.label == "solder mask opening (gr_text)").count();
+            (apertures, text)
+        };
+        let (warning, text) = lowered(Some("warning"));
+        assert_eq!(warning.len(), 2);
+        assert!(warning.iter().all(|clearance| (clearance - 0.102).abs() < 1.0e-9), "{warning:?}");
+        assert_eq!(text, 1);
+        let (error, text) = lowered(None);
+        assert!(error.iter().all(|clearance| (clearance - 0.107).abs() < 1.0e-9), "{error:?}");
+        assert_eq!(text, 2);
+    }
+
+    #[test]
+    fn symbols_outside_ascii_reach_as_far_as_descenders() {
+        // eurorack-pmod's "⇒⊕⊥∃⊢≢" on F.Mask at 315 degrees: KiCad's glyphs
+        // reached 0.73 mm across the line, where a track bridged.
+        let shapes = copper_graphic_shapes(
+            &parse(r#"(gr_text "⇒⊕⊥∃⊢≢" (at 0 0 0) (layer "F.Mask") (effects (font (size 1 1) (thickness 0.15))))"#).unwrap(),
+        )
+        .unwrap();
+        assert!(shapes[0].contains([0.0, 0.8]) && shapes[0].contains([0.0, -0.8]));
+    }
+
+    #[test]
     fn at_snsps_values_a_via_by_another_nets_pad_bridges_no_mask() {
         // SNSP-CPU-01: tented vias (front yes, back yes), no mask expansion,
         // no minimum web, no solder-mask-to-copper clearance, so KiCad's
@@ -4837,13 +4912,13 @@ mod pour_request_tests {
                   (render_cache "ESC" 0 (polygon (pts (xy 70.7 39.3) (xy 71.3 39.3) (xy 71.4 40.9) (xy 70.7 40.9)))))"#
             )
         };
-        let mask = copper_graphic_shapes(&parse(&text("B.Mask")).unwrap()).unwrap();
+        let mask = mask_graphic_shapes(&parse(&text("B.Mask")).unwrap()).unwrap();
         assert_eq!(mask.len(), 2);
         // The track at (68.17, 39.05) and the via at (69.47, 38.75) that
         // bridged were inside KiCad's glyphs.
         assert!(mask.iter().any(|shape| shape.contains([68.17, 39.05])));
         assert!(mask.iter().any(|shape| shape.distance_to_point([69.47, 38.75]) < 0.225));
-        assert_eq!(copper_graphic_shapes(&parse(&text("B.Cu")).unwrap()).unwrap().len(), 1);
+        assert_eq!(copper_graphic_shapes(&parse(&text("B.Mask")).unwrap()).unwrap().len(), 1);
     }
 
     #[test]
