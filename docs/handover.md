@@ -1249,6 +1249,68 @@ s, the ladder's 4 probes and 3 rungs, identical row (55/56, 72 vias).
 Tests: `placement_seeds_are_judged_in_seed_order_whatever_the_threads`
 (threads 1-16, seeds finishing in reverse order, the sequential reference).
 
+## Committed on 2026-10-15 (hatched zones in the tracks rung)
+
+The tracks rung lowers its pours with `connect` false, and the fill probe
+read a zone's hatch (and the outline edges) only from connecting pours, so
+there hatched zones were modelled solid: the spoke verdicts, manual
+spokes, island vias and stubs (only `add_inner_spokes` read the hatch,
+through `hatch_any_plane`). The probe now reads every zone of the net as
+KiCad fills it (`FillProbe::filled_planes`; `tracks_rung_fill`, on,
+`PCB_ROUTER_OLD_TRACKS_FILL`): hatch, rings, hole grid and outline in
+every rung. In the tracks rung the probe is used only after the routing
+(the manual-spoke pass and its island repairs; the via reduction's starved
+count is the corridor model), so the routing itself never saw the hatch.
+
+Why reading the hatch alone hurt 0xCB (x860, route mode on v15: tracks
+rung 46 vias, KiCad "2 spokes connected to isolated island" at MX3.S1 on
+B.Cu): not the island rule and not the routing. MX3.S1 (a 2 mm PTH pad)
+has two F.Cu tracks; KiCad's DRC counts a track connected to the pad that
+starts in its ring and ends in this layer's fill, and one of them,
+112.07 to 118.37 mm, ends in B.Cu fill. Our model tests a pad's straight
+lattice run to its turn, which ran past that end (a junction: another GND
+branch leaves it there, and `materialize` cuts the segment) to 98.77 mm,
+outside the fill; the other run ends at 131.07 mm, 12 microns inside a
+hatch hole (pcbnew agrees: not in fill). With the solid model the second
+end was "in fill", so the model counted one track, found the pad short
+with two island spokes, and added an island via; with the hatch it counted
+no track, and with no track KiCad's rule lets the island spokes stand in
+(spokes_short 0: no repair). KiCad counted the first track (1 counted, the
+islands then ignored): starved. Fix: the DRC track rule cuts the run at
+the first junction as the emitter does (`junction_nodes`;
+`track_end_junctions`, on, `PCB_ROUTER_OLD_TRACK_RUNS`). The census
+cannot see either change (it lowers with the pours connected and adopts
+the board's exact segments). Router tests:
+`the_tracks_rung_reads_a_hatched_zone_as_hatched`,
+`a_track_ends_for_the_drc_at_a_junction`.
+
+Hatched boards (`(fill ... (mode hatch`): 0xCB-1337 1337-v4.0, pcb, panel,
+pcb-panel; Business-Cards Batch_1, USB_Keypad, WLED_Matrix; capybully;
+le_chiffre stm32_chiffre_36keys and stm32_hotswap_chiffre; Qfwfq; the A13
+module. Route mode on the v15 placements (tasks v6, `--jobs 1 --threads
+4`), x832 (= main's router) against x861, `build/hatch/route-x8{32,61}.log`:
+pcb-panel has no v15 placement and panel times out at 1800 s on both
+sides; on the other 10 the same rung wins everywhere, unconnected 518 to
+518, errors 14 to 14, starved thermals the same per board (Batch_1 7,
+the rest 0), vias 1428 to 1427 (USB_Keypad 100 to 99), length 37025 to
+37022 mm. 0xCB 1337-v4.0: tracks rung, 0 open, 0 starved, 47 vias on both,
+MX3.S1's island via kept, and two manual spokes (B.Cu, four segments) the
+hatched model no longer needs are gone (1953.2 to 1949.2 mm); capybully
+-1.1 mm (two manual spokes fewer), Batch_1 +2.3 mm. Census of 44 boards:
+x832, x860 and x862 identical (157 predicted, 12 missed, 27 false alarms,
+2 not modelled), `build/hatch/census-x8*.txt`.
+
+Short tier (tasks v6) x862 (this, rebased on main 9276fba) against
+x833h (main's x833, run now as the base: short-x829 predates the work
+accounting and the placement pool, which move 0xCB 1337-v4.0 to 76 vias
+and 1611.6 mm on main itself), `build/short-x833h.log`,
+`build/short-x862.log`: 10 of 12 boards byte-identical (placement and
+result); USB_Keypad 100 to 99 vias, WLED_Matrix 2457.8 to 2459.2 mm (its
+tracks rung adds 11 manual spokes, not 8; the model on x833h's board had
+2 false alarms there), both 0 starved in KiCad on both sides; unconnected
+42 to 42, errors 6 to 6, passes 6 to 6, vias 1177 to 1176, length 22030
+to 22032 mm; OpenFC cut by the wall clock on both sides.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only
