@@ -512,6 +512,44 @@ unconnected 8, new errors 0, vias 3577 to 3578; ten rows identical
 x1112's, the moves after routing walk the options in the canonical order
 now (C3 at 90 rather than 270, D4 one key pitch over).
 
+## Order independence (2026-10-16)
+
+The placement depended on the order of the footprints in the file and on
+the order of each footprint's own items, as chaotically as it did on the
+start angles: part indices decide the annealer's move draws and every
+tie in the legaliser and refinement, nets are numbered by the first pad
+seen, bus rows and channels are found in footprint order, and the
+router's probes in the race took obstacles in the graphics' order.
+pcbnew's save, the netlist import and the schematic flow each write
+another order, so two saves of one design placed and routed apart
+(homebrew_486, same angles, pcbnew's order: 103 of 130 parts elsewhere).
+
+Now every command that places or routes sorts the board as it reads it
+(`canonical_order::parse_board` in pcb-kicad: `place-kicad-board`, the
+layout's outline sizing, placement and reads of the placed board, the
+router's every attempt, the congestion score): footprints by reference
+in natural order (R2 before R10), then uuid, then their text; inside a
+footprint the pads by number (natural), then position, the `fp_*`
+graphics by layer and content without their uuid, the footprint's zones
+by content; each kind keeps the places it held among the items, the rest
+stays. With the input in one order, everything downstream (global
+placement, the annealer's moves and seeds, legaliser, refinement, rows,
+the pool's seeds, the race's ranking and probes) iterates one order; no
+change inside `pcb-placer` was needed. The boards written (placed,
+routed) are in that order too, so the result file is byte-identical
+from any input order; KiCad does not care about the order (its own save
+sorts footprints by uuid).
+
+A second difference between two saves was the angle's spelling: KiCad
+stores pad angles absolute and wrapped, so one pad's angle relative to
+its footprint is -90 in one file and 270 in another, and a footprint is
+at -180 or 180. `to_radians().sin_cos()` rounds the two differently
+(1e-16 in a pad box, the sign of sin(pi)); the placer's lowering and the
+router's pad, rotation and rectangle code now take the sine and cosine
+exact for quarter turns (`pcb_router::geometry::degrees_sin_cos`).
+
+ORDER_RESULTS
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
@@ -531,8 +569,9 @@ now (C3 at 90 rather than 270, D4 one key pitch over).
 - The board's top-level items (graphics, zones, tracks, the net list)
   are taken in the file's order; only the footprints and their own items
   are sorted (see "Order independence" above). Nothing measured follows
-  them yet; a save that changes numbers (pcbnew writes -180 for 180)
-  is another input, not another order.
+  them yet. Of the numbers a save may spell another way only the
+  quarter-turn angles (-180 or 180, -90 or 270) lower alike; a save
+  that rounds coordinates is another input.
 - Constraints: see [constraints.md](constraints.md). No alignment
   constraints yet.
 - Congestion drives nudges of individual parts, but does not yet feed the

@@ -804,7 +804,10 @@ the graphics by layer and content, the zones by content, each kind in
 the places it held. So two saves of one board (KiCad's, the import's,
 the schematic flow's) route alike, and the boards written are in that
 order (the placed and the routed board are byte-identical from any input
-order). Top-level graphics, zones, tracks and the net list are not
+order). A save may also spell one angle two ways (a footprint at -180 or
+180, a pad at -90 or 270 relative to it): pads, rotations and rectangles
+take their sine and cosine exact for quarter turns
+(`geometry::degrees_sin_cos`), so the two lower alike. Top-level graphics, zones, tracks and the net list are not
 sorted (KiCad's save sorts those too, by uuid; nothing measured here
 followed them).
 

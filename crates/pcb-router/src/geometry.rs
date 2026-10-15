@@ -254,6 +254,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn one_angle_spelled_two_ways_has_one_sine_and_cosine() {
+        for (a, b) in [(180.0, -180.0), (270.0, -90.0), (90.0, -270.0), (0.0, 360.0), (0.0, -0.0), (30.0, -330.0), (-45.0, 315.0)] {
+            assert_eq!(degrees_sin_cos(a), degrees_sin_cos(b), "{a} and {b}");
+        }
+        assert_eq!(degrees_sin_cos(90.0), (1.0, 0.0));
+        assert_eq!(degrees_sin_cos(-180.0), (0.0, -1.0));
+        assert_eq!(degrees_sin_cos(-90.0), (-1.0, 0.0));
+        // Rectangles at 180 and -180 are the same polygon.
+        let corners = |angle: f64| format!("{:?}", Shape::rectangle([1.0, 2.0], [3.0, 0.5], angle));
+        assert_eq!(corners(180.0), corners(-180.0));
+    }
+
+    #[test]
     fn distances_are_zero_inside_and_exact_outside() {
         let circle = Shape::Circle {
             center: [0.0, 0.0],
