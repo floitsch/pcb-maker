@@ -5,7 +5,8 @@
 //! MIT; `crates/pcb-kicad/tests/fixtures/urchin`), imported with
 //! `import-kicad-netlist`, constraints written (outline, rows of keys,
 //! regions, `near` to a key of a row, `relative`, `edge`), checked with
-//! `place-kicad-board` (a region too small first), laid out with
+//! `place-kicad-board` (a region too small first, then a board without
+//! room: a fast no with the room as numbers), laid out with
 //! `layout-kicad-board` on a short work budget (`total_seconds`), and
 //! judged by `drc-kicad-board`. It asserts the exit codes and the verdict
 //! fields an agent reads, so that the walkthrough of 2026-10-15
@@ -18,7 +19,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
@@ -160,8 +161,54 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     assert_eq!(code(&output), 2, "a region too small");
     assert!(String::from_utf8_lossy(&output.stderr).contains("region for Display1 cannot hold it"));
 
-    // Room enough: the placement keeps every constraint, in seconds.
-    fs::write(project.join("constraints.json"), constraints(230.0, 95.0).to_string()).unwrap();
+    // A board without room is a fast no, with the room as numbers. On 80 x
+    // 40 mm neither half's key grid (88 x 44 mm) fits the board, nor its
+    // region: an input error at once (the placer ran its levels for over
+    // twelve minutes before), its verdict with the outline to try.
+    fs::write(project.join("constraints.json"), constraints(80.0, 40.0).to_string()).unwrap();
+    let small = root.join("small");
+    let started = Instant::now();
+    let output = run(&[Path::new("place-kicad-board"), &project, Path::new("main"), &small, &project.join("layout.json")]);
+    assert_eq!(code(&output), 2, "a board without room");
+    assert!(started.elapsed().as_secs() < 60);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("the row of SW1 (15 parts) cannot fit the outline"));
+    let verdict = read(&small.join("verdict.json"));
+    assert_eq!(verdict["status"], "usage_error");
+    let room = &verdict["room"];
+    assert_eq!(room["outline_mm"], json!([80.0, 40.0]));
+    // The keys are on the back: more than the target there.
+    assert!(room["utilization"][1].as_f64().unwrap() > room["target_utilization"].as_f64().unwrap(), "{room}");
+    assert!(room["missing_mm2"][1].as_f64().unwrap() > 0.0, "{room}");
+    let suggested = room["suggested_outline_mm"].as_array().unwrap_or_else(|| panic!("{room}"));
+    assert!(suggested[0].as_f64().unwrap() >= 88.0 && suggested[1].as_f64().unwrap() >= 88.0, "two 88 x 44 mm grids: {room}");
+    assert!(room["limits"].as_array().unwrap().iter().any(|limit| limit.as_str().unwrap().contains("the row of SW1")), "{room}");
+    assert!(verdict["next_actions"].as_array().unwrap().iter().any(|action| action.as_str().unwrap().starts_with("try an outline of")));
+    // The same directory takes the retry (it holds only that verdict).
+    // Without the rows, on 60 x 40 mm: the parts need more area than a
+    // side has even with their tightest bodies; the placer says no at
+    // once (exit 1), the parts it could not seat unplaced.
+    fs::write(project.join("constraints.json"), json!({"version": 1, "move_all": true, "outline": {"width": 60, "height": 40}}).to_string())
+        .unwrap();
+    let started = Instant::now();
+    let output = run(&[Path::new("place-kicad-board"), &project, Path::new("main"), &small, &project.join("layout.json")]);
+    assert_eq!(code(&output), 1, "parts without room");
+    assert!(started.elapsed().as_secs() < 60);
+    let verdict = read(&small.join("verdict.json"));
+    assert!(!verdict["unplaced"].as_array().unwrap().is_empty());
+    let room = &verdict["room"];
+    assert!(room["missing_mm2"][1].as_f64().unwrap() > 1000.0, "{room}");
+    let suggested = room["suggested_outline_mm"].as_array().unwrap_or_else(|| panic!("{room}"));
+    assert!(suggested[0].as_f64().unwrap() * suggested[1].as_f64().unwrap() > 60.0 * 40.0 / 0.7, "{room}");
+    assert_eq!(read(&small.join("board-placer.json"))["overfull"], true);
+
+    // Room enough: the placement keeps every constraint, in seconds, and
+    // lists the constraints it keeps by construction (a side, the turns a
+    // part may take) like the others.
+    let mut kept = constraints(230.0, 95.0);
+    kept["rotation"] = json!([{"part": "RSW0", "angles": [0, 180]}]);
+    kept["back"] = json!(["Display2"]);
+    kept["front"] = json!(["RSW1"]);
+    fs::write(project.join("constraints.json"), kept.to_string()).unwrap();
     let placed = root.join("placed");
     let output = run(&[Path::new("place-kicad-board"), &project, Path::new("main"), &placed, &project.join("layout.json")]);
     assert_eq!(code(&output), 0, "placement");
@@ -171,6 +218,16 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     // A diode near a key the row carries is reported against that key.
     assert!(statuses.iter().any(|status| status["part"] == "D2" && status["other"] == "SW2"), "{statuses:?}");
     assert!(stdout_has_no_overlap_warnings(&output));
+    for (kind, part) in [("rotation", "RSW0"), ("back", "Display2"), ("front", "RSW1")] {
+        assert!(statuses.iter().any(|status| status["kind"] == kind && status["part"] == part && status["satisfied"] == true), "{kind} {part}");
+    }
+    // The room on a board with room: below the target on both sides, no
+    // outline suggested, the smallest one within the board's.
+    let room = &placement["room"];
+    assert!(room["utilization"].as_array().unwrap().iter().all(|share| share.as_f64().unwrap() < 0.7), "{room}");
+    assert_eq!(room["missing_mm2"], json!([0.0, 0.0]));
+    assert!(room.get("suggested_outline_mm").is_none(), "{room}");
+    fs::write(project.join("constraints.json"), constraints(230.0, 95.0).to_string()).unwrap();
 
     // 3. Run, on a short work budget (the default is 1500 s).
     fs::write(project.join("layout.json"), json!({"placer": {"constraints": "constraints.json"}, "total_seconds": 30}).to_string()).unwrap();
@@ -189,13 +246,22 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     assert_eq!(verdict["constraints_missed"], json!([]));
     assert_eq!(verdict["unplaced"], json!([]));
     assert_eq!(verdict["cut"], json!([]));
-    assert_eq!(verdict["next_actions"], json!([]));
+    // Nothing to do; the parity findings are the controller's no-connect
+    // pins, and the verdict says so.
+    let actions = verdict["next_actions"].as_array().unwrap();
+    assert!(actions.iter().all(|action| action.as_str().unwrap().starts_with("nothing to do")), "{actions:?}");
     assert!(verdict["skipped"].is_array());
     assert!(verdict["work_seconds"].as_f64().unwrap() > 0.0);
     assert!(verdict["drc_cache"]["calls"].as_u64().unwrap() >= 1);
     // The no-net pins above are KiCad's parity findings, nothing more
     // (181 when the library's references won).
     assert!(verdict["schematic_parity_issues"].as_u64().unwrap() <= 6, "{verdict}");
+    let by_type: u64 = verdict["schematic_parity_by_type"].as_object().unwrap().values().map(|count| count.as_u64().unwrap()).sum();
+    assert_eq!(by_type, verdict["schematic_parity_issues"].as_u64().unwrap(), "{verdict}");
+    // The layout's room: the placement's, the board with room to spare.
+    assert_eq!(verdict["room"]["outline_mm"], json!([230.0, 95.0]), "{verdict}");
+    assert!(verdict["room"]["utilization"][1].as_f64().unwrap() < 0.7, "{verdict}");
+    assert!(verdict["room"].get("suggested_outline_mm").is_none(), "{verdict}");
     for output in ["project", "board", "drc", "report", "verdict"] {
         let path = verdict["outputs"][output].as_str().unwrap_or_else(|| panic!("outputs.{output}"));
         assert!(Path::new(path).exists(), "{output}: {path}");

@@ -83,6 +83,9 @@ pub struct Placement {
     /// ranks after those with routing room (its shorter wires are the
     /// halos it did not get).
     pub routing_room_failed: bool,
+    /// Even the tightest bodies need more area than a side has: no
+    /// packing places every part, and the placer said so at once.
+    pub overfull: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -155,9 +158,16 @@ fn outline_area(problem: &Problem) -> f64 {
 /// and spacing alone (halos are a wish; cutouts take no room): no packing
 /// can place them all.
 fn overfull(problem: &Problem) -> bool {
+    side_overfull(problem, true)
+}
+
+/// `overfull` counting the fixed parts too (`with_fixed`) or the movable
+/// ones alone: those may not overlap each other whatever the fixed ones
+/// do (a designer's fixed parts may overlap where the rules allow it).
+fn side_overfull(problem: &Problem, with_fixed: bool) -> bool {
     let mut used = [0.0f64; 2];
     for component in &problem.components {
-        if component.copper_only {
+        if component.copper_only || (component.fixed && !with_fixed) {
             continue;
         }
         let area = if !component.hollow.is_empty() {
@@ -179,6 +189,85 @@ fn overfull(problem: &Problem) -> bool {
     }
     let area = outline_area(problem);
     used.iter().any(|used| *used > area)
+}
+
+/// The least extents of a part's body along x and along y over the angles
+/// it may take (a part that may turn by a quarter has its smaller side
+/// both ways; a row turned only by halves keeps its length along its axis).
+pub fn least_extents(component: &Component) -> [f64; 2] {
+    let size = component.body_size;
+    let mut least = [f64::INFINITY, f64::INFINITY];
+    for angle in &component.angle_options {
+        let turns = angle.rem_euclid(360.0) / 90.0;
+        let extent = if (turns - turns.round()).abs() > 1.0e-6 {
+            // Any angle: no more than the smaller side either way.
+            [size[0].min(size[1]); 2]
+        } else if turns.round() as i64 % 2 == 0 {
+            size
+        } else {
+            [size[1], size[0]]
+        };
+        least = [least[0].min(extent[0]), least[1].min(extent[1])];
+    }
+    if least[0].is_finite() { least } else { size }
+}
+
+/// Whether bodies with the least extents `parts` (`least_extents`) can lie
+/// side by side in a `size` box, by strips: the bodies at least `t` tall
+/// meet any vertical line at most `floor(height / t)` times (bodies do
+/// not overlap), so their widths sum to at most that times the box's
+/// width; the same across. A necessary condition only: `false` means no
+/// arrangement exists.
+pub fn strips_hold(parts: &[[f64; 2]], size: [f64; 2]) -> bool {
+    for axis in 0..2 {
+        // Lines across `axis`: the parts' extents across them, then along.
+        let mut sorted: Vec<[f64; 2]> =
+            parts.iter().map(|extent| [extent[1 - axis], extent[axis]]).filter(|extent| extent[0] > 0.0).collect();
+        sorted.sort_by(|a, b| b[0].total_cmp(&a[0]));
+        let mut sum = 0.0;
+        for [across, along] in sorted {
+            sum += along;
+            if sum > (size[1 - axis] / across).floor() * size[axis] + 1.0e-6 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether a side's movable parts cannot lie in the outline's box in any
+/// arrangement, by strips (`strips_hold`). Exact, and stronger than the
+/// area for large parts: 34 key switches with 18 x 17 mm courtyards on
+/// 80 x 40 mm (96 % by area) need 34 x 17 mm of length where two strips
+/// of 80 mm are all there is. Parts held at an edge or reaching over one,
+/// hollow parts and cutouts are left out; a body may reach its
+/// `edge_inset` beyond the outline.
+fn strips_overfull(problem: &Problem) -> bool {
+    if problem.outline.len() < 3 {
+        return false;
+    }
+    let bounds = problem.bounds();
+    let reach = problem.components.iter().map(|component| component.edge_inset).fold(0.0f64, f64::max).max(0.0);
+    let size = [bounds[2] - bounds[0] + 2.0 * reach, bounds[3] - bounds[1] + 2.0 * reach];
+    let constraints = &problem.constraints;
+    [Side::Front, Side::Back].into_iter().any(|side| {
+        let parts: Vec<[f64; 2]> = problem
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(index, component)| {
+                !component.fixed
+                    && !component.copper_only
+                    && component.hollow.is_empty()
+                    && component.side.collides(side)
+                    && component.side != Side::Neither
+                    && !constraints.edges.iter().any(|(part, _, _)| part == index)
+                    && constraints.overhang(*index).is_none()
+            })
+            .map(|(_, component)| least_extents(component))
+            .collect();
+        !strips_hold(&parts, size)
+    })
 }
 
 /// The board area per side (front, back) that fixed parts leave free, on
@@ -317,6 +406,35 @@ pub fn work() -> u64 {
     WORK.with(|work| work.get())
 }
 
+thread_local! {
+    /// The work at which the running `place` on this thread is out of its
+    /// budget (`Config::work_limit`): the legalisation, eviction, refinement
+    /// and repair passes check it inside, not only between levels.
+    static STOP: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether the running placement has spent its work budget, counting
+/// `pending` work not yet added.
+pub(crate) fn out_of_work(pending: u64) -> bool {
+    STOP.with(|stop| stop.get().is_some_and(|stop| work() + pending >= stop))
+}
+
+/// Sets the budget's stop for the passes for as long as it lives, and
+/// restores the one before when dropped.
+struct StopGuard(Option<u64>);
+
+impl StopGuard {
+    fn set(stop: Option<u64>) -> Self {
+        StopGuard(STOP.with(|cell| cell.replace(stop)))
+    }
+}
+
+impl Drop for StopGuard {
+    fn drop(&mut self) {
+        STOP.with(|cell| cell.set(self.0));
+    }
+}
+
 pub(crate) fn add_work(amount: u64) {
     WORK.with(|work| work.set(work.get() + amount));
 }
@@ -405,6 +523,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         config.anneal.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
             || anneal_config.stop_at_work.is_some_and(|stop| work() >= stop)
     };
+    // The passes check the budget inside too (a part without room
+    // searched the whole board at every level: urchin on 80 x 40 mm took
+    // 11, 10 and 8 s of a 10 s budget in its first level's passes).
+    let _stop = StopGuard::set(anneal_config.stop_at_work);
     let global_mark = mark();
     let global = global::global_place(problem, &config.global);
     phase_line(debug, "global", global_mark);
@@ -472,17 +594,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The grid and bodies the last anneal ran with.
     let mut annealed_shape: Option<(f64, bool)> = None;
     let level_count = levels.len();
-    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor)) in
-        levels.into_iter().enumerate()
-    {
-        // Past the caller's deadline the best placement so far stands.
-        if best.is_some() && out_of_budget() {
-            break;
-        }
-        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
-            // Same as the previous level.
-            continue;
-        }
+    // The problem at a level: its halos, spacing, grid and bodies.
+    let relax = |level: usize, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor): (f64, f64, f64, bool, bool, bool, f64, f64)| {
         let mut relaxed = problem.clone();
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
@@ -502,17 +615,74 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 component.use_tight_body();
             }
         }
+        relaxed
+    };
+    // No packing fits the parts even at the loosest level (the last): the
+    // movable bodies need more area than a side has, or more than strips
+    // of the board can hold (`strips_overfull`). Then no level can place
+    // them all, and the placer says so at once instead of annealing and
+    // legalizing at every level in vain. Exact: a board that can be placed
+    // never takes this way.
+    let hopeless = {
+        let last = relax(level_count - 1, *levels.last().expect("levels"));
+        side_overfull(&last, false) || strips_overfull(&last)
+    };
+    let mut overfull_sides = false;
+    for (level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor)) in
+        levels.into_iter().enumerate()
+    {
+        // Past the caller's deadline the best placement so far stands.
+        if best.is_some() && out_of_budget() {
+            break;
+        }
+        if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some() {
+            // Same as the previous level.
+            continue;
+        }
+        let relaxed = relax(level, (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor));
         // Bodies that need more room than a side has cannot all be placed
         // at this level: on to a looser one (OpenESC's boards, packed with
         // overlapping courtyards, fit only with tight bodies; every level
         // before them annealed and legalized in vain, 1-4 minutes each).
-        if level + 1 < level_count && overfull(&relaxed) {
+        if level + 1 < level_count && (hopeless || overfull(&relaxed)) {
             if debug {
                 eprintln!(
                     "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: bodies need more room than a side has"
                 );
             }
             continue;
+        }
+        // Even the last level's bodies need more area than a side has
+        // (every level before was overfull too, so none ran): no packing
+        // places them all. A fast no: the parts are seated near where the
+        // global placement put them as far as there is room, without an
+        // anneal, and the passes after it stop at once (urchin's 80 parts
+        // on 80 x 40 mm took more than ten minutes before).
+        if hopeless {
+            if debug {
+                eprintln!("placer: the last level is overfull too: no packing fits, the parts are seated where there is room");
+            }
+            overfull_sides = true;
+            STOP.with(|stop| stop.set(Some(work())));
+            // On the regular grid: the hurried search reaches 15 mm there.
+            let mut relaxed = relaxed;
+            relaxed.grid = problem.grid;
+            let mut poses = global_poses.clone();
+            let failed = legal::legalize(&relaxed, &mut poses);
+            relaxation = Some(Relaxation {
+                spacing: relaxed.spacing,
+                grid: relaxed.grid,
+                halo_scale: fit_scale[1] * halo_scale,
+                small_halo_scale: fit_scale[0] * halo_scale * small_factor,
+                edge_inset: inset,
+                tight,
+                edge_copper,
+                edge_rule,
+                courtyard_spacing: level == courtyard_level,
+                halos: None,
+            });
+            best = Some((failed, poses, relaxed));
+            break;
         }
         let level_started = std::time::Instant::now();
         // Every level is looser than the one before: what was legal there
@@ -608,8 +778,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 (work() - work_started) as f64 / started.elapsed().as_secs_f64().max(1.0e-3)
             );
         }
-        // The parts that found no room go first in a second pass.
-        if !failed.is_empty() {
+        // The parts that found no room go first in a second pass (not past
+        // the work budget).
+        if !failed.is_empty() && !out_of_work(0) {
             let mut retry = annealed;
             let retry_mark = mark();
             let again = legal::legalize_first(&relaxed, &mut retry, &failed);
@@ -800,5 +971,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         work: work() - work_started,
         stage_poses,
         routing_room_failed,
+        overfull: overfull_sides,
     }
 }

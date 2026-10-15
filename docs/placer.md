@@ -115,6 +115,56 @@ The written board is checked: every pad must land exactly where the placer's
 model said it would, including rotated footprints (KiCad stores pad and text
 angles as absolute values).
 
+## A fast no, and the budget inside the passes (2026-10-15)
+
+A board without room used to cost every relaxation level an anneal and a
+legalisation in vain, each part without a spot searching the whole board
+(urchin's 80 parts on 80 x 40 mm with its key grids as rows: 742 s of
+wall on four threads; the work budget was checked only between levels,
+so a seed overran its 600 s by a quarter). Now:
+
+- **Before placement** (`placement_room::outline_holds`, after the
+  constraints are applied; input errors, exit 2): a user's `row` that fits
+  the outline's box in no orientation it may take, and the parts an edge
+  constraint holds at one edge on one side that need more length than the
+  edge has. Only parts too deep to stand two behind each other within
+  their `max_mm` count, each by its shortest tight body; the two that could
+  overhang the edge's ends at the edge-copper level count their copper
+  only. Regions were checked this way already (`region_holds`); all such
+  errors are now said together. Not for an automatic outline (the layout
+  grows it). Urchin's case: exit 2 in 0.04 s.
+- **At once, before the levels** (`place`, `hopeless`): when even the
+  last (loosest) level's bodies cannot all be placed, by area (the movable
+  tight bodies with the least spacing need more than a side's outline
+  area) or by strips (`strips_hold`: bodies at least `t` across meet any
+  line at most `floor(height / t)` times, so their least extents along it
+  sum to at most that times the width), no level runs: the parts are
+  legalized once from the global placement with the hurried search below,
+  the rest are unplaced, and `Placement::overfull` (`"overfull": true` in
+  board-placer.json) says why. Both tests are exact (a necessary
+  condition for any packing): a board that can be placed never takes
+  this way, so its placement is unchanged. Hollow parts (those without a
+  courtyard block with their pads alone), parts held at an edge or
+  reaching over it, and cutouts are left out of the strips. Urchin
+  without its rows on 60 x 40 mm: exit 1 in 3 s.
+- **Inside the passes** (`out_of_work`, a thread-local stop the running
+  `place` sets from `work_limit`): past the budget, a part without a spot
+  in `legalize` searches only as many rings as 15 mm of a 0.5 mm grid (3
+  mm of the fine grid) instead of the board; `evict_for`, `refine`,
+  `repair_relations` and `align_orientations` stop; the retry with the
+  stuck parts first is skipped. A placement within its budget is
+  unchanged. Urchin without rows on 80 x 40 mm is not hopeless by either
+  test (its switches have no courtyard: their pads alone block, which
+  could interleave), so it still takes the levels up to the budget.
+
+The placement's `room` (`placement_room::room`, in board-placer.json and
+the verdict, see [agents.md](agents.md)) puts the room in numbers: per
+side the usable area (outline less the edge band and the fixed bodies),
+the movable bodies with spacing, the utilization, the area missing at a
+target of 0.7, the smallest outline at that target (area, strips with the
+target's slack, the largest part, rows and edge sets) and, when parts
+found no place, a suggested outline.
+
 ## Where the wirelength goes (measured 2026-10-14)
 
 `PCB_PLACER_TRACE=<file>` writes, per seed, the weighted wirelength after

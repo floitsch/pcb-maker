@@ -343,6 +343,14 @@ pub struct KiCadBoardPlacerResult {
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,
+    /// Room as numbers: utilization per side against the usable area, the
+    /// area missing, the smallest outline that holds the parts and, when
+    /// parts found no place, an outline to try (`placement_room`).
+    pub room: crate::placement_room::KiCadRoom,
+    /// Even the tightest bodies need more area than a side has: the
+    /// placer said no at once.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub overfull: bool,
     /// How many seeds were kept (the work budget may stop them before
     /// `placement_seeds`).
     #[serde(default)]
@@ -3627,6 +3635,12 @@ pub fn place_kicad_board(
                 ));
             }
         }
+        if placement.overfull {
+            hints.push(
+                "even the tightest bodies need more area than a side has: no placement fits every part; room.suggested_outline_mm is an outline that holds them"
+                    .into(),
+            );
+        }
         if hints.is_empty() {
             hints.push(
                 "no free spot fits the part's courtyard with the copper clearance around it: give the board more room"
@@ -3636,6 +3650,11 @@ pub fn place_kicad_board(
         hints.sort();
         hints.dedup();
     }
+    let room = crate::placement_room::room(
+        problem,
+        &lowered.references,
+        !placement.unplaced.is_empty() || !placement.illegal.is_empty(),
+    );
     let result = KiCadBoardPlacerResult {
         alternatives,
         tight_bodies: placement.relaxation.tight,
@@ -3650,6 +3669,8 @@ pub fn place_kicad_board(
         halos: placement.relaxation.halos.clone(),
         utilization,
         hints,
+        room,
+        overfull: placement.overfull,
         board_id: board_id.into(),
         components: lowered.problem.components.len(),
         movable: lowered

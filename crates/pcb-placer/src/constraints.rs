@@ -146,6 +146,21 @@ pub struct Constraints {
     /// power's designer packed 0603s edge to edge on a 96 % full side).
     /// The last relaxation level.
     pub courtyard_spacing: bool,
+    /// Constraints the lowering keeps by construction (a side, the turns a
+    /// part may take): the placer never breaks them, they are only
+    /// reported (`report_kept`), so that an agent sees them kept.
+    pub kept: Vec<Kept>,
+}
+
+/// A constraint kept by construction: `side`, the side the part (or the
+/// row it is in) lies on; `angles`, the orientations it may take.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kept {
+    /// `back`, `front`, `rotation` or `opening_outwards`.
+    pub kind: &'static str,
+    pub part: usize,
+    pub side: Option<crate::problem::Side>,
+    pub angles: Vec<f64>,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the
@@ -807,6 +822,34 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
         });
     }
     statuses
+}
+
+/// The constraints kept by construction (`Constraints::kept`), with
+/// whether `poses` keep them: a part on its side (a row's member on its
+/// row's), at one of its allowed angles. Not part of `report`: the
+/// placement's ranking never sees them.
+pub fn report_kept(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
+    problem
+        .constraints
+        .kept
+        .iter()
+        .map(|kept| {
+            let leader = problem
+                .constraints
+                .followers
+                .iter()
+                .find(|follower| follower.part == kept.part)
+                .map_or(kept.part, |follower| follower.leader);
+            let side = kept.side.is_none_or(|side| problem.components[leader].side == side);
+            let angle = poses[kept.part].angle.rem_euclid(360.0);
+            let turned = kept.angles.is_empty()
+                || kept.angles.iter().any(|allowed| {
+                    let difference = (allowed.rem_euclid(360.0) - angle).abs();
+                    difference < 1.0e-6 || (difference - 360.0).abs() < 1.0e-6
+                });
+            Status { kind: kept.kind, part: kept.part, other: None, satisfied: side && turned, violation: 0.0 }
+        })
+        .collect()
 }
 
 /// Snaps a component origin to the placement grid. Parts against a

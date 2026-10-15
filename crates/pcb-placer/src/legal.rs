@@ -778,6 +778,9 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
     if step < 0.3 {
         rings = rings.min((15.0 / step).ceil() as i64);
     }
+    // Past the placement's work budget, as many rings as 15 mm of a 0.5 mm
+    // grid (3 mm of the fine grid).
+    let hurried_rings = (15.0 / step.max(0.5)).ceil() as i64;
     let mut buckets = Buckets::new(problem);
     for &index in &placed {
         buckets.insert(problem, index, poses[index]);
@@ -805,6 +808,13 @@ pub fn legalize_keeping(problem: &Problem, poses: &mut [Pose], first: &[usize], 
                 if let Some((distance, _)) = best
                     && ((ring - 2).max(0) as f64 * step).powi(2) > distance
                 {
+                    break 'search;
+                }
+                // Past the placement's work budget a part looks only near
+                // where it wants to be: a part with no spot searched the
+                // whole board (urchin on 80 x 40 mm: 40 parts, 45 s a pass
+                // on the fine grid).
+                if best.is_none() && ring > hurried_rings && crate::out_of_work(0) {
                     break 'search;
                 }
                 for dy in -ring..=ring {
@@ -862,6 +872,11 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
     let mut near = Vec::new();
     let mut work = 0;
     for &index in failed {
+        // Past the work budget no more parts are tried.
+        if crate::out_of_work(work) {
+            still.push(index);
+            continue;
+        }
         let component = &problem.components[index];
         // The spot whose displaced movable parts are smallest in area.
         let mut best: Option<(f64, Pose, Vec<usize>)> = None;
@@ -990,6 +1005,9 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
     let step = if problem.grid > 0.0 { problem.grid } else { 0.25 };
     let mut moved = 0;
     for relation in &constraints.relations {
+        if crate::out_of_work(0) {
+            break;
+        }
         let Some(index) = relation.parts()[0] else {
             continue;
         };
@@ -1074,6 +1092,9 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
     let angle_key = |angle: f64| (angle.rem_euclid(360.0).round() as i64) % 360;
     let mut turned = 0;
     for members in kinds.values().filter(|members| members.len() >= 2) {
+        if crate::out_of_work(0) {
+            break;
+        }
         let mut counts: std::collections::BTreeMap<i64, usize> = Default::default();
         for index in members {
             *counts.entry(angle_key(poses[*index].angle)).or_default() += 1;
@@ -1170,6 +1191,10 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
     for _ in 0..passes {
         let mut improved = false;
         for index in 0..count {
+            // Past the work budget the placement stands as it is (legal).
+            if crate::out_of_work(0) {
+                break;
+            }
             let component = &problem.components[index];
             if component.fixed || component.pins.is_empty() {
                 continue;

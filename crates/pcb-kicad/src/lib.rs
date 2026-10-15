@@ -91,7 +91,7 @@ mod verdict;
 pub use verdict::{
     DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference, KiCadRunFacts, KiCadRunStatus,
     KiCadVerdict, decide, error_verdict, input_error, is_cosmetic, is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings,
-    route_facts, split_findings, tally_drc, wall_cuts,
+    room_action, route_facts, split_findings, tally_drc, wall_cuts,
 };
 mod describe;
 mod flip;
@@ -109,6 +109,8 @@ mod netlist_import;
 pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist};
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
 mod placement_constraints;
+mod placement_room;
+pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, read_placement_constraints,
 };

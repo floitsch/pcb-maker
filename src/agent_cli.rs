@@ -54,9 +54,11 @@ fn set_target(command: &str, report: PathBuf, outputs: BTreeMap<String, String>)
 
 /// Writes the error's verdict as `<out-dir>/verdict.json` when the run got
 /// as far as having an output directory. A usage error writes only into an
-/// output directory the run already created (a retry with the same
-/// directory stays possible); an internal error creates it. The run's own
-/// report (board-router.json, ...) is left as it is, or absent.
+/// output directory the run already created, or, when a constraint needs
+/// more room than the outline has (`room`), into one holding only the
+/// verdict, which a retry may use again (`check_fresh_output`); an
+/// internal error creates it. The run's own report (board-router.json,
+/// ...) is left as it is, or absent.
 pub fn report_failure(status: KiCadRunStatus, message: &str) {
     let Some(target) = TARGET.lock().ok().and_then(|mut target| target.take()) else {
         return;
@@ -64,12 +66,21 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
     let Some(directory) = target.report.parent() else {
         return;
     };
+    let room = (status == KiCadRunStatus::UsageError).then(pcb_kicad::noted_room).flatten();
     if !directory.exists() {
-        if status == KiCadRunStatus::UsageError || fs::create_dir_all(directory).is_err() {
+        if (status == KiCadRunStatus::UsageError && room.is_none()) || fs::create_dir_all(directory).is_err() {
             return;
         }
     }
-    let verdict = pcb_kicad::error_verdict(&target.command, status, message, target.started.elapsed().as_secs_f64(), existing(&target.outputs));
+    let mut verdict = pcb_kicad::error_verdict(&target.command, status, message, target.started.elapsed().as_secs_f64(), existing(&target.outputs));
+    // A constraint the outline cannot hold (a row longer than the board):
+    // the room it needs, as numbers.
+    if let Some(room) = room {
+        if let Some(size) = room.suggested_outline_mm {
+            verdict.next_actions.push(pcb_kicad::room_action(&room, size));
+        }
+        verdict.room = Some(room);
+    }
     let _ = write_verdict(directory, None, &verdict);
 }
 
@@ -161,7 +172,21 @@ fn check_project(directory: &str, board_id: &str) -> Result<(), Failure> {
 }
 
 fn check_fresh_output(directory: &str) -> Result<(), Failure> {
-    if Path::new(directory).exists() {
+    let path = Path::new(directory);
+    // A directory holding only the verdict of a run that ended in an input
+    // error (the room a constraint needs) is taken again: the retry with
+    // the fixed input goes where the first run went.
+    let only_verdict = fs::read_dir(path)
+        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect::<Vec<_>>())
+        .is_ok_and(|names| names == [std::ffi::OsString::from("verdict.json")])
+        && fs::read_to_string(path.join("verdict.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|verdict| verdict["status"] == "usage_error");
+    if only_verdict {
+        fs::remove_dir_all(path).map_err(|error| Failure::Usage(format!("failed to remove {directory}: {error}")))?;
+    }
+    if path.exists() {
         return Err(Failure::Usage(format!("output directory {directory} already exists; give a new one")));
     }
     Ok(())
@@ -412,6 +437,7 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     facts.constraints_missed = missed_constraints(&constraints);
     facts.work_seconds = report["work_seconds"].as_f64();
     facts.cut = pcb_kicad::wall_cuts();
+    facts.room = serde_json::from_value(report["room"].clone()).ok();
     facts
 }
 
@@ -471,6 +497,11 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     print_layout(&result).map_err(Failure::Internal)?;
     let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory);
     facts.constraints_missed = missed_constraints(&result.constraints);
+    // The placement's room (the parts and the outline the layout kept).
+    facts.room = fs::read_to_string(output.join("placed/board-placer.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|placed| serde_json::from_value(placed["room"].clone()).ok());
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
     facts.outputs = existing(&outputs);
@@ -725,7 +756,8 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
 <out-dir>/board-layout.json the report: moves, constraints, routed (as board-router.json), quality,
 cut, work_seconds and verdict; <out-dir>/verdict.json the verdict alone. When parts find no legal
 place the layout stops before routing (exit 1) and writes no board-layout.json: verdict.json holds
-unplaced, and next_actions the hints (how full each side is, which constraint holds a part).";
+unplaced, room (utilization per side, the area missing, an outline to try) and next_actions the
+hints (how full each side is, which constraint holds a part).";
 
 const PLACE_HELP: &str = "\
 Places a KiCad board's movable parts (no routing): for checking constraints in seconds.
@@ -742,9 +774,13 @@ usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-co
                        A layout config (the layout.json import-kicad-netlist writes) works as well:
                        its placer object is used.
 
-A board with room places in seconds. One without (a side over 90 % full, a part no place fits)
-tries looser placement levels first, up to the work budget, before it reports unplaced parts: a
-minute or more on 80 parts. A region smaller than its part is an input error at once (exit 2).
+A board with room places in seconds. What cannot fit is an input error at once (exit 2): a region
+smaller than its part, a row longer than the outline, parts held at one edge that need more length
+than it has. Parts that need more area than a side has, or more than strips of the board hold, are
+a no in seconds (exit 1, overfull). A board merely crowded (a side over 90 % full) tries looser
+placement levels first, up to the work budget, before it reports unplaced parts: minutes on 80
+parts. verdict.json's room gives the numbers: utilization per side, the area missing, the smallest
+outline and, when parts did not fit, an outline to try (suggested_outline_mm).
 
 Environment: PCB_PLACER_WORK_SECONDS sets the placement's work budget in seconds of work (default
 600, the layout's placement share of its default budget; 60 gives a quicker no).

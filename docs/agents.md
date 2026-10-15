@@ -203,13 +203,21 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   1. Check the constraints alone, which takes seconds:
      `pcb-maker place-kicad-board <dir> <id> <out> <dir>/layout.json`
      (the `placer` object of a layout config is used; a file holding only
-     that object works too). A board without room is the slow case: the
-     placer tries looser levels before it reports parts as unplaced, up
-     to the layout's placement budget (600 s of work; a minute or more on
-     80 parts); `PCB_PLACER_WORK_SECONDS=60` gives a quicker answer. A
-     `region` smaller than its part is an error at once (exit 2).
+     that object works too). What cannot fit is said at once, with exit
+     2: a `region` smaller than its part, a `row` longer than the outline
+     (as it may turn), parts held at one edge that need more length than
+     the edge has. Parts that need more area than a side has even with
+     their tightest bodies, or that cannot lie side by side in strips of
+     the board, are a no in seconds (exit 1, `"overfull": true` in
+     `board-placer.json`). Either way `verdict.json` has `room`: what is
+     missing, and an outline to try. A board that is merely crowded is
+     the slow case: the placer tries looser levels before it reports
+     parts as unplaced, up to the layout's placement budget (600 s of
+     work per seed; urchin's 80 parts on 80 x 40 mm without rows: about
+     seven minutes); `PCB_PLACER_WORK_SECONDS=60` gives a quicker answer.
      `<out>/board-placer.json` reports every constraint, `unplaced`,
-     `hints` and `utilization`.
+     `hints`, `utilization` and `room`. A directory holding only the
+     verdict of such an input error is taken again by the retry.
   2. Make a draft: `{"moves": 0, "placer": {...}}` in `layout.json` places
      and routes once, skipping the router-driven part moves. Those moves
      take most of a layout's time.
@@ -273,6 +281,7 @@ A finished run also carries it as `verdict` in its report:
 | `new_findings` | KiCad errors per type beyond the reference's: the run's own. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has too, and its project. |
 | `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
+| `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
 | `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. |
 | `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
@@ -281,6 +290,38 @@ A finished run also carries it as `verdict` in its report:
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
 | `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
+| `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
+
+`room` says how full the board is and how large it would need to be, so
+that an agent enlarges it in one step:
+
+| Field | Meaning |
+| --- | --- |
+| `outline_mm` | The outline's box, width and height. |
+| `usable_mm2` | Per side (front, back): the outline's area less the band along the edge bodies keep free and less the fixed parts' bodies. |
+| `parts_mm2` | Per side: the movable parts' bodies (courtyards, or the body box) with the spacing around them; a row is one body. |
+| `utilization` | `parts_mm2` over `usable_mm2`, per side. |
+| `target_utilization` | 0.7: above it a side is called full and placement gets hard. |
+| `missing_mm2` | Per side: the usable area missing for the parts at the target. |
+| `smallest_outline_mm` | The smallest outline (at the current aspect, unless large parts need another) that holds every side's parts at the target by area, its large parts side by side in strips across it (as full as the target), the largest part, every row and every edge's parts. An estimate from sizes: the placement may need more. |
+| `suggested_outline_mm` | Only when parts found no place or the outline failed a check: the larger of the current outline and `smallest_outline_mm` per side, or, where area is not what is missing, a quarter more area. `next_actions` names it ("try an outline of 118.0 x 107.5 mm ..."). |
+| `limits` | What bounds the outline besides area: rows, edges, parts larger than the board. |
+
+Urchin (both keyboard halves, 80 parts) on 80 x 40 mm, its two 5 x 3 key
+grids as rows: exit 2 in 0.04 s, with
+
+```json
+{"outline_mm": [80.0, 40.0], "usable_mm2": [3080.0, 3080.0], "parts_mm2": [1419.0, 3038.8],
+ "utilization": [0.461, 0.987], "target_utilization": 0.7, "missing_mm2": [0.0, 1261.2],
+ "smallest_outline_mm": [118.0, 107.5], "suggested_outline_mm": [118.0, 107.5],
+ "limits": ["the row of SW1 (15 parts) is 88.2 x 43.7 mm", "the row of SW18 (15 parts) is 88.2 x 43.7 mm"]}
+```
+
+(118 x 107.5 mm then places every part; two `near`/`relative` entries
+written for the halves side by side miss.) On the 230 x 95 mm board the
+walkthrough uses, the layout's verdict has `utilization` [0.066, 0.141],
+`missing_mm2` [0, 0] and `smallest_outline_mm` [213.5, 54.5]: the two
+grids side by side.
 
 **KiCad's DRC is cached.** Every DRC (15-25 s and 2.2 GB on a large
 board) is kept in `$XDG_CACHE_HOME/pcb-maker/drc/` (`~/.cache/pcb-maker/drc/`
@@ -312,7 +353,7 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
 | `routed.unconnected_terminals` | Pads the router could not reach. |
 | `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (`repair-kicad-silkscreen` fixes most of them), so `complete` is often false on a board that passes: `verdict` decides. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
-| `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. |
+| `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. The ones the placer keeps by construction are listed too: `back` and `front` (a part on its side), `rotation` and `opening_outwards` (a part at an allowed angle). |
 | `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
 | `routed.diagnostics.conflicted_nets` | Nets still fighting for room when the router gave up. |
 | `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`), worst first: give these areas more room. |
@@ -327,8 +368,9 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
   semicolon say why: a side that is more than 70 % full (parts' bodies
   with spacing against the board area), or parts held by an `edge`,
   `region` or overhang constraint. Give them
-  more room: a larger `outline`, a wider `region`, a looser `edge`
-  `max_mm`, parts on the other side, or unfix a neighbour.
+  more room: a larger `outline` (`room.suggested_outline_mm`), a wider
+  `region`, a looser `edge` `max_mm`, parts on the other side, or unfix a
+  neighbour.
   `placed/board-placer.json` has the same `hints` and the `utilization`
   per side.
   Before giving up, the placer shrinks the halos and the spacing (down to

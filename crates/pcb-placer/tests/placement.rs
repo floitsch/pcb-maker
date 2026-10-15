@@ -835,3 +835,67 @@ fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
         .max((placement.poses[0].position[1] - placement.poses[1].position[1]).abs());
     assert!(gap >= 14.5 - 1.0e-6, "squares {gap} mm apart");
 }
+
+/// `count` key switches of 17 x 17 mm on a `width` x `height` board.
+fn keys_on(width: f64, height: f64, count: usize) -> Problem {
+    let mut problem = chain(count);
+    problem.outline = vec![[0.0, 0.0], [width, 0.0], [width, height], [0.0, height]];
+    problem.poses[0].position = [2.0, height / 2.0];
+    problem.poses[1].position = [width - 2.0, height / 2.0];
+    for component in &mut problem.components[2..] {
+        component.body_size = [17.0, 17.0];
+    }
+    for pose in &mut problem.poses[2..] {
+        pose.position = [width / 2.0, height / 2.0];
+    }
+    problem
+}
+
+#[test]
+fn a_board_without_room_says_no_at_once() {
+    // Ten 17 mm keys on 80 x 40 mm: 2890 mm2 of 3200, but two strips of
+    // 80 mm hold only four keys each. No level can place them: the placer
+    // says so without annealing at every level.
+    let problem = keys_on(80.0, 40.0, 10);
+    let placement = place(&problem, &Config::new());
+    assert!(placement.overfull);
+    assert!(!placement.unplaced.is_empty());
+    // Little work: one global placement and a legalisation near where it
+    // put the parts.
+    assert!((placement.work as f64) < 5.0 * pcb_placer::WORK_PER_SECOND, "work {}", placement.work);
+    // Eight fit (two rows of four); the placer seats at least some.
+    assert!(placement.unplaced.len() < 10, "{:?}", placement.unplaced);
+    // Room enough (four rows of 6 on 110 x 75 mm): no fast no.
+    let placement = place(&keys_on(110.0, 75.0, 10), &Config::new());
+    assert!(!placement.overfull);
+    assert!(placement.unplaced.is_empty(), "{:?}", placement.unplaced);
+}
+
+#[test]
+fn the_work_budget_is_kept_inside_the_passes() {
+    // A crowded board that is not hopeless by area or strips (40 parts of
+    // 6 x 3 mm on 32 x 25 mm: 720 of 800 mm2), on a small budget: the
+    // legalisation and the passes after it stop near the budget instead
+    // of searching the whole board for every part without room.
+    let mut problem = chain(40);
+    problem.outline = vec![[0.0, 0.0], [32.0, 0.0], [32.0, 25.0], [0.0, 25.0]];
+    problem.poses[0].position = [2.0, 12.5];
+    problem.poses[1].position = [30.0, 12.5];
+    for pose in &mut problem.poses[2..] {
+        pose.position = [16.0, 12.5];
+    }
+    let free = place(&problem, &Config::new());
+    // The global placement is not budgeted (and counts the same in both).
+    let start = pcb_placer::work();
+    pcb_placer::global::global_place(&problem, &Config::new().global);
+    let global = pcb_placer::work() - start;
+    let mut config = Config::new();
+    let limit = (0.05 * pcb_placer::WORK_PER_SECOND) as u64;
+    config.work_limit = Some(limit);
+    let placement = place(&problem, &config);
+    assert!(!placement.overfull);
+    eprintln!("work without a limit {}, with {}, global {global}", free.work, placement.work);
+    assert!(free.work - global > 10 * limit, "the test needs a board whose passes take long");
+    // What follows the global placement overruns by one hurried pass.
+    assert!(placement.work - global < 5 * limit, "work {} (global {global}) against a limit of {limit}", placement.work);
+}

@@ -559,9 +559,12 @@ fn apply_rows(
     footprints: usize,
     pad_boxes: &[Vec<[f64; 4]>],
     rows: &[KiCadRowConstraint],
-) -> Result<(BTreeMap<usize, usize>, BTreeMap<usize, RowPlace>), String> {
+) -> Result<(BTreeMap<usize, usize>, BTreeMap<usize, RowPlace>, Vec<usize>), String> {
     let mut leaders = BTreeMap::new();
     let mut places = BTreeMap::new();
+    // The first parts of the user's rows (the placer's own bus rows turn
+    // with their parts and are not checked against the outline).
+    let mut user_rows = Vec::new();
     for row in rows {
         let mut members: Vec<usize> = Vec::new();
         for pattern in &row.parts {
@@ -595,6 +598,9 @@ fn apply_rows(
             return Err(format!("row {:?}: columns and row_pitch_mm must be positive", row.parts));
         }
         let leader = members[0];
+        if !row.turns {
+            user_rows.push(leader);
+        }
         let side = problem.components[leader].side;
         // The row's frame: the leader's angle, or that angle turned by a
         // half turn (a quarter with `turns`) when the members lie exactly
@@ -740,7 +746,7 @@ fn apply_rows(
     let mut poses = problem.poses.clone();
     problem.sync_followers(&mut poses);
     problem.poses = poses;
-    Ok((leaders, places))
+    Ok((leaders, places, user_rows))
 }
 
 /// Where a row member sits in its leader's frame: its origin's offset, its
@@ -805,7 +811,11 @@ pub(super) fn apply_constraints(
     weight: f64,
 ) -> Result<Vec<String>, String> {
     let footprints = pads.len();
-    let (leaders, places) = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
+    let (leaders, places, user_rows) = apply_rows(problem, references, footprints, pad_boxes, &constraints.row)?;
+    // Constraints no placement can keep (a region smaller than its part, a
+    // row longer than the board): said at the end, all of them, with the
+    // room the board would need.
+    let mut cannot = Vec::new();
     let find = |reference: &str| -> Result<usize, String> {
         let index = references[..footprints]
             .iter()
@@ -869,7 +879,8 @@ pub(super) fn apply_constraints(
                 angle: angles[0],
             };
         }
-        problem.components[index].angle_options = angles;
+        problem.components[index].angle_options = angles.clone();
+        problem.constraints.kept.push(core::constraints::Kept { kind: "rotation", part: index, side: None, angles });
         constrained.insert(index);
     }
     // Parts put somewhere in words become edge and region constraints;
@@ -1028,7 +1039,8 @@ pub(super) fn apply_constraints(
                     angle: angles[0],
                 };
             }
-            problem.components[index].angle_options = angles;
+            problem.components[index].angle_options = angles.clone();
+            problem.constraints.kept.push(core::constraints::Kept { kind: "opening_outwards", part: index, side: None, angles });
         }
         constrained.insert(index);
     }
@@ -1047,7 +1059,9 @@ pub(super) fn apply_constraints(
         let mut any = false;
         for pattern in &entry.parts {
             for index in matching(pattern) {
-                region_holds(&problem.components[index], &references[index], region)?;
+                if let Err(error) = region_holds(&problem.components[index], &references[index], region) {
+                    cannot.push(error);
+                }
                 problem.constraints.regions.push((index, region));
                 constrained.insert(index);
                 any = true;
@@ -1275,6 +1289,23 @@ pub(super) fn apply_constraints(
             problem.components[index].fixed = true;
         }
     }
+    // A row or an edge's parts the outline cannot hold. Not for an
+    // outline sized from the parts: the layout grows it while parts do
+    // not fit.
+    let automatic = constraints.outline.as_ref().is_some_and(|outline| outline.width.is_none() && outline.height.is_none());
+    let outlined = if automatic { Vec::new() } else { crate::placement_room::outline_holds(problem, references, &user_rows) };
+    if !cannot.is_empty() || !outlined.is_empty() {
+        crate::placement_room::note_room(crate::placement_room::room(problem, references, !outlined.is_empty()));
+        cannot.extend(outlined);
+        return Err(cannot.join("; "));
+    }
+    // The sides `apply_sides` flipped the parts to, row members included
+    // (they lie on their row's side), reported as kept constraints.
+    for (kind, patterns, side) in [("back", &constraints.back, core::Side::Back), ("front", &constraints.front, core::Side::Front)] {
+        for index in (0..footprints).filter(|index| patterns.iter().any(|pattern| glob_matches(pattern, &references[*index]))) {
+            problem.constraints.kept.push(core::constraints::Kept { kind, part: index, side: Some(side), angles: Vec::new() });
+        }
+    }
     Ok(warnings)
 }
 
@@ -1283,8 +1314,11 @@ pub(super) fn constraint_report(
     poses: &[core::Pose],
     references: &[String],
 ) -> Vec<KiCadConstraintStatus> {
+    // The constraints the lowering keeps by construction (sides, turns)
+    // after the placed ones: listed as kept, like every other.
     core::constraints::report(problem, poses)
         .into_iter()
+        .chain(core::constraints::report_kept(problem, poses))
         .map(|status| KiCadConstraintStatus {
             kind: status.kind.into(),
             part: references[status.part].clone(),
@@ -1583,6 +1617,66 @@ mod tests {
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }
+    }
+
+    #[test]
+    fn constraints_kept_by_construction_are_reported() {
+        // A side, the turns a part may take, a connector opening outwards:
+        // the placer cannot break them; the report lists them as kept.
+        let (mut problem, references, pads) = problem();
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "front": ["C1"], "rotation": [{"part": "C2", "angles": [90, 270]}],
+                "edge": [{"part": "C1", "edge": "left", "opening_outwards": true}]}"#,
+        )
+        .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            // C1 opens towards -x in its own frame.
+            &[None, Some([-1.0, 0.0]), None],
+            &[false, false, false],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        let kept = |poses: &[core::Pose]| -> Vec<(String, String, bool)> {
+            constraint_report(&problem, poses, &references)
+                .into_iter()
+                .filter(|status| status.kind != "edge")
+                .map(|status| (status.kind, status.part, status.satisfied))
+                .collect()
+        };
+        let row = |kind: &str, part: &str, satisfied: bool| (kind.to_string(), part.to_string(), satisfied);
+        assert_eq!(
+            kept(&problem.poses),
+            vec![row("rotation", "C2", true), row("opening_outwards", "C1", true), row("front", "C1", true)]
+        );
+        // Turned another way, they would be missed.
+        let mut poses = problem.poses.clone();
+        poses[1].angle = 180.0;
+        poses[2].angle = 0.0;
+        assert_eq!(kept(&poses), vec![row("rotation", "C2", false), row("opening_outwards", "C1", false), row("front", "C1", true)]);
+    }
+
+    #[test]
+    fn a_row_the_outline_cannot_hold_is_an_error_at_once() {
+        // Two 2 x 1 mm parts 25 mm apart: 27 mm on a 30 mm board; 40 apart
+        // do not fit, turned by a half or not (a row turns no further).
+        assert!(apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 25}]}"#).is_ok());
+        let error = apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 40}]}"#).unwrap_err();
+        assert!(error.contains("the row of C1 (2 parts) cannot fit the outline: the row is 42.00 x 1.00 mm"), "{error}");
+        // The room it would need is noted for the verdict (other tests may
+        // note theirs in between: only that there is one).
+        assert!(crate::placement_room::noted_room().is_some());
+        // With a region too small as well, both are said.
+        let error = apply(
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 40}], "region": [{"parts": ["J1"], "x": [0, 1], "y": [0, 0.5]}]}"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("region for J1 cannot hold it") && error.contains("the row of C1"), "{error}");
     }
 
     #[test]

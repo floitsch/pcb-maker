@@ -87,12 +87,23 @@ list every constraint:
 "constraints": [
   {"kind": "edge", "part": "U3", "satisfied": true, "violation_mm": 0.0},
   {"kind": "overhang", "part": "U3", "satisfied": true, "violation_mm": 0.0},
-  {"kind": "near", "part": "C5", "other": "U3", "satisfied": false, "violation_mm": 3.235}
+  {"kind": "near", "part": "C5", "other": "U3", "satisfied": false, "violation_mm": 3.235},
+  {"kind": "rotation", "part": "J1", "satisfied": true, "violation_mm": 0.0},
+  {"kind": "back", "part": "BT1", "satisfied": true, "violation_mm": 0.0}
 ]
 ```
 
+`back`, `front`, `rotation` and an edge's `opening_outwards` are kept by
+construction (the placer never changes a part's side or takes an angle
+not allowed); they are listed so that every constraint has its line.
+
 `constraint_warnings` lists accepted but unused inputs. An unknown key, part
-or pad is an error, never ignored.
+or pad is an error, never ignored. So is a constraint no placement can keep,
+said at once rather than after every relaxation level: a `region` smaller
+than its part, a `row` longer than the outline in every way it may turn, or
+parts held at one edge (each too deep to stand two behind each other) that
+need more length than that edge has. With an outline sized from the parts
+(`"outline": {}`) the outline checks are left out: the layout grows it.
 
 ## What pcb-maker adds by itself
 

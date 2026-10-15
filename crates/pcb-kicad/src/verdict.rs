@@ -83,6 +83,12 @@ pub struct DrcTally {
     pub warnings: usize,
     pub unconnected: usize,
     pub schematic_parity: usize,
+    /// The schematic parity findings by type (`net_conflict`,
+    /// `missing_footprint`, ...).
+    pub schematic_parity_types: BTreeMap<String, usize>,
+    /// Every parity finding is a symbol pin the footprint has no pad for
+    /// (`no_connect_parity_only`).
+    pub schematic_parity_pins_only: bool,
 }
 
 pub fn tally_drc(report: &Value) -> DrcTally {
@@ -102,6 +108,10 @@ pub fn tally_drc(report: &Value) -> DrcTally {
     }
     tally.unconnected = report["unconnected_items"].as_array().map_or(0, Vec::len);
     tally.schematic_parity = report["schematic_parity"].as_array().map_or(0, Vec::len);
+    for finding in report["schematic_parity"].as_array().into_iter().flatten() {
+        *tally.schematic_parity_types.entry(finding["type"].as_str().unwrap_or("unknown").to_string()).or_default() += 1;
+    }
+    tally.schematic_parity_pins_only = no_connect_parity_only(report).is_some();
     tally
 }
 
@@ -204,6 +214,8 @@ pub struct KiCadRunFacts {
     pub skipped: Vec<String>,
     /// Whether the run routed (a placement alone has no copper to judge).
     pub routes: bool,
+    /// The placement's room (`placement_room`), when there was one.
+    pub room: Option<crate::placement_room::KiCadRoom>,
 }
 
 impl KiCadRunFacts {
@@ -228,6 +240,7 @@ impl KiCadRunFacts {
             outputs: BTreeMap::new(),
             skipped: Vec::new(),
             routes: true,
+            room: None,
         }
     }
 
@@ -270,6 +283,8 @@ pub struct KiCadVerdict {
     /// Other warning-severity findings, which do not count.
     pub warnings: usize,
     pub schematic_parity_issues: usize,
+    /// `schematic_parity_issues` by KiCad's type.
+    pub schematic_parity_by_type: BTreeMap<String, usize>,
     /// Clearance violations the router's own exact check found.
     pub internal_violations: usize,
     /// Pads KiCad finds short of thermal spokes (counted in
@@ -291,6 +306,11 @@ pub struct KiCadVerdict {
     pub skipped: Vec<String>,
     /// What to do next, if anything; factual.
     pub next_actions: Vec<String>,
+    /// The room on the board as numbers: utilization per side, the area
+    /// missing, the smallest outline that holds the parts, and an outline
+    /// to try when parts found no place (`null` for a route).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room: Option<crate::placement_room::KiCadRoom>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -364,6 +384,11 @@ fn next_actions(facts: &KiCadRunFacts, status: KiCadRunStatus, new_findings: &BT
             "give the unplaced parts room: a larger outline, a looser region or edge constraint, or the other side ({})",
             if facts.placement_hints.is_empty() { "see hints in board-placer.json".to_string() } else { facts.placement_hints.join("; ") }
         ));
+        if let Some(room) = &facts.room
+            && let Some(size) = room.suggested_outline_mm
+        {
+            actions.push(room_action(room, size));
+        }
     }
     if !facts.cut.is_empty() && status != KiCadRunStatus::Complete {
         actions.push(format!(
@@ -406,6 +431,20 @@ fn next_actions(facts: &KiCadRunFacts, status: KiCadRunStatus, new_findings: &BT
     if let KiCadReference::Failed { error, .. } = &facts.reference {
         actions.push(format!("the reference board could not be checked ({error}): every DRC error counted as new"));
     }
+    if let Some(native) = facts.native.as_ref().filter(|native| native.schematic_parity > 0) {
+        actions.push(if native.schematic_parity_pins_only {
+            format!(
+                "nothing to do for the {} schematic parity findings: each is a symbol pin the footprint has no pad for (net_conflict \"No pad found for pin\"), a no-connect pin on KiCad's unconnected-(...) net when import-kicad-netlist listed it in unmatched_pins",
+                native.schematic_parity
+            )
+        } else {
+            format!(
+                "schematic parity findings ({}; counted, not judged): see {}",
+                counts(&native.schematic_parity_types),
+                facts.outputs.get("drc").map_or("drc.json", String::as_str)
+            )
+        });
+    }
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the verdict is the router's own count".into());
     }
@@ -413,6 +452,38 @@ fn next_actions(facts: &KiCadRunFacts, status: KiCadRunStatus, new_findings: &BT
         actions.extend(facts.skipped.iter().cloned());
     }
     actions
+}
+
+/// The next action an outline suggestion makes: the size to try, and why.
+pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
+    let full: Vec<String> = ["front", "back"]
+        .iter()
+        .zip(room.utilization.iter().zip(room.missing_mm2))
+        .filter(|(_, (_, missing))| *missing > 0.0)
+        .map(|(side, (share, missing))| format!("the {side} side is {:.0} % full, {missing:.0} mm2 short of {:.0} %", share * 100.0, room.target_utilization * 100.0))
+        .collect();
+    let mut why = full;
+    why.extend(room.limits.iter().cloned());
+    format!(
+        "try an outline of {:.1} x {:.1} mm (room.suggested_outline_mm; now {:.1} x {:.1}){}",
+        size[0],
+        size[1],
+        room.outline_mm[0],
+        room.outline_mm[1],
+        if why.is_empty() { String::new() } else { format!(": {}", why.join("; ")) }
+    )
+}
+
+/// The parity findings that are only the schematic's no-connect pins
+/// (KiCad's `unconnected-(...)` nets): pins the footprint has no pad for,
+/// harmless; `None` when the report holds others too or none.
+pub fn no_connect_parity_only(report: &Value) -> Option<usize> {
+    let findings = report["schematic_parity"].as_array()?;
+    let harmless = |finding: &Value| {
+        finding["type"].as_str() == Some("net_conflict")
+            && finding["description"].as_str().is_some_and(|text| text.contains("No pad found for pin"))
+    };
+    (!findings.is_empty() && findings.iter().all(harmless)).then_some(findings.len())
 }
 
 /// The verdict of a finished run.
@@ -442,6 +513,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         cosmetic_findings: facts.native.as_ref().map_or(0, |native| native.cosmetic),
         warnings: facts.native.as_ref().map_or(0, |native| native.warnings),
         schematic_parity_issues: facts.native.as_ref().map_or(0, |native| native.schematic_parity),
+        schematic_parity_by_type: facts.native.as_ref().map(|native| native.schematic_parity_types.clone()).unwrap_or_default(),
         internal_violations: facts.internal_violations,
         starved_thermals: facts.starved_thermals,
         constraints_missed: facts.constraints_missed.clone(),
@@ -451,6 +523,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         wall_seconds: facts.wall_seconds,
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
+        room: facts.room.clone(),
     }
 }
 
@@ -678,5 +751,23 @@ mod tests {
         let message = input_error("constraint names unknown part \"U99\"");
         assert!(is_input_error(&format!("placement: {message}")));
         assert!(!is_input_error("kicad-cli failed with exit status 1"));
+    }
+
+    #[test]
+    fn parity_findings_are_counted_by_type_and_no_connect_pins_need_nothing() {
+        let pin = json!({"type": "net_conflict", "description": "No pad found for pin 31 in symbol U1."});
+        let report = json!({"violations": [], "unconnected_items": [], "schematic_parity": [pin.clone(), pin.clone()]});
+        let tally = tally_drc(&report);
+        assert_eq!(tally.schematic_parity_types, map(&[("net_conflict", 2)]));
+        assert!(tally.schematic_parity_pins_only);
+        let verdict = judge(&routed(tally));
+        assert_eq!(verdict.schematic_parity_by_type, map(&[("net_conflict", 2)]));
+        assert!(verdict.next_actions.iter().any(|action| action.starts_with("nothing to do for the 2 schematic parity findings")));
+        // A footprint missing is something to look at.
+        let report = json!({"schematic_parity": [pin, {"type": "missing_footprint", "description": "Missing footprint R3"}]});
+        let tally = tally_drc(&report);
+        assert!(!tally.schematic_parity_pins_only);
+        let verdict = judge(&routed(tally));
+        assert!(verdict.next_actions.iter().any(|action| action.starts_with("schematic parity findings (missing_footprint 1, net_conflict 1")));
     }
 }
