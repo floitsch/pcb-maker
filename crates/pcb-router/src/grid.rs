@@ -532,6 +532,9 @@ impl StaticMaps {
             .chain(board.obstacles.iter().filter(|obstacle| mask_opening(obstacle)))
             .collect();
         let first_apart = ordered.iter().position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
+        // `PCB_ROUTER_OLD_POLYGON_DISTANCES` measures every node edge by
+        // edge again (A/B: the maps are the same).
+        let polygon_fields = std::env::var_os("PCB_ROUTER_OLD_POLYGON_DISTANCES").is_none();
         let mut fill_trace: Option<FillTrace> = None;
         for (position, obstacle) in ordered.into_iter().enumerate() {
             if Some(position) == first_apart {
@@ -563,6 +566,29 @@ impl StaticMaps {
             let margin = step * step / (8.0 * trace_reach);
             let bounds = obstacle.shape.aabb();
 
+            // A polygon of many corners (a board cutout, a rule area) is
+            // measured once per node from its edges' neighbourhoods
+            // (`PolygonField`), not edge by edge for every node of its box
+            // (ULK's 454-corner cutout: 15 s a class, 60-190 s a lattice).
+            let field = match &obstacle.shape {
+                Shape::Polygon { points } if points.len() >= FIELD_CORNERS && polygon_fields => {
+                    let via_range = obstacle.blocks_vias.then(|| grid.node_range(bounds.inflated(via_reach))).flatten();
+                    let trace_range = obstacle
+                        .blocks_tracks
+                        .then(|| grid.node_range(bounds.inflated(trace_reach + margin)))
+                        .flatten();
+                    [via_range, trace_range]
+                        .into_iter()
+                        .flatten()
+                        .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
+                        .map(|range| PolygonField::new(grid, points, range, via_reach.max(trace_reach + margin)))
+                }
+                _ => None,
+            };
+            let distance_at = |x: usize, y: usize, center: Point| match &field {
+                Some(field) => field.distance(x, y),
+                None => obstacle.shape.distance_to_point(center),
+            };
             if obstacle.blocks_vias
                 && let Some((x0, y0, x1, y1)) = grid.node_range(bounds.inflated(via_reach))
             {
@@ -581,7 +607,7 @@ impl StaticMaps {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = grid.center(x, y);
-                        if obstacle.shape.distance_to_point(center) < via_reach {
+                        if distance_at(x, y, center) < via_reach {
                             let index = grid.index(x, y);
                             if searched {
                                 via_owner[index] = match (own_vias, own_hole) {
@@ -619,7 +645,7 @@ impl StaticMaps {
                     for x in x0..=x1 {
                         let index = grid.index(x, y);
                         let center = grid.center(x, y);
-                        let distance = obstacle.shape.distance_to_point(center);
+                        let distance = distance_at(x, y, center);
                         if distance < trace_reach {
                             if !edge_zone[index] {
                                 if let Some(fill) = &mut fill_trace {
@@ -722,6 +748,79 @@ impl StaticMaps {
     }
 }
 
+/// Corners from which a polygon obstacle's distances come from a
+/// `PolygonField`.
+const FIELD_CORNERS: usize = 16;
+
+/// The distances from the nodes of an inclusive node range to a filled
+/// polygon, equal to `Shape::distance_to_point` bit for bit wherever that is
+/// below `cap` (the same edge distances, the same crossing test as
+/// `point_in_polygon`), and at least `cap` elsewhere. Each edge updates only
+/// the nodes within `cap` of its box, and the inside comes from each row's
+/// sorted crossings: the cost follows the edges' neighbourhoods and the
+/// rows, not the box's nodes times the corners.
+struct PolygonField {
+    x0: usize,
+    y0: usize,
+    width: usize,
+    distances: Vec<f64>,
+}
+
+impl PolygonField {
+    fn new(grid: &Grid, points: &[Point], range: (usize, usize, usize, usize), cap: f64) -> Self {
+        let (x0, y0, x1, y1) = range;
+        let width = x1 - x0 + 1;
+        let mut distances = vec![f64::INFINITY; width * (y1 - y0 + 1)];
+        for (a, b) in polygon_edges(points) {
+            // One node more than the cap: a node just inside it by rounding
+            // is measured too.
+            let near = Aabb {
+                minimum: [a[0].min(b[0]), a[1].min(b[1])],
+                maximum: [a[0].max(b[0]), a[1].max(b[1])],
+            }
+            .inflated(cap + grid.pitch);
+            let Some((ex0, ey0, ex1, ey1)) = grid.node_range(near) else {
+                continue;
+            };
+            let (ex0, ey0, ex1, ey1) = (ex0.max(x0), ey0.max(y0), ex1.min(x1), ey1.min(y1));
+            for y in ey0..=ey1 {
+                for x in ex0..=ex1 {
+                    let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
+                    let slot = &mut distances[(y - y0) * width + x - x0];
+                    if distance < *slot {
+                        *slot = distance;
+                    }
+                }
+            }
+        }
+        let mut crossings = Vec::new();
+        for y in y0..=y1 {
+            let line = grid.center(x0, y)[1];
+            crossings.clear();
+            crossings.extend(
+                polygon_edges(points)
+                    .filter(|(a, b)| (a[1] > line) != (b[1] > line))
+                    .map(|(a, b)| a[0] + (line - a[1]) / (b[1] - a[1]) * (b[0] - a[0])),
+            );
+            crossings.sort_by(f64::total_cmp);
+            for x in x0..=x1 {
+                let point = grid.center(x, y)[0];
+                // `point_in_polygon`: inside where an odd number of
+                // crossings lie beyond the point.
+                let beyond = crossings.len() - crossings.partition_point(|crossing| !(point < *crossing));
+                if beyond % 2 == 1 {
+                    distances[(y - y0) * width + x - x0] = 0.0;
+                }
+            }
+        }
+        Self { x0, y0, width, distances }
+    }
+
+    fn distance(&self, x: usize, y: usize) -> f64 {
+        self.distances[(y - self.y0) * self.width + x - self.x0]
+    }
+}
+
 fn mark_tight_edges(
     grid: &Grid,
     shape: &Shape,
@@ -741,6 +840,58 @@ fn mark_tight_edges(
             claim16(&mut edge_owner[index], net);
             edge_block[neighbor] |= 1 << ((direction + 4) % 8);
             claim16(&mut edge_owner[neighbor], net);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A concave polygon of many corners (a ring of `count` points whose
+    /// radius alternates, like a cutout with notches) around `center`.
+    fn star(center: Point, count: usize, outer: f64, inner: f64) -> Vec<Point> {
+        (0..count)
+            .map(|index| {
+                let angle = index as f64 / count as f64 * std::f64::consts::TAU;
+                let radius = if index % 2 == 0 { outer } else { inner };
+                [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn polygon_field_matches_distance_to_point_below_its_cap() {
+        let grid = Grid {
+            origin: [0.0375, -0.0125],
+            pitch: 0.1,
+            nx: 140,
+            ny: 120,
+        };
+        for (points, cap) in [
+            (star([7.0, 6.0], 64, 5.0, 3.5), 0.45),
+            (star([6.93, 5.97], 200, 4.0, 3.9), 0.3),
+            // A cutout whose corners sit on lattice rows and columns.
+            (vec![[2.0375, 2.0875], [11.0375, 2.0875], [11.0375, 9.0875], [6.0375, 4.0875], [2.0375, 9.0875]], 0.25),
+        ] {
+            let shape = Shape::Polygon { points: points.clone() };
+            let range = grid.node_range(shape.aabb().inflated(cap)).expect("on the lattice");
+            let field = PolygonField::new(&grid, &points, range, cap);
+            let (x0, y0, x1, y1) = range;
+            let mut inside = 0;
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let exact = shape.distance_to_point(grid.center(x, y));
+                    let measured = field.distance(x, y);
+                    if exact < cap {
+                        assert_eq!(measured.to_bits(), exact.to_bits(), "node {x}, {y}");
+                    } else {
+                        assert!(measured >= cap, "node {x}, {y}: {measured} for {exact}");
+                    }
+                    inside += usize::from(exact == 0.0);
+                }
+            }
+            assert!(inside > 100, "the polygon covers nodes");
         }
     }
 }
