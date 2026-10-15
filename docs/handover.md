@@ -3765,6 +3765,70 @@ schematic tier's scripts are not on the layout tier's path.
 build/schfail-full-x1100.log, build/schfail-four-x1100.log (the first
 four boards), build/schfail-layout-third-x1100.log, build/short-x1100.log.
 
+## Committed on 2026-10-15 (mask openings block placement)
+
+The open item of the mask-bridge section: the placer let parts sit under
+a fixed part's mask opening. Cause: the body's box holds a footprint's
+mask graphics (`body_on_side`), but a part whose courtyard covers under
+three quarters of that box blocks with its courtyard's shape and pads
+(`hollow`), without them. SNSP-CPU-01's J2 (RFModulator: 12 x 5 mm
+courtyard, 22 x 32 mm F.Mask polygon) and SNSP-CPU-1CHIP's RF1 are such
+parts; `PCB_PLACER_DESIGNER` on the v16 layouts judged T1 and C61 (and
+1CHIP's T1) legal under the opening on x1055, illegal ("shaped or hollow
+boxes", J2) on x1110. Fix (crates/pcb-kicad/src/board_placer.rs,
+`mask_openings`, on): the shape includes the part's mask graphics on its
+side, held to the body's box (a stroke's half width past it would raise
+`far_reach` on every search), so the legality test and the annealer keep
+bodies and pads off it, fixed and movable parts alike. Where KiCad's mask
+margin, max(web + `pad_to_mask_clearance`, `solder_mask_to_copper_clearance`
+(project_rules, new placer key `solder_mask_to_copper_mm`)), exceeds the
+copper clearance, the openings grow by the difference (eternal-keypad,
+protoesp, USB_Cable_Tester, WLED_Matrix, USB_Keypad: none has such a
+part). Same-net pads are kept out too. The designers' placements of both
+SNSP boards: the same parts illegal before and after (51 and 47, none
+for an opening).
+
+Census (`experiments/mask-openings/pads_under_openings.py`: other
+footprints' pads whose box meets a footprint's mask graphics, per side):
+0 on all 109 designers' boards; on the 109 v16 layouts only SNSP-CPU-01
+(J2: T1 4 pads, C61 2) and SNSP-CPU-1CHIP (RF1: T1 4 pads). Parts with a
+courtyard and mask graphics past it: 7 on 3 boards (SNSP-CPU-01 4,
+1CHIP 2, USB_Cable_Tester's battery holder 1).
+
+Layouts, tasks v6, one run a side, jobs 1, threads 4 (x1055 = 8136361,
+x1110 = that + this; build/openings-snsp-x1055, -x1110):
+
+| board | pads under openings | solder_mask_bridge | unconnected | errors | vias | first route |
+| --- | --- | --- | --- | --- | --- | --- |
+| SNSP-CPU-01 | 6 / 0 | 15 / 0 | 102 / 147 | 16 / 2 (copper_edge_clearance 1 / 2) | 1812 / 1615 | 114 / 215 |
+| SNSP-CPU-1CHIP | 4 / 0 | 16 / 0 | 2 / 0, passes | 16 / 0 | 757 / 678 | 9 / 6 |
+
+SNSP-CPU-01's unconnected rose: front utilization 0.732 to 0.757 (J2's
+opening), the race kept seed 3 instead of 12 (probe 308 unfinished nets
+against 317, wirelength 14235 to 14556 mm), its first route left 215
+open terminals against 114. One run cannot tell a reshuffle of this
+crowded board from a cost of the rule (v16, x862, with the parts under
+J2: 152); a few placer seeds per side would.
+
+Identity: place-kicad-board (short-x1054's prepared sources and
+layout.json, 120 s of placement work, four threads), x1055 against
+x1110: byte-identical boards on spell_tome_bottom, USB_Cable_Tester,
+urchin, eternal-keypad, OpenFC and Blue_Line (board-placer.json differs
+only in seconds and paths). Short tier on x1111 (x1110 rebased on
+2ab5ef5; tasks v6, jobs 6, threads 4, under the lock,
+build/short-x1111.log) against build/short-x976.log: compare.py same
+12, unconnected 35, new errors 3, vias 1129, length 22253 mm, work 3236
+s, first-route 61 on both; no row field differs but `tasks` (the path's
+spelling) and timing; every placed and result board byte-identical to
+build/short-x1054's. Unit tests
+`a_fixed_parts_mask_opening_keeps_other_parts_pads_out` (J2's geometry
+at its angle, J2 fixed and movable, legality and the annealer's overlap,
+the switch off) and
+`a_mask_opening_keeps_kicads_mask_margin_beyond_the_copper_clearance`.
+Not done: a pad's own mask expansion beyond the spacing, and the grown
+margin for whole-body parts (their box holds the openings at the
+spacing only).
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

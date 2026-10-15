@@ -48,7 +48,9 @@ less copper); on PIC and the hierarchy board the automatic one is.
    pads, and with its courtyard against parts with holes, since KiCad
    forbids holes in a courtyard unless the courtyard is malformed and
    KiCad skips it. A board cutout keeps only copper away: a connector body
-   may reach over its peg holes.
+   may reach over its peg holes. A footprint's own mask graphics (an RF
+   modulator's exposed 22 x 32 mm area) are part of its body, also where
+   it blocks with its courtyard's shape (`mask_openings`, below).
 2. **Routing halos.** A PCB routes in the same plane it places in. Every body
    gets a halo proportional to its pin count; halos count as body area and as
    spacing. If the board cannot afford them they shrink uniformly.
@@ -364,6 +366,51 @@ what a seed does.
   from the other's far side (holes, pads, courtyard) at the bodies' gap;
   neighbour searches reach `far_reach` farther where such parts exist.
   woagboard's 26-28 courtyard overlaps go to 0.
+
+## Mask openings block placement (2026-10-15)
+
+A footprint's own mask graphics (filled F.Mask or B.Mask polygons,
+rectangles, circles, strokes) bare the copper under them: another
+footprint's pad there is exposed next to the opening, and KiCad reports
+solder_mask_bridge for every such pad of another net. The body's box has
+held them since the bodies agent (`body_on_side`), but a part whose
+courtyard covers less than three quarters of that box blocks with its
+courtyard's shape and its pads (`hollow`), and the openings were lost
+there. SNSP-CPU-01's J2 (an RF modulator: a 12 x 5 mm courtyard around
+four pins, a 22 x 32 mm F.Mask polygon beside it) held T1 and C61 in the
+layout, SNSP-CPU-1CHIP's RF1 held T1; J2 is fixed, but a movable part
+lost them alike. Now that shape includes the part's mask graphics on its
+side (`mask_openings`, on), held to the body's box, so the legality test
+and the annealer (both test the shape) keep other parts' bodies and pads
+the bodies' spacing away, fixed and movable parts alike. Where KiCad's
+mask margin, max(minimum web + `pad_to_mask_clearance`,
+`solder_mask_to_copper_clearance`), exceeds the copper clearance the
+openings grow by the difference (eternal-keypad and protoesp 0.10 mm,
+USB_Cable_Tester 0.08, WLED_Matrix and USB_Keypad 0.05; none of them has
+such a part). Pads of the opening's own net are kept out too (KiCad
+exempts them; a whole pad of one net is rare). Courtyard-less parts
+already blocked with their mask graphics, whole-body parts with their
+box, and mask graphics on a part's far side are far-side copper.
+
+Only three boards of the 109 have a part with a courtyard and mask
+graphics past it (SNSP-CPU-01 4, SNSP-CPU-1CHIP 2, USB_Cable_Tester 1).
+`experiments/mask-openings/pads_under_openings.py` counts other
+footprints' pads under a footprint's mask graphics: 0 on all 109
+designers' boards; on the 109 v16 layouts only SNSP-CPU-01 (6 pads of T1
+and C61 under J2) and SNSP-CPU-1CHIP (4 pads of T1 under RF1). Layouts
+(tasks v6, four threads, one run a side), x1055 against x1110:
+
+| board | pads under openings | solder_mask_bridge | unconnected | errors | vias |
+| --- | --- | --- | --- | --- | --- |
+| SNSP-CPU-01 | 6 / 0 | 15 / 0 | 102 / 147 | 16 / 2 | 1812 / 1615 |
+| SNSP-CPU-1CHIP | 4 / 0 | 16 / 0 | 2 / 0 (passes) | 16 / 0 | 757 / 678 |
+
+SNSP-CPU-01's front is 73 % full (76 % with J2's opening). Another
+seed won the race (seed 3 instead of 12; its race probe left 308
+unfinished nets against 317), its first route left 215 open terminals
+against 114, and it ended with 45 more unconnected items. One run a side
+cannot tell a reshuffle of a crowded board from a cost of the rule; the
+v16 layout (x862, the parts under J2) had 152.
 
 ## What went wrong on the way (kept as lessons)
 
