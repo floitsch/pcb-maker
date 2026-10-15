@@ -120,8 +120,10 @@ pub struct KiCadBoardRouterConfig {
     /// The board setup's minimum connection width (`rules.min_connection`)
     /// as a floor on every track width the router chooses: class widths,
     /// the narrow-signal width, neck-downs, stubs and spokes. Set from the
-    /// project when KiCad's connection_width check reports at error or
-    /// warning severity (`apply_width_floor`); `None`: no floor.
+    /// project when KiCad's connection_width check reports at error
+    /// severity, and at warning severity with
+    /// `PCB_MIN_CONNECTION_FLOOR=warning` (`project_rules::
+    /// connection_width_floor`, `apply_width_floor`); `None`: no floor.
     #[serde(default)]
     pub min_connection_mm: Option<f64>,
     /// The project's severity of connection_width findings (`error`,

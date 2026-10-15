@@ -482,19 +482,21 @@ directory; the result's `board-router.json` has `neck_repair`.
 
 The board setup's minimum connection width is also a floor on every track
 width the router chooses (2026-10-15): when the project rates
-connection_width findings as errors or warnings (KiCad's default is a
-warning; `ignore` sets no floor), `min_connection` raises the class widths,
-the narrow-signal width and the neck width (`project_rules.rs`,
+connection_width findings as errors, `min_connection` raises the class
+widths, the narrow-signal width and the neck width (`project_rules.rs`,
 `KiCadBoardRouterConfig::min_connection_mm`, `apply_width_floor`), and the
 lowering raises every class and the neck to it again, so a configuration
 file's or a requested net class's widths keep it as well; stubs, escapes,
 manual and inner spokes take their net's class or neck width, and the
-neck repair's tracks are the minimum rounded up to a micron. A warning
-does not fail the pass rule, but it is what the user sees in KiCad's
-DRC, so warnings floor the widths too. `PCB_MIN_CONNECTION_FLOOR=error`
-floors only at error severity, `off` never. `board-router.json`'s `rules`
-names the floor, the severity, the narrowest class width and the neck
-width the board was routed with.
+neck repair's tracks are the minimum rounded up to a micron. At warning
+severity (KiCad's default) there is no floor by default: a warning does
+not fail the pass rule, and on OpenESC (minimum 0.16, classes 0.09, the
+only corpus boards where it matters) the floor cost routing in route mode
+(4in1-mini 52 to 89 unconnected, 4in1 104 to 121) for 199+ warnings
+gone. `PCB_MIN_CONNECTION_FLOOR=warning` floors warnings too, `off`
+never; `ignore` never floors. `board-router.json`'s `rules` names the
+floor, the severity, the narrowest class width and the neck width the
+board was routed with.
 
 ### Plane skeleton (fallback)
 

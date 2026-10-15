@@ -232,8 +232,8 @@ pub fn resolve_project_rules(
 }
 
 /// Which connection_width severities make `min_connection` a floor on the
-/// router's widths (`PCB_MIN_CONNECTION_FLOOR`: `off`, `error` for error
-/// severity only; anything else or unset: error and warning).
+/// router's widths (`PCB_MIN_CONNECTION_FLOOR`: `off`, `warning` for error
+/// and warning severity; anything else or unset: error severity only).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FloorMode {
     Off,
@@ -244,17 +244,20 @@ pub(crate) enum FloorMode {
 fn floor_mode() -> FloorMode {
     match std::env::var("PCB_MIN_CONNECTION_FLOOR").as_deref() {
         Ok("off") => FloorMode::Off,
-        Ok("error") => FloorMode::Errors,
-        _ => FloorMode::ErrorsAndWarnings,
+        Ok("warning") => FloorMode::ErrorsAndWarnings,
+        _ => FloorMode::Errors,
     }
 }
 
 /// The track width floor from the board setup's minimum connection width
 /// and the project's severity of KiCad's connection_width findings. KiCad
 /// checks only with a minimum above 0; a project without the severity
-/// gets KiCad's default, a warning. A warning does not fail the pass rule
-/// but is what the agent's user sees in KiCad, so it floors the widths as
-/// an error does (`FloorMode::ErrorsAndWarnings`, the default); `ignore`
+/// gets KiCad's default, a warning. By default only the error severity
+/// floors the widths (`FloorMode::Errors`): a warning does not fail the
+/// pass rule, and on OpenESC (0.16 over classes of 0.09, warning) the floor
+/// cost routing in route mode (4in1-mini 52 to 89 unconnected, 4in1 104
+/// to 121), so there the designer's choice of a warning is taken at its
+/// word; `PCB_MIN_CONNECTION_FLOOR=warning` floors warnings too. `ignore`
 /// never does.
 pub(crate) fn connection_width_floor(min_connection: f64, severity: Option<&str>, mode: FloorMode) -> Option<f64> {
     if min_connection <= 0.0 {
@@ -335,8 +338,8 @@ mod tests {
         )
         .unwrap();
         let project = directory.join("board.kicad_pro");
-        // OpenESC's setup: classes and menu at 0.09, the minimum connection
-        // 0.16 at warning severity; a power class above it.
+        // OpenESC's setup (classes and menu at 0.09, the minimum connection
+        // 0.16; a power class above it), at several severities.
         let write = |severity: &str| {
             let text = format!(
                 r#"{{"board": {{"design_settings": {{"rules": {{"min_track_width": 0.09, "min_connection": 0.16}},
@@ -348,10 +351,18 @@ mod tests {
             );
             fs::write(&project, text).unwrap();
         };
-        write("warning");
+        // At warning severity the default sets no floor.
+        if std::env::var_os("PCB_MIN_CONNECTION_FLOOR").is_none() {
+            write("warning");
+            let config = resolve_project_rules(&project, &pcb).unwrap();
+            assert_eq!(config.min_connection_mm, None);
+            assert_eq!(config.connection_width_severity.as_deref(), Some("warning"));
+            assert_eq!(config.connection_rules["A"].trace_width_mm, 0.09);
+        }
+        write("error");
         let config = resolve_project_rules(&project, &pcb).unwrap();
         assert_eq!(config.min_connection_mm, Some(0.16));
-        assert_eq!(config.connection_width_severity.as_deref(), Some("warning"));
+        assert_eq!(config.connection_width_severity.as_deref(), Some("error"));
         assert_eq!(config.connection_rules["A"].trace_width_mm, 0.16);
         assert_eq!(config.connection_rules["PWR"].trace_width_mm, 0.3);
         // The menu's smallest width, raised to the floor.
