@@ -3882,6 +3882,165 @@ Not done: a pad's own mask expansion beyond the spacing, and the grown
 margin for whole-body parts (their box holds the openings at the
 spacing only).
 
+## Committed on 2026-10-15 (search core, x1060 / x1062)
+
+Two measurements and one change to the search proper, routes
+byte-identical (x1060: the change on 8a1fd2c, what was measured; x1062:
+the commit on c9fe4de). Scripts and logs in the worktree `pcb-maker-core`
+(`build/scale`, `build/prof`, `build/bench`, `build/pairs`, `build/fpall`).
+
+**Thread scaling (route mode, x1042, v16 placements, tasks v6,
+`RAYON_NUM_THREADS` 1 to 16, one run each, `PCB_MAKER_NO_CACHE=1`).**
+Every run of a board gave the same board file (md5) and the same
+fingerprints (as a multiset: side-by-side probes print in the order they
+finish), so the results are thread-independent as designed. Wall seconds
+(CPU seconds):
+
+| board | 1 | 2 | 4 | 8 | 16 |
+|---|---|---|---|---|---|
+| Castor | 302 (369) | 305 (381) | 223 (295) | 225 (296) | 239 (296) |
+| k30-SBC | 226 (388) | 234 (396) | 229 (395) | 229 (380) | 226 (401) |
+| jetson | 1114 (1744) | 1075 (1781) | 976 (1665) | 851 (1510) | 786 (1370) |
+
+There is no speed-up to speak of: what differs follows the machine's load
+(1 and 2 threads ran at load 14 to 30, jetson at 16 threads at 5 to 12),
+not the threads. The proof is in the routers' own profile lines: the
+negotiation runs its nets in batches, and almost all are single-net
+batches, one thread by construction, whose seconds fell as much as the
+wall did (Castor 3084 single batches, 132 s at 1 thread, 96 s at 16; the
+561 parallel batches with 1214 nets took 6.5 s and 3.2 s of wall; jetson's
+first attempt 3617 single batches 209 s to 148 s, 520 parallel 18 s to
+9 s). Resolve, clean-up and the via reduction (its negotiations: single
+batches again) do not scale either; KiCad's DRC is its own process. What
+runs side by side are the probes (four) and the ladder's rungs (three),
+std threads sized by free memory, not by `RAYON_NUM_THREADS`: so a
+1-thread run still uses up to four cores while it probes (jetson: 1744 s
+of CPU in 1114 s of wall). For development jobs: `--threads 1` (or 2) per
+board and more jobs gives the same rows for fewer cores; 8 or 16 threads
+buy nothing.
+
+**Profile at one thread** (x1042's code with line tables, gperftools
+`libprofiler.so`, 200 Hz, route mode, share of the process's samples,
+Castor / jetson): the search proper 76 / 87 (`Router::search` and its
+heuristic closure). Its lines:
+
+| what | Castor | jetson |
+|---|---|---|
+| `KeyHeap::pop` (the sift-down's least-of-four loop and compare) | 11.2 | 14.9 |
+| `occupancy_seen`: the u16 occupancy read and the own-stamp test | 8.6 | 10.3 |
+| search node reads: neighbour closed, via target closed, cost compare, popped node closed | 9.5 | 12.2 |
+| the neighbour's `Hot` record (trace owner, history, guard, cover) | 4.7 | 6.0 |
+| heuristic closure (`points`: up to 12 target points a push) | 5.5 | 5.1 |
+| bounds checks, unattributed lines | 6.8 | 7.2 |
+| edge block and owner of the expanded node | 2.4 | 3.4 |
+| the via step's per-layer pour cover loop | 2.4 | 0.5 |
+| corridor and window tests | 1.7 | 2.5 |
+| via allowed, free layers, own via ring | 2.4 | 2.0 |
+| heap pushes | 1.3 | 1.4 |
+| neck zone test (`zone_class`) | 0.8 | 0.3 |
+
+Outside the search: `Router::stamp` 9.3 / 2.4 (Castor stamps for six
+classes), `route_net` with the planner inlined 2.2 / 4.9, the planner's
+entry cost 0.9 / 2.0, pour building 2.7 / 0.1. The layout: a
+`SearchNode` is 12 bytes (cost f32, three 16-bit generation marks seen,
+closed, target, parent u8) per state, states layer by layer (`layer *
+cells + cell`, which is also the key's tie-break); occupancy is a dense
+`u16` count per map (`Vec<Vec<u16>>`: per class a trace map per layer
+and a via map, two diagonal maps per class and layer), the routed net's
+own stamps subtracted through a bitset (`own_mark`) only where the count
+is not zero; `Hot` is a 12-byte record per (class, layer, cell); the heap
+is a four-way heap of one-word keys (estimate bits above the state).
+cachegrind of a 3-iteration bench on Castor puts the search's cost in
+branch mispredictions (the search's lines: 142 M of 198 M; the neighbour
+closed test 21 M, the seen-or-cheaper test 11 M, the heap's sift 25 M, what
+the branchless sift removed) and in L1 misses (the node records, the per-layer cover maps).
+
+**Changed** (crates/pcb-router/src/router.rs; the expansions, their
+order, every key and cost unchanged). Measured with bench-search
+(`PCB_ROUTER_NO_WALL_GUARD=1`, one thread) as two processes on the two
+hyperthreads of one core, sides swapped each repetition, user seconds,
+median of the ratios (a null test of x1042 against itself: 1.002, spread
+0.999-1.003; the machine's load otherwise made one-thread timings swing
+by 15 %). Ratios against x1042, Castor (4 iterations) / jetson
+(2 iterations), the whole process including the lattice build:
+
+- The key heap keeps its four children per node as an aligned group (half
+  a cache line, root at slot 3, slots past the end hold `u64::MAX`) and
+  takes the least of the four without branches: 0.996 / 0.990.
+- Per expansion, not per step: whether all eight neighbours lie inside the
+  window, the corridor's answer when they all lie in the node's tile (77 %
+  of nodes; a node outside the corridor there skips its steps),
+  the neck zones' bounding box (a step asks the zones only near it); per
+  cell, the via step reads one summary word of the pour cover (one net on
+  a mask of layers, multiplied in the same layer order; several nets fall
+  back to the per-layer maps) instead of a map a layer: together with the
+  heap 0.980 / 0.979.
+- The via step's target layers as a bit mask (the test against the own
+  layer mispredicted) and the unrolled eight steps (one copy a direction:
+  the diagonal test and the step's constants are compile-time): all
+  together 0.963 / 0.957.
+
+cachegrind of the 3-iteration Castor bench, x1042 to x1060: instructions
+31.3 G to 28.1 G, mispredictions 203 M to 147 M, L1 data misses 197 M to
+177 M. Tried and dropped (measured as above): a radix heap (slower: keys
+are unique, so every pop split a bucket, 438 M key moves for 47 M
+expansions), an 8-byte search node (cost and one tag word: 1 % slower on
+both boards despite 3 % fewer L1 misses), the node array cell by cell
+(a via step's layers on one line; no gain in cachegrind), the expanded
+layer's occupancy maps looked up once (0.7 % slower), the heuristic over
+four points at a time (more instructions: most searches have one to three
+points), touching the next heap top's node early (1.000), a front slot
+for the least key pushed since the last pop (1.000).
+
+**CPU, pinned simultaneous pairs** (route mode, `--jobs 1 --threads 4`,
+`PCB_MAKER_NO_CACHE=1`, x1042 against x1060, which is this change on
+8a1fd2c; `cpu_seconds` of the rows; r1 x1042 on 0-7,16-23, r2 swapped):
+
+| board | r1 x1042 / x1060 | r2 x1060 / x1042 (swapped) | both |
+|---|---|---|---|
+| Castor | 0.904 (299.7 / 270.8) | 0.951 (356.2 / 338.7) | 0.927 |
+| k30-SBC | 0.924 (402.3 / 371.7) | 0.958 (392.3 / 375.8) | 0.941 |
+| Sisu | 0.932 (1369.4 / 1276.5) | 0.929 (1352.9 / 1256.2) | 0.930 |
+| jetson | 0.908 (1432.9 / 1301.5) | 0.961 (1649.8 / 1585.5) | 0.934 |
+| spell_tome | 1.012 (17.2 / 17.4) | 1.079 (20.3 / 21.9) | 1.045 |
+| geomean | 0.935 | 0.974 | 0.954 (big four 0.933) |
+
+Ratios are new / old; the half a side ran on moved them by 3 to 5 points,
+so the swapped pair matters. spell_tome is 1.1 s of work in 17-22 s of
+CPU (KiCad's DRC). Every pair: the same board file (md5), vias, work
+seconds, verdict and fingerprints (`PCB_ROUTER_FINGERPRINT=1`, as a
+multiset). With `PCB_ROUTER_FINGERPRINT_ALL` (every occupancy map and pour
+mask hashed into each fingerprint) at a quarter of the budget, two
+threads: urchin, spell_tome, Castor, k30-SBC, Sisu and jetson identical to
+x1042 (`build/fpall/fpall.out`).
+
+**The work counter** keeps its meaning: the same expansions (work seconds
+identical in every row). An expansion now costs about 5-7 % less CPU on
+the big boards, so `EXPANSIONS_PER_SECOND` (2.0e6, the idle eight-core
+calibration) is stale by about that much. One-thread rates on the loaded
+machine (bench-search, 47 M expansions on Castor, simultaneous runs on two
+cores) swung between 1.4 M and 1.9 M expansions a second for both
+binaries, too loaded to recalibrate from. A recalibration to about
+2.1e6 would give every budget 5-7 % more expansions for the same seconds:
+every result would move (more search per budget, the same wall per
+budget). Not done here.
+
+Short tier (tasks v6, 2 jobs x 4 threads, under the lock) on x1060
+against `build/short-x1041.log`: all 12 rows identical but for CPU, wall,
+load and memory (routed, vias, length, work seconds, KiCad's findings,
+first-route open terminals); compare.py: same 12, unconnected 35 to 35,
+passes 6 to 6, cut 0. Its CPU (2756 to 3510 s) is not a claim: unpaired,
+and it ran beside the fingerprint runs and other agents (load about 20).
+`cargo test --release -p pcb-router -p pcb-kicad` passes (two heap tests
+new: pops as a binary heap's, across clears and with keys below the last
+popped).
+
+Next on this path: `Router::stamp` (9 % of Castor at one thread, 15 % of
+the bench; the footprint loop tests bounds and the mark per offset; most
+offsets of consecutive nodes are already marked), and the mispredicted
+data-dependent tests that remain (closed neighbour, seen-or-cheaper,
+occupancy zero), which no layout change removes.
+
 ## Open problems, ranked
 
 1. **Fill fidelity, what is left** (2026-10-14 section above): island-only

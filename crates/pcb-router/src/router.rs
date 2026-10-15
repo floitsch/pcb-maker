@@ -741,71 +741,97 @@ fn experiment_seed() -> Option<u64> {
     std::env::var("PCB_ROUTER_SEED").ok()?.parse().ok()
 }
 
-/// A search heap entry: the estimate's bits (non-negative floats order as
-/// their bits) above the state, compared as one word.
-/// A min-heap of search keys (`heap_key`), four children a node: half the
-/// levels of a binary heap, and a node's children share a cache line. It
-/// lives in the search scratch, so that its buffer is not grown again for
-/// every search (with the four-way layout 9-13 % less CPU per routed board,
-/// k30-SBC and Sisu, identical routes). Keys order totally (a key holds
-/// its state), so the pops are those of any other min-heap.
+/// Four keys whose parent is one node, on one half of a cache line.
+#[derive(Clone, Copy)]
+#[repr(align(32))]
+struct KeyGroup([u64; 4]);
+
+/// No key: fills the slots of a group past the heap's end, so that a
+/// sift takes the least of four without counting them.
+const NO_KEY: u64 = u64::MAX;
+
+/// A min-heap of search keys (`heap_key`: the estimate's bits, as
+/// non-negative floats order as their bits, above the state, compared as
+/// one word), four children a node: half the levels of a binary heap. The
+/// children of a node are an aligned group on half a cache line, and a
+/// sift finds the least of them without branches (since 2026-10-15; the
+/// branches mispredicted). It lives in the search scratch, so that its
+/// buffer is not grown again for every search (with the four-way layout
+/// 9-13 % less CPU per routed board, k30-SBC and Sisu, identical routes).
+/// Keys order totally (a key holds its state; equal keys are the same
+/// entry twice), so the pops are those of any other min-heap.
 #[derive(Default)]
 struct KeyHeap {
-    keys: Vec<u64>,
+    /// Slot `q` is `groups[q / 4].0[q % 4]`. The root is slot 3, the
+    /// children of slot `p` are the group `p - 2` (slots `4p - 8` to
+    /// `4p - 5`), so that siblings never straddle a cache line. Slots 0 to
+    /// 2 and those past the end hold `NO_KEY`.
+    groups: Vec<KeyGroup>,
+    len: usize,
 }
 
 impl KeyHeap {
     fn clear(&mut self) {
-        self.keys.clear();
+        self.groups.clear();
+        self.len = 0;
+    }
+
+    #[inline(always)]
+    fn slot(&mut self, q: usize) -> &mut u64 {
+        &mut self.groups[q >> 2].0[q & 3]
     }
 
     #[inline(always)]
     fn push(&mut self, key: u64) {
-        let mut index = self.keys.len();
-        self.keys.push(key);
-        while index > 0 {
-            let parent = (index - 1) / 4;
-            let above = self.keys[parent];
+        let mut q = 3 + self.len;
+        if self.groups.len() <= q >> 2 {
+            self.groups.push(KeyGroup([NO_KEY; 4]));
+        }
+        self.len += 1;
+        while q > 3 {
+            let parent = (q >> 2) + 2;
+            let above = *self.slot(parent);
             if above <= key {
                 break;
             }
-            self.keys[index] = above;
-            index = parent;
+            *self.slot(q) = above;
+            q = parent;
         }
-        self.keys[index] = key;
+        *self.slot(q) = key;
     }
 
     #[inline(always)]
     fn pop(&mut self) -> Option<u64> {
-        let last = self.keys.pop()?;
-        let len = self.keys.len();
-        if len == 0 {
-            return Some(last);
+        if self.len == 0 {
+            return None;
         }
-        let top = self.keys[0];
-        let mut index = 0;
+        let top = *self.slot(3);
+        self.len -= 1;
+        let end = 3 + self.len;
+        let last = std::mem::replace(self.slot(end), NO_KEY);
+        if self.len == 0 {
+            return Some(top);
+        }
+        let mut q = 3;
         loop {
-            let first = 4 * index + 1;
-            if first >= len {
+            if 4 * q - 8 >= end {
                 break;
             }
-            let end = (first + 4).min(len);
-            let mut child = first;
-            let mut least = self.keys[first];
-            for other in first + 1..end {
-                let key = self.keys[other];
-                if key < least {
-                    least = key;
-                    child = other;
-                }
-            }
+            // The least of the four children without branches (`NO_KEY`
+            // past the end; the first of equal keys, as any order would
+            // pop the same keys).
+            let [a, b, c, d] = self.groups[q - 2].0;
+            let low = if b < a { 1 } else { 0 };
+            let high = if d < c { 3 } else { 2 };
+            let (first, second) = (a.min(b), c.min(d));
+            let (least, which) = if second < first { (second, high) } else { (first, low) };
             if least >= last {
                 break;
             }
-            self.keys[index] = least;
-            index = child;
+            *self.slot(q) = least;
+            q = 4 * q - 8 + which;
         }
-        self.keys[index] = last;
+        *self.slot(q) = last;
         Some(top)
     }
 }
@@ -968,6 +994,9 @@ struct Hot {
     /// `covered` (an `owner`).
     covered: u16,
 }
+
+/// `Router::via_cover` where the per-layer maps must be read.
+const VIA_COVER_MIXED: u32 = u32::MAX;
 
 /// `HARD_GUARD` in `Hot::guard`.
 const HOT_HARD: u16 = 1 << 15;
@@ -1486,6 +1515,12 @@ pub struct Router {
     /// `guard` holds a net there (most nodes: neither, and a via step
     /// skips the per-layer maps).
     via_marks: Vec<u8>,
+    /// Per node with bit 0 of `via_marks`: the one pour net covering it
+    /// (`owner`, low 16 bits) and the layers it covers (bits 16 to 30),
+    /// or `VIA_COVER_MIXED` where several nets cover it or the board has
+    /// more than 15 layers (a via step then reads `covered` per layer).
+    /// A via step reads one word for what were up to a cache line a layer.
+    via_cover: Vec<u32>,
     /// Per layer and node: the pour (as `owner`) covering the node, if any.
     covered: Vec<Vec<u32>>,
     /// Per rule class and layer (index `class * layers + layer`), per
@@ -1706,6 +1741,7 @@ impl Router {
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
             guard: vec![Vec::new(); layers],
             via_marks: Vec::new(),
+            via_cover: Vec::new(),
             covered: vec![Vec::new(); layers],
             hot: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
@@ -1762,7 +1798,7 @@ impl Router {
         let occupancy = bytes(&self.occupancy);
         let stamp_mark = bytes(&self.stamp_mark);
         let hot = bytes(&self.hot);
-        let pour = bytes(&self.history) + bytes(&self.guard) + bytes(&self.covered) + self.via_marks.capacity();
+        let pour = bytes(&self.history) + bytes(&self.guard) + bytes(&self.covered) + self.via_marks.capacity() + 4 * self.via_cover.capacity();
         let planes: usize = self.nets.iter().map(|state| bytes(&state.plane) + bytes(&state.plane_target)).sum();
         let scratch = self.scratch.bytes();
         let tiles = bytes(&self.tile_claimed) + bytes(&self.tile_routable) + bytes(&self.tile_history) + bytes(&self.tile_covered);
@@ -2091,6 +2127,23 @@ impl Router {
             }
         }
         self.via_marks = marks;
+        let mut cover = vec![0u32; self.grid.cells()];
+        for (layer, map) in self.covered.iter().enumerate() {
+            if map.is_empty() {
+                continue;
+            }
+            for (summary, &owner) in cover.iter_mut().zip(map) {
+                if owner == 0 || *summary == VIA_COVER_MIXED {
+                    continue;
+                }
+                if layer >= 15 || owner > 0xffff || (*summary != 0 && *summary & 0xffff != owner) {
+                    *summary = VIA_COVER_MIXED;
+                } else {
+                    *summary = owner | (*summary & !0xffff) | 1 << (16 + layer);
+                }
+            }
+        }
+        self.via_cover = cover;
     }
 
     /// Marks the nodes and tiles under pours, per layer.
@@ -3843,9 +3896,15 @@ impl Router {
         let necks = !net_state.neck_zones.is_empty();
         // `class_at` from the coordinates the step has at hand (no division).
         let neck_class = self.neck_of[class];
+        // The zones' bounding box: outside it no zone needs asking.
+        let zone_box = net_state.neck_zones.iter().fold((usize::MAX, usize::MAX, 0, 0), |b, z| {
+            (b.0.min(z.0), b.1.min(z.1), b.2.max(z.2), b.3.max(z.3))
+        });
         let class_xy = |x: usize, y: usize| match neck_class {
-            Some(neck) => zone_class(class, neck, &net_state.neck_zones, x, y),
-            None => class,
+            Some(neck) if x >= zone_box.0 && y >= zone_box.1 && x <= zone_box.2 && y <= zone_box.3 => {
+                zone_class(class, neck, &net_state.neck_zones, x, y)
+            }
+            _ => class,
         };
         let mut found = None;
         while let Some(key) = heap.pop() {
@@ -3897,35 +3956,62 @@ impl Router {
             let layer_factor = if self.layer_bias.is_empty() { 1.0 } else { self.layer_bias[layer] };
             let thermal_guard_cost = self.config.thermal_guard_cost as f32;
 
-            for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
+            // Invariant per expansion: whether every neighbour lies inside
+            // the window, and the corridor's answer where every neighbour
+            // lies in this node's tile (0: no test, 1: test each, 2: none
+            // in the corridor).
+            let interior = x > window.0 && y > window.1 && x < window.2 && y < window.3;
+            // Whether a neighbour may lie in a neck zone (else its class is
+            // the net's).
+            let near_zones = necks && x + 1 >= zone_box.0 && y + 1 >= zone_box.1 && x <= zone_box.2 + 1 && y <= zone_box.3 + 1;
+            let corridor_test = match &scratch.corridor {
+                None => 0,
+                Some(corridor) => {
+                    let (inner_x, inner_y) = (x % TILE, y % TILE);
+                    if inner_x == 0 || inner_x == TILE - 1 || inner_y == 0 || inner_y == TILE - 1 {
+                        1
+                    } else if corridor[(y / TILE) * self.tiles_x + x / TILE] {
+                        0
+                    } else {
+                        2
+                    }
+                }
+            };
+            // The eight steps unrolled (one copy each, the step's direction
+            // known: whether it is diagonal and its bend cost are no longer
+            // decided per step at run time).
+            macro_rules! neighbour {
+                ($direction:expr, $dx:expr, $dy:expr) => {
+                    'step: {
+                let direction: usize = $direction;
+                let (dx, dy): (&i32, &i32) = (&$dx, &$dy);
                 let tx = x as i64 + *dx as i64;
                 let ty = y as i64 + *dy as i64;
-                if tx < window.0 as i64
-                    || ty < window.1 as i64
-                    || tx > window.2 as i64
-                    || ty > window.3 as i64
+                if !interior
+                    && (tx < window.0 as i64 || ty < window.1 as i64 || tx > window.2 as i64 || ty > window.3 as i64)
                 {
-                    continue;
+                    break 'step;
                 }
                 if blocked_edges & (1 << direction) != 0 {
-                    continue;
+                    break 'step;
                 }
-                if let Some(corridor) = &scratch.corridor
+                if corridor_test == 1
+                    && let Some(corridor) = &scratch.corridor
                     && !corridor[(ty as usize / TILE) * self.tiles_x + tx as usize / TILE]
                 {
-                    continue;
+                    break 'step;
                 }
                 let target_cell = ty as usize * nx + tx as usize;
                 let target_state = layer * cells + target_cell;
                 // The search node is read for the cost update anyway: a
                 // closed neighbour costs no other map's cache line.
                 if scratch.nodes[target_state].closed == generation {
-                    continue;
+                    break 'step;
                 }
-                let target_class = if necks { class_xy(tx as usize, ty as usize) } else { class };
-                let hot = if necks { self.hot[target_class * layers + layer][target_cell] } else { layer_hot[target_cell] };
+                let target_class = if near_zones { class_xy(tx as usize, ty as usize) } else { class };
+                let hot = if near_zones { self.hot[target_class * layers + layer][target_cell] } else { layer_hot[target_cell] };
                 if hot.trace != crate::grid::FREE && hot.trace != own {
-                    continue;
+                    break 'step;
                 }
                 let map = target_class * (layers + 1) + layer;
                 let mut occupied = self.occupancy_seen(scratch, class, map, target_cell) as f32;
@@ -3943,19 +4029,19 @@ impl Router {
                     occupied = occupied.max(blocked);
                 }
                 if hard && occupied > 0.0 {
-                    continue;
+                    break 'step;
                 }
                 let history = if cleanup { 0.0 } else { hot.history };
                 let mut step = layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
                 if hot.guard != 0 && (hot.guard & !HOT_HARD) as u32 != own {
                     if hot.guard & HOT_HARD != 0 {
-                        continue;
+                        break 'step;
                     }
                     step *= thermal_guard_cost;
                 }
                 if hot.covered != 0 && hot.covered as u32 != own {
                     if self.exclusive[layer] {
-                        continue;
+                        break 'step;
                     }
                     step *= self.layer_cut[layer];
                 }
@@ -3972,7 +4058,20 @@ impl Router {
                     let estimate = total + heuristic(layer, tx as i32, ty as i32);
                     heap.push(heap_key(estimate, target_state));
                 }
+                    }
+                };
             }
+            if corridor_test != 2 {
+                neighbour!(0, 1, 0);
+                neighbour!(1, 1, 1);
+                neighbour!(2, 0, 1);
+                neighbour!(3, -1, 1);
+                neighbour!(4, -1, 0);
+                neighbour!(5, -1, -1);
+                neighbour!(6, 0, -1);
+                neighbour!(7, 1, -1);
+            }
+            debug_assert_eq!(DIRECTIONS, [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]);
 
             let via_occupied = self.occupancy_seen(scratch, class, via_map, cell) as f32;
             if layers > 1
@@ -3989,9 +4088,19 @@ impl Router {
                 let mut cut = 1.0f32;
                 let marks = self.via_marks.get(cell).copied().unwrap_or(3);
                 if marks & 1 != 0 {
-                    for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
-                        if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
-                            cut *= factor;
+                    let cover = self.via_cover.get(cell).copied().unwrap_or(VIA_COVER_MIXED);
+                    if cover == VIA_COVER_MIXED {
+                        for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
+                            if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
+                                cut *= factor;
+                            }
+                        }
+                    } else if cover & 0xffff != own {
+                        // The same products in the same (layer) order.
+                        let mut layers_covered = cover >> 16;
+                        while layers_covered != 0 {
+                            cut *= self.layer_cut[layers_covered.trailing_zeros() as usize];
+                            layers_covered &= layers_covered - 1;
                         }
                     }
                 }
@@ -4010,10 +4119,12 @@ impl Router {
                 let cell_class = if necks { class_xy(x, y) } else { class };
                 let cell_statics = &self.statics[cell_class];
                 let free_layers = cell_statics.free_layers[cell];
-                for target_layer in 0..layers {
-                    if target_layer == layer {
-                        continue;
-                    }
+                // The other layers as a mask (a test against this layer
+                // in the loop mispredicted, its place changing per node).
+                let mut others = (u64::MAX >> (64 - layers)) & !(1u64 << layer);
+                while others != 0 {
+                    let target_layer = others.trailing_zeros() as usize;
+                    others &= others - 1;
                     if free_layers & (1 << target_layer) == 0 {
                         let allowed = cell_statics.trace[target_layer][cell];
                         if allowed != crate::grid::FREE && allowed != own {
@@ -10125,6 +10236,45 @@ mod tests {
                 assert_eq!(heap.pop(), reference.pop().map(|std::cmp::Reverse(key)| key));
             } else {
                 let key = state >> 40;
+                heap.push(key);
+                reference.push(std::cmp::Reverse(key));
+            }
+        }
+        while let Some(std::cmp::Reverse(key)) = reference.pop() {
+            assert_eq!(heap.pop(), Some(key));
+        }
+        assert_eq!(heap.pop(), None);
+    }
+
+    #[test]
+    fn key_heap_pops_as_binary_heap_across_clears() {
+        // A search's pattern: keys mostly at or above the last popped one,
+        // a few below it, repeats, and the heap cleared between searches.
+        let mut heap = KeyHeap::default();
+        let mut reference = std::collections::BinaryHeap::new();
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut last = 0u64;
+        for round in 0..200_000u64 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            if round % 40_000 == 39_999 {
+                heap.clear();
+                reference.clear();
+                last = 0;
+                continue;
+            }
+            if (state >> 60) % 3 == 0 {
+                let popped = heap.pop();
+                assert_eq!(popped, reference.pop().map(|std::cmp::Reverse(key)| key));
+                if let Some(key) = popped {
+                    last = key;
+                }
+            } else {
+                let noise = (state >> 20) & 0xff_ffff;
+                let key = match (state >> 8) % 16 {
+                    0 => last.saturating_sub(noise),
+                    1 => last,
+                    _ => last + (noise << ((state >> 4) % 24)),
+                };
                 heap.push(key);
                 reference.push(std::cmp::Reverse(key));
             }
