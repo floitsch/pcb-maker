@@ -2084,10 +2084,13 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
         shift
     };
     // Top and bottom put the anchor on that side of the box.
+    // A bottom anchor is the baseline: descenders hang below it
+    // (eurorack-pmod's "[apf.audio]" on F.Mask, 1 mm high: its "p" reached
+    // 0.25 mm past the anchor, where a track bridged).
     let rise = if justify.contains(&"top") {
         half[1]
     } else if justify.contains(&"bottom") {
-        -half[1]
+        -half[1] + if descends { 0.3 * size[0] } else { 0.0 }
     } else {
         0.0
     };
@@ -4841,6 +4844,22 @@ mod pour_request_tests {
         assert!(mask.iter().any(|shape| shape.contains([68.17, 39.05])));
         assert!(mask.iter().any(|shape| shape.distance_to_point([69.47, 38.75]) < 0.225));
         assert_eq!(copper_graphic_shapes(&parse(&text("B.Cu")).unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_bottom_anchored_texts_descenders_hang_below_its_anchor() {
+        // eurorack-pmod's "[apf.audio]" on F.Mask: KiCad's glyphs span x
+        // 9.98 to 11.68 at (11.43, 57.15, 90), 0.25 mm past the anchor; a
+        // track whose edge was at 11.549 bridged.
+        let shapes = copper_graphic_shapes(
+            &parse(r#"(gr_text "[apf.audio]" (at 11.43 57.15 90) (layer "F.Mask") (effects (font (size 1 0.85) (thickness 0.15)) (justify left bottom)))"#)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(shapes.len(), 1);
+        for point in [[11.6765, 53.0], [9.98, 53.0], [11.0, 50.0]] {
+            assert!(shapes[0].contains(point), "{point:?}");
+        }
     }
 
     #[test]
