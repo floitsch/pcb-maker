@@ -1,0 +1,15 @@
+{"board": "spell", "user": {"wall": 6.721, "user": 10.25647, "sys": 2.6116669999999997, "rss_mb": 2140, "status": 0, "cpu": 12.9}, "empty": {"wall": 4.132, "user": 3.507783, "sys": 0.346286, "rss_mb": 245, "status": 0, "cpu": 3.9}, "library_warnings": {"lib_footprint_issues/warning": [9, 25], "lib_footprint_mismatch/warning": [2, 0]}, "other_differences": {}}
+{"board": "castor", "user": {"wall": 4.726, "user": 9.125305, "sys": 2.578295, "rss_mb": 2182, "status": 256, "cpu": 11.7}, "empty": {"wall": 2.18, "user": 2.62627, "sys": 0.309924, "rss_mb": 349, "status": 256, "cpu": 2.9}, "library_warnings": {"lib_footprint_issues/warning": [167, 196], "lib_footprint_mismatch/warning": [16, 0]}, "other_differences": {}}
+{"board": "wled", "user": {"wall": 18.239, "user": 27.866788, "sys": 2.518763, "rss_mb": 2300, "status": 256, "cpu": 30.4}, "empty": {"wall": 14.832, "user": 20.613461, "sys": 0.44315299999999996, "rss_mb": 585, "status": 256, "cpu": 21.1}, "library_warnings": {"lib_footprint_issues/warning": [139, 145], "lib_footprint_mismatch/warning": [6, 0]}, "other_differences": {}}
+{"board": "ghoul", "user": {"wall": 20.338, "user": 24.099684, "sys": 1.935448, "rss_mb": 2196, "status": 256, "cpu": 26.0}, "empty": {"wall": 17.833, "user": 18.648215, "sys": 0.238234, "rss_mb": 386, "status": 256, "cpu": 18.9}, "library_warnings": {"lib_footprint_issues/warning": [105, 183], "lib_footprint_mismatch/warning": [66, 0]}, "other_differences": {}}
+{"board": "panel", "user": {"wall": 29.248, "user": 70.444154, "sys": 2.380105, "rss_mb": 2951, "status": 256, "cpu": 72.8}, "empty": {"wall": 28.443, "user": 66.485334, "sys": 0.9003629999999999, "rss_mb": 1654, "status": 256, "cpu": 67.4}, "library_warnings": {"lib_footprint_issues/warning": [112, 199], "lib_footprint_mismatch/warning": [104, 0]}, "other_differences": {}}
+{"board": "jetson", "user": {"wall": 7.938, "user": 12.144895, "sys": 2.289023, "rss_mb": 2275, "status": 256, "cpu": 14.4}, "empty": {"wall": 5.542, "user": 6.89836, "sys": 0.42531399999999997, "rss_mb": 508, "status": 256, "cpu": 7.3}, "library_warnings": {}, "other_differences": {}}
+
+| board | wall s user / empty | CPU s user / empty | peak RSS MB user / empty | other differences |
+|---|---|---|---|---|
+| spell | 6.7 / 4.1 | 12.9 / 3.9 | 2140 / 245 | none |
+| castor | 4.7 / 2.2 | 11.7 / 2.9 | 2182 / 349 | none |
+| wled | 18.2 / 14.8 | 30.4 / 21.1 | 2300 / 585 | none |
+| ghoul | 20.3 / 17.8 | 26.0 / 18.9 | 2196 / 386 | none |
+| panel | 29.2 / 28.4 | 72.8 / 67.4 | 2951 / 1654 | none |
+| jetson | 7.9 / 5.5 | 14.4 / 7.3 | 2275 / 508 | none |

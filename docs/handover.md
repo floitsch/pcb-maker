@@ -3511,6 +3511,69 @@ fake kicad-cli.
 - ERC can take the same directory once its changed library warnings are
   shown not to count.
 
+**Built (x1091 on 0121d54; x1092 rebased on 8136361).** `kicad_config.rs`:
+kicad-cli's DRC (`run_kicad_report` for `pcb drc`, `run_kicad_save_board`)
+runs with `KICAD_CONFIG_HOME=<cache root>/kicad-config`. That directory
+holds `10.0/fp-lib-table` and `10.0/sym-lib-table`, both empty. They are
+created on first use and rewritten if changed. The root is the DRC cache's
+(`PCB_MAKER_CACHE_DIR`, `XDG_CACHE_HOME`, `HOME`) and is used even with
+`PCB_MAKER_NO_CACHE=1`. The user's configuration is kept:
+- with `PCB_MAKER_KICAD_USER_LIBS=1`;
+- when the board's `.kicad_pro` sets a `lib_footprint_*` rule severity to
+  `error`, or is not JSON;
+- when the directory cannot be prepared;
+- for ERC, which stays on the user's configuration until its changed
+  library warnings (`lib_symbol_issues`, `lib_symbol_mismatch`,
+  `footprint_link_issues`) are shown not to count.
+
+The cache key hashes the tables of the configuration kicad-cli runs with
+and the `KICAD_CONFIG_HOME` it sees, so every entry missed once after the
+switch. `netlist_import.rs`'s own DRC call is unchanged. Tests:
+`kicad_config` (version series, tables written and repaired, a project with
+library errors keeps the user's libraries) and a fake-kicad-cli test (the
+DRC sees the empty tables through `KICAD_CONFIG_HOME`; the same
+configuration hits; the user's configuration is a second entry and a second
+run). `cargo test --release -p pcb-kicad` (341) and `-p pcb-maker --test
+cli_exit_codes` (7) pass.
+
+Six boards, `pcb-maker drc-kicad-board` with the cache off, user against
+override, best of two alternated runs on four pinned CPUs
+(`judge_override.py`, `results/judge-x1091-2026-10-15.log`). Findings per
+type and severity are identical on all six, except the `lib_footprint_*`
+warnings:
+
+| board | wall s | CPU s | peak RSS MB |
+|---|---|---|---|
+| spell_tome | 6.7 / 4.1 | 12.9 / 3.9 | 2140 / 245 |
+| Castor | 4.7 / 2.2 | 11.7 / 2.9 | 2182 / 349 |
+| WLED_Matrix | 18.2 / 14.8 | 30.4 / 21.1 | 2300 / 585 |
+| ghoul | 20.3 / 17.8 | 26.0 / 18.9 | 2196 / 386 |
+| 0xCB panel | 29.2 / 28.4 | 72.8 / 67.4 | 2951 / 1654 |
+| jetson | 7.9 / 5.5 | 14.4 / 7.3 | 2275 / 508 |
+| sum | 87.0 / 72.8 (-16%) | 168.2 / 121.5 (-28%) | |
+
+x1092 on Castor: 4.6 / 1.9 s, 11.4 / 2.5 CPU s, 2180 / 356 MB, same
+findings.
+
+Short tier under the lock (`--jobs 6 --threads 4 --min-free-gb 20`, tasks
+v6, load 5-25), x1091 against build/short-x976.log: all 12 rows identical
+except timing and memory (unconnected 35, new errors 3, 1129 vias,
+22253 mm, 6 passes, work 3236 s, cut 0). Peak RSS per row is now the
+layout's own wherever KiCad set it:
+
+| board | peak RSS MB |
+|---|---|
+| WLED_Matrix | 2326 to 792 |
+| USB_Keypad | 2244 to 1202 |
+| Blue_Line | 2325 to 2092 (its layout) |
+| largest of the tier | 2.3 to 2.0 GB |
+
+CPU is 3258 to 3327 s, but the runs differ: x976 ran on a warm DRC cache
+(0.2-0.3 s designer checks) and x1091 on a cold one, since the new keys
+missed everywhere (designer checks 1.5-14.8 s). The per-check CPU saving
+is the six-board table above. Tier wall 1161 s.
+build/short-x1091.log.
+
 ## Committed on 2026-10-15 (solder mask bridges, x1050-x1054)
 
 The premise (our vias bridge pads of other nets) does not hold: no via-pad

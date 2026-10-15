@@ -403,6 +403,17 @@ warnings, which never count, read them); after changing them without a new
 KiCad version, delete the directory. The stderr line `board check: ...`
 and `drc_cache` in the verdict count the calls and hits.
 
+**KiCad's DRC runs without the global libraries.** kicad-cli's DRC
+otherwise loads every footprint library of the global `fp-lib-table`
+first (about 2.7 s, 9 CPU s and 2 GB per call, for the `lib_footprint_*`
+warnings alone), so pcb-maker runs it with `KICAD_CONFIG_HOME` set to
+`<cache root>/kicad-config/` (the root as for the cache: `PCB_MAKER_CACHE_DIR`,
+else `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`), which holds
+empty `fp-lib-table` and `sym-lib-table`. Every finding but the
+`lib_footprint_*` warnings is the same. The user's configuration is kept
+when the project sets a `lib_footprint_*` severity to `error`, and with
+`PCB_MAKER_KICAD_USER_LIBS=1`. ERC runs on the user's configuration.
+
 The other commands exit 0 when done, 1 when their result is incomplete
 (`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with
 footprints missing), 2 on usage or input errors and 4 on internal errors.

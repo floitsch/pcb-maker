@@ -230,12 +230,19 @@ pub(super) fn run_kicad_report(
     output: &Path,
     input: &Path,
 ) -> Result<(), String> {
+    let program = OsStr::new("kicad-cli");
+    // DRC only: ERC's library warnings change too and are not checked yet.
+    let config_home = match arguments.get(..2) {
+        Some(["pcb", "drc"]) => crate::kicad_config::drc_config_home(program, input),
+        _ => None,
+    };
     run_report_command_cached(
-        OsStr::new("kicad-cli"),
+        program,
         arguments,
         output,
         input,
         crate::drc_cache::directory_from_env().as_deref(),
+        config_home.as_deref(),
     )
 }
 
@@ -246,18 +253,20 @@ fn run_report_command(
     output: &Path,
     input: &Path,
 ) -> Result<(), String> {
-    run_report_command_cached(program, arguments, output, input, None)
+    run_report_command_cached(program, arguments, output, input, None, None)
 }
 
 /// Runs a native report, a DRC through the cache in `cache` (see
 /// `drc_cache`): a hit is validated and published exactly as a fresh
-/// report is.
+/// report is. `config_home`, when given, is kicad-cli's `KICAD_CONFIG_HOME`
+/// (see `kicad_config`) and part of the cache key.
 fn run_report_command_cached(
     program: &OsStr,
     arguments: &[&str],
     output: &Path,
     input: &Path,
     cache: Option<&Path>,
+    config_home: Option<&Path>,
 ) -> Result<(), String> {
     let kind = match arguments.get(..2) {
         Some(["sch", "erc"]) => ReportKind::Erc,
@@ -277,7 +286,7 @@ fn run_report_command_cached(
             crate::drc_cache::count_call();
             // The key is taken before KiCad runs: the inputs as given.
             cache.and_then(|directory| {
-                crate::drc_cache::DrcCache::for_run(directory.to_path_buf(), program, arguments, input)
+                crate::drc_cache::DrcCache::for_run(directory.to_path_buf(), program, arguments, input, config_home)
             })
         }
         ReportKind::Erc => None,
@@ -305,10 +314,12 @@ fn run_report_command_cached(
         .unwrap_or(Path::new("."));
     let temporary = ReportDirectory::new(parent)?;
     let fresh = temporary.0.join("report.json");
-    let (status, transcript) = run_bounded(
-        Command::new(program).args(arguments).arg(&fresh).arg(input),
-        &temporary.0,
-    )?;
+    let mut command = Command::new(program);
+    command.args(arguments).arg(&fresh).arg(input);
+    if let Some(home) = config_home {
+        command.env("KICAD_CONFIG_HOME", home);
+    }
+    let (status, transcript) = run_bounded(&mut command, &temporary.0)?;
     if !status.success() {
         return Err(format!("kicad-cli failed with {status}: {transcript}"));
     }
@@ -334,13 +345,16 @@ fn run_report_command_cached(
 /// not boards. The report goes to `report`.
 pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
     let scratch = board.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let (status, transcript) = run_bounded(
-        Command::new("kicad-cli")
-            .args(["pcb", "drc", "--refill-zones", "--save-board", "--severity-error", "--format", "json", "--output"])
-            .arg(report)
-            .arg(board),
-        scratch,
-    )?;
+    let program = OsStr::new("kicad-cli");
+    let mut command = Command::new(program);
+    command
+        .args(["pcb", "drc", "--refill-zones", "--save-board", "--severity-error", "--format", "json", "--output"])
+        .arg(report)
+        .arg(board);
+    if let Some(home) = crate::kicad_config::drc_config_home(program, board) {
+        command.env("KICAD_CONFIG_HOME", home);
+    }
+    let (status, transcript) = run_bounded(&mut command, scratch)?;
     if !status.success() {
         return Err(format!("kicad-cli failed with {status}: {transcript}"));
     }
@@ -590,7 +604,7 @@ mod tests {
         let cli = fake_cli(&directory.0, &body);
         let arguments = ["pcb", "drc", "--format", "json", "--severity-all", "--output"];
         let run = |output: &Path| {
-            run_report_command_cached(cli.as_os_str(), &arguments, output, &board, Some(&cache)).unwrap();
+            run_report_command_cached(cli.as_os_str(), &arguments, output, &board, Some(&cache), None).unwrap();
             fs::read(output).unwrap()
         };
         let kicad_runs = || fs::read_to_string(&runs).map_or(0, |text| text.lines().count());
@@ -609,7 +623,7 @@ mod tests {
         run(&project.join("drc.json"));
         assert_eq!((kicad_runs(), entries()), (2, 2));
         let refill = ["pcb", "drc", "--format", "json", "--severity-all", "--refill-zones", "--output"];
-        run_report_command_cached(cli.as_os_str(), &refill, &project.join("drc.json"), &board, Some(&cache)).unwrap();
+        run_report_command_cached(cli.as_os_str(), &refill, &project.join("drc.json"), &board, Some(&cache), None).unwrap();
         assert_eq!((kicad_runs(), entries()), (3, 3));
         // A corrupt entry is dropped and the DRC runs again.
         for entry in fs::read_dir(&cache).unwrap() {
@@ -625,6 +639,43 @@ mod tests {
                 assert!(!name.ends_with(".tmp"), "left {name} in {}", place.display());
             }
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_drc_without_libraries_runs_with_the_empty_tables_and_its_own_cache_key() {
+        let directory = ReportDirectory::new(&std::env::temp_dir()).unwrap();
+        let project = directory.0.join("project");
+        let cache = directory.0.join("cache");
+        fs::create_dir(&project).unwrap();
+        let board = project.join("board.kicad_pcb");
+        fs::write(&board, "(kicad_pcb (version 20240108))\n").unwrap();
+        fs::write(project.join("board.kicad_pro"), "{}\n").unwrap();
+        let home = crate::kicad_config::prepare(&directory.0.join("kicad-config"), "10.0.7").unwrap();
+        let runs = directory.0.join("runs");
+        let body = format!(
+            "if [ \"$1\" = version ]; then echo 10.0.7; exit 0; fi\n\
+             if [ -f \"$KICAD_CONFIG_HOME/10.0/fp-lib-table\" ] && [ -f \"$KICAD_CONFIG_HOME/10.0/sym-lib-table\" ] \
+             && ! grep -q '(lib ' \"$KICAD_CONFIG_HOME/10.0/fp-lib-table\"; then\n  echo \"empty $KICAD_CONFIG_HOME\" >> {runs}\n\
+             else\n  echo \"user ${{KICAD_CONFIG_HOME:-}}\" >> {runs}\nfi\n{}",
+            write_report_script(&report(ReportKind::Drc), 0),
+            runs = runs.display(),
+        );
+        let cli = fake_cli(&directory.0, &body);
+        let arguments = ["pcb", "drc", "--format", "json", "--severity-all", "--output"];
+        let output = project.join("drc.json");
+        let lines = || fs::read_to_string(&runs).unwrap_or_default().lines().map(String::from).collect::<Vec<_>>();
+        let entries = || fs::read_dir(&cache).map_or(0, |entries| entries.count());
+        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), Some(&home)).unwrap();
+        assert_eq!(lines(), [format!("empty {}", home.display())]);
+        assert_eq!(entries(), 1);
+        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), Some(&home)).unwrap();
+        assert_eq!((lines().len(), entries()), (1, 1), "the same configuration hits");
+        // The user's configuration is another key: a miss, a KiCad run without the override.
+        run_report_command_cached(cli.as_os_str(), &arguments, &output, &board, Some(&cache), None).unwrap();
+        let lines = lines();
+        assert_eq!((lines.len(), entries()), (2, 2));
+        assert!(!lines[1].contains(&home.display().to_string()), "{}", lines[1]);
     }
 
     #[test]

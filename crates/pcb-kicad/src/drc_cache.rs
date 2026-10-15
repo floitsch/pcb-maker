@@ -14,9 +14,10 @@
 //! - every KiCad design file under the board's directory (the board, the
 //!   `.kicad_pro` and `.kicad_dru` rules, schematic sheets for parity,
 //!   project libraries and their tables), by relative path and bytes;
-//! - the user's global library tables (`fp-lib-table`, `sym-lib-table`
-//!   under KiCad's configuration directory) and every `KICAD*` environment
-//!   variable (library paths).
+//! - the global library tables (`fp-lib-table`, `sym-lib-table` under the
+//!   configuration directory kicad-cli runs with: pcb-maker's library-free
+//!   one, see `kicad_config`, or the user's) and every `KICAD*` environment
+//!   variable kicad-cli sees (library paths, `KICAD_CONFIG_HOME`).
 //!
 //! Not hashed: the contents of libraries outside the project (KiCad's own,
 //! which change with KiCad, whose version is in the key). They only feed
@@ -97,15 +98,11 @@ pub(crate) fn directory_from_env() -> Option<PathBuf> {
     if variable("PCB_MAKER_NO_CACHE").is_some_and(|value| value != "0") {
         return None;
     }
-    let root = variable("PCB_MAKER_CACHE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| variable("XDG_CACHE_HOME").map(|base| PathBuf::from(base).join("pcb-maker")))
-        .or_else(|| variable("HOME").map(|home| PathBuf::from(home).join(".cache/pcb-maker")))?;
-    Some(root.join("drc"))
+    Some(crate::kicad_config::cache_root_from_env()?.join("drc"))
 }
 
 /// `program version`, asked once per program and process.
-fn tool_version(program: &OsStr) -> Option<String> {
+pub(crate) fn tool_version(program: &OsStr) -> Option<String> {
     static VERSIONS: OnceLock<Mutex<HashMap<OsString, Option<String>>>> = OnceLock::new();
     let versions = VERSIONS.get_or_init(Default::default);
     if let Some(version) = versions.lock().ok()?.get(program) {
@@ -136,17 +133,24 @@ pub(crate) struct KeyContext {
 }
 
 impl KeyContext {
-    fn current(program: &OsStr, arguments: &[&str]) -> Result<Self, String> {
+    /// `config_home` is the `KICAD_CONFIG_HOME` kicad-cli runs with when it
+    /// is not the process's own (see `kicad_config`): its tables are hashed.
+    fn current(program: &OsStr, arguments: &[&str], config_home: Option<&Path>) -> Result<Self, String> {
         let version = tool_version(program).ok_or("kicad-cli version unknown")?;
         let mut environment: Vec<(String, String)> = std::env::vars_os()
             .filter_map(|(name, value)| Some((name.into_string().ok()?, value.to_string_lossy().into_owned())))
             .filter(|(name, _)| name.starts_with("KICAD"))
+            .filter(|(name, _)| config_home.is_none() || name != "KICAD_CONFIG_HOME")
             .collect();
+        if let Some(home) = config_home {
+            environment.push(("KICAD_CONFIG_HOME".into(), home.display().to_string()));
+        }
         environment.sort();
         let mut globals = Vec::new();
         let variable = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
-        let config = variable("KICAD_CONFIG_HOME")
-            .map(PathBuf::from)
+        let config = config_home
+            .map(Path::to_path_buf)
+            .or_else(|| variable("KICAD_CONFIG_HOME").map(PathBuf::from))
             .or_else(|| variable("XDG_CONFIG_HOME").map(|base| PathBuf::from(base).join("kicad")))
             .or_else(|| variable("HOME").map(|home| PathBuf::from(home).join(".config/kicad")));
         if let Some(config) = config.filter(|path| path.is_dir()) {
@@ -284,8 +288,14 @@ pub(crate) struct DrcCache {
 impl DrcCache {
     /// The cache entry for a DRC of `input`, or `None` when the cache is
     /// off or the inputs cannot be hashed.
-    pub(crate) fn for_run(directory: PathBuf, program: &OsStr, arguments: &[&str], input: &Path) -> Option<Self> {
-        let derived = KeyContext::current(program, arguments).and_then(|context| key(&context, input));
+    pub(crate) fn for_run(
+        directory: PathBuf,
+        program: &OsStr,
+        arguments: &[&str],
+        input: &Path,
+        config_home: Option<&Path>,
+    ) -> Option<Self> {
+        let derived = KeyContext::current(program, arguments, config_home).and_then(|context| key(&context, input));
         match derived {
             Ok(key) => Some(Self { directory, key }),
             Err(error) => {
