@@ -1261,3 +1261,43 @@ panels still leave a few back connectors unplaced (designer stacking at
 with the 1.57x larger work budget. The two cuts ran at loads 1 and 66.
 Compare with
 `python3 benchmarks/agent-tasks/compare.py build/github-layout-v16.log build/github-layout-v17.log`.
+
+## Expansion intake: 5 834 boards routed on the designer's placement (2026-10-18)
+
+`benchmarks/expansion/` (README there) harvested 5 834 native KiCad boards
+from 1 146 repositories (plus 1 225 Eagle and Altium conversions, kept
+apart) and routed each on the designer's placement with tracks, vias and
+small zones stripped, at a 30-second ladder budget on the be4b012 binary,
+one search thread at nice 19 on a loaded machine; 2 635 of them again at
+300 s; 2 168 placement variants with features for placement data. The
+analysis tables are in `benchmarks/expansion/analysis/` (the raw data,
+54 GB, stays on disk under `data/`).
+
+| | boards | share |
+|---|---|---|
+| native-clean within 30 s of routing | 2 309 | 39.6 % |
+| native-clean at any time on the quick run | 2 626 | 45.0 % |
+| designer-relative pass (no finding type above the designer's, nothing unconnected) | 3 896 | 66.8 % |
+| complete by the router's count | 4 367 | 74.9 % |
+| complete at 300 s | 4 528 | 77.6 % |
+| boards with a native-clean source and their own rules: clean within 30 s | 71.7 % of 1 995 | |
+
+Median routing time of the clean boards 3.4 s (p90 34.5 s). Caveats: 59 %
+of the designer boards have DRC findings of their own; 6.9 % of boards use
+inferred rules; 75 % are 2-layer; resource limits (199, a 3 GiB cap the
+ladder's memory sizing cannot see) and wall cuts (279, overrun work beyond
+the ladder budget) are harness and sizing effects, not routing failures.
+
+What blocks boards at scale, ranked by boards a single new finding type
+blocks: KiCad disagreeing with the router's "complete" (119: stacked
+same-number F/B pads, tracks ending at a pad on the other side, pour to pad
+after refill), starved thermals (103), track_width (82, almost all inferred
+rules against KiCad's 0.2 mm default), clearance from `.kicad_dru` and
+netclass rules (16), copper edge clearance (15), mask bridges (8). 1 297 of
+the 1 725 "DRC failures" fail only on the designer's own findings. Of the
+63 model errors, 9 are ours (degenerate polygons, `gr_bbox` pads, a missing
+roundrect ratio, `/A15` vs `A15` net identity, one unexplained "no routable
+connections"); 54 are unloadable or netless sources. More budget rarely
+helps: of 1 258 boards incomplete at 30 s with a 300 s run, 161 became
+complete. A 46-board "expansion" tier spanning the hardness axis is
+proposed in `analysis/expansion-tier.json`.

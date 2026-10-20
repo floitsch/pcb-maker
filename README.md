@@ -30,6 +30,12 @@ Not finished, but already useful.
   rest are complete but for a few connections or a few starved thermal
   reliefs; a handful are panels or boards whose rules no track can satisfy
   ([results](docs/benchmarks.md#layout-sweep-v17-2026-10-16)).
+- **At scale, on the designer's placement:** 5 834 boards harvested from
+  1 146 public KiCad repositories, each routed from stripped copper with a
+  30 s budget: 2 309 route clean under KiCad's own DRC within 30 s, 3 896
+  pass the designer-relative rule, 4 528 are complete at 300 s; the clean
+  boards take a median 3.4 s
+  ([details and caveats](docs/benchmarks.md#expansion-intake-5-834-boards-routed-on-the-designers-placement-2026-10-18)).
 - **Against Freerouting** on the same 109 boards with only the copper
   removed (the designer's placement kept, 1500 s each): Freerouting finishes
   67 and times out on 36; where it finishes, pcb-maker leaves fewer

@@ -1,0 +1,46 @@
+{
+ "by_first_lattice_node_layers": {
+  "<0.5M": {
+   "n": 2527,
+   "resource_limit": 2,
+   "cut_wall_clock": 6,
+   "clean": 1161,
+   "incomplete_at_budget": 366
+  },
+  "0.5-1M": {
+   "n": 1108,
+   "resource_limit": 5,
+   "cut_wall_clock": 47,
+   "clean": 560,
+   "incomplete_at_budget": 157
+  },
+  "1-2M": {
+   "n": 1050,
+   "resource_limit": 9,
+   "cut_wall_clock": 92,
+   "clean": 481,
+   "incomplete_at_budget": 113
+  },
+  "2-4M": {
+   "n": 725,
+   "resource_limit": 38,
+   "cut_wall_clock": 94,
+   "clean": 389,
+   "incomplete_at_budget": 50
+  },
+  "4-8M": {
+   "n": 171,
+   "resource_limit": 53,
+   "cut_wall_clock": 36,
+   "clean": 29,
+   "incomplete_at_budget": 13
+  },
+  ">=8M": {
+   "n": 107,
+   "resource_limit": 92,
+   "cut_wall_clock": 4,
+   "clean": 6,
+   "incomplete_at_budget": 0
+  }
+ }
+}
