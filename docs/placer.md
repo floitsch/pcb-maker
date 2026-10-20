@@ -445,7 +445,7 @@ What the measurements say (`experiments/orientation-search/`):
 - **The layout tier does not keep the designer's angles.** From the
   designer's angles x1112 left 25-40 % of the moved parts at them, from 0
   degrees 22-35 % (four seeds, ten short-tier boards; a quarter by
-  chance). coco2's 549 against 1144 vias (handover, schematic tier
+  chance). coco2's 549 against 1144 vias (docs/changelog.md, schematic tier
   failures) was the placement's chaos, not inheritance: on x1112 the same
   board from 0 degrees gave 663 vias, from the designer's angles 1060.
 - **HPWL over seeds** (`seeds.py`: `place-kicad-board`, one seed a run,

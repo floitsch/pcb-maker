@@ -125,7 +125,7 @@ fn perturbation_problem(
     pcb: &Expr,
     placer_config: &KiCadBoardPlacerConfig,
 ) -> Result<placer::Problem, String> {
-    let mut problem = lower_placement(pcb, placer_config, &[])?.problem;
+    let mut problem = lower_placement(pcb, placer_config)?.problem;
     problem.spacing = problem.min_spacing;
     for component in &mut problem.components {
         component.halo = 0.0;
@@ -423,7 +423,7 @@ pub fn export_congestion_samples(
             }
             placements.insert(variant.name.clone(), pcb.clone());
             let wirelength_mm = {
-                let problem = lower_placement(&pcb, &perturb_config, &[])?.problem;
+                let problem = lower_placement(&pcb, &perturb_config)?.problem;
                 problem.wirelength(&problem.poses)
             };
             // As the layout routes a placement: planned pours added.

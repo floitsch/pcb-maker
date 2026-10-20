@@ -359,20 +359,19 @@ Diagnostics (stderr unless said):
 - `PCB_ROUTER_SEED=N`: perturbs the net order and seeds the history with
   noise, so one board routes many ways.
 
-Old-path A/B switches, **being removed** by the kicad quality package
-(each restores the code before a change, for A/B runs):
-`PCB_KICAD_OLD_ZONE_ARCS`, `PCB_LADDER_OLD_RESERVE`,
-`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`, `PCB_LAYOUT_NARROW_CONTINUATION` and
-`_FLOOR`. The router's (`PCB_ROUTER_OLD_*`, `PCB_ROUTER_NO_*` but
-`NO_ISLAND_STUBS` and `NO_WALL_GUARD`, `PCB_ROUTER_REROUTE_FRACTION`, the
-speculation switches and `PCB_ROUTER_CLEANUP_WINDOW`) were removed on
-2026-10-16 (changelog.md, "quality: pcb-router"); `PCB_JACOBI_BATCH` is
-still read by src/main.rs but no longer reaches the router.
+The old-path A/B switches (each restored the code before a change) were
+removed on 2026-10-16: the router's (`PCB_ROUTER_OLD_*`,
+`PCB_ROUTER_NO_*` but `NO_ISLAND_STUBS` and `NO_WALL_GUARD`,
+`PCB_ROUTER_REROUTE_FRACTION`, the speculation switches,
+`PCB_ROUTER_CLEANUP_WINDOW`; changelog.md, "quality: pcb-router") and
+the layout's, ladder's and placer's (`PCB_KICAD_OLD_ZONE_ARCS`,
+`PCB_LADDER_OLD_RESERVE`, `PCB_LADDER_FORCE_RUNG`,
+`PCB_LADDER_SHORT_RESUME`, `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`,
+`PCB_LAYOUT_NARROW_CONTINUATION` and `_FLOOR`, `PCB_PLACER_CHANNEL_SELF`,
+`PCB_JACOBI_BATCH`; changelog.md, "quality: pcb-kicad").
 `PCB_ROUTER_NO_ISLAND_STUBS` turns off the island stubs
 (`Config::island_stubs`, on), a default Florian has not settled. Other
-experiment hooks in the code, undocumented on purpose:
-`PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`,
-`PCB_PLACER_CHANNEL_SELF`, `PCB_TOPO_*`,
+experiment hooks in the code, undocumented on purpose: `PCB_TOPO_*`,
 `PCB_MAKER_KICAD_VERIFICATION_CACHE*`; test fixtures
 `PCB_MAKER_JOINT_RETAINED_FIXTURE_ROOT`, `PCB_MAKER_KEEP_TEST_ARTIFACTS`.
 

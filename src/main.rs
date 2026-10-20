@@ -950,12 +950,6 @@ fn board_router_config(
             if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
                 config.skip_native_verification = true;
             }
-            if let Some(batch) = std::env::var("PCB_JACOBI_BATCH")
-                .ok()
-                .and_then(|v| v.parse().ok())
-            {
-                config.jacobi_batch = Some(batch);
-            }
             if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS")
                 .ok()
                 .and_then(|v| v.parse().ok())

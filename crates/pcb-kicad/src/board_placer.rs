@@ -5,7 +5,7 @@
 use super::*;
 use crate::placement_constraints::{
     KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints, apply_keepouts,
-    apply_outline, apply_sides, constraint_report, natural, resolve_constraints,
+    apply_outline, apply_sides, constraint_report, resolve_constraints,
 };
 use pcb_placer as core;
 
@@ -165,36 +165,15 @@ pub struct KiCadBoardPlacerConfig {
     /// only the halos the level kept are redistributed.
     #[serde(default = "default_routing_room_all_parts")]
     pub routing_room_all_parts: bool,
-    /// Identical parts that share a bus pin for pin (SIMM sockets, SRAM
-    /// banks) are placed as a row (see `bus_rows`). Off by default.
-    pub bus_rows: bool,
-    /// The gap between a bus row's parts: their halo times the share of
-    /// pads off the bus, times this.
-    pub bus_row_gap_scale: f64,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
-    /// Keep room for a via beside every surface pad of a pour net (a
-    /// supply pad reaches its plane through a via next to it): the body
-    /// grows outward past such pads by `supply_via_room_mm` (the via plus
-    /// its clearance, from the rules when not given). Off by default.
-    #[serde(default)]
-    pub supply_via_room: bool,
-    #[serde(default)]
-    pub supply_via_room_mm: Option<f64>,
     /// Routing demand as charge in the global placement: every net's
     /// estimated wire area (half perimeter times the track pitch, over its
     /// signal layers) spreads over its bounding box and pushes parts apart
     /// where the wires will run, scaled by this (0: off).
     #[serde(default)]
     pub routing_demand: f64,
-    /// Repeated channels (sheet instances of one schematic file with the
-    /// same parts: an ESC's four phases, a keyboard's columns) are placed
-    /// alike: a first placement finds the best-packed instance, whose
-    /// arrangement every instance then takes as one rigid part. Off by
-    /// default.
-    #[serde(default)]
-    pub replicate_channels: bool,
     /// The placement's orientation search starts from a canonical pose
     /// (`core::orient`): every movable part that may turn at the first of
     /// its angle options (in a fixed order), so that the placement is the
@@ -247,13 +226,8 @@ impl Default for KiCadBoardPlacerConfig {
             routing_room_floor: default_routing_room_floor(),
             routing_room_most: default_routing_room_most(),
             routing_room_all_parts: default_routing_room_all_parts(),
-            bus_rows: false,
-            bus_row_gap_scale: 1.0,
             placement_seeds: 3,
-            supply_via_room: false,
-            supply_via_room_mm: None,
             routing_demand: 0.0,
-            replicate_channels: false,
             orientation_search: true,
         }
     }
@@ -293,16 +267,6 @@ fn routing_room(
         all_parts: config.routing_room_all_parts,
         ..Default::default()
     })
-}
-
-/// Room a via with its clearance takes, by the board's largest rules.
-pub(super) fn via_room(config: &KiCadBoardRouterConfig) -> f64 {
-    config
-        .connection_rules
-        .values()
-        .chain(config.default_rules.iter())
-        .map(|rules| rules.via_size_mm + rules.clearance_mm)
-        .fold(0.0, f64::max)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1527,25 +1491,9 @@ pub(super) struct LoweredPlacement {
     /// Copper layers signals can use (the board's layers less the planes
     /// a multilayer stack keeps): what the routing demand spreads over.
     pub routing_layers: f64,
-    /// Per footprint: which sheet instance it comes from, and what it is.
-    pub identities: Vec<Option<ChannelIdentity>>,
     /// Per net of the problem: whether a pour carries it.
     pub poured: Vec<bool>,
 }
-
-/// What tells a footprint's channel: its sheet instance (`/ESC1/`), the
-/// sheet's file, and the footprint with its value.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct ChannelIdentity {
-    pub sheet: String,
-    pub file: String,
-    pub footprint: String,
-    pub value: String,
-}
-
-/// One instance of a channel: its parts with their offsets (in the first
-/// part's frame) and angles relative to the first part, which carries them.
-pub(super) type ChannelInstance = Vec<(usize, [f64; 2], f64)>;
 
 fn default_edge_rule() -> f64 {
     f64::INFINITY
@@ -2021,224 +1969,11 @@ fn keep_copies_apart(problem: &mut core::Problem, footprints: usize) -> usize {
     copies.len()
 }
 
-/// Bus rows: identical footprints (the same library footprint, on one
-/// side) whose pads of one number carry one signal net, pin for pin (the
-/// SIMM sockets of a video card, a bank of SRAMs), placed as a row so
-/// that every bus net runs straight from part to part. The designers line
-/// them up (video's eight SIMMs at a 8.89 mm pitch, mackerel-08's seven
-/// DIP-32s at 20 mm); scattered, video's bus left 384 connections open
-/// after the first route against none on the designer's placement.
-/// Parts a constraint names, fixed ones, repeated references and boards
-/// of several pieces (panels) are left alone. The parts
-/// stack along their bodies' shorter side, `gap` apart (per part: its
-/// halo times the share of its pads not on the bus), in as many lines as
-/// make the block's shape closest to the board's. Only through-hole
-/// parts (SIMM sockets, DIPs, slots): surface parts need room between
-/// their facing pads that a rigid block does not give.
-fn bus_rows(
-    pcb: &Expr,
-    problem: &core::Problem,
-    references: &[String],
-    footprints: usize,
-    constraints: Option<&crate::placement_constraints::KiCadPlacementConstraints>,
-    gap_scale: f64,
-) -> Vec<crate::placement_constraints::KiCadRowConstraint> {
-    use crate::placement_constraints::KiCadRowConstraint;
-    // Every string a constraint holds, as a pattern: a part it matches is
-    // named (pin anchors name their part before the colon).
-    let mut named: Vec<String> = Vec::new();
-    fn strings(value: &serde_json::Value, into: &mut Vec<String>) {
-        match value {
-            serde_json::Value::String(text) => {
-                into.push(text.split(':').next().unwrap_or("").to_string())
-            }
-            serde_json::Value::Array(items) => items.iter().for_each(|item| strings(item, into)),
-            serde_json::Value::Object(map) => map.values().for_each(|item| strings(item, into)),
-            _ => {}
-        }
-    }
-    if let Some(constraints) = constraints
-        && let Ok(value) = serde_json::to_value(constraints)
-    {
-        strings(&value, &mut named);
-    }
-    // A panel (several pieces, references repeated per copy) keeps its
-    // copies apart: a row would pull them together.
-    if problem.pieces.len() > 1 {
-        return Vec::new();
-    }
-    let mut copies: BTreeMap<&str, usize> = BTreeMap::new();
-    for reference in &references[..footprints] {
-        *copies.entry(reference.as_str()).or_default() += 1;
-    }
-    let footprint_items: Vec<&Expr> = pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("footprint"))
-        .collect();
-    let mut pin_count: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut pads: Vec<BTreeMap<String, &str>> = Vec::new();
-    for footprint in &footprint_items {
-        let mut own = BTreeMap::new();
-        for pad in footprint
-            .children()
-            .iter()
-            .filter(|child| child.head() == Some("pad"))
-        {
-            let (Some(number), Some(net)) = (
-                pad.children().get(1).and_then(Expr::atom),
-                node_net(pad)
-                    .filter(|raw| placer_net(raw))
-                    .map(normalize_net),
-            ) else {
-                continue;
-            };
-            if own.insert(number.to_string(), net).is_none() {
-                *pin_count.entry(net).or_default() += 1;
-            }
-        }
-        pads.push(own);
-    }
-    // Candidates by library footprint and side.
-    let mut kinds: BTreeMap<(String, bool), Vec<usize>> = BTreeMap::new();
-    for part in 0..footprints.min(footprint_items.len()) {
-        let component = &problem.components[part];
-        if component.fixed
-            || pads[part].len() < 8
-            || copies[references[part].as_str()] > 1
-            || named
-                .iter()
-                .any(|pattern| glob_matches(pattern, &references[part]))
-        {
-            continue;
-        }
-        let Some(library) = footprint_items[part].children().get(1).and_then(Expr::atom) else {
-            continue;
-        };
-        kinds
-            .entry((library.to_string(), component.side == core::Side::Back))
-            .or_default()
-            .push(part);
-    }
-    let bounds = problem.bounds();
-    let board = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
-    let mut rows = Vec::new();
-    for parts in kinds.values().filter(|parts| parts.len() >= 2) {
-        // Pairs sharing a bus: a quarter of the pads on common signal nets
-        // (power and big nets do not count), at least four.
-        let shared = |a: usize, b: usize| {
-            pads[a]
-                .iter()
-                .filter(|(number, net)| {
-                    pin_count[**net] <= 40 && pads[b].get(*number) == Some(*net)
-                })
-                .count()
-        };
-        let mut parent: Vec<usize> = (0..parts.len()).collect();
-        fn root(parent: &mut [usize], mut item: usize) -> usize {
-            while parent[item] != item {
-                parent[item] = parent[parent[item]];
-                item = parent[item];
-            }
-            item
-        }
-        let mut share = vec![0.0f64; parts.len()];
-        for i in 0..parts.len() {
-            for j in i + 1..parts.len() {
-                let common = shared(parts[i], parts[j]);
-                if common >= 4 && common as f64 >= 0.25 * pads[parts[i]].len() as f64 {
-                    let (a, b) = (root(&mut parent, i), root(&mut parent, j));
-                    parent[a] = b;
-                    let fraction = common as f64 / pads[parts[i]].len() as f64;
-                    share[i] = share[i].max(fraction);
-                    share[j] = share[j].max(fraction);
-                }
-            }
-        }
-        let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        for i in 0..parts.len() {
-            let group = root(&mut parent, i);
-            groups.entry(group).or_default().push(i);
-        }
-        for members in groups.values().filter(|members| members.len() >= 2) {
-            let mut members: Vec<usize> = members.iter().map(|i| parts[*i]).collect();
-            members.sort_by_key(|part| natural(&references[*part]));
-            let leader = &problem.components[members[0]];
-            let fraction = members
-                .iter()
-                .map(|part| share[parts.iter().position(|p| p == part).expect("member")])
-                .fold(1.0f64, f64::min);
-            // Through-hole parts only: they take a bus straight from pin to
-            // pin through the board. Surface parts' pads face each other
-            // across the gap and need their whole halo to escape (the
-            // designers' SOP and TSOP banks: 4.4-5.9 mm apart); so spaced,
-            // homebrew_486's eight SRAMs found no legal spot as a block,
-            // and closer they cost two connections and 360 vias.
-            if !members
-                .iter()
-                .all(|part| !problem.components[*part].far_side.is_empty())
-            {
-                continue;
-            }
-            let gap = (leader.halo * (1.0 - fraction) * gap_scale).max(problem.spacing);
-            // Along the body's shorter side, in the leader's frame; the
-            // row's axis is in the board's frame at the leader's angle.
-            let size = leader.body_size;
-            let short_x = size[0] <= size[1];
-            let (along, across) = if short_x {
-                (size[0], size[1])
-            } else {
-                (size[1], size[0])
-            };
-            let (pitch, line_pitch) = (along + gap, across + gap);
-            let quarter =
-                ((problem.poses[members[0]].angle / 90.0).round() as i64).rem_euclid(2) == 1;
-            let axis = if short_x != quarter { "x" } else { "y" };
-            // Lines: the block's shape closest to the board's (either way
-            // round, as the row turns).
-            let count = members.len();
-            let fit = |lines: usize| {
-                let columns = count.div_ceil(lines);
-                let (a, b) = (columns as f64 * pitch, lines as f64 * line_pitch);
-                (a / board[0])
-                    .max(b / board[1])
-                    .min((b / board[0]).max(a / board[1]))
-            };
-            let lines = (1..=count)
-                .min_by(|a, b| fit(*a).total_cmp(&fit(*b)).then(a.cmp(b)))
-                .unwrap_or(1);
-            if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-                eprintln!(
-                    "bus row: {:?} pitch {pitch:.2} mm, lines {lines} ({line_pitch:.2} mm), shared {fraction:.2}, axis {axis}",
-                    members
-                        .iter()
-                        .map(|part| references[*part].as_str())
-                        .collect::<Vec<_>>()
-                );
-            }
-            rows.push(KiCadRowConstraint {
-                parts: members
-                    .iter()
-                    .map(|part| references[*part].clone())
-                    .collect(),
-                pitch_mm: pitch,
-                axis: Some(axis.to_string()),
-                columns: (lines > 1).then(|| count.div_ceil(lines)),
-                row_pitch_mm: (lines > 1).then_some(line_pitch),
-                turns: true,
-            });
-        }
-    }
-    rows
-}
-
 pub(super) fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
-    channels: &[ChannelInstance],
 ) -> Result<LoweredPlacement, String> {
     crate::note_net_names(pcb);
-    let mut identities = Vec::new();
     let loops = outline::board_loops(pcb)?;
     let mut net_ids = BTreeMap::<String, usize>::new();
     let mut components = Vec::new();
@@ -2256,9 +1991,9 @@ pub(super) fn lower_placement(
     let mut pad_boxes: Vec<Vec<[f64; 4]>> = Vec::new();
     let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
     let mut mouths: Vec<Option<[f64; 2]>> = Vec::new();
-    // The nets with copper pours, whose surface pads want a via beside
-    // them, and the layers signals can route on: a four-layer stack keeps
-    // one plane, six or more two (what the harvested designers do).
+    // The nets with copper pours, and the layers signals can route on: a
+    // four-layer stack keeps one plane, six or more two (what the
+    // harvested designers do).
     let layer_table = crate::board_router::LayerTable::from_pcb(pcb)?;
     let pour_nets: BTreeSet<String> = crate::board_router::pours(pcb, &layer_table)?
         .into_iter()
@@ -2269,11 +2004,6 @@ pub(super) fn lower_placement(
         0..=2 => 2.0,
         3..=5 => (copper_layers - 1) as f64,
         _ => (copper_layers - 2) as f64,
-    };
-    let via_room = if config.supply_via_room {
-        config.supply_via_room_mm.unwrap_or(0.8)
-    } else {
-        0.0
     };
     let mask_growth = mask_opening_growth(pcb, config);
     for footprint in pcb
@@ -2369,9 +2099,6 @@ pub(super) fn lower_placement(
         let holes_error = config.holes_in_courtyards_error == Some(true);
         let mut own_pads = Vec::new();
         let mut pin_centers: Vec<[f64; 2]> = Vec::new();
-        // Surface pads of pour nets: the body grows past them by the via
-        // room, on the side they lie nearest to.
-        let mut supply_pads: Vec<[f64; 4]> = Vec::new();
         let mut named = BTreeMap::new();
         // The copper layer of the side the part is not on: an edge-mount
         // connector's SMD pads there occupy that side too.
@@ -2497,9 +2224,6 @@ pub(super) fn lower_placement(
             else {
                 continue;
             };
-            if via_room > 0.0 && pad_type == "smd" && pour_nets.contains(net) {
-                supply_pads.push(pad_box);
-            }
             let next = net_ids.len();
             let net = *net_ids.entry(net.to_string()).or_insert(next);
             let pad_at = form_at(pad)?;
@@ -2507,41 +2231,6 @@ pub(super) fn lower_placement(
                 offset: [pad_at[0], pad_at[1]],
                 net,
             });
-        }
-        if !supply_pads.is_empty() && !round {
-            let mut body = [
-                body_center[0] - body_size[0] / 2.0,
-                body_center[1] - body_size[1] / 2.0,
-                body_center[0] + body_size[0] / 2.0,
-                body_center[1] + body_size[1] / 2.0,
-            ];
-            for pad in &supply_pads {
-                // The side the pad lies nearest to; a pad deep inside the
-                // body (an exposed pad) takes its via inside itself.
-                let gaps = [
-                    pad[0] - body[0],
-                    pad[1] - body[1],
-                    body[2] - pad[2],
-                    body[3] - pad[3],
-                ];
-                let (side, gap) = gaps
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .unwrap();
-                if gap >= via_room {
-                    continue;
-                }
-                match side {
-                    0 => body[0] = body[0].min(pad[0] - via_room),
-                    1 => body[1] = body[1].min(pad[1] - via_room),
-                    2 => body[2] = body[2].max(pad[2] + via_room),
-                    _ => body[3] = body[3].max(pad[3] + via_room),
-                }
-            }
-            body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
-            body_size = [body[2] - body[0], body[3] - body[1]];
         }
         // Copper and mask graphics on the outer layers of the side the part
         // is not on occupy that side as well: Castor's LOGO footprint sits
@@ -2823,27 +2512,6 @@ pub(super) fn lower_placement(
             position: [at[0], at[1]],
             angle: at[2],
         });
-        identities.push(footprint.children().get(1).and_then(Expr::atom).map(|id| {
-            ChannelIdentity {
-                sheet: form_atom(footprint, "sheetname", 1)
-                    .unwrap_or("")
-                    .to_string(),
-                file: form_atom(footprint, "sheetfile", 1)
-                    .unwrap_or("")
-                    .to_string(),
-                footprint: id.to_string(),
-                value: footprint
-                    .children()
-                    .iter()
-                    .find(|item| {
-                        item.head() == Some("property")
-                            && item.children().get(1).and_then(Expr::atom) == Some("Value")
-                    })
-                    .and_then(|item| item.children().get(2).and_then(Expr::atom))
-                    .unwrap_or("")
-                    .to_string(),
-            }
-        }));
         references.push(reference);
         uuids.push(footprint_uuid(footprint));
         source_at.push(at);
@@ -3113,40 +2781,21 @@ pub(super) fn lower_placement(
         Some(KiCadConstraintsSource::Inline(constraints)) => Some(constraints),
         _ => None,
     };
-    let automatic_rows = if config.bus_rows {
-        bus_rows(
-            pcb,
-            &problem,
+    let constraint_warnings = match &config.constraints {
+        Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
+            &mut problem,
             &references,
-            footprint_count,
-            user_constraints,
-            config.bus_row_gap_scale,
-        )
-    } else {
-        Vec::new()
-    };
-    let with_rows = (!automatic_rows.is_empty()).then(|| {
-        let mut constraints = user_constraints.cloned().unwrap_or_default();
-        constraints.row.extend(automatic_rows);
-        constraints
-    });
-    let constraint_warnings = match (&config.constraints, &with_rows) {
-        (_, Some(constraints)) | (Some(KiCadConstraintsSource::Inline(constraints)), None) => {
-            apply_constraints(
-                &mut problem,
-                &references,
-                &pad_offsets,
-                &pad_boxes,
-                &keepout_boxes,
-                &mouths,
-                &locked,
-                &uuids,
-                constraints,
-                config.constraint_weight,
-            )?
-        }
-        (None, None) => Vec::new(),
-        (Some(KiCadConstraintsSource::File(path)), None) => {
+            &pad_offsets,
+            &pad_boxes,
+            &keepout_boxes,
+            &mouths,
+            &locked,
+            &uuids,
+            constraints,
+            config.constraint_weight,
+        )?,
+        None => Vec::new(),
+        Some(KiCadConstraintsSource::File(path)) => {
             return Err(format!(
                 "constraints file {} was not resolved",
                 path.display()
@@ -3284,7 +2933,6 @@ pub(super) fn lower_placement(
     if config.keep_copies {
         keep_copies_apart(&mut problem, footprint_count);
     }
-    apply_channels(&mut problem, &references, &pad_boxes, channels)?;
     problem.constraints.link_pairs();
     let mut constraint_warnings = constraint_warnings;
     constraint_warnings.extend(stacked_warnings);
@@ -3300,7 +2948,6 @@ pub(super) fn lower_placement(
         source_at,
         constraint_warnings,
         routing_layers,
-        identities,
         poured,
     })
 }
@@ -3325,364 +2972,6 @@ fn turned_box(b: [f64; 4], angle: f64) -> [f64; 4] {
             ]
         },
     )
-}
-
-/// The repeated channels of a board: groups of sheet instances of one
-/// file whose movable parts match one to one (same footprints and values,
-/// paired in reference order, with the nets wired alike). Each group lists
-/// its instances, each instance its parts in the paired order.
-pub(super) fn channel_groups(lowered: &LoweredPlacement) -> Vec<Vec<Vec<usize>>> {
-    let problem = &lowered.problem;
-    // Instance (sheet, file) -> its movable parts.
-    let mut instances: BTreeMap<(String, String), Vec<usize>> = BTreeMap::new();
-    for (index, identity) in lowered.identities.iter().enumerate() {
-        let Some(identity) = identity else { continue };
-        if identity.sheet.is_empty() || identity.sheet == "/" || identity.file.is_empty() {
-            continue;
-        }
-        instances
-            .entry((identity.sheet.clone(), identity.file.clone()))
-            .or_default()
-            .push(index);
-    }
-    // Instances by file and signature (what parts they hold).
-    let mut by_signature: BTreeMap<(String, Vec<(String, String, bool)>), Vec<Vec<usize>>> =
-        BTreeMap::new();
-    for ((_, file), mut members) in instances {
-        if members.len() < 3 {
-            continue;
-        }
-        let identity = |index: usize| lowered.identities[index].as_ref().unwrap();
-        members.sort_by(|a, b| {
-            (
-                &identity(*a).footprint,
-                &identity(*a).value,
-                natural(&lowered.references[*a]),
-            )
-                .cmp(&(
-                    &identity(*b).footprint,
-                    &identity(*b).value,
-                    natural(&lowered.references[*b]),
-                ))
-        });
-        let signature: Vec<(String, String, bool)> = members
-            .iter()
-            .map(|index| {
-                let component = &problem.components[*index];
-                (
-                    identity(*index).footprint.clone(),
-                    identity(*index).value.clone(),
-                    component.side == core::Side::Back,
-                )
-            })
-            .collect();
-        by_signature
-            .entry((file, signature))
-            .or_default()
-            .push(members);
-    }
-    let mut groups = Vec::new();
-    for (_, instances) in by_signature {
-        if instances.len() < 2 {
-            continue;
-        }
-        // Every part movable, and the nets wired alike: the first
-        // instance's nets map one to one onto each other's.
-        let movable = instances
-            .iter()
-            .flatten()
-            .all(|index| !problem.components[*index].fixed);
-        let alike = instances[1..].iter().all(|other| {
-            let mut map: BTreeMap<usize, usize> = BTreeMap::new();
-            instances[0].iter().zip(other).all(|(a, b)| {
-                let (pins_a, pins_b) = (&problem.components[*a].pins, &problem.components[*b].pins);
-                pins_a.len() == pins_b.len()
-                    && pins_a.iter().zip(pins_b).all(|(pin_a, pin_b)| {
-                        *map.entry(pin_a.net).or_insert(pin_b.net) == pin_b.net
-                    })
-            })
-        });
-        if movable && alike {
-            groups.push(instances);
-        }
-    }
-    groups
-}
-
-/// From a placement of the whole board: every instance of every group
-/// arranged like the group's best-packed instance (the one whose own nets
-/// are shortest), as offsets and angles relative to its first part.
-pub(super) fn channel_templates(
-    lowered: &LoweredPlacement,
-    groups: &[Vec<Vec<usize>>],
-    poses: &[core::Pose],
-) -> Vec<ChannelInstance> {
-    let problem = &lowered.problem;
-    let mut templates = Vec::new();
-    for instances in groups {
-        let best = instances
-            .iter()
-            .min_by(|a, b| {
-                let local = |members: &Vec<usize>| -> f64 {
-                    let inside: BTreeSet<usize> = members.iter().copied().collect();
-                    let mut boxes: BTreeMap<usize, [f64; 4]> = BTreeMap::new();
-                    for (index, component) in problem.components.iter().enumerate() {
-                        for pin in &component.pins {
-                            let at = component.pin_position(pin, poses[index]);
-                            let entry = boxes.entry(pin.net).or_insert([
-                                f64::INFINITY,
-                                f64::INFINITY,
-                                f64::NEG_INFINITY,
-                                f64::NEG_INFINITY,
-                            ]);
-                            if inside.contains(&index) {
-                                *entry = [
-                                    entry[0].min(at[0]),
-                                    entry[1].min(at[1]),
-                                    entry[2].max(at[0]),
-                                    entry[3].max(at[1]),
-                                ];
-                            } else {
-                                // A net leaving the instance is not its own.
-                                *entry = [f64::NAN; 4];
-                            }
-                        }
-                    }
-                    boxes
-                        .values()
-                        .filter(|b| b[0].is_finite())
-                        .map(|b| (b[2] - b[0]) + (b[3] - b[1]))
-                        .sum()
-                };
-                local(a).total_cmp(&local(b))
-            })
-            .unwrap();
-        let leader = poses[best[0]];
-        let arrangement: Vec<([f64; 2], f64)> = best
-            .iter()
-            .map(|member| {
-                let pose = poses[*member];
-                let delta = [
-                    pose.position[0] - leader.position[0],
-                    pose.position[1] - leader.position[1],
-                ];
-                (
-                    core::problem::rotate(delta, leader.angle),
-                    (pose.angle - leader.angle).rem_euclid(360.0),
-                )
-            })
-            .collect();
-        for members in instances {
-            // PCB_PLACER_CHANNEL_SELF: every instance keeps its own
-            // arrangement (a check of the rigid parts: the free placement
-            // seats them, so the rigid one must).
-            if std::env::var_os("PCB_PLACER_CHANNEL_SELF").is_some() {
-                let leader = poses[members[0]];
-                templates.push(
-                    members
-                        .iter()
-                        .map(|member| {
-                            let pose = poses[*member];
-                            let delta = [
-                                pose.position[0] - leader.position[0],
-                                pose.position[1] - leader.position[1],
-                            ];
-                            (
-                                *member,
-                                core::problem::rotate(delta, leader.angle),
-                                (pose.angle - leader.angle).rem_euclid(360.0),
-                            )
-                        })
-                        .collect(),
-                );
-                continue;
-            }
-            templates.push(
-                members
-                    .iter()
-                    .zip(&arrangement)
-                    .map(|(member, (offset, angle))| (*member, *offset, *angle))
-                    .collect(),
-            );
-        }
-    }
-    templates
-}
-
-/// Turns every channel instance into one part, as `apply_rows` does for
-/// a row: the first part carries the others' bodies (as separate blocking
-/// boxes, so parts may sit in the channel's gaps), pins and pads at their
-/// places; the others follow it.
-fn apply_channels(
-    problem: &mut core::Problem,
-    references: &[String],
-    pad_boxes: &[Vec<[f64; 4]>],
-    channels: &[ChannelInstance],
-) -> Result<(), String> {
-    for instance in channels {
-        let Some(&(leader, _, _)) = instance.first() else {
-            continue;
-        };
-        if instance.iter().any(|(member, _, _)| {
-            problem
-                .constraints
-                .followers
-                .iter()
-                .any(|follower| follower.part == *member || follower.leader == *member)
-                || problem.components[*member].fixed
-        }) {
-            return Err(format!(
-                "channel of {} overlaps a row or a fixed part",
-                references[leader]
-            ));
-        }
-        let mut body = [
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        ];
-        let mut tight = body;
-        let mut carried = problem.components[leader].clone();
-        carried.pins.clear();
-        carried.far_side.clear();
-        carried.far_copper.clear();
-        carried.far_courtyard.clear();
-        carried.pads.clear();
-        carried.hollow.clear();
-        carried.tight_hollow.clear();
-        let leader_side = carried.side;
-        for (member, offset, angle) in instance {
-            let component = &problem.components[*member];
-            // A member on the other side blocks there, as a through-hole
-            // part's pins do; what it has on the leader's side joins the
-            // leader's boxes.
-            let same_side = component.side == leader_side || component.side == core::Side::Both;
-            // A member-local point lies at offset + rotate(point, -angle)
-            // in the leader's frame (see `Problem::sync_followers`).
-            let place = |b: &[f64; 4]| -> [f64; 4] {
-                let turned = turned_box(*b, -angle);
-                [
-                    turned[0] + offset[0],
-                    turned[1] + offset[1],
-                    turned[2] + offset[0],
-                    turned[3] + offset[1],
-                ]
-            };
-            let own_body = place(&[
-                component.body_center[0] - component.body_size[0] / 2.0,
-                component.body_center[1] - component.body_size[1] / 2.0,
-                component.body_center[0] + component.body_size[0] / 2.0,
-                component.body_center[1] + component.body_size[1] / 2.0,
-            ]);
-            body = [
-                body[0].min(own_body[0]),
-                body[1].min(own_body[1]),
-                body[2].max(own_body[2]),
-                body[3].max(own_body[3]),
-            ];
-            // At the tight level the members are tight too (ESC mini's
-            // boards fit only so).
-            let own_tight = component.tight.map_or(own_body, |t| place(&t));
-            tight = [
-                tight[0].min(own_tight[0]),
-                tight[1].min(own_tight[1]),
-                tight[2].max(own_tight[2]),
-                tight[3].max(own_tight[3]),
-            ];
-            if same_side {
-                carried.hollow.push(own_body);
-                carried.tight_hollow.push(own_tight);
-                carried
-                    .far_side
-                    .extend(component.far_side.iter().map(place));
-                carried
-                    .far_copper
-                    .extend(component.far_copper.iter().map(place));
-                carried
-                    .far_courtyard
-                    .extend(component.far_courtyard.iter().map(place));
-            } else {
-                carried.far_side.push(own_body);
-                carried.hollow.extend(
-                    component
-                        .far_side
-                        .iter()
-                        .chain(&component.far_copper)
-                        .map(place),
-                );
-            }
-            carried.pins.extend(component.pins.iter().map(|pin| {
-                let at = core::problem::rotate(pin.offset, -angle);
-                core::Pin {
-                    offset: [at[0] + offset[0], at[1] + offset[1]],
-                    net: pin.net,
-                }
-            }));
-            carried.pads.extend(pad_boxes[*member].iter().map(place));
-            carried.halo = carried.halo.max(component.halo);
-            carried.edge_inset = carried.edge_inset.min(component.edge_inset);
-            if *member != leader {
-                problem
-                    .constraints
-                    .followers
-                    .push(core::constraints::Follower {
-                        part: *member,
-                        leader,
-                        offset: *offset,
-                        angle: *angle,
-                    });
-            }
-        }
-        carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
-        carried.body_size = [body[2] - body[0], body[3] - body[1]];
-        carried.round = false;
-        carried.tight = (carried.tight_hollow.len() == carried.hollow.len()
-            && !carried.tight_hollow.is_empty())
-        .then_some(tight);
-        carried.courtyards.clear();
-        carried.holes_inside = true;
-        if carried.hollow.is_empty() {
-            // Everything on the other side: the leader's own side is free.
-            carried.hollow.push([
-                carried.body_center[0],
-                carried.body_center[1],
-                carried.body_center[0],
-                carried.body_center[1],
-            ]);
-        }
-        if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-            eprintln!(
-                "channel of {}: {} parts, {:.1} x {:.1} mm, {} boxes on its side, {} on the other",
-                references[leader],
-                instance.len(),
-                carried.body_size[0],
-                carried.body_size[1],
-                carried.hollow.len(),
-                carried.far_side.len()
-            );
-        }
-        problem.components[leader] = carried;
-        for (member, _, _) in &instance[1..] {
-            let component = &mut problem.components[*member];
-            component.side = core::Side::Neither;
-            component.fixed = true;
-            component.pins.clear();
-            component.far_side.clear();
-            component.far_copper.clear();
-            component.far_courtyard.clear();
-            component.pads.clear();
-            component.hollow.clear();
-            component.halo = 0.0;
-            component.body_size = [0.01, 0.01];
-        }
-    }
-    if !channels.is_empty() {
-        let mut poses = problem.poses.clone();
-        problem.sync_followers(&mut poses);
-        problem.poses = poses;
-    }
-    Ok(())
 }
 
 /// Places the movable footprints of `<source>/<board_id>.kicad_pcb`, removes
@@ -4301,7 +3590,6 @@ pub fn place_kicad_board(
         || config.copper_edge_clearance_mm.is_none()
         || config.hole_clearance_mm.is_none()
         || (config.mask_openings && config.solder_mask_to_copper_mm.is_none())
-        || (config.supply_via_room && config.supply_via_room_mm.is_none())
     {
         let rules = project_rules::resolve_project_rules(
             &source_directory.join(format!("{board_id}.kicad_pro")),
@@ -4316,9 +3604,6 @@ pub fn place_kicad_board(
         }
         if config.hole_clearance_mm.is_none() {
             config.hole_clearance_mm = rules.as_ref().map(|rules| rules.hole_clearance_mm);
-        }
-        if config.supply_via_room && config.supply_via_room_mm.is_none() {
-            config.supply_via_room_mm = rules.as_ref().map(via_room).filter(|room| *room > 0.0);
         }
         if config.solder_mask_to_copper_mm.is_none() {
             config.solder_mask_to_copper_mm = rules
@@ -4359,7 +3644,7 @@ pub fn place_kicad_board(
         apply_keepouts(&mut pcb, &constraints.keepout).map_err(crate::verdict::input_error)?;
         apply_sides(&mut pcb, constraints).map_err(crate::verdict::input_error)?;
     }
-    let mut lowered = lower_placement(&pcb, config, &[]).map_err(crate::verdict::input_error)?;
+    let lowered = lower_placement(&pcb, config).map_err(crate::verdict::input_error)?;
     if let Some(designer) = std::env::var_os("PCB_PLACER_DESIGNER") {
         diagnose_designer(&lowered, Path::new(&designer))?;
     }
@@ -4397,7 +3682,7 @@ pub fn place_kicad_board(
     let threads = rayon::current_num_threads().max(1);
     // The kept seeds' work as the clock of the reference machine sees it
     // (`REFERENCE_THREADS` at once), and in all; the seeds run, the kept
-    // seed. Summed over the races (the repeated channels race twice).
+    // seed.
     let pool_work = std::cell::Cell::new(0u64);
     let seeds_work = std::cell::Cell::new(0u64);
     let seeds_run = std::cell::Cell::new(0u64);
@@ -4455,64 +3740,7 @@ pub fn place_kicad_board(
         });
         placements
     };
-    // Repeated channels: a first placement, with every instance's parts
-    // pulled together by a net of their own, shows which instance packs
-    // best; every instance then takes that arrangement as one rigid part
-    // and the board is placed again. Kept when every part finds room.
-    let groups = if config.replicate_channels {
-        channel_groups(&lowered)
-    } else {
-        Vec::new()
-    };
-    let mut placements = if groups.is_empty() {
-        place_seeds(&lowered.problem)
-    } else {
-        let mut cohesive = lowered.problem.clone();
-        for members in groups.iter().flatten() {
-            let net = cohesive.net_weights.len();
-            cohesive.net_weights.push(0.5);
-            for member in members {
-                let component = &mut cohesive.components[*member];
-                component.pins.push(core::Pin {
-                    offset: component.body_center,
-                    net,
-                });
-            }
-        }
-        place_seeds(&cohesive)
-    };
-    if config.replicate_channels {
-        if !groups.is_empty() {
-            let templates = channel_templates(&lowered, &groups, &placements[0].1.poses);
-            eprintln!(
-                "channels: {} ({} instances of {} parts): placed alike",
-                groups.len(),
-                templates.len(),
-                groups
-                    .iter()
-                    .map(|instances| instances[0].len())
-                    .max()
-                    .unwrap_or(0)
-            );
-            let replicated = lower_placement(&pcb, config, &templates)?;
-            let again = place_seeds(&replicated.problem);
-            if again[0].1.unplaced.is_empty() && again[0].1.illegal.is_empty() {
-                lowered = replicated;
-                placements = again;
-            } else {
-                let stuck: Vec<&str> = again[0]
-                    .1
-                    .unplaced
-                    .iter()
-                    .chain(&again[0].1.illegal)
-                    .map(|index| replicated.references[*index].as_str())
-                    .collect();
-                eprintln!(
-                    "channels: the replicated placement left {stuck:?} without room; the free one stands"
-                );
-            }
-        }
-    }
+    let placements = place_seeds(&lowered.problem);
     let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) =
         placements.into_iter().unzip();
     if let Some(trace) = std::env::var_os("PCB_PLACER_TRACE") {
@@ -4898,7 +4126,7 @@ mod tests {
                 (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "B.Cu") (net 2 "B"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         let logo = &problem.components[0];
         assert_eq!(
@@ -4958,7 +4186,7 @@ mod tests {
                 (pad "2" smd rect (at 0.5 0) (size 0.6 0.9) (layers "F.Cu") (net 2 "B"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         let (back, front) = (1, 2);
         let mut poses = problem.poses.clone();
@@ -4996,7 +4224,7 @@ mod tests {
                 (pad "2" thru_hole circle (at 1 0) (size 1 1) (drill 0.6) (layers "*.Cu") (net 2 "B"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         let mut poses = problem.poses.clone();
         assert!(core::legal::illegal_components(problem, &poses).is_empty());
@@ -5024,7 +4252,7 @@ mod tests {
                 (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         let (ufl, front) = (0, 1);
         assert!(!problem.components[ufl].fixed);
@@ -5106,7 +4334,7 @@ mod tests {
             keep_on_pieces: true,
             ..KiCadBoardPlacerConfig::default()
         };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         let problem = &lowered.problem;
         assert_eq!(problem.pieces.len(), 2);
         let right = *problem.pieces.iter().find(|piece| piece[0] > 35.0).unwrap();
@@ -5120,7 +4348,6 @@ mod tests {
                 keep_on_pieces: false,
                 ..KiCadBoardPlacerConfig::default()
             },
-            &[],
         )
         .unwrap();
         assert!(lowered.problem.constraints.regions.is_empty());
@@ -5164,7 +4391,7 @@ mod tests {
             constraints: Some(KiCadConstraintsSource::Inline(constraints.clone())),
             ..KiCadBoardPlacerConfig::default()
         };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         let problem = &lowered.problem;
         assert_eq!(
             problem.pieces,
@@ -5206,7 +4433,7 @@ mod tests {
             constraints: Some(KiCadConstraintsSource::Inline(rectangle)),
             ..KiCadBoardPlacerConfig::default()
         };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         assert!(lowered.problem.constraints.sides.is_empty());
         assert!(lowered.problem.constraints.solid_cutouts.is_empty());
     }
@@ -5240,7 +4467,7 @@ mod tests {
             .unwrap()
         };
         let pcb = board(&format!("{}\n{}", copy(0, 10.0), copy(1, 90.0)));
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         assert!(problem.pieces.len() < 2);
         let mut regions = problem.constraints.regions.clone();
@@ -5261,7 +4488,7 @@ mod tests {
         // fixed parts (55 mm apart: 23 mm right of the first copy's).
         let regions_of = |first: f64, second: f64| {
             let pcb = board(&format!("{}\n{}", copy(0, first), copy(1, second)));
-            let mut regions = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[])
+            let mut regions = lower_placement(&pcb, &KiCadBoardPlacerConfig::default())
                 .unwrap()
                 .problem
                 .constraints
@@ -5283,7 +4510,7 @@ mod tests {
             ..KiCadBoardPlacerConfig::default()
         };
         assert!(
-            lower_placement(&pcb, &off, &[])
+            lower_placement(&pcb, &off)
                 .unwrap()
                 .problem
                 .constraints
@@ -5292,7 +4519,7 @@ mod tests {
         );
         let single = board(&copy(0, 10.0));
         assert!(
-            lower_placement(&single, &KiCadBoardPlacerConfig::default(), &[])
+            lower_placement(&single, &KiCadBoardPlacerConfig::default())
                 .unwrap()
                 .problem
                 .constraints
@@ -5301,7 +4528,7 @@ mod tests {
         );
         let shared = board(&format!("{}\n{}", copy(0, 10.0), copy(0, 90.0)));
         assert!(
-            lower_placement(&shared, &KiCadBoardPlacerConfig::default(), &[])
+            lower_placement(&shared, &KiCadBoardPlacerConfig::default())
                 .unwrap()
                 .problem
                 .constraints
@@ -5316,7 +4543,7 @@ mod tests {
             copy(1, 90.0).replace("\"R1\"", "\"R2\"")
         ));
         assert!(
-            lower_placement(&other, &KiCadBoardPlacerConfig::default(), &[])
+            lower_placement(&other, &KiCadBoardPlacerConfig::default())
                 .unwrap()
                 .problem
                 .constraints
@@ -5347,7 +4574,7 @@ mod tests {
         )
         .unwrap();
         let config = KiCadBoardPlacerConfig::default();
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         let net_of = |reference: &str, pad: usize| {
             let index = lowered
                 .references
@@ -5369,74 +4596,6 @@ mod tests {
         assert_eq!(room.net_demand[net_of("R1", 1)], 0.0);
         assert_eq!(room.net_demand[net_of("R1", 0)], 1.0);
         assert_eq!(room.share, 0.75);
-    }
-
-    #[test]
-    fn identical_parts_on_one_bus_become_a_row() {
-        // Three SIMM-like sockets (10 x 2 mm, eight pads) carry the same
-        // eight bus nets pin for pin; a fourth part of another footprint
-        // and a fifth socket a constraint names stay free.
-        let socket = |reference: &str, x: f64| {
-            let pads: String = (1..=8)
-                .map(|pin| format!(r#"(pad "{pin}" thru_hole circle (at {} 0) (size 0.8 0.8) (drill 0.4) (layers "*.Cu") (net {pin} "B{pin}"))"#, pin as f64 - 4.5))
-                .collect();
-            format!(
-                r#"(footprint "Lib:SIMM" (layer "F.Cu") (at {x} 15) (attr through_hole)
-                    (fp_rect (start -5 -1) (end 5 1) (layer "F.CrtYd"))
-                    (property "Reference" "{reference}") {pads})"#
-            )
-        };
-        let pcb = parse(&format!(
-            r#"(kicad_pcb
-            (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
-            (gr_rect (start 0 0) (end 80 60) (layer "Edge.Cuts"))
-            {} {} {} {}
-            (footprint "Lib:R" (layer "F.Cu") (at 40 40)
-                (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
-                (property "Reference" "R1")
-                (pad "1" smd rect (at -0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 1 "B1"))
-                (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 9 "X"))))"#,
-            socket("U1", 20.0),
-            socket("U2", 30.0),
-            socket("U3", 40.0),
-            socket("U4", 50.0),
-        ))
-        .unwrap();
-        let constraints: crate::placement_constraints::KiCadPlacementConstraints =
-            serde_json::from_str(
-                r#"{"version": 1, "near": [{"part": "U4", "part_of": "R1", "max_mm": 5}]}"#,
-            )
-            .unwrap();
-        let config = KiCadBoardPlacerConfig {
-            bus_rows: true,
-            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
-            ..KiCadBoardPlacerConfig::default()
-        };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
-        let problem = &lowered.problem;
-        let followers: Vec<(usize, usize, [f64; 2])> = problem
-            .constraints
-            .followers
-            .iter()
-            .map(|follower| (follower.part, follower.leader, follower.offset))
-            .collect();
-        // U2 and U3 follow U1, stacked along the sockets' short side (y)
-        // with the spacing between them: every bus pad lines up.
-        assert_eq!(followers.len(), 2, "{followers:?}");
-        let pitch = 2.0 + problem.spacing;
-        for (index, (part, leader, offset)) in followers.iter().enumerate() {
-            assert_eq!((*part, *leader), (index + 1, 0));
-            assert!(
-                offset[0].abs() < 1.0e-9
-                    && (offset[1].abs() - (index + 1) as f64 * pitch).abs() < 1.0e-9,
-                "{offset:?}"
-            );
-        }
-        // The block may take quarter turns.
-        assert_eq!(problem.components[0].angle_options.len(), 4);
-        // Off by default.
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
-        assert!(lowered.problem.constraints.followers.is_empty());
     }
 
     #[test]
@@ -5474,7 +4633,7 @@ mod tests {
             constraints: Some(KiCadConstraintsSource::Inline(constraints)),
             ..KiCadBoardPlacerConfig::default()
         };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         let problem = &lowered.problem;
         let mut poses = problem.poses.clone();
         let legal =
@@ -5503,7 +4662,7 @@ mod tests {
                 (pad "2" smd rect (at 0.5 0) (size 0.6 0.8) (layers "F.Cu") (net 2 "B"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         assert!(
             !problem.components[0].hollow.is_empty(),
@@ -5551,7 +4710,7 @@ mod tests {
             fixed: vec!["J2".into()],
             ..KiCadBoardPlacerConfig::default()
         };
-        let mut placement = lower_placement(&pcb, &config, &[]).unwrap();
+        let mut placement = lower_placement(&pcb, &config).unwrap();
         let (j2, c) = (0, 1);
         assert_eq!(
             placement.references[..2],
@@ -5603,7 +4762,6 @@ mod tests {
                 mask_openings: false,
                 ..config.clone()
             },
-            &[],
         )
         .unwrap();
         let mut poses = off.problem.poses.clone();
@@ -5661,7 +4819,7 @@ mod tests {
             part(15.0 + step, 15.0 + step)
         ))
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         assert!(
             !problem.components[0].hollow.is_empty(),
@@ -5691,7 +4849,7 @@ mod tests {
                 (pad "2" smd rect (at 0.9 0) (size 0.8 1) (layers "F.Cu") (net 3 "C"))))"#,
         )
         .unwrap();
-        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default(), &[]).unwrap();
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
         let problem = &lowered.problem;
         let mut poses = problem.poses.clone();
         let legal =
@@ -5789,7 +4947,7 @@ mod tests {
         ))
         .unwrap();
         let inside = |config: &KiCadBoardPlacerConfig| {
-            let lowered = lower_placement(&pcb, config, &[]).unwrap();
+            let lowered = lower_placement(&pcb, config).unwrap();
             let problem = &lowered.problem;
             let mut poses = problem.poses.clone();
             poses[1].position = [20.0, 15.0];
@@ -5832,7 +4990,7 @@ mod tests {
         ))
         .unwrap();
         let interleaved = |config: &KiCadBoardPlacerConfig| {
-            let lowered = lower_placement(&pcb, config, &[]).unwrap();
+            let lowered = lower_placement(&pcb, config).unwrap();
             let problem = &lowered.problem;
             let mut poses = problem.poses.clone();
             // J2's top row between J1's rows (at y 10), its bottom row
@@ -5870,7 +5028,7 @@ mod tests {
             copper_edge_clearance_mm: Some(0.0),
             ..KiCadBoardPlacerConfig::default()
         };
-        let lowered = lower_placement(&pcb, &config, &[]).unwrap();
+        let lowered = lower_placement(&pcb, &config).unwrap();
         let problem = &lowered.problem;
         assert!(problem.constraints.copper_edge >= 0.01);
         let offsets = core::constraints::copper_edge_offsets(problem, 0, 0.0);
@@ -5905,7 +5063,7 @@ mod tests {
                 holes_in_courtyards_error: Some(holes_error),
                 ..Default::default()
             };
-            lower_placement(&pcb, &config, &[]).unwrap()
+            lower_placement(&pcb, &config).unwrap()
         };
         let lowered = board(false);
         let problem = &lowered.problem;
@@ -5977,148 +5135,6 @@ mod tests {
         ))
         .unwrap();
         assert!(courtyard_shapes(&footprint).unwrap().1);
-    }
-}
-
-#[cfg(test)]
-mod channel_tests {
-    use super::*;
-
-    /// Two instances of a three-part channel (A-B on one net, B-C on
-    /// another, A on the shared ground), instance 2 placed far apart.
-    fn lowered() -> LoweredPlacement {
-        let part = |name: &str, pins: Vec<(f64, usize)>| core::Component {
-            name: name.into(),
-            body_center: [0.0, 0.0],
-            body_size: [2.0, 1.0],
-            round: false,
-            halo: 0.0,
-            pins: pins
-                .into_iter()
-                .map(|(x, net)| core::Pin {
-                    offset: [x, 0.0],
-                    net,
-                })
-                .collect(),
-            side: core::Side::Front,
-            fixed: false,
-            angle_options: vec![0.0, 90.0, 180.0, 270.0],
-            far_side: Vec::new(),
-            far_copper: Vec::new(),
-            far_courtyard: Vec::new(),
-            hollow: Vec::new(),
-            tight: None,
-            edge_inset: 0.0,
-            courtyards: Vec::new(),
-            holes_inside: false,
-            pads: vec![[-1.0, -0.5, 1.0, 0.5]],
-            copper_only: false,
-            cutout_outline: Vec::new(),
-            tight_hollow: Vec::new(),
-        };
-        // Nets: 0 GND, 1-2 instance 1's, 3-4 instance 2's.
-        let components = vec![
-            part("A1", vec![(-0.5, 0), (0.5, 1)]),
-            part("B1", vec![(-0.5, 1), (0.5, 2)]),
-            part("C1", vec![(-0.5, 2)]),
-            part("A2", vec![(-0.5, 0), (0.5, 3)]),
-            part("B2", vec![(-0.5, 3), (0.5, 4)]),
-            part("C2", vec![(-0.5, 4)]),
-        ];
-        let poses = [
-            [0.0, 0.0],
-            [3.0, 0.0],
-            [6.0, 0.0],
-            [20.0, 20.0],
-            [20.0, 30.0],
-            [30.0, 30.0],
-        ]
-        .map(|position| core::Pose {
-            position,
-            angle: 0.0,
-        })
-        .to_vec();
-        let identities = ["A1", "B1", "C1", "A2", "B2", "C2"]
-            .iter()
-            .map(|name| {
-                Some(ChannelIdentity {
-                    sheet: format!("/CH{}/", &name[1..]),
-                    file: "channel.kicad_sch".into(),
-                    footprint: format!("Lib:{}", &name[..1]),
-                    value: "x".into(),
-                })
-            })
-            .collect();
-        LoweredPlacement {
-            problem: core::Problem {
-                outline: vec![[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0]],
-                components,
-                net_weights: vec![1.0; 5],
-                poses,
-                spacing: 0.5,
-                grid: 0.1,
-                edge_margin: 0.5,
-                min_spacing: 0.2,
-                constraints: Default::default(),
-                far_side_pads_only: false,
-                shared_halos: false,
-                pieces: Vec::new(),
-            },
-            references: ["A1", "B1", "C1", "A2", "B2", "C2"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            source_at: vec![[0.0; 3]; 6],
-            constraint_warnings: Vec::new(),
-            routing_layers: 2.0,
-            identities,
-            poured: vec![false; 5],
-        }
-    }
-
-    #[test]
-    fn channels_are_found_paired_and_placed_as_the_compact_instance() {
-        let lowered = lowered();
-        let groups = channel_groups(&lowered);
-        assert_eq!(groups, vec![vec![vec![0, 1, 2], vec![3, 4, 5]]]);
-        let templates = channel_templates(&lowered, &groups, &lowered.problem.poses);
-        // Instance 1 is the compact one: both take its arrangement.
-        assert_eq!(templates.len(), 2);
-        assert_eq!(
-            templates[0],
-            vec![
-                (0, [0.0, 0.0], 0.0),
-                (1, [3.0, 0.0], 0.0),
-                (2, [6.0, 0.0], 0.0)
-            ]
-        );
-        assert_eq!(
-            templates[1],
-            vec![
-                (3, [0.0, 0.0], 0.0),
-                (4, [3.0, 0.0], 0.0),
-                (5, [6.0, 0.0], 0.0)
-            ]
-        );
-        let mut problem = lowered.problem.clone();
-        let pad_boxes: Vec<Vec<[f64; 4]>> = vec![vec![[-1.0, -0.5, 1.0, 0.5]]; 6];
-        apply_channels(&mut problem, &lowered.references, &pad_boxes, &templates).unwrap();
-        assert_eq!(problem.constraints.followers.len(), 4);
-        let leader = &problem.components[3];
-        assert_eq!(leader.pins.len(), 5);
-        assert_eq!(leader.hollow.len(), 3);
-        assert_eq!(leader.body_size, [8.0, 1.0]);
-        assert_eq!(problem.components[4].side, core::Side::Neither);
-        // Followers moved to the template's places.
-        assert_eq!(problem.poses[5].position, [26.0, 20.0]);
-    }
-
-    #[test]
-    fn channels_wired_differently_are_not_replicated() {
-        let mut lowered = lowered();
-        // C2 hangs on the ground instead of its own net.
-        lowered.problem.components[5].pins[0].net = 0;
-        assert!(channel_groups(&lowered).is_empty());
     }
 }
 
@@ -6245,19 +5261,16 @@ mod order_tests {
         let config = KiCadBoardPlacerConfig::default();
         // As read, the parts come in the file's order.
         let raw = |text: &str| {
-            lower_placement(&parse(text).unwrap(), &config, &[])
+            lower_placement(&parse(text).unwrap(), &config)
                 .unwrap()
                 .references
         };
         assert_ne!(raw(&forward), raw(&backward));
         // In the canonical order the problems are the same.
         let lowered = |text: &str| {
-            let lowered = lower_placement(
-                &crate::canonical_order::parse_board(text).unwrap(),
-                &config,
-                &[],
-            )
-            .unwrap();
+            let lowered =
+                lower_placement(&crate::canonical_order::parse_board(text).unwrap(), &config)
+                    .unwrap();
             (lowered.references.clone(), format!("{:?}", lowered.problem))
         };
         let (references, problem) = lowered(&forward);

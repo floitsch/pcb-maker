@@ -516,90 +516,20 @@ pub(crate) fn direct_narrow_budget(work_left: f64) -> (f64, f64) {
     (negotiation, cleanup)
 }
 
-/// What runs after the narrow-signal attempt run alone, with the work it
-/// left (`narrow_continuation`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NarrowContinuation {
-    /// Nothing: the layout ends.
-    Stop,
-    /// The narrow-signal attempt again in the other pour mode.
-    OtherPours,
-    /// The narrow-signal attempt again with fresh seeds.
-    Seeds,
-    /// The class-width ladder with what is left.
-    Ladder,
-}
-
-impl NarrowContinuation {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "stop" | "none" => Some(Self::Stop),
-            "tracks" | "pours" | "other-pours" => Some(Self::OtherPours),
-            "seeds" => Some(Self::Seeds),
-            "ladder" => Some(Self::Ladder),
-            _ => None,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Stop => "none",
-            Self::OtherPours => "the other pour mode",
-            Self::Seeds => "fresh seeds",
-            Self::Ladder => "the class-width ladder",
-        }
-    }
-}
-
-/// The continuation after the narrow-signal attempt run alone
-/// (`PCB_LAYOUT_NARROW_CONTINUATION` overrides it: stop, tracks, seeds,
-/// ladder).
-pub(crate) const NARROW_CONTINUATION: NarrowContinuation = NarrowContinuation::OtherPours;
-
-/// The work a continuation needs left: an attempt with a negotiation of
-/// a few minutes, its repair and KiCad's check.
+/// The work the attempt after the narrow-signal attempt run alone (that
+/// attempt again in the other pour mode) needs left: an attempt with a
+/// negotiation of a few minutes, its repair and KiCad's check.
 pub(crate) const NARROW_CONTINUATION_FLOOR: f64 = 240.0;
 
 /// How many of the final ladder's attempts, by the router's measures with
 /// the layout's own board among them, KiCad checks (`CheckGate`).
 pub(crate) const KICAD_CHECK_TOP: usize = 2;
 
-/// The first seed of the continuation's seeds, past any the narrow-signal
-/// attempt's own seed rounds used.
-const CONTINUATION_FIRST_SEED: u64 = 101;
-
-/// What runs after the narrow-signal attempt run alone: `choice` when
-/// connections are open, the wall clock has not passed the layout's guard
-/// and at least `floor` of work is left (`NARROW_CONTINUATION_FLOOR`);
-/// else nothing.
-pub(crate) fn narrow_continuation(
-    choice: NarrowContinuation,
-    work_left: f64,
-    floor: f64,
-    open: usize,
-    wall_passed: bool,
-) -> NarrowContinuation {
-    if open == 0 || wall_passed || work_left < floor {
-        NarrowContinuation::Stop
-    } else {
-        choice
-    }
-}
-
-/// The work of an attempt of `side_by_side` seeds from what its ladder
-/// counted (`work`: one seed's routing, and `check_work` of KiCad's
-/// checks, which run once per attempt, not once per seed).
-pub(crate) fn seeds_work(work: f64, check_work: f64, side_by_side: usize) -> f64 {
-    (work - check_work) * side_by_side as f64 + check_work
-}
-
-/// How many seeds of the narrow-signal attempt fit in `work_left` (they
-/// run side by side, each about `attempt_work`): at most four.
-pub(crate) fn continuation_seeds(work_left: f64, attempt_work: f64) -> usize {
-    if attempt_work <= 0.0 {
-        return 0;
-    }
-    ((work_left / attempt_work).floor().max(0.0) as usize).min(4)
+/// Whether the attempt after the narrow-signal attempt run alone runs:
+/// when connections are open, the wall clock has not passed the layout's
+/// guard and at least `NARROW_CONTINUATION_FLOOR` of work is left.
+pub(crate) fn narrow_continuation_runs(work_left: f64, open: usize, wall_passed: bool) -> bool {
+    !(open == 0 || wall_passed || work_left < NARROW_CONTINUATION_FLOOR)
 }
 
 /// The steps of a layout after placement, in their order.
@@ -992,7 +922,7 @@ pub fn layout_kicad_board(
                 &source_directory.join(format!("{board_id}.kicad_pro")),
             ));
     }
-    let mut problem = lower_placement(&pcb, &placer_config, &[])?;
+    let mut problem = lower_placement(&pcb, &placer_config)?;
     let first_relaxation = placer::Relaxation {
         spacing: placement.spacing_mm,
         grid: placement.grid_mm,
@@ -1171,7 +1101,7 @@ pub fn layout_kicad_board(
             board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
             pcb = candidate;
             placer_config.tight_bodies = Some(relaxation.tight);
-            problem = lower_placement(&pcb, &placer_config, &[])?;
+            problem = lower_placement(&pcb, &placer_config)?;
             relaxation.apply(&mut problem.problem);
         }
         others = keep[1..]
@@ -1294,7 +1224,7 @@ pub fn layout_kicad_board(
                 candidate_router.config_mut().verbose = core_config.verbose;
                 kept = candidate_router;
                 placer_config.tight_bodies = Some(relaxation.tight);
-                problem = lower_placement(&pcb, &placer_config, &[])?;
+                problem = lower_placement(&pcb, &placer_config)?;
                 relaxation.apply(&mut problem.problem);
             }
         }
@@ -1382,9 +1312,7 @@ pub fn layout_kicad_board(
     // step is what nearly completes such boards (jetson: 48 to 6 open in
     // route mode), and the moves and the resume took 388 s of jetson's
     // work for 31 to 25 open and left 218 s, too little for any ladder.
-    // (`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` keeps the old split.)
-    let old_split = std::env::var_os("PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET").is_some();
-    let narrow_applies = !old_split && crate::board_router::narrow_step_applies(router_config);
+    let narrow_applies = crate::board_router::narrow_step_applies(router_config);
     let far_open =
         narrow_applies && ladder_has_rungs && !many_open && far_from_complete(best.0, terminals);
     if many_open {
@@ -1804,12 +1732,6 @@ pub fn layout_kicad_board(
     // 121, vaio_re 138, jetson 25 without a ladder; the step alone 17, 82,
     // 35, 18).
     let direct_narrow = narrow_applies && many_open && current.0 > 0;
-    // What runs after it (`PCB_LAYOUT_NARROW_CONTINUATION`: an experiment
-    // switch, docs/handover.md, "after the narrow attempt").
-    let continuation_choice = std::env::var("PCB_LAYOUT_NARROW_CONTINUATION")
-        .ok()
-        .and_then(|value| NarrowContinuation::parse(&value))
-        .unwrap_or(NARROW_CONTINUATION);
     let fallback_config = if past_guard {
         None
     } else if direct_narrow {
@@ -1884,7 +1806,6 @@ pub fn layout_kicad_board(
         // The work of the narrow-signal attempt and what follows it counts
         // whether the layout keeps them or not.
         let mut after_work = fallback.work_seconds;
-        let attempt_work = fallback.expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
         let fallback_pours = fallback.pours.clone();
         let mut best_quality = current;
         let fallback_quality = quality(&fallback, &fallback_directory);
@@ -1901,91 +1822,48 @@ pub fn layout_kicad_board(
         }
         // After the narrow-signal attempt run alone, the work it left (Hub
         // ended at 577 of 1500 s) goes to one more attempt when there is
-        // enough of it.
+        // enough of it: the attempt again in the other pour mode (as tracks
+        // after connected, and the other way round; the only continuation
+        // that gained: docs/changelog.md, "after the narrow attempt").
         if direct_narrow {
             let left = work_deadline - work - pool_excess - after_work;
             let wall = !stop.allows(LayoutStep::Continuation);
-            // Experiment switch: another floor.
-            let floor = std::env::var("PCB_LAYOUT_NARROW_CONTINUATION_FLOOR")
-                .ok()
-                .and_then(|value| value.parse::<f64>().ok())
-                .unwrap_or(NARROW_CONTINUATION_FLOOR);
-            let next = narrow_continuation(continuation_choice, left, floor, best_quality.0, wall);
-            // Seeds run side by side, each with its share of the work.
-            let mut side_by_side = 1;
-            let continuation_config = match next {
-                NarrowContinuation::Stop => {
-                    if best_quality.0 > 0 && continuation_choice != NarrowContinuation::Stop {
-                        let why = if wall {
-                            "the wall clock passed the layout's guard".to_string()
-                        } else {
-                            format!("{left:.0} s of work left, under {floor:.0} s")
-                        };
-                        eprintln!("layout: no attempt after the narrow-signal attempt: {why}");
-                        routed.skipped.push(format!(
-                            "the attempt after the narrow-signal attempt ({}) did not run: {why}",
-                            continuation_choice.name()
-                        ));
-                    }
-                    None
-                }
-                NarrowContinuation::OtherPours => {
-                    let mut other = fallback_config.clone();
-                    other.pours = if fallback_pours == "tracks" {
-                        KiCadPourMode::Connect
+            let continuation_config = if narrow_continuation_runs(left, best_quality.0, wall) {
+                let mut other = fallback_config.clone();
+                other.pours = if fallback_pours == "tracks" {
+                    KiCadPourMode::Connect
+                } else {
+                    KiCadPourMode::Tracks
+                };
+                let (negotiation, cleanup) = direct_narrow_budget(left);
+                other.negotiation_seconds = Some(negotiation);
+                other.cleanup_seconds = Some(cleanup);
+                eprintln!(
+                    "layout: {left:.0} s of work left after the narrow-signal attempt: it again with pours {} (negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
+                    if other.pours == KiCadPourMode::Tracks {
+                        "as tracks"
                     } else {
-                        KiCadPourMode::Tracks
+                        "connected"
+                    }
+                );
+                Some(other)
+            } else {
+                if best_quality.0 > 0 {
+                    let why = if wall {
+                        "the wall clock passed the layout's guard".to_string()
+                    } else {
+                        format!("{left:.0} s of work left, under {NARROW_CONTINUATION_FLOOR:.0} s")
                     };
-                    let (negotiation, cleanup) = direct_narrow_budget(left);
-                    other.negotiation_seconds = Some(negotiation);
-                    other.cleanup_seconds = Some(cleanup);
-                    eprintln!(
-                        "layout: {left:.0} s of work left after the narrow-signal attempt: it again with pours {} (negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
-                        if other.pours == KiCadPourMode::Tracks {
-                            "as tracks"
-                        } else {
-                            "connected"
-                        }
-                    );
-                    Some(other)
+                    eprintln!("layout: no attempt after the narrow-signal attempt: {why}");
+                    routed.skipped.push(format!(
+                        "the attempt after the narrow-signal attempt (the other pour mode) did not run: {why}"
+                    ));
                 }
-                NarrowContinuation::Seeds => {
-                    let seeds = continuation_seeds(left, attempt_work);
-                    if seeds == 0 {
-                        eprintln!(
-                            "layout: {left:.0} s of work left after the narrow-signal attempt, under one attempt's {attempt_work:.0} s: no seeds"
-                        );
-                        None
-                    } else {
-                        let mut seeded = fallback_config.clone();
-                        seeded.seeds = Some(seeds);
-                        seeded.first_seed = Some(CONTINUATION_FIRST_SEED);
-                        let (negotiation, cleanup) = direct_narrow_budget(left / seeds as f64);
-                        seeded.negotiation_seconds = Some(negotiation);
-                        seeded.cleanup_seconds = Some(cleanup);
-                        side_by_side = seeds;
-                        eprintln!(
-                            "layout: {left:.0} s of work left after the narrow-signal attempt: it again with {seeds} seeds ({attempt_work:.0} s of work each)"
-                        );
-                        Some(seeded)
-                    }
-                }
-                NarrowContinuation::Ladder => {
-                    // The class-width ladder: no narrow-signal or
-                    // minimum-clearance step in it (that ran).
-                    let mut ladder = router_config.clone();
-                    ladder.use_narrow_signals = Some(false);
-                    ladder.relaxed_clearance_mm = None;
-                    eprintln!(
-                        "layout: {left:.0} s of work left after the narrow-signal attempt: the class-width ladder"
-                    );
-                    Some(ladder)
-                }
+                None
             };
             if let Some(mut continuation_config) = continuation_config {
-                let share = left / side_by_side as f64;
-                continuation_config.ladder_budget_seconds = Some(share.min(1200.0));
-                continuation_config.deadline_work = Some(share.max(0.0));
+                continuation_config.ladder_budget_seconds = Some(left.min(1200.0));
+                continuation_config.deadline_work = Some(left.max(0.0));
                 continuation_config.kicad_check_top = Some(KICAD_CHECK_TOP);
                 continuation_config.kicad_kept = Some((
                     (
@@ -1996,20 +1874,13 @@ pub fn layout_kicad_board(
                     best_quality,
                 ));
                 let continuation_directory = output_directory.join("result-continuation");
-                let mut continuation = route_kicad_board(
+                let continuation = route_kicad_board(
                     &placed_directory,
                     board_id,
                     &continuation_directory,
                     &continuation_config,
                 )?;
-                // The ladder counts one seed's work for an attempt of seeds
-                // (not its checks: one per attempt).
                 checks_charged.add(continuation.kicad_checks_charged);
-                continuation.work_seconds = seeds_work(
-                    continuation.work_seconds,
-                    continuation.kicad_check_work_seconds,
-                    side_by_side,
-                );
                 after_work += continuation.work_seconds;
                 let continuation_quality = quality(&continuation, &continuation_directory);
                 eprintln!(
@@ -2237,73 +2108,23 @@ mod budget_tests {
 
     #[test]
     fn the_continuation_runs_only_with_work_left_and_connections_open() {
-        use NarrowContinuation::*;
-        for choice in [OtherPours, Seeds, Ladder] {
-            // Hub: about 900 s left, 30 open.
-            assert_eq!(
-                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, false),
-                choice
-            );
-            // At the floor it runs, under it not.
-            assert_eq!(
-                narrow_continuation(
-                    choice,
-                    NARROW_CONTINUATION_FLOOR,
-                    NARROW_CONTINUATION_FLOOR,
-                    30,
-                    false
-                ),
-                choice
-            );
-            assert_eq!(
-                narrow_continuation(
-                    choice,
-                    NARROW_CONTINUATION_FLOOR - 1.0,
-                    NARROW_CONTINUATION_FLOOR,
-                    30,
-                    false
-                ),
-                Stop
-            );
-            // Module and jetson: under 200 s left.
-            assert_eq!(
-                narrow_continuation(choice, 170.0, NARROW_CONTINUATION_FLOOR, 17, false),
-                Stop
-            );
-            // Complete, or past the wall-clock guard: nothing.
-            assert_eq!(
-                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 0, false),
-                Stop
-            );
-            assert_eq!(
-                narrow_continuation(choice, 900.0, NARROW_CONTINUATION_FLOOR, 30, true),
-                Stop
-            );
-        }
-        assert_eq!(
-            narrow_continuation(Stop, 900.0, NARROW_CONTINUATION_FLOOR, 30, false),
-            Stop
-        );
-        assert_eq!(NarrowContinuation::parse("tracks"), Some(OtherPours));
-        assert_eq!(NarrowContinuation::parse("ladder"), Some(Ladder));
-        assert_eq!(NarrowContinuation::parse("seeds"), Some(Seeds));
-        assert_eq!(NarrowContinuation::parse("stop"), Some(Stop));
-        assert_eq!(NarrowContinuation::parse("more"), None);
-    }
-
-    #[test]
-    fn continuation_seeds_fit_the_work_left() {
-        assert_eq!(continuation_seeds(900.0, 120.0), 4);
-        assert_eq!(continuation_seeds(410.0, 200.0), 2);
-        assert_eq!(continuation_seeds(150.0, 200.0), 0);
-        assert_eq!(continuation_seeds(900.0, 0.0), 0);
-    }
-
-    #[test]
-    fn seeds_multiply_their_routing_not_their_checks() {
-        // 300 s of one seed's routing and two checks of 9 s, four seeds.
-        assert_eq!(seeds_work(318.0, 18.0, 4), 1218.0);
-        assert_eq!(seeds_work(318.0, 18.0, 1), 318.0);
-        assert_eq!(seeds_work(300.0, 0.0, 3), 900.0);
+        // Hub: about 900 s left, 30 open.
+        assert!(narrow_continuation_runs(900.0, 30, false));
+        // At the floor it runs, under it not.
+        assert!(narrow_continuation_runs(
+            NARROW_CONTINUATION_FLOOR,
+            30,
+            false
+        ));
+        assert!(!narrow_continuation_runs(
+            NARROW_CONTINUATION_FLOOR - 1.0,
+            30,
+            false
+        ));
+        // Module and jetson: under 200 s left.
+        assert!(!narrow_continuation_runs(170.0, 17, false));
+        // Complete, or past the wall-clock guard: nothing.
+        assert!(!narrow_continuation_runs(900.0, 0, false));
+        assert!(!narrow_continuation_runs(900.0, 30, true));
     }
 }

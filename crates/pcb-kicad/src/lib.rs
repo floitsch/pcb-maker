@@ -11985,12 +11985,11 @@ fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, String> {
     {
         // Sides drawn as arcs (Telemetry's GND zones along its round
         // edge), flattened as KiCad's filler does (ClearArcs); they were
-        // left out, the zone then a polygon through the other corners
-        // (`PCB_KICAD_OLD_ZONE_ARCS` for A/B).
+        // left out, the zone then a polygon through the other corners.
         let arcs = polygon
             .child("pts")
             .is_some_and(|pts| pts.children().iter().any(|item| item.head() == Some("arc")));
-        if arcs && std::env::var_os("PCB_KICAD_OLD_ZONE_ARCS").is_none() {
+        if arcs {
             let points = outline::pts_points(polygon)?;
             if points.len() >= 3 {
                 polygons.push(points);

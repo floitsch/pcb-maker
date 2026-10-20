@@ -14,7 +14,7 @@
 //! and a term for the holes of hatched copper zones, which KiCad's zone
 //! fill cuts one by one (the boards whose checks take 20 to 50 s).
 //! Measured on the v16 layout sweep's board checks and on the routed v16
-//! boards checked again uncached (docs/handover.md, "Committed on
+//! boards checked again uncached (docs/changelog.md, "Committed on
 //! 2026-10-15 (KiCad check work)").
 
 use super::*;
