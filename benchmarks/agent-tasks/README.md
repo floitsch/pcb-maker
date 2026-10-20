@@ -675,6 +675,144 @@ but spell_tome's:
 | coco2 | passed, 661 vias | passed, 1144 vias | Its GNDS pours (177 vias on GNDS, 23 before). The layout tier at a third gives 573 vias and 22,373 mm against 26,093: the stack keeps the designer's orientations, the import puts every part at 0 degrees; with the designer's angles on the imported board the same layout gives 549 vias and 22,505 mm, with the stack's position alone 1144 and 26,093 (the placement follows the orientations it starts from). |
 | homebrew_486, bumwings, 0xcb-static | passed | passed | The pours: vias 907 to 1008, 11 to 17, 1 to 2. |
 
+## The expansion tier (`--tier expansion`)
+
+46 boards of the 2026-10-18 intake ([benchmarks/expansion](../expansion/README.md)),
+routed on the **designer's placement** with the tracks stripped, at the
+intake's 30 seconds of work: a router tier over a wider spread of
+designers, tools and hardness than the harvested layout tiers. Each task
+is a route-mode task (`"mode": "route"` in the task, not `--route-from`):
+no placement, no constraints.
+
+```sh
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/expansion-x1211 --tier expansion \
+  --jobs 8 --threads 1 --binary build/bin/pcb-maker-x1211 > build/expansion-x1211.log
+# the intake's deep run (300 s of work)
+flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/expansion300-x1211 --tier expansion \
+  --budget-scale 10 --jobs 8 --threads 1 --binary build/bin/pcb-maker-x1211 > build/expansion300-x1211.log
+benchmarks/agent-tasks/compare.py build/expansion-x1211.log build/expansion-x1220.log
+```
+
+`expansion.json` (the quick.json format, `budget_scale` 1) lists the
+boards; `expansion-tasks.json` is its task list. Both are written by
+`from_expansion.py` from `benchmarks/expansion/analysis/expansion-tasks.json`,
+`expansion_tier.csv` and the harvest's manifest; each board's entry has its
+bucket, size, licence, the intake's quick and deep outcomes (and the
+intake's stripped board's SHA-256, routed count, vias and length), and the
+tier run's seconds, peak and result (`x1211`). Run it with `--jobs 8
+--threads 1`, as the intake did (one search thread a board): the rows of
+the cut boards depend on the load (below).
+
+**Selection** (benchmarks/expansion/analysis/expansion-tier.json): from
+the intake's quick run, boards whose designer board is native-DRC clean
+(no error, no unconnected item) under its own project rules (not
+inferred), with a repository licence in harvest.py's `USABLE_LICENSES`, no
+quality flag (panel, backup, fixture), tool and QA mirrors excluded
+(KiCad's own repositories, kisurf, kicad-assistant, Huaqiu's KiCad,
+re-hosted SparkFun designs, qa, demo and test_data paths), no resource
+limit at 300 s; one board per repository, round-robin over layer counts
+(most layers first), larger boards first, scarce buckets first. The
+buckets (by the intake's quick and deep outcomes):
+
+| Bucket | Rule | Boards |
+| --- | --- | ---: |
+| B1 clean beyond 30 s | complete and native-clean, after more than 30 s of routing (wall: `routing_seconds`) | 12 |
+| B2 near | incomplete at the budget, 1-2 connections open at 30 s | 9 |
+| B3 far | incomplete at the budget with 3+ open, or cut by the wall guard, at 30 s | 12 |
+| B4 clean only at 300 s | incomplete or cut at 30 s, native-clean at 300 s | 9 |
+| B5 gives up early | `incomplete_early` (the router stops with connections open) | 4 |
+
+27 boards are 2-layer, 15 4-layer, 4 6-layer; 44 to 1887 pads.
+
+**The fetch.** A task carries its source: repository, pinned commit,
+repository path, URL, licence, the harvest's directory name and
+`files` (file name to SHA-256: the `.kicad_pcb`, and the `.kicad_pro` and
+`.kicad_dru` where the harvest found them). When
+`build/github-expansion/<task>/source` does not hold those files with
+those digests, run.py fetches them: from the harvest's copy
+(`--harvest-data`, default `benchmarks/expansion/data`, `boards/<name>`)
+when it matches, else from GitHub at the pinned commit next to the board
+(harvest.py's `GitHub.raw`, raw.githubusercontent.com, 40 MB at most).
+Every file is verified before use; a mismatch or a missing file fails the
+row (`fetch: ...`, outcome `fetch_error`) and keeps nothing (the files
+arrive in a staging directory that replaces the source directory when all
+are verified). Only those files are fetched or copied, and nothing in them
+is run. Rows say `fetched` (and `fetched_from`: `harvest` or `github`) and
+`source_sha256`.
+
+**The licence rule.** Every task carries its repository's licence
+(`source.license`, GitHub's SPDX id, repository metadata: per-file
+exceptions are not checked), and every row prints it (`license`). run.py
+refuses to fetch a board whose licence is missing, empty or `NOASSERTION`.
+The boards are fetched for local benchmarking only; this repository does
+not redistribute them.
+
+**What a task runs**, as the intake did (benchmarks/expansion/triage.py):
+
+- the board, its `.kicad_pro` and `.kicad_dru` copied to `<out>/<task>/source`;
+  the board through `strip-kicad-tracks <original> <copy>` (the intake's
+  exact arguments: segments, arcs, vias, cached fills and copper zones
+  under 10 % of the board's area go; the large pours and the rule areas
+  stay); the row's `stripped_sha256` is the stripped board's;
+- `route-kicad-board source <id> route router.json --reference none` with
+  the task's `router` (the intake's `seeds` 1 and
+  `skip_native_verification`), `ladder_budget_seconds` = the task's
+  `budget_seconds` (30) times the budget scale, and the intake's wall
+  guard `deadline_seconds` = max(90, 3 x budget); the harness's timeout is
+  the intake's max(180, 3 x budget + 60) s unless `--timeout` is given;
+- `drc-kicad-board` (zones refilled) on the result, the router having
+  skipped its own check; the pass rule is the other tiers' (KiCad's
+  unconnected items and copper errors less the designer's, with
+  `designer_budget`).
+
+The row is a route row (`mode: "route"`, `routed`, `vias`, `length_mm`,
+`native`, `work_seconds`, `cut`) with `license`, `fetched`,
+`source_sha256`, `stripped_sha256`, `budget_seconds`, `routing_seconds`,
+`open` (connections the router left open), `drc_seconds` and `outcome`,
+the intake's class (`clean_fast` within 3 routing seconds, `clean_medium`
+within the budget, `clean_slow`, `native_drc_failure`, `cut_wall_clock`,
+`incomplete_at_budget`, `incomplete_early`, ...; triage.py's rule). The
+run ends with an `outcomes:` line. `peak_rss_mb` is the larger of the
+route process and the DRC; the memory gate expects the board's
+`peak_rss_mb` from `expansion.json`. compare.py reads the rows unchanged
+(route rows have no constraints digest).
+
+**First run, x1211, 2026-10-21** (8 jobs x 1 thread under the lock, load
+13-23, 471 s wall, largest peak 2.2 GB, 45 boards fetched from GitHub):
+**14/46 pass**; outcomes clean_slow 11, clean_medium 1, incomplete_at_budget
+21, cut_wall_clock 9, incomplete_early 4; KiCad 456 unconnected, 294 new
+errors, 4194 vias, CPU 4846 s, work 3143 s, 13 rows cut. Per bucket: B1
+12/12 pass; B2 2/9 (LC_PAMV4b and Barklind: the router leaves one connection
+open, KiCad counts none unconnected); B3, B4, B5 none.
+
+The reproduction is faithful: all 46 stripped boards are byte-identical
+to the intake's, and the 32 boards that neither run's wall guard cut
+routed identically (routed count, vias, length, work seconds). **45 of 46
+boards have the intake's outcome class.** The one that differs,
+DIYSynth's Multi_saturation_module, is the same route (8 vias, 10.5 s of
+work) in 27.0 routing seconds against the intake's 37.8: B1's line between
+`clean_medium` and `clean_slow` is wall time, so B1 membership is the
+load's. The 14 rows cut in either run (the 90 s wall guard fired in the
+intake on 14, here on 13: TokayEdge finished uncut) depend on the load:
+of the 13 cut both times, 5 routed identically and 8 differently (Wonkle
+262/271 then, 235/271 now). compare.py leaves CUT rows out of
+better/same/worse, so a third of this tier is no A/B evidence at 30 s
+unless the machine is idle. The binary did not change in between: the
+1.57x work calibration (015676c, 3.15e6 expansions a second) is an
+ancestor of be4b012, the intake's main, and the router and pcb-kicad
+crates are unchanged since be4b012 (x1211 only drops the research stack);
+the work seconds of the uncut rows match the intake's to the tenth.
+
+Errors the intake did not see: it checked KiCad only on complete routes,
+so the incomplete rows' errors are new information: backplane (201:
+track_width and hole_to_hole), tuxkeychain (45 clearance), FUEL4EP (32
+hole_clearance), rpi_cm5_dronecarrier (11), anthracite (3
+starved_thermal), RS485M_Unit (2 starved_thermal).
+
+At 300 s (`--budget-scale 10`, three B4 boards, Zulassungskarte,
+nervous-ecg and 3117_AUSIGN, 3 jobs x 1 thread): 3/3 pass, `clean_medium`,
+work seconds 164.8, 102.5 and 129.6, the intake's deep run's to the tenth.
+
 ## Route mode (`--route-from`)
 
 For router experiments: `--route-from <earlier output directory>` routes

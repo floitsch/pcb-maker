@@ -8,6 +8,7 @@
     benchmarks/agent-tasks/run.py <output> --tier quick --route-from build/quick30-x782 --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier quick --only A B --splice-from build/quick30-x782.log
     benchmarks/agent-tasks/run.py <output> --tier schematic --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier expansion --jobs 8 --threads 1 --binary PATH
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -29,7 +30,12 @@ from an earlier sweep (`<sweep>/<task>/layout/placed`) with
 the rows of the boards not run (outside `--only`) from an earlier log,
 marked `spliced`. `--tier schematic` starts each board from its schematic
 instead (`import-kicad-netlist`, schematic.py; rows say where the flow
-stopped). Every row has `mode` (layout, route or schematic); the run ends with
+stopped). A task with `"mode": "route"` (the expansion tier) routes the
+designer's own placement: run.py fetches its files at the pinned commit
+when they are not there (verified against the task's SHA-256; never
+without a licence), strips the tracks as the intake did and routes with
+`route-kicad-board` and the task's `budget_seconds` of work (README.md,
+"The expansion tier"). Every row has `mode` (layout, route or schematic); the run ends with
 the pass line and a line of continuous objectives (README.md, "How to
 measure"), also written to summary.json."""
 
@@ -43,7 +49,7 @@ import subprocess
 import sys
 import threading
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -51,7 +57,8 @@ from compare import by_name, constraints_digest, objectives, objectives_line, ro
 import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
-TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json"}
+TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json",
+         "expansion": HERE / "expansion.json"}
 # A tier's default parallelism (no --jobs and --threads given): this many
 # search threads a board and the physical cores / this many boards at once.
 # A layout is the same at any thread count, so this only sets the wall: the
@@ -388,6 +395,8 @@ def run_admitted(task, arguments, token):
         return schematic_admitted(task, arguments, token)
     if arguments.route_from:
         return route_admitted(task, arguments, token)
+    if task.get("mode") == "route":
+        return route_task_admitted(task, arguments, token)
     name = task["name"]
     directory = Path(task["directory"])
     if not directory.is_absolute():
@@ -404,7 +413,9 @@ def run_admitted(task, arguments, token):
     designer_seconds = round(time.monotonic() - designer_started, 1)
     subprocess.run([str(arguments.binary), "strip-kicad-tracks", str(board), str(board)],
                    capture_output=True, check=True)
-    constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
+    # Constraints are optional: without them the layout gets an empty set.
+    constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text()) \
+        if task.get("constraints") else {}
     if task.get("unplace"):
         outline = constraints.get("outline", {})
         point = task.get("stack_at") or [outline.get("x", 0) + outline.get("width", 40) / 2,
@@ -748,6 +759,13 @@ def route_admitted(task, arguments, token):
     if code == "timeout":
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
+    return route_result(row, task, work, code, output, allowed, designer_seconds)
+
+
+def route_result(row, task, work, code, output, allowed, designer_seconds):
+    """The row of a route that ended (not by the harness's timeout):
+    `work`/route's report, KiCad's findings in `work`/route/drc.json less
+    the designer's (`allowed`), and the pass rule (a layout's)."""
     row["exit"] = code
     report = work / "route/board-router.json"
     if not report.exists():
@@ -779,6 +797,257 @@ def route_admitted(task, arguments, token):
         row["work_seconds"] = round(result["work_seconds"], 1)
     row["pass"] = bool(copper is not None and copper["unconnected"] == 0 and not copper["errors"])
     return row
+
+
+# Route-mode tasks (`"mode": "route"`, the expansion tier): the designer's
+# placement, fetched at a pinned commit, stripped and routed as the
+# 2026-10-18 intake did (benchmarks/expansion/triage.py and run.py).
+
+# The largest file fetched (the harvest's --max-bytes).
+FETCH_MAX_BYTES = 40_000_000
+# Licence fields that name no licence: such a board is not fetched.
+NO_LICENCE = (None, "", "NOASSERTION", "NONE")
+# The intake's classes of a quick route's outcome (triage.py's classify):
+# a complete route at most this many routing seconds is clean_fast.
+INTAKE_SIMPLE_SECONDS = 3
+
+
+class FetchRefused(Exception):
+    """A task's files may not be fetched (no licence)."""
+
+
+def intake_deadline(budget):
+    """The router's wall guard the intake gave a ladder of `budget` work
+    seconds (benchmarks/expansion/run.py: 90 s at 30 s, 900 s at 300 s)."""
+    return max(90.0, 3 * budget)
+
+
+def intake_timeout(budget):
+    """The intake's whole-process guard for that ladder (180 s at 30 s,
+    960 s at 300 s)."""
+    return max(180.0, 3 * budget + 60)
+
+
+def strip_command(binary, original, stripped):
+    """The intake's strip, with its exact arguments (triage.py): the
+    designer's board in, a new board out; `strip-kicad-tracks` drops
+    segments, arcs, vias, cached fills and copper zones under 10% of the
+    board's area, and keeps the large pours and the rule areas."""
+    return [str(binary), "strip-kicad-tracks", str(original), str(stripped)]
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def github_raw(repository, commit, path, maximum):
+    """A file of `repository` at `commit` (None when it is not there), with
+    the harvest's own fetch (benchmarks/expansion/harvest.py, GitHub.raw)."""
+    with _HARVEST_LOCK:
+        if "module" not in _HARVEST:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("expansion_harvest", ROOT / "benchmarks/expansion/harvest.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _HARVEST["module"] = module
+    return _HARVEST["module"].GitHub().raw(repository, commit, path, maximum)
+
+
+_HARVEST = {}
+_HARVEST_LOCK = threading.Lock()
+
+
+def ensure_source(task, directory, harvest_boards=None, raw=github_raw):
+    """Puts the task's files (`source.files`: file name -> SHA-256) into
+    `directory` unless it holds them already. Returns None when it did,
+    else where they came from: "harvest" (the harvest's copy,
+    `harvest_boards`/`source.harvest_name`, when it matches) or "github"
+    (`raw` at `source.commit`, next to `source.path`). Every file is
+    verified against its SHA-256 before it is used; a task without a
+    licence is not fetched (FetchRefused). The files arrive in a staging
+    directory that replaces `directory` when all are there."""
+    source = task["source"]
+    files = source["files"]
+
+    def verified(folder):
+        return all((folder / name).is_file() and file_sha256(folder / name) == digest
+                   for name, digest in files.items())
+
+    if directory.is_dir() and verified(directory):
+        return None
+    if source.get("license") in NO_LICENCE:
+        raise FetchRefused(f"no licence for {source.get('repository')}: not fetched")
+    staging = directory.parent / (directory.name + ".partial")
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    try:
+        harvested = Path(harvest_boards) / source["harvest_name"] \
+            if harvest_boards is not None and source.get("harvest_name") else None
+        if harvested is not None and verified(harvested):
+            for name in files:
+                shutil.copyfile(harvested / name, staging / name)
+            origin = "harvest"
+        else:
+            folder = PurePosixPath(source["path"]).parent
+            for name, digest in files.items():
+                path = name if str(folder) == "." else str(folder / name)
+                data = raw(source["repository"], source["commit"], path, FETCH_MAX_BYTES)
+                if data is None:
+                    raise ValueError(f"{path} is not in {source['repository']} at {source['commit'][:12]}")
+                actual = hashlib.sha256(data).hexdigest()
+                if actual != digest:
+                    raise ValueError(f"{path}: SHA-256 {actual[:12]} is not the task's {digest[:12]}")
+                (staging / name).write_bytes(data)
+            origin = "github"
+        if directory.exists():
+            shutil.rmtree(directory)
+        staging.replace(directory)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return origin
+
+
+def intake_outcome(result, kicad, budget, simple_seconds=INTAKE_SIMPLE_SECONDS):
+    """The intake's outcome class of a route (triage.py's classify): its
+    report `result`, KiCad's findings on the result (`kicad`, run.py's
+    native() without the designer's findings) and the ladder's budget."""
+    complete = (result.get("unconnected_terminals", 1) == 0
+                and result.get("routed_connections") == result.get("routable_connections"))
+    internal = result.get("internal_violations") or []
+    seconds = result.get("routing_seconds", 0)
+    if complete and not internal:
+        if kicad is None:
+            return "verification_unknown"
+        if kicad["errors"] or kicad["unconnected"]:
+            return "native_drc_failure"
+        if seconds <= simple_seconds:
+            return "clean_fast"
+        return "clean_medium" if seconds <= budget else "clean_slow"
+    if result.get("cut"):
+        return "cut_wall_clock"
+    if result.get("work_seconds", 0) >= .95 * budget or seconds >= .95 * budget:
+        return "incomplete_at_budget"
+    return "internal_drc_failure" if internal else "incomplete_early"
+
+
+def route_task_config(task, budget_scale):
+    """The router's settings for a route-mode task: its `router`, the
+    ladder's budget (`budget_seconds`, else the router's own or 1200 s,
+    times `budget_scale`) and, with `budget_seconds`, the intake's wall
+    guard for that budget unless the task sets one."""
+    router = dict(task.get("router") or {})
+    key, default = ROUTE_BUDGET
+    budget = round(task.get("budget_seconds", router.get(key, default)) * budget_scale, 3)
+    router[key] = budget
+    if task.get("budget_seconds") is not None:
+        router.setdefault("deadline_seconds", intake_deadline(budget))
+    return router
+
+
+def route_task_admitted(task, arguments, token):
+    """A route-mode task (`"mode": "route"`): fetches the board if needed
+    (ensure_source), copies it with its .kicad_pro and .kicad_dru, strips
+    it (strip_command), routes it with `route-kicad-board` and the task's
+    router settings, `budget_seconds` of work times the budget scale and
+    the intake's wall guard, and checks the result with `drc-kicad-board`
+    when the router did not. The row is a route row (route_result) with
+    the licence, `fetched`, `source_sha256` and the intake's outcome class
+    (`outcome`)."""
+    name = task["name"]
+    directory = Path(task["directory"])
+    if not directory.is_absolute():
+        directory = ROOT / directory
+    board_id = task["board_id"]
+    work = arguments.output / name
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    source = task.get("source") or {}
+    row = {"name": name, "mode": "route", "license": source.get("license")}
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
+    if source:
+        try:
+            fetched = ensure_source(task, directory, arguments.harvest_boards)
+        except (FetchRefused, ValueError, OSError) as error:
+            row.update(fetched=False, error=f"fetch: {error}"[:300], outcome="fetch_error", **{"pass": False})
+            return row
+        row["fetched"] = fetched is not None
+        if fetched:
+            row["fetched_from"] = fetched
+    original = directory / f"{board_id}.kicad_pcb"
+    if not original.is_file():
+        row.update(error=f"no board {original}", outcome="source_issue", **{"pass": False})
+        return row
+    row["source_sha256"] = file_sha256(original)
+    prepared = work / "source"
+    prepared.mkdir()
+    # The project's rules come along; nothing else of the repository does.
+    for extension in (".kicad_pro", ".kicad_dru"):
+        sidecar = original.with_suffix(extension)
+        if sidecar.is_file():
+            shutil.copyfile(sidecar, prepared / sidecar.name)
+    board = prepared / original.name
+    strip = subprocess.run(strip_command(arguments.binary, original, board), capture_output=True, text=True)
+    if strip.returncode != 0:
+        row.update(error=f"strip-kicad-tracks: {(strip.stderr or strip.stdout).strip()[-200:]}",
+                   outcome="source_issue", **{"pass": False})
+        return row
+    row["stripped_sha256"] = file_sha256(board)
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
+    router = route_task_config(task, arguments.budget_scale)
+    budget = router[ROUTE_BUDGET[0]]
+    (work / "router.json").write_text(json.dumps(router))
+    row["budget_seconds"] = budget
+    env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else None
+    command = [str(arguments.binary), "route-kicad-board", str(prepared), board_id, str(work / "route"),
+               str(work / "router.json"), "--reference", "none"]
+    timeout = scaled_timeout(arguments) if arguments.timeout_given else intake_timeout(budget)
+    started = time.monotonic()
+    load_before = os.getloadavg()[0]
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
+    (work / "route.log").write_text(output)
+    row.update(seconds=round(time.monotonic() - started, 1), cpu_seconds=cpu_seconds, peak_rss_mb=peak_mb,
+               layout_rss_mb=own_mb)
+    if code == "timeout":
+        row.update(load=[round(load_before, 1), round(os.getloadavg()[0], 1)], error=f"timed out after {timeout} s",
+                   cut=["timeout"], outcome="unresolved_timeout", **{"pass": False})
+        return row
+    # KiCad's check of the result where the router skipped its own (the
+    # intake's skip_native_verification): drc-kicad-board, refilled.
+    routed_board = work / "route" / f"{board_id}.kicad_pcb"
+    if routed_board.exists() and not (work / "route/drc.json").exists():
+        drc_started = time.monotonic()
+        drc_code, drc_output, drc_peak, _, drc_cpu = run_measured(
+            [str(arguments.binary), "drc-kicad-board", str(work / "route"), board_id, str(work / "route/drc.json")],
+            FIXED_TIMEOUT_SECONDS)
+        (work / "drc.log").write_text(drc_output)
+        row.update(drc_seconds=round(time.monotonic() - drc_started, 1), peak_rss_mb=max(peak_mb, drc_peak),
+                   cpu_seconds=round(cpu_seconds + drc_cpu, 1))
+    row["load"] = [round(load_before, 1), round(os.getloadavg()[0], 1)]
+    route_result(row, task, work, code, output, allowed, designer_seconds)
+    report = work / "route/board-router.json"
+    if report.exists():
+        result = json.loads(report.read_text())
+        row["routing_seconds"] = round(result.get("routing_seconds", 0), 1)
+        row["open"] = result["routable_connections"] - result["routed_connections"]
+        row["outcome"] = intake_outcome(result, native(work / "route"), budget)
+    else:
+        row["outcome"] = "import_error" if code == 2 else "model_error"
+    return row
+
+
+def run_mode(tasks):
+    """The run's mode from its tasks: "route" when every task is a
+    route-mode task, else "layout"."""
+    return "route" if tasks and all(task.get("mode") == "route" for task in tasks) else "layout"
 
 
 def physical_cores():
@@ -835,7 +1104,12 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--binary", type=Path, default=ROOT / "target/release/pcb-maker")
-    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--timeout", type=int, default=None,
+                        help="the harness's timeout per board in seconds (default 1800; route-mode tasks: the "
+                             "intake's, 3 x the budget + 60 s, at least 180 s)")
+    parser.add_argument("--harvest-data", type=Path, default=ROOT / "benchmarks/expansion/data",
+                        help="route-mode tasks: the expansion harvest's data directory, whose boards/<name> "
+                             "copies are used before GitHub when their SHA-256 matches")
     parser.add_argument("--tasks", type=Path, default=None,
                         help="task list; constraint files are relative to it (default: tasks.json here, "
                              "or the tier's own list)")
@@ -867,6 +1141,10 @@ def main():
                              "(outside --only) are copied from it, marked spliced, into this run's log "
                              "and results.json")
     arguments = parser.parse_args()
+    arguments.timeout_given = arguments.timeout is not None
+    if arguments.timeout is None:
+        arguments.timeout = 1800
+    arguments.harvest_boards = arguments.harvest_data / "boards"
     arguments.output.mkdir(parents=True, exist_ok=True)
     tier = None
     if arguments.tier:
@@ -939,7 +1217,8 @@ def main():
             if task["peak_rss_mb"] is None:
                 del task["peak_rss_mb"]
         directory = Path(task["directory"]) if Path(task["directory"]).is_absolute() else ROOT / task["directory"]
-        if not directory.exists():
+        # A route-mode task with a source is fetched when its job runs.
+        if not directory.exists() and not (task.get("mode") == "route" and task.get("source")):
             print(f"skipping {task['name']}: {directory} not found")
             continue
         tasks.append(task)
@@ -960,7 +1239,13 @@ def main():
             if name in spliced:
                 rows[name] = spliced[name]
                 print(json.dumps(spliced[name]), flush=True)
-    if arguments.route_from is not None or arguments.budget_scale != 1:
+    if run_mode(tasks) == "route" and not arguments.route_from:
+        budgets = sorted({task.get("budget_seconds") for task in tasks if task.get("budget_seconds") is not None})
+        print(f"mode route (the designer's placement), budget scale {arguments.budget_scale:g}"
+              + (f", {', '.join(f'{b * arguments.budget_scale:g}' for b in budgets)} s of work" if budgets else "")
+              + (f", timeout {scaled_timeout(arguments)} s" if arguments.timeout_given
+                 else ", the intake's timeouts"), file=sys.stderr)
+    elif arguments.route_from is not None or arguments.budget_scale != 1:
         mode = "schematic" if arguments.schematic else "route from " + str(arguments.route_from) if arguments.route_from \
             else "layout"
         print(f"mode {mode}, "
@@ -974,7 +1259,8 @@ def main():
                 return run_task(task, arguments)
             except Exception as error:
                 return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
-                        "mode": "schematic" if arguments.schematic else "route" if arguments.route_from else "layout"}
+                        "mode": "schematic" if arguments.schematic else "route" if arguments.route_from
+                        else task.get("mode", "layout")}
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
@@ -994,7 +1280,8 @@ def main():
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
-                   mode="schematic" if arguments.schematic else "route" if arguments.route_from else "layout",
+                   mode="schematic" if arguments.schematic else "route" if arguments.route_from
+                   else run_mode(tasks),
                    spliced=spliced_count,
                    tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
                    # Search threads per board (None: all CPUs, one job) and
@@ -1003,6 +1290,14 @@ def main():
                    # Whether jobs and threads were the tier's default
                    # (TIER_THREADS) or given.
                    parallelism=arguments.parallelism)
+    outcomes = {}
+    for row in ordered:
+        if row.get("outcome"):
+            outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
+    if outcomes:
+        # The intake's outcome classes (route-mode tasks, intake_outcome).
+        summary["outcomes"] = outcomes
+        print("outcomes: " + ", ".join(f"{outcome} {count}" for outcome, count in sorted(outcomes.items())))
     if arguments.schematic:
         # Where the flow stopped, by stage (schematic tier).
         stages = {}

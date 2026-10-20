@@ -1301,3 +1301,12 @@ connections"); 54 are unloadable or netless sources. More budget rarely
 helps: of 1 258 boards incomplete at 30 s with a 300 s run, 161 became
 complete. A 46-board "expansion" tier spanning the hardness axis is
 proposed in `analysis/expansion-tier.json`.
+
+The tier is built (2026-10-21): `run.py --tier expansion` routes the 46
+boards on the designer's placement at 30 s of work (`--budget-scale 10`
+for 300 s), fetching each at its pinned commit with SHA-256 checks and a
+licence rule (benchmarks/agent-tasks/README.md, "The expansion tier").
+x1211, 8 jobs x 1 thread: 14/46 pass, 45 of 46 boards in the intake's
+outcome class, every stripped board identical and every route the wall
+guard cut in neither run identical (32 boards); 13 rows are cut by the
+wall guard at that load.

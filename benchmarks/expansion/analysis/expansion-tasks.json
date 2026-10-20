@@ -1,5 +1,5 @@
 {
- "comment": "Route-mode tasks on the designer placement (proposal): copy the directory, strip tracks, route-kicad-board; pass if every connection is routed and KiCad reports no unconnected item and no copper error beyond the designer's own (designer_budget). \"mode\": \"route\" and a missing \"constraints\" are not yet understood by benchmarks/agent-tasks/run.py (see REPORT.md).",
+ "comment": "Route-mode tasks on the designer placement (proposal): copy the directory, strip tracks, route-kicad-board; pass if every connection is routed and KiCad reports no unconnected item and no copper error beyond the designer's own (designer_budget). The tier built from this proposal is benchmarks/agent-tasks/expansion.json (run.py --tier expansion; from_expansion.py).",
  "tasks": [
   {
    "name": "EwoudVV__ducktop2__bms",

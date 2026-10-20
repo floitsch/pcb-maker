@@ -11,6 +11,48 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (expansion tier)
+
+The intake's proposed 46-board tier (benchmarks/expansion/analysis) as a
+run.py tier: `--tier expansion` (benchmarks/agent-tasks/README.md, "The
+expansion tier"). No Rust change; binary x1211.
+
+- **Route-mode tasks** (`"mode": "route"` in a task): the designer's
+  placement, fetched into `build/github-expansion/<task>/source` when not
+  there (the harvest's copy when its SHA-256 matches, else GitHub at the
+  pinned commit with harvest.py's fetch; every file verified, staged, and
+  nothing kept on a mismatch), stripped with the intake's exact
+  `strip-kicad-tracks <original> <copy>`, routed with `route-kicad-board`
+  at the task's `budget_seconds` times the budget scale with the intake's
+  router settings (one seed, no KiCad check inside), wall guard (max(90,
+  3 x budget)) and process timeout (max(180, 3 x budget + 60)), then
+  checked with `drc-kicad-board`. Rows add `license`, `fetched`,
+  `fetched_from`, `source_sha256`, `stripped_sha256`, `budget_seconds`,
+  `routing_seconds`, `open`, `drc_seconds` and `outcome` (the intake's
+  class); `peak_rss_mb` covers the DRC too and the summary counts the
+  outcomes. `constraints` is optional in every task.
+- **Licences**: every task carries its repository's licence and every row
+  prints it; a board without one (missing, empty, `NOASSERTION`) is not
+  fetched.
+- `expansion.json` (budget_scale 1: 30 s; `--budget-scale 10`: the deep
+  run's 300 s) and `expansion-tasks.json`, written by `from_expansion.py`
+  from the proposal, the CSV, the harvest's manifest and the quick run's
+  results; `--harvest-data`; `--timeout` defaults to the intake's in route
+  mode. compare.py reads the rows unchanged. Tests:
+  `test_expansion.py` (task list, router settings, strip arguments against
+  triage.py's, the fetch with a fake GitHub, the outcome classes).
+
+**First run, x1211** (8 jobs x 1 thread, load 13-23, 471 s): 14/46 pass;
+clean_slow 11, clean_medium 1, incomplete_at_budget 21, cut_wall_clock 9,
+incomplete_early 4. 45 of 46 boards have the intake's outcome class (the
+other is the same route in fewer wall seconds: B1's line is wall time).
+All 46 stripped boards match the intake's, and all 32 routes that neither
+run's 90 s wall guard cut are identical, work seconds included: the
+1.57x calibration was already in the intake's binary (015676c precedes
+be4b012) and the router has not changed since. 13 rows are cut by the
+wall guard and depend on the load. Three B4 boards at 300 s pass with the
+intake's deep work seconds.
+
 ## Committed on 2026-10-16 (quality: placer, topo, congestion)
 
 A code-quality pass over `pcb-placer`, `pcb-topo` and `pcb-congestion`
