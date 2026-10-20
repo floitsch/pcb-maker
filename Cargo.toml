@@ -16,7 +16,6 @@ members = [
     "crates/pcb-engine",
     "crates/pcb-grid-router",
     "crates/pcb-kicad",
-    "crates/pcb-pipeline",
     "crates/pcb-placement",
     "crates/pcb-placer",
     "crates/pcb-router",
@@ -36,7 +35,6 @@ pcb-coordinator = { path = "crates/pcb-coordinator" }
 pcb-engine = { path = "crates/pcb-engine" }
 pcb-grid-router = { path = "crates/pcb-grid-router" }
 pcb-kicad = { path = "crates/pcb-kicad" }
-pcb-pipeline = { path = "crates/pcb-pipeline" }
 pcb-placement = { path = "crates/pcb-placement" }
 pcb-routing = { path = "crates/pcb-routing" }
 pcb-validate = { path = "crates/pcb-validate" }

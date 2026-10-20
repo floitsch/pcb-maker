@@ -699,19 +699,10 @@ dependencies = [
  "pcb-engine",
  "pcb-grid-router",
  "pcb-kicad",
- "pcb-pipeline",
  "pcb-placement",
  "pcb-routing",
  "pcb-validate",
  "pcb-viewer",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pcb-pipeline"
-version = "0.1.0"
-dependencies = [
  "serde",
  "serde_json",
 ]
