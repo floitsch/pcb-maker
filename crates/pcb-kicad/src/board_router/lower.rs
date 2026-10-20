@@ -1,0 +1,1228 @@
+// Copyright (C) 2026 Toit contributors.
+
+//! Lowering a parsed KiCad board to the core router's board: layers,
+//! nets, pads, obstacles, pours and rule areas.
+
+use super::geometry::polygon_area;
+use super::*;
+use pcb_router as core;
+
+pub(super) fn shape(geometry: &ObstacleGeometry) -> core::Shape {
+    match geometry {
+        ObstacleGeometry::Circle { center, radius } => core::Shape::Circle {
+            center: *center,
+            radius: *radius,
+        },
+        ObstacleGeometry::Segment { start, end, radius } => core::Shape::Capsule {
+            start: *start,
+            end: *end,
+            radius: *radius,
+        },
+        ObstacleGeometry::Rectangle {
+            center,
+            half_size,
+            angle_degrees,
+        } => core::Shape::rectangle(*center, *half_size, *angle_degrees),
+        ObstacleGeometry::Polygon { points } => core::Shape::Polygon {
+            points: points.clone(),
+        },
+        ObstacleGeometry::Union { parts } => core::Shape::Union {
+            parts: parts.iter().map(shape).collect(),
+        },
+    }
+}
+
+/// The board's copper layers in stack order: front, inner 1..n, back.
+pub(crate) struct LayerTable {
+    pub names: Vec<String>,
+}
+
+impl LayerTable {
+    pub fn from_pcb(pcb: &Expr) -> Result<Self, String> {
+        let mut names: Vec<String> = pcb
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| entry.children().get(1).and_then(Expr::atom))
+            .filter(|name| name.ends_with(".Cu"))
+            .map(str::to_owned)
+            .collect();
+        let rank = |name: &str| -> (u8, u32) {
+            match name {
+                "F.Cu" => (0, 0),
+                "B.Cu" => (2, 0),
+                _ => (
+                    1,
+                    name.trim_start_matches("In")
+                        .trim_end_matches(".Cu")
+                        .parse()
+                        .unwrap_or(u32::MAX),
+                ),
+            }
+        };
+        names.sort_by_key(|name| rank(name));
+        if names.first().map(String::as_str) != Some("F.Cu")
+            || names.last().map(String::as_str) != Some("B.Cu")
+            || names.len() > 32
+        {
+            return Err(format!(
+                "unsupported copper layer stack {names:?}: expected F.Cu, inner layers, B.Cu"
+            ));
+        }
+        Ok(Self { names })
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|layer| layer == name)
+    }
+
+    pub fn all(&self) -> core::LayerMask {
+        (1u32 << self.len()) - 1
+    }
+
+    /// Mask for a KiCad layer list such as `("F.Cu" "In1.Cu")`, `*.Cu`
+    /// (all copper) or `F&B.Cu` (both outer layers).
+    pub fn mask_of<'a>(
+        &self,
+        names: impl Iterator<Item = &'a str>,
+    ) -> Result<core::LayerMask, String> {
+        let mut mask = 0;
+        for name in names {
+            match name {
+                "*.Cu" => mask |= self.all(),
+                "F&B.Cu" => mask |= 1 | 1 << (self.len() - 1),
+                // A copper layer the stackup does not have (a footprint
+                // made for more layers) carries nothing, as in KiCad.
+                name if name.ends_with(".Cu") => {
+                    if let Some(index) = self.index(name) {
+                        mask |= 1 << index;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(mask)
+    }
+
+    /// Mask of an item with either a `layer` or a `layers` form.
+    pub fn mask_of_item(&self, item: &Expr) -> Result<core::LayerMask, String> {
+        if let Some(layer) = form_atom(item, "layer", 1) {
+            return self.mask_of(std::iter::once(layer));
+        }
+        let names: Vec<&str> = item
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .collect();
+        self.mask_of(names.into_iter())
+    }
+}
+
+thread_local! {
+    /// `unconnected-(...)` nets that nevertheless join two or more pads: a
+    /// reversible footprint's duplicate pad numbers on both sides. KiCad
+    /// wants them connected and reports them unconnected otherwise.
+    static JUMPER_NETS: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+}
+
+/// Records the `unconnected-(...)` nets of `pcb` that hold two or more
+/// pads, for `routable_net` (on this thread, for the lowering that follows).
+fn note_jumper_nets(pcb: &Expr) {
+    let mut pads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("pad"))
+        {
+            if let Some(net) = node_net(pad)
+                && net
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(net)
+                    .starts_with("unconnected-(")
+            {
+                *pads.entry(net).or_default() += 1;
+            }
+        }
+    }
+    JUMPER_NETS.with(|jumpers| {
+        *jumpers.borrow_mut() = pads
+            .into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .map(|(net, _)| net.to_string())
+            .collect();
+    });
+}
+
+/// Whether a net (by its raw name, sheet path included) is routed. Bare
+/// numbers are placeholders for single pins; `/1` is a labelled net; an
+/// `unconnected-(...)` net is a single pin unless two pads share it.
+pub(crate) fn routable_net(raw: &str) -> bool {
+    !raw.is_empty()
+        && !raw.bytes().all(|byte| byte.is_ascii_digit())
+        && (!raw
+            .rsplit('/')
+            .next()
+            .unwrap_or(raw)
+            .starts_with("unconnected-(")
+            || JUMPER_NETS.with(|jumpers| jumpers.borrow().contains(raw)))
+}
+
+/// The drilled hole of a pad: a circle, or a capsule for a slot
+/// (`(drill oval 1 7)`), centred on the pad.
+fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
+    let Some(drill) = pad.child("drill") else {
+        return Ok(None);
+    };
+    let values: Vec<f64> = drill
+        .children()
+        .iter()
+        .skip(1)
+        .filter_map(Expr::atom)
+        .filter_map(|value| value.parse::<f64>().ok())
+        .collect();
+    let Some(&diameter) = values.first().filter(|diameter| **diameter > 0.0) else {
+        return Ok(None);
+    };
+    let (sin, cos) = quarter_sin_cos(-form_at(pad)?[2]);
+    Ok(Some(match values.get(1) {
+        Some(&height) if (height - diameter).abs() > 1.0e-9 => {
+            let (long, short) = (diameter.max(height), diameter.min(height));
+            let axis = if diameter >= height {
+                [1.0, 0.0]
+            } else {
+                [0.0, 1.0]
+            };
+            let half = (long - short) / 2.0;
+            let offset = [
+                half * (axis[0] * cos - axis[1] * sin),
+                half * (axis[0] * sin + axis[1] * cos),
+            ];
+            core::Shape::Capsule {
+                start: [center[0] - offset[0], center[1] - offset[1]],
+                end: [center[0] + offset[0], center[1] + offset[1]],
+                radius: short / 2.0,
+            }
+        }
+        _ => core::Shape::Circle {
+            center,
+            radius: diameter / 2.0,
+        },
+    }))
+}
+
+pub(crate) struct Lowered {
+    pub board: core::Board,
+}
+
+static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+static LOWER_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Calls of `lower` in this process and their seconds (summed over
+/// threads), for the board check's line.
+pub(crate) fn lowering_totals() -> (u64, f64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        LOWER_CALLS.load(Relaxed),
+        LOWER_NANOS.load(Relaxed) as f64 / 1.0e9,
+    )
+}
+
+pub(crate) fn lower(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<Lowered, String> {
+    use std::sync::atomic::Ordering::Relaxed;
+    let started = std::time::Instant::now();
+    let lowered = lower_board(pcb, config, connect_pours);
+    LOWER_CALLS.fetch_add(1, Relaxed);
+    LOWER_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+    lowered
+}
+
+fn lower_board(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+) -> Result<Lowered, String> {
+    note_jumper_nets(pcb);
+    crate::note_net_names(pcb);
+    let loops = outline::board_loops(pcb)?;
+    let layers = LayerTable::from_pcb(pcb)?;
+    let mut classes: Vec<core::RuleClass> = Vec::new();
+    let mut nets: Vec<core::Net> = Vec::new();
+    let mut net_ids = BTreeMap::<String, core::NetId>::new();
+    let mut obstacles = Vec::new();
+    // Rule areas that keep zone fills out: (layers, polygon).
+    let mut pour_keepouts: Vec<PourKeepout> = Vec::new();
+    let mut solid_pads: Vec<String> = Vec::new();
+    // Openings in the solder mask (graphics on a mask layer), placed once
+    // the pads under them are known.
+    // The margin is how far the opening reaches past its shapes (a
+    // mask-only pad's mask expansion); the last value is the aperture's
+    // mask expansion as KiCad's bridge test takes it (a graphic's own
+    // `solder_mask_margin`, else the board's `pad_to_mask_clearance`).
+    let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64, f64)> = Vec::new();
+    // Board copper graphics, with the net they carry, placed once the nets
+    // of the pads are known.
+    let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> =
+        Vec::new();
+    let mut isolated_pads: Vec<String> = Vec::new();
+    let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
+        std::collections::HashMap::new();
+    // With `use_narrow_signals`, signal nets (not poured, not named as a
+    // ground or a rail) route at the project's smallest predefined width.
+    let poured: std::collections::HashSet<String> = if config.use_narrow_signals == Some(true) {
+        pours(pcb, &layers)?
+            .into_iter()
+            .map(|pour| pour.net)
+            .collect()
+    } else {
+        Default::default()
+    };
+
+    let mut net_id = |name: &str,
+                      nets: &mut Vec<core::Net>,
+                      classes: &mut Vec<core::RuleClass>|
+     -> Result<core::NetId, String> {
+        if let Some(id) = net_ids.get(name) {
+            return Ok(*id);
+        }
+        let rules = config
+            .connection_rules
+            .get(name)
+            .or(config.default_rules.as_ref())
+            .ok_or_else(|| format!("no routing rules for connection {name:?}"))?;
+        let narrow = match (config.use_narrow_signals, config.narrow_signal_mm) {
+            (Some(true), Some(width))
+                if width < rules.trace_width_mm
+                    && !poured.contains(name)
+                    && !crate::quality::ground(name)
+                    && !crate::quality::rail_name(name) =>
+            {
+                Some(width)
+            }
+            _ => None,
+        };
+        let class = core::RuleClass {
+            trace_width: narrow
+                .unwrap_or(rules.trace_width_mm)
+                .max(config.width_floor()),
+            clearance: rules.clearance_mm,
+            via_diameter: rules.via_size_mm,
+            via_drill: rules.via_drill_mm,
+        };
+        let class_index = classes
+            .iter()
+            .position(|existing| *existing == class)
+            .unwrap_or_else(|| {
+                classes.push(class);
+                classes.len() - 1
+            });
+        let id = nets.len() as core::NetId;
+        nets.push(core::Net {
+            name: name.to_string(),
+            class: class_index,
+            terminals: Vec::new(),
+        });
+        net_ids.insert(name.to_string(), id);
+        Ok(id)
+    };
+
+    // A pad's solder mask aperture (the pad grown by its mask expansion)
+    // bares the copper around it: another net's copper near it bridges.
+    // Only reaches past the copper clearance matter. The board's mask
+    // expansion is `pad_to_mask_clearance` (KiCad's setup has no
+    // `solder_mask_margin`; the rule below read that key until 2026-10-15,
+    // so only pads and footprints with their own margin had an aperture).
+    let board_pad_to_mask = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "pad_to_mask_clearance", 1).ok())
+        .unwrap_or(0.0);
+    let min_mask_web = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
+        .unwrap_or(0.0)
+        .max(0.0);
+    let pad_mask_reach = if min_mask_web > 0.0 {
+        min_mask_web / 2.0 + 0.01
+    } else {
+        0.0
+    };
+    let mask_to_copper = config.solder_mask_to_copper_mm.unwrap_or(0.0).max(0.0);
+    let tented = vias_tented(pcb);
+    // KiCad's exact rule where its bridges are errors; the rule of before
+    // where the designer rated them lower.
+    let strict_mask = !matches!(
+        config.solder_mask_bridge_severity.as_deref(),
+        Some("warning" | "ignore")
+    );
+    let smallest_clearance = config
+        .connection_rules
+        .values()
+        .chain(config.default_rules.iter())
+        .map(|rules| rules.clearance_mm)
+        .fold(f64::INFINITY, f64::min);
+    for item in pcb.children() {
+        match item.head() {
+            Some("footprint") => {
+                let footprint_at = form_at(item)?;
+                let reference = footprint_reference(item).unwrap_or_default();
+                // Rule areas inside the footprint (an antenna keepout) keep
+                // tracks and vias out like board-level ones.
+                for zone in item
+                    .children()
+                    .iter()
+                    .filter(|child| child.head() == Some("zone") && is_rule_area(child))
+                {
+                    if let Some(obstacle) =
+                        rule_area_obstacle(zone, &layers, &format!("{reference} keepout"))?
+                    {
+                        obstacles.push(obstacle);
+                    }
+                    if let Some(keepout) = pour_keepout(zone, &layers)? {
+                        pour_keepouts.push(keepout);
+                    }
+                }
+                // Copper drawn inside the footprint (a logo, a net tie's
+                // bridge) belongs to no net.
+                for graphic in item.children().iter().filter(|child| {
+                    matches!(
+                        child.head(),
+                        Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly")
+                    )
+                }) {
+                    // Mask graphics open the mask like the board's own
+                    // (Sisu's 190 B.Mask polygons, link's connector).
+                    if let Some(side @ ("F.Mask" | "B.Mask")) = form_atom(graphic, "layer", 1) {
+                        let shapes: Vec<core::Shape> = copper_graphic_shapes(graphic)?
+                            .into_iter()
+                            .map(|shape| place_shape(shape, footprint_at))
+                            .collect();
+                        if !shapes.is_empty() {
+                            let layer = if side == "F.Mask" {
+                                0
+                            } else {
+                                layers.len() - 1
+                            };
+                            let expansion = form_f64(graphic, "solder_mask_margin", 1)
+                                .ok()
+                                .unwrap_or(board_pad_to_mask)
+                                .max(0.0);
+                            mask_openings.push((
+                                shapes,
+                                layer,
+                                graphic.head().unwrap_or("graphic").to_string(),
+                                0.0,
+                                expansion,
+                            ));
+                        }
+                        continue;
+                    }
+                    let Some(layer) =
+                        form_atom(graphic, "layer", 1).and_then(|name| layers.index(name))
+                    else {
+                        continue;
+                    };
+                    for shape in copper_graphic_shapes(graphic)? {
+                        obstacles.push(core::Obstacle {
+                            shape: place_shape(shape, footprint_at),
+                            layers: 1 << layer,
+                            kind: core::ObstacleKind::Copper,
+                            net: None,
+                            clearance: 0.0,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!(
+                                "{reference} copper {}",
+                                graphic.head().unwrap_or("graphic")
+                            ),
+                        });
+                    }
+                }
+                for pad in item
+                    .children()
+                    .iter()
+                    .filter(|child| child.head() == Some("pad"))
+                {
+                    let pad_name = pad.children().get(1).and_then(Expr::atom).unwrap_or("");
+                    let label = format!("{reference}.{}", pad_name.trim_matches('"'));
+                    // KiCad's zone connection: the pad's own, else its
+                    // footprint's (0 none, 1 thermal, 2 solid).
+                    match form_atom(pad, "zone_connect", 1)
+                        .or_else(|| form_atom(item, "zone_connect", 1))
+                    {
+                        Some("0") => isolated_pads.push(label.clone()),
+                        Some("2") => solid_pads.push(label.clone()),
+                        _ => {}
+                    }
+                    let lowered = lower_pad(pad, footprint_at)?;
+                    let pad_type = pad.children().get(2).and_then(Expr::atom).unwrap_or("");
+                    // Plated holes of pads without a net are just holes to
+                    // everyone; the board's hole clearance applies. Holes of
+                    // mechanical (unplated) pads always are.
+                    let hole = (pad_type == "thru_hole"
+                        && !node_net(pad).is_some_and(routable_net))
+                        || pad_type == "np_thru_hole";
+                    if hole && let Some(shape) = drill_shape(pad, lowered.center)? {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: layers.all(),
+                            kind: core::ObstacleKind::Hole,
+                            net: None,
+                            clearance: local_clearance::pad_clearance(pad, item)?,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: if pad_type == "np_thru_hole" {
+                                format!("{label} hole")
+                            } else {
+                                format!("{label} plated hole")
+                            },
+                        });
+                    }
+                    let pad_layers = layers.mask_of_item(pad)?;
+                    if pad_layers == 0 {
+                        // A pad with a mask opening and no copper (hackrf's
+                        // mask-only test points over a track) bares the
+                        // copper under it: KiCad reports a solder mask
+                        // bridge when copper of a second net lies there. It
+                        // is an opening like a mask graphic, grown by the
+                        // pad's mask expansion.
+                        if config.mask_only_pad_openings != Some(false) {
+                            let names: Vec<&str> = pad
+                                .child("layers")
+                                .map(Expr::children)
+                                .unwrap_or_default()
+                                .iter()
+                                .skip(1)
+                                .filter_map(Expr::atom)
+                                .collect();
+                            let front = names
+                                .iter()
+                                .any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask"));
+                            let back = names
+                                .iter()
+                                .any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask"));
+                            let margin = form_f64(pad, "solder_mask_margin", 1)
+                                .ok()
+                                .or_else(|| form_f64(item, "solder_mask_margin", 1).ok())
+                                .unwrap_or(board_pad_to_mask)
+                                .max(0.0);
+                            let kind = format!("pad {label}");
+                            for (open, side) in [(front, 0), (back, layers.len() - 1)] {
+                                if open {
+                                    mask_openings.push((
+                                        vec![shape(&lowered.geometry)],
+                                        side,
+                                        kind.clone(),
+                                        margin,
+                                        margin,
+                                    ));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    let net_name = node_net(pad).map(normalize_net);
+                    let net = node_net(pad)
+                        .filter(|raw| routable_net(raw))
+                        .map(normalize_net)
+                        .map(|name| net_id(name, &mut nets, &mut classes))
+                        .transpose()?;
+                    // A positive pad or footprint override replaces the
+                    // net class's clearance in KiCad, also when smaller.
+                    let clearance_override = Some(local_clearance::pad_clearance(pad, item)?)
+                        .filter(|value| *value > 0.0);
+                    let mut clearance = 0.0;
+                    if net.is_none() {
+                        // A pad the router never connects (single-pin net,
+                        // unconnected pin, no net) still keeps its net
+                        // class's clearance in KiCad's DRC.
+                        let rules = net_name
+                            .and_then(|name| config.connection_rules.get(name))
+                            .or(config.default_rules.as_ref());
+                        if let Some(rules) = rules {
+                            clearance = rules.clearance_mm;
+                        }
+                    }
+                    let pad_obstacle = obstacles.len();
+                    // A custom pad's box holds its primitives: its
+                    // spokes stay along the axes of its copper's box.
+                    if pad.children().get(3).and_then(Expr::atom) != Some("custom")
+                        && let Ok(frame) = pad_spokes_frame(pad, lowered.center)
+                    {
+                        pad_spokes.insert(pad_obstacle, frame);
+                    }
+                    obstacles.push(core::Obstacle {
+                        shape: shape(&lowered.geometry),
+                        layers: pad_layers,
+                        kind: core::ObstacleKind::Copper,
+                        net,
+                        clearance,
+                        clearance_override,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: label.clone(),
+                    });
+                    // The pad's mask aperture, where it reaches past the
+                    // copper clearance. A mask opening of the pad's net; its
+                    // own net's copper never bridges (KiCad skips pairs of
+                    // one net). KiCad's bridge test (10.0.7,
+                    // DRC_TEST_PROVIDER_SOLDER_MASK): covered copper (a
+                    // track, a tented via) bridges within the project's
+                    // solder-mask-to-copper clearance plus the pad's
+                    // expansion (OpenESC 4in1's J1: margin 0.102 mm plus
+                    // 0.005, tracks 0.105 mm from the pads bridged); an
+                    // untented via is an opening itself and bridges within
+                    // the minimum web plus both expansions. Kept from
+                    // before, for a pad or footprint margin of its own:
+                    // the margin plus half the web (a "Hole, 3mm"
+                    // footprint, a ring of small pads with 0.1 mm margins
+                    // whose apertures merge into a mask-free annulus).
+                    let local_margin = form_f64(pad, "solder_mask_margin", 1)
+                        .ok()
+                        .or_else(|| form_f64(item, "solder_mask_margin", 1).ok());
+                    let expansion = local_margin.unwrap_or(board_pad_to_mask);
+                    let web_reach = local_margin
+                        .filter(|margin| *margin > 0.0)
+                        .map_or(0.0, |margin| margin + pad_mask_reach);
+                    let covered = if strict_mask {
+                        web_reach.max(mask_to_copper + expansion)
+                    } else {
+                        web_reach
+                    };
+                    let floor = smallest_clearance.min(clearance_override.unwrap_or(f64::INFINITY))
+                        - 1.0e-9;
+                    let mask_names: Vec<&str> = pad
+                        .child("layers")
+                        .map(Expr::children)
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .collect();
+                    let sides = [
+                        (
+                            0usize,
+                            mask_names
+                                .iter()
+                                .any(|name| matches!(*name, "F.Mask" | "*.Mask" | "F&B.Mask")),
+                        ),
+                        (
+                            layers.len() - 1,
+                            mask_names
+                                .iter()
+                                .any(|name| matches!(*name, "B.Mask" | "*.Mask" | "F&B.Mask")),
+                        ),
+                    ];
+                    for (index, (side, open)) in sides.into_iter().enumerate() {
+                        // The looser rule: every outer copper layer of the
+                        // pad, mask layer or not, both sides in one.
+                        let open = open || !strict_mask;
+                        if !open || pad_layers & (1 << side) == 0 || (index == 1 && side == 0) {
+                            continue;
+                        }
+                        let via_reach = if tented[index] || !strict_mask {
+                            covered
+                        } else {
+                            web_reach.max(min_mask_web + expansion + board_pad_to_mask)
+                        };
+                        let aperture = |clearance: f64, blocks_tracks: bool, blocks_vias: bool| {
+                            core::Obstacle {
+                                shape: shape(&lowered.geometry),
+                                layers: 1 << side,
+                                kind: core::ObstacleKind::Keepout,
+                                net,
+                                clearance,
+                                clearance_override: None,
+                                blocks_tracks,
+                                blocks_vias,
+                                label: format!("{label} mask aperture"),
+                            }
+                        };
+                        // A reach at the copper clearance adds nothing (KiCad's
+                        // tests are strict on both); the older rule keeps
+                        // its own threshold (USB_Cable_Tester: 0.05 + 0.05
+                        // mm against classes of 0.1 rerouted for nothing).
+                        let needed = |reach: f64| {
+                            reach > floor + 2.0e-9 || (reach == web_reach && reach > floor)
+                        };
+                        if (via_reach - covered).abs() < 1.0e-9 {
+                            if needed(covered) {
+                                obstacles.push(aperture(covered, true, true));
+                            }
+                        } else {
+                            if needed(covered) {
+                                obstacles.push(aperture(covered, true, false));
+                            }
+                            if needed(via_reach) {
+                                obstacles.push(aperture(via_reach, false, true));
+                            }
+                        }
+                    }
+                    // Other nets keep the hole clearance from a plated hole
+                    // too, which reaches past a thin annular ring (a thermal
+                    // via pad: 0.3 drill in 0.5 copper, eurorack-pmod's U1).
+                    // Their vias as well (jetson's J2: 0.55 drill in 0.75
+                    // copper, clearance 0.125, hole clearance 0.25); the
+                    // pad's own net is exempt (`StaticMaps::via_owner`).
+                    if pad_type == "thru_hole"
+                        && net.is_some()
+                        && let Some(shape) = drill_shape(pad, lowered.center)?
+                    {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: layers.all(),
+                            kind: core::ObstacleKind::Hole,
+                            net,
+                            clearance: 0.0,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!("{label} plated hole"),
+                        });
+                    }
+                    if let Some(net) = net {
+                        // Without a hole, a pad on several layers (an
+                        // edge-mount connector's top and bottom pads) does
+                        // not join them: it is reached on its footprint's
+                        // side, and layer changes need a via.
+                        let mut terminal_layers = pad_layers;
+                        if pad.child("drill").is_none() && pad_layers.count_ones() > 1 {
+                            let side = form_atom(item, "layer", 1)
+                                .and_then(|name| layers.index(name))
+                                .map(|layer| 1 << layer)
+                                .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
+                            terminal_layers = side.unwrap_or(pad_layers.isolate_lowest_one());
+                        }
+                        // A custom pad connects through its anchor only.
+                        let contact = match (
+                            pad.children().get(3).and_then(Expr::atom),
+                            &lowered.geometry,
+                        ) {
+                            (Some("custom"), ObstacleGeometry::Union { parts })
+                                if parts.len() > 1 =>
+                            {
+                                Some(shape(&parts[0]))
+                            }
+                            _ => None,
+                        };
+                        nets[net as usize].terminals.push(core::Terminal {
+                            anchor: lowered.center,
+                            layers: terminal_layers,
+                            pad: pad_obstacle,
+                            contact,
+                            label,
+                        });
+                    }
+                }
+            }
+            Some("segment") => {
+                let Some(layer) = form_atom(item, "layer", 1).and_then(|name| layers.index(name))
+                else {
+                    continue;
+                };
+                let net = node_net(item)
+                    .filter(|raw| routable_net(raw))
+                    .map(normalize_net)
+                    .map(|name| net_id(name, &mut nets, &mut classes))
+                    .transpose()?;
+                obstacles.push(core::Obstacle {
+                    shape: core::Shape::Capsule {
+                        start: form_xy(item, "start")?,
+                        end: form_xy(item, "end")?,
+                        radius: form_f64(item, "width", 1)? / 2.0,
+                    },
+                    layers: 1 << layer,
+                    kind: core::ObstacleKind::Copper,
+                    net,
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing track".into(),
+                });
+            }
+            Some("via") => {
+                let net = node_net(item)
+                    .filter(|raw| routable_net(raw))
+                    .map(normalize_net)
+                    .map(|name| net_id(name, &mut nets, &mut classes))
+                    .transpose()?;
+                obstacles.push(core::Obstacle {
+                    shape: core::Shape::Circle {
+                        center: form_xy(item, "at")?,
+                        radius: form_f64(item, "size", 1)? / 2.0,
+                    },
+                    layers: layers.all(),
+                    kind: core::ObstacleKind::Copper,
+                    net,
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing via".into(),
+                });
+            }
+            Some("arc") => {
+                return Err("the board router does not yet lower existing arc tracks".into());
+            }
+            // Board graphics: copper on the copper layers they name (KiCad
+            // 9 draws them on several layers at once, with a net: Sisu's
+            // GND rectangles on F.Cu and F.Mask), openings on the mask
+            // layers. Graphics on a mask layer open the mask: copper of two
+            // nets under one opening is a solder bridge (KiCad's
+            // solder_mask_bridge), so routed copper stays out from under
+            // them on that side.
+            Some("gr_text" | "gr_line" | "gr_rect" | "gr_arc" | "gr_circle" | "gr_poly") => {
+                let copper = layers.mask_of_item(item)?;
+                let names: Vec<&str> = match form_atom(item, "layer", 1) {
+                    Some(name) => vec![name],
+                    None => item
+                        .child("layers")
+                        .map(Expr::children)
+                        .unwrap_or_default()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .collect(),
+                };
+                let sides: Vec<usize> = names
+                    .iter()
+                    .filter_map(|name| match *name {
+                        "F.Mask" => Some(0),
+                        "B.Mask" => Some(layers.len() - 1),
+                        _ => None,
+                    })
+                    .collect();
+                if copper == 0 && sides.is_empty() {
+                    continue;
+                }
+                let shapes = copper_graphic_shapes(item)?;
+                let kind = item.head().unwrap_or("graphic").to_string();
+                if copper != 0 {
+                    let net = node_net(item)
+                        .filter(|raw| routable_net(raw))
+                        .map(|raw| normalize_net(raw).to_string());
+                    copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
+                }
+                let shapes = if strict_mask && !sides.is_empty() {
+                    mask_graphic_shapes(item)?
+                } else {
+                    shapes
+                };
+                // KiCad's bridge test grows a shape by its mask expansion,
+                // a text by nothing.
+                let expansion = if item.head() == Some("gr_text") {
+                    0.0
+                } else {
+                    form_f64(item, "solder_mask_margin", 1)
+                        .ok()
+                        .unwrap_or(board_pad_to_mask)
+                        .max(0.0)
+                };
+                for side in sides {
+                    mask_openings.push((shapes.clone(), side, kind.clone(), 0.0, expansion));
+                }
+            }
+            Some("zone") if is_rule_area(item) => {
+                if let Some(obstacle) = rule_area_obstacle(item, &layers, "unnamed rule area")? {
+                    obstacles.push(obstacle);
+                }
+                if let Some(keepout) = pour_keepout(item, &layers)? {
+                    pour_keepouts.push(keepout);
+                }
+            }
+            _ => {}
+        }
+    }
+    // Pads of one number that overlap are one pad to KiCad (a solder pad
+    // with holes in it, an exposed pad's thermal vias): the largest is the
+    // terminal, the others just its copper. OpenRX's panel hangs half of
+    // each wire pad's holes over the edge, unreachable as terminals.
+    let mut merged_pads: Vec<core::MergedPad> = Vec::new();
+    for (net_id, net) in nets.iter_mut().enumerate() {
+        let area = |terminal: &core::Terminal| {
+            let bounds = obstacles[terminal.pad].shape.aabb();
+            (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[1] - bounds.minimum[1])
+        };
+        let mut order: Vec<usize> = (0..net.terminals.len()).collect();
+        order.sort_by(|a, b| {
+            area(&net.terminals[*b])
+                .total_cmp(&area(&net.terminals[*a]))
+                .then(a.cmp(b))
+        });
+        let mut keep = vec![true; net.terminals.len()];
+        let mut host = vec![usize::MAX; net.terminals.len()];
+        for (position, &large) in order.iter().enumerate() {
+            if !keep[large] {
+                continue;
+            }
+            for &small in &order[position + 1..] {
+                if keep[small]
+                    && net.terminals[small].label == net.terminals[large].label
+                    && obstacles[net.terminals[large].pad]
+                        .shape
+                        .contains(net.terminals[small].anchor)
+                {
+                    keep[small] = false;
+                    host[small] = large;
+                }
+            }
+        }
+        let mut renumbered = vec![usize::MAX; net.terminals.len()];
+        let mut next = 0;
+        for (index, kept) in keep.iter().enumerate() {
+            if *kept {
+                renumbered[index] = next;
+                next += 1;
+            }
+        }
+        for (index, terminal) in net.terminals.iter().enumerate() {
+            if !keep[index] {
+                merged_pads.push(core::MergedPad {
+                    net: net_id as core::NetId,
+                    host: renumbered[host[index]],
+                    pad: terminal.pad,
+                    anchor: terminal.anchor,
+                    layers: obstacles[terminal.pad].layers,
+                });
+            }
+        }
+        let mut index = 0;
+        net.terminals.retain(|_| {
+            index += 1;
+            keep[index - 1]
+        });
+    }
+    // Copper graphics belong to their net (other nets keep clear) or, without
+    // one, to none.
+    for (index, (shapes, copper, net, kind)) in copper_graphics.into_iter().enumerate() {
+        let net = net.and_then(|name| net_ids_lookup(&nets, &name));
+        // A filled graphic with a net is copper KiCad wants connected like
+        // a pad (Sisu's antenna feed, a rectangle on /RF/ANT, stayed an
+        // island): it is a terminal of its net too.
+        // Its fill is the one shape that is not a stroke's capsule.
+        let fills: Vec<usize> = (0..shapes.len())
+            .filter(|index| !matches!(shapes[*index], core::Shape::Capsule { .. }))
+            .collect();
+        if let (Some(id), [fill]) = (net, fills.as_slice()) {
+            let shape = &shapes[*fill];
+            let bounds = shape.aabb();
+            let center = [
+                (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+            ];
+            if shape.contains(center) {
+                nets[id as usize].terminals.push(core::Terminal {
+                    anchor: center,
+                    layers: copper,
+                    pad: obstacles.len() + fill,
+                    contact: None,
+                    label: format!("{kind} {}", index + 1),
+                });
+            }
+        }
+        obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
+            shape,
+            layers: copper,
+            kind: core::ObstacleKind::Copper,
+            net,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: format!("copper {kind}"),
+        }));
+    }
+    // A mask opening exposes the copper under it: pads, or else the fill
+    // of a pour. Over one net (a pad or a pour exposed on purpose) it is
+    // that net's: it may route there, others would bridge to it. Over
+    // several (J_LCD1's opening over its eight pads in Sisu) or none,
+    // nothing new goes under it; pads inside leave it by their stubs. The
+    // net is the whole graphic's.
+    let pours = pours(pcb, &layers)?;
+    // KiCad's bridge test drops mask slivers under the minimum web width:
+    // copper of another net within half of it of an opening is exposed
+    // (link: a track 0.025 mm from an F.Mask polygon bridged it to GND with
+    // a 0.1 mm minimum; at 0.07 mm it did not).
+    let mask_reach = pcb
+        .child("setup")
+        .and_then(|setup| form_f64(setup, "solder_mask_min_width", 1).ok())
+        .map_or(0.0, |width| width / 2.0 + 0.01);
+    // KiCad's bridge test (DRC_TEST_PROVIDER_SOLDER_MASK, KiCad 10)
+    // exposes copper within the project's solder-mask-to-copper clearance
+    // plus the aperture's expansion, and never less than the web rule
+    // above.
+    for (shapes, layer, kind, margin, expansion) in mask_openings {
+        let reach = (mask_reach + margin).max(mask_to_copper + expansion);
+        let bounds = shapes
+            .iter()
+            .skip(1)
+            .fold(shapes[0].aabb(), |bounds, shape| bounds.union(shape.aabb()))
+            .inflated(margin);
+        let mut exposed: std::collections::BTreeSet<core::NetId> = obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle.kind == core::ObstacleKind::Copper
+                    && obstacle.layers & (1 << layer) != 0
+                    && obstacle.shape.aabb().intersects(bounds)
+            })
+            .filter_map(|obstacle| obstacle.net)
+            .collect();
+        let center = [
+            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+        ];
+        let under: Vec<&Pour> = pours
+            .iter()
+            .filter(|pour| {
+                pour.layers & (1 << layer) != 0
+                    && core::geometry::point_in_polygon(center, &pour.polygon)
+            })
+            .collect();
+        // A pour's fill keeps its clearance from pads: it shows through
+        // only where the opening has no pad of its own.
+        if exposed.is_empty()
+            && let Some(top) = under.iter().map(|pour| pour.priority).max()
+        {
+            exposed.extend(
+                under
+                    .iter()
+                    .filter(|pour| pour.priority == top)
+                    .filter_map(|pour| net_ids_lookup(&nets, &pour.net)),
+            );
+        }
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            eprintln!(
+                "mask opening ({kind}) on layer {layer}: {:?}, nets {exposed:?}",
+                bounds
+            );
+        }
+        // Over bare board an opening is no net's: copper of two nets under
+        // one text bridges (jetson-nano's B.Mask title over three nets'
+        // vias and tracks).
+        let net = if exposed.len() == 1 {
+            exposed.first().copied()
+        } else {
+            None
+        };
+        obstacles.extend(shapes.into_iter().map(|shape| core::Obstacle {
+            shape,
+            layers: 1 << layer,
+            kind: core::ObstacleKind::Keepout,
+            net,
+            clearance: reach,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: format!("solder mask opening ({kind})"),
+        }));
+    }
+    for cutout in &loops.cutouts {
+        // A cutout is board edge to KiCad: the edge clearance applies, not
+        // the hole clearance.
+        obstacles.push(core::Obstacle {
+            shape: core::Shape::Polygon {
+                points: cutout.clone(),
+            },
+            layers: layers.all(),
+            kind: core::ObstacleKind::Hole,
+            net: None,
+            clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "board cutout".into(),
+        });
+    }
+    let board_area = polygon_area(&loops.outline);
+    let mut planes = Vec::new();
+    for pour in &pours {
+        // A pour without pads has nothing to connect.
+        let Some(net) = net_ids_lookup(&nets, &pour.net) else {
+            continue;
+        };
+        let net_class = classes[nets[net as usize].class];
+        let brush = core::RuleClass {
+            trace_width: pour.min_thickness.max(0.05),
+            clearance: pour.clearance.max(net_class.clearance),
+            ..net_class
+        };
+        let class = classes
+            .iter()
+            .position(|existing| *existing == brush)
+            .unwrap_or_else(|| {
+                classes.push(brush);
+                classes.len() - 1
+            });
+        for layer in 0..layers.len() {
+            if pour.layers & (1 << layer) == 0 {
+                continue;
+            }
+            planes.push(core::Plane {
+                net,
+                class,
+                layer,
+                polygon: pour.polygon.clone(),
+                excluded: pours
+                    .iter()
+                    .filter(|other| {
+                        other.net != pour.net
+                            && other.layers & (1 << layer) != 0
+                            && other.priority > pour.priority
+                    })
+                    .map(|other| other.polygon.clone())
+                    .chain(
+                        pour_keepouts
+                            .iter()
+                            .filter(|(mask, _)| mask & (1 << layer) != 0)
+                            .map(|(_, polygon)| polygon.clone()),
+                    )
+                    .collect(),
+                // KiCad cuts a same-net zone of a strictly higher priority
+                // out of this one's fill (an equal one overlaps it).
+                above: pours
+                    .iter()
+                    .filter(|other| {
+                        other.net == pour.net
+                            && other.layers & (1 << layer) != 0
+                            && other.priority > pour.priority
+                    })
+                    .map(|other| other.polygon.clone())
+                    .collect(),
+                connect: connect_pours,
+                thermal_reach: pour.thermal_reach,
+                thermal_gap: pour.thermal_gap,
+                // An inner layer poured over nearly the whole board is a
+                // plane: it carries no signals.
+                exclusive: layers.names[layer].starts_with("In")
+                    && polygon_area(&pour.polygon) >= 0.9 * board_area,
+                solid: pour.solid,
+                hatch: pour.hatch,
+            });
+        }
+    }
+    if let Some(limit) = config.exclusive_layers {
+        let mut by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
+        for (index, plane) in planes.iter().enumerate() {
+            if plane.exclusive {
+                by_net.entry(plane.net).or_default().push(index);
+            }
+        }
+        let last = layers.len().saturating_sub(1);
+        for (_, mut indices) in by_net {
+            indices.sort_by_key(|index| {
+                (
+                    planes[*index].layer.min(last - planes[*index].layer),
+                    planes[*index].layer,
+                )
+            });
+            for index in indices.into_iter().skip(limit) {
+                planes[index].exclusive = false;
+            }
+        }
+    }
+    if classes.is_empty() {
+        return Err("the board has no routable connections".into());
+    }
+    Ok(Lowered {
+        board: core::Board {
+            layer_count: layers.len(),
+            neck_width: config
+                .neck_width_mm
+                .unwrap_or_else(|| {
+                    classes
+                        .iter()
+                        .map(|class| class.trace_width)
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .max(config.width_floor()),
+            outline: loops.outline.clone(),
+            // Arcs are flattened to chords inside the true curve; the
+            // chord error is added so copper stays clear of the real edge.
+            edge_clearance: config.edge_clearance_mm + outline::ARC_TOLERANCE,
+            hole_clearance: config.hole_clearance_mm,
+            hole_to_hole: config.hole_to_hole_clearance_mm,
+            classes,
+            obstacles,
+            nets,
+            planes,
+            solid_pads: {
+                solid_pads.sort();
+                solid_pads
+            },
+            isolated_pads: {
+                isolated_pads.sort();
+                isolated_pads
+            },
+            pad_spokes,
+            merged_pads,
+        },
+    })
+}
+
+/// KiCad's frame for a pad's thermal spokes (`core::PadSpokes`): its shape
+/// position, size at orientation 0, absolute orientation and spoke angle
+/// (the pad's `thermal_bridge_angle`, else 45 degrees for a circle and 90
+/// for any other shape, a custom pad's by its anchor).
+fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, String> {
+    let pad_at = form_at(pad)?;
+    let size = form_xy(pad, "size")?;
+    let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
+    let anchor = if shape == "custom" {
+        pad.child("options")
+            .and_then(|options| form_atom(options, "anchor", 1))
+            .unwrap_or("circle")
+    } else {
+        shape
+    };
+    let offset = match pad
+        .child("drill")
+        .filter(|drill| drill.child("offset").is_some())
+    {
+        Some(drill) => {
+            let (x, y) = (
+                form_f64(drill, "offset", 1).unwrap_or(0.0),
+                form_f64(drill, "offset", 2).unwrap_or(0.0),
+            );
+            let (sine, cosine) = quarter_sin_cos(-pad_at[2]);
+            [x * cosine - y * sine, x * sine + y * cosine]
+        }
+        None => [0.0, 0.0],
+    };
+    Ok(core::PadSpokes {
+        center: [center[0] + offset[0], center[1] + offset[1]],
+        half: [size[0] / 2.0, size[1] / 2.0],
+        orientation: pad_at[2],
+        spoke_angle: form_f64(pad, "thermal_bridge_angle", 1).unwrap_or(if anchor == "circle" {
+            45.0
+        } else {
+            90.0
+        }),
+        circular: shape == "circle" || (shape == "oval" && (size[0] - size[1]).abs() < 1.0e-9),
+    })
+}
+
+fn net_ids_lookup(nets: &[core::Net], name: &str) -> Option<core::NetId> {
+    nets.iter()
+        .position(|net| net.name == name)
+        .map(|index| index as core::NetId)
+}

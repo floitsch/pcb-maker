@@ -35,7 +35,7 @@ The current board (`../v4-4layer/fence-esp32/`) has since moved on: the board is
 ## What makes it hard for pcb-maker (2026-09-25)
 
 - **No edge, relative or proximity constraints** (`docs/placer.md`: "No constraint language yet"). Nothing tells the placer that U3 belongs on an edge, J4 below it, or U2 between them. Wire length alone pulls them towards the middle.
-- **Overhang:** a footprint whose body leaves the outline is treated as fixed by default (`on_edge` in `board_placer.rs`). A placer that may put a part *partly outside* the board has to reason about which part of the footprint may overhang (here: exactly the antenna keepout).
+- **Overhang:** a footprint whose body leaves the outline is treated as fixed by default (`on_edge` in `board_placer/lower.rs`). A placer that may put a part *partly outside* the board has to reason about which part of the footprint may overhang (here: exactly the antenna keepout).
 - **Keepouts:** keepout zones inside footprints are not honoured by the router (issue 1 in `../README.md`).
 
 `constraints.json` sketches how the intent could be stated:

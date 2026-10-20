@@ -56,7 +56,7 @@ beside them `config`, `result`, `heap` (the open list), `hash`, `wall`
 model) and `tests`.
 
 
-1. **Lowering (once).** The adapter (`crates/pcb-kicad/src/board_router.rs`)
+1. **Lowering (once).** The adapter (`crates/pcb-kicad/src/board_router/`)
    turns pads, holes, rule areas, existing copper, the outline and the resolved
    per-net rules into a format-independent `pcb_router::Board`.
 2. **Lattice.** A pitch and phase are chosen so that as many pad centres as
@@ -631,7 +631,7 @@ were measured and lost (docs/changelog.md, "after the narrow attempt");
 **KiCad's checks in the ladder** (2026-10-15). Every attempt routes
 without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board;
 in a layout counted as modelled work, below); the ladder then checks only
-the attempts that could still win (`CheckGate` in board_router.rs). An attempt's open count is the
+the attempts that could still win (`CheckGate` in board_router/budget.rs). An attempt's open count is the
 router's (unconnected terminals and internal violations) plus KiCad's
 unconnected items, so the router's count is a lower bound with no slack:
 an attempt whose router count is above the best checked board's open
@@ -708,7 +708,7 @@ command line's exit code is 3 for an incomplete result with a cut
 A layout's routers stop at the layout's end in work (router
 `deadline_work`, armed before every phase from what is left of
 `total_seconds`), not at the wall-clock deadline. The placement's seeds run
-in a pool (`race_seeds` in board_placer.rs), as many at once as the
+in a pool (`race_seeds` in board_placer/seed_race.rs), as many at once as the
 process has search threads (`RAYON_NUM_THREADS`), a seed starting as a
 thread frees; they are judged in seed order as if one ran after the
 other, and the batches they start in are sized from the kept seeds' work,
