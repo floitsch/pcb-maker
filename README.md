@@ -235,7 +235,7 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `crates/pcb-router` | the format-independent routing core: geometry, lattice, negotiation, pours, verifier |
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
 | `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
-| `src/main.rs` | the `pcb-maker` command line |
+| `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the research and benchmark commands), `agent_cli.rs` (the agent commands), `freerouting_backend.rs` |
 | `benchmarks/corpus` | the KiCad-demo corpus runner (route and layout) |
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
@@ -244,10 +244,16 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the changelog](docs/changelog.md) |
 | `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `check_links.py` |
 
-The other crates (`pcb-engine`, `pcb-grid-router`, `layout-trace-*`,
-`pcb-core`, `pcb-topo`, `pcb-coordinator`, `pcb-pipeline`, ...) are
-earlier approaches, scheduled for removal; some are still linked by
-`pcb-kicad` until then. The
+`crates/pcb-topo` is a TopoR-style topological router, an experiment the
+board router can call. `pcb-engine`,
+`pcb-grid-router`, `layout-trace-model` and `pcb-core` are earlier
+approaches kept only because research modules of `pcb-kicad` (the semantic
+ladder, the sequential and adaptive routers, the routing-cut inspection)
+still use them; they go with those modules. The rest of the research stack
+(`layout-trace-routing`, `pcb-routing`, `pcb-coordinator`, `pcb-placement`,
+`pcb-validate`, `pcb-viewer`, `pcb-benchmark`, `pcb-pipeline`, their
+commands and fixtures) was removed on 2026-10-20 and is in git history up to
+commit be4b012. The
 [trust audit](docs/reviews/2026-09-21-trust-audit.md) explains what was
 kept and why.
 

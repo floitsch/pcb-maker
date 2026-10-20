@@ -71,6 +71,94 @@ placement, quarter budget, 4 threads, `PCB_ROUTER_FINGERPRINT=1
 PCB_ROUTER_FINGERPRINT_ALL=1`): the same four fingerprints in the same
 order, the same routed board (md5) and row (126/126, 187 vias, 5490 mm,
 work 150.4 s).
+## Committed on 2026-10-20 (quality: research stack removed)
+
+The research stack of August and September 2026 removed, as Florian
+approved (branch quality-research: 346c9ba, 8ac4653, d988456, 9df9ee5 and
+this section, on be4b012). **The last
+commit holding all of it is be4b012** (main on 2026-10-16); check it out to
+run or read any of the removed commands, crates, tests or fixtures. Rust
+goes from 190 752 to 118 802 lines; 152 444 lines deleted in all.
+
+| Step | What | Lines deleted |
+| --- | --- | ---: |
+| 1 | `crates/pcb-pipeline` (no `pcb_pipeline::` use anywhere) | 763 |
+| 2 | 54 research command arms of `src/main.rs`, their helpers (the semantic ladder's placement and order portfolios, the resistor field, the config loaders), their unit tests and usage lines: `main.rs` 6610 to 1008 lines | 5 602 net |
+| 3 | the crates `layout-trace-routing` (24 707), `pcb-routing` (12 862), `pcb-coordinator` (9 083), `pcb-placement` (8 750), `pcb-benchmark` (3 667), `pcb-validate` (2 637), `pcb-viewer` (532), with the root tests that only tested them (`exact_validation_smoke`, `occupied_passage`) | 62 567 |
+| 4 | the root tests `kicad_ladder` (2 038), `kicad_pad_layer_contacts`, `board_continuation`, `conflict_actions`, `kicad_grid_alignment`, `kicad_via_keepout`, `kicad_pad_clearance`, `imported_benchmarks`; the fixtures `benchmarks/esp32-c3-ladder` (29 814), `dual-esp32-ladder` (12 060), `analysis-lab`, `small`, `esp32-pad-gaps`, `competitive`, `smoke` and `imported` but four files (23 790); the experiments `placement-locality`, `field-routing`, `occupied-passage` | 82 976 |
+
+**Commands removed** (54): check, validate, insert-connection,
+trace-placement, place, route-grid, route-grid-negotiated,
+explore-conflict-actions, search-conflict-actions, continue-board,
+place-route-grid, place-route-grid-width-continuation,
+place-route-grid-negotiated, analyze-corridors, analyze-route-families,
+materialize-route-family-portfolio, repair-route-families,
+repair-route-grid, optimize-route-junctions, repair-route-pressure,
+repair-route-order, repair-route-ripup, view-route, render-route-layers,
+view-continuous-repair, relax-continuous, resistor-field,
+resistor-ablation, generate-semantic-kicad-ladder,
+solve-semantic-kicad-prefix, solve-semantic-kicad-order-portfolio,
+solve-semantic-kicad-placement-portfolio,
+solve-semantic-kicad-prefix-feedback, materialize-kicad-rung,
+insert-kicad-connection, progress-kicad-connections,
+relax-kicad-joint-routes, search-kicad-board-sequential-orders,
+propose-kicad-pad-pair-route, route-kicad-connection,
+diagnose-kicad-yielding-connections,
+repair-kicad-single-connection-ripup, import-kicad-route-candidate,
+apply-kicad-route-candidate, relax-kicad-reference-fields,
+search-kicad-reference-fields, search-kicad-via-actions,
+replace-kicad-connection-with-zones, measure-kicad-route-candidate,
+shorten-kicad-route-candidate, relax-kicad-route-candidate,
+benchmark-route-freerouting, benchmark-route-compare,
+benchmark-route-corpus.
+
+**Commands kept**: the agent commands (route-, layout-, place- and
+drc-kicad-board; repair-kicad-silkscreen, strip-kicad-tracks and -copper,
+import-kicad-netlist, export-kicad-fab, score-kicad-board,
+describe-kicad-board, swap-kicad-pins), verify-kicad-rung,
+normalize-kicad-footprint-links, shrink-kicad-board, inspect-kicad-board,
+-connections, -routing-cut, -terminal-access and -route-obstructions,
+score-congestion, score-congestion-sample, export-congestion-sample,
+dump-pour-map, repair-kicad-necks, bench-search,
+route-kicad-board-freerouting (benchmarks/corpus/run.py),
+render-kicad-layers, and for the next package to decide
+route-kicad-board-adaptive, route- and resume-kicad-board-sequential,
+refine- and discover-kicad-vias, and **bridge-kicad-open-connections**:
+route-kicad-board-freerouting's `island_bridges` option
+([native-external-routing.md](native-external-routing.md)) runs it as a
+subprocess.
+
+**Kept for the pcb-kicad package** (they go with pcb-kicad's research
+modules): the crates `layout-trace-model` (pcb-kicad's
+`semantic_template.rs`), `pcb-core` and `pcb-engine` (pcb-kicad's
+`lib.rs`), `pcb-grid-router` (`lib.rs` and `routing_cut.rs`, behind
+inspect-kicad-routing-cut); no longer root dependencies. Four files of
+`benchmarks/imported/layout-trace/` (dual-esp32-benchmark,
+forced-crossing-two-layer, decoupling-capacitor,
+esp32-slices/esp-pad-fanout-clearance) stay because the tests of
+`semantic_template.rs` and of `layout-trace-model` include them;
+`benchmarks/manifest.sha256` lists only those. `experiments/whole-board`
+stays: `src/freerouting_backend.rs` and pcb-kicad's `island_bridge.rs`
+include its scripts. `experiments/placement-exploration` (a standalone
+crate on `pcb-placement`) no longer builds; it is history. Historical
+documents (docs/experiments, docs/reviews, experiments/*.md) that name
+removed commands or fixtures are left as written.
+
+`benchmarks/README.md` is now an index of the benchmark directories;
+`benchmarks/real/README.md` notes that its benchmark-route commands are
+gone. `main.rs` (1 008 lines) needed no split.
+
+**Gate**: `scripts/check.sh` passes after every step (455 library
+tests, the three CLI suites, the Python tests); `cargo clippy --release
+--workspace` has the same warnings in the kept crates as before (the
+root's 2, pcb-kicad's 46, pcb-router's 26, pcb-topo's 11, pcb-placer's 6,
+pcb-congestion's 2; pcb-placement's 12 left with it).
+
+**Short tier** (x1210 = the branch's code at 9df9ee5, `--jobs 6 --threads
+4` under the lock): `build/short-x1210.log` equals `build/short-x1170.log`
+in every row but the CPU, wall and memory fields: 7 of 12 pass,
+unconnected 19, new errors 2, vias 1134, length 21228 mm, work 2501 s, cut
+0, first-route open terminals 26.
 
 ## Committed on 2026-10-16 (stamp)
 
