@@ -1481,8 +1481,8 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
     };
 
     let mut buckets = Buckets::new(problem);
-    for index in 0..count {
-        buckets.insert(problem, index, poses[index]);
+    for (index, pose) in poses.iter().enumerate().take(count) {
+        buckets.insert(problem, index, *pose);
     }
     let mut near = Vec::new();
     let step = if problem.grid > 0.0 {

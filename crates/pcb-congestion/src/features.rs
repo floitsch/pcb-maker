@@ -236,7 +236,7 @@ fn fill_polygon(points: &[Point], frame: &TileFrame, mask: &mut NodeMask) {
             }
         }
         crossings.sort_by(f64::total_cmp);
-        for pair in crossings.chunks_exact(2) {
+        for pair in crossings.as_chunks::<2>().0 {
             let x0 = ((pair[0] - frame.origin[0]) / pitch).ceil().max(0.0);
             let x1 = ((pair[1] - frame.origin[0]) / pitch)
                 .floor()
@@ -392,8 +392,8 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
             }
         }
     }
-    for slot in 0..SLOTS {
-        if sizes[slot] > 0 {
+    for (slot, &size) in sizes.iter().enumerate() {
+        if size > 0 {
             let base = plane_index(4, slot);
             data[base..base + tiles]
                 .iter_mut()

@@ -137,6 +137,8 @@ mod tests {
     /// The fixed tiny network of `experiments/congestion/export_tiny.py`
     /// (width 8, seed 0) on its test pattern gives what PyTorch computed.
     #[test]
+    // The expected values are PyTorch's, as printed.
+    #[allow(clippy::excessive_precision)]
     fn tiny_model_matches_pytorch() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/tiny.onnx");
         let model = CongestionModel::load(&path).unwrap();

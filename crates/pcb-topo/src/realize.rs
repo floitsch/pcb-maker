@@ -35,6 +35,15 @@ pub const MARGIN: f64 = 0.001;
 const BULGE: f64 = 0.0005;
 const ROUNDS: usize = 40;
 
+/// Adds a closed ring of points to a layer's triangulation, constrained
+/// along its sides, its points tagged with a feature.
+type Ring<'a> = dyn Fn(
+        &mut ConstrainedDelaunayTriangulation<Vertex>,
+        &[Point],
+        &mut HashMap<usize, Vec<Feature>>,
+        Feature,
+    ) + 'a;
+
 #[derive(Clone, Copy, Debug)]
 struct Vertex {
     position: Point2<f64>,
@@ -139,12 +148,7 @@ impl LayerMesh {
             features: &mut HashMap<usize, Vec<Feature>>,
             obstacle: usize,
             shape: &Shape,
-            ring: &dyn Fn(
-                &mut ConstrainedDelaunayTriangulation<Vertex>,
-                &[Point],
-                &mut HashMap<usize, Vec<Feature>>,
-                Feature,
-            ),
+            ring: &Ring<'_>,
         ) {
             match shape {
                 Shape::Circle { center, radius } => {
@@ -1017,7 +1021,7 @@ fn close_pairs(
         pairs.push((a, b, on_b, on_a));
         pairs.push((b, a, on_a, on_b));
     }
-    pairs.sort_by(|x, y| (x.0, x.1).cmp(&(y.0, y.1)));
+    pairs.sort_by_key(|x| (x.0, x.1));
     pairs
 }
 
@@ -1060,6 +1064,7 @@ fn closest_points(a: Point, b: Point, c: Point, d: Point) -> (Point, Point) {
 
 /// A piece pulled tight through its channel, then kept clear of the exact
 /// shapes of the layer's obstacles.
+#[allow(clippy::too_many_arguments)]
 fn pull(
     board: &Board,
     mesh: &LayerMesh,

@@ -75,7 +75,7 @@ pub struct Weights {
 /// preferred axis (even layers horizontal, odd ones vertical).
 pub fn directed_length(from: Point, to: Point, layer: usize, against: f64) -> f64 {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
-    if layer % 2 == 0 {
+    if layer.is_multiple_of(2) {
         (dx * dx + (against * dy).powi(2)).sqrt()
     } else {
         ((against * dx).powi(2) + dy * dy).sqrt()
@@ -670,6 +670,7 @@ impl Topology {
 
     /// Crossing cost of a chord in `face` between two coordinates, or
     /// `None` if it would cross a wire on the same layer (chords cached).
+    #[allow(clippy::too_many_arguments)]
     fn cached_crossing_cost(
         &self,
         mesh: &Mesh,

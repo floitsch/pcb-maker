@@ -13,6 +13,10 @@
 use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon};
 
+/// Boxes as (center, half size), as `Component::far_boxes` and its kin
+/// return them.
+type Boxes = Vec<(Point, Point)>;
+
 #[derive(Clone, Debug)]
 pub struct AnnealConfig {
     pub stages: usize,
@@ -375,7 +379,7 @@ impl State<'_> {
         body: usize,
         body_pose: Pose,
         body_rect: &Rect,
-        built: &dyn Fn(Vec<(Point, Point)>) -> Vec<(Point, Point)>,
+        built: &dyn Fn(Boxes) -> Boxes,
         area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
     ) -> f64 {
         let component = &self.problem.components[holes];
@@ -443,7 +447,7 @@ impl State<'_> {
         yard_pose: Pose,
         other: usize,
         other_pose: Pose,
-        built: &dyn Fn(Vec<(Point, Point)>) -> Vec<(Point, Point)>,
+        built: &dyn Fn(Boxes) -> Boxes,
         area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
     ) -> f64 {
         let (component, against) = (

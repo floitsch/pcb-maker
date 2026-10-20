@@ -89,11 +89,14 @@ fn allowed(board: &Board, mesh: &Mesh, topology: &Topology, wire: usize) -> Vec<
         .collect()
 }
 
+/// A wire's room on an edge and layer: (net, wire, room).
+type WireRoom = (u32, usize, f64);
+
 /// Room used per edge and layer by the assigned wires.
 #[derive(Default)]
 struct Usage {
     /// (edge, layer) -> [(net, wire, room)]
-    rooms: HashMap<(usize, usize), Vec<(u32, usize, f64)>>,
+    rooms: HashMap<(usize, usize), Vec<WireRoom>>,
 }
 
 impl Usage {
@@ -211,17 +214,16 @@ impl Context<'_> {
         let steps = path.faces.len();
         let mut cost = vec![vec![f64::INFINITY; layers]; steps];
         let mut from = vec![vec![0usize; layers]; steps];
-        for layer in 0..layers {
-            cost[0][layer] = self.state(wire, 0, layer, partners, allowed);
+        for (layer, entry) in cost[0].iter_mut().enumerate() {
+            *entry = self.state(wire, 0, layer, partners, allowed);
         }
         for step in 1..steps {
             let portal = path.portals[step - 1];
             for layer in 0..layers {
                 let here = self.state(wire, step, layer, partners, allowed);
                 let mut best = (f64::INFINITY, 0);
-                for previous in 0..layers {
-                    let total =
-                        cost[step - 1][previous] + self.transition(wire, portal, previous, layer);
+                for (previous, &before) in cost[step - 1].iter().enumerate() {
+                    let total = before + self.transition(wire, portal, previous, layer);
                     if total < best.0 {
                         best = (total, previous);
                     }
@@ -456,8 +458,8 @@ fn flip_clusters(
         }
         stretch_of[wire] = vec![0; path.faces.len()];
         let mut first = 0;
-        for step in 0..path.faces.len() {
-            stretch_of[wire][step] = stretches.len();
+        for (step, stretch) in stretch_of[wire].iter_mut().enumerate() {
+            *stretch = stretches.len();
             if step + 1 == path.faces.len() || matches!(path.portals[step], Portal::Vertex(_)) {
                 stretches.push((wire, first, step));
                 first = step + 1;
@@ -497,13 +499,13 @@ fn flip_clusters(
     let mut cluster_of = vec![0; count];
     let mut clusters: Vec<Vec<usize>> = Vec::new();
     let mut index: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for stretch in 0..count {
+    for (stretch, cluster_slot) in cluster_of.iter_mut().enumerate() {
         let root = find(&mut parent, stretch);
         let cluster = *index.entry(root).or_insert_with(|| {
             clusters.push(Vec::new());
             clusters.len() - 1
         });
-        cluster_of[stretch] = cluster;
+        *cluster_slot = cluster;
         clusters[cluster].push(stretch);
     }
     // Per stretch: its layer, the cost of each layer, and its neighbours
@@ -516,9 +518,9 @@ fn flip_clusters(
         .iter()
         .map(|&(wire, first, last)| {
             let mut cost = [0.0; 2];
-            for step in first..=last {
+            for mask in &allowed[wire][first..=last] {
                 for (side, entry) in cost.iter_mut().enumerate() {
-                    if allowed[wire][step] & (1 << side) == 0 {
+                    if mask & (1 << side) == 0 {
                         *entry += INFEASIBLE;
                     }
                 }

@@ -11,6 +11,67 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-16 (quality: placer, topo, congestion)
+
+A code-quality pass over `pcb-placer`, `pcb-topo` and `pcb-congestion`
+with no behaviour change. Binary x1200 (this code; main had no Rust change
+since 54eff39).
+
+**Clippy.** `cargo clippy --release -p pcb-placer -p pcb-topo -p
+pcb-congestion` reported 19 warnings in the three crates (6 + 11 + 2),
+now none, also with `--all-targets` (the 26 left in that output are
+`pcb-router`'s, a dependency):
+
+- `needless_range_loop` (8): iterators with `enumerate` in
+  `global.rs` (filler sides), `legal.rs` (`refine`'s bucket fill),
+  `features.rs` (layer slots) and `layers.rs` (the layer DP, the
+  stretches, the clusters, the stretch costs); same order, same values;
+- `type_complexity` (7): aliases `Boxes` (anneal.rs), `NetPin`
+  (global.rs), `Level` (lib.rs, the relaxation levels' tuple),
+  `WireRoom` (layers.rs), `Ring` (realize.rs);
+- `too_many_arguments` (2, `realize::pull`, `cached_crossing_cost`):
+  allowed, as elsewhere in the crates;
+- `chunks_exact_to_as_chunks`, `unnecessary_sort_by` (a stable
+  `sort_by_key` on the same key), `manual_is_multiple_of`: as suggested;
+- with `--all-targets`, `excessive_precision` in the tiny model's test:
+  allowed, the expected values are PyTorch's as printed.
+
+No NaN-sensitive comparison was among them.
+
+**File sizes.** No `pcb-placer` file is over 2 500 lines (the largest:
+legal.rs 1 713, constraints.rs 1 277, lib.rs 1 119), so nothing was split.
+
+**Kept on purpose** (documented, off or parked), untouched:
+
+- `shared_halos` (placer option, off): the field `Problem::shared_halos`
+  (problem.rs:147), its branches in lib.rs:386, global.rs:297,
+  anneal.rs:225, legal.rs:482, room.rs:186; the KiCad option in
+  board_placer.rs:143;
+- `anneal_far_side_gaps` (off): board_placer.rs:146 sets
+  `AnnealConfig::legal_far_side`; the annealer's `far_overlap` and
+  `far_courtyards` (anneal.rs:374-479, about 106 lines) and `build_state`;
+- `routing_room` (off): crates/pcb-placer/src/room.rs (428 lines),
+  `Config::routing_room` in lib.rs (about lines 967-1063),
+  crates/pcb-kicad/src/placement_room.rs (676 lines);
+- the topological engine: crates/pcb-topo (8 files, 5 730 lines), called
+  from board_router.rs (around line 5159), docs/topological.md;
+- the congestion network: crates/pcb-congestion/src/model.rs (190 lines),
+  crates/pcb-kicad/src/congestion_rank.rs (225 lines);
+  crates/pcb-congestion/src/features.rs (790 lines) also holds
+  `rudy_overflow`, which the race uses.
+
+**Identity.** Tests (`-p pcb-placer -p pcb-topo -p pcb-congestion -p
+pcb-kicad`, release) pass. `place-kicad-board` on the short tier's prepared
+sources (build/short-x1170, with each board's layout.json, 4 threads):
+spell_tome_bottom, USB_Cable_Tester, urchin, eternal-keypad, OpenFC and
+Blue_Line give byte-identical boards with x1170 and x1200.
+`score-congestion` (q-ensemble.onnx) on urchin's and OpenFC's placements:
+the same `open`, `overflow` and tiles. Route mode on Castor (v16
+placement, quarter budget, 4 threads, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_FINGERPRINT_ALL=1`): the same four fingerprints in the same
+order, the same routed board (md5) and row (126/126, 187 vias, 5490 mm,
+work 150.4 s).
+
 ## Committed on 2026-10-16 (stamp)
 
 `Router::stamp` made cheaper with routes and occupancy maps byte-identical

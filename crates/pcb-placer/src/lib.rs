@@ -545,6 +545,11 @@ fn halos_area(problem: &Problem) -> f64 {
         .sum()
 }
 
+/// A relaxation level of `place`: halo scale, spacing scale, grid, edge
+/// inset, tight bodies, edge copper, edge margin, and the factor on the
+/// halos of parts with fewer than `MANY_PINS` pins.
+type Level = (f64, f64, f64, bool, bool, bool, f64, f64);
+
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The pin-count halos as asked for, before the board's fit.
     let requested: Vec<f64> = problem
@@ -628,7 +633,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // held at an edge only need their copper on the board (a card edge in
     // its tab).
     let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
-    let mut levels: Vec<(f64, f64, f64, bool, bool, bool, f64, f64)> = levels
+    let mut levels: Vec<Level> = levels
         .into_iter()
         .map(|(halo, spacing, grid, inset, tight, small)| {
             (
@@ -673,7 +678,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         edge_copper,
         edge_rule,
         small_factor,
-    ): (f64, f64, f64, bool, bool, bool, f64, f64)| {
+    ): Level| {
         let mut relaxed = problem.clone();
         relaxed.grid = grid;
         relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);

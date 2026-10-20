@@ -19,6 +19,10 @@ use crate::constraints;
 use crate::problem::{Point, Pose, Problem, point_in_polygon, rotate};
 use std::collections::BTreeMap;
 
+/// A pin on a net: its position and, for a movable body's pin, the body and
+/// the pin's index on it (`None` for a fixed pin).
+type NetPin = (Point, Option<(usize, usize)>);
+
 #[derive(Clone, Debug)]
 pub struct GlobalConfig {
     pub bins: usize,
@@ -430,14 +434,13 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .sqrt()
         .max(field.bin[0].min(field.bin[1]));
     // Fillers take a share of each side's whitespace.
-    for side in 0..side_count {
+    for (side, free) in side_free.iter().enumerate().take(side_count) {
         let side_movable: f64 = bodies
             .iter()
             .filter(|body| body.field == side)
             .map(|body| 4.0 * body.charge_half()[0] * body.charge_half()[1])
             .sum();
-        let filler_area =
-            config.whitespace_fill.clamp(0.0, 1.0) * (side_free[side] - side_movable).max(0.0);
+        let filler_area = config.whitespace_fill.clamp(0.0, 1.0) * (free - side_movable).max(0.0);
         let filler_count = (filler_area / (filler_side * filler_side)).floor() as usize;
         for _ in 0..filler_count {
             bodies.push(Body {
@@ -666,7 +669,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             * field.bin[0].max(field.bin[1])
             * 10f64.powf((overflow.min(1.0) - 0.1) * 20.0 / 9.0 - 1.0);
         let mut wire_gradient = vec![[0.0; 2]; bodies.len()];
-        let mut net_pins: Vec<Vec<(Point, Option<(usize, usize)>)>> = vec![Vec::new(); nets];
+        let mut net_pins: Vec<Vec<NetPin>> = vec![Vec::new(); nets];
         for (at, net) in &fixed_pins {
             net_pins[*net].push((*at, None));
         }
