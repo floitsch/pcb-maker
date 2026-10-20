@@ -21,15 +21,15 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **44 of 109** to a clean KiCad verdict
+  pcb-maker places and routes **48 of 109** to a clean KiCad verdict
   (0 unconnected, no copper error beyond the designer's own board) within
   30 minutes each, every board placed from stacked parts (sweep v16,
   2026-10-15; v17, with the work since, is running); over all 109
-  boards the open connections fell from 3868 to 3527 and the new DRC
-  errors from 289 to 82 against the previous sweep. Most of the
+  boards the open connections fell from 3527 to 2708 and the new DRC
+  errors from 82 to 38 against the previous sweep. Most of the
   rest are complete but for a few connections or a few starved thermal
   reliefs; a handful are panels or boards whose rules no track can satisfy
-  ([results](docs/benchmarks.md#layout-sweep-v16-2026-10-15)).
+  ([results](docs/benchmarks.md#layout-sweep-v17-2026-10-16)).
 - **Against Freerouting** on the same 109 boards with only the copper
   removed (the designer's placement kept, 1500 s each): Freerouting finishes
   67 and times out on 36; where it finishes, pcb-maker leaves fewer

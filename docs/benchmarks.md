@@ -1230,3 +1230,34 @@ to 61 (cut). The 17 cut rows at modest load say some phase's wall runs
 well ahead of its counted work; triage in
 [changelog.md](changelog.md#triage-of-v16-2026-10-15-x931--x932). Compare with
 `python3 benchmarks/agent-tasks/compare.py build/github-layout-v15.log build/github-layout-v16.log`.
+
+## Layout sweep v17 (2026-10-16)
+
+`build/github-layout-v17.log`, binary x1170 (main 54eff39, the one-time
+rustfmt commit; code = everything up to the KiCad check charge: first-route
+budget, hole clearance, router overhead and search core and stamp rounds,
+pour-work recalibration, second narrow attempt, zone seams, connection
+width, min connection, mask bridges and mask openings, placement room,
+panel fixes, orientation search, order independence, calibration 3.15e6,
+check work), tasks v7, tier default 8 jobs x 2 threads, 65959 s wall.
+
+| | v16 (x862) | v17 (x1170) |
+|---|---|---|
+| pass | 44 of 109 | 48 of 109 |
+| unconnected (all rows) | 3527 | 2708 |
+| new DRC errors | 82 | 38 |
+| vias | 25335 | 30601 |
+| CPU s (unpaired) | 145292 | 101279 |
+| rows cut by the wall clock | 17 | 2 |
+| rows without a result | 10 | 7 |
+
+Better 25, same 50, worse 8 (14 cut rows and 1 on other inputs left out).
+ULK, SmartSpin2k_Panelized and poly_kybd_split72_left now finish (68/70,
+553/585 and 394/420); MegaDrive finishes but is cut at 163 open. The 0xCB
+pcb-panel still ends on kicad-cli's 900 s zone refill, the four molecule
+panels still leave a few back connectors unplaced (designer stacking at
+0.03 mm), OpenESC 4in1-panel is crowded, and MIDAS-MK1 is a new refusal
+(6 parts without a legal place: triage assigned). Vias rose 21 percent
+with the 1.57x larger work budget. The two cuts ran at loads 1 and 66.
+Compare with
+`python3 benchmarks/agent-tasks/compare.py build/github-layout-v16.log build/github-layout-v17.log`.

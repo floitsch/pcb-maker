@@ -54,7 +54,7 @@ designer's, constraints met); 3527 unconnected in all, 82 new DRC errors,
 [benchmarks.md](benchmarks.md#layout-sweep-v16-2026-10-15), triage in
 [changelog.md](changelog.md#triage-of-v16-2026-10-15-x931--x932).
 
-**Layout sweep v17**: running (tasks v7, the tier default parallelism,
+- v17 (x1170, tasks v7, 8 x 2): 48 of 109 pass, unconnected 2708, new errors 38, cut 2 (docs/benchmarks.md "Layout sweep v17").
 under the lock). Fill in when it lands:
 
     v17 (x____, tasks v7): __ of 109 pass, __ unconnected, __ new errors, __ cut; build/github-layout-v17.log
