@@ -126,7 +126,7 @@ Interf-U were re-run during the audit.
 
 A net's tree grows by one multi-target search at a time and stops at the
 first search that finds nothing. In negotiation only what never changes
-(pads, rule areas, the outline, hard thermal guards) stops a search, so a
+(pads, rule areas, the outline) stops a search, so a
 board-wide search that fails proves its open pads unreachable for the
 whole negotiation. Since 2026-10-06 two such failures make the net keep to
 its corridors (`hopeless_searches`, link's wasted board-wide searches),
@@ -853,6 +853,20 @@ followed them).
   single threaded. Jacobi-style parallel routing of overlapping nets (each
   against the current copper, then all re-stamped) was tried and converges
   far worse (Interf-U: 448 s and 44 vias against 81 s and 28 vias); the
-  option `jacobi_batch` was removed on 2026-10-16.
+  option `jacobi_batch` was removed on 2026-10-16. Speculative routing
+  (the next batches of an iteration routed side by side against the board
+  as it was, a route kept where nothing it read had changed since, the
+  same result as routing in turn; also for the clean-up's single-net
+  trials, and a variant keeping a route unless its own path met changed
+  copper) kept too few routes to pay (Castor 16 %, k30-SBC 8 %: the
+  negotiation reroutes the nets of one congested area one after another,
+  each reading what the one before changed). It was off and was removed
+  on 2026-10-16 with its switches (`PCB_ROUTER_NO_SPECULATION`,
+  `_SPECULATE_PATHS`, `_SPECULATION_CHECK`, `_SPECULATION_NO_TILES`,
+  `_CLEANUP_WINDOW`); the code (`route_batches`, `ReadSet`,
+  `clean_up_window`) is in commit e256657, which added it, and on main up
+  to be4b012. Hard thermal guards (a pad's last two spoke corridors closed
+  to other nets) and stitching vias during the negotiation, both measured
+  worse and off, went with it.
 - No gate swapping, no differential pairs, no length tuning. Pin swapping
   is a separate step before routing ([pin-swap.md](pin-swap.md)).
