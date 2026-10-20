@@ -97,6 +97,91 @@ Not taken (behaviour changes, for a later agent): `routable_net` rejects
 net names made only of digits (SeanBP Edge-Card-CAEN); the writer's
 footprint file order in a process-global registry rather than on the
 board (this pass did not touch `encode`).
+## Committed on 2026-10-20 (MIDAS-MK1 refusal)
+
+In layout sweep v17 (x1170, tasks v7) MIDAS-MK1 ended "incomplete: 6
+parts without a legal place (J105, J101, J102, R204, R207, R208)" after
+206 s; v16 (x862) had placed and routed it (151/159, 16 unconnected).
+Snapshots x1221-x1223 are this work on 0425fea; x1224 is the commit on
+3d28004 (MIDAS's poses as x1223's; the file differs only by 3d28004's
+writer, which keeps footprint graphics in the file's order).
+
+**Which rule.** None of the rules is wrong. Only J105 is unplaced; the
+five others are fixed parts it was left on: J105 (a 7.7 x 35.4 mm Molex
+terminal block held at the bottom edge, turned 90) stood over the back's
+fixed R204/R207/R208 (its holes, "far side") and against the front's
+fixed J101/J102. `PCB_PLACER_DESIGNER` calls the designer's J105, J103
+and J108 legal (its 70 flagged parts are spacing at the default level).
+The switches change nothing: `mask_openings`, `solid_pin_rows`,
+`keep_copies` off give x1170's placement byte for byte,
+`orientation_search` off another placement with the same refusal.
+Bisecting the snapshots on `place-kicad-board` (the v17 source, three
+seeds, 600 s of work, four threads): x862, x1112, x1130 and x1152 place
+all; x1161 (order independence) refuses. The canonical order sent all
+seeds' anneals elsewhere: J108 (a 24.7 x 19.1 mm SD slot held at the
+left edge) into the bottom-left corner, where the designer has it at the
+top left. Left of the fixed parts the bottom edge then holds one of the
+two terminal blocks, not both.
+
+**A search gap.** Largest first, the legaliser seats J108 in the corner,
+J103 beside the fixed parts, and J105 finds nothing. With J105 first
+(the retry) J105 takes J103's spot and J103 finds nothing; eviction moves
+the parts on one spot but cannot reseat J103, which needs J108 moved.
+J108 has a spot only once bodies may reach past the edge (the inset
+levels: x862 put it 4.6 mm over the left edge, copper inside), and those
+levels only keep the placement and try the stuck part among the kept
+ones. With J105 and J103 both first, both stand at the bottom and J108
+moves left over the edge by 1.9 mm.
+
+**The fix** (`legal::legalize_stuck_first`, `lib.rs`'s kept-placement
+path): at a level with no halo, spacing or grid left to give (the edge
+and courtyard levels), when the kept placement leaves a few parts
+without room after keeping and eviction (as many as an eviction takes
+on), the level legalizes the anneal that gave the kept placement again
+with those parts first; the parts that pass leaves without room join
+them, up to four passes (`STUCK_FIRST_PASSES`), while new parts fail and
+the work lasts; the pass with fewest parts left wins if it beats the
+kept placement. MIDAS: J105 first leaves J103, J105 and J103 first leave
+none. Two broader variants were measured and not kept: the passes also
+in the fresh anneal's retry and at every kept level (x1221), or at every
+kept level (x1222), seat stuck parts of other seeds at stricter levels
+and change the seed kept on framework_mobo and OpenFC (16 seeds); x1222's
+short tier lost framework_mobo's pass (70/71). A whole-board search on
+the fine grid for parts placed first was tried too and not needed.
+Unit test `parts_without_room_go_first_until_none_takes_anothers_place`
+(tests/placement.rs): MIDAS's bottom edge simplified (the two blocks,
+the slot in the corner, a fixed block on the right): `legalize` leaves
+J105, `legalize_first` with J105 leaves J103, the passes leave none and
+every part is legal.
+
+**MIDAS-MK1** (layout, tasks v7, four threads, build/midas-x1223.log):
+complete placement (3 seeds, wirelength 2295 mm against x1170's 2431 with
+J105 unplaced and x862's 2628), 153/159, **6 unconnected** (v16 16), 0
+new errors, 205 vias (v16 207), 4225 mm (v16 4565), work 1404 s, cut 0,
+first-route open terminals 13 (v16 19). x1221's and x1222's routed boards
+are the same file.
+
+**Identity.** `place-kicad-board` on short-x1170's prepared sources
+(each board's layout.json, four threads): spell_tome_bottom,
+USB_Cable_Tester, urchin, eternal-keypad, OpenFC and Blue_Line
+byte-identical with x1170; framework_mobo and OpenFC with 16 seeds too.
+Short tier (jobs 6, threads 4, under the lock) x1223 against
+build/short-x1170.log: 7/12 both, unconnected 19, new errors 2, vias
+1134, length 21228 mm, cut 0, first-route 26 on both; every row
+identical and every placed board byte-identical but MIDAS-MK1.1's work,
+285.1 to 287.5 s: it is MIDAS-class (two terminal blocks held at the
+bottom, J101 and J102), a seed's stuck parts took the passes at a
+loosest level without a better result (build/short-x1223.log).
+
+**The other v17 refusals** (`place-kicad-board`, v17 sources and
+layout.json, 600 s of work, four threads; unplaced x1170 / x1223): the
+molecule panels are the designer's own geometry (neighbouring tiles' J5
+and J6 0.03 mm apart on the back, J9 against the outline; panel fixes,
+2026-10-15), not this mechanism, and the passes seat some of them:
+7x5_wave_left 1 / 1 and 5x2_shifted 2 / 2 byte-identical, 4x4 3 / 2,
+4x5 7 / 3. OpenESC's 4in1-panel is crowding (111 / 111 unplaced,
+byte-identical: too many stuck parts for the passes). SmartSpin2k
+finished in v17 and was not rerun.
 
 ## Committed on 2026-10-21 (parser and writer robustness)
 

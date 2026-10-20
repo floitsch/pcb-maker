@@ -68,8 +68,13 @@ less copper); on PIC and the hierarchy board the automatic one is.
    wirelength plus an overlap penalty that grows until no overlap survives.
    It starts cold so the global result is refined, not scrambled. An exact
    nearest-legal-position pass is the safety net. When it fails, it runs
-   again with the stuck parts first. Crowded boards then walk down
-   relaxation levels:
+   again with the stuck parts first. At the edge and courtyard levels
+   (no halo, spacing or grid left to give), a level that keeps the
+   placement of the level before, and whose few stuck parts find no room
+   among the kept ones, legalizes its anneal again with them first, the
+   parts that pass leaves without room joining them, up to four passes (a
+   part placed first can take another's only spot: MIDAS-MK1, changelog
+   "MIDAS-MK1 refusal"). Crowded boards then walk down relaxation levels:
    - smaller halos, then none;
    - spacing down to the copper clearance;
    - a 0.1 mm grid;

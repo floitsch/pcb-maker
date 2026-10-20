@@ -1354,3 +1354,95 @@ fn the_work_budget_is_kept_inside_the_passes() {
         placement.work
     );
 }
+
+#[test]
+fn parts_without_room_go_first_until_none_takes_anothers_place() {
+    use pcb_placer::constraints::Edge;
+    use pcb_placer::legal::{is_legal, legalize, legalize_first, legalize_stuck_first};
+    // MIDAS-MK1's bottom edge, simplified: two 7.7 x 35.4 mm terminal
+    // blocks (J103, J105) held at the bottom, a 24.7 x 19.1 mm card slot
+    // (J108) held at the left edge and annealed into the bottom-left
+    // corner, and fixed parts (Q203, R207, J101 and the like) filling the
+    // bottom right from x = 36. Left of them the bottom has room for both
+    // blocks only when J108 moves up its edge.
+    let part = |name: &str, size: [f64; 2], fixed: bool| Component {
+        name: name.into(),
+        body_center: [0.0, 0.0],
+        body_size: size,
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net: 0,
+        }],
+        side: Side::Front,
+        fixed,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: Vec::new(),
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let at = |x: f64, y: f64| Pose {
+        position: [x, y],
+        angle: 0.0,
+    };
+    let mut problem = Problem {
+        outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 100.0], [0.0, 100.0]],
+        components: vec![
+            part("Q203", [24.0, 40.0], true),
+            part("J108", [24.7, 19.1], false),
+            part("J103", [7.7, 35.4], false),
+            part("J105", [7.7, 35.4], false),
+        ],
+        net_weights: vec![1.0],
+        // Where the anneal left them: J108 in the corner, J103 and J105
+        // wanting spots at and over the fixed block.
+        poses: vec![
+            at(48.0, 80.0),
+            at(12.35, 90.45),
+            at(35.0, 82.3),
+            at(45.0, 82.3),
+        ],
+        spacing: 0.2,
+        grid: 0.5,
+        edge_margin: 0.0,
+        min_spacing: 0.2,
+        far_side_pads_only: false,
+        shared_halos: false,
+        pieces: Vec::new(),
+        constraints: Default::default(),
+    };
+    problem.constraints.edges.push((1, Edge::Left, 0.5));
+    problem.constraints.edges.push((2, Edge::Bottom, 0.5));
+    problem.constraints.edges.push((3, Edge::Bottom, 0.5));
+    let annealed = problem.poses.clone();
+    // Largest first: J108 keeps the corner, J103 the spot next to the
+    // fixed block, and J105 finds none.
+    let mut poses = annealed.clone();
+    assert_eq!(legalize(&problem, &mut poses), vec![3]);
+    // J105 first takes J103's spot, and J103 finds none.
+    let mut poses = annealed.clone();
+    assert_eq!(legalize_first(&problem, &mut poses, &[3]), vec![2]);
+    // Both first: they stand side by side and J108 goes up its edge.
+    let (poses, failed) = legalize_stuck_first(&problem, &annealed, &[3], 4, false);
+    assert!(failed.is_empty(), "{failed:?}");
+    for index in 0..problem.components.len() {
+        assert!(
+            is_legal(&problem, &poses, index, poses[index], 0..poses.len()),
+            "{} at {:?}",
+            problem.components[index].name,
+            poses[index]
+        );
+    }
+    assert!(poses[1].position[0] < 13.0 && poses[1].position[1] < 64.6 - 9.55);
+    assert!(poses[2].position[1] > 82.0 && poses[3].position[1] > 82.0);
+}

@@ -157,6 +157,14 @@ impl Relaxation {
 /// Parts with at least this many pins keep their halos one level longer.
 const MANY_PINS: usize = 10;
 
+/// Passes of the legaliser with the parts that found no room first, each
+/// adding the parts the pass before left without room
+/// (`legal::legalize_stuck_first`), at a loosest level (no halo, spacing
+/// or grid left to give) that keeps the placement of the level before,
+/// when a few parts (as many as an eviction takes on) found no room among
+/// the kept ones.
+const STUCK_FIRST_PASSES: usize = 4;
+
 /// Area of the outline polygon.
 fn outline_area(problem: &Problem) -> f64 {
     let outline = &problem.outline;
@@ -811,6 +819,34 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                         );
                     }
                     kept = evicted;
+                    failed = again;
+                }
+            }
+            // Still without room, with no halo, spacing or grid left to
+            // give (only the edge and courtyard levels remain): the
+            // level's own pass with those parts first, from the anneal
+            // that gave the kept placement (the kept parts may have to
+            // move: MIDAS-MK1's J105 needs J103's spot, J103 J108's, and
+            // J108 a spot it has only once bodies may reach past the edge).
+            if !failed.is_empty()
+                && halo_scale == 0.0
+                && spacing_scale == 0.0
+                && grid == fine
+                && failed.len() <= (problem.components.len() / 50).max(3)
+                && !out_of_work(0)
+                && let Some(annealed) = best_annealed.as_ref()
+            {
+                let retry_mark = mark();
+                let (retry, again) = legal::legalize_stuck_first(
+                    &relaxed,
+                    annealed,
+                    &failed,
+                    STUCK_FIRST_PASSES,
+                    debug,
+                );
+                phase_line(debug, "legalize first", retry_mark);
+                if again.len() < failed.len() {
+                    kept = retry;
                     failed = again;
                 }
             }

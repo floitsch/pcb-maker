@@ -1101,6 +1101,47 @@ pub fn legalize_keeping(
     failed
 }
 
+/// Legalizes `annealed` with the parts of `failed` first; a part placed
+/// first can take the spot of another that then finds none, and that one
+/// joins the parts going first in the next pass, up to `passes` passes
+/// while new parts fail and the work lasts. Returns the poses and the
+/// parts without room of the pass that left the fewest (the first on
+/// ties).
+pub fn legalize_stuck_first(
+    problem: &Problem,
+    annealed: &[Pose],
+    failed: &[usize],
+    passes: usize,
+    debug: bool,
+) -> (Vec<Pose>, Vec<usize>) {
+    let mut first = failed.to_vec();
+    let mut best: Option<(Vec<Pose>, Vec<usize>)> = None;
+    for _ in 0..passes.max(1) {
+        let mut retry = annealed.to_vec();
+        let again = legalize_first(problem, &mut retry, &first);
+        if debug {
+            eprintln!("placer: legalize first {first:?}: no room for {again:?}");
+        }
+        let newly: Vec<usize> = again
+            .iter()
+            .copied()
+            .filter(|part| !first.contains(part))
+            .collect();
+        let done = again.is_empty() || newly.is_empty();
+        if best
+            .as_ref()
+            .is_none_or(|(_, least)| again.len() < least.len())
+        {
+            best = Some((retry, again));
+        }
+        if done || crate::out_of_work(0) {
+            break;
+        }
+        first.extend(newly);
+    }
+    best.expect("one pass at least")
+}
+
 /// Places each part of `failed` where it displaces the least area of
 /// movable parts (never a fixed one), then finds the displaced parts new
 /// spots; keeps that only if all of them find one. A part whose spot is
