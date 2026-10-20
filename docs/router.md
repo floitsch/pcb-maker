@@ -40,6 +40,22 @@ Interf-U were re-run during the audit.
 
 ## How it works
 
+The code (`crates/pcb-router/src`): `router.rs` holds the shared state
+(`Router`, `NetState`, `Scratch`, the lattice nodes and branches, the
+work constants) and the small helpers; `router/` has one file per part of
+`impl Router`, in the order of a run: `build` (the lowering into maps),
+`escapes`, `guards` (thermal guards), `prepare` (a net's search state),
+`stamping` (occupancy, rip-up, conflicts), `route_net`, `planner` (tile
+corridors), `search` (the lattice A*), `update`, `batching`, `global`,
+`driver` (the phases, budgets and clocks), `fixed`, `negotiate`,
+`pour_refresh`, `vias` (via reduction), `finish`, `pour_analysis`, `fill`
+(the fill probe), `spokes` (KiCad's spoke model), `manual_spokes`,
+`pour_dump`, `stitch`, `cleanup`, `resolve` (the hard repair), `output`;
+beside them `config`, `result`, `heap` (the open list), `hash`, `wall`
+(wall-clock cuts), `profile`, `congestion` (tile views for the congestion
+model) and `tests`.
+
+
 1. **Lowering (once).** The adapter (`crates/pcb-kicad/src/board_router.rs`)
    turns pads, holes, rule areas, existing copper, the outline and the resolved
    per-net rules into a format-independent `pcb_router::Board`.
