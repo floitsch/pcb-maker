@@ -111,9 +111,9 @@ impl Shape {
                     maximum: [f64::NEG_INFINITY; 2],
                 };
                 for point in points {
-                    for axis in 0..2 {
-                        bounds.minimum[axis] = bounds.minimum[axis].min(point[axis]);
-                        bounds.maximum[axis] = bounds.maximum[axis].max(point[axis]);
+                    for (axis, value) in point.iter().enumerate() {
+                        bounds.minimum[axis] = bounds.minimum[axis].min(*value);
+                        bounds.maximum[axis] = bounds.maximum[axis].max(*value);
                     }
                 }
                 bounds

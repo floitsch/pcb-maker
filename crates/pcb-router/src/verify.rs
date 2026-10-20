@@ -40,6 +40,11 @@ enum Item {
 const TOLERANCE: f64 = 1.0e-5;
 const BUCKET: f64 = 2.0;
 
+/// A routed item as a centreline and a copper radius: start, end, radius,
+/// the layer (`None`: a via, on every layer), a via's drill radius and the
+/// index of the segment it is.
+type RoutedItem = (Point, Point, f64, Option<usize>, Option<f64>, Option<usize>);
+
 fn buckets(bounds: Aabb) -> impl Iterator<Item = (i64, i64)> {
     let x0 = (bounds.minimum[0] / BUCKET).floor() as i64;
     let y0 = (bounds.minimum[1] / BUCKET).floor() as i64;
@@ -125,7 +130,7 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
         let net = net as NetId;
         let class = board.classes[board.nets[net as usize].class];
         // A routed item is described as a centreline plus a copper radius.
-        let mut items: Vec<(Point, Point, f64, Option<usize>, Option<f64>, Option<usize>)> = route
+        let mut items: Vec<RoutedItem> = route
             .segments
             .iter()
             .enumerate()

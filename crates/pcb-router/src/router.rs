@@ -1512,6 +1512,29 @@ impl Profile {
     }
 }
 
+/// Called with the iteration and a snapshot after each negotiation
+/// iteration (`Router::set_frame_hook`).
+pub type FrameHook = Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>;
+
+/// A pad's spoke corridors (`Router::spoke_corridors`): the layer, the net,
+/// the cells of each of its four corridors (the spoke's own strip first)
+/// and how many cells of each that strip is.
+type SpokeCorridors = (usize, NetId, [Vec<usize>; 4], [usize; 4]);
+
+/// A lattice window: the first and last column and row (inclusive).
+type CellWindow = (usize, usize, usize, usize);
+
+/// A pad the spoke model checks (`Router::kicad_spokes`): its terminal,
+/// the pad, its anchor, the layers it is checked on and those of them on
+/// which it lies inside its terminal's pad.
+type SpokePad = (
+    usize,
+    usize,
+    crate::geometry::Point,
+    std::collections::BTreeSet<usize>,
+    std::collections::BTreeSet<usize>,
+);
+
 #[derive(Clone)]
 pub struct Router {
     board: Board,
@@ -1609,7 +1632,7 @@ pub struct Router {
     last_conflicted: Vec<NetId>,
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
-    frame_hook: Option<Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>>,
+    frame_hook: Option<FrameHook>,
 }
 
 impl Router {
@@ -1619,7 +1642,7 @@ impl Router {
         let mut board = board.clone();
         let mut neck_of = vec![None; board.classes.len()];
         if config.neck_reach > 0.0 {
-            for class in 0..neck_of.len() {
+            for (class, neck_class) in neck_of.iter_mut().enumerate() {
                 let rules = board.classes[class];
                 if rules.trace_width > board.neck_width + 1.0e-9 {
                     let neck = RuleClass {
@@ -1634,7 +1657,7 @@ impl Router {
                             board.classes.push(neck);
                             board.classes.len() - 1
                         });
-                    neck_of[class] = Some(index);
+                    *neck_class = Some(index);
                 }
             }
         }
@@ -2086,7 +2109,7 @@ impl Router {
                 }
             }
             let candidate_count = candidates.len();
-            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && candidates.len() > 0 {
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && !candidates.is_empty() {
                 // What blocks the narrowest stub to the nearest candidates.
                 for (distance, cell) in candidates.iter().take(3) {
                     let center = self.grid.center_of(*cell);
@@ -2301,8 +2324,8 @@ impl Router {
             })
             .collect();
         let least = share.iter().copied().fold(1.0f32, f32::min);
-        for layer in 0..self.board.layer_count {
-            let relative = (share[layer] - least).max(0.0) / (1.0 - least).max(1.0e-3);
+        for (layer, layer_share) in share.iter().enumerate() {
+            let relative = (layer_share - least).max(0.0) / (1.0 - least).max(1.0e-3);
             self.layer_cut[layer] = 1.0 + (self.config.plane_cut_cost as f32 - 1.0) * relative;
         }
     }
@@ -2313,7 +2336,7 @@ impl Router {
     /// across the gap and the spoke's length.
     /// Each corridor lists the spoke's own strip (the bridge's width) first;
     /// the fourth element says how many cells that is.
-    fn spoke_corridors(&self) -> Vec<(usize, NetId, [Vec<usize>; 4], [usize; 4])> {
+    fn spoke_corridors(&self) -> Vec<SpokeCorridors> {
         let mut corridors = Vec::new();
         for plane in &self.board.planes {
             if plane.thermal_reach <= 0.0 {
@@ -2853,7 +2876,7 @@ impl Router {
         if !self.nets[net as usize].plane.is_empty() && !self.config.pour_whole_rip_up {
             return false;
         }
-        stuck > 0 && stuck % STUCK_WHOLE == 0
+        stuck > 0 && stuck.is_multiple_of(STUCK_WHOLE)
     }
 
     /// Removes only the branches of `net` that are in conflict, plus any
@@ -3377,9 +3400,13 @@ impl Router {
         let mut parent: Vec<usize> =
             (0..terminal_count + retained.len() + has_plane as usize).collect();
         if has_plane {
-            for terminal in 0..terminal_count {
-                if net_state.on_plane[terminal] {
-                    parent[terminal] = plane_element;
+            for (slot, on_plane) in parent
+                .iter_mut()
+                .zip(&net_state.on_plane)
+                .take(terminal_count)
+            {
+                if *on_plane {
+                    *slot = plane_element;
                 }
             }
         }
@@ -3658,9 +3685,9 @@ impl Router {
                     if net_state.unreachable.len() != terminal_count {
                         net_state.unreachable = vec![false; terminal_count];
                     }
-                    for terminal in 0..terminal_count {
-                        if !in_tree[terminal] {
-                            net_state.unreachable[terminal] = true;
+                    for (unreachable, reached) in net_state.unreachable.iter_mut().zip(&in_tree) {
+                        if !reached {
+                            *unreachable = true;
                         }
                     }
                 }
@@ -3879,6 +3906,10 @@ impl Router {
     /// Plans a connection on the tile graph: Dijkstra over (layer, tile)
     /// from the source tiles to any target tile, where a tile costs more the
     /// fuller it is. Returns the tiles on the path, grown by `margin` tiles.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the search's state, its ends and the planner's settings, all read once"
+    )]
     fn plan_corridor(
         &self,
         net: NetId,
@@ -4868,7 +4899,7 @@ impl Router {
     /// batch. Pour nets and nets without a bounded window get a batch each.
     fn batches(&self, pending: &[NetId], growth: f64) -> Vec<Vec<NetId>> {
         let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
-        let mut batches: Vec<(Vec<NetId>, Vec<(usize, usize, usize, usize)>)> = Vec::new();
+        let mut batches: Vec<(Vec<NetId>, Vec<CellWindow>)> = Vec::new();
         for net in pending {
             let window = self.window(*net, growth);
             let alone = window == full || !self.nets[*net as usize].plane.is_empty();
@@ -5346,7 +5377,7 @@ impl Router {
 
     /// Registers a hook called after every negotiation iteration with the
     /// iteration count and the routing as it stands (see `snapshot`).
-    pub fn set_frame_hook(&mut self, hook: Arc<dyn Fn(usize, &RoutingResult) + Send + Sync>) {
+    pub fn set_frame_hook(&mut self, hook: FrameHook) {
         self.frame_hook = Some(hook);
     }
 
@@ -7668,7 +7699,7 @@ impl Router {
         skip: &dyn Fn(usize) -> bool,
         rings: &[Vec<(usize, f64)>],
         branch_pieces: &[Vec<(u32, usize)>],
-        mut report: Option<&mut Vec<SpokeRecord>>,
+        report: Option<&mut Vec<SpokeRecord>>,
     ) -> Vec<(usize, usize)> {
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
@@ -7782,13 +7813,7 @@ impl Router {
         // spokes reach; in a solid one the pad's relief takes them, and
         // the DRC counts what crosses their rings, the pad's own spokes).
         // Per pad, whether it lies inside its terminal's pad on the layer.
-        let mut spoke_pads: Vec<(
-            usize,
-            usize,
-            crate::geometry::Point,
-            std::collections::BTreeSet<usize>,
-            std::collections::BTreeSet<usize>,
-        )> = Vec::new();
+        let mut spoke_pads: Vec<SpokePad> = Vec::new();
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             let layers_of_nodes: std::collections::BTreeSet<usize> =
                 nodes.iter().map(|node| node.layer as usize).collect();
@@ -9008,7 +9033,7 @@ impl Router {
                 }
             }
         }
-        if let Some(report) = report.as_deref_mut() {
+        if let Some(report) = report {
             report.extend(records);
         }
         probe.charge();
@@ -9779,7 +9804,7 @@ impl Router {
         let state = &self.nets[net as usize];
         let description = &self.board.nets[net as usize];
         let mut result = vec![Vec::new(); layers];
-        for layer in 0..layers {
+        for (layer, pads) in result.iter_mut().enumerate() {
             if state.plane[layer].is_empty() {
                 continue;
             }
@@ -9813,7 +9838,7 @@ impl Router {
                 if self.board.obstacles[terminal.pad].layers & (1 << layer) == 0 {
                     continue;
                 }
-                result[layer].push((terminal.pad, reach));
+                pads.push((terminal.pad, reach));
             }
             // KiCad cuts a relief (and in a hatched zone adds a ring) around
             // every thermal pad, a pad merged into its terminal's larger pad
@@ -9830,7 +9855,7 @@ impl Router {
                     .get(merged.host)
                     .is_some_and(|host| thermal(&host.label))
                 {
-                    result[layer].push((merged.pad, reach));
+                    pads.push((merged.pad, reach));
                 }
             }
         }
@@ -10046,7 +10071,7 @@ impl Router {
                     )?;
                 }
             }
-            for layer in 0..layers {
+            for (layer, ring) in rings.iter().enumerate() {
                 if state.plane[layer].is_empty() {
                     continue;
                 }
@@ -10088,7 +10113,7 @@ impl Router {
                     if self.occupancy[map][cell] as usize == own.contains(map, cell) as usize {
                         flags[cell] |= 4;
                     }
-                    if !rings[layer][cell] {
+                    if !ring[cell] {
                         flags[cell] |= 8;
                     }
                     if pours.solid[layer][cell] {
@@ -10137,7 +10162,7 @@ impl Router {
         &self,
         net: NetId,
         pours: &crate::pour::PourMap,
-        parent: &mut Vec<usize>,
+        parent: &mut [usize],
         main: usize,
         anchors: &HashMap<usize, crate::geometry::Point>,
         main_only: bool,
@@ -11304,7 +11329,7 @@ mod tests {
                 last = 0;
                 continue;
             }
-            if (state >> 60) % 3 == 0 {
+            if (state >> 60).is_multiple_of(3) {
                 let popped = heap.pop();
                 assert_eq!(popped, reference.pop().map(|std::cmp::Reverse(key)| key));
                 if let Some(key) = popped {

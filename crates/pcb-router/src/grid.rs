@@ -210,7 +210,7 @@ impl Grid {
         let y0 = low(bounds.minimum[1], self.origin[1]).max(0.0);
         let x1 = high(bounds.maximum[0], self.origin[0]).min(self.nx as f64 - 1.0);
         let y1 = high(bounds.maximum[1], self.origin[1]).min(self.ny as f64 - 1.0);
-        (x0 <= x1 && y0 <= y1).then(|| (x0 as usize, y0 as usize, x1 as usize, y1 as usize))
+        (x0 <= x1 && y0 <= y1).then_some((x0 as usize, y0 as usize, x1 as usize, y1 as usize))
     }
 
     pub fn nearest_node(&self, point: Point) -> Option<usize> {
@@ -260,9 +260,9 @@ impl Grid {
             maximum: [f64::NEG_INFINITY; 2],
         };
         for point in &board.outline {
-            for axis in 0..2 {
-                bounds.minimum[axis] = bounds.minimum[axis].min(point[axis]);
-                bounds.maximum[axis] = bounds.maximum[axis].max(point[axis]);
+            for (axis, value) in point.iter().enumerate() {
+                bounds.minimum[axis] = bounds.minimum[axis].min(*value);
+                bounds.maximum[axis] = bounds.maximum[axis].max(*value);
             }
         }
         let channels = tight_channels(board);
@@ -488,7 +488,7 @@ impl StaticMaps {
                 .map(|(a, b)| a[0] + (line - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
                 .collect();
             crossings.sort_by(f64::total_cmp);
-            for span in crossings.chunks_exact(2) {
+            for span in crossings.as_chunks::<2>().0 {
                 let x0 = ((span[0] - grid.origin[0]) / grid.pitch).ceil().max(0.0) as usize;
                 let x1 = ((span[1] - grid.origin[0]) / grid.pitch).floor();
                 if x1 < 0.0 {
@@ -880,6 +880,9 @@ impl PolygonField {
                 let point = grid.center(x, y)[0];
                 // `point_in_polygon`: inside where an odd number of
                 // crossings lie beyond the point.
+                // Not `crossing <= point`: a NaN crossing counts as not
+                // beyond, as in `point_in_polygon`.
+                #[allow(clippy::neg_cmp_op_on_partial_ord)]
                 let beyond =
                     crossings.len() - crossings.partition_point(|crossing| !(point < *crossing));
                 if beyond % 2 == 1 {
