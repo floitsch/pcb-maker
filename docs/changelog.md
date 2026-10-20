@@ -11,6 +11,93 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-16 (quality: pcb-router)
+
+A code-quality package for `crates/pcb-router`, no algorithm change:
+every step routes byte-identically to x1170 (main 54eff39). Branch
+`quality-router`, four commits, snapshots x1180 to x1183 (one per step)
+and x1184 (the four rebased on main, the gates' last binary). Finished on
+2026-10-21 after a pause; the date is the package's start.
+
+**1. Settled switches removed** (x1180; the router crate -350 lines).
+Each restored the code before a change for A/B runs, and the changelog
+section that introduced it records the measurement that settled it. Gone,
+with their old code paths, the current path the only one:
+`PCB_ROUTER_OLD_SPOKES`, `NO_MANUAL_SPOKES` (the fields `kicad_spokes`
+and `manual_spokes` stay switchable: router.json sets them),
+`NO_ISLAND_VIAS` (`island_vias`), `OLD_TRACKED` (`track_meets_spokes`),
+`NO_FOREIGN_SPOKES`, `OLD_TRACK_PIECES` (`track_touch_fill`),
+`NO_NECK_JOINS`, `OLD_SPOKE_FRAMES`, `NO_INNER_PADS`, `OLD_TRACK_ENDS`
+(`track_end_tolerance`), `NO_INNER_SPOKES`, `OLD_TRACKS_FILL`
+(`tracks_rung_fill` and `Router::hatch_any_plane`), `OLD_TRACK_RUNS`
+(`track_end_junctions`), `NO_ZONE_SEAMS`, `OLD_SPOKE_CLEAR`
+(`spoke_clear_to_fill`), `OLD_HOPELESS` (`unreachable_terminals`),
+`OLD_RESOLVE` (`resolve_keeps_partial`), `OLD_FILL_CLEARANCE` (board.rs),
+`OLD_POLYGON_DISTANCES` (grid.rs), `REROUTE_FRACTION`, and the
+`jacobi_batch` option with `route_jacobi` (`PCB_JACOBI_BATCH` is still
+read by src/main.rs into the pcb-kicad field, which no longer reaches the
+router). `PCB_ROUTER_NO_ISLAND_STUBS` stays (a default for Florian). The
+tests' "old" halves went; their current halves stay.
+
+**2. Parked speculation removed** (x1181; -791 lines): `speculate`,
+`speculate_cleanup`, `speculate_paths`, `route_batches` (now a loop over
+`route_batch`), `ReadSet` and its notes in the search, the planner and the
+per-search escapes loop (which only noted reads), `changed_cells`,
+`mark_dirty_blocks`, `clean_up_window`, `clean_up_batch`, the speculative
+part of `clean_up`, the profile line's speculation counts, and
+`PCB_ROUTER_NO_SPECULATION`, `SPECULATE_PATHS`, `SPECULATION_CHECK`,
+`SPECULATION_NO_TILES`, `CLEANUP_WINDOW`. The code is in e256657, which
+added it (router.md, "Known limits"). Also `hard_thermal_guards` and
+`stitch_in_negotiation` (off, measured worse in the 2026-10-09 sections,
+unset by pcb-kicad). `pour_whole_rip_up` stays: it is on by default.
+
+**3. Clippy** (x1182; +33 lines): pcb-router is clippy-clean
+(`cargo clippy -p pcb-router --all-targets`): iterators for the indexed
+loops, `is_multiple_of`, `as_chunks`, a slice for `stitching_vias`'
+parent, type aliases (`FrameHook`, `SpokeCorridors`, `CellWindow`,
+`SpokePad`, `RoutedItem`), `too_many_arguments` allowed on `plan_corridor`
+with a reason, `neg_cmp_op_on_partial_ord` allowed where a NaN crossing
+must count as not beyond.
+
+**4. router.rs split** (x1183; pure moves, +324 lines of headers and
+`use`): router.rs (15 395 lines at 54eff39, 14 291 before the split) keeps
+the shared state and helpers in 920 lines; `router/` has config, result,
+heap, wall, hash, profile, and `impl Router` in build, escapes, guards,
+prepare, stamping, route_net, planner, search, update, batching, global,
+driver, fixed, negotiate, pour_refresh, vias, finish, pour_analysis,
+spokes, manual_spokes, pour_dump, stitch, cleanup, resolve, output; the
+tests in router/tests.rs. Methods are `pub(super)`; the paths pcb-kicad
+uses are re-exported (`router::{Config, Router, EXPANSIONS_PER_SECOND,
+GUARD, wall_cuts, wall_guard, note_wall_cut, WALL_CUTS, build_totals,
+congestion::tile_frame}`). router.md, "How it works", lists the files.
+
+**Gates**, after every step: `cargo test --release -p pcb-router -p
+pcb-kicad` (58 router tests, the dropped halves aside, and pcb-kicad's
+365). Route mode on the v16 placements (`--route-from
+build/github-layout-v16 --tasks build/github-tasks-v6/tasks.json --jobs 2
+--threads 4`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`) of
+Castor, k30-SBC, jetson, Sisu, urchin and spell_tome, x1180, x1181, x1182
+and x1184 (the four commits rebased on fb4b7e6) each against x1170: the
+same board md5, vias, length, work seconds (1649.8, 1032.0, 418.5, 310.7,
+16.8, 1.0), verdict and fingerprints on every board (`build/qb-x1170*`,
+`build/qb-x118*`). `PCB_ROUTER_FINGERPRINT_ALL` at a quarter budget, two
+threads, on Castor and k30-SBC, x1184 against x1170: identical
+(`build/qb-fpall-*`). The starved-thermal census (census.py, fill3 KiCad
+cache, 44 boards) 162 predicted / 7 missed / 26 false alarms / 2 not
+modelled for x1170 and every step, the whole output identical
+(`build/qb-census`). Short tier (tasks v6, 6 x 4 under the lock) x1184
+against `build/short-x1170.log`: all 12 rows identical apart from CPU,
+wall, load and memory (unconnected 19, new errors 2, 1134 vias, 21228 mm,
+work 2501 s, passes 7, first-route open terminals 26).
+
+Not pure clean-ups, for the reviewer: pcb-kicad's `jacobi_batch` field
+(board_router.rs) and the `PCB_JACOBI_BATCH` line of src/main.rs stay but
+do nothing now (the three lines that passed the field on were removed so
+that pcb-kicad compiles); the verbose `profile:` line lost its speculation
+counts and the `PCB_ROUTER_DEBUG` batch sizes their `j` marks; the
+net-count assertion of `build` keeps its 15-bit limit, which the hard
+guard's bit no longer needs.
+
 ## Committed on 2026-10-21 (expansion tier)
 
 The intake's proposed 46-board tier (benchmarks/expansion/analysis) as a

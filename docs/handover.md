@@ -359,20 +359,19 @@ Diagnostics (stderr unless said):
 - `PCB_ROUTER_SEED=N`: perturbs the net order and seeds the history with
   noise, so one board routes many ways.
 
-Old-path A/B switches, **being removed** by the router and kicad quality
-packages (each restores the code before a change, for A/B runs):
-`PCB_ROUTER_OLD_*` (`FILL_CLEARANCE`, `HOPELESS`, `POLYGON_DISTANCES`,
-`RESOLVE`, `SPOKE_CLEAR`, `SPOKE_FRAMES`, `SPOKES`, `TRACKED`,
-`TRACK_ENDS`, `TRACK_PIECES`, `TRACK_RUNS`, `TRACKS_FILL`),
-`PCB_ROUTER_NO_*` (`FOREIGN_SPOKES`, `INNER_PADS`, `INNER_SPOKES`,
-`ISLAND_STUBS`, `ISLAND_VIAS`, `MANUAL_SPOKES`, `NECK_JOINS`,
-`ZONE_SEAMS`), `PCB_KICAD_OLD_ZONE_ARCS`, `PCB_LADDER_OLD_RESERVE`,
+Old-path A/B switches, **being removed** by the kicad quality package
+(each restores the code before a change, for A/B runs):
+`PCB_KICAD_OLD_ZONE_ARCS`, `PCB_LADDER_OLD_RESERVE`,
 `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`, `PCB_LAYOUT_NARROW_CONTINUATION` and
-`_FLOOR`. Other experiment hooks in the code, undocumented on purpose:
-`PCB_JACOBI_BATCH`, `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`,
-`PCB_ROUTER_CLEANUP_WINDOW`, `PCB_ROUTER_REROUTE_FRACTION`,
-`PCB_ROUTER_NO_SPECULATION`, `PCB_ROUTER_SPECULATE_PATHS`,
-`PCB_ROUTER_SPECULATION_CHECK`, `PCB_ROUTER_SPECULATION_NO_TILES`,
+`_FLOOR`. The router's (`PCB_ROUTER_OLD_*`, `PCB_ROUTER_NO_*` but
+`NO_ISLAND_STUBS` and `NO_WALL_GUARD`, `PCB_ROUTER_REROUTE_FRACTION`, the
+speculation switches and `PCB_ROUTER_CLEANUP_WINDOW`) were removed on
+2026-10-16 (changelog.md, "quality: pcb-router"); `PCB_JACOBI_BATCH` is
+still read by src/main.rs but no longer reaches the router.
+`PCB_ROUTER_NO_ISLAND_STUBS` turns off the island stubs
+(`Config::island_stubs`, on), a default Florian has not settled. Other
+experiment hooks in the code, undocumented on purpose:
+`PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`,
 `PCB_PLACER_CHANNEL_SELF`, `PCB_TOPO_*`,
 `PCB_MAKER_KICAD_VERIFICATION_CACHE*`; test fixtures
 `PCB_MAKER_JOINT_RETAINED_FIXTURE_ROOT`, `PCB_MAKER_KEEP_TEST_ARTIFACTS`.
