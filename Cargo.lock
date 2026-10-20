@@ -401,17 +401,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "layout-trace-routing"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "serde",
- "serde_json",
- "sha2",
- "spade",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -615,39 +604,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
-name = "pcb-benchmark"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "pcb-coordinator",
- "pcb-kicad",
- "pcb-placement",
- "pcb-routing",
- "pcb-validate",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "pcb-congestion"
 version = "0.1.0"
 dependencies = [
  "pcb-router",
  "tract-onnx",
-]
-
-[[package]]
-name = "pcb-coordinator"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "pcb-placement",
- "pcb-routing",
- "pcb-validate",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -693,25 +654,7 @@ name = "pcb-maker"
 version = "0.1.0"
 dependencies = [
  "layout-trace-model",
- "pcb-benchmark",
- "pcb-coordinator",
- "pcb-core",
- "pcb-engine",
- "pcb-grid-router",
  "pcb-kicad",
- "pcb-placement",
- "pcb-routing",
- "pcb-validate",
- "pcb-viewer",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pcb-placement"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
  "serde",
  "serde_json",
 ]
@@ -728,44 +671,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcb-routing"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "layout-trace-routing",
- "pcb-core",
- "pcb-engine",
- "pcb-grid-router",
- "pcb-validate",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pcb-topo"
 version = "0.1.0"
 dependencies = [
  "pcb-router",
  "spade",
-]
-
-[[package]]
-name = "pcb-validate"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pcb-viewer"
-version = "0.1.0"
-dependencies = [
- "layout-trace-model",
- "pcb-core",
- "pcb-validate",
- "serde_json",
 ]
 
 [[package]]
