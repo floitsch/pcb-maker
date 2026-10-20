@@ -24,6 +24,70 @@
 
 use super::*;
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
+
+/// Footprint graphics the canonical order moved: by a digest of the
+/// footprint's reference and graphics in the canonical order, each
+/// graphic's index among the graphics of the file read. The writer
+/// ([`source_order`]) puts them back: KiCad chains a footprint's
+/// courtyard from its graphics in file order, and a courtyard with
+/// zero-length lines (AccordeurDeGuitare's MK1: two arcs and two
+/// points) is closed in the designer's order and "malformed" in ours.
+/// A footprint whose graphics changed since (flipped, a label moved) is
+/// written in the canonical order.
+static SOURCE_ORDERS: OnceLock<Mutex<HashMap<u64, Vec<usize>>>> = OnceLock::new();
+
+fn source_orders() -> std::sync::MutexGuard<'static, HashMap<u64, Vec<usize>>> {
+    SOURCE_ORDERS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The digest of a footprint's reference and graphics, in their order.
+fn graphics_digest(footprint: &Expr) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    footprint_reference(footprint).hash(&mut hasher);
+    for item in footprint
+        .children()
+        .iter()
+        .filter(|item| item.head().is_some_and(graphic))
+    {
+        encode_canonical(item).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// The order to write a footprint's items in: its graphics in the order
+/// of the file it was read from, when the canonical order moved them and
+/// they are unchanged since; None to write them as they are.
+pub(crate) fn source_order(footprint: &Expr) -> Option<Vec<usize>> {
+    let items = footprint.children();
+    let places: Vec<usize> = (0..items.len())
+        .filter(|&index| items[index].head().is_some_and(graphic))
+        .collect();
+    if places.len() < 2 {
+        return None;
+    }
+    if SOURCE_ORDERS
+        .get()
+        .is_none_or(|_| source_orders().is_empty())
+    {
+        return None;
+    }
+    let digest = graphics_digest(footprint);
+    let sources = source_orders().get(&digest)?.clone();
+    if sources.len() != places.len() {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    for (canonical, source) in sources.into_iter().enumerate() {
+        order[places[source]] = places[canonical];
+    }
+    Some(order)
+}
 
 /// Parses a `.kicad_pcb` text and sorts it ([`canonical_order`]).
 pub(crate) fn parse_board(text: &str) -> Result<Expr, String> {
@@ -76,14 +140,14 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> Ordering {
 /// which it is.
 fn content_text(item: &Expr) -> String {
     match item {
-        Expr::List(items) => encode(&Expr::List(
+        Expr::List(items) => encode_canonical(&Expr::List(
             items
                 .iter()
                 .filter(|child| !matches!(child.head(), Some("uuid" | "tstamp")))
                 .cloned()
                 .collect(),
         )),
-        Expr::Atom(_) => encode(item),
+        Expr::Atom(_) => encode_canonical(item),
     }
 }
 
@@ -108,24 +172,28 @@ fn sort_in_place<K>(
     kind: impl Fn(&Expr) -> bool,
     key: impl Fn(&Expr) -> K,
     compare: impl Fn(&K, &K) -> Ordering,
-) {
+) -> Vec<usize> {
     let places: Vec<usize> = (0..items.len())
         .filter(|&index| kind(&items[index]))
         .collect();
     if places.len() < 2 {
-        return;
+        return (0..places.len()).collect();
     }
-    let mut keyed: Vec<(K, Expr)> = places
+    let mut keyed: Vec<(K, usize, Expr)> = places
         .iter()
-        .map(|&index| {
+        .enumerate()
+        .map(|(source, &index)| {
             let item = std::mem::replace(&mut items[index], Expr::List(Vec::new()));
-            (key(&item), item)
+            (key(&item), source, item)
         })
         .collect();
-    keyed.sort_by(|(a, _), (b, _)| compare(a, b));
-    for (place, (_, item)) in places.into_iter().zip(keyed) {
+    keyed.sort_by(|(a, _, _), (b, _, _)| compare(a, b));
+    let mut sources = Vec::with_capacity(places.len());
+    for (place, (_, source, item)) in places.into_iter().zip(keyed) {
         items[place] = item;
+        sources.push(source);
     }
+    sources
 }
 
 /// Sorts a footprint's pads, graphics and zones (see the module's
@@ -149,7 +217,13 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
                     .and_then(|value| value.parse::<f64>().ok())
                     .unwrap_or(0.0)
             };
-            (number, at(1), at(2), content_text(pad), encode(pad))
+            (
+                number,
+                at(1),
+                at(2),
+                content_text(pad),
+                encode_canonical(pad),
+            )
         },
         |a, b| {
             natural_cmp(&a.0, &b.0)
@@ -159,22 +233,33 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
                 .then_with(|| a.4.cmp(&b.4))
         },
     );
-    sort_in_place(
+    let sources = sort_in_place(
         items,
         |item| item.head().is_some_and(graphic),
         |item| {
             (
                 form_atom(item, "layer", 1).unwrap_or("").to_string(),
                 content_text(item),
-                encode(item),
+                encode_canonical(item),
             )
         },
         |a, b| a.cmp(b),
     );
+    if sources
+        .iter()
+        .enumerate()
+        .any(|(index, source)| index != *source)
+    {
+        let digest = graphics_digest(footprint);
+        source_orders().insert(digest, sources);
+    }
+    let Expr::List(items) = footprint else {
+        return;
+    };
     sort_in_place(
         items,
         |item| item.head() == Some("zone"),
-        |zone| (content_text(zone), encode(zone)),
+        |zone| (content_text(zone), encode_canonical(zone)),
         |a, b| a.cmp(b),
     );
 }
@@ -198,7 +283,7 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
             (
                 footprint_reference(footprint).unwrap_or_default(),
                 footprint_uuid(footprint).unwrap_or_default(),
-                encode(footprint),
+                encode_canonical(footprint),
             )
         },
         |a, b| {
@@ -219,6 +304,60 @@ mod tests {
             .filter(|item| item.head() == Some("footprint"))
             .map(|footprint| footprint_reference(footprint).unwrap_or_default())
             .collect()
+    }
+
+    #[test]
+    fn footprint_graphics_are_written_in_the_files_order() {
+        // AccordeurDeGuitare's microphone MK1 (pixzrr/AccordeurDeGuitare,
+        // carteCMS/cms-KiCad, Apache-2.0): its courtyard is two points and
+        // two arcs, and KiCad closes it only in this order; sorted, the
+        // arcs came first and KiCad's DRC found the courtyard malformed.
+        let text = r#"(kicad_pcb (version 20240108)
+          (footprint "accordeurEmp:micro-KECG2740PBJ" (layer "F.Cu") (at 131.55 155 90)
+            (property "Reference" "MK1" (at 0 0 0) (layer "F.SilkS") (uuid "r"))
+            (fp_line (start 0.5 -3.05) (end 0.5 -3.05) (stroke (width 0.1) (type solid)) (layer "F.CrtYd") (uuid "c0f5ce33-7126-4c44-b647-a7bf524c5f7a"))
+            (fp_line (start 0.5 4.95) (end 0.5 4.95) (stroke (width 0.1) (type solid)) (layer "F.CrtYd") (uuid "9c06ef35-75e1-4290-a7ed-50cbf7c00a80"))
+            (fp_arc (start 0.5 -3.05) (mid 4.5 0.95) (end 0.5 4.95) (stroke (width 0.1) (type solid)) (layer "F.CrtYd") (uuid "c24589b9-e11c-4bd5-bcdd-baae5114db0a"))
+            (fp_arc (start 0.5 4.95) (mid -3.5 0.95) (end 0.5 -3.05) (stroke (width 0.1) (type solid)) (layer "F.CrtYd") (uuid "d37d713a-7f5a-44f3-a762-468e9ea0fe9c"))
+            (fp_line (start 0.5 -2.05) (end 0.5 -2.05) (stroke (width 0.2) (type solid)) (layer "F.Fab") (uuid "60dedca2-f33b-49dd-8639-4b62dc5ae040"))
+            (fp_line (start 0 -2.75) (end 0 -2.75) (stroke (width 0.2) (type solid)) (layer "F.SilkS") (uuid "331b257e-deb9-40a2-83e0-4fce98b82b56"))
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))))"#;
+        let heads = |pcb: &Expr| -> Vec<String> {
+            pcb.child("footprint")
+                .unwrap()
+                .children()
+                .iter()
+                .filter(|item| item.head().is_some_and(graphic))
+                .map(|item| {
+                    let uuid = item.child("uuid").unwrap().children()[1].atom().unwrap();
+                    format!("{} {}", item.head().unwrap(), &uuid[..4])
+                })
+                .collect()
+        };
+        let source = parse(text).unwrap();
+        let sorted = parse_board(text).unwrap();
+        // Held in the canonical order: arcs before points, F.CrtYd first.
+        assert_eq!(heads(&sorted)[..2], ["fp_arc c245", "fp_arc d37d"]);
+        // Written in the file's.
+        let written = parse(&encode(&sorted)).unwrap();
+        assert_eq!(heads(&written), heads(&source));
+        assert_eq!(encode(&sorted), encode(&source));
+        // Keys and digests see the canonical order.
+        assert_ne!(encode_canonical(&sorted), encode(&sorted));
+        // A footprint whose graphics changed is written as it is held.
+        let mut changed = sorted.clone();
+        if let Expr::List(items) = &mut changed
+            && let Some(Expr::List(footprint)) = items
+                .iter_mut()
+                .find(|item| item.head() == Some("footprint"))
+            && let Some(Expr::List(line)) = footprint
+                .iter_mut()
+                .find(|item| item.head() == Some("fp_line"))
+        {
+            line.push(Expr::Atom("changed".into()));
+        }
+        let written = parse(&encode(&changed)).unwrap();
+        assert_eq!(heads(&written), heads(&changed));
     }
 
     #[test]

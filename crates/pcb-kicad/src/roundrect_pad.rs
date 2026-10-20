@@ -3,6 +3,9 @@
 //! KiCad's effective rounded-rectangle copper, expressed in existing primitives.
 use super::*;
 
+/// KiCad's corner ratio for a rounded-rectangle pad that names none.
+const DEFAULT_ROUNDRECT_RATIO: f64 = 0.25;
+
 pub(super) fn geometry(
     pad: &Expr,
     center: [f64; 2],
@@ -141,8 +144,13 @@ fn geometry_with(
     {
         return Err("roundrect pad requires finite positive dimensions and finite pose".into());
     }
-    let ratio = form_f64(ratio_of, "roundrect_rratio", 1)
-        .map_err(|_| "roundrect pad requires an explicit numeric roundrect_rratio".to_string())?;
+    // Without a ratio KiCad keeps its pad default, a quarter (PADSTACK's
+    // SHAPE_PROPS); one that is there must be a number.
+    let ratio = match ratio_of.child("roundrect_rratio") {
+        None => DEFAULT_ROUNDRECT_RATIO,
+        Some(_) => form_f64(ratio_of, "roundrect_rratio", 1)
+            .map_err(|_| "roundrect pad requires a numeric roundrect_rratio".to_string())?,
+    };
     if !ratio.is_finite() || !(0.0..=0.5).contains(&ratio) {
         return Err("roundrect_rratio must be finite and between zero and 0.5".into());
     }
@@ -322,6 +330,27 @@ mod tests {
     }
     fn pad(ratio: &str) -> Expr {
         parse(&format!("(pad \"1\" smd roundrect (at 0 0) (size 2 2) (layers \"F.Cu\") (roundrect_rratio {ratio}))")).unwrap()
+    }
+    #[test]
+    fn roundrect_without_a_ratio_takes_kicads_quarter() {
+        // A pad with no roundrect_rratio (a generated board's 0.3 x 1.2 mm
+        // connector pads, lumen-tap), which KiCad loads with its default.
+        let bare =
+            parse(r#"(pad "1" smd roundrect (at -3.5 0) (size 0.3 1.2) (layers "F.Cu"))"#).unwrap();
+        let quarter = parse(
+            r#"(pad "1" smd roundrect (at -3.5 0) (size 0.3 1.2) (layers "F.Cu") (roundrect_rratio 0.25))"#,
+        )
+        .unwrap();
+        let (a, b) = (
+            geometry(&bare, [-3.5, 0.0], [0.3, 1.2], 0.0).unwrap(),
+            geometry(&quarter, [-3.5, 0.0], [0.3, 1.2], 0.0).unwrap(),
+        );
+        for point in [[-3.36, 0.59], [-3.37, 0.58], [-3.5, 0.6], [-3.35, 0.0]] {
+            assert_eq!(a.contains(point, 0.0), b.contains(point, 0.0), "{point:?}");
+        }
+        assert!(!a.contains([-3.36, 0.59], 0.0));
+        // A ratio that is there must be a number.
+        assert!(geometry(&pad("x"), [0.0; 2], [2.0; 2], 0.0).is_err());
     }
     #[test]
     fn roundrect_corner_gap_is_not_its_square_envelope() {

@@ -5,6 +5,7 @@
 //! the board; all others are cutouts.
 
 use super::*;
+use std::collections::HashMap;
 
 pub(super) struct BoardLoops {
     pub outline: Vec<[f64; 2]>,
@@ -72,11 +73,24 @@ pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
                 expression_coordinate(point, 2, "polygon y")?,
             ]),
             Some("arc") => {
-                for at in arc_points(
+                let (start, mid, end) = (
                     form_xy(point, "start")?,
                     form_xy(point, "mid")?,
                     form_xy(point, "end")?,
-                ) {
+                );
+                // An arc that ends where it starts is a full circle, as
+                // KiCad reads it (its arc centre is then halfway between
+                // start and mid): rule areas drawn as one closed arc (the
+                // 30led card's 26 mm NFC keepout, mounting-hole keepouts)
+                // were two points.
+                let arc = match full_circle(start, mid).filter(|_| closed_arc(start, end)) {
+                    Some(mut circle) => {
+                        circle.push(start);
+                        circle
+                    }
+                    None => arc_points(start, mid, end),
+                };
+                for at in arc {
                     if points.last() != Some(&at) {
                         points.push(at);
                     }
@@ -85,10 +99,55 @@ pub(super) fn pts_points(item: &Expr) -> Result<Vec<[f64; 2]>, String> {
             _ => {}
         }
     }
-    if points.len() > 1 && points.first() == points.last() {
+    // The closing point repeated is dropped, unless that leaves fewer than
+    // three: a degenerate polygon (BratwurstPower's 2 nm wide copper
+    // slivers, [a, b, a]) stays the zero-area shape KiCad keeps, not an
+    // error.
+    if points.len() > 3 && points.first() == points.last() {
         points.pop();
     }
     Ok(points)
+}
+
+/// A full circle through `start` and the opposite point `mid` (an arc
+/// whose end is its start, as KiCad draws a circle with an arc), closed:
+/// its points from `start` around and back to just before `start`. None
+/// when `start` and `mid` coincide.
+pub(super) fn full_circle(start: [f64; 2], mid: [f64; 2]) -> Option<Vec<[f64; 2]>> {
+    if distance_squared(start, mid).sqrt() <= 1.0e-6 {
+        return None;
+    }
+    let center = [(start[0] + mid[0]) / 2.0, (start[1] + mid[1]) / 2.0];
+    let quarter = [
+        center[0] - (start[1] - center[1]),
+        center[1] + (start[0] - center[0]),
+    ];
+    let back = [2.0 * center[0] - quarter[0], 2.0 * center[1] - quarter[1]];
+    let mut points = arc_points(start, quarter, mid);
+    points.pop();
+    points.extend(arc_points(mid, back, start));
+    points.pop();
+    Some(points)
+}
+
+/// How many different points `points` holds (a polygon with fewer than
+/// three is degenerate).
+pub(super) fn distinct_points(points: &[[f64; 2]]) -> usize {
+    let mut seen: Vec<[f64; 2]> = Vec::new();
+    for point in points {
+        if !seen.contains(point) {
+            seen.push(*point);
+            if seen.len() >= 3 {
+                break;
+            }
+        }
+    }
+    seen.len()
+}
+
+/// Whether an arc ends where it starts.
+fn closed_arc(start: [f64; 2], end: [f64; 2]) -> bool {
+    distance_squared(start, end).sqrt() < 1.0e-6
 }
 
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
@@ -175,118 +234,142 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
         / 2.0
 }
 
-pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
-    let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
-    let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
-    // Whether each loop and open piece is the board's own graphics.
-    let mut loop_on_board: Vec<bool> = Vec::new();
-    let mut open_on_board: Vec<bool> = Vec::new();
-    // Footprints may carry part of the outline (card-edge notches); their
-    // graphics are in the footprint frame.
-    let identity = [0.0, 0.0, 0.0];
-    let items: Vec<(&Expr, [f64; 3])> = pcb
-        .children()
+/// Closed loops chained from open pieces, each with whether all its
+/// pieces are the board's own graphics.
+type Chained = Vec<(Vec<[f64; 2]>, bool)>;
+
+const NOT_CLOSED: &str = "Edge.Cuts graphics do not form closed loops";
+
+/// KiCad's chaining distance (`BOARD::GetBoardPolygonOutlines`), in
+/// nanometres: an end joins the next piece's end within it.
+const KICAD_CHAINING_EPSILON_NM: i64 = 20_000;
+
+/// The open pieces chained as KiCad's `ConvertOutlineToPolygon` chains
+/// them, in its integer nanometres: from the current end, an unused piece
+/// with an end exactly there; else the nearest end of any other piece,
+/// used or not, closer than the chaining distance. An unused one is
+/// followed; otherwise the chain closes when its end is within the
+/// distance of its start, and the outline is not closed when it is not.
+/// Pieces start in their order (KiCad's first outline starts at the
+/// leftmost piece; which loop starts where does not change the loops).
+fn chain_as_kicad(open: &[Vec<[f64; 2]>], open_on_board: &[bool]) -> Result<Chained, String> {
+    type Point = (i64, i64);
+    let nm = |point: [f64; 2]| -> Point {
+        (
+            (point[0] * 1.0e6).round() as i64,
+            (point[1] * 1.0e6).round() as i64,
+        )
+    };
+    let ends: Vec<[Point; 2]> = open
         .iter()
-        .flat_map(|item| -> Vec<(&Expr, [f64; 3])> {
-            if item.head() == Some("footprint") {
-                let at = form_at(item).unwrap_or(identity);
-                item.children().iter().map(|child| (child, at)).collect()
-            } else {
-                vec![(item, identity)]
-            }
-        })
+        .map(|piece| [nm(piece[0]), nm(*piece.last().unwrap())])
         .collect();
-    for (item, frame) in items {
-        if form_atom(item, "layer", 1) != Some("Edge.Cuts") {
+    let cell = |point: Point| {
+        (
+            point.0.div_euclid(KICAD_CHAINING_EPSILON_NM),
+            point.1.div_euclid(KICAD_CHAINING_EPSILON_NM),
+        )
+    };
+    let mut exact: HashMap<Point, Vec<usize>> = HashMap::new();
+    let mut cells: HashMap<Point, Vec<usize>> = HashMap::new();
+    for (index, pair) in ends.iter().enumerate() {
+        for end in pair {
+            exact.entry(*end).or_default().push(index);
+            let list = cells.entry(cell(*end)).or_default();
+            if list.last() != Some(&index) {
+                list.push(index);
+            }
+        }
+    }
+    let squared = |a: Point, b: Point| {
+        let (dx, dy) = ((a.0 - b.0) as i128, (a.1 - b.1) as i128);
+        dx * dx + dy * dy
+    };
+    let limit = (KICAD_CHAINING_EPSILON_NM as i128).pow(2);
+    let mut used = vec![false; open.len()];
+    let mut chained = Vec::new();
+    for first in 0..open.len() {
+        if used[first] {
             continue;
         }
-        let on_board = matches!(item.head(), Some(head) if head.starts_with("gr_"));
-        let place = |local: [f64; 2]| -> [f64; 2] {
-            let offset = rotate_vector(local, -frame[2]);
-            [frame[0] + offset[0], frame[1] + offset[1]]
-        };
-        let xy = |head: &str| -> Result<[f64; 2], String> { Ok(place(form_xy(item, head)?)) };
-        match item.head() {
-            Some("gr_line" | "fp_line") => open.push(vec![xy("start")?, xy("end")?]),
-            Some("gr_arc" | "fp_arc") => {
-                let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
-                if distance_squared(start, end).sqrt() < 1.0e-6
-                    && distance_squared(start, mid).sqrt() > 1.0e-6
-                {
-                    // An arc that ends where it starts is a full circle
-                    // (start and mid are opposite).
-                    let center = [(start[0] + mid[0]) / 2.0, (start[1] + mid[1]) / 2.0];
-                    let quarter = [
-                        center[0] - (start[1] - center[1]),
-                        center[1] + (start[0] - center[0]),
-                    ];
-                    let back = [2.0 * center[0] - quarter[0], 2.0 * center[1] - quarter[1]];
-                    let mut points = arc_points(start, quarter, mid);
-                    points.pop();
-                    points.extend(arc_points(mid, back, start));
-                    points.pop();
-                    loops.push(points);
-                } else {
-                    open.push(arc_points(start, mid, end));
-                }
-            }
-            Some("gr_rect" | "fp_rect") => {
-                let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
-                loops.push(
-                    [a, [b[0], a[1]], b, [a[0], b[1]]]
-                        .iter()
-                        .map(|corner| place(*corner))
-                        .collect(),
-                );
-            }
-            Some("gr_circle" | "fp_circle") => {
-                let center = xy("center")?;
-                let end = xy("end")?;
-                let opposite = [2.0 * center[0] - end[0], 2.0 * center[1] - end[1]];
-                let quarter = [
-                    center[0] - (end[1] - center[1]),
-                    center[1] + (end[0] - center[0]),
-                ];
-                let back = [2.0 * center[0] - quarter[0], 2.0 * center[1] - quarter[1]];
-                let mut points = arc_points(end, quarter, opposite);
-                points.pop();
-                points.extend(arc_points(opposite, back, end));
-                points.pop();
-                loops.push(points);
-            }
-            Some("gr_poly" | "fp_poly") => {
-                let points: Vec<[f64; 2]> = pts_points(item)?.into_iter().map(place).collect();
-                if points.len() >= 3 {
-                    loops.push(points);
-                }
-            }
-            Some("gr_curve" | "fp_curve") => {
-                let mut controls = Vec::new();
-                for point in item
-                    .child("pts")
-                    .map(Expr::children)
-                    .unwrap_or_default()
+        used[first] = true;
+        let mut chain = open[first].clone();
+        let mut on_board = open_on_board[first];
+        let start = ends[first][0];
+        let mut tail = ends[first][1];
+        let mut current = first;
+        loop {
+            // An unused piece with an end exactly here, the first in order.
+            let hit = exact.get(&tail).and_then(|indices| {
+                indices
                     .iter()
-                    .filter(|point| point.head() == Some("xy"))
-                {
-                    controls.push(place([
-                        expression_coordinate(point, 1, "outline x")?,
-                        expression_coordinate(point, 2, "outline y")?,
-                    ]));
+                    .copied()
+                    .find(|&index| index != current && !used[index])
+            });
+            // Else the nearest end of any other piece within the distance.
+            let next = hit.or_else(|| {
+                let (cx, cy) = cell(tail);
+                let mut best: Option<(i128, usize)> = None;
+                for x in cx - 1..=cx + 1 {
+                    for y in cy - 1..=cy + 1 {
+                        for &index in cells.get(&(x, y)).into_iter().flatten() {
+                            if index == current {
+                                continue;
+                            }
+                            for end in ends[index] {
+                                let distance = squared(tail, end);
+                                if distance < limit
+                                    && best.is_none_or(|(nearest, at)| {
+                                        (distance, index) < (nearest, at)
+                                    })
+                                {
+                                    best = Some((distance, index));
+                                }
+                            }
+                        }
+                    }
                 }
-                let [a, b, c, d] = controls[..] else {
-                    return Err("Edge.Cuts bezier curve needs four points".into());
-                };
-                let mut points = vec![a];
-                bezier_points([a, b, c, d], 0, &mut points);
-                open.push(points);
+                best.map(|(_, index)| index)
+            });
+            match next {
+                Some(index) if !used[index] => {
+                    used[index] = true;
+                    on_board &= open_on_board[index];
+                    let mut piece = open[index].clone();
+                    if squared(ends[index][1], tail) < squared(ends[index][0], tail) {
+                        piece.reverse();
+                    }
+                    for point in &piece[1..] {
+                        if chain.last() != Some(point) {
+                            chain.push(*point);
+                        }
+                    }
+                    tail = nm(*chain.last().unwrap());
+                    current = index;
+                }
+                _ if squared(start, tail) <= limit => {
+                    if chain.len() > 1 && nm(*chain.last().unwrap()) == nm(chain[0]) {
+                        chain.pop();
+                    }
+                    break;
+                }
+                _ => return Err(NOT_CLOSED.into()),
             }
-            _ => {}
         }
-        loop_on_board.resize(loops.len(), on_board);
-        open_on_board.resize(open.len(), on_board);
+        if chain.len() >= 3 {
+            chained.push((chain, on_board));
+        }
     }
+    Ok(chained)
+}
 
+/// The open pieces (lines, arcs, curves as point chains) chained into
+/// closed loops, with whether each loop is all the board's own graphics.
+fn chain_pieces(
+    mut open: Vec<Vec<[f64; 2]>>,
+    mut open_on_board: Vec<bool>,
+) -> Result<Chained, String> {
+    let mut chained = Vec::new();
     // End points closer than this belong together: drawings exported by
     // other tools miss by a few micrometres, and KiCad chains them.
     // End points closer than this belong together: arcs converted from
@@ -376,7 +459,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
                 // straight line, as KiCad's own outline tolerance would.
                 let others_open = (0..open.len()).any(|index| !used[index]);
                 if others_open {
-                    return Err("Edge.Cuts graphics do not form closed loops".into());
+                    return Err(NOT_CLOSED.into());
                 }
                 break;
             };
@@ -388,8 +471,124 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             }
             chain.extend_from_slice(&piece[1..]);
         }
+        chained.push((chain, chain_on_board));
+    }
+    Ok(chained)
+}
+
+pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
+    let mut loops: Vec<Vec<[f64; 2]>> = Vec::new();
+    let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
+    // Whether each loop and open piece is the board's own graphics.
+    let mut loop_on_board: Vec<bool> = Vec::new();
+    let mut open_on_board: Vec<bool> = Vec::new();
+    // Footprints may carry part of the outline (card-edge notches); their
+    // graphics are in the footprint frame.
+    let identity = [0.0, 0.0, 0.0];
+    let items: Vec<(&Expr, [f64; 3])> = pcb
+        .children()
+        .iter()
+        .flat_map(|item| -> Vec<(&Expr, [f64; 3])> {
+            if item.head() == Some("footprint") {
+                let at = form_at(item).unwrap_or(identity);
+                item.children().iter().map(|child| (child, at)).collect()
+            } else {
+                vec![(item, identity)]
+            }
+        })
+        .collect();
+    for (item, frame) in items {
+        if form_atom(item, "layer", 1) != Some("Edge.Cuts") {
+            continue;
+        }
+        let on_board = matches!(item.head(), Some(head) if head.starts_with("gr_"));
+        let place = |local: [f64; 2]| -> [f64; 2] {
+            let offset = rotate_vector(local, -frame[2]);
+            [frame[0] + offset[0], frame[1] + offset[1]]
+        };
+        let xy = |head: &str| -> Result<[f64; 2], String> { Ok(place(form_xy(item, head)?)) };
+        match item.head() {
+            Some("gr_line" | "fp_line") => open.push(vec![xy("start")?, xy("end")?]),
+            Some("gr_arc" | "fp_arc") => {
+                let (start, mid, end) = (xy("start")?, xy("mid")?, xy("end")?);
+                // An arc that ends where it starts is a full circle (start
+                // and mid are opposite).
+                if let Some(points) = full_circle(start, mid).filter(|_| closed_arc(start, end)) {
+                    loops.push(points);
+                } else {
+                    open.push(arc_points(start, mid, end));
+                }
+            }
+            Some("gr_rect" | "fp_rect") => {
+                let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
+                loops.push(
+                    [a, [b[0], a[1]], b, [a[0], b[1]]]
+                        .iter()
+                        .map(|corner| place(*corner))
+                        .collect(),
+                );
+            }
+            Some("gr_circle" | "fp_circle") => {
+                let center = xy("center")?;
+                let end = xy("end")?;
+                let opposite = [2.0 * center[0] - end[0], 2.0 * center[1] - end[1]];
+                let quarter = [
+                    center[0] - (end[1] - center[1]),
+                    center[1] + (end[0] - center[0]),
+                ];
+                let back = [2.0 * center[0] - quarter[0], 2.0 * center[1] - quarter[1]];
+                let mut points = arc_points(end, quarter, opposite);
+                points.pop();
+                points.extend(arc_points(opposite, back, end));
+                points.pop();
+                loops.push(points);
+            }
+            Some("gr_poly" | "fp_poly") => {
+                let points: Vec<[f64; 2]> = pts_points(item)?.into_iter().map(place).collect();
+                if distinct_points(&points) >= 3 {
+                    loops.push(points);
+                }
+            }
+            Some("gr_curve" | "fp_curve") => {
+                let mut controls = Vec::new();
+                for point in item
+                    .child("pts")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|point| point.head() == Some("xy"))
+                {
+                    controls.push(place([
+                        expression_coordinate(point, 1, "outline x")?,
+                        expression_coordinate(point, 2, "outline y")?,
+                    ]));
+                }
+                let [a, b, c, d] = controls[..] else {
+                    return Err("Edge.Cuts bezier curve needs four points".into());
+                };
+                let mut points = vec![a];
+                bezier_points([a, b, c, d], 0, &mut points);
+                open.push(points);
+            }
+            _ => {}
+        }
+        loop_on_board.resize(loops.len(), on_board);
+        open_on_board.resize(open.len(), on_board);
+    }
+
+    let chained = match chain_pieces(open.clone(), open_on_board.clone()) {
+        Ok(chained) => chained,
+        // The chaining above snaps each end to the nearest one seen before
+        // and drops pieces shorter than its tolerance; outlines drawn from
+        // segments of 10-20 um (keyboard halves' traced cutouts, panels of
+        // thousands of segments) come apart under it although KiCad closes
+        // them. Then KiCad's own chaining decides.
+        Err(error) if error == NOT_CLOSED => chain_as_kicad(&open, &open_on_board)?,
+        Err(error) => return Err(error),
+    };
+    for (chain, on_board) in chained {
         loops.push(chain);
-        loop_on_board.push(chain_on_board);
+        loop_on_board.push(on_board);
     }
     if loops.is_empty() {
         return Err("the board has no Edge.Cuts outline".into());
@@ -502,6 +701,94 @@ mod tests {
         assert!(point_in_polygon([35.0, 5.0], &loops.outline));
         assert!(point_in_polygon([10.0, 5.0], &loops.outline));
         assert!(!point_in_polygon([25.0, 5.0], &loops.outline));
+    }
+
+    #[test]
+    fn outlines_from_segments_shorter_than_the_tolerance_close_as_kicad_closes_them() {
+        // A 10 x 10 board whose top and bottom edges are drawn from 0.01 mm
+        // segments, as traced outlines are (keyboard halves, panels): the
+        // snapping chain drops them as slivers and is left with two gaps;
+        // KiCad chains them end to end.
+        let mut text = String::from("(kicad_pcb");
+        for y in [0.0, 10.0] {
+            for step in 0..1000 {
+                let (x0, x1) = (step as f64 * 0.01, (step + 1) as f64 * 0.01);
+                text.push_str(&format!(
+                    "(gr_line (start {x0:.2} {y}) (end {x1:.2} {y}) (layer \"Edge.Cuts\"))"
+                ));
+            }
+        }
+        text.push_str(
+            r#"(gr_line (start 0 0) (end 0 10) (layer "Edge.Cuts"))
+            (gr_line (start 10 0) (end 10 10) (layer "Edge.Cuts"))
+            (gr_circle (center 5 5) (end 6 5) (layer "Edge.Cuts")))"#,
+        );
+        let pcb = parse(&text).unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        assert!((polygon_area(&loops.outline) - 100.0).abs() < 1.0e-6);
+        assert_eq!(loops.cutouts.len(), 1);
+        // Ends further apart than KiCad's 0.02 mm stay open.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_line (start 0 0) (end 10 0) (layer "Edge.Cuts"))
+          (gr_line (start 10 0) (end 10 10) (layer "Edge.Cuts"))
+          (gr_line (start 10 10) (end 0 10) (layer "Edge.Cuts"))
+          (gr_line (start 0 10) (end 0 5.1) (layer "Edge.Cuts"))
+          (gr_line (start 0 5) (end 0 0) (layer "Edge.Cuts"))
+          (gr_line (start 20 0) (end 30 0) (layer "Edge.Cuts"))
+          (gr_line (start 30 0) (end 30 10) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        assert_eq!(board_loops(&pcb).err().as_deref(), Some(NOT_CLOSED));
+    }
+
+    #[test]
+    fn an_arc_that_closes_on_itself_in_a_polygon_is_a_circle() {
+        // The 30led card's NFC keepout (McbeEringi/pcb-stuff,
+        // proj/card/30led, MIT): one arc from (87, 100) through (113, 100)
+        // back to (87, 100), which KiCad fills as a 26 mm circle.
+        let zone = parse(
+            r#"(zone (net 0) (net_name "") (layers "F.Cu" "B.Cu") (name "nfc")
+          (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed)
+            (copperpour not_allowed) (footprints not_allowed))
+          (polygon (pts (arc (start 87 100) (mid 113 100) (end 87 100)))))"#,
+        )
+        .unwrap();
+        let polygon = zone.child("polygon").unwrap();
+        let points = pts_points(polygon).unwrap();
+        let circle = std::f64::consts::PI * 13.0 * 13.0;
+        assert!(
+            (polygon_area(&points) - circle).abs() < 0.5,
+            "{}",
+            polygon_area(&points)
+        );
+        assert!(points.first() != points.last());
+        assert!(point_in_polygon([100.0, 100.0], &points));
+        assert!(!point_in_polygon([100.0, 113.5], &points));
+    }
+
+    #[test]
+    fn a_degenerate_polygon_keeps_three_points() {
+        // BratwurstPower's copper sliver (Qeteshpony/BratwurstPower,
+        // pcb/BratwurstPower.kicad_pcb, BSD-2-Clause): three points, the
+        // last the first, 2 nm wide. A zero-area shape, not an error; on
+        // Edge.Cuts no outline.
+        let polygon = parse(
+            r#"(fp_poly (pts (xy -0.000385 -8.363353) (xy -0.000387 -8.363353)
+          (xy -0.000385 -8.363353)) (stroke (width -0.000001) (type solid)) (fill solid)
+          (layer "F.Cu"))"#,
+        )
+        .unwrap();
+        let points = pts_points(&polygon).unwrap();
+        assert_eq!(points.len(), 3);
+        assert_eq!(polygon_area(&points), 0.0);
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (gr_poly (pts (xy 5 5) (xy 6 5) (xy 5 5)) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        assert!(board_loops(&pcb).unwrap().cutouts.is_empty());
     }
 
     #[test]

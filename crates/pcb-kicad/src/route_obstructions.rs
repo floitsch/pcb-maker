@@ -633,7 +633,7 @@ mod tests {
             "(roundrect_rratio NaN)",
             "(roundrect_rratio 0.6)",
             "(roundrect_rratio 0.25) (chamfer top_left) (chamfer_ratio 0.9)",
-            "",
+            "(roundrect_rratio x)",
         ] {
             let pcb = fixture(&format!(
                 "(footprint \"P\" (at 5 5) (pad \"1\" smd roundrect (at 0 0) (size 2 2) (layers \"F.Cu\") (net \"PAD\") {fields}))"

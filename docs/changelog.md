@@ -11,6 +11,77 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (parser and writer robustness)
+
+The reader and writer defects that the 5 834-board intake
+(benchmarks/expansion/data/analysis: model_error_boards.csv,
+verification_unknown_boards.csv, source_issue_boards.csv and the four
+boards with new malformed_courtyard findings in drc_failure_boards.csv)
+put on us. Binaries x1230 (the code on f720ab7) and x1231 (rebased on
+8877428, the pcb-router quality package). Each defect has a unit test
+from the board's own geometry where its licence allows (MIT, BSD,
+Apache), a synthetic equivalent otherwise. Each board was run as the
+intake ran it (strip-kicad-tracks, route-kicad-board on the designer's
+placement with the intake's router-config.json: 30 s of work, one seed,
+90 s wall guard; then drc-kicad-board), with x1211 before and x1230
+after (scratch runs, not kept).
+
+| Defect | Boards | Cause | Fix | x1211 | x1230 |
+| --- | --- | --- | --- | --- | --- |
+| rule area "fewer than three points" | Boardoza LSM303, McbeEringi 30led, tobycm skibidi disc | a zone outline that is one arc ending where it starts: KiCad reads it as a full circle (its arc centre is halfway between start and mid; 30led's own B.Mask fill of that outline is a 26 mm circle), we as two points | `outline::pts_points` lowers a closed arc as the circle (`full_circle`, shared with the Edge.Cuts arc); so the areas are kept as KiCad keeps them, not skipped | error | routed 17/17, 26/26, 14/14; KiCad: no rule-area finding; Boardoza 80 track_width (0.127 mm tracks, see below), 30led hole_clearance 4 as the designer's, tobycm 5 unconnected (below) |
+| custom-pad primitive gr_bbox | 2 kicad-assistant QA boards | the pad editor's number box, which KiCad parses as a proxy shape (`SetIsProxyItem`) and leaves out of the pad's copper | lowered to nothing | error | 86/87 and 62/63 at the budget, KiCad loads and checks them (2 and 3 unconnected) |
+| degenerate copper polygon | BratwurstPower | an fp_poly of three points, the last the first, 2 nm wide, negative stroke: `pts_points` dropped the repeated point, two left | the closing point is dropped only while three stay: a zero-area shape, as KiCad keeps it (Edge.Cuts skips polygons with fewer than three distinct points as before) | error | 67/67, KiCad: 1 starved_thermal |
+| roundrect pad without roundrect_rratio | jayis1 lumen-tap | required | KiCad's default 0.25 when absent; a ratio that is there must still be a number | error | 14/14, KiCad: 1 shorting_items + 1 solder_mask_bridge (the designer's: 2 + 2, 39 unconnected) |
+| ambiguous net identity "/A15" vs "A15" | gametank exp_port_mod_board | a KiCad 10 board has no net table, and `note_net_names` read the bare names from the table alone: none, so "/A15" folded into "A15" | `note_net_names` also takes the pads' names; the writer spells a connection that is a bare net as it is (`written_net_name`; "/A15" then is connection "/A15", written "//A15", and `canonicalize_copper_net_names` finds each pad's spelling) | error | 41/41, KiCad: the designer's copper_edge_clearance 22 and invalid_outline 2, no shorts |
+| image data on one 24 MB line | stonedDiscord EMP | the encoder writes a list's atoms on one line; KiCad reads lines of at most 1 MB | a `data` list one string a line, as KiCad writes it | KiCad cannot load the result | KiCad loads it: courtyards_overlap 9 (the designer's 9), 0 unconnected |
+| footprint graphics reordered on write | AccordeurDeGuitare, 3 dacha boards | the canonical order sorts a footprint's graphics, and KiCad chains a courtyard in file order: MK1's courtyard (two zero-length lines, two arcs) closes in the designer's order only | `canonical_order` notes each footprint's source order of graphics (by a digest of its reference and graphics); `encode` writes them back in that order while they are unchanged (a flipped footprint or a moved label is written as held); keys and digests use `encode_canonical` | malformed_courtyard 3, 10, 22, 16 | 0, 6, 18, 14: the designer's counts |
+| outline "do not form closed loops" although KiCad accepts it | 8 hermod keyboard halves, 4 panels (Pips801 minibadge, SEM-karifa rudolf, prrpls406 and programmer panels) | outlines drawn from 10-20 um segments: the chaining snaps each end to the nearest one seen before and drops pieces shorter than its 0.02 mm tolerance, which tears such outlines apart | when that chaining fails, KiCad's own (`chain_as_kicad`: integer nanometres, an unused exact hit first, else the nearest end within 0.02 mm, closed when the end is back within 0.02 mm of the start); outlines that chained before are untouched | strip-kicad-tracks fails | all 12 load and route: hermod 119/119 to 133/133 (one 123/124, cut), Pips801 99/99, rudolf 162/162 clean, programmer 16/16, prrpls406 27/162 at the budget (41 unconnected); KiCad's findings the designer's plus those below |
+| "trailing input" | RoyalBlue54L-Feather | "(curved_edges no)filter_ratio 0.9)" in each teardrops form: KiCad's teardrop reader takes the "(" as optional, ours closed the pad and then the board | in a `teardrops` list a bare key starts a list that ends at its ")" | strip fails | loads; 43-46/68 at the budget (cut), 30 unconnected, the designer's other findings |
+
+**Not fixed here** (in files other packages own):
+
+- **SeanBP Edge-Card-CAEN, "no routable connections"**: its 70 nets are
+  named "1", "3", ..., "139", and `board_router::routable_net` rejects
+  names of digits only (meant for single-pin placeholders). Counting
+  digit names shared by two pads as `note_jumper_nets` counts
+  `unconnected-(` names (a two-line change, tried on a scratch build)
+  routes 70/70, but KiCad then finds 70 unconnected: every net joins a
+  test point on F.Cu and one on B.Cu 0.3 mm apart, which the router takes
+  as one terminal; KiCad needs a via. Both for the board_router package.
+- tobycm skibidi disc: copper rings drawn as `gr_circle` with a net on
+  `(layers "F.Cu" "F.Mask")` are not modelled; KiCad: 5 unconnected.
+- Boardoza LSM303: 80 GND tracks of 0.127 mm on a project of 0.2 mm
+  minimum width (the board's own narrow width).
+- hermod halves: hole_to_hole 62 and 14, hole_clearance 5 and 10 from
+  vias near switch holes (a custom rule of 0.5 mm the router does not
+  read); prrpls406: hole_to_hole 24.
+
+**Tiers.** Short tier (x1230, `--jobs 6 --threads 4`, under the lock):
+`build/short-x1230.log` equals `build/short-x1170.log` row for row
+(routed, vias, length, work, KiCad findings): 7/12, unconnected 19, new
+errors 2, work 2501 s. Expansion tier (x1231, `--jobs 8 --threads 1`):
+`build/expansion-x1231.log` against `build/expansion-x1211.log`: 14/46
+pass and the same outcome classes (clean_medium 1, clean_slow 11,
+cut_wall_clock 9, incomplete_at_budget 21, incomplete_early 4); the 33
+rows the 90 s wall guard cut in neither run are identical (routed, vias,
+length, work seconds, KiCad findings, outcome); the 13 cut in both differ
+as cut rows do with the load. Four stripped boards (EMG_DAQ_ADS1292,
+Barklind, power-manifold backplane, anthracite-bottom) have another
+SHA-256: their embedded files' `(data |...|)` is back on its lines, the
+same tokens in the same order. None of the 46 boards is among the fixed
+ones. x1231 and x1230 give byte-identical routed boards (four of the
+boards above checked).
+
+Tests: `outline::tests` (closing as KiCad, the closed-arc circle, the
+degenerate polygon), `canonical_order::tests::footprint_graphics_are_written_in_the_files_order`,
+`roundrect_pad::tests::roundrect_without_a_ratio_takes_kicads_quarter`,
+`tests::a_custom_pads_number_box_is_no_copper`,
+`tests::a_teardrop_setting_without_its_opening_parenthesis_reads_as_kicad_reads_it`,
+`tests::embedded_data_is_written_one_string_a_line`,
+`tests::colliding_normalized_pad_names_stay_two_nets_when_the_board_declares_both`
+(now the KiCad 10 case); `route_obstructions`' malformed-roundrect test
+no longer counts a missing ratio as malformed.
+
 ## Committed on 2026-10-16 (quality: pcb-router)
 
 A code-quality package for `crates/pcb-router`, no algorithm change:

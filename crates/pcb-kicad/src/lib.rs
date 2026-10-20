@@ -12382,6 +12382,9 @@ fn custom_pad_geometry(
                     });
                 }
             }
+            // The pad editor's number box: KiCad reads it as a proxy shape
+            // (SetIsProxyItem) that its pad outline leaves out, no copper.
+            Some("gr_bbox") => {}
             other => {
                 return Err(format!(
                     "KiCad grid adapter does not yet lower custom-pad primitive {}",
@@ -13467,7 +13470,7 @@ fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
             Expr::Atom(quote(&via.layers[0])),
             Expr::Atom(quote(&via.layers[1])),
         ]),
-        net_expr(&format!("/{}", via.connection)),
+        net_expr(&written_net_name(&via.connection)),
         Expr::List(vec![
             Expr::Atom("uuid".into()),
             Expr::Atom(quote(&deterministic_uuid_for(&identity))),
@@ -13568,7 +13571,7 @@ fn supplemental_segment_expr(segment: &SupplementalSegment) -> Expr {
             Expr::Atom(segment.width.to_string()),
         ]),
         string_form("layer", &segment.layer),
-        net_expr(&format!("/{}", segment.connection)),
+        net_expr(&written_net_name(&segment.connection)),
         Expr::List(vec![
             Expr::Atom("uuid".into()),
             Expr::Atom(quote(&deterministic_uuid_for(&identity))),
@@ -13646,15 +13649,40 @@ thread_local! {
 /// Records `pcb`'s bare net names for `normalize_net` (on this thread,
 /// for the lowering that follows).
 pub(crate) fn note_net_names(pcb: &Expr) {
-    let bare: std::collections::HashSet<String> = pcb
+    // The net table; a KiCad 10 board has none (its items name their
+    // nets), so the pads' names too: gametank's expansion-port board has
+    // pads on "/A15" and on "A15", one net read before.
+    let table = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("net"))
-        .filter_map(|item| item.children().get(2).and_then(Expr::atom))
+        .filter_map(|item| item.children().get(2).and_then(Expr::atom));
+    let pads = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .flat_map(|footprint| footprint.children())
+        .filter(|item| item.head() == Some("pad"))
+        .filter_map(node_net);
+    let bare: std::collections::HashSet<String> = table
+        .chain(pads)
         .filter(|name| !name.starts_with('/') && !name.is_empty())
         .map(str::to_string)
         .collect();
     BARE_NETS.with(|names| *names.borrow_mut() = bare);
+}
+
+/// The net name copper of `connection` is written with: the connection
+/// with the hierarchical slash it dropped, or as it is when the board has
+/// a bare net of that name (`/A15` then is another net, its connection
+/// `/A15`, written `//A15`); `canonicalize_copper_net_names` then takes
+/// the pads' own spelling.
+fn written_net_name(connection: &str) -> String {
+    if BARE_NETS.with(|names| names.borrow().contains(connection)) {
+        connection.to_string()
+    } else {
+        format!("/{connection}")
+    }
 }
 
 fn normalize_net(net: &str) -> &str {
@@ -14283,6 +14311,35 @@ impl Parser<'_> {
                     self.bump();
                     return Ok(Expr::List(items));
                 }
+                // KiCad reads a teardrop setting's opening parenthesis as
+                // optional (PCB_IO_KICAD_SEXPR_PARSER's
+                // parseTEARDROP_PARAMETERS: a key after a missing "(" ends
+                // at its ")" as usual), and a pad written as
+                // "(curved_edges no)filter_ratio 0.9)" loads; read as a
+                // list, the stray ")" closed the pad and then the board
+                // (RoyalBlue54L-Feather: "trailing input at byte 14111").
+                Some(character)
+                    if character != '('
+                        && matches!(items.first(), Some(Expr::Atom(head)) if head == "teardrops") =>
+                {
+                    items.push(self.list_without_opening()?)
+                }
+                Some(_) => items.push(self.expression()?),
+                None => return Err("unterminated list".into()),
+            }
+        }
+    }
+
+    /// A list whose "(" is missing: its items up to and with its ")".
+    fn list_without_opening(&mut self) -> Result<Expr, String> {
+        let mut items = Vec::new();
+        loop {
+            self.whitespace();
+            match self.peek() {
+                Some(')') => {
+                    self.bump();
+                    return Ok(Expr::List(items));
+                }
                 Some(_) => items.push(self.expression()?),
                 None => return Err("unterminated list".into()),
             }
@@ -14341,27 +14398,49 @@ fn unquote(atom: &str) -> &str {
         .unwrap_or(atom)
 }
 
+/// The text of `expression` as written to a file: a footprint's graphics
+/// in the order of the file they were read from when only the canonical
+/// order moved them ([`canonical_order::source_order`]).
 fn encode(expression: &Expr) -> String {
     let mut output = String::new();
-    encode_into(expression, 0, &mut output);
+    encode_into(expression, 0, &mut output, true);
     output
 }
 
-fn encode_into(expression: &Expr, depth: usize, output: &mut String) {
+/// The text of `expression` as it is held, footprint graphics in the
+/// canonical order (for keys and digests).
+fn encode_canonical(expression: &Expr) -> String {
+    let mut output = String::new();
+    encode_into(expression, 0, &mut output, false);
+    output
+}
+
+fn encode_into(expression: &Expr, depth: usize, output: &mut String, source_order: bool) {
     match expression {
         Expr::Atom(atom) => output.push_str(atom),
         Expr::List(items) => {
+            let order = if source_order && expression.head() == Some("footprint") {
+                canonical_order::source_order(expression)
+            } else {
+                None
+            };
+            // Embedded data (an image's base64) one string a line, as
+            // KiCad writes it: KiCad reads lines of at most 1 MB, and an
+            // image written on one 24 MB line made the board unreadable
+            // (stonedDiscord's EMP).
+            let data = expression.head() == Some("data");
             output.push('(');
-            for (index, item) in items.iter().enumerate() {
+            for index in 0..items.len() {
+                let item = &items[order.as_ref().map_or(index, |order| order[index])];
                 if index > 0 {
-                    if matches!(item, Expr::List(_)) {
+                    if matches!(item, Expr::List(_)) || (data && index > 1) {
                         output.push('\n');
                         output.push_str(&"  ".repeat(depth + 1));
                     } else {
                         output.push(' ');
                     }
                 }
-                encode_into(item, depth + 1, output);
+                encode_into(item, depth + 1, output, source_order);
             }
             output.push(')');
         }
@@ -15269,18 +15348,45 @@ mod tests {
 
     #[test]
     fn colliding_normalized_pad_names_stay_two_nets_when_the_board_declares_both() {
-        // Without the bare net declared, `/SIGNAL` and `SIGNAL` would be
-        // one connection and the pads collide.
-        let pcb = parse(
-            r#"(kicad_pcb (net 1 "/SIGNAL") (footprint "test"
-            (pad "1" smd (net "SIGNAL")) (pad "2" smd (net "/SIGNAL"))))"#,
+        // A KiCad 10 board has no net table: its pads name both nets
+        // (gametank's expansion-port board: "/A15" and "A15"), and they
+        // stay two, through the copper written back.
+        let mut pcb = parse(
+            r#"(kicad_pcb (version 20260206) (footprint "test"
+            (pad "1" smd (net "A15")) (pad "2" smd (net "/A15")) (pad "3" smd (net "/D0"))))"#,
         )
         .unwrap();
-        assert!(
-            unambiguous_pad_net_names(&pcb)
-                .unwrap_err()
-                .contains("ambiguous native net identity")
-        );
+        let names = unambiguous_pad_net_names(&pcb).unwrap();
+        assert_eq!(names.len(), 3);
+        assert_eq!(normalize_net("/A15"), "/A15");
+        assert_eq!(normalize_net("/D0"), "D0");
+        let segment = |connection: &str| SupplementalSegment {
+            connection: connection.into(),
+            start: [0.0, 0.0],
+            end: [1.0, 0.0],
+            width: 0.2,
+            layer: "F.Cu".into(),
+        };
+        if let Expr::List(items) = &mut pcb {
+            for connection in ["A15", "/A15", "D0"] {
+                items.push(supplemental_segment_expr(&segment(connection)));
+            }
+            items.push(supplemental_via_expr(&SupplementalVia {
+                connection: "A15".into(),
+                at: [0.0, 0.0],
+                size: 0.6,
+                drill: 0.3,
+                layers: ["F.Cu".into(), "B.Cu".into()],
+            }));
+        }
+        canonicalize_copper_net_names(&mut pcb, &names);
+        let written: Vec<&str> = pcb
+            .children()
+            .iter()
+            .filter(|item| matches!(item.head(), Some("segment" | "via")))
+            .filter_map(node_net)
+            .collect();
+        assert_eq!(written, ["A15", "/A15", "/D0", "A15"]);
         // With both declared (a global and a root-sheet label), two nets.
         let pcb = parse(
             r#"(kicad_pcb (net 1 "SIGNAL") (net 2 "/SIGNAL") (footprint "test"
@@ -15293,6 +15399,49 @@ mod tests {
         assert_eq!(normalize_net("//SIGNAL"), "/SIGNAL");
         note_net_names(&parse("(kicad_pcb)").unwrap());
         assert_eq!(normalize_net("/SIGNAL"), "SIGNAL");
+    }
+
+    #[test]
+    fn a_teardrop_setting_without_its_opening_parenthesis_reads_as_kicad_reads_it() {
+        // RoyalBlue54L-Feather's pads: "(curved_edges no)filter_ratio 0.9)".
+        // KiCad takes the "(" of a teardrop setting as optional; read as
+        // a list, the stray ")" closed the pad and then the board.
+        let board = parse(
+            r#"(kicad_pcb (footprint "C" (pad "1" smd roundrect (at -0.48 0)
+              (teardrops (best_length_ratio 0.5) (max_length 1) (best_width_ratio 1)
+                (max_width 2) (curved_edges no)filter_ratio 0.9)
+                (enabled yes) (allow_two_segments yes) (prefer_zone_connections yes))
+              (uuid "a")) (uuid "b")) (gr_line (start 0 0) (end 1 0)))"#,
+        )
+        .unwrap();
+        let footprint = board.child("footprint").unwrap();
+        let teardrops = footprint.child("pad").unwrap().child("teardrops").unwrap();
+        assert_eq!(form_atom(teardrops, "filter_ratio", 1), Some("0.9"));
+        assert_eq!(form_atom(teardrops, "enabled", 1), Some("yes"));
+        assert!(footprint.child("uuid").is_some());
+        assert!(board.child("gr_line").is_some());
+        // Written back with its parenthesis.
+        assert!(encode(teardrops).contains("(filter_ratio 0.9)"));
+        // Elsewhere a stray atom is still an atom.
+        assert!(parse("(kicad_pcb (x 1) y)").is_ok());
+    }
+
+    #[test]
+    fn embedded_data_is_written_one_string_a_line() {
+        // An image's base64 (stonedDiscord's EMP: 24 MB on one line, which
+        // KiCad cannot read back), as KiCad writes it.
+        let image = parse(
+            r#"(image (at 84.7 106.25) (layer "F.Paste")
+              (data "/9j/4AAQ" "CwsNDhIQ"
+                "FBQUFBQU") (uuid "u"))"#,
+        )
+        .unwrap();
+        let text = encode(&image);
+        assert!(
+            text.contains("(data \"/9j/4AAQ\"\n    \"CwsNDhIQ\"\n    \"FBQUFBQU\")"),
+            "{text}"
+        );
+        assert_eq!(parse(&text).unwrap(), image);
     }
 
     #[test]
@@ -15605,6 +15754,27 @@ mod tests {
         assert!(!geometry.contains([9.0, 20.7], 0.0));
         assert_eq!(geometry.aabb().minimum, [9.35, 19.25]);
         assert_eq!(geometry.aabb().maximum, [10.5, 20.75]);
+    }
+
+    #[test]
+    fn a_custom_pads_number_box_is_no_copper() {
+        // A heatsink pad whose primitives are only the pad editor's number
+        // box (gr_bbox), as KiCad 7 writes it: the anchor alone is copper.
+        let pad = parse(
+            r#"(pad "5" thru_hole custom (at 1.2 -1.5 90) (size 0.4 0.4) (drill 0.2)
+                (layers "*.Cu") (options (clearance outline) (anchor rect))
+                (primitives
+                    (gr_bbox (start -0.75 -0.75) (end 0.75 0.75) (width 0.000001) (fill none))))"#,
+        )
+        .unwrap();
+        let anchor = ObstacleGeometry::Rectangle {
+            center: [10.0, 20.0],
+            half_size: [0.2, 0.2],
+            angle_degrees: 90.0,
+        };
+        let geometry = custom_pad_geometry(&pad, [10.0, 20.0], 90.0, anchor).unwrap();
+        assert!(matches!(geometry, ObstacleGeometry::Rectangle { .. }));
+        assert!(!geometry.contains([10.5, 20.5], 0.0));
     }
 
     #[test]
