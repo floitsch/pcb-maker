@@ -242,17 +242,21 @@ pub struct KiCadOutlineTrial {
     pub used: bool,
 }
 
-/// For an outline sized from the parts (no size, no `area_factor`): starts
-/// at the size designers use and grows it by a quarter while the parts do
-/// not fit or a quick route leaves connections open; with `shrink`, when
-/// the first size routes, shrinks it by a fifth while it still does. Sets
-/// the chosen factor in `placer_config` and returns the sizes tried.
 /// How far past its total budget (counted in work) a layout may run on the
 /// wall clock, on a busy or slow machine, before its phases are cut short
 /// (verification and writing the result follow: jetson-nano ended at
 /// 1741 s of a 1500 s budget at 1.15, 59 s before the benchmark's limit).
 const WALL_GUARD: f64 = 1.1;
 
+/// For an outline sized from the parts (no size, no `area_factor`): starts
+/// at the size designers use and grows it by a quarter while the parts do
+/// not fit or a quick route leaves connections open; with `shrink`, when
+/// the first size routes, shrinks it by a fifth while it still does. Sets
+/// the chosen factor in `placer_config` and returns the sizes tried.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the layout's work accounts (work, its deadline, the pool's excess) are threaded through by reference"
+)]
 fn size_outline(
     source_directory: &Path,
     board_id: &str,
@@ -532,7 +536,11 @@ pub(crate) fn narrow_continuation_runs(work_left: f64, open: usize, wall_passed:
     !(open == 0 || wall_passed || work_left < NARROW_CONTINUATION_FLOOR)
 }
 
-/// The steps of a layout after placement, in their order.
+/// The steps of a layout after placement that improve the board, in
+/// their order. The steps that finish the result (labels, KiCad's check
+/// of the board kept, the report) run whatever the wall clock says and
+/// do not ask the guard: asking would only fire it later than an
+/// improving step saw it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayoutStep {
     /// The other seeds' placements probed against the kept one.
@@ -543,39 +551,24 @@ pub(crate) enum LayoutStep {
     Resume,
     /// The clean-up, via reduction and spokes of the kept routes.
     Polish,
-    /// Reference labels and copper texts.
-    Labels,
-    /// KiCad's check of the board kept.
-    Check,
     /// The final ladder (or the narrow-signal attempt run alone).
     Ladder,
     /// The attempt after the narrow-signal attempt.
     Continuation,
     /// The repair of KiCad's connection_width necks on the board kept.
     NeckRepair,
-    /// The report and the verdict.
-    Report,
 }
 
 impl LayoutStep {
-    /// Whether the step makes the result rather than improving it: these
-    /// run after the wall guard fired too.
-    pub(crate) fn finishes(self) -> bool {
-        matches!(self, Self::Labels | Self::Check | Self::Report)
-    }
-
     fn name(self) -> &'static str {
         match self {
             Self::Race => "the placement race",
             Self::Move => "the move trials",
             Self::Resume => "the resume of the first route",
             Self::Polish => "the polish",
-            Self::Labels => "the labels",
-            Self::Check => "KiCad's check",
             Self::Ladder => "the final ladder",
             Self::Continuation => "the attempt after the narrow-signal attempt",
             Self::NeckRepair => "the neck repair",
-            Self::Report => "the report",
         }
     }
 }
@@ -603,13 +596,12 @@ impl<F: Fn() -> bool> WallStop<F> {
         }
     }
 
-    /// Whether `step` runs: always until the wall clock has passed the
-    /// deadline, afterwards only the steps that finish the result.
+    /// Whether `step` runs: until the wall clock has passed the deadline.
     pub(crate) fn allows(&self, step: LayoutStep) -> bool {
         if !self.fired.get() && (self.passed)() {
             self.fired.set(true);
         }
-        if !self.fired.get() || step.finishes() {
+        if !self.fired.get() {
             return true;
         }
         let mut skipped = self.skipped.borrow_mut();
@@ -1475,15 +1467,8 @@ pub fn layout_kicad_board(
             let trial_board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
             arm(&mut router, work + pool_excess);
             let expansions_before = router.expansions();
-            let rerouted = match router.update(&trial_board) {
-                Ok(count) => count,
-                Err(error) => {
-                    router = saved_router;
-                    pcb = saved_pcb;
-                    problem.problem.poses = saved_poses.clone();
-                    return Err(error);
-                }
-            };
+            // (An error ends the layout: nothing to restore.)
+            let rerouted = router.update(&trial_board)?;
             let polish = best.0 == 0;
             let trial = router.reroute(polish);
             work += router.expansions().saturating_sub(expansions_before) as f64
@@ -1571,9 +1556,9 @@ pub fn layout_kicad_board(
                 before.0,
                 elapsed()
             );
+            // (`best` is not read past this point.)
             if after <= before {
                 result = resumed;
-                best = after;
             } else {
                 router = saved_router;
             }
@@ -2026,7 +2011,7 @@ mod budget_tests {
     }
 
     #[test]
-    fn past_the_wall_guard_only_the_finishing_steps_run() {
+    fn past_the_wall_guard_no_improving_step_runs() {
         use LayoutStep::*;
         let steps = [
             Race,
@@ -2035,29 +2020,26 @@ mod budget_tests {
             Move,
             Resume,
             Polish,
-            Labels,
-            Check,
             Ladder,
             Continuation,
             NeckRepair,
-            Report,
         ];
         // The guard never fires: everything runs.
         let (ran, skipped) = run_steps(&steps, usize::MAX);
         assert_eq!(ran, steps.to_vec());
         assert!(skipped.is_empty());
         // It fires during the second move trial: the third trial, the
-        // resume, the polish, the ladder and the continuation are skipped;
-        // the labels, the check of the board kept and the report run.
+        // resume, the polish, the ladder, the continuation and the neck
+        // repair are skipped.
         let (ran, skipped) = run_steps(&steps, 2);
-        assert_eq!(ran, vec![Race, Move, Labels, Check, Report]);
+        assert_eq!(ran, vec![Race, Move]);
         assert_eq!(
             skipped,
             vec![Move, Resume, Polish, Ladder, Continuation, NeckRepair]
         );
         // Fired already in placement: no race either.
         let (ran, _) = run_steps(&steps, 0);
-        assert_eq!(ran, vec![Labels, Check, Report]);
+        assert!(ran.is_empty());
     }
 
     #[test]
@@ -2073,7 +2055,7 @@ mod budget_tests {
         assert!(!stop.allows(Move));
         assert!(!stop.allows(Ladder));
         assert!(stop.fired());
-        assert!(stop.allows(Check));
+        assert!(!stop.allows(NeckRepair));
     }
 
     #[test]

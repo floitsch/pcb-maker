@@ -322,7 +322,6 @@ pub struct KiCadBoardPlacerResult {
     pub edge_copper: bool,
     /// Distance movable bodies kept from the edge (the placement's margin,
     /// or the rules' copper-to-edge clearance when nothing else fit).
-    #[serde(default = "default_edge_rule")]
     pub edge_rule_mm: f64,
     /// Courtyards came as close as their copper allows (touching).
     #[serde(default)]
@@ -1182,7 +1181,7 @@ fn pads_in_pin_rows(centers: &[[f64; 2]]) -> bool {
 /// Empty when the courtyard is not closed or has too many corners (arcs).
 fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>, String> {
     let mut edges: Vec<([f64; 2], [f64; 2])> = Vec::new();
-    let mut chain = |points: &[[f64; 2]], closed: bool, edges: &mut Vec<([f64; 2], [f64; 2])>| {
+    let chain = |points: &[[f64; 2]], closed: bool, edges: &mut Vec<([f64; 2], [f64; 2])>| {
         for pair in points.windows(2) {
             edges.push((pair[0], pair[1]));
         }
@@ -1232,7 +1231,7 @@ fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>
             .copied()
             .filter(|(a, b)| (a[1] > middle) != (b[1] > middle))
             .collect();
-        if crossing.len() % 2 != 0 {
+        if !crossing.len().is_multiple_of(2) {
             return Ok(Vec::new());
         }
         crossing.sort_by(|p, q| x_at(*p, middle).total_cmp(&x_at(*q, middle)));
@@ -1257,12 +1256,8 @@ fn courtyard_slabs(footprint: &Expr, skip: Option<&str>) -> Result<Vec<[f64; 4]>
 /// none), and whether the courtyard is malformed: lines and arcs whose end
 /// points do not each join exactly two of them (a zero-length line does
 /// not), which KiCad cannot build and does not check. Lines and arcs that
-/// share end points form one shape.
-fn courtyard_shapes(footprint: &Expr) -> Result<(Vec<[f64; 4]>, bool), String> {
-    courtyard_shapes_on_side(footprint, None)
-}
-
-/// `courtyard_shapes` leaving out the courtyard on one side's layers.
+/// share end points form one shape. `skip`: leaves out the courtyard on
+/// that side's layers.
 fn courtyard_shapes_on_side(
     footprint: &Expr,
     skip: Option<&str>,
@@ -1493,10 +1488,6 @@ pub(super) struct LoweredPlacement {
     pub routing_layers: f64,
     /// Per net of the problem: whether a pour carries it.
     pub poured: Vec<bool>,
-}
-
-fn default_edge_rule() -> f64 {
-    f64::INFINITY
 }
 
 fn default_edge_keep_mm() -> f64 {
@@ -2950,28 +2941,6 @@ pub(super) fn lower_placement(
         routing_layers,
         poured,
     })
-}
-
-/// A box turned by `angle` (a quarter turn or any other) about the origin.
-fn turned_box(b: [f64; 4], angle: f64) -> [f64; 4] {
-    let corners = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
-        .map(|corner| core::problem::rotate(corner, angle));
-    corners.iter().fold(
-        [
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        ],
-        |acc, c| {
-            [
-                acc[0].min(c[0]),
-                acc[1].min(c[1]),
-                acc[2].max(c[0]),
-                acc[3].max(c[1]),
-            ]
-        },
-    )
 }
 
 /// Places the movable footprints of `<source>/<board_id>.kicad_pcb`, removes
@@ -5114,7 +5083,7 @@ mod tests {
             "(footprint \"Board\" (layer \"F.Cu\") (at 0 0) {lines})"
         ))
         .unwrap();
-        let (mut shapes, malformed) = courtyard_shapes(&footprint).unwrap();
+        let (mut shapes, malformed) = courtyard_shapes_on_side(&footprint, None).unwrap();
         assert!(!malformed);
         shapes.sort_by(|a, b| a[0].total_cmp(&b[0]));
         assert_eq!(
@@ -5127,14 +5096,17 @@ mod tests {
             rectangle(0.0, 0.0, 2.0, 1.0)
         ))
         .unwrap();
-        assert_eq!(courtyard_shapes(&footprint).unwrap(), (Vec::new(), false));
+        assert_eq!(
+            courtyard_shapes_on_side(&footprint, None).unwrap(),
+            (Vec::new(), false)
+        );
         // A zero-length line at a corner: KiCad cannot build it.
         let footprint = parse(&format!(
             "(footprint \"Part\" (layer \"F.Cu\") (at 0 0) {} (fp_line (start 2 1) (end 2 1) (layer \"F.CrtYd\")))",
             rectangle(0.0, 0.0, 2.0, 1.0)
         ))
         .unwrap();
-        assert!(courtyard_shapes(&footprint).unwrap().1);
+        assert!(courtyard_shapes_on_side(&footprint, None).unwrap().1);
     }
 }
 

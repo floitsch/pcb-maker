@@ -242,10 +242,6 @@ pub struct KiCadRowConstraint {
     pub columns: Option<usize>,
     #[serde(default)]
     pub row_pitch_mm: Option<f64>,
-    /// The row may also take quarter turns as a whole (the placer's own
-    /// bus rows, whose axis follows the parts, not the board).
-    #[serde(skip)]
-    pub turns: bool,
 }
 
 /// Parts kept together: each one's body within `max_mm` of the central
@@ -472,6 +468,10 @@ pub struct KiCadRelativeConstraint {
 /// the source directory) or the constraints themselves.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one per placer config; a box would only complicate the many matches on Inline"
+)]
 pub enum KiCadConstraintsSource {
     File(PathBuf),
     Inline(KiCadPlacementConstraints),
@@ -700,9 +700,13 @@ fn fillet(
     Some([start, mid, end])
 }
 
+/// A piece of a contour: `Ok` a line from point to point, `Err` an arc
+/// (start, mid, end).
+type ContourPiece = Result<[[f64; 2]; 2], [[f64; 2]; 3]>;
+
 /// The contour's pieces in order: `Ok` lines from point to point, `Err`
 /// arcs (start, mid, end).
-fn contour_pieces(contour: &Contour) -> Vec<Result<[[f64; 2]; 2], [[f64; 2]; 3]>> {
+fn contour_pieces(contour: &Contour) -> Vec<ContourPiece> {
     let corners = &contour.corners;
     let count = corners.len();
     let rounded: Vec<Option<[[f64; 2]; 3]>> = (0..count)
@@ -1340,27 +1344,31 @@ pub(super) fn natural(reference: &str) -> (String, u64, String) {
     )
 }
 
+/// What `apply_rows` returns: each follower's leader, each row member's
+/// place, and the rows' first parts.
+type AppliedRows = (
+    BTreeMap<usize, usize>,
+    BTreeMap<usize, RowPlace>,
+    Vec<usize>,
+);
+
 /// Turns every row into one part: the first part carries the others' bodies,
 /// pins and pads at their places in the row; the others become followers
 /// that occupy nothing themselves. Returns each follower's leader.
+#[allow(
+    clippy::neg_cmp_op_on_partial_ord,
+    reason = "!(x > 0.0) rejects NaN as well as zero and negative values"
+)]
 fn apply_rows(
     problem: &mut core::Problem,
     references: &[String],
     footprints: usize,
     pad_boxes: &[Vec<[f64; 4]>],
     rows: &[KiCadRowConstraint],
-) -> Result<
-    (
-        BTreeMap<usize, usize>,
-        BTreeMap<usize, RowPlace>,
-        Vec<usize>,
-    ),
-    String,
-> {
+) -> Result<AppliedRows, String> {
     let mut leaders = BTreeMap::new();
     let mut places = BTreeMap::new();
-    // The first parts of the user's rows (the placer's own bus rows turn
-    // with their parts and are not checked against the outline).
+    // The first parts of the rows.
     let mut user_rows = Vec::new();
     for row in rows {
         let mut members: Vec<usize> = Vec::new();
@@ -1400,12 +1408,10 @@ fn apply_rows(
             ));
         }
         let leader = members[0];
-        if !row.turns {
-            user_rows.push(leader);
-        }
+        user_rows.push(leader);
         let side = problem.components[leader].side;
         // The row's frame: the leader's angle, or that angle turned by a
-        // half turn (a quarter with `turns`) when the members lie exactly
+        // half turn when the members lie exactly
         // that way. A board placed before (layout mode lowers its own
         // placement again) holds a row the placer turned: built from the
         // leader's angle alone, it ran the other way, reported a region
@@ -1421,11 +1427,6 @@ fn apply_rows(
             ]
         };
         let leader_pose = problem.poses[leader];
-        let turns: &[f64] = if row.turns {
-            &[0.0, 180.0, 90.0, 270.0]
-        } else {
-            &[0.0, 180.0]
-        };
         let mismatch = |turn: f64| -> f64 {
             members
                 .iter()
@@ -1439,18 +1440,13 @@ fn apply_rows(
                 .sum()
         };
         // Only a row that lies exactly so (members within 0.01 mm of their
-        // places) turns the frame: parts anywhere else (an automatic bus
-        // row's sockets side by side) keep the leader's.
+        // places) turns the frame: parts anywhere else keep the leader's.
         let exact = 1.0e-4 * members.len() as f64;
-        let mut turn = 0.0;
-        if mismatch(0.0) > exact {
-            for candidate in &turns[1..] {
-                if mismatch(*candidate) <= exact {
-                    turn = *candidate;
-                    break;
-                }
-            }
-        }
+        let turn = if mismatch(0.0) > exact && mismatch(180.0) <= exact {
+            180.0
+        } else {
+            0.0
+        };
         let angle = leader_pose.angle + turn;
         let mut body = [
             f64::INFINITY,
@@ -1562,12 +1558,10 @@ fn apply_rows(
         carried.courtyards.clear();
         carried.holes_inside = false;
         // Turning the row by a half turn keeps it along its axis.
-        if !row.turns {
-            carried.angle_options.retain(|option| {
-                let turn = (option - angle).rem_euclid(360.0);
-                turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
-            });
-        }
+        carried.angle_options.retain(|option| {
+            let turn = (option - angle).rem_euclid(360.0);
+            turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
+        });
         if carried.angle_options.is_empty() {
             carried.angle_options = vec![angle];
         }
@@ -1652,6 +1646,14 @@ fn region_holds(
 /// Applies `constraints` to a lowered problem. `pads[i]` maps pad names of
 /// footprint `i` to their local offsets. Returns warnings for parts of the
 /// constraints that are accepted but not acted on.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the lowered placement's per-footprint tables, each its own slice"
+)]
+#[allow(
+    clippy::neg_cmp_op_on_partial_ord,
+    reason = "!(x > 0.0) rejects NaN as well as zero and negative values"
+)]
 pub(super) fn apply_constraints(
     problem: &mut core::Problem,
     references: &[String],
@@ -1734,7 +1736,7 @@ pub(super) fn apply_constraints(
             })
             .collect()
     };
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
     let mut constrained = BTreeSet::new();
     let bounds = problem.bounds();
 
@@ -2369,7 +2371,9 @@ pub(super) fn constraint_report(
 mod tests {
     use super::*;
 
-    fn problem() -> (core::Problem, Vec<String>, Vec<BTreeMap<String, [f64; 2]>>) {
+    type PadNames = Vec<BTreeMap<String, [f64; 2]>>;
+
+    fn problem() -> (core::Problem, Vec<String>, PadNames) {
         let part = |fixed: bool| core::Component {
             name: String::new(),
             body_center: [0.0, 0.0],
@@ -3299,7 +3303,7 @@ mod tests {
         let written = zones(&pcb);
         assert_eq!(written.len(), 2);
         // Relative to the outline's corner; copper keepouts block tracks on every layer.
-        let text = format!("{}", encode(&written[0]));
+        let text = encode(&written[0]).to_string();
         assert!(
             text.contains("(xy 10 22)") && text.contains("(xy 15 24)"),
             "{text}"
@@ -3308,7 +3312,7 @@ mod tests {
             text.contains("\"*.Cu\"") && text.contains("(tracks not_allowed)"),
             "{text}"
         );
-        let text = format!("{}", encode(&written[1]));
+        let text = encode(&written[1]).to_string();
         assert!(
             text.contains("\"B.Cu\"")
                 && text.contains("(tracks allowed)")

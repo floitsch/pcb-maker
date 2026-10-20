@@ -1014,7 +1014,7 @@ fn lower_board(
     let mut net_ids = BTreeMap::<String, core::NetId>::new();
     let mut obstacles = Vec::new();
     // Rule areas that keep zone fills out: (layers, polygon).
-    let mut pour_keepouts: Vec<(u32, Vec<[f64; 2]>)> = Vec::new();
+    let mut pour_keepouts: Vec<PourKeepout> = Vec::new();
     let mut solid_pads: Vec<String> = Vec::new();
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
@@ -1455,8 +1455,7 @@ fn lower_board(
                                 .and_then(|name| layers.index(name))
                                 .map(|layer| 1 << layer)
                                 .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
-                            terminal_layers =
-                                side.unwrap_or(pad_layers & pad_layers.wrapping_neg());
+                            terminal_layers = side.unwrap_or(pad_layers.isolate_lowest_one());
                         }
                         // A custom pad connects through its anchor only.
                         let contact = match (
@@ -2413,11 +2412,14 @@ pub(crate) fn vias_tented(pcb: &Expr) -> [bool; 2] {
     }
 }
 
+/// A rule area that keeps zone fills out: its layer mask and polygon.
+type PourKeepout = (u32, Vec<[f64; 2]>);
+
 /// A rule area that keeps zone fills out (`(copperpour not_allowed)`): its
 /// layers and polygon. KiCad's fill does not enter it, so neither does a
 /// pour's on those layers (Sisu: a 30 x 18 mm area on In3 and three on
 /// In4 and B.Cu, which the pour model counted as fill).
-fn pour_keepout(zone: &Expr, layers: &LayerTable) -> Result<Option<(u32, Vec<[f64; 2]>)>, String> {
+fn pour_keepout(zone: &Expr, layers: &LayerTable) -> Result<Option<PourKeepout>, String> {
     let keeps_fill_out = zone
         .child("keepout")
         .and_then(|keepout| keepout.child("copperpour"))
@@ -5086,7 +5088,7 @@ fn route_kicad_board_once(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
-    let mut pcb = crate::canonical_order::parse_board(&source)?;
+    let pcb = crate::canonical_order::parse_board(&source)?;
     let Lowered { board } = lower(&pcb, config, connect_pours)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
@@ -5230,7 +5232,7 @@ fn write_attempt(
     let mut result = result;
     if config.tighten && config.engine.as_deref() != Some("topological") {
         let tightening = std::time::Instant::now();
-        let (routes, report) = pcb_topo::tighten::tighten(&board, &result.routes);
+        let (routes, report) = pcb_topo::tighten::tighten(board, &result.routes);
         eprintln!(
             "tighten: {} of {} pieces pulled tight, {:.1} mm -> {:.1} mm, {:.2}s",
             report.tightened,

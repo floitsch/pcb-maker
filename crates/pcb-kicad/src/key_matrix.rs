@@ -169,7 +169,7 @@ fn line_kind(net: &str) -> i32 {
     if name.contains("col") {
         return -1;
     }
-    let bare = name.trim_start_matches(|c: char| c == '_' || c == '-');
+    let bare = name.trim_start_matches(['_', '-']);
     let mut chars = bare.chars();
     match (chars.next(), chars.next()) {
         (Some('r'), Some(c)) if c.is_ascii_digit() => 1,
@@ -188,7 +188,7 @@ fn hand_of_column(net: &str) -> Option<&'static str> {
         .find("column")
         .map(|at| at + 6)
         .or_else(|| lower.find("col").map(|at| at + 3))?;
-    let rest = name[at..].trim_start_matches(|c: char| c == '_' || c == '-');
+    let rest = name[at..].trim_start_matches(['_', '-']);
     let rest_lower = rest.to_ascii_lowercase();
     if rest.starts_with('L') || rest_lower.starts_with("left") {
         Some("left")

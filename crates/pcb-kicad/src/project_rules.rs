@@ -225,7 +225,8 @@ pub fn resolve_project_rules(
         neck_width_mm: Some(if minimum("min_track_width") > 0.0 {
             minimum("min_track_width").max(0.1)
         } else {
-            narrowest.min(0.127).max(0.1)
+            // (`narrowest` is a fold of `f64::min` from infinity: never NaN.)
+            narrowest.clamp(0.1, 0.127)
         }),
         connection_rules,
         default_rules: Some(classes["Default"].clone()),
