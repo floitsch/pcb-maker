@@ -23,8 +23,8 @@ Not finished, but already useful.
   placement gone, a `constraints.json` of fixed connectors and edges -
   pcb-maker places and routes **48 of 109** to a clean KiCad verdict
   (0 unconnected, no copper error beyond the designer's own board) within
-  30 minutes each, every board placed from stacked parts (sweep v16,
-  2026-10-15; v17, with the work since, is running); over all 109
+  30 minutes each, every board placed from stacked parts (sweep v17,
+  2026-10-16); over all 109
   boards the open connections fell from 3527 to 2708 and the new DRC
   errors from 82 to 38 against the previous sweep. Most of the
   rest are complete but for a few connections or a few starved thermal
@@ -207,7 +207,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1800 s (v16, 2026-10-15; v17 running) | 109 | 44 clean, 3527 connections open in all | - |
+| Layout from stacked parts and constraints, 1800 s (v17, 2026-10-16) | 109 | 48 clean, 2708 connections open in all | - |
 | Routing the designer's placement cold, 1500 s (x738, 2026-10-15) | 109 | 62 clean; where both finish (67 boards) 51 clean, 184 open | 67 finished, 36 timed out, 6 failed; where both finish 8 clean, 873 open |
 
 Smaller tiers of the same boards judge a change in minutes
