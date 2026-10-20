@@ -653,7 +653,6 @@ dependencies = [
 name = "pcb-maker"
 version = "0.1.0"
 dependencies = [
- "layout-trace-model",
  "pcb-kicad",
  "serde",
  "serde_json",

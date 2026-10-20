@@ -1,5 +1,11 @@
 # Frozen real-board sources
 
+> The `benchmark-route-freerouting` and `benchmark-route-compare` commands
+> shown below (and the `pcb-benchmark` crate behind them) were removed with
+> the research stack on 2026-10-20; they are in git history up to commit
+> be4b012. The fetch script and the source declarations here remain; the
+> current Freerouting comparison is `benchmarks/github/freerouting.py`.
+
 The [whole-board reference suite](../../experiments/whole-board/README.md)
 now keeps human layouts, complete cold-routing comparisons, unsupported cases
 and the placement/area objective together. Start there for project-level

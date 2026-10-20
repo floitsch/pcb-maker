@@ -1,7 +1,0 @@
-{
-  "policy": {
-    "kind": "declared"
-  },
-  "seed": 0,
-  "projection_sweeps": 1024
-}

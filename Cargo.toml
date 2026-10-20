@@ -21,7 +21,6 @@ members = [
 resolver = "3"
 
 [dependencies]
-layout-trace-model = { path = "crates/layout-trace-model" }
 pcb-kicad = { path = "crates/pcb-kicad" }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
