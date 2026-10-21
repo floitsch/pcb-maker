@@ -44,6 +44,8 @@ fn fingerprints(threads: usize) -> Vec<String> {
         .args(["--reference", "none"])
         .env("PCB_ROUTER_FINGERPRINT", "1")
         .env("PCB_ROUTER_NO_WALL_GUARD", "1")
+        // The rates pinned: each process would measure its own.
+        .env("PCB_WORK_RATE", "3.15e6,150e6")
         .env("RAYON_NUM_THREADS", threads.to_string())
         .env_remove("PCB_ROUTER_FINGERPRINT_ALL")
         .output()

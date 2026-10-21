@@ -104,7 +104,7 @@ pub fn place_kicad_board(
     placer_config.anneal.deadline = config.deadline;
     placer_config.work_limit = config
         .work_seconds
-        .map(|seconds| (seconds.max(0.0) * core::WORK_PER_SECOND) as u64);
+        .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.routing_room = routing_room(config, &lowered);
@@ -199,7 +199,7 @@ pub fn place_kicad_board(
         .map(|placement| placement.work)
         .max()
         .unwrap_or(0) as f64
-        / core::WORK_PER_SECOND;
+        / core::work_per_second();
     let seeds_placed = placements.len();
     let placement = placements.remove(0);
     // The other legal placements, for layout to race when the best one by
@@ -435,8 +435,8 @@ pub fn place_kicad_board(
         edges_chosen,
         seconds: started.elapsed().as_secs_f64(),
         work_seconds,
-        pool_work_seconds: pool_work.get() as f64 / core::WORK_PER_SECOND,
-        seeds_work_seconds: seeds_work.get() as f64 / core::WORK_PER_SECOND,
+        pool_work_seconds: pool_work.get() as f64 / core::work_per_second(),
+        seeds_work_seconds: seeds_work.get() as f64 / core::work_per_second(),
         seeds: seeds_placed,
         seeds_run: seeds_run.get() as usize,
         seed_kept: kept_seeds[0],

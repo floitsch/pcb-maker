@@ -859,14 +859,18 @@ all other copper is boxed in, while renegotiation lets the neighbours move.
 ## Determinism and the wall clock (2026-10-14)
 
 Every routing decision is taken in work (search expansions at
-`EXPANSIONS_PER_SECOND`, placement work at the placer's own rate), so the
-same input and thread count give the same board however busy the machine
-is (`PCB_ROUTER_FINGERPRINT` prints phase fingerprints to compare runs).
+`expansions_per_second`, placement work at the placer's
+`work_per_second`), so the same input, thread count and work rates give
+the same board however busy the machine is (`PCB_ROUTER_FINGERPRINT`
+prints phase fingerprints to compare runs). The rates are measured at
+the start of every route, layout and placement unless pinned ("The
+machine's rates" below): results depend on the measured rates unless
+`PCB_WORK_RATE` pins them, as the benchmark tiers do.
 The wall clock only guards: in route mode at `GUARD` (4) times a budget
 (the attempt ladder's own budget only once the wall clock over 4 is ahead
 of its work by more than a twentieth of that budget: in route mode the
 work counts only search expansions, not KiCad's checks), in a layout at
-its deadline, 1.1 times its budget (`WALL_GUARD`). A layout counts each
+its deadline, `wall_guard` (default 2) times its budget. A layout counts each
 KiCad check at a cost modelled from the board, the same cached or not
 ("KiCad's checks as work" above), so its end in work no longer leaves
 10 to 50 s of uncounted wall clock per check. Where
@@ -985,9 +989,10 @@ changed: work over wall 0.93-1.10 on spell_tome, Sisu and jetson, 1.50 on
 Castor (its analyses ran faster idle than in their loaded calibration).
 The reference is the fastest the machine runs a thread: under a tier's
 load (all cores busy, SMT siblings, the all-core clock) the same work
-takes longer, and the layout's wall guard (1.1 times the budget) has
-less room than before; see benchmarks/agent-tasks/README.md, "How to
-measure", for the tiers' parallelism.
+takes longer (see benchmarks/agent-tasks/README.md, "How to measure",
+for the tiers' parallelism). Since 2026-10-21 the constant is the
+reference's rate, which the start-up calibration scales to the machine
+(below).
 
 **After the guard** (2026-10-15): once the layout's wall-clock deadline
 has passed, the layout goes straight to finishing (`WallStop`,
@@ -1004,11 +1009,70 @@ ladder only an attempt that could beat the kept boards is checked
 (above). v16's poly_kybd_split72_left ran three move trials of 60-200 s
 after the deadline and was killed at 1800 s with no result.
 
-What remains load-dependent: a
-run that reaches the wall clock first (a
-machine slower or busier than the work's calibration by more than the 10 %
-margin: video's placement took 980-1275 s of wall clock for 193 s of work
-on four pinned cores beside other jobs), and the harness's timeout. Both
+**The machine's rates** (2026-10-21, `work_rate.rs` in pcb-kicad). The
+rates that turn seconds into work were the reference's constants, so a
+second of work was a second of a 5950X core nearly idle, and any machine
+slower than that by more than the layout's 10 % margin (a laptop, a CI
+runner, the macOS snapshot's machine, this one above load 45) had every
+non-trivial layout cut (exit 3): 0xcb-static at 40 s pinned to one
+logical CPU ended at 20 s of work after 50 s of wall clock. Now every
+`route-kicad-board`, `layout-kicad-board` and `place-kicad-board`
+measures the machine first (about a second, once per process, before
+the run's clock starts): a fixed search on a canned lattice (40 x 30 mm,
+two layers at 0.1 mm, 24 crossing nets and keepouts, 240 k nodes and
+about 50 MB of maps, beyond the caches as a board's are) on one thread,
+five rounds; and a fixed placement (40 parts, 20 global iterations, 15 M
+units) as three copies at once on the process's threads, the placement
+race's first batch, three rounds. Each workload's work is the same on
+every machine (a unit test checks), so the fastest round's rate against
+the same workload's on the reference
+(`REFERENCE_CANNED_EXPANSIONS_PER_SECOND` 6.9 M,
+`REFERENCE_CANNED_PLACER_PER_SECOND` 155 M, measured here at load 12)
+scales the reference's rates (`REFERENCE_EXPANSIONS_PER_SECOND` 3.15e6,
+`REFERENCE_WORK_PER_SECOND` 150e6) to this machine's
+(`set_expansions_per_second`, `set_work_per_second`). The pour analyses'
+nanoseconds and KiCad's check model, both measured on the reference,
+scale with the search's rate (`reference_time_scale`). The placer's rate
+is measured with three copies at once because the placement race's
+clock counts its seeds as the reference's eight threads run them: with
+fewer threads than three (one pinned CPU) a seed gets that share, and
+the placer's rate says so; the search's work is counted as one thread
+does it, so its rate is one thread's. The fastest round counts, not the
+median: another job's burst on the core or its sibling halves a round
+for a moment (pinned at load 16: 5.4, 5.0, 5.8 and 2.96 M a second, one
+process after another), and a layout's minutes average such bursts.
+
+The work counters are unchanged, so a run is byte-identical for given
+rates, and results now depend on the measured rates unless they are
+pinned: `PCB_WORK_RATE=<expansions/s>[,<placer units/s>]` (a search rate
+alone scales the placer's alike; `3.15e6,150e6` is the reference's), or
+the router settings `work_rate` and `placer_work_rate`
+(`PCB_WORK_RATE` wins). A bad value is an input error (exit 2). The
+first line of a run is `work rate: ...` (applied, source, measured, the
+canned rates and their share of the reference's); every verdict has
+`work_rate`, `placer_work_rate`, `work_rate_source` (`measured`,
+`PCB_WORK_RATE`, `config`, `reference`), `work_rate_measured`,
+`placer_work_rate_measured` and `work_wall_ratio` (work over wall), and
+the `layout: done` line prints the ratio and the rates. To repeat a run,
+pin the rates its verdict recorded. The tiers pin the reference's (run.py
+`--work-rate`, default `3.15e6,150e6`; `measured` lets each binary
+measure), so rows compare across machines and loads; the rows carry the
+verdict's rate fields, summary.json the setting and the medians of the
+measured rates. `pcb-maker calibrate-work-rate [rounds]` prints the
+measurement alone.
+
+The layout's wall guard is a config default now (`wall_guard`, 2, was the
+const 1.1): with the rates measured, a second of work is about a second
+of the machine's wall clock, so the guard is only a margin for load and
+for what the work does not count (KiCad's checks beyond their model, a
+board whose placement units run faster or slower than the canned ones,
+the load changing after the measurement), not a budget; a run that hangs
+still ends. run.py's timeout follows it: the budget times the guard plus
+300 s, at least 1800 s. `PCB_ROUTER_NO_WALL_GUARD` still drops it.
+
+What remains load-dependent: the measured rates themselves (pin them for
+comparisons), a run that reaches the wall clock first (a machine that
+gets much busier after the measurement), and the harness's timeout. Both
 are reported as above.
 
 **The order of the file** (2026-10-16): the lowering takes pads and

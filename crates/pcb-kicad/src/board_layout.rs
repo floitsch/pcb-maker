@@ -43,6 +43,12 @@ pub struct KiCadBoardLayoutConfig {
     /// check runs). An agent waits for this; the best board so far is what
     /// it gets.
     pub total_seconds: f64,
+    /// How far past `total_seconds` (counted in work) the wall clock may
+    /// run before the layout's phases are cut short, as a factor of it
+    /// (default 2: the layout stops at `total_seconds` of work; the wall
+    /// clock only guards against a machine far busier or slower than the
+    /// work rates say: `wall_guard_seconds`). A load margin, not a budget.
+    pub wall_guard: f64,
     pub placer: KiCadBoardPlacerConfig,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted after placement.
@@ -149,6 +155,7 @@ impl Default for KiCadBoardLayoutConfig {
             move_seconds: 600.0,
             polish_seconds: 60.0,
             total_seconds: 1500.0,
+            wall_guard: DEFAULT_WALL_GUARD,
             placer: KiCadBoardPlacerConfig::default(),
             pin_swaps: None,
             swappable: Vec::new(),
@@ -244,9 +251,32 @@ pub struct KiCadOutlineTrial {
 
 /// How far past its total budget (counted in work) a layout may run on the
 /// wall clock, on a busy or slow machine, before its phases are cut short
-/// (verification and writing the result follow: jetson-nano ended at
-/// 1741 s of a 1500 s budget at 1.15, 59 s before the benchmark's limit).
-const WALL_GUARD: f64 = 1.1;
+/// (`wall_guard`'s default; verification and writing the result follow).
+/// It is a margin for load, not a budget: the work ends the layout, at
+/// `total_seconds`, and since the work rates are measured at the start a
+/// second of work is about a second of this machine's wall clock, so on a
+/// machine as fast as its calibration the guard never fires. It was 1.1
+/// with the reference's rates fixed: any machine slower than a 5950X core
+/// by more than a tenth (a laptop, a CI runner, this one above load 45)
+/// had every non-trivial layout cut (exit 3; 0xcb-static at 40 s pinned
+/// to one CPU: 16.6 s of work at 48 s of wall). Twice the budget leaves
+/// room for what the work does not count (KiCad's checks beyond their
+/// model, the measured rate's drift with the load during a run) while a
+/// run that hangs still ends; the harness's timeout follows it (run.py:
+/// the budget times the guard plus 300 s, at least 1800 s).
+pub const DEFAULT_WALL_GUARD: f64 = 2.0;
+
+/// The wall clock a layout of `total_seconds` of work may take before its
+/// phases are cut short (`wall_guard` times the budget). A guard below 1
+/// would cut every layout before its work ends: it is an input error.
+pub fn wall_guard_seconds(total_seconds: f64, wall_guard: f64) -> Result<f64, String> {
+    if !(wall_guard.is_finite() && wall_guard >= 1.0) {
+        return Err(crate::verdict::input_error(format!(
+            "wall_guard {wall_guard}: the wall-clock guard is a factor of total_seconds of at least 1"
+        )));
+    }
+    Ok(wall_guard * total_seconds.max(0.0))
+}
 
 /// For an outline sized from the parts (no size, no `area_factor`): starts
 /// at the size designers use and grows it by a quarter while the parts do
@@ -328,7 +358,7 @@ fn size_outline(
             quick.deadline_work = Some((work_deadline - *work - *pool_excess).max(0.0));
             let mut router = core::router::Router::new(&board, &quick);
             let result = router.run_in_place();
-            *work += router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+            *work += router.expansions() as f64 / core::router::expansions_per_second();
             Some(score(&result, &board).0)
         } else {
             None
@@ -687,7 +717,10 @@ pub fn layout_kicad_board(
                 let text = fs::read_to_string(&board)
                     .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
                 let inputs = crate::check_work::check_inputs(&parse(&text)?);
-                let seconds = crate::check_work::check_seconds(inputs);
+                // Modelled on the reference: on a machine the work rates
+                // find slower, a check takes longer by as much.
+                let seconds =
+                    crate::check_work::check_seconds(inputs) * core::router::reference_time_scale();
                 eprintln!(
                     "layout: a KiCad check counts {seconds:.1} s of work ({} hatched zones, {:.0} hatch holes)",
                     inputs.hatched_zones, inputs.hatch_holes
@@ -701,13 +734,10 @@ pub fn layout_kicad_board(
     // budget: on a much busier or slower machine the work would run on
     // past what the agent waits for.
     // (None under `PCB_ROUTER_NO_WALL_GUARD`: the work alone decides.)
+    let guard_seconds = wall_guard_seconds(config.total_seconds, config.wall_guard)?;
     let with_deadline = KiCadBoardRouterConfig {
-        deadline: router_config
-            .deadline
-            .or(core::router::wall_guard().then(|| {
-                layout_started
-                    + std::time::Duration::from_secs_f64(WALL_GUARD * config.total_seconds.max(0.0))
-            })),
+        deadline: router_config.deadline.or(core::router::wall_guard()
+            .then(|| layout_started + std::time::Duration::from_secs_f64(guard_seconds))),
         kicad_check_work: Some(check_seconds),
         ..router_config.clone()
     };
@@ -715,7 +745,7 @@ pub fn layout_kicad_board(
     // The layout's end in work, its nominal end: every router of the
     // layout stops there (`arm`), the polish and the final ladder are
     // planned up to it, so that where a run stops does not depend on the
-    // machine's load. The wall-clock deadline `WALL_GUARD` past it is the
+    // machine's load. The wall-clock deadline `wall_guard` times it is the
     // margin for load (and for what the work does not count); a run that
     // reaches it first says so (`cut`). With both at 1.1 times the budget,
     // the wall clock decided every crowded board under a sweep's load
@@ -963,7 +993,8 @@ pub fn layout_kicad_board(
                     // As the race's resume below: at most half of what is
                     // left before the deadline negotiates.
                     let left = seeded.deadline_work.unwrap_or(f64::INFINITY);
-                    let half = ((left / 2.0).max(1.0) * core::router::EXPANSIONS_PER_SECOND) as u64;
+                    let half =
+                        ((left / 2.0).max(1.0) * core::router::expansions_per_second()) as u64;
                     seeded.negotiation_expansions = if seeded.negotiation_expansions == 0 {
                         half
                     } else {
@@ -996,7 +1027,7 @@ pub fn layout_kicad_board(
             (
                 best.0,
                 best.1,
-                expansions as f64 / core::router::EXPANSIONS_PER_SECOND,
+                expansions as f64 / core::router::expansions_per_second(),
             )
         })
     };
@@ -1194,7 +1225,7 @@ pub fn layout_kicad_board(
         let mut probed = probed.into_iter();
         let (_, mut kept) = probed.next().expect("the first placement's probe");
         let mut best_unfinished = race[0];
-        work += kept.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+        work += kept.expansions() as f64 / core::router::expansions_per_second();
         let mut raced = 1;
         let mut candidates = candidates.into_iter();
         for (index, mut candidate_router) in probed {
@@ -1205,7 +1236,7 @@ pub fn layout_kicad_board(
             }
             let unfinished = race[index];
             raced += 1;
-            work += candidate_router.expansions() as f64 / core::router::EXPANSIONS_PER_SECOND;
+            work += candidate_router.expansions() as f64 / core::router::expansions_per_second();
             eprintln!(
                 "placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})"
             );
@@ -1233,7 +1264,7 @@ pub fn layout_kicad_board(
         // (The router's negotiation budget in work: its seconds are the
         // wall-clock guard, `GUARD` times that.)
         let budget =
-            core_config.negotiation_expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
+            core_config.negotiation_expansions as f64 / core::router::expansions_per_second();
         let mut seconds = (budget - probe_seconds).max(60.0);
         if seconds > left / 2.0 {
             seconds = (left / 2.0).max(1.0);
@@ -1244,7 +1275,7 @@ pub fn layout_kicad_board(
         let before = kept.expansions();
         let result = kept.resume_polished(seconds, false);
         work +=
-            kept.expansions().saturating_sub(before) as f64 / core::router::EXPANSIONS_PER_SECOND;
+            kept.expansions().saturating_sub(before) as f64 / core::router::expansions_per_second();
         (kept, result)
     } else {
         let (router, result, first_work) = route_once(&board);
@@ -1472,7 +1503,7 @@ pub fn layout_kicad_board(
             let polish = best.0 == 0;
             let trial = router.reroute(polish);
             work += router.expansions().saturating_sub(expansions_before) as f64
-                / core::router::EXPANSIONS_PER_SECOND;
+                / core::router::expansions_per_second();
             let trial_score = score(&trial, &trial_board);
             let kept = trial_score < best;
             if kept && trial_score.0 < best.0 {
@@ -1548,7 +1579,7 @@ pub fn layout_kicad_board(
             }
             let resumed = router.resume_polished(share, false);
             work += router.expansions().saturating_sub(expansions_before) as f64
-                / core::router::EXPANSIONS_PER_SECOND;
+                / core::router::expansions_per_second();
             let (before, after) = (score(&result, &board), score(&resumed, &board));
             eprintln!(
                 "layout: the first route resumed with {share:.0} s: {} open (before {}), {:.0} s",
@@ -1597,7 +1628,7 @@ pub fn layout_kicad_board(
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {
-            let own = expansions_before as f64 / core::router::EXPANSIONS_PER_SECOND;
+            let own = expansions_before as f64 / core::router::expansions_per_second();
             let polish = router.config_mut();
             polish.via_reduction_seconds = polish
                 .via_reduction_seconds
@@ -1612,7 +1643,7 @@ pub fn layout_kicad_board(
         }
         let polished_result = router.polish();
         work += router.expansions().saturating_sub(expansions_before) as f64
-            / core::router::EXPANSIONS_PER_SECOND;
+            / core::router::expansions_per_second();
         // A polish the deadline cut short can leave more open than it
         // found (Sisu: 146 open before it, 255 after): then the board stays
         // as the moves left it.
@@ -1966,9 +1997,14 @@ pub fn layout_kicad_board(
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     let drc_cache = crate::drc_cache_counts();
     eprintln!(
-        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count; check work {} x {check_seconds:.1} s = {kicad_check_work_seconds:.0} s{}",
+        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all; work over wall {} at {:.4e} expansions/s, {:.4e} placer units/s, {}); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count; check work {} x {check_seconds:.1} s = {kicad_check_work_seconds:.0} s{}",
         elapsed(),
         work + routed_work,
+        crate::verdict::work_wall_ratio(Some(work + routed_work), elapsed())
+            .map_or("-".to_string(), |ratio| format!("{ratio:.2}")),
+        core::router::expansions_per_second(),
+        placer::work_per_second(),
+        crate::work_rate::work_rate().source,
         drc_cache.calls,
         drc_cache.hits,
         crate::board_router::neck_checks(),
@@ -2108,5 +2144,32 @@ mod budget_tests {
         // Complete, or past the wall-clock guard: nothing.
         assert!(!narrow_continuation_runs(900.0, 0, false));
         assert!(!narrow_continuation_runs(900.0, 30, true));
+    }
+
+    #[test]
+    fn the_wall_guard_is_a_factor_of_the_budget() {
+        // The default: twice the budget, a load margin.
+        let config = KiCadBoardLayoutConfig::default();
+        assert_eq!(config.wall_guard, 2.0);
+        assert_eq!(
+            wall_guard_seconds(config.total_seconds, config.wall_guard),
+            Ok(3000.0)
+        );
+        assert_eq!(wall_guard_seconds(40.0, 1.1), Ok(44.0));
+        assert_eq!(wall_guard_seconds(40.0, 1.0), Ok(40.0));
+        // A negative budget guards nothing beyond its start.
+        assert_eq!(wall_guard_seconds(-5.0, 2.0), Ok(0.0));
+        // Below 1 the guard would cut every layout before its work ends.
+        for bad in [0.9, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let error = wall_guard_seconds(40.0, bad).unwrap_err();
+            assert!(crate::verdict::is_input_error(&error), "{error}");
+        }
+        // A layout config names it; the default fills it in.
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"total_seconds": 40, "wall_guard": 3}"#).unwrap();
+        assert_eq!(config.wall_guard, 3.0);
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"total_seconds": 40}"#).unwrap();
+        assert_eq!(config.wall_guard, DEFAULT_WALL_GUARD);
     }
 }

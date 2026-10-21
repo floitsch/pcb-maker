@@ -1304,7 +1304,7 @@ fn a_board_without_room_says_no_at_once() {
     // Little work: one global placement and a legalisation near where it
     // put the parts.
     assert!(
-        (placement.work as f64) < 5.0 * pcb_placer::WORK_PER_SECOND,
+        (placement.work as f64) < 5.0 * pcb_placer::REFERENCE_WORK_PER_SECOND,
         "work {}",
         placement.work
     );
@@ -1335,7 +1335,7 @@ fn the_work_budget_is_kept_inside_the_passes() {
     pcb_placer::global::global_place(&problem, &Config::new().global);
     let global = pcb_placer::work() - start;
     let mut config = Config::new();
-    let limit = (0.05 * pcb_placer::WORK_PER_SECOND) as u64;
+    let limit = (0.05 * pcb_placer::REFERENCE_WORK_PER_SECOND) as u64;
     config.work_limit = Some(limit);
     let placement = place(&problem, &config);
     assert!(!placement.overfull);

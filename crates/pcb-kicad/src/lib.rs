@@ -64,6 +64,11 @@ pub use verdict::{
     is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings, room_action,
     route_facts, split_findings, tally_drc, wall_cuts,
 };
+mod work_rate;
+pub use work_rate::{
+    KiCadMeasuredRate, KiCadWorkRate, WORK_RATE_VARIABLE, calibrate as calibrate_work_rate,
+    measure as measure_work_rate, parse_work_rate, work_rate,
+};
 mod describe;
 mod flip;
 mod net_classes;

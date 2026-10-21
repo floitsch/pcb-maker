@@ -531,17 +531,16 @@ fn the_hard_repair_keeps_the_branches_out_of_conflict() {
 
 #[test]
 fn a_budget_in_seconds_buys_expansions_at_the_calibration() {
-    // A budget of seconds is `EXPANSIONS_PER_SECOND` expansions a
+    // A budget of seconds is `expansions_per_second()` expansions a
     // second, and the work and the `profile rate:` line count the same
-    // expansions back: the calibration enters only through the
-    // constant.
+    // expansions back: the calibration enters only through the rate.
     let mut router = crossed_net();
     router.probe(1.0e-3);
     let expansions = router.expansions();
     assert!(expansions > 0);
     assert_eq!(
         router.work_seconds(),
-        expansions as f64 / EXPANSIONS_PER_SECOND
+        expansions as f64 / expansions_per_second()
     );
     assert_eq!(router.profile.phase_expansions[0], expansions);
     assert!((router.profile.phase_search[0] - router.work_seconds()).abs() < 1.0e-12);
@@ -551,13 +550,13 @@ fn a_budget_in_seconds_buys_expansions_at_the_calibration() {
         "{line}"
     );
     assert!(
-        line.contains(&format!("constant {:.0}", EXPANSIONS_PER_SECOND)),
+        line.contains(&format!("rate {:.0}", expansions_per_second())),
         "{line}"
     );
     // A probe allowed fewer expansions than one iteration takes stops
     // after that iteration: its limit is the seconds at the constant.
     let mut short = crossed_net();
-    short.probe(1.0 / EXPANSIONS_PER_SECOND);
+    short.probe(1.0 / expansions_per_second());
     assert_eq!(
         short.config.negotiation_expansions, 0,
         "the probe restores the limit"

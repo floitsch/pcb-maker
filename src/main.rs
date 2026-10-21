@@ -205,6 +205,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
     "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
+    "calibrate-work-rate [rounds]",
 ];
 
 /// The commands without the agent contract (and the agent commands that
@@ -584,6 +585,24 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 "{}",
                 serde_json::to_string_pretty(&repair).map_err(|error| error.to_string())?
             );
+            Ok(())
+        }
+        "calibrate-work-rate" => {
+            // The start-up calibration's measurement alone, `rounds` times
+            // (default 1), one JSON line each (docs/router.md, "Determinism
+            // and the wall clock").
+            let usage = "usage: pcb-maker calibrate-work-rate [rounds]";
+            let rounds: usize = match arguments.next() {
+                Some(value) => value.parse().map_err(|_| usage.to_string())?,
+                None => 1,
+            };
+            for _ in 0..rounds {
+                let measured = pcb_kicad::measure_work_rate();
+                println!(
+                    "{}",
+                    serde_json::to_string(&measured).map_err(|error| error.to_string())?
+                );
+            }
             Ok(())
         }
         "bench-search" => {

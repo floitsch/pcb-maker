@@ -37,6 +37,53 @@ class Parallelism(unittest.TestCase):
         self.assertGreaterEqual(jobs, 1)
 
 
+class WorkRateAndTimeout(unittest.TestCase):
+    def test_the_reference_rate_is_pinned_unless_asked_otherwise(self):
+        environ = {}
+        self.assertEqual(run.pin_work_rate(None, environ), run.REFERENCE_WORK_RATE)
+        self.assertEqual(environ["PCB_WORK_RATE"], "3.15e6,150e6")
+        environ = {"PCB_WORK_RATE": "2e6"}
+        self.assertEqual(run.pin_work_rate(None, environ), "2e6")
+        self.assertEqual(environ["PCB_WORK_RATE"], "2e6")
+        self.assertEqual(run.pin_work_rate("3e6,140e6", environ), "3e6,140e6")
+        self.assertEqual(environ["PCB_WORK_RATE"], "3e6,140e6")
+        self.assertEqual(run.pin_work_rate("measured", environ), "measured")
+        self.assertNotIn("PCB_WORK_RATE", environ)
+
+    def test_the_timeout_follows_the_wall_guard(self):
+        class Arguments:
+            timeout_given = False
+            timeout = run.DEFAULT_TIMEOUT_SECONDS
+            budget_scale = 1.0
+        arguments = Arguments()
+        # The layout's 1500 s at a guard of 2, plus 300 s.
+        self.assertEqual(run.scaled_timeout(arguments), 3300)
+        self.assertEqual(run.scaled_timeout(arguments, 1500, 3.0), 4800)
+        # At least 1800 s.
+        self.assertEqual(run.scaled_timeout(arguments, 40), 1800)
+        arguments.budget_scale = 2.0
+        self.assertEqual(run.scaled_timeout(arguments), 6300)
+        # --timeout as given, beyond its fixed 300 s scaled.
+        arguments.timeout_given, arguments.timeout = True, 1000
+        self.assertEqual(run.scaled_timeout(arguments, 40), 1700)
+        arguments.budget_scale = 1.0
+        self.assertEqual(run.scaled_timeout(arguments, 40), 1000)
+
+    def test_rows_carry_the_verdicts_rates(self):
+        row = {}
+        run.verdict_extras(row, {"work_rate": 3.15e6, "placer_work_rate": 150e6, "work_rate_source": "PCB_WORK_RATE",
+                                 "work_rate_measured": 3.1e6, "placer_work_rate_measured": 1.4e8,
+                                 "work_wall_ratio": 0.98765, "environment": {}})
+        self.assertEqual(row, {"work_rate": 3.15e6, "placer_work_rate": 150e6, "work_rate_source": "PCB_WORK_RATE",
+                               "work_rate_measured": 3.1e6, "placer_work_rate_measured": 1.4e8,
+                               "work_wall_ratio": 0.988})
+        rows = [{"work_rate_measured": 3.0e6, "work_wall_ratio": 0.9}, {"work_rate_measured": 3.2e6},
+                {"work_rate_measured": 2.0e6}, {}]
+        self.assertEqual(run.measured_rates(rows), {"work_rate_measured_median": 3.0e6,
+                                                    "placer_work_rate_measured_median": None,
+                                                    "work_wall_ratio_median": 0.9})
+
+
 def finding(kind, *items):
     return (kind, [(uuid, at) for uuid, at in items])
 

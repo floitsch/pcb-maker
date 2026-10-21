@@ -305,7 +305,7 @@ pub fn route_kicad_board(
         ladder_work_now.set(ladder_work_now.get() + tally.add(checks));
         checks_charged.set(tally);
     };
-    let work_of = |expansions: u64| expansions as f64 / core::router::EXPANSIONS_PER_SECOND;
+    let work_of = |expansions: u64| expansions as f64 / core::router::expansions_per_second();
     // Without a deadline (route mode) the wall clock guards the work at
     // `GUARD` times it; with one, the deadline is the only wall guard. The
     // guard takes over only when the wall clock is ahead by more than a
@@ -1913,7 +1913,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // expansions), so that results do not depend on the machine's
         // load; the clock stays as a guard.
         router_config.negotiation_expansions =
-            (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+            (seconds * core::router::expansions_per_second()) as u64;
         router_config.negotiation_seconds = seconds * core::router::GUARD;
         // The polish after it may not take longer than the negotiation was
         // allowed.
@@ -1926,7 +1926,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // wherever the load had brought it (1124 s of work on one run).
         let seconds = router_config.negotiation_seconds;
         router_config.negotiation_expansions =
-            (seconds * core::router::EXPANSIONS_PER_SECOND) as u64;
+            (seconds * core::router::expansions_per_second()) as u64;
         router_config.negotiation_seconds = seconds * core::router::GUARD;
     }
     if let Some(length) = config.escape_stub_mm {

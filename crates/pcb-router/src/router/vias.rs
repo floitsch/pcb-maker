@@ -156,7 +156,8 @@ impl Router {
             if strict {
                 // The round's negotiation stops where the budget ends (a
                 // cut round that leaves something open is reverted below).
-                self.config.negotiation_expansions = ((left * EXPANSIONS_PER_SECOND) as u64).max(1);
+                self.config.negotiation_expansions =
+                    ((left * expansions_per_second()) as u64).max(1);
                 self.config.negotiation_seconds = self.config.negotiation_seconds.min(left * GUARD);
             }
             let via_cost = self.config.via_cost;

@@ -87,6 +87,17 @@ TIER_THREADS = 2
 # The harness's timeout less this is scaled with the budget: KiCad's checks
 # and the file work do not shrink with it.
 FIXED_TIMEOUT_SECONDS = 300
+# The harness's timeout without --timeout: at least this, else the layout's
+# wall-clock guard (KiCadBoardLayoutConfig's wall_guard default, 2 times the
+# budget) past the budget plus FIXED_TIMEOUT_SECONDS (scaled_timeout).
+DEFAULT_TIMEOUT_SECONDS = 1800
+WALL_GUARD = 2.0
+# The work rates every board runs at unless --work-rate says otherwise
+# (PCB_WORK_RATE: search expansions and placement units a second of work
+# stands for): the reference's, so that rows compare across machines and
+# loads; `measured` lets each binary measure its machine at its start
+# (docs/router.md, "Determinism and the wall clock").
+REFERENCE_WORK_RATE = "3.15e6,150e6"
 COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|missing_courtyard|isolated_copper|nonmirrored_text)")
 
 
@@ -364,6 +375,30 @@ def strict_row(row, strict, unexpected=()):
                               and not strict["new"])
 
 
+def pin_work_rate(given, environ):
+    """Sets PCB_WORK_RATE in `environ`, which every board's binary inherits:
+    `given` (--work-rate), else what it holds, else the reference's;
+    `measured` removes it (each binary measures its machine). Returns the
+    setting."""
+    rate = given or environ.get("PCB_WORK_RATE") or REFERENCE_WORK_RATE
+    if rate == "measured":
+        environ.pop("PCB_WORK_RATE", None)
+    else:
+        environ["PCB_WORK_RATE"] = rate
+    return rate
+
+
+def measured_rates(rows):
+    """The median of the work rates the rows' binaries measured, and their
+    work over wall clock (summary.json)."""
+    def median(key):
+        values = sorted(row[key] for row in rows if row.get(key) is not None)
+        return values[len(values) // 2] if values else None
+    return {"work_rate_measured_median": median("work_rate_measured"),
+            "placer_work_rate_measured_median": median("placer_work_rate_measured"),
+            "work_wall_ratio_median": median("work_wall_ratio")}
+
+
 def verdict_extras(row, verdict):
     """The binary's repairs and the result-changing environment it echoed
     (verdict.json; binaries since the verdict-integrity change)."""
@@ -373,6 +408,12 @@ def verdict_extras(row, verdict):
         row["repairs"] = verdict["repairs"]
     if verdict.get("environment"):
         row["environment"] = verdict["environment"]
+    # The work rates the binary ran at and what it measured, and its work
+    # over its wall clock (binaries since the runtime calibration).
+    for key in ("work_rate", "placer_work_rate", "work_rate_source", "work_rate_measured",
+                "placer_work_rate_measured", "work_wall_ratio"):
+        if verdict.get(key) is not None:
+            row[key] = round(verdict[key], 3) if key == "work_wall_ratio" else verdict[key]
 
 
 def native(result_directory, allowed=None):
@@ -727,11 +768,21 @@ LAYOUT_BUDGETS = {"total_seconds": 1500.0, "move_seconds": 600.0, "polish_second
 ROUTE_BUDGET = ("ladder_budget_seconds", 1200.0)
 
 
-def scaled_timeout(arguments):
-    if arguments.budget_scale == 1:
-        return arguments.timeout
-    fixed = min(FIXED_TIMEOUT_SECONDS, arguments.timeout)
-    return round(fixed + (arguments.timeout - fixed) * arguments.budget_scale)
+def scaled_timeout(arguments, budget=None, guard=None):
+    """The harness's timeout for a board: --timeout as given (beyond its
+    fixed 300 s scaled with the budget), else the layout's wall-clock guard
+    past the board's budget in work (`budget`: the layout's total_seconds,
+    route mode's ladder budget; default the layout's, scaled) plus the
+    fixed 300 s, at least 1800 s. The guard (`guard`, default WALL_GUARD,
+    the layout's wall_guard) is a load margin: the harness waits for it."""
+    if arguments.timeout_given:
+        if arguments.budget_scale == 1:
+            return arguments.timeout
+        fixed = min(FIXED_TIMEOUT_SECONDS, arguments.timeout)
+        return round(fixed + (arguments.timeout - fixed) * arguments.budget_scale)
+    if budget is None:
+        budget = LAYOUT_BUDGETS["total_seconds"] * arguments.budget_scale
+    return round(max(DEFAULT_TIMEOUT_SECONDS, budget * (guard or WALL_GUARD) + FIXED_TIMEOUT_SECONDS))
 
 
 def run_admitted(task, arguments, token):
@@ -798,7 +849,8 @@ def run_admitted(task, arguments, token):
     command = [str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
                str(work / "layout"), router_argument, str(work / "layout.json")]
     load_before = os.getloadavg()[0]
-    timeout = scaled_timeout(arguments)
+    timeout = scaled_timeout(arguments, layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]),
+                             layout.get("wall_guard"))
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
                                                               lambda pid: arguments.gate.started(token, pid))
     (work / "layout.log").write_text(output)
@@ -1002,7 +1054,8 @@ def schematic_admitted(task, arguments, token):
     env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else None
     command = [str(arguments.binary), "layout-kicad-board", str(project), board_id, str(work / "layout"),
                router_argument, str(project / "layout.json")]
-    timeout = scaled_timeout(arguments)
+    timeout = scaled_timeout(arguments, layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]),
+                             layout.get("wall_guard"))
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
                                                               lambda pid: arguments.gate.started(token, pid))
     (work / "layout.log").write_text(output)
@@ -1094,7 +1147,7 @@ def route_admitted(task, arguments, token):
                str(work / "route"), router_argument, "--reference", "none"]
     started = time.monotonic()
     load_before = os.getloadavg()[0]
-    timeout = scaled_timeout(arguments)
+    timeout = scaled_timeout(arguments, router.get(ROUTE_BUDGET[0], ROUTE_BUDGET[1]))
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
                                                               lambda pid: arguments.gate.started(token, pid))
     (work / "route.log").write_text(output)
@@ -1200,7 +1253,7 @@ def designer_admitted(task, arguments, token):
                str(work / "router.json"), "--reference", "none"]
     started = time.monotonic()
     load_before = os.getloadavg()[0]
-    timeout = scaled_timeout(arguments)
+    timeout = scaled_timeout(arguments, router.get(ROUTE_BUDGET[0], ROUTE_BUDGET[1]))
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
                                                               lambda pid: arguments.gate.started(token, pid))
     (work / "route.log").write_text(output)
@@ -1561,13 +1614,20 @@ def main():
     parser.add_argument("--quality", action="store_true",
                         help="score the designer's board and the result with score-kicad-board (quality.py's "
                              "measures, about 0.1 s a board) into each row's quality")
+    parser.add_argument("--work-rate", default=None,
+                        help="the work rates every board runs at (PCB_WORK_RATE: '<expansions/s>[,<placer "
+                             "units/s>]'; 'measured': each binary measures its machine at its start; default: "
+                             "PCB_WORK_RATE if set, else the reference's " + REFERENCE_WORK_RATE + ")")
     parser.add_argument("--no-lock", action="store_true",
                         help="do not take build/quick-tier.lock (by default a tier run or a run of a whole "
                              "task list takes it and waits for it: one tier at a time on the machine)")
     arguments = parser.parse_args()
     arguments.timeout_given = arguments.timeout is not None
     if arguments.timeout is None:
-        arguments.timeout = 1800
+        arguments.timeout = DEFAULT_TIMEOUT_SECONDS
+    arguments.work_rate = pin_work_rate(arguments.work_rate, os.environ)
+    print(f"work rate {arguments.work_rate}" + (" (the reference's)" if arguments.work_rate == REFERENCE_WORK_RATE
+                                                else ""), file=sys.stderr)
     arguments.harvest_boards = arguments.harvest_data / "boards"
     arguments.output.mkdir(parents=True, exist_ok=True)
     tier = None
@@ -1695,7 +1755,8 @@ def main():
                  else ", the intake's timeouts"), file=sys.stderr)
     elif arguments.designer:
         print(f"mode route on the designer's placement, {arguments.designer_budget * arguments.budget_scale:g} s "
-              f"of work, timeout {scaled_timeout(arguments)} s", file=sys.stderr)
+              f"of work, timeout {scaled_timeout(arguments, arguments.designer_budget * arguments.budget_scale)} s",
+              file=sys.stderr)
     elif arguments.route_from is not None or arguments.budget_scale != 1:
         mode = "schematic" if arguments.schematic else "route from " + str(arguments.route_from) if arguments.route_from \
             else "layout"
@@ -1744,7 +1805,11 @@ def main():
                    jobs=arguments.jobs, threads=arguments.threads, physical_cores=arguments.physical_cores,
                    # Whether jobs and threads were the tier's default
                    # (TIER_THREADS) or given.
-                   parallelism=arguments.parallelism)
+                   parallelism=arguments.parallelism,
+                   # The work rates every board was pinned at (PCB_WORK_RATE;
+                   # "measured": each binary measured its machine) and the
+                   # median of what the binaries measured.
+                   work_rate=arguments.work_rate, **measured_rates(ran))
     if arguments.designer:
         summary["placement"] = "designer"
     outcomes = {}

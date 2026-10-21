@@ -53,7 +53,7 @@ impl Router {
             self.config.negotiation_expansions,
         );
         self.config.negotiation_seconds = seconds * GUARD;
-        self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
+        self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
         self.negotiate(&order, order.clone());
         (
             self.config.negotiation_seconds,
@@ -87,7 +87,7 @@ impl Router {
             self.config.negotiation_expansions,
         );
         self.config.negotiation_seconds = seconds * GUARD;
-        self.config.negotiation_expansions = (seconds * EXPANSIONS_PER_SECOND) as u64;
+        self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
         self.hopeless = false;
         let order = self.routing_order();
         let pending: Vec<NetId> = order
@@ -120,15 +120,15 @@ impl Router {
     }
 
     /// The work done so far, in seconds of an idle machine (search
-    /// expansions at `EXPANSIONS_PER_SECOND`): budgets measured in it do
+    /// expansions at `expansions_per_second()`): budgets measured in it do
     /// not depend on how busy the machine is.
     pub(super) fn work_seconds(&self) -> f64 {
-        self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND
+        self.scratch.expansions as f64 / expansions_per_second()
     }
 
     pub(super) fn phase_mark(&self) -> PhaseMark {
         (
-            self.scratch.expansions as f64 / EXPANSIONS_PER_SECOND,
+            self.scratch.expansions as f64 / expansions_per_second(),
             self.pour_work_seconds(),
             self.scratch
                 .pour_nanos
@@ -149,14 +149,16 @@ impl Router {
     }
 
     /// The pour analyses' work so far, in seconds of an idle machine
-    /// (`pour_analysis_nanos`, and the fill probes' `probe_nanos`).
+    /// (`pour_analysis_nanos`, and the fill probes' `probe_nanos`: the
+    /// reference's nanoseconds, scaled to this process's rate by
+    /// `reference_time_scale`).
     pub(super) fn pour_work_seconds(&self) -> f64 {
         let nanos = self
             .scratch
             .pour_units
             .load(std::sync::atomic::Ordering::Relaxed)
             + self.probe_nanos();
-        nanos as f64 / 1.0e9
+        nanos as f64 / 1.0e9 * reference_time_scale()
     }
 
     /// The fill probes' work so far, in nanoseconds of an idle machine:
@@ -243,7 +245,7 @@ impl Router {
     }
 
     /// The work this router has done, in seconds of an idle machine
-    /// (search expansions at `EXPANSIONS_PER_SECOND`).
+    /// (search expansions at `expansions_per_second()`).
     pub fn work(&self) -> f64 {
         self.work_seconds()
     }

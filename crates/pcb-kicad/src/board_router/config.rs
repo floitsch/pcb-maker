@@ -230,6 +230,17 @@ pub struct KiCadBoardRouterConfig {
     /// a limit (the intake's 3 GiB).
     #[serde(default)]
     pub memory_mb: Option<f64>,
+    /// The search expansions a second of work stands for, pinned instead
+    /// of measured at the start (`work_rate` in a verdict: for reproducing
+    /// a run on another machine with the rate it recorded; docs/router.md,
+    /// "Determinism and the wall clock"). `PCB_WORK_RATE` wins over it.
+    #[serde(default)]
+    pub work_rate: Option<f64>,
+    /// With `work_rate`: the placement units a second stands for (default:
+    /// the reference's, scaled as `work_rate` scales the reference's search
+    /// rate).
+    #[serde(default)]
+    pub placer_work_rate: Option<f64>,
     /// Seconds one negotiation may run (default 900 s). The ladder sets it
     /// per attempt from what is left of its budget, so that a hopeless
     /// first rung leaves time for the next (video's exclusive-plane rung

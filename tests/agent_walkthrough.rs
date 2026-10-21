@@ -27,10 +27,13 @@ use serde_json::{Value, json};
 fn binary() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pcb-maker"));
     // The work, not the machine's load, ends the run: a loaded test
-    // machine must not turn exit 0 into exit 3.
+    // machine must not turn exit 0 into exit 3; and the work rates are
+    // pinned at the reference's, so that a slow test machine does the same
+    // work as the machine the expectations come from.
     command
         .env("RAYON_NUM_THREADS", "2")
         .env("PCB_ROUTER_NO_WALL_GUARD", "1")
+        .env("PCB_WORK_RATE", "3.15e6,150e6")
         .env_remove("PCB_SKIP_NATIVE")
         .env_remove("PCB_MAKER_TEST_PANIC");
     command

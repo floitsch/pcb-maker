@@ -75,13 +75,50 @@ const STUB_FIT: f64 = 1.0e-6;
 /// Search expansions per second of a router's phases (their wall clock
 /// without the pour analyses, which count by their own model) on the
 /// reference: the 5950X nearly idle, one search thread (`RAYON_NUM_THREADS`
-/// 1), route mode. It turns a time budget into work. Calibrated 2026-10-15
-/// on x1150 (docs/router.md, "Determinism and the wall clock"): the median
-/// of Castor 3.34M, jetson 3.23M, k30-SBC 3.27M, Sisu 3.07M, urchin 2.78M
-/// and spell_tome 2.27M a second. It was 2.0e6 (an idle eight-core
-/// machine's negotiation, ATAT1800: 52M in 29 s), stale by four speed
-/// rounds.
-pub const EXPANSIONS_PER_SECOND: f64 = 3.15e6;
+/// 1), route mode. Calibrated 2026-10-15 on x1150 (docs/router.md,
+/// "Determinism and the wall clock"): the median of Castor 3.34M, jetson
+/// 3.23M, k30-SBC 3.27M, Sisu 3.07M, urchin 2.78M and spell_tome 2.27M a
+/// second. It was 2.0e6 (an idle eight-core machine's negotiation,
+/// ATAT1800: 52M in 29 s), stale by four speed rounds. The rate a process
+/// turns its time budgets into work at is `expansions_per_second`: this
+/// one unless the process set its own (pcb-kicad's `work_rate`: the
+/// start-up calibration scales it to the machine, `PCB_WORK_RATE` pins it).
+pub const REFERENCE_EXPANSIONS_PER_SECOND: f64 = 3.15e6;
+
+/// The rate `set_expansions_per_second` set (its bits; 0 when unset).
+static EXPANSION_RATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Search expansions a second of work stands for in this process: it turns
+/// every time budget into work and the work back into seconds. The
+/// reference's rate (`REFERENCE_EXPANSIONS_PER_SECOND`) unless the process
+/// set its own; set once before any work, so that a run's results depend
+/// on it only as a fixed input (docs/router.md, "Determinism and the wall
+/// clock").
+pub fn expansions_per_second() -> f64 {
+    match EXPANSION_RATE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => REFERENCE_EXPANSIONS_PER_SECOND,
+        bits => f64::from_bits(bits),
+    }
+}
+
+/// Sets the rate of `expansions_per_second` for the rest of the process
+/// (pcb-kicad's `work_rate`, before a run starts). Panics on a rate that
+/// is not a positive finite number.
+pub fn set_expansions_per_second(rate: f64) {
+    assert!(
+        rate.is_finite() && rate > 0.0,
+        "a work rate must be positive: {rate}"
+    );
+    EXPANSION_RATE.store(rate.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many seconds of this machine a second of the reference's modelled
+/// work takes (the reference's rate over this process's: 1 at the
+/// reference's rate): the pour analyses' nanoseconds and KiCad's checks
+/// are modelled on the reference and scale by it.
+pub fn reference_time_scale() -> f64 {
+    REFERENCE_EXPANSIONS_PER_SECOND / expansions_per_second()
+}
 /// How much longer than its work the clock may run before it stops a
 /// route-mode negotiation anyway (a loaded machine).
 pub const GUARD: f64 = 4.0;

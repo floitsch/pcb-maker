@@ -440,9 +440,37 @@ thread_local! {
     static WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Placement work one thread does per second on an idle machine: budgets
-/// in seconds become work limits at this rate.
-pub const WORK_PER_SECOND: f64 = 150.0e6;
+/// Placement work one thread does per second on the reference (the 5950X
+/// idle, docs/placer.md, "Placement work against the CPU"). The rate a
+/// process turns its budgets in seconds into work limits at is
+/// `work_per_second`: this one unless the process set its own (pcb-kicad's
+/// `work_rate`: the start-up calibration scales it to the machine,
+/// `PCB_WORK_RATE` pins it).
+pub const REFERENCE_WORK_PER_SECOND: f64 = 150.0e6;
+
+/// The rate `set_work_per_second` set (its bits; 0 when unset).
+static WORK_RATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Placement work a second stands for in this process: budgets in seconds
+/// become work limits at this rate. The reference's
+/// (`REFERENCE_WORK_PER_SECOND`) unless the process set its own, once,
+/// before any work.
+pub fn work_per_second() -> f64 {
+    match WORK_RATE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => REFERENCE_WORK_PER_SECOND,
+        bits => f64::from_bits(bits),
+    }
+}
+
+/// Sets the rate of `work_per_second` for the rest of the process. Panics
+/// on a rate that is not a positive finite number.
+pub fn set_work_per_second(rate: f64) {
+    assert!(
+        rate.is_finite() && rate > 0.0,
+        "a work rate must be positive: {rate}"
+    );
+    WORK_RATE.store(rate.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
 
 /// The work of one pin's position (a turn of its offset) in a wirelength
 /// sum, in units of one part-against-part test.
@@ -505,7 +533,7 @@ fn phase_line(debug: bool, name: &str, mark: Mark) {
             (Some(start), Some(now)) => now - start,
             _ => seconds,
         };
-        let counted = (work() - mark.1) as f64 / WORK_PER_SECOND;
+        let counted = (work() - mark.1) as f64 / work_per_second();
         eprintln!(
             "placer phase {name}: {seconds:.2} s, cpu {cpu:.2} s, work {counted:.2} s ({:.2})",
             counted / cpu.max(1.0e-6)

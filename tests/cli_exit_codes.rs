@@ -15,7 +15,8 @@ fn binary() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pcb-maker"));
     command
         .env("RAYON_NUM_THREADS", "2")
-        .env_remove("PCB_MAKER_TEST_PANIC");
+        .env_remove("PCB_MAKER_TEST_PANIC")
+        .env_remove("PCB_WORK_RATE");
     command
 }
 
@@ -202,6 +203,20 @@ fn a_route_kicad_did_not_check_is_never_complete() {
     assert_eq!(verdict["open_connections"], 0);
     assert_eq!(verdict["cut"], serde_json::json!([]));
     assert!(verdict["work_seconds"].as_f64().is_some());
+    // The rates were measured at the start, and recorded.
+    assert_eq!(verdict["work_rate_source"], "measured");
+    assert!(verdict["work_rate"].as_f64().is_some_and(|rate| rate > 0.0));
+    assert_eq!(verdict["work_rate"], verdict["work_rate_measured"]);
+    assert_eq!(
+        verdict["placer_work_rate"],
+        verdict["placer_work_rate_measured"]
+    );
+    assert!(verdict["work_wall_ratio"].as_f64().is_some());
+    assert!(
+        stderr(&output).contains("work rate: "),
+        "{}",
+        stderr(&output)
+    );
     assert!(
         verdict["outputs"]["board"]
             .as_str()
@@ -215,6 +230,67 @@ fn a_route_kicad_did_not_check_is_never_complete() {
     let report: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
     assert_eq!(report["repairs"], verdict["repairs"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_pinned_work_rate_is_applied_and_recorded() {
+    let root = scratch("rate");
+    let project = project(&root);
+    let route = |out: &Path, rate: Option<&str>, config: &str| {
+        let mut command = binary();
+        command.env("PCB_SKIP_NATIVE", "1");
+        if let Some(rate) = rate {
+            command.env("PCB_WORK_RATE", rate);
+        }
+        command
+            .args([
+                "route-kicad-board",
+                &project.display().to_string(),
+                "t",
+                &out.display().to_string(),
+                config,
+            ])
+            .output()
+            .unwrap()
+    };
+    // The variable: both rates as given, the measurement beside them.
+    let out = root.join("variable");
+    let output = route(&out, Some("3.15e6,150e6"), "auto");
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let judged = verdict(&out.join("board-router.json"));
+    assert_eq!(judged["work_rate"], 3.15e6);
+    assert_eq!(judged["placer_work_rate"], 150.0e6);
+    assert_eq!(judged["work_rate_source"], "PCB_WORK_RATE");
+    assert!(
+        judged["work_rate_measured"]
+            .as_f64()
+            .is_some_and(|rate| rate > 0.0)
+    );
+    assert_eq!(judged["environment"]["PCB_WORK_RATE"], "3.15e6,150e6");
+    // The router settings, the placer's rate scaled as the search's.
+    let config = root.join("router.json");
+    fs::write(
+        &config,
+        r#"{"work_rate": 1.575e6, "skip_native_verification": true}"#,
+    )
+    .unwrap();
+    let out = root.join("config");
+    let output = route(&out, None, &config.display().to_string());
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let judged = verdict(&out.join("board-router.json"));
+    assert_eq!(judged["work_rate"], 1.575e6);
+    assert_eq!(judged["placer_work_rate"], 75.0e6);
+    assert_eq!(judged["work_rate_source"], "config");
+    // A rate that is no rate is the input's error.
+    let out = root.join("bad");
+    let output = route(&out, Some("fast"), "auto");
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("PCB_WORK_RATE"),
+        "{}",
+        stderr(&output)
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -274,8 +350,13 @@ fn a_panic_exits_4_with_one_line_and_a_report() {
         .output()
         .unwrap();
     assert_eq!(code(&output), 4);
+    // One line besides the work rates' (measured before the run starts).
     let text = stderr(&output);
-    assert_eq!(text.lines().count(), 1, "{text}");
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.starts_with("work rate: "))
+        .collect();
+    assert_eq!(lines.len(), 1, "{text}");
     assert!(text.contains("PCB_MAKER_TEST_PANIC"), "{text}");
     assert!(!out.join("board-router.json").exists());
     let verdict: serde_json::Value =

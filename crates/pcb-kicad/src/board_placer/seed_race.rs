@@ -5,7 +5,7 @@
 
 /// The threads of the reference machine the placement race's seeds count
 /// as running on (a pool this wide, whatever the process's threads). The
-/// router's `EXPANSIONS_PER_SECOND` is calibrated on one search thread;
+/// router's `REFERENCE_EXPANSIONS_PER_SECOND` is calibrated on one search thread;
 /// this pool width is the placement's own convention.
 pub(crate) const REFERENCE_THREADS: usize = 8;
 

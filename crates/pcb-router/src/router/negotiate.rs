@@ -287,7 +287,7 @@ impl Router {
                         "{:.0} s of wall clock, {:.0} s of work",
                         started.elapsed().as_secs_f64(),
                         (self.scratch.expansions - expansions_before) as f64
-                            / EXPANSIONS_PER_SECOND
+                            / expansions_per_second()
                     ),
                 );
                 break;

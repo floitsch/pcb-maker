@@ -333,13 +333,23 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      at most 600 s while connections are open and 60 s
      (`polish_seconds`) once everything is routed.
   - **The budget.** `total_seconds` in `layout.json` (default 1500) is
-    the layout's whole budget in seconds of work (an idle machine's
-    seconds, so a run does the same on a loaded one): the placement
+    the layout's whole budget in seconds of work (search expansions and
+    placement units at rates the binary measures on this machine at its
+    start, so a second of work is about a second of its wall clock; the
+    run is the same on a loaded machine for the same rates): the placement
     race stops at 40 % of it, the moves at 65 %, the final route gets
     the rest. A small board needs far less: `"total_seconds": 30` lays
-    out a 68-net keyboard in about 15 s. The wall clock guards it at 1.1
-    times (exit 3, `cut`); `PCB_ROUTER_NO_WALL_GUARD=1` leaves it to the
-    work alone.
+    out a 68-net keyboard in about 15 s. The wall clock guards it at
+    `wall_guard` times (default 2; exit 3, `cut`);
+    `PCB_ROUTER_NO_WALL_GUARD=1` leaves it to the work alone.
+  - **The work rates.** The first line on stderr is `work rate: ...`: the
+    rates applied and what the start-up calibration measured (about a
+    second; `work_rate`, `work_rate_source`, `work_rate_measured` in the
+    verdict). Results depend on the measured rates. To repeat a run
+    exactly, here or on another machine, pin the rates it recorded:
+    `PCB_WORK_RATE=<work_rate>,<placer_work_rate>` (the reference's:
+    `3.15e6,150e6`, which the benchmark tiers use), or the router
+    settings `work_rate` and `placer_work_rate`.
 
 ## 4. Read the verdict: exit code and `<out-dir>/verdict.json`
 
@@ -412,13 +422,15 @@ A finished run also carries it as `verdict` in its report:
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): not subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
-| `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_NO_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`. Empty when none is. |
+| `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_NO_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`, `PCB_WORK_RATE`. Empty when none is. |
 | `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
 | `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
 | `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. |
 | `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
-| `work_seconds`, `wall_seconds` | The work done (seconds of an idle machine, what budgets count) and the wall clock. |
+| `work_seconds`, `wall_seconds`, `work_wall_ratio` | The work done (what budgets count: seconds at the work rates), the wall clock, and the one over the other (about 1 where the rates fit the machine; lower where the wall clock ran ahead: load, KiCad's checks beyond their model, a pinned rate faster than the machine). |
+| `work_rate`, `placer_work_rate`, `work_rate_source` | The search expansions and placement units a second of work stood for, and where they came from: `measured` (the start-up calibration), `PCB_WORK_RATE`, `config` (the router settings `work_rate`, `placer_work_rate`) or `reference`. |
+| `work_rate_measured`, `placer_work_rate_measured` | What the start-up calibration measured (also beside a pinned rate). |
 | `kicad_check_work_seconds` | Layouts: the part of `work_seconds` that is KiCad's checks inside the layout (the board kept, the final ladder's attempts, the neck repair), each counted at a cost modelled from the board, the same whether the DRC cache answered it or not. |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |

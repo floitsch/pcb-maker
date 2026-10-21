@@ -52,7 +52,7 @@ pub(super) struct Profile {
 }
 
 /// Whether `search` times itself (`PCB_ROUTER_SEARCH_RATE`, for
-/// calibrating `EXPANSIONS_PER_SECOND`: the `profile rate:` line).
+/// calibrating `REFERENCE_EXPANSIONS_PER_SECOND`: the `profile rate:` line).
 pub(super) fn search_rate_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("PCB_ROUTER_SEARCH_RATE").is_some())
@@ -106,7 +106,7 @@ impl Profile {
         format!("profile work: {}", phases.join("; "))
     }
 
-    /// The search's rate (`EXPANSIONS_PER_SECOND` measured): the phases'
+    /// The search's rate (`REFERENCE_EXPANSIONS_PER_SECOND` measured): the phases'
     /// expansions over their wall seconds without the pour analyses' (which
     /// count by their own model), and with `PCB_ROUTER_SEARCH_RATE` the
     /// expansions over the seconds inside `search` alone.
@@ -127,9 +127,9 @@ impl Profile {
             }
         };
         format!(
-            "profile rate: phases {expansions} expansions in {wall:.3}s without pour analyses ({:.0}/s, constant {:.0}); pour {pour_work:.3}s work in {pour_wall:.3}s wall; inside the search {inside_expansions} expansions in {inside:.3}s ({:.0}/s)",
+            "profile rate: phases {expansions} expansions in {wall:.3}s without pour analyses ({:.0}/s, rate {:.0}); pour {pour_work:.3}s work in {pour_wall:.3}s wall; inside the search {inside_expansions} expansions in {inside:.3}s ({:.0}/s)",
             rate(expansions, wall),
-            EXPANSIONS_PER_SECOND,
+            expansions_per_second(),
             rate(inside_expansions, inside),
         )
     }

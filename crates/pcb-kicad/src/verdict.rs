@@ -436,7 +436,7 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 13] = [
+pub const RESULT_ENVIRONMENT: [&str; 14] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_SEEDS",
     "PCB_ROUTER_NO_ISLAND_STUBS",
@@ -450,6 +450,7 @@ pub const RESULT_ENVIRONMENT: [&str; 13] = [
     "PCB_NARROW_RESERVE",
     "PCB_PROBES_SIDE_BY_SIDE",
     "PCB_LADDER_STATS",
+    "PCB_WORK_RATE",
 ];
 
 /// The variables of `RESULT_ENVIRONMENT` that are set, with their values.
@@ -600,6 +601,22 @@ pub struct KiCadVerdict {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kicad_check_work_seconds: Option<f64>,
     pub wall_seconds: f64,
+    /// `work_seconds` over `wall_seconds`: about 1 where the work rates
+    /// fit the machine (they are measured at the start unless pinned),
+    /// lower where the wall clock ran ahead of the work (load, KiCad's
+    /// checks beyond their model, a pinned rate faster than the machine).
+    pub work_wall_ratio: Option<f64>,
+    /// The search expansions a second of work stood for (`work_rate`).
+    pub work_rate: f64,
+    /// The placement units a second of work stood for.
+    pub placer_work_rate: f64,
+    /// Where the rates came from: `measured` (the start-up calibration),
+    /// `PCB_WORK_RATE`, `config` (the router settings `work_rate`,
+    /// `placer_work_rate`) or `reference` (none calibrated).
+    pub work_rate_source: String,
+    /// What the start-up calibration measured, also beside a pinned rate.
+    pub work_rate_measured: Option<f64>,
+    pub placer_work_rate_measured: Option<f64>,
     /// Where the results are: `project`, `board`, `drc`, `report`, ...
     pub outputs: BTreeMap<String, String>,
     /// Steps that did not run while the board was incomplete, with why.
@@ -864,6 +881,7 @@ pub fn no_connect_parity_only(report: &Value) -> Option<usize> {
 
 /// The verdict of a finished run.
 pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
+    let rate = crate::work_rate::work_rate();
     let errors = facts
         .native
         .as_ref()
@@ -935,12 +953,31 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         work_seconds: facts.work_seconds,
         kicad_check_work_seconds: facts.kicad_check_work_seconds,
         wall_seconds: facts.wall_seconds,
+        work_wall_ratio: work_wall_ratio(facts.work_seconds, facts.wall_seconds),
+        work_rate: rate.expansions_per_second,
+        placer_work_rate: rate.placer_work_per_second,
+        work_rate_source: rate.source.clone(),
+        work_rate_measured: rate
+            .measured
+            .as_ref()
+            .map(|measured| measured.expansions_per_second),
+        placer_work_rate_measured: rate
+            .measured
+            .as_ref()
+            .map(|measured| measured.placer_work_per_second),
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
         room: facts.room.clone(),
         repairs: facts.repairs.clone(),
         environment: result_environment(),
     }
+}
+
+/// Work over wall clock (`None` without work or wall).
+pub(crate) fn work_wall_ratio(work_seconds: Option<f64>, wall_seconds: f64) -> Option<f64> {
+    work_seconds
+        .filter(|_| wall_seconds > 0.0)
+        .map(|work| work / wall_seconds)
 }
 
 /// The verdict of a run that ended in an error (`status` a usage or an

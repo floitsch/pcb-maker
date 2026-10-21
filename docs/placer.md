@@ -274,7 +274,10 @@ differs by up to 130 unconnected between runs of the same placement
 ## Placement work against the CPU (calibrated 2026-10-14)
 
 Budgets count placement work (`pcb_placer::work`, 150 M units a second
-of one thread); the layout's wall clock only guards. `PCB_PLACER_DEBUG`
+of one thread on the reference, `REFERENCE_WORK_PER_SECOND`; since
+2026-10-21 scaled to the machine at the start of a run unless pinned,
+`work_per_second`: docs/router.md, "The machine's rates"); the layout's
+wall clock only guards. `PCB_PLACER_DEBUG`
 prints per phase `placer phase <name>: <wall> s, cpu <thread cpu> s, work
 <counted> s (<counted / cpu>)`; the CPU time comes from
 `/proc/thread-self/schedstat`, so the ratio is the calibration whatever

@@ -29,10 +29,12 @@ pours that is far from complete after the first route takes that narrow
 attempt directly, then, with 240 s of work left, the same attempt in the
 other pour mode. KiCad's connection-width
 findings are repaired afterwards with KiCad's own fill. Every budget is in
-work (search expansions at 3.15e6 a second, pour analyses and KiCad checks
-by a model), so a layout is deterministic for its input and binary,
-whatever the thread count, unless the wall-clock guard (1.1 times the
-budget) cuts it (`cut` in the verdict). KiCad's ERC/DRC/connectivity
+work (search expansions and placement units at rates measured at the
+start, the reference's 3.15e6 and 150e6 a second scaled to the machine;
+pour analyses and KiCad checks by a model), so a layout is deterministic
+for its input, binary and rates (`PCB_WORK_RATE` pins them; the tiers pin
+the reference's), whatever the thread count, unless the wall-clock guard
+(`wall_guard`, 2 times the budget) cuts it (`cut` in the verdict). KiCad's ERC/DRC/connectivity
 decide pass or fail (exit codes 0-4 and `verdict.json`).
 `route-kicad-board` is the same without placement; `import-kicad-netlist`
 starts an agent's board from a schematic (`--footprints-from` a designer's
@@ -302,6 +304,11 @@ User-facing:
 - `PCB_ROUTER_NO_WALL_GUARD`: no wall-clock guard in the router, and the
   layout sets no wall-clock deadline; work alone decides (determinism
   checks, the walkthrough test).
+- `PCB_WORK_RATE=<expansions/s>[,<placer units/s>]`: the work rates
+  pinned instead of measured at the start (a verdict's `work_rate` and
+  `placer_work_rate` repeat its run; `3.15e6,150e6` the reference's, run.py's
+  default). `pcb-maker calibrate-work-rate [rounds]` prints the
+  measurement alone.
 - `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget
   (default 600 s, the layout's share).
 - `PCB_MAKER_CACHE_DIR`: root of the DRC cache and of the library-free

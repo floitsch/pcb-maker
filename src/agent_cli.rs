@@ -288,6 +288,25 @@ fn classify(error: String) -> Failure {
     }
 }
 
+/// The machine's work rates for this run, before any work
+/// (`pcb_kicad::calibrate_work_rate`): measured, or pinned by
+/// `PCB_WORK_RATE` or the router settings `work_rate` and
+/// `placer_work_rate`. Printed, and written into the verdict.
+fn calibrate_work_rate(router: Option<&pcb_kicad::KiCadBoardRouterConfig>) -> Result<(), Failure> {
+    let pinned = match router.map(|config| (config.work_rate, config.placer_work_rate)) {
+        Some((Some(expansions), placer)) => Some((expansions, placer)),
+        Some((None, Some(_))) => {
+            return Err(Failure::Usage(
+                "the router setting placer_work_rate needs work_rate beside it".into(),
+            ));
+        }
+        _ => None,
+    };
+    pcb_kicad::calibrate_work_rate(pinned)
+        .map(|_| ())
+        .map_err(Failure::Usage)
+}
+
 /// The reference project of `--reference`: `none`, a directory, or the
 /// default.
 fn reference_option(
@@ -388,6 +407,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             path_text(&output.join("verdict.json")),
         ),
     ]);
+    calibrate_work_rate(Some(&config))?;
     let report = output.join("board-router.json");
     set_target(command, report.clone(), outputs.clone());
     // Test hook: a panic once the run has started (tests/cli_exit_codes.rs).
@@ -676,6 +696,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             path_text(&output.join("verdict.json")),
         ),
     ]);
+    calibrate_work_rate(Some(&router))?;
     let report = output.join("board-layout.json");
     set_target(command, report.clone(), outputs.clone());
     let started = Instant::now();
@@ -792,6 +813,7 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             path_text(&output.join("verdict.json")),
         ),
     ]);
+    calibrate_work_rate(None)?;
     let report = output.join("board-placer.json");
     set_target(command, report.clone(), outputs.clone());
     let started = Instant::now();

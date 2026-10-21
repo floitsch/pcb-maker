@@ -107,7 +107,13 @@ board that could be placed legally was routed clean.
 Since x747 a layout is deterministic for a given input and binary (and
 since the placement pool, whatever its thread count) unless the wall clock cuts it (docs/router.md, "Determinism and the
 wall clock"; such rows carry `cut`, compare.py marks them CUT). One run per
-side answers a quality question: a repeat gives the same rows. The
+side answers a quality question: a repeat gives the same rows. The work
+rates are pinned at the reference's for every board (run.py sets
+`PCB_WORK_RATE=3.15e6,150e6`; `--work-rate measured` lets each binary
+measure its machine, which changes the rows with the machine and its
+load), and rows carry `work_rate`, `work_rate_measured`, `work_wall_ratio`
+and the rest of the verdict's rate fields (docs/router.md, "The machine's
+rates"). The
 benchmark, not the machine, was the bottleneck (a quick tier about an hour
 at 6 jobs, a full sweep five hours, tiers serialised, pairs doubling every
 measurement). The discipline:
@@ -481,8 +487,10 @@ CPU s: medians at the full budget):
 overrides it) scales the layout's work budget: `total_seconds` 1500 to
 500 (the placement race stops at 40 % of it, the moves at 65 %, the final
 ladder gets what is left), `move_seconds` 600 to 200, `polish_seconds` 60
-to 20; the harness's timeout keeps a fixed 300 s for KiCad's checks and
-scales the rest (1800 to 800 s). The layout ends by work since x747
+to 20; the harness's timeout is the budget times the layout's wall guard
+(2) plus 300 s for KiCad's checks, at least 1800 s (before 2026-10-21: a
+fixed 300 s and the rest of 1800 s scaled, 800 s; `--timeout` keeps that
+rule). The layout ends by work since x747
 (docs/router.md, "Determinism and the wall clock"), so the scale changes
 what the layout does, not how the machine's load cuts it. Most quick-tier
 boards finish well inside 500 s of work; the scale bites where the final

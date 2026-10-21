@@ -359,7 +359,7 @@ impl Router {
             self.config.negotiation_expansions,
         );
         if self.wall_guard() {
-            let minute = (60.0 * EXPANSIONS_PER_SECOND) as u64;
+            let minute = (60.0 * expansions_per_second()) as u64;
             self.config.negotiation_expansions = if limits.1 == 0 {
                 minute
             } else {

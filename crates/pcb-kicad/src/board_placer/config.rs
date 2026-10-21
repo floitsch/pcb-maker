@@ -55,7 +55,7 @@ pub struct KiCadBoardPlacerConfig {
     #[serde(skip)]
     pub deadline: Option<std::time::Instant>,
     /// Placement work each seed may do, in seconds of an idle machine (see
-    /// `core::WORK_PER_SECOND`): set by the layout from its budget, so that
+    /// `core::work_per_second`): set by the layout from its budget, so that
     /// a busy or a slower machine places the same way.
     #[serde(skip)]
     pub work_seconds: Option<f64>,
