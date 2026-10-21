@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 59 | - | 0 | 59 | - |
-| [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 13 |
+| [Placer settings](#placer-settings) | 44 | 42 | 2 | 44 | 14 |
 | [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -345,6 +345,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `placement_seeds` | `usize` | `3` | placer.md | Placements tried with different seeds (in parallel); the best is kept: fewest illegal parts, least missed constraints, least wire. |
 | `routing_demand` | `f64` | `0.0` | - | Routing demand as charge in the global placement: every net's estimated wire area (half perimeter times the track pitch, over its signal layers) spreads over its bounding box and pushes parts apart where the wires will run, scaled by this (0: off). |
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |
+| `keep_board_marks` | `bool` | `true` | placer.md | The board's own texts (header pin names, a title) and silkscreen graphics (a logo, a frame around a group) stay where the input put them: each is a placement obstacle on its side with a keepout's semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box from font size, thickness and justification; graphics on the silkscreen by their strokes, in clusters, leaving out a cluster that spans most of the board; a part meets a silkscreen mark without its routing halo), and a part that finds no room off them at a level lies on them (`parts_on_marks` in `board-placer.json`); the layout routes around copper texts instead of moving them afterwards, and the polish moves only the parts' reference and value labels. Movable parts whose silkscreen or pads lie on a mark are reported (`labels.overlaps` in `board-layout.json`, the verdict's next_actions); fixed parts on a mark get a warning. On; off: the behaviour before 2026-10-21 (the marks are no obstacles, the polish moves them off the parts). |
 
 ## Layout settings
 

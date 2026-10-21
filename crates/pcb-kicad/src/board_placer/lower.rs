@@ -1182,6 +1182,25 @@ pub(crate) fn lower_placement(
         locked.push(true);
     }
 
+    // The board's own texts and silkscreen graphics the input placed
+    // (`marks`): obstacles on their side, as a keepout there.
+    let mut marks: Vec<(usize, BoardMark)> = Vec::new();
+    if config.keep_board_marks {
+        for mark in board_marks(pcb, outline_box(pcb))? {
+            let (component, pose) = mark_obstacle(&mark);
+            marks.push((components.len(), mark));
+            components.push(component);
+            poses.push(pose);
+            references.push(if marks.last().is_some_and(|(_, mark)| mark.copper) {
+                "copper text".into()
+            } else {
+                "silkscreen mark".into()
+            });
+            source_at.push([0.0; 3]);
+            locked.push(true);
+        }
+    }
+
     // Cutouts are board edge too: parts keep the edge margin from them.
     // Those an `outline` constraint cut (the board's own graphics, which
     // it replaced) keep bodies off as well.
@@ -1287,6 +1306,12 @@ pub(crate) fn lower_placement(
     // copper_edge_clearance findings; 0.01 mm off it, none).
     problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.02);
     problem.constraints.solid_cutouts = solid_cutouts;
+    problem.constraints.yielding = marks.iter().map(|(index, _)| *index).collect();
+    problem.constraints.halo_free = marks
+        .iter()
+        .filter(|(_, mark)| !mark.copper)
+        .map(|(index, _)| *index)
+        .collect();
     for index in 0..footprint_count {
         let reference = &references[index];
         let component = &problem.components[index];
@@ -1378,6 +1403,36 @@ pub(crate) fn lower_placement(
                         references[*first], references[*second]
                     ));
                 }
+            }
+        }
+    }
+    // A fixed part on a mark of the input (a header's pin names inside its
+    // courtyard, a test pad under its name): both stay as the input put
+    // them; said, not refused.
+    for &(index, ref mark) in &marks {
+        let mark_side = problem.components[index].side;
+        for (part, reference) in references.iter().enumerate().take(footprint_count) {
+            let component = &problem.components[part];
+            if !component.fixed || !component.side.collides(mark_side) {
+                continue;
+            }
+            let pose = problem.poses[part];
+            let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+            let body = [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[0] + half[0],
+                center[1] + half[1],
+            ];
+            if mark
+                .boxes
+                .iter()
+                .any(|b| b[0] < body[2] && body[0] < b[2] && b[1] < body[3] && body[1] < b[3])
+            {
+                stacked_warnings.push(format!(
+                    "fixed part {} lies on the board's {} ({} at {:.2}, {:.2}): both stay where the input put them",
+                    reference, mark.what, mark.layer, mark.at[0], mark.at[1]
+                ));
             }
         }
     }

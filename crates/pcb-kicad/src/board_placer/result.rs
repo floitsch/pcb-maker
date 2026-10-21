@@ -62,6 +62,14 @@ pub struct KiCadBoardPlacerResult {
     /// Courtyards came as close as their copper allows (touching).
     #[serde(default)]
     pub courtyard_spacing: bool,
+    /// The parts that lie on the board's own texts or silkscreen graphics,
+    /// having found no room off them at the placement's level
+    /// (`core::Relaxation::on_marks`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts_on_marks: Vec<String>,
+    /// The same parts by their index in the placement problem.
+    #[serde(skip)]
+    pub on_marks: Vec<usize>,
     /// Per footprint, the halo the placement gave it where routing room
     /// set the halos (`core::Relaxation::halos`).
     #[serde(skip)]

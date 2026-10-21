@@ -868,6 +868,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory)
         .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
+    facts.board_mark_overlaps = result.labels.overlaps.clone();
     // The placement's room (the parts and the outline the layout kept)
     // and what it warned of.
     let placed = fs::read_to_string(output.join("placed/board-placer.json"))

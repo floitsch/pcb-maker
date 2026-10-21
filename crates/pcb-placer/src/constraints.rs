@@ -183,6 +183,19 @@ pub struct Constraints {
     /// outline: bodies keep off them too, not only copper (a window in the
     /// board; a designer's slot may hold a connector's pegs).
     pub solid_cutouts: Vec<usize>,
+    /// Fixed obstacles that give way (the board's own texts and
+    /// silkscreen graphics), in ascending order: parts keep off them, and
+    /// a part that finds no room elsewhere at a level may lie on them
+    /// (`on_marks`).
+    pub yielding: Vec<usize>,
+    /// Parts that found no room off the yielding obstacles at their level
+    /// and may lie on them, in ascending order (`place`'s
+    /// `seat_on_marks`).
+    pub on_marks: Vec<usize>,
+    /// Fixed obstacles parts meet without their routing halos, in
+    /// ascending order: the board's silkscreen texts and graphics (tracks
+    /// run under them; a halo is room for tracks).
+    pub halo_free: Vec<usize>,
 }
 
 /// A constraint kept by construction: `side`, the side the part (or the
@@ -225,6 +238,27 @@ impl Constraints {
 
     pub fn linked(&self, a: usize, b: usize) -> bool {
         !self.linked.is_empty() && self.linked.contains(&(a.min(b), a.max(b)))
+    }
+
+    /// Whether two parts meet without their halos: tied together, or one
+    /// of them an obstacle without routing room (`halo_free`).
+    pub fn bare(&self, a: usize, b: usize) -> bool {
+        self.linked(a, b) || self.halo_free(a) || self.halo_free(b)
+    }
+
+    /// Whether one of the two is a yielding obstacle and the other a part
+    /// that may lie on it (`on_marks`).
+    pub fn lies_on(&self, a: usize, b: usize) -> bool {
+        !self.on_marks.is_empty()
+            && ((self.on_marks.binary_search(&a).is_ok()
+                && self.yielding.binary_search(&b).is_ok())
+                || (self.on_marks.binary_search(&b).is_ok()
+                    && self.yielding.binary_search(&a).is_ok()))
+    }
+
+    /// Whether the part is an obstacle parts meet without their halos.
+    pub fn halo_free(&self, part: usize) -> bool {
+        !self.halo_free.is_empty() && self.halo_free.binary_search(&part).is_ok()
     }
 
     pub fn is_empty(&self) -> bool {

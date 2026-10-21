@@ -102,6 +102,12 @@ pub struct KiCadLabelReport {
     pub moved: usize,
     /// Labels no free spot was found for (left where they were).
     pub stuck: Vec<String>,
+    /// The board's own texts and silkscreen graphics (`board_marks`) that
+    /// parts' silkscreen, pads or labels lie on after placement, each with
+    /// those parts: the marks stay where the input put them
+    /// (`keep_board_marks`), so they are reported rather than moved.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub overlaps: Vec<String>,
 }
 
 fn visible(property: &Expr) -> bool {
@@ -121,9 +127,39 @@ fn visible(property: &Expr) -> bool {
     !hidden
 }
 
+/// One mark's overlaps as a line of the report: the mark, then each part
+/// with what of it lies there.
+fn overlap_line(
+    mark: &crate::board_placer::BoardMark,
+    hits: &BTreeMap<String, BTreeSet<&'static str>>,
+) -> String {
+    format!(
+        "{} ({} at {:.2}, {:.2}): {}",
+        mark.what,
+        mark.layer,
+        mark.at[0],
+        mark.at[1],
+        hits.iter()
+            .map(|(reference, kinds)| format!(
+                "{reference}'s {}",
+                kinds.iter().copied().collect::<Vec<_>>().join(" and ")
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// Moves every visible reference label to the nearest free spot around
-/// its footprint.
-pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
+/// its footprint. With `keep_marks` the board's own silkscreen texts and
+/// graphics stay where they are, labels keep off them, and the parts lying
+/// on them are reported (`overlaps`; not the `fixed` ones, which lie where
+/// the input put them); without, they move off the parts' silkscreen and
+/// pads first (before 2026-10-21).
+pub(crate) fn place_labels(
+    pcb: &mut Expr,
+    keep_marks: bool,
+    fixed: &BTreeSet<String>,
+) -> Result<KiCadLabelReport, String> {
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
             [
@@ -145,13 +181,23 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
     // What labels must stay off, per side: exposed copper (pads) and
     // silkscreen that is not a label.
     let mut blocked: [Vec<Box2>; 2] = [Vec::new(), Vec::new()];
+    // Whose each blocked box is: the footprint and what of it.
+    let mut owners: [Vec<(usize, &'static str)>; 2] = [Vec::new(), Vec::new()];
     let mut labels = Vec::new();
     let footprints: Vec<&Expr> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
         .collect();
+    let references: Vec<String> = footprints
+        .iter()
+        .map(|footprint| crate::kicad_nets::footprint_reference(footprint).unwrap_or_default())
+        .collect();
     for (index, footprint) in footprints.iter().enumerate() {
+        // Every box pushed for this footprint below is its silkscreen but
+        // its pads'.
+        let owned = [blocked[0].len(), blocked[1].len()];
+        let mut pad_boxes = [0usize; 2];
         let at = form_at(footprint)?;
         let place = |local: [f64; 2]| {
             let offset = rotate_vector(local, -at[2]);
@@ -206,12 +252,14 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
                 .any(|layer| matches!(*layer, "F.Cu" | "*.Cu" | "F&B.Cu"))
             {
                 blocked[0].push(bounds);
+                pad_boxes[0] += 1;
             }
             if layers
                 .iter()
                 .any(|layer| matches!(*layer, "B.Cu" | "*.Cu" | "F&B.Cu"))
             {
                 blocked[1].push(bounds);
+                pad_boxes[1] += 1;
             }
         }
         for child in footprint.children() {
@@ -340,6 +388,19 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
                 }
             }
         }
+        // The pads come first, then the silkscreen.
+        for side in 0..2 {
+            for number in owned[side]..blocked[side].len() {
+                owners[side].push((
+                    index,
+                    if number < owned[side] + pad_boxes[side] {
+                        "pads"
+                    } else {
+                        "silkscreen"
+                    },
+                ));
+            }
+        }
         let (center, size, _) = crate::board_placer::local_body(footprint)?;
         let middle = place(center);
         let (sin, cos) = (-at[2]).to_radians().sin_cos();
@@ -410,189 +471,205 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
         })
     };
 
-    // Board silkscreen artwork (a logo drawn as polygons and lines) moves as
-    // one piece: shapes within 0.5 mm of each other form a cluster.
-    let mut graphics: Vec<(usize, bool, Box2)> = Vec::new();
-    for (item_index, item) in pcb.children().iter().enumerate() {
-        let Some(back) = form_atom(item, "layer", 1).and_then(silk_side) else {
-            continue;
-        };
-        if !matches!(
-            item.head(),
-            Some("gr_poly" | "gr_line" | "gr_rect" | "gr_circle" | "gr_arc" | "gr_curve")
-        ) {
-            continue;
-        }
-        let mut points = outline::outline_points(item)?;
-        if item.child("center").is_some() {
-            points.push(form_xy(item, "center")?);
-        }
-        points.extend(outline::pts_points(item)?);
-        if item.head() == Some("gr_circle") && points.len() == 2 {
-            let radius = distance_squared(points[0], points[1]).sqrt();
-            points.push([points[0][0] - radius, points[0][1] - radius]);
-            points.push([points[0][0] + radius, points[0][1] + radius]);
-        }
-        if points.is_empty() {
-            continue;
-        }
-        let bounds = points.iter().fold(
-            [
-                f64::INFINITY,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::NEG_INFINITY,
-            ],
-            |b, p| {
-                [
-                    b[0].min(p[0]),
-                    b[1].min(p[1]),
-                    b[2].max(p[0]),
-                    b[3].max(p[1]),
-                ]
-            },
-        );
-        graphics.push((item_index, back, bounds));
-    }
-    let mut clusters: Vec<(Vec<usize>, bool, Box2)> = Vec::new();
-    for (item_index, back, bounds) in graphics {
-        let mut members = vec![item_index];
-        let mut total = bounds;
-        // Absorb every cluster this shape touches.
-        let mut index = 0;
-        while index < clusters.len() {
-            if clusters[index].1 == back && overlaps(clusters[index].2, total, 0.5) {
-                let (other, _, other_bounds) = clusters.remove(index);
-                members.extend(other);
-                total = [
-                    total[0].min(other_bounds[0]),
-                    total[1].min(other_bounds[1]),
-                    total[2].max(other_bounds[2]),
-                    total[3].max(other_bounds[3]),
-                ];
-                index = 0;
-            } else {
-                index += 1;
-            }
-        }
-        clusters.push((members, back, total));
-    }
     let mut artwork_moves: Vec<(Vec<usize>, [f64; 2])> = Vec::new();
-    for (members, back, bounds) in clusters {
-        let side = back as usize;
-        // A frame around the whole board is decoration of the board, not a
-        // piece to move.
-        if outline.is_some_and(|board| (bounds[2] - bounds[0]) > 0.8 * (board[2] - board[0])) {
-            continue;
-        }
-        let free = |bounds: Box2, taken: &[Box2]| {
-            !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1))
-                && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
-        };
-        if free(bounds, &taken[side]) {
-            taken[side].push(bounds);
-            continue;
-        }
-        let mut found = None;
-        'rings: for ring in 1..=60 {
-            let radius = ring as f64 * 0.5;
-            let directions = 8 * ring.min(4);
-            for step in 0..directions {
-                let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
-                let shift = [radius * angle.cos(), radius * angle.sin()];
-                let moved = [
-                    bounds[0] + shift[0],
-                    bounds[1] + shift[1],
-                    bounds[2] + shift[0],
-                    bounds[3] + shift[1],
-                ];
-                if inside(moved) && free(moved, &taken[side]) {
-                    found = Some((shift, moved));
-                    break 'rings;
-                }
-            }
-        }
-        match found {
-            Some((shift, moved)) => {
-                taken[side].push(moved);
-                artwork_moves.push((members, shift));
-            }
-            None => {
-                taken[side].push(bounds);
-                report.stuck.push("silkscreen artwork".into());
-            }
-        }
-    }
-
-    // Board silkscreen texts (a board's name, a note) first: where they are
-    // if that is free, else the nearest free spot around it.
     let mut text_moves: Vec<(usize, [f64; 2])> = Vec::new();
-    for (item_index, item) in pcb.children().iter().enumerate() {
-        let Some(back) = form_atom(item, "layer", 1).and_then(silk_side) else {
-            continue;
-        };
-        if item.head() != Some("gr_text") {
-            continue;
+    // The board's own silkscreen texts and graphics stay; labels keep off
+    // them.
+    let marks: Vec<crate::board_placer::BoardMark> = if keep_marks {
+        crate::board_placer::board_marks(pcb, outline)?
+            .into_iter()
+            .filter(|mark| !mark.copper)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for mark in &marks {
+        taken[mark.back as usize].extend(mark.boxes.iter().copied());
+    }
+    if !keep_marks {
+        // Board silkscreen artwork (a logo drawn as polygons and lines) moves as
+        // one piece: shapes within 0.5 mm of each other form a cluster.
+        let mut graphics: Vec<(usize, bool, Box2)> = Vec::new();
+        for (item_index, item) in pcb.children().iter().enumerate() {
+            let Some(back) = form_atom(item, "layer", 1).and_then(silk_side) else {
+                continue;
+            };
+            if !matches!(
+                item.head(),
+                Some("gr_poly" | "gr_line" | "gr_rect" | "gr_circle" | "gr_arc" | "gr_curve")
+            ) {
+                continue;
+            }
+            let mut points = outline::outline_points(item)?;
+            if item.child("center").is_some() {
+                points.push(form_xy(item, "center")?);
+            }
+            points.extend(outline::pts_points(item)?);
+            if item.head() == Some("gr_circle") && points.len() == 2 {
+                let radius = distance_squared(points[0], points[1]).sqrt();
+                points.push([points[0][0] - radius, points[0][1] - radius]);
+                points.push([points[0][0] + radius, points[0][1] + radius]);
+            }
+            if points.is_empty() {
+                continue;
+            }
+            let bounds = points.iter().fold(
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ],
+                |b, p| {
+                    [
+                        b[0].min(p[0]),
+                        b[1].min(p[1]),
+                        b[2].max(p[0]),
+                        b[3].max(p[1]),
+                    ]
+                },
+            );
+            graphics.push((item_index, back, bounds));
         }
-        let Some(bounds) = board_router::copper_graphic_shapes(item)?
-            .iter()
-            .map(pcb_router::Shape::aabb)
-            .reduce(pcb_router::geometry::Aabb::union)
-        else {
-            continue;
-        };
-        let bounds = [
-            bounds.minimum[0],
-            bounds.minimum[1],
-            bounds.maximum[0],
-            bounds.maximum[1],
-        ];
-        let side = back as usize;
-        let free = |bounds: Box2, taken: &[Box2]| {
-            !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1))
-                && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
-        };
-        if free(bounds, &taken[side]) {
-            taken[side].push(bounds);
-            continue;
+        let mut clusters: Vec<(Vec<usize>, bool, Box2)> = Vec::new();
+        for (item_index, back, bounds) in graphics {
+            let mut members = vec![item_index];
+            let mut total = bounds;
+            // Absorb every cluster this shape touches.
+            let mut index = 0;
+            while index < clusters.len() {
+                if clusters[index].1 == back && overlaps(clusters[index].2, total, 0.5) {
+                    let (other, _, other_bounds) = clusters.remove(index);
+                    members.extend(other);
+                    total = [
+                        total[0].min(other_bounds[0]),
+                        total[1].min(other_bounds[1]),
+                        total[2].max(other_bounds[2]),
+                        total[3].max(other_bounds[3]),
+                    ];
+                    index = 0;
+                } else {
+                    index += 1;
+                }
+            }
+            clusters.push((members, back, total));
         }
-        let mut found = None;
-        'rings: for ring in 1..=50 {
-            let radius = ring as f64 * 0.5;
-            let directions = 8 * ring.min(4);
-            for step in 0..directions {
-                let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
-                let shift = [radius * angle.cos(), radius * angle.sin()];
-                let moved = [
-                    bounds[0] + shift[0],
-                    bounds[1] + shift[1],
-                    bounds[2] + shift[0],
-                    bounds[3] + shift[1],
-                ];
-                if inside(moved) && free(moved, &taken[side]) {
-                    found = Some((shift, moved));
-                    break 'rings;
+        for (members, back, bounds) in clusters {
+            let side = back as usize;
+            // A frame around the whole board is decoration of the board, not a
+            // piece to move.
+            if outline.is_some_and(|board| (bounds[2] - bounds[0]) > 0.8 * (board[2] - board[0])) {
+                continue;
+            }
+            let free = |bounds: Box2, taken: &[Box2]| {
+                !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1))
+                    && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
+            };
+            if free(bounds, &taken[side]) {
+                taken[side].push(bounds);
+                continue;
+            }
+            let mut found = None;
+            'rings: for ring in 1..=60 {
+                let radius = ring as f64 * 0.5;
+                let directions = 8 * ring.min(4);
+                for step in 0..directions {
+                    let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
+                    let shift = [radius * angle.cos(), radius * angle.sin()];
+                    let moved = [
+                        bounds[0] + shift[0],
+                        bounds[1] + shift[1],
+                        bounds[2] + shift[0],
+                        bounds[3] + shift[1],
+                    ];
+                    if inside(moved) && free(moved, &taken[side]) {
+                        found = Some((shift, moved));
+                        break 'rings;
+                    }
+                }
+            }
+            match found {
+                Some((shift, moved)) => {
+                    taken[side].push(moved);
+                    artwork_moves.push((members, shift));
+                }
+                None => {
+                    taken[side].push(bounds);
+                    report.stuck.push("silkscreen artwork".into());
                 }
             }
         }
-        match found {
-            Some((shift, moved)) => {
-                taken[side].push(moved);
-                text_moves.push((item_index, shift));
+
+        // Board silkscreen texts (a board's name, a note) first: where they are
+        // if that is free, else the nearest free spot around it.
+        for (item_index, item) in pcb.children().iter().enumerate() {
+            let Some(back) = form_atom(item, "layer", 1).and_then(silk_side) else {
+                continue;
+            };
+            if item.head() != Some("gr_text") {
+                continue;
             }
-            None => {
+            let Some(bounds) = board_router::copper_graphic_shapes(item)?
+                .iter()
+                .map(pcb_router::Shape::aabb)
+                .reduce(pcb_router::geometry::Aabb::union)
+            else {
+                continue;
+            };
+            let bounds = [
+                bounds.minimum[0],
+                bounds.minimum[1],
+                bounds.maximum[0],
+                bounds.maximum[1],
+            ];
+            let side = back as usize;
+            let free = |bounds: Box2, taken: &[Box2]| {
+                !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1))
+                    && !taken.iter().any(|b| overlaps(bounds, *b, 0.2))
+            };
+            if free(bounds, &taken[side]) {
                 taken[side].push(bounds);
-                report.stuck.push(
-                    item.children()
-                        .get(1)
-                        .and_then(Expr::atom)
-                        .unwrap_or("")
-                        .to_string(),
-                );
+                continue;
+            }
+            let mut found = None;
+            'rings: for ring in 1..=50 {
+                let radius = ring as f64 * 0.5;
+                let directions = 8 * ring.min(4);
+                for step in 0..directions {
+                    let angle = step as f64 / directions as f64 * std::f64::consts::TAU;
+                    let shift = [radius * angle.cos(), radius * angle.sin()];
+                    let moved = [
+                        bounds[0] + shift[0],
+                        bounds[1] + shift[1],
+                        bounds[2] + shift[0],
+                        bounds[3] + shift[1],
+                    ];
+                    if inside(moved) && free(moved, &taken[side]) {
+                        found = Some((shift, moved));
+                        break 'rings;
+                    }
+                }
+            }
+            match found {
+                Some((shift, moved)) => {
+                    taken[side].push(moved);
+                    text_moves.push((item_index, shift));
+                }
+                None => {
+                    taken[side].push(bounds);
+                    report.stuck.push(
+                        item.children()
+                            .get(1)
+                            .and_then(Expr::atom)
+                            .unwrap_or("")
+                            .to_string(),
+                    );
+                }
             }
         }
     }
     let mut moves = Vec::new();
+    let mut stuck_labels = Vec::new();
     // Big parts first: small ones have more room around them.
     let mut order: Vec<usize> = (0..labels.len()).collect();
     order.sort_by(|a, b| {
@@ -695,7 +772,36 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
             None => {
                 taken[side].push(current);
                 report.stuck.push(label.text.clone());
+                stuck_labels.push((index, current));
             }
+        }
+    }
+    // The parts on the board's marks: their pads, silkscreen and the
+    // labels that found no free spot.
+    for mark in &marks {
+        let side = mark.back as usize;
+        let on_mark = |b: Box2| mark.boxes.iter().any(|m| overlaps(*m, b, 0.0));
+        let mut hits: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+        for (b, (footprint, kind)) in blocked[side].iter().zip(&owners[side]) {
+            if on_mark(*b) && !fixed.contains(&references[*footprint]) {
+                hits.entry(references[*footprint].clone())
+                    .or_default()
+                    .insert(kind);
+            }
+        }
+        for (index, b) in &stuck_labels {
+            let label = &labels[*index];
+            if label.back == mark.back
+                && on_mark(*b)
+                && !fixed.contains(&references[label.footprint])
+            {
+                hits.entry(references[label.footprint].clone())
+                    .or_default()
+                    .insert("label");
+            }
+        }
+        if !hits.is_empty() {
+            report.overlaps.push(overlap_line(mark, &hits));
         }
     }
 
@@ -823,15 +929,22 @@ pub(crate) fn has_mask_twin(
     })
 }
 
+///
+/// With `keep_marks` they stay where the input put them (the router kept
+/// clear of them); a part's pads or body or a track on one is reported
+/// (`overlaps`) instead.
 pub(crate) fn place_copper_texts(
     pcb: &mut Expr,
     routes: &[pcb_router::NetRoute],
     layer_names: &[String],
+    keep_marks: bool,
+    fixed: &BTreeSet<String>,
 ) -> Result<KiCadLabelReport, String> {
     let mut report = KiCadLabelReport {
         labels: 0,
         moved: 0,
         stuck: Vec::new(),
+        overlaps: Vec::new(),
     };
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
@@ -863,12 +976,16 @@ pub(crate) fn place_copper_texts(
     // had better keep off (the parts' bodies).
     let mut blocked: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
     let mut bodies: Vec<Vec<Box2>> = vec![Vec::new(); layer_names.len()];
+    // Whose each pad and body box is (the reference), for the overlaps.
+    let mut pad_owners: Vec<Vec<String>> = vec![Vec::new(); layer_names.len()];
+    let mut body_owners: Vec<Vec<String>> = vec![Vec::new(); layer_names.len()];
     let layer_index = |name: &str| layer_names.iter().position(|layer| layer == name);
     for footprint in pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
     {
+        let reference = crate::kicad_nets::footprint_reference(footprint).unwrap_or_default();
         let at = form_at(footprint)?;
         let place = |local: [f64; 2]| {
             let offset = rotate_vector(local, -at[2]);
@@ -906,6 +1023,7 @@ pub(crate) fn place_copper_texts(
             };
             if let Some(index) = layer_index(side) {
                 bodies[index].push(body);
+                body_owners[index].push(reference.clone());
             }
         }
         for pad in footprint
@@ -944,6 +1062,7 @@ pub(crate) fn place_copper_texts(
                     .any(|layer| *layer == name || matches!(*layer, "*.Cu" | "F&B.Cu"))
                 {
                     blocked[index].push(bounds);
+                    pad_owners[index].push(reference.clone());
                 }
             }
         }
@@ -1032,6 +1151,48 @@ pub(crate) fn place_copper_texts(
         ];
         if has_mask_twin(item, layer_name) {
             taken[layer].push(bounds);
+            continue;
+        }
+        if keep_marks {
+            // Pads and bodies by their parts; the rest of `blocked` after
+            // the pads is the routes' copper and the board's graphics.
+            let mut hits: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+            for (number, b) in blocked[layer].iter().enumerate() {
+                if overlaps(bounds, *b, 0.0) {
+                    match pad_owners[layer].get(number) {
+                        Some(reference) if fixed.contains(reference) => false,
+                        Some(reference) => {
+                            hits.entry(reference.clone()).or_default().insert("pads")
+                        }
+                        None => hits
+                            .entry("the routing".into())
+                            .or_default()
+                            .insert("copper"),
+                    };
+                }
+            }
+            for (b, reference) in bodies[layer].iter().zip(&body_owners[layer]) {
+                if overlaps(bounds, *b, 0.0) && !fixed.contains(reference) {
+                    hits.entry(reference.clone()).or_default().insert("body");
+                }
+            }
+            taken[layer].push(bounds);
+            if !hits.is_empty() {
+                let at = form_at(item)?;
+                let text = crate::board_placer::mark_text(item).unwrap_or_default();
+                report.overlaps.push(format!(
+                    "copper text {text:?} ({layer_name} at {:.2}, {:.2}): {}",
+                    at[0],
+                    at[1],
+                    hits.iter()
+                        .map(|(reference, kinds)| format!(
+                            "{reference}'s {}",
+                            kinds.iter().copied().collect::<Vec<_>>().join(" and ")
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             continue;
         }
         let free = |bounds: Box2, taken: &[Box2], off_bodies: bool| {
@@ -1140,5 +1301,87 @@ fn turn_quarter(item: &mut Expr) {
         } else {
             values.push(turned);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A test pad's name and a resistor placed on it; a back text no part
+    /// lies on.
+    const BOARD: &str = r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        (gr_text "VDD" (at 20 10 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (gr_text "STACK" (at 10 5 0) (layer "B.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13)) (justify mirror)))
+        (footprint "R" (layer "F.Cu") (at 20 10.3)
+            (property "Reference" "R22" (at 0 -1.5 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+            (fp_line (start -1.5 -0.8) (end 1.5 -0.8) (layer "F.SilkS") (stroke (width 0.12) (type solid)))
+            (fp_rect (start -1.5 -0.8) (end 1.5 0.8) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu"))))"#;
+
+    fn text_at(pcb: &Expr, text: &str) -> [f64; 3] {
+        let item = pcb
+            .children()
+            .iter()
+            .find(|item| {
+                item.head() == Some("gr_text")
+                    && item.children().get(1).and_then(Expr::atom) == Some(text)
+            })
+            .unwrap();
+        form_at(item).unwrap()
+    }
+
+    #[test]
+    fn the_polish_keeps_board_texts_and_reports_the_parts_on_them() {
+        let mut pcb = parse(BOARD).unwrap();
+        let report = place_labels(&mut pcb, true, &BTreeSet::new()).unwrap();
+        assert_eq!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
+        assert_eq!(text_at(&pcb, "STACK"), [10.0, 5.0, 0.0]);
+        assert_eq!(report.overlaps.len(), 1, "{:?}", report.overlaps);
+        assert!(
+            report.overlaps[0]
+                .starts_with("text \"VDD\" (F.SilkS at 20.00, 10.00): R22's pads and silkscreen"),
+            "{:?}",
+            report.overlaps
+        );
+        // The reference label moved off the text.
+        assert_eq!(report.moved, 1);
+        // A fixed part lay there in the input: not reported.
+        let mut pcb = parse(BOARD).unwrap();
+        let fixed = BTreeSet::from(["R22".to_string()]);
+        assert!(
+            place_labels(&mut pcb, true, &fixed)
+                .unwrap()
+                .overlaps
+                .is_empty()
+        );
+        // Before 2026-10-21 the text moved off the part.
+        let mut pcb = parse(BOARD).unwrap();
+        let report = place_labels(&mut pcb, false, &BTreeSet::new()).unwrap();
+        assert_ne!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
+        assert!(report.overlaps.is_empty());
+    }
+
+    #[test]
+    fn a_copper_text_stays_and_parts_on_it_are_reported() {
+        let board = BOARD.replace(
+            r#"(gr_text "VDD" (at 20 10 0) (layer "F.SilkS")"#,
+            r#"(gr_text "VDD" (at 20 10 0) (layer "F.Cu")"#,
+        );
+        let layers = ["F.Cu".to_string(), "B.Cu".to_string()];
+        let mut pcb = parse(&board).unwrap();
+        let report = place_copper_texts(&mut pcb, &[], &layers, true, &BTreeSet::new()).unwrap();
+        assert_eq!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
+        assert_eq!(
+            report.overlaps,
+            ["copper text \"VDD\" (F.Cu at 20.00, 10.00): R22's body and pads"]
+        );
+        let mut pcb = parse(&board).unwrap();
+        let report = place_copper_texts(&mut pcb, &[], &layers, false, &BTreeSet::new()).unwrap();
+        assert_ne!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
+        assert_eq!(report.moved, 1);
     }
 }

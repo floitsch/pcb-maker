@@ -67,6 +67,7 @@ fn ranks(values: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// `pcb` is the board as the layout routes it (`without_copper_texts`).
 pub(crate) fn rank_placements(
     pcb: &Expr,
     placements: &[(Vec<placer::Pose>, placer::Relaxation)],
@@ -89,7 +90,7 @@ pub(crate) fn rank_placements(
                 write_footprint_pose(footprint, *pose)?;
             }
         }
-        let board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
+        let board = lower(&candidate, router_config, connect)?.board;
         lower_seconds += lowered_at.elapsed().as_secs_f64();
         let (value, rudy, features, inference) = score_board(&board, model, core_config, score)?;
         feature_seconds += features;
@@ -157,7 +158,7 @@ pub fn score_kicad_congestion(
     let model = pcb_congestion::CongestionModel::load(model_path)?;
     let core_config = crate::congestion_samples::race_core_config(router_config);
     let lowered_at = std::time::Instant::now();
-    let board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+    let board = lower(&without_copper_texts(&pcb, false), router_config, connect)?.board;
     let lower_seconds = lowered_at.elapsed().as_secs_f64();
     let started = std::time::Instant::now();
     let frame = core::router::congestion::tile_frame(&board, &core_config);

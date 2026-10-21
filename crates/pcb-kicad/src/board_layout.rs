@@ -230,7 +230,9 @@ pub struct KiCadBoardLayoutResult {
     /// layout's last router got (review 2026-10-21, H3).
     pub final_ladder_budget_seconds: Option<f64>,
     pub moves: Vec<KiCadBoardLayoutMove>,
-    /// Reference labels moved off pads and other silkscreen.
+    /// Reference labels moved off pads and other silkscreen, and the
+    /// board's own texts and silkscreen graphics parts lie on
+    /// (`overlaps`).
     pub labels: crate::labels::KiCadLabelReport,
     /// The result's quality measures and cost estimate (as
     /// `score-kicad-board` reports them).
@@ -382,7 +384,12 @@ fn size_outline(
             let layers = LayerTable::from_pcb(&pcb)?;
             let connect =
                 !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
-            let board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+            let board = lower(
+                &without_copper_texts(&pcb, placer_config.keep_board_marks),
+                router_config,
+                connect,
+            )?
+            .board;
             let mut quick = quick.clone();
             quick.deadline_work = Some((work_deadline - *work - *pool_excess).max(0.0));
             let mut router = core::router::Router::new(&board, &quick);
@@ -526,13 +533,17 @@ pub(crate) fn footprint_items(pcb: &mut Expr) -> Result<Vec<&mut Expr>, String> 
 
 /// Places and routes `<source>/<board_id>.kicad_pcb`. The placement goes to
 /// `output/placed`, the final routed board to `output/result`.
-/// The board without its copper texts: while laying out, they are
-/// decoration that moves off the copper afterwards (`labels`), not
-/// obstacles at their old spots.
-pub(crate) fn without_copper_texts(pcb: &Expr) -> Expr {
+/// The board the layout routes: with its copper texts where the input put
+/// them (`keep`: `keep_board_marks`, obstacles to the router as to KiCad),
+/// or else without them: decoration that moves off the copper afterwards
+/// (`labels`), not obstacles at their old spots (before 2026-10-21).
+pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
     let Expr::List(items) = pcb else {
         return pcb.clone();
     };
+    if keep {
+        return pcb.clone();
+    }
     // Exposed-copper artwork (a copper text with its mask twin) is not
     // moved afterwards, so it stays an obstacle here (Quanta75: routes
     // under its 7 mm logo, 11 bridges and a short).
@@ -998,6 +1009,7 @@ pub fn layout_kicad_board(
         edge_rule: placement.edge_rule_mm,
         courtyard_spacing: placement.courtyard_spacing,
         halos: placement.halos.clone(),
+        on_marks: placement.on_marks.clone(),
     };
     first_relaxation.apply(&mut problem.problem);
     // The in-place router compares placements: it stops negotiating once
@@ -1023,7 +1035,12 @@ pub fn layout_kicad_board(
     core_config.deadline_work = Some((work_deadline - work - pool_excess).max(0.0));
 
     let first_started = std::time::Instant::now();
-    let mut board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+    let mut board = lower(
+        &without_copper_texts(&pcb, config.placer.keep_board_marks),
+        router_config,
+        connect,
+    )?
+    .board;
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
@@ -1122,7 +1139,7 @@ pub fn layout_kicad_board(
                 .map(|(poses, relaxation)| ((*poses).clone(), (*relaxation).clone())),
         );
         let ranked = crate::congestion_rank::rank_placements(
-            &pcb,
+            &without_copper_texts(&pcb, config.placer.keep_board_marks),
             &pool,
             congestion_model.as_ref(),
             router_config,
@@ -1135,7 +1152,12 @@ pub fn layout_kicad_board(
         // (laptop power: RUDY picked a touching seed, 18 connections open
         // against 9 for the best of the five that needed no touching).
         let mut order = ranked.order.clone();
-        order.sort_by_key(|index| pool[*index].1.courtyard_spacing);
+        order.sort_by_key(|index| {
+            (
+                pool[*index].1.courtyard_spacing,
+                pool[*index].1.on_marks.len(),
+            )
+        });
         let keep: Vec<usize> = order
             .iter()
             .copied()
@@ -1163,7 +1185,12 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
-            board = lower(&without_copper_texts(&candidate), router_config, connect)?.board;
+            board = lower(
+                &without_copper_texts(&candidate, config.placer.keep_board_marks),
+                router_config,
+                connect,
+            )?
+            .board;
             pcb = candidate;
             placer_config.tight_bodies = Some(relaxation.tight);
             problem = lower_placement(&pcb, &placer_config)?;
@@ -1200,8 +1227,12 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
-            let candidate_board =
-                lower(&without_copper_texts(&candidate), router_config, connect)?.board;
+            let candidate_board = lower(
+                &without_copper_texts(&candidate, config.placer.keep_board_marks),
+                router_config,
+                connect,
+            )?
+            .board;
             candidates.push((candidate, candidate_board, relaxation));
         }
         // The placements are probed side by side, each a router of its own,
@@ -1537,7 +1568,12 @@ pub fn layout_kicad_board(
                 }
             }
             problem.problem.poses = poses;
-            let trial_board = lower(&without_copper_texts(&pcb), router_config, connect)?.board;
+            let trial_board = lower(
+                &without_copper_texts(&pcb, config.placer.keep_board_marks),
+                router_config,
+                connect,
+            )?
+            .board;
             arm(&mut router, work + pool_excess);
             let expansions_before = router.expansions();
             // (An error ends the layout: nothing to restore.)
@@ -1700,14 +1736,39 @@ pub fn layout_kicad_board(
             router = saved_router;
         }
     }
-    // Reference labels off pads and other silkscreen.
-    let labels = crate::labels::place_labels(&mut pcb)?;
+    // Reference labels off pads and other silkscreen; the board's own
+    // texts and silkscreen graphics stay where the input put them
+    // (`keep_board_marks`), and the parts on them are reported.
+    let keep_marks = config.placer.keep_board_marks;
+    // Fixed parts lay where they are in the input, marks and all (the
+    // placement warned of them): only the parts placed are reported.
+    let fixed: BTreeSet<String> = problem
+        .references
+        .iter()
+        .zip(&problem.problem.components)
+        .filter(|(_, component)| component.fixed)
+        .map(|(reference, _)| reference.clone())
+        .collect();
+    let mut labels = crate::labels::place_labels(&mut pcb, keep_marks, &fixed)?;
     if !labels.stuck.is_empty() {
         eprintln!("labels without a free spot: {:?}", labels.stuck);
     }
     let layer_names = layers.names.clone();
-    // Copper texts (decoration on copper) off the copper and the parts.
-    let copper_texts = crate::labels::place_copper_texts(&mut pcb, &result.routes, &layer_names)?;
+    // Copper texts: kept, or else (decoration on copper) moved off the
+    // copper and the parts.
+    let copper_texts = crate::labels::place_copper_texts(
+        &mut pcb,
+        &result.routes,
+        &layer_names,
+        keep_marks,
+        &fixed,
+    )?;
+    labels
+        .overlaps
+        .extend(copper_texts.overlaps.iter().cloned());
+    for overlap in &labels.overlaps {
+        eprintln!("board mark under parts: {overlap}");
+    }
     if copper_texts.moved > 0 || !copper_texts.stuck.is_empty() {
         eprintln!(
             "copper texts: {} moved, {} without a free spot",

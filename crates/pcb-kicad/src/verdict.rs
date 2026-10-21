@@ -611,6 +611,10 @@ pub struct KiCadRunFacts {
     /// What the input check found before the run (a keepout over a fixed
     /// part: `keepout_warnings`); next_actions repeat them.
     pub input_warnings: Vec<String>,
+    /// The board's own texts and silkscreen graphics that parts lie on
+    /// after a layout (`KiCadLabelReport::overlaps`): they stay where the
+    /// input put them.
+    pub board_mark_overlaps: Vec<String>,
 }
 
 impl KiCadRunFacts {
@@ -643,6 +647,7 @@ impl KiCadRunFacts {
             repairs: None,
             unmodelled_rules: Vec::new(),
             input_warnings: Vec::new(),
+            board_mark_overlaps: Vec::new(),
         }
     }
 
@@ -964,6 +969,23 @@ fn next_actions(
                 .collect();
             actions.push(finding_action(kind, *count, &findings));
         }
+    }
+    if !facts.board_mark_overlaps.is_empty() {
+        let shown = 6;
+        let mut listed: Vec<String> = facts
+            .board_mark_overlaps
+            .iter()
+            .take(shown)
+            .cloned()
+            .collect();
+        if facts.board_mark_overlaps.len() > shown {
+            listed.push(format!("{} more", facts.board_mark_overlaps.len() - shown));
+        }
+        actions.push(format!(
+            "parts lie on {} of the board's own texts or silkscreen graphics, which stay where the input put them (labels.overlaps in board-layout.json): keep the parts off them (a keepout constraint over the text, a region, fixed positions) or move the text in the input: {}",
+            facts.board_mark_overlaps.len(),
+            listed.join("; ")
+        ));
     }
     if !facts.constraints_missed.is_empty() {
         actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());

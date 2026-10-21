@@ -607,6 +607,100 @@ TelemetryOnboard's layout moves one part elsewhere (1 to 0 unconnected).
 Three short-tier boards (Blue_Line, spell_tome, 0xCB-1337) at 1, 2 and 4
 threads: the same rows and byte-identical boards.
 
+## The board's own texts and silkscreen graphics (2026-10-21)
+
+The breadboard fence (an external report, `~/tmp/fence-report.md`,
+finding 2) labels its headers and test pads with board texts on F.SilkS
+(`3V3  VDD  5V`, `GND`, `VDD`, `DIO`, `CLK`). The placer put SW1 under
+`3V3  VDD  5V` (free text was no obstacle), and the polish after routing
+then moved the text off the part's silkscreen, 7.5 mm to the right and
+under a socket; the test pads' names were shuffled so that `DIO` sat
+under the `VDD` pad. A text the input placed is an intent: it stays, and
+the parts keep off it.
+
+**What is a mark** (`board_placer::board_marks`, on with
+`keep_board_marks`): every visible board text (`gr_text`, KiCad 6's
+`gr_text locked`) and text box (`gr_text_box`) on F.SilkS, B.SilkS, F.Cu
+and B.Cu, by the box the lowering computes for copper texts (KiCad's
+stroke font: size, thickness, justification, lines; a knockout text's
+plate; a cached TrueType text's glyphs), and the board's silkscreen
+graphics (`gr_line`, `gr_rect`, `gr_arc`, `gr_circle`, `gr_poly`,
+`gr_curve`) in clusters of shapes within 0.5 mm of each other, each
+cluster blocking with its shapes' boxes (a rectangle drawn around a group
+blocks with its four sides, not its inside; a dense logo is coarsened to
+at most 48 boxes, runs of a grid that doubles until they are few
+enough). Left out: hidden texts, marks off the outline's box, and a
+cluster that spans more than 0.8 of the board's width or height (a frame
+around the board, an image behind every part: Blue_Line's 8793
+polygons), which the polish never moved either. Inner-layer copper texts
+are not marks (the placer models no inner layer) but stay where they are
+too, and the router routes around them.
+
+**What a mark does.** It is a fixed obstacle on its side with a
+keepout's semantics: a part's body (courtyard and pads) on that side
+stays the spacing away, and a part on the other side keeps its holes and
+pads there off it (a pin through a back label would cut it). A fixed
+part already on a mark stays, with a warning in the placement's
+`constraint_warnings` ("fixed part TP1 lies on the board's text "GND"
+(F.SilkS at 81.50, 58.90): both stay where the input put them"); fixed
+parts never block each other. The room model counts the marks as fixed
+area. A part meets a silkscreen mark without its routing halo (tracks
+run under silkscreen; a copper text keeps the halo, as a copper graphic
+does). **A part without room lies on a mark**: where a level leaves
+parts without a place, they are seated again with the marks out of
+their way (`seat_on_marks`; `Constraints::yielding`, `on_marks`,
+`Relaxation::on_marks`; `parts_on_marks` in `board-placer.json`), every
+other part keeping its place, or, where that seats fewer, every part
+legalized again with those first (MIDAS-MK1.1's two 36 mm headers at
+the bottom edge, whose spots the others had taken), before the next
+level takes halos or spacing from every part (OpenFC's and
+MIDAS-MK1.1's connectors at the edge under their own pin names,
+USB_Keypad's J1, J2 and four switches beside its artwork). The same happens after the levels when the work budget ended
+them with parts still unplaced. A placement with fewer parts on marks
+ranks first among the seeds and in the race. A first try made the marks
+give way only at a level of their own after the courtyard level: the
+three boards then gave up halos and spacing first (USB_Keypad placed
+with courtyards touching, 35/39 against 37/39 routed), and OpenFC's
+levels spent the placement budget before that level (CN1 and USB1
+without a place).
+
+**The polish** (`labels`, after routing) used to move, and now moves:
+
+| item | before 2026-10-21 | now (`keep_board_marks`) |
+| --- | --- | --- |
+| footprints' visible Reference and Value fields on the silkscreen | moved to the nearest free spot around the part, turned, shrunk to 0.8 | the same; the board's marks are taken spots they keep off |
+| board texts on F.SilkS and B.SilkS | moved to the nearest spot off the parts' silkscreen and pads (up to 25 mm) | stay |
+| board silkscreen graphics in clusters (not those spanning the board) | moved as one piece (up to 30 mm) | stay |
+| board texts on copper layers (no mask twin) | taken off the board while routing, then moved off the copper and the parts (turned when that fitted) | stay; the router routes around them (as route mode always did) |
+| copper texts with a mask twin, footprints' own texts, texts on other layers, text boxes, dimensions | stay | stay |
+
+`repair-kicad-silkscreen` moves footprints' reference fields and
+silkscreen strokes only; it treats the board's drawings as fixed.
+
+**What is reported.** A movable part whose silkscreen, pads or label
+(one without a free spot) lies on a silkscreen mark after the layout, or
+whose pads or body lie on a copper text, is listed in `board-layout.json`
+(`labels.overlaps`: the mark, its layer and anchor, and each part with
+what of it lies there) and in the verdict's next_actions (keep the parts
+off with a keepout constraint, a region or fixed positions, or move the
+text in the input). Fixed parts are not listed (the placement warned).
+
+**Measured** (changelog, "Committed on 2026-10-21 (fence report: placer
+side)"). The fence without its workaround keepouts: no board text moves
+(seven did, up to 7.5 mm), no movable part lies on a label's spot (SW1
+did), the verdict complete as before (187 vias against 186). The short
+tier, whose tasks keep the designer's texts while re-placing the
+designer's parts: every board has marks (3 to 104), passes 8 -> 5,
+KiCad unconnected 18 -> 20, vias 1068 -> 1254, HPWL up to +82 %
+(USB_Keypad, whose artwork takes a fifth of the front). About half the
+designers' board texts (3144 of 6088 on the 107 boards of tasks v7, by
+a rough box) lie on their own parts: pin names inside a connector's
+courtyard, a chip's name on its outline. For such tasks
+`"keep_board_marks": false` gives the rows before (checked on the
+tier). The schematic tier's boards have no board texts or silkscreen
+graphics (the import writes none): their placements with x1385
+and x1417 are byte-identical.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
@@ -634,10 +728,13 @@ threads: the same rows and byte-identical boards.
   constraint yet.
 - Congestion drives nudges of individual parts, but does not yet feed the
   global placer's density term (coupling step 3).
-- The placer does not place silkscreen labels; the layout's polish moves
-  reference labels and board texts off pads and other silkscreen
-  ([quality.md](quality.md)), and `repair-kicad-silkscreen` handles most of
-  the rest.
+- Reference labels are placed after routing by the polish (`labels`), which
+  keeps them off pads, silkscreen and the board's own marks
+  ([quality.md](quality.md)); the separate
+  repair tool handles most of what is left. A board text that labels a
+  part the placer moves does not move with it (the benchmark tasks' pin
+  names of their connectors): it stays, and the part keeps off it until
+  the last level.
 - Pin swapping runs once after placement when the layout config names a
   `pin_swaps` file ([pin-swap.md](pin-swap.md)); it is not yet part of the
   move loop. No gate swapping.

@@ -583,7 +583,7 @@ pub(super) fn dimension_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> 
 /// and from the glyphs inside; the filled box holds both. A footprint's
 /// comes out in the footprint's frame (its corners are the footprint's
 /// coordinates, as a line's are).
-pub(super) fn text_box_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+pub(crate) fn text_box_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
     let corners = if item.child("pts").is_some() {
         outline::pts_points(item)?
     } else {

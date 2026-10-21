@@ -14,6 +14,7 @@ mod courtyards;
 mod decoupling;
 mod edges;
 mod lower;
+mod marks;
 mod place;
 mod result;
 mod rules;
@@ -22,6 +23,6 @@ mod seed_race;
 mod tests;
 mod trace;
 
-pub(crate) use self::{bodies::*, lower::*, rules::*, seed_race::*};
+pub(crate) use self::{bodies::*, lower::*, marks::*, rules::*, seed_race::*};
 pub use self::{config::*, place::*, result::*};
 use self::{courtyards::*, decoupling::*, edges::*, trace::*};

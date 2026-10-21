@@ -173,6 +173,7 @@ pub fn place_kicad_board(
             (
                 placement.unplaced.len() + placement.illegal.len(),
                 placement.relaxation.courtyard_spacing as usize,
+                placement.relaxation.on_marks.len(),
                 placement.routing_room_failed as usize,
                 missed,
                 placement.wirelength_final,
@@ -410,6 +411,13 @@ pub fn place_kicad_board(
         edge_copper: placement.relaxation.edge_copper,
         edge_rule_mm: placement.relaxation.edge_rule,
         courtyard_spacing: placement.relaxation.courtyard_spacing,
+        parts_on_marks: placement
+            .relaxation
+            .on_marks
+            .iter()
+            .map(|index| lowered.references[*index].clone())
+            .collect(),
+        on_marks: placement.relaxation.on_marks.clone(),
         halos: placement.relaxation.halos.clone(),
         utilization,
         hints,

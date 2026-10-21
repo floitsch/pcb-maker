@@ -145,6 +145,22 @@ joins to fixed parts on one piece stay on that piece (as a `region`);
 `bus_rows`, rows of identical bus parts, was off, won nothing and was
 removed on 2026-10-16; a placer config that sets it is rejected.)
 
+The board's own texts and silkscreen graphics need no constraint: a
+visible board text or text box on F.SilkS, B.SilkS, F.Cu or B.Cu (by
+the box of its glyphs) and the board's silkscreen graphics (by their
+strokes, in clusters; not a frame or an image spanning the board) are
+obstacles on their side as a `keepout` for that side is, and stay where
+the input put them: the polish after routing no longer moves them, and
+the router routes around copper texts. A fixed part already on one gets
+a warning, not an error. A part that finds no room off them (a
+connector at the edge under its own pin names) lies on them, and the
+parts on them are reported in the verdict's next_actions. So a header's pin names or a test pad's name need no
+keepout over them (the breadboard fence used three as a workaround);
+`"keep_board_marks": false` in the placer config restores the behaviour
+before 2026-10-21 (no obstacles, the polish moves them off the parts).
+See [placer.md](placer.md), "The board's own texts and silkscreen
+graphics".
+
 A footprint's own rule areas (a U.FL's or an antenna's keepout) move and
 turn with it. One that forbids pads but allows footprints keeps the other
 side's pads out where the part is; a board rule area on inner layers only

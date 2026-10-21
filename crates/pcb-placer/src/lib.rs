@@ -126,6 +126,67 @@ pub struct Relaxation {
     /// Per component, the halo the placement gave it, where it is not the
     /// pin-count halo times the scales (`Config::routing_room`).
     pub halos: Option<std::sync::Arc<Vec<f64>>>,
+    /// The parts that lie on the board's marks, having found no room off
+    /// them (`Constraints::on_marks`).
+    pub on_marks: Vec<usize>,
+}
+
+/// Seats the parts of `failed` (no room at this level) where only the
+/// board's marks (`Constraints::yielding`: its own texts and silkscreen
+/// graphics) are in the way: they may lie on them (`on_marks`), the other
+/// parts keep their places. A connector at the edge under its own pin
+/// names (OpenFC, MIDAS-MK1.1) or beside a business card's artwork
+/// (USB_Keypad) takes its spot there at the level it fails, rather than
+/// every part giving up its routing room first.
+fn seat_on_marks(
+    relaxed: &mut Problem,
+    poses: &mut Vec<Pose>,
+    failed: &mut Vec<usize>,
+    debug: bool,
+) {
+    if failed.is_empty() || relaxed.constraints.yielding.is_empty() {
+        return;
+    }
+    let mut trial = relaxed.clone();
+    let mut on_marks = trial.constraints.on_marks.clone();
+    on_marks.extend(failed.iter().copied());
+    on_marks.sort_unstable();
+    on_marks.dedup();
+    trial.constraints.on_marks = on_marks;
+    let keep: Vec<usize> = (0..trial.components.len())
+        .filter(|index| !failed.contains(index))
+        .collect();
+    let mut seated = poses.clone();
+    let seat_mark = mark();
+    let mut again = legal::legalize_keeping(&trial, &mut seated, failed, &keep);
+    // Still without room (the others took the spots by the marks, where
+    // MIDAS-MK1.1's two 36 mm headers go at the bottom edge): every part
+    // again, those first, the others around them.
+    if !again.is_empty() {
+        let (retry, left) =
+            legal::legalize_stuck_first(&trial, poses, failed, STUCK_FIRST_PASSES, debug);
+        if left.len() < again.len() {
+            seated = retry;
+            again = left;
+        }
+    }
+    phase_line(debug, "legalize on marks", seat_mark);
+    if again.len() < failed.len() {
+        if debug {
+            eprintln!(
+                "placer: {} of {} parts seated on the board's marks",
+                failed.len() - again.len(),
+                failed.len()
+            );
+        }
+        trial
+            .constraints
+            .on_marks
+            .retain(|part| !again.contains(part));
+        *relaxed = trial;
+        *poses = seated;
+        *failed = again;
+    }
 }
 
 impl Relaxation {
@@ -155,6 +216,7 @@ impl Relaxation {
         problem.constraints.edge_copper = self.edge_copper;
         problem.constraints.courtyard_spacing = self.courtyard_spacing;
         problem.edge_margin = problem.edge_margin.min(self.edge_rule);
+        problem.constraints.on_marks = self.on_marks.clone();
     }
 }
 
@@ -820,6 +882,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
                 halos: None,
+                on_marks: relaxed.constraints.on_marks.clone(),
             });
             best = Some((failed, poses, relaxed));
             break;
@@ -827,9 +890,12 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let level_started = std::time::Instant::now();
         // Every level is looser than the one before: what was legal there
         // stays legal. First only the parts that failed look for room.
-        if let Some((known_failed, known_poses, _)) = best.as_ref()
+        let mut relaxed = relaxed;
+        if let Some((known_failed, known_poses, known_relaxed)) = best.as_ref()
             && !known_failed.is_empty()
         {
+            // The parts the level before seated on marks lie there still.
+            relaxed.constraints.on_marks = known_relaxed.constraints.on_marks.clone();
             let mut kept = known_poses.clone();
             let keep: Vec<usize> = (0..relaxed.components.len())
                 .filter(|index| !known_failed.contains(index))
@@ -882,6 +948,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     failed = again;
                 }
             }
+            seat_on_marks(&mut relaxed, &mut kept, &mut failed, debug);
             if debug {
                 eprintln!(
                     "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
@@ -901,6 +968,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     edge_rule,
                     courtyard_spacing: level == courtyard_level,
                     halos: None,
+                    on_marks: relaxed.constraints.on_marks.clone(),
                 });
                 let done = failed.is_empty();
                 best = Some((failed, kept, relaxed.clone()));
@@ -929,6 +997,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             continue;
         }
         annealed_shape = Some((grid, tight));
+        // A fresh placement: no part lies on a mark yet.
+        relaxed.constraints.on_marks.clear();
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
         let anneal_mark = mark();
@@ -983,6 +1053,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 failed = again;
             }
         }
+        seat_on_marks(&mut relaxed, &mut poses, &mut failed, debug);
         let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
             failed.len() < unplaced.len()
                 || (failed.len() == unplaced.len()
@@ -1001,12 +1072,27 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
                 halos: None,
+                on_marks: relaxed.constraints.on_marks.clone(),
             });
             best = Some((failed, poses, relaxed));
             best_annealed = Some(annealed_for_trace);
         }
         if done {
             break;
+        }
+    }
+    // Parts still without room when the budget ended the levels (the
+    // fast no of an overfull board, a deadline): those the marks alone
+    // keep out lie on them (hurried past the budget, as every pass is).
+    if let Some((failed, poses, relaxed)) = best.as_mut()
+        && !failed.is_empty()
+    {
+        let before = failed.len();
+        seat_on_marks(relaxed, poses, failed, debug);
+        if failed.len() < before
+            && let Some(relaxation) = relaxation.as_mut()
+        {
+            relaxation.on_marks = relaxed.constraints.on_marks.clone();
         }
     }
     let (unplaced, mut poses, mut relaxed) = best.expect("at least one relaxation level ran");

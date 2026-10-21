@@ -434,7 +434,12 @@ pub fn export_congestion_samples(
             let connect = !pours(&routed, &layers)?.is_empty()
                 && router_config.pours != KiCadPourMode::Tracks;
             let lowered_at = std::time::Instant::now();
-            let board = lower(&without_copper_texts(&routed), router_config, connect)?.board;
+            let board = lower(
+                &without_copper_texts(&routed, false),
+                router_config,
+                connect,
+            )?
+            .board;
             let seconds_lower = lowered_at.elapsed().as_secs_f64();
             let features_at = std::time::Instant::now();
             let frame = core::router::congestion::tile_frame(&board, &core_config);

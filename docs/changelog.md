@@ -11,6 +11,149 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (fence report: placer side)
+
+The breadboard fence report (`~/tmp/fence-report.md`, finding 2): the
+board's own silkscreen labels (header pin names, the test pads' names)
+were no placement obstacle, the placer put SW1 under `3V3  VDD  5V`, and
+the polish after routing moved seven labels off the parts' silkscreen,
+one 7.5 mm, the test pads' names shuffled. Branch fence-report-placer;
+snapshots x1410 (first build), x1411 (graphics clustered by their
+strokes), x1412 (a level of their own where the marks give way, last),
+x1413 (that level also past the budget), x1414 (halo-free marks; its
+tier stopped unrun), x1415 (parts seated on marks per level), x1416 (the
+seating retries with those parts first), x1417 (the commit: x1414's
+halo rule had reached linked pairs against hollow parts in the anneal;
+now only marks).
+
+**What changed** (docs/placer.md, "The board's own texts and silkscreen
+graphics"; docs/constraints.md):
+
+- The board's visible texts and text boxes on F.SilkS, B.SilkS, F.Cu
+  and B.Cu (by the lowering's stroke-font box) and its silkscreen
+  graphics in clusters of strokes (not a cluster spanning 0.8 of the
+  board: frames, Blue_Line's background image) are placement obstacles
+  on their side with a keepout's semantics (`board_placer::board_marks`,
+  `mark_obstacle`); parts meet silkscreen marks without their routing
+  halos. A fixed part on a mark gets a warning in the placement's
+  `constraint_warnings`.
+- A part that finds no room off the marks at a level lies on them
+  (`seat_on_marks`: the parts the level left without a place are
+  legalized with the marks out of their way, the others kept, else all
+  again with those first), before the next level takes halos or spacing
+  from every part; also after the levels when the budget ended them.
+  `parts_on_marks` in `board-placer.json`; a placement with fewer ranks
+  first among the seeds and in the race.
+- The polish (`labels`) moves only the parts' reference and value
+  labels; board texts, silkscreen graphics and copper texts stay where
+  the input put them, and the layout routes around copper texts (it took
+  them off the board while routing and moved them afterwards). Movable
+  parts whose silkscreen, pads or stuck label lie on a mark are reported
+  in `board-layout.json` (`labels.overlaps`) and the verdict's
+  next_actions; fixed parts are not (the placement warned).
+- `keep_board_marks` (placer config, on) switches it all; off restores
+  the behaviour before.
+
+**Designers' texts lie on their parts.** On the 107 boards of tasks v7
+with an outline, 3144 of 6088 board texts on the silkscreen (by a rough
+box from size and character count) overlap a
+designer part's courtyard-and-pads box on their side (header pin names
+inside a connector's courtyard, a chip's function on its DIP outline,
+KiCad 6 boards' reference designators drawn as board texts). In a task
+whose parts are unplaced those texts mark where the designer's parts
+were; kept as obstacles they keep our parts from those spots, which is
+where the tier's changes come from.
+
+**The fence** (`layout-kicad-board` on copies of
+`breadboard-enhancer/hw/build/v5`, the reference's rates pinned, two
+threads; "without": layout.json's three workaround keepouts removed).
+Board texts at the input's position against the result, and what lies on
+the input's spot (pcbnew's boxes):
+
+| text | x1385 without | x1417 without |
+| --- | --- | --- |
+| `GND` (81.50, 58.90) | moved 0.50 mm | stays |
+| `VDD` (84.04, 58.90) | moved 2.00 mm (to 84.43, 60.86) | stays |
+| `DIO` (86.58, 58.90) | moved 2.00 mm (to 84.62, 59.29, under the VDD pad's name) | stays |
+| `CLK` (89.12, 58.90) | moved 3.00 mm | stays |
+| `3V3  VDD  5V` (103.37, 55.34) | moved 7.50 mm (to 110.87); SW1's courtyard, silkscreen and pads on its spot | stays, nothing on it |
+| `P2 P1` (111.02, 55.34) | moved 1.50 mm | stays |
+| `GND 3V3 5V` (118.67, 55.34) | moved 1.50 mm | stays |
+| `B7  ANALOG BUS  B0`, `STACK`, `breadboard fence v5` | stay | stay |
+
+The test pads' names lie on the fixed TP1-TP4's and C1/C2's courtyards
+(1.3 mm around a 1.5 mm pad) as the generator placed them: eleven
+placement warnings, nothing moved, nothing reported (fixed parts).
+pcbnew's generous text box also touches R23's reference label at
+`P2 P1`; KiCad's DRC finds no silkscreen finding on any board text.
+Verdicts, without / with the keepouts: x1385 complete, 186 / 201 vias,
+3757 / 3887 mm, 17 / 15 cosmetic findings, HPWL 2838 / 2914 mm; x1417
+complete, 187 / 202 vias, 3771 / 3837 mm, 15 / 17 cosmetic findings (two
+of R22's label over J3's pins without the keepouts before, two with them
+after), HPWL 2837 / 2913 mm, no next action. With the keepouts x1385
+still moved the four test pad names; x1417 moves none. The keepouts are
+no longer needed.
+
+
+**The short tier** (`--tier short`, 3 x 2, `--no-lock`; x1381's
+`build/short-charge-x1381.log`, which main's x1385, x1396 and x1422
+repeat, against x1417 in `build/short-fence-x1417.log`). Every one of
+the 12 boards has marks (3 to 104 obstacles: `components` in
+`board-placer.json` before and after), so every placement changes; the
+polish moved 2 to 148 of the designer's board items per board before
+and moves none now:
+
+| board | marks | HPWL mm | front, back utilization | parts seated on marks; marks reported under parts | routed, KiCad unconnected, pass |
+| --- | ---: | --- | --- | ---: | --- |
+| 1337-v4.0 | 5 | 984.6 -> 997.1 | 0.14, 0.32 -> 0.15, 0.32 | 0; 0 | 47/47 pass -> 47/47 pass |
+| USB_Cable_Tester | 3 | 1274.4 -> 1269.7 | 0.62, 0.20 -> 0.62, 0.21 | 0; 0 | 54/54 pass -> 54/54 pass (95 -> 138 vias) |
+| USB_Keypad | 43 (artwork) | 804.5 -> 1460.4 | 0.57, 0 -> 0.79, 0.33 | 6 (J1, J2, SW2, SW3, SW8, SW9); 13 | 37/39, 2 -> 37/39, 2 |
+| WLED_Matrix | 40 (artwork) | 1057.0 -> 1078.1 | 0.50, 0 -> 0.59, 0.27 | 0; 0 | 100/104, 5 -> 101/104, 4 |
+| framework_mobo_lefthalf | 9 | 946.0 -> 915.9 | 0.94, 0.08 -> 1.03, 0.24 | 1 (R29); 1 | 71/71 pass -> 70/71, 1 and a new error |
+| MIDAS-MK1.1 | 102 | 2543.5 -> 2971.4 | 0.45, 0.42 -> 0.57, 0.51 | 6 (J102, J104, J107, TP112-TP114); 23 | 151/156, 7 -> 151/156, 6 |
+| OpenFC | 104 | 842.8 -> 828.6 | 0.36, 0.43 -> 1.11, 0.98 | 17 (CN1, P1, 15 headers); 21 | 82/82 pass -> 80/82, 2 |
+| reCamera_S101 | 6 | 188.6 -> 212.2 | 0.37, 0.27 -> 0.39, 0.33 | 0; 3 (silkscreen or labels) | 55/56, 4 -> 54/56, 5 |
+| spell_tome_bottom | 95 (artwork) | 146.6 -> 165.9 | 0.07, 0.07 -> 0.10, 0.27 | 0; 0 | 18/18 pass -> 18/18 pass |
+| eternal-keypad | 8 | 531.8 -> 522.2 | 0.35, 0 -> 0.37, 0.02 | 0; 0 | 65/65 pass -> 65/65, a new shorting_items (a VCC track over ProMicro1's netless pad: the router's) |
+| urchin | 24 | 1678.7 -> 1698.6 | 0.08, 0.41 -> 0.09, 0.42 | 0; 1 | 68/68 pass -> 68/68 pass |
+| Blue_Line | 4 (its 8793-polygon background left out) | 104.3 -> 101.9 | 0.005, 0.002 -> 0.005, 0.015 | 0; 0 | 26/26 pass -> 26/26 pass |
+
+Objectives: passes 8 -> 5 (strict 7 -> 5: OpenFC, framework_mobo and
+eternal-keypad lose theirs), KiCad unconnected 18 -> 20, new errors 2 ->
+3, vias 1068 -> 1254, length 20596 -> 21804 mm, work 2749 -> 2829 s,
+first-route open terminals 28 -> 44, cut 0; against the designer
+(medians) vias x0.84 -> x0.96, length x0.98 -> x1.02, open 0.000 ->
+0.007 of the connections. HPWL rises on 6 boards (USB_Keypad +82 %,
+MIDAS +17 %, spell_tome +13 %, reCamera +13 %) and falls on 6 (at most
+-3 %). The cost is the benchmark's: its texts mark where the designer's
+parts were (above), and a task re-places those parts. With
+`--placer '{"keep_board_marks": false}'` the tier repeats x1381
+(`build/short-fence-x1416-off.log`: 10 rows identical, 1337-v4.0 and
+OpenFC changed by an anneal slip in x1416 that x1417 fixes; x1417 off on
+those two, `build/short-fence-x1417-off.log`, gives x1381's rows).
+
+Steps on the way (all on this tier): x1411, the marks hard at every
+level, left MIDAS-MK1.1, USB_Keypad and OpenFC with parts without a
+place (connectors at the edge under their pin names, beside artwork);
+x1412's level of their own after the courtyard level placed MIDAS and
+USB_Keypad only after every part gave up its halo and spacing (USB_Keypad
+35/39 routed) and OpenFC's levels spent the budget before it; x1414 let
+parts meet silkscreen marks without their halos (WLED_Matrix HPWL 1229
+-> 1078 mm, 97/104 -> 101/104); x1415 seated the parts without room on
+the marks at their level (OpenFC placed); x1416 retried the seating with
+those parts first (MIDAS-MK1.1 placed: its two 36 mm headers at the
+bottom edge).
+
+**The schematic tier** has no mark at all: its 12 imported boards (the
+x1250 run's projects, the latest schematic log) carry no board text,
+text box or graphic on a silkscreen or outer copper layer, so the
+placement problem, the routed board and the polish are the old ones.
+Checked by placing all 12 with x1385 and x1417 (`place-kicad-board`, the
+tier's placer config): byte-identical placed boards, the same
+components and wirelength. The tier itself ran one board under the
+machine's memory rule (MokyaLora 261/262, KiCad 0 unconnected, pass, as
+in x1250) and was stopped there.
+
 ## Measured on 2026-10-21 (Freerouting refresh)
 
 The README's comparison with Freerouting rested on x738 (2026-10-15, the

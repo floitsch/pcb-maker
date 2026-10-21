@@ -185,6 +185,23 @@ pub struct KiCadBoardPlacerConfig {
     /// or the designer's angles (a stack). On; off: the parts start at
     /// the angles the board holds.
     pub orientation_search: bool,
+    /// The board's own texts (header pin names, a title) and silkscreen
+    /// graphics (a logo, a frame around a group) stay where the input put
+    /// them: each is a placement obstacle on its side with a keepout's
+    /// semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box
+    /// from font size, thickness and justification; graphics on the
+    /// silkscreen by their strokes, in clusters, leaving out a cluster that
+    /// spans most of the board; a part meets a silkscreen mark without its
+    /// routing halo), and a part that finds no room off them at a level
+    /// lies on them (`parts_on_marks` in `board-placer.json`); the layout
+    /// routes around copper texts instead of moving them afterwards, and
+    /// the polish moves only the parts' reference and value labels.
+    /// Movable parts whose
+    /// silkscreen or pads lie on a mark are reported (`labels.overlaps` in
+    /// `board-layout.json`, the verdict's next_actions); fixed parts on a
+    /// mark get a warning. On; off: the behaviour before 2026-10-21 (the
+    /// marks are no obstacles, the polish moves them off the parts).
+    pub keep_board_marks: bool,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -233,6 +250,7 @@ impl Default for KiCadBoardPlacerConfig {
             placement_seeds: 3,
             routing_demand: 0.0,
             orientation_search: true,
+            keep_board_marks: true,
         }
     }
 }

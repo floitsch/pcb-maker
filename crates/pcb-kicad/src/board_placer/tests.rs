@@ -204,6 +204,227 @@ fn rule_areas_keep_out_what_they_forbid() {
 }
 
 #[test]
+fn board_texts_and_silkscreen_graphics_keep_parts_off() {
+    // The fence's labels: a front text, a back text, a rectangle drawn on
+    // the front silkscreen around a group, a frame around the whole board
+    // (decoration, no obstacle), a hidden text, a copper text, and a fixed
+    // test pad on a text (a warning). A front and a back part to move.
+    let pcb = parse(
+        r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+        (gr_text "GND" (at 10 10 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (gr_text "STACK" (at 10 20 0) (layer "B.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13)) (justify mirror)))
+        (gr_rect (start 30 5) (end 40 15) (stroke (width 0.15) (type solid)) (fill no) (layer "F.SilkS"))
+        (gr_rect (start 0.5 0.5) (end 59.5 29.5) (stroke (width 0.15) (type solid)) (fill no) (layer "F.SilkS"))
+        (gr_text "HIDDEN" (at 50 20 0) (layer "F.SilkS") (hide yes) (effects (font (size 1 1) (thickness 0.15))))
+        (gr_text "+5V" (at 50 10 0) (layer "F.Cu") (effects (font (size 1 1) (thickness 0.15))))
+        (footprint "TP" (layer "F.Cu") (at 20 25) (locked yes)
+            (property "Reference" "TP1")
+            (fp_rect (start -1.3 -1.3) (end 1.3 1.3) (layer "F.CrtYd"))
+            (pad "1" smd circle (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "A")))
+        (gr_text "TEST" (at 20 26.5 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (footprint "R" (layer "F.Cu") (at 25 3)
+            (property "Reference" "R1")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "B")))
+        (footprint "R" (layer "B.Cu") (at 25 27)
+            (property "Reference" "R2")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "B.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "B.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "B.Cu") (net 2 "B"))))"#,
+    )
+    .unwrap();
+    let config = KiCadBoardPlacerConfig::default();
+    let lowered = lower_placement(&pcb, &config).unwrap();
+    let problem = &lowered.problem;
+    let (front, back) = (1, 2);
+    let marks: Vec<&str> = lowered.references[3..].iter().map(String::as_str).collect();
+    // Four texts (GND, STACK, +5V, TEST) and the rectangle; not the frame
+    // nor the hidden text.
+    assert_eq!(
+        marks
+            .iter()
+            .filter(|name| matches!(**name, "silkscreen mark" | "copper text"))
+            .count(),
+        5,
+        "{marks:?}"
+    );
+    let legal = |poses: &[core::Pose], part: usize| {
+        !core::legal::illegal_components(problem, poses).contains(&part)
+    };
+    let mut poses = problem.poses.clone();
+    assert!(legal(&poses, front) && legal(&poses, back));
+    // On the front text, the copper text, the rectangle's side: not legal
+    // for the front part; inside the rectangle, clear of its sides: legal.
+    for (position, expected) in [
+        ([10.0, 10.0], false),
+        ([50.0, 10.0], false),
+        ([30.0, 10.0], false),
+        ([35.0, 10.0], true),
+        ([10.0, 20.0], true),
+    ] {
+        poses[front].position = position;
+        assert_eq!(legal(&poses, front), expected, "front at {position:?}");
+    }
+    poses[front] = problem.poses[front];
+    // The back text keeps the back part off; the front's marks do not.
+    for (position, expected) in [
+        ([10.0, 20.0], false),
+        ([10.0, 10.0], true),
+        ([35.0, 10.0], true),
+    ] {
+        poses[back].position = position;
+        assert_eq!(legal(&poses, back), expected, "back at {position:?}");
+    }
+    // A routing halo is room for tracks, which run under a silkscreen
+    // text but not through a copper one: 1 mm from either (more than the
+    // spacing, less than the halo).
+    let mut haloed = problem.clone();
+    haloed.components[front].halo = 2.0;
+    let mut poses = problem.poses.clone();
+    poses[front].position = [10.0, 12.23];
+    assert!(!core::legal::illegal_components(&haloed, &poses).contains(&front));
+    poses[front].position = [50.0, 12.36];
+    assert!(core::legal::illegal_components(&haloed, &poses).contains(&front));
+    // The fixed test pad on its name: a warning.
+    assert!(
+        lowered
+            .constraint_warnings
+            .iter()
+            .any(|warning| warning.contains("TP1") && warning.contains("\"TEST\"")),
+        "{:?}",
+        lowered.constraint_warnings
+    );
+    // Without `keep_board_marks` the marks are no obstacles (a copper
+    // text is decoration the polish moves).
+    let off = lower_placement(
+        &pcb,
+        &KiCadBoardPlacerConfig {
+            keep_board_marks: false,
+            ..config
+        },
+    )
+    .unwrap();
+    let mut poses = off.problem.poses.clone();
+    for position in [[10.0, 10.0], [50.0, 10.0], [30.0, 10.0]] {
+        poses[front].position = position;
+        assert!(
+            !core::legal::illegal_components(&off.problem, &poses).contains(&front),
+            "{position:?}"
+        );
+    }
+}
+
+#[test]
+fn a_part_that_would_sit_under_a_board_label_is_placed_beside_it() {
+    // Two fixed connectors and a resistor between them: every spot on the
+    // line between them is as short, and a label covers its middle.
+    let board = r#"(kicad_pcb (version 20240108)
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (net 0 "") (net 1 "A") (net 2 "B")
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        (gr_text "ABCDEFGHIJKLMNO" (at 20 10 0) (layer "F.SilkS") (effects (font (size 2 2) (thickness 0.3))))
+        (footprint "Lib:J" (layer "F.Cu") (at 3 10) (locked yes)
+            (property "Reference" "J1")
+            (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "A")))
+        (footprint "Lib:J" (layer "F.Cu") (at 37 10) (locked yes)
+            (property "Reference" "J2")
+            (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 2 "B")))
+        (footprint "Lib:R" (layer "F.Cu") (at 20 3)
+            (property "Reference" "R1")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "B"))))"#;
+    let label = {
+        let pcb = parse(board).unwrap();
+        board_marks(&pcb, outline_box(&pcb)).unwrap()[0].bounds
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pcb-maker-label-{}-{nonce}", std::process::id()));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("board.kicad_pcb"), board).unwrap();
+    let mut under = Vec::new();
+    for keep in [true, false] {
+        let config = KiCadBoardPlacerConfig {
+            keep_board_marks: keep,
+            placement_seeds: 1,
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let output = root.join(format!("placed-{keep}"));
+        let result = place_kicad_board(&source, "board", &output, &config).unwrap();
+        assert!(result.unplaced.is_empty() && result.illegal.is_empty());
+        let placed = fs::read_to_string(output.join("board.kicad_pcb")).unwrap();
+        let placed = parse(&placed).unwrap();
+        // The label stays.
+        let text = placed
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("gr_text"))
+            .unwrap();
+        assert_eq!(form_at(text).unwrap()[..2], [20.0, 10.0]);
+        let r1 = placed
+            .children()
+            .iter()
+            .find(|item| crate::kicad_nets::footprint_reference(item).as_deref() == Some("R1"))
+            .unwrap();
+        let at = form_at(r1).unwrap();
+        let (sin, cos) = at[2].to_radians().sin_cos();
+        let half = [
+            1.5 * cos.abs() + 0.7 * sin.abs(),
+            1.5 * sin.abs() + 0.7 * cos.abs(),
+        ];
+        under.push(
+            at[0] - half[0] < label[2]
+                && label[0] < at[0] + half[0]
+                && at[1] - half[1] < label[3]
+                && label[1] < at[1] + half[1],
+        );
+    }
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(under, [false, true], "R1 under the label (kept, not kept)");
+}
+
+#[test]
+fn board_marks_give_way_when_nothing_else_seats_a_part() {
+    // A label across the whole of a small board: the resistor has no spot
+    // off it, so it lies there (and the placement says so).
+    let board = r#"(kicad_pcb (version 20240108)
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (net 0 "") (net 1 "A") (net 2 "B")
+        (gr_rect (start 0 0) (end 12 6) (layer "Edge.Cuts"))
+        (gr_text "ABCDE" (at 6 3 0) (layer "F.SilkS") (effects (font (size 3 2) (thickness 0.3))))
+        (footprint "Lib:R" (layer "F.Cu") (at 3 3)
+            (property "Reference" "R1")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "B"))))"#;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pcb-maker-yield-{}-{nonce}", std::process::id()));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("board.kicad_pcb"), board).unwrap();
+    let config = KiCadBoardPlacerConfig {
+        placement_seeds: 1,
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let result = place_kicad_board(&source, "board", &root.join("placed"), &config).unwrap();
+    let _ = fs::remove_dir_all(&root);
+    assert!(result.unplaced.is_empty() && result.illegal.is_empty());
+    assert_eq!(result.parts_on_marks, ["R1"]);
+}
+
+#[test]
 fn an_inner_layer_pad_keepout_keeps_pads_out() {
     let pcb = parse(
         r#"(kicad_pcb

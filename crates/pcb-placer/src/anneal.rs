@@ -191,6 +191,9 @@ impl State<'_> {
             }
             let body = &self.rects[other];
             let other_component = &self.problem.components[other];
+            if self.problem.constraints.lies_on(index, other) {
+                continue;
+            }
             if side.collides(other_component.side) {
                 if component.copper_only || other_component.copper_only {
                     // A cutout keeps only copper away.
@@ -219,7 +222,7 @@ impl State<'_> {
                 } else if !component.hollow_for(other_component)
                     && !other_component.hollow_for(component)
                 {
-                    if self.problem.constraints.linked(index, other) {
+                    if self.problem.constraints.bare(index, other) {
                         // Parts tied together meet without their halos.
                         let (mine, theirs) = (component.halo, other_component.halo);
                         total += area(
@@ -261,13 +264,21 @@ impl State<'_> {
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
                     // spacing, as the rectangles are) only.
+                    // Against an obstacle without routing room, without
+                    // the halo.
+                    let bare = self.problem.constraints.halo_free(index)
+                        || self.problem.constraints.halo_free(other);
                     let blocking = |part: &crate::problem::Component,
                                     against: &crate::problem::Component,
                                     pose: Pose,
                                     whole: &Rect|
                      -> Vec<(Point, Point)> {
                         if !part.hollow_for(against) {
-                            return vec![(whole.center, whole.half)];
+                            let halo = if bare { part.halo } else { 0.0 };
+                            return vec![(
+                                whole.center,
+                                [whole.half[0] - halo, whole.half[1] - halo],
+                            )];
                         }
                         let margin = self.problem.spacing / 2.0;
                         built(part.blocking_boxes(against, pose))

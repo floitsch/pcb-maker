@@ -448,6 +448,10 @@ fn clear_of(
         if problem.components[index].fixed && problem.components[other].fixed {
             continue;
         }
+        // A part without room elsewhere may lie on the board's marks.
+        if problem.constraints.lies_on(index, other) {
+            continue;
+        }
         let other_side = problem.components[other].side;
         if side.collides(other_side) {
             let (mine, theirs) = (&problem.components[index], &problem.components[other]);
@@ -467,7 +471,7 @@ fn clear_of(
             if if hollow {
                 hollow_overlap(problem, index, pose, other, poses[other], work)
             } else {
-                if problem.constraints.linked(index, other) {
+                if problem.constraints.bare(index, other) {
                     // Parts tied together meet without their halos.
                     let bare = |part: usize, pose: Pose| {
                         let rect = rect(problem, part, pose);
@@ -847,7 +851,13 @@ fn hollow_overlap(
     let blocking = |index: usize, pose: Pose, other: usize| -> Vec<Rect> {
         let component = &problem.components[index];
         if !component.hollow_for(&problem.components[other]) {
-            return vec![rect(problem, index, pose)];
+            // Against an obstacle without routing room, without the halo.
+            let halo = if problem.constraints.halo_free(other) {
+                component.halo
+            } else {
+                0.0
+            };
+            return vec![rect(problem, index, pose).grown(-halo)];
         }
         let against = &problem.components[other];
         let mut rects = turned_rects(component, &component.hollow, pose, 0.0);
