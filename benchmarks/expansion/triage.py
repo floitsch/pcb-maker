@@ -19,8 +19,12 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "github"))
+from licences import spdx_training_eligible  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 GIB = 1024 ** 3
@@ -310,7 +314,10 @@ def evaluate(board, fingerprint, args, binary, config, native_semaphore):
         row['benchmark_candidate'] = row['category'] in ('incomplete_at_budget', 'clean_slow') and row['source_quality'] == 'native_clean' and not row['rules_inferred']
         row['benchmark_review_candidate'] = row['category'] in ('incomplete_at_budget', 'cut_wall_clock', 'clean_slow', 'incomplete_early')
         row['training_candidate'] = row['category'].startswith('clean_') and not row['rules_inferred']
-        row['nn_license_eligible'] = board.get('nn_license_eligible', False)
+        # Permissive only (benchmarks/github/licences.py): boards harvested
+        # before 2026-10-21 carry a flag that admitted copyleft licences too.
+        row['nn_license_eligible'] = bool(board.get('nn_license_eligible', False)
+                                          and spdx_training_eligible(board.get('license_spdx')))
     except Exception as error:
         row.update(category='source_issue', error=f'{type(error).__name__}: {error}')
     row['elapsed_seconds'] = round(time.monotonic() - start, 3)

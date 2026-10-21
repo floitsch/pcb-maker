@@ -160,6 +160,20 @@ class HarvestTests(unittest.TestCase):
         self.assertFalse(board["nn_license_eligible"])
         self.assertEqual(board["license_spdx"], "NOASSERTION")
 
+    def test_copyleft_license_keeps_board_but_not_for_training(self):
+        original = self.github.api
+        def api(endpoint):
+            result = original(endpoint)
+            if endpoint == "repos/example/design":
+                result["license"] = {"spdx_id": "GPL-3.0"}
+            return result
+        self.github.api = api
+        self.collector.fetch()
+        board = next(iter(self.collector.boards.values()))
+        self.assertFalse(board["nn_license_eligible"])
+        self.assertTrue(harvest.nn_license_eligible("CERN-OHL-P-2.0"))
+        self.assertFalse(harvest.nn_license_eligible("CERN-OHL-W-2.0"))
+
     def test_partial_journal_tail_recovers_on_next_append(self):
         journal = self.args.data / "harvest.jsonl"
         journal.write_text('{"partial":')

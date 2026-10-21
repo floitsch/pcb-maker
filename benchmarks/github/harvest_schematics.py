@@ -48,6 +48,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from harvest import gh  # noqa: E402
+from licences import LICENCE_FILE, classify_licence  # noqa: E402,F401
 
 ROOT = HERE.parents[1]
 STORE = ROOT / "benchmarks/real/external/github-sch"
@@ -58,26 +59,6 @@ SYSTEM_FOOTPRINTS = Path("/usr/share/kicad/footprints")
 # MB; the schematic does not need them, its symbols are embedded).
 MAX_FILE_BYTES = 30_000_000
 
-# Licences GitHub names that let the files be copied.
-OPEN_SPDX = {"MIT", "Apache-2.0", "GPL-2.0", "GPL-3.0", "LGPL-2.1", "LGPL-3.0", "AGPL-3.0", "BSD-2-Clause",
-             "BSD-3-Clause", "0BSD", "Unlicense", "CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC-BY-3.0",
-             "CC-BY-SA-3.0", "MPL-2.0", "ISC", "CERN-OHL-P-2.0", "CERN-OHL-W-2.0", "CERN-OHL-S-2.0",
-             "CERN-OHL-1.2", "WTFPL", "BSL-1.0", "Zlib", "EUPL-1.2", "SHL-0.51", "SHL-2.1", "TAPR-OHL-1.0"}
-# Words of licence texts GitHub does not recognise: grants, and the
-# reservations that withhold one.
-GRANTS = [("CERN Open Hardware", "CERN OHL"), ("CERN OHL", "CERN OHL"), ("CERN-OHL", "CERN OHL"),
-          ("GNU Affero General Public", "AGPL"), ("you can redistribute it", "free software licence"), ("Creative Commons", "Creative Commons"),
-          ("creativecommons.org", "Creative Commons"), ("Permission is hereby granted", "MIT-style"),
-          ("GNU GENERAL PUBLIC LICENSE", "GPL"), ("GNU LESSER GENERAL PUBLIC", "LGPL"),
-          ("Apache License", "Apache"), ("Solderpad", "Solderpad"), ("TAPR Open Hardware", "TAPR OHL"),
-          ("Redistribution and use in source and binary forms", "BSD-style"), ("Mozilla Public License", "MPL"),
-          ("unlicense.org", "Unlicense"), ("dedicated to the public domain", "public domain"),
-          ("released into the public domain", "public domain"), ("CC BY", "Creative Commons"),
-          ("CC-BY", "Creative Commons"), ("Open Hardware License", "open hardware licence"),
-          ("HIPPOCRATIC LICENSE", "Hippocratic License")]
-RESERVATIONS = ["all rights reserved", "may not be redistributed", "may not be copied", "proprietary",
-                "not for redistribution", "without the prior written permission"]
-LICENCE_FILE = re.compile(r"^(licen[cs]e|copying)([._-].*)?$", re.IGNORECASE)
 
 
 def raw(repository, commit, path):
@@ -162,29 +143,6 @@ def resolve(uri, project_dir):
     if path.startswith(".."):
         return None
     return "" if path == "." else path
-
-
-def classify_licence(spdx, texts):
-    """(may it be copied, why). `texts`: (path, text) of licence files."""
-    if spdx and spdx != "NOASSERTION":
-        if spdx in OPEN_SPDX:
-            return True, spdx
-        return False, f"{spdx} is not a licence known to allow copies"
-    if not texts:
-        return False, "no licence file (all rights reserved)"
-    for path, text in texts:
-        lower = " ".join(text.lower().split())
-        grant = next((name for key, name in GRANTS if key.lower() in lower), None)
-        if grant:
-            # A grant wins over "all rights reserved" (copyright lines of
-            # open licences say it too).
-            # Creative Commons' NC variants (the GPL says "noncommercially"
-            # too, of something else).
-            noncommercial = grant == "Creative Commons" and "noncommercial" in lower.replace("-", "")
-            return True, f"{path}: {grant}" + (" (non-commercial)" if noncommercial else "")
-    path, text = texts[0]
-    reserved = next((word for word in RESERVATIONS if word in " ".join(text.lower().split())), None)
-    return False, f"{path}: " + (f'"{reserved}"' if reserved else "no licence grant recognised")
 
 
 def harvest(board, refresh):

@@ -3,8 +3,9 @@
 """Harvests open-source KiCad boards from GitHub as benchmarks.
 
     benchmarks/github/harvest.py search [--pages N] [--out candidates.json]
-    benchmarks/github/harvest.py fetch [--candidates candidates.json] [--limit N]
+    benchmarks/github/harvest.py fetch [--candidates candidates.json] [--limit N] [--allow-unlicensed]
     benchmarks/github/harvest.py boards
+    benchmarks/github/harvest.py licences [--markdown]
 
 `search` runs GitHub code searches for KiCad 7+ boards (needs `gh auth`)
 and writes the candidates. `fetch` downloads each candidate's board and
@@ -22,7 +23,19 @@ and make layout tasks with
 `benchmarks/agent-tasks/from_pcbench.py <out> --corpus benchmarks/github/boards.json`.
 
 Files are downloaded for benchmarking only and are not redistributed; the
-manifest records each repository's licence. The boards' schematics and
+manifest records each repository's licence. Licences (licences.py, as
+harvest_schematics.py gates the schematics): `fetch` takes a board only
+when its repository's licence lets it be copied (GitHub's SPDX
+identifier, or for NOASSERTION and none the licence files at the
+repository's root and along the board's folder); `--allow-unlicensed`
+takes the others too, for private benchmarking, marked `allowed: false`.
+Every board's `licence` record gives its class (permissive,
+weak-copyleft, copyleft, unclassified, restricted, unlicensed) and whether
+it may train a model (`training`: permissive only); `fetch --training`
+takes permissive boards only. `licences` writes the records of the boards
+fetched before the gate (from schematics.json's reading of their licence
+files at the commit, else the SPDX identifier) into manifest.json and
+boards.json and prints the corpus's report. The boards' schematics and
 project libraries, at the same commits, come from harvest_schematics.py
 (benchmarks/real/external/github-sch, schematics.json)."""
 
@@ -38,8 +51,12 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import licences  # noqa: E402
+
 ROOT = HERE.parents[1]
 STORE = ROOT / "benchmarks/real/external/github"
+SCHEMATICS = HERE / "schematics.json"
 MANIFEST = HERE / "manifest.json"
 TRAINING_STORE = ROOT / "benchmarks/real/external/training"
 TRAINING_MANIFEST = HERE / "training-manifest.json"
@@ -187,6 +204,46 @@ def judge_training(text):
     return numbers, None
 
 
+def licence_texts(repository, commit, path):
+    """(path, text) of the licence files at the repository's root and in
+    every folder down to the board's, at the commit."""
+    folders = [""]
+    for part in [part for part in str(Path(path).parent).split("/") if part and part != "."]:
+        folders.append(f"{folders[-1]}/{part}" if folders[-1] else part)
+    texts = []
+    for folder in folders:
+        listing = gh(f"repos/{repository}/contents/{folder}?ref={commit}") if folder \
+            else gh(f"repos/{repository}/contents?ref={commit}")
+        for entry in listing if isinstance(listing, list) else []:
+            if entry.get("type") == "file" and licences.LICENCE_FILE.match(entry["name"]) \
+                    and entry.get("size", 0) < 300_000 and entry.get("download_url"):
+                try:
+                    with urllib.request.urlopen(entry["download_url"], timeout=60) as response:
+                        texts.append((entry["path"], response.read().decode("utf-8", errors="replace")))
+                except Exception:  # noqa: BLE001
+                    continue
+    return texts
+
+
+def board_licence(info, repository, commit, path, texts=licence_texts):
+    """The licence record of a board (licences.record): GitHub's SPDX
+    identifier, or for NOASSERTION and none the licence files read."""
+    spdx = (info.get("license") or {}).get("spdx_id")
+    files = texts(repository, commit, path) if spdx in (None, "NOASSERTION") else []
+    return licences.record(spdx, files)
+
+
+def licence_refusal(record, training, allow_unlicensed):
+    """Why a board with this licence record is not taken (None: taken).
+    Benchmarks need a licence that allows copies (unless allowed
+    unlicensed, for private benchmarking); training data a permissive one."""
+    if training and not record["training"]:
+        return f"licence: {record['kind']} ({record['why']}), training data is permissive only"
+    if not record["allowed"] and not allow_unlicensed:
+        return f"licence: {record['why']}"
+    return None
+
+
 def fetch(arguments):
     candidates = json.loads(arguments.candidates.read_text())
     store = TRAINING_STORE if arguments.training else STORE
@@ -245,6 +302,12 @@ def fetch(arguments):
         if board_entry.get("size", 0) > 40_000_000:
             manifest["rejected"][key] = f"board file {board_entry.get('size')} bytes"
             continue
+        licence = board_licence(info, repository, commit, path)
+        refusal = licence_refusal(licence, arguments.training, arguments.allow_unlicensed)
+        if refusal:
+            manifest["rejected"][key] = refusal
+            print(f"  {key}: {refusal}", file=sys.stderr)
+            continue
         try:
             with urllib.request.urlopen(board_entry["download_url"], timeout=120) as response:
                 board_bytes = response.read()
@@ -283,7 +346,7 @@ def fetch(arguments):
         license_ = (info.get("license") or {}).get("spdx_id")
         manifest["boards"].append({
             "key": key, "name": name, "board_id": stem, "repository": repository, "path": path,
-            "commit": commit, "license": license_, "stars": info.get("stargazers_count"),
+            "commit": commit, "license": license_, "licence": licence, "stars": info.get("stargazers_count"),
             "sha256": digest, "size": len(board_bytes), **numbers})
         taken += 1
         print(f"{name}: {numbers['copper_layers']} layers, {numbers['footprints']} footprints, "
@@ -299,14 +362,66 @@ def boards(arguments):
     for board in sorted(manifest["boards"], key=lambda b: (-b["copper_layers"], -b["fine_pads"], -b["footprints"])):
         rows.append({"name": board["name"], "directory": f"benchmarks/real/external/github/{board['name']}",
                      "board_id": board["board_id"],
+                     "licence": {key: (board.get("licence") or {}).get(key) for key in ("kind", "allowed", "training")},
                      "note": f'{board["repository"]} @ {board["commit"][:8]}, {board["license"]}: '
                              f'{board["copper_layers"]} layers, {board["footprints"]} footprints, '
                              f'{board["fine_pads"]} fine pads, designer {board["segments"]} segments / {board["vias"]} vias'})
     (HERE / "boards.json").write_text(json.dumps({
         "comment": "Open-source boards harvested from GitHub by harvest.py; sources under "
-                   "benchmarks/real/external/github (gitignored), origins in manifest.json.",
+                   "benchmarks/real/external/github (gitignored), origins in manifest.json. licence: its class, "
+                   "whether it allows copies (false: private benchmarking only) and whether it may train a "
+                   "model (permissive only); harvest.py licences reports them.",
         "boards": rows}, indent=1))
     print(f"{len(rows)} boards", file=sys.stderr)
+
+
+def corpus_licences(manifest, schematics):
+    """The licence records of the manifest's boards: the board's own (since
+    the gate), else schematics.json's reading of its licence files at the
+    commit, else its SPDX identifier alone (no file read)."""
+    records = {}
+    for board in manifest["boards"]:
+        if board.get("licence"):
+            records[board["name"]] = board["licence"]
+            continue
+        read = (schematics.get(board["name"]) or {}).get("licence")
+        if read is not None:
+            records[board["name"]] = licences.record(board.get("license"),
+                                                     verdict=(read["allowed"], read["why"], read.get("files", [])))
+        else:
+            record = licences.record(board.get("license"), [])
+            if board.get("license") in (None, "NOASSERTION"):
+                record["why"] = "licence files not read (SPDX " + str(board.get("license")) + ")"
+            records[board["name"]] = record
+    return records
+
+
+def licences_report(arguments):
+    manifest = json.loads(MANIFEST.read_text())
+    schematics = json.loads(SCHEMATICS.read_text())["boards"] if SCHEMATICS.exists() else {}
+    records = corpus_licences(manifest, schematics)
+    for board in manifest["boards"]:
+        board["licence"] = records[board["name"]]
+    MANIFEST.write_text(json.dumps(manifest, indent=1))
+    boards(arguments)
+    total = len(records)
+    spdx_none = sum(1 for board in manifest["boards"] if board.get("license") in (None, "NOASSERTION"))
+    print(f"{total} boards; GitHub names no licence for {spdx_none} (none or NOASSERTION)")
+    counts = {}
+    for record in records.values():
+        counts[record["kind"]] = counts.get(record["kind"], 0) + 1
+    print("| Class | Boards | Benchmark | Training |")
+    print("| --- | ---: | --- | --- |")
+    for name in licences.KINDS:
+        if counts.get(name):
+            print(f"| {name} | {counts[name]} | {'private only' if name == 'unlicensed' else 'yes'} | "
+                  f"{'yes' if licences.training_eligible(name) else 'no'} |")
+    for name in ("unlicensed", "copyleft", "weak-copyleft", "unclassified", "restricted"):
+        listed = sorted((board_name, record) for board_name, record in records.items() if record["kind"] == name)
+        if listed and arguments.markdown:
+            print(f"\n{name}:")
+            for board_name, record in listed:
+                print(f"- {board_name}: {record['spdx']}, {record['why']}")
 
 
 def main():
@@ -319,10 +434,17 @@ def main():
     f.add_argument("--candidates", type=Path, default=HERE / "candidates.json")
     f.add_argument("--limit", type=int, default=0)
     f.add_argument("--training", action="store_true",
-                   help="relaxed criteria, into benchmarks/real/external/training (congestion model training data)")
+                   help="relaxed criteria, into benchmarks/real/external/training (congestion model training data; "
+                        "permissive licences only)")
+    f.add_argument("--allow-unlicensed", action="store_true",
+                   help="also take boards whose licence does not let them be copied, for private benchmarking "
+                        "(marked allowed: false; never training data)")
     commands.add_parser("boards")
+    lic = commands.add_parser("licences", help="the corpus's licence records into manifest.json and boards.json, "
+                                               "and its report")
+    lic.add_argument("--markdown", action="store_true", help="also list the boards of every class but permissive")
     arguments = parser.parse_args()
-    {"search": search, "fetch": fetch, "boards": boards}[arguments.command](arguments)
+    {"search": search, "fetch": fetch, "boards": boards, "licences": licences_report}[arguments.command](arguments)
 
 
 if __name__ == "__main__":

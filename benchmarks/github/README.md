@@ -31,6 +31,67 @@ benchmarks/github/harvest.py boards          # boards.json for the runners
 The files are used for benchmarking only and are not redistributed; the
 manifest records each repository's licence.
 
+## Licences
+
+Since 2026-10-21 `fetch` gates on the licence as `harvest_schematics.py`
+does (both use `licences.py`): a board is taken only when its repository's
+licence lets the files be copied: GitHub's SPDX identifier where it names
+one, else the licence files at the repository's root and along the
+board's folder at the commit (CERN OHL, GPL, Creative Commons, ... texts
+GitHub calls `NOASSERTION`); no licence file means all rights reserved.
+`fetch --allow-unlicensed` takes the others too, for private benchmarking:
+their record says `allowed: false`, and they are never redistributed and
+never training data.
+
+Every board's `licence` record (manifest.json; `kind`, `allowed` and
+`training` in boards.json) gives its class:
+
+| Class | What | Benchmark | Training |
+| --- | --- | --- | --- |
+| permissive | MIT, BSD, Apache-2.0, ISC, CC0, Unlicense, CERN-OHL-P, CC-BY, ... | yes | yes |
+| weak-copyleft | CERN-OHL-W, LGPL, MPL | yes | no |
+| copyleft | GPL, AGPL, CERN-OHL-S, CC-BY-SA, ... | yes | no |
+| unclassified | a CERN OHL or Creative Commons text of an unread variant, Solderpad | yes | no |
+| restricted | Hippocratic, Creative Commons non-commercial | yes | no |
+| unlicensed | no licence file, or a text that reserves the rights | private only | no |
+
+**The copyleft position.** Benchmarking a copyleft design (routing it,
+reporting numbers) copies nothing out of this repository, so copyleft
+boards are benchmarks like any other. Training is another matter: whether
+a model trained on a reciprocal licence's designs is a derived work that
+inherits its obligations is not settled, and nobody here has settled it,
+so training data is permissive only: `fetch --training` takes permissive
+boards only, `benchmarks/expansion/harvest.py`'s `nn_license_eligible`
+(and triage's copy of it) is permissive only, and the expansion tier's
+benchmark selection keeps its wider `USABLE_LICENSES`. No trained model is
+in the repository (the congestion model's weights live under `build/`).
+The congestion model's training manifest (training-manifest.json, 700
+boards, fetched before the gate) holds by its SPDX identifiers 205
+permissive boards, 326 without one (none or NOASSERTION, licence files not
+read) and 169 copyleft or weakly reciprocal ones (141 and 28): a model
+meant to ship must be trained on the permissive subset.
+
+`harvest.py licences [--markdown]` writes the records of boards fetched
+before the gate into manifest.json and boards.json (from schematics.json's
+reading of their licence files at the commit) and prints the report. The
+corpus on 2026-10-21 (109 boards; GitHub names no licence for 42, of
+which 24 have a licence file with a grant):
+
+| Class | Boards |
+| --- | ---: |
+| permissive | 32 |
+| weak-copyleft | 12 (CERN-OHL-W: sporkus, PolyKybd) |
+| copyleft | 27 (CERN-OHL-S 12, GPL-3.0 8, GPL-2.0 2, CC-BY-SA 1, and four by their licence files: AGPL 2, GPL 1, rosco_m68k's COPYING) |
+| unclassified | 16 (CERN OHL texts of an unread variant: the 0xCB boards, ...) |
+| restricted | 4 (Hippocratic License) |
+| unlicensed | 18 (no licence file: the six ISS-PCB boards, seven of hackclub's OnBoard, MegaDrive, Neotron-Pico, SUMEC, ATAT1800, vd-rd's module) |
+
+The 18 unlicensed boards stay in the corpus for private benchmarking
+(their results are numbers, their files are not published); seven of them
+are in the quick tier (the four ISS-PCB boards there, E-Fidget-Lite,
+MotionCubeViewAllForces, keyboar_), one in the short tier (MIDAS-MK1.1),
+none in the schematic tier (harvest_schematics.py skipped them).
+
 ## Schematics (`harvest_schematics.py`)
 
 The boards above come without their schematics. `harvest_schematics.py`

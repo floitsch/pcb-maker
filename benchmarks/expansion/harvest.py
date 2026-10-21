@@ -27,18 +27,35 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 OLD = ROOT / "benchmarks/github"
 FORMATS = {".kicad_pcb": "kicad", ".brd": "eagle-or-legacy", ".pcbdoc": "altium"}
-# Eligibility is conservative, not a conclusion about every repository file.
+# The repository licences of boards usable as benchmarks (the expansion
+# tier's selection). Eligibility is conservative, not a conclusion about
+# every repository file.
 USABLE_LICENSES = {"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC",
                    "CC0-1.0", "Unlicense", "CERN-OHL-P-2.0", "CERN-OHL-W-2.0",
                    "CERN-OHL-S-2.0", "GPL-2.0", "GPL-3.0", "GPL-2.0-only",
                    "GPL-3.0-only", "GPL-2.0-or-later", "GPL-3.0-or-later",
                    "CC-BY-4.0", "CC-BY-SA-4.0"}
+# Training data (nn_license_eligible) is permissive only
+# (benchmarks/github/licences.py; benchmarks/github/README.md, "Licences"):
+# the copyleft and weakly reciprocal licences of USABLE_LICENSES
+# (CERN-OHL-S and -W, GPL, CC-BY-SA) are benchmarks, never training data.
+sys.path.append(str(Path(__file__).resolve().parents[1] / "github"))
+from licences import spdx_training_eligible  # noqa: E402
+
 TOPICS = ["kicad", "kicad-project", "pcb-design", "open-hardware", "oshw",
           "fpga-board", "hardware", "eagle-pcb", "altium-designer"]
 CURATED = ["antmicro/jetson-nano-baseboard", "antmicro/alkali-csd", "OLIMEX/ESP32-EVB",
            "OLIMEX/ESP32-POE", "raspberrypi/pico", "greatscottgadgets/hackrf",
            "greatscottgadgets/luna", "m-labs/sinara", "myriadrf/LimeSDR-USB",
            "Nuand/bladeRF", "wuxx/nanoDAP", "espressif/esp-dev-kits"]
+
+
+def nn_license_eligible(spdx):
+    """Whether a board under this repository licence may be training data:
+    a permissive licence only (MIT, BSD, Apache-2.0, ISC, CC0, Unlicense,
+    CERN-OHL-P, CC-BY, ...); copyleft and weakly reciprocal licences and
+    NOASSERTION are not."""
+    return spdx_training_eligible(spdx)
 
 
 def atomic_json(path, value):
@@ -317,7 +334,7 @@ class Harvest:
                           directory=self.relative(directory), board_path=self.relative(board_path),
                           source_url=f"https://github.com/{repository}/blob/{context['commit']}/{urllib.parse.quote(path, safe='/')}",
                           source_format=FORMATS.get(PurePosixPath(path).suffix.lower(), "unknown"),
-                          nn_license_eligible=context["license_spdx"] in USABLE_LICENSES,
+                          nn_license_eligible=nn_license_eligible(context["license_spdx"]),
                           license_scope="repository metadata; per-file exceptions not checked",
                           quality_flags=quality_flags(path))
             try:

@@ -80,7 +80,7 @@ show progress. Per-stage status files update while a batch is running.
 | Import/model/outline/conversion failure | Importer regression; no false router-difficulty claim |
 | Memory limit or wall timeout | Resource/performance queue; not a verified routing failure |
 | Layer/package/pad counts, fixture/panel/backup flags, source family | Diversity and sampling information |
-| Repository licence metadata | Conservative collection flag; per-file exceptions remain unchecked |
+| Repository licence metadata | Conservative collection flag; per-file exceptions remain unchecked; training (`nn_license_eligible`) permissive only since 2026-10-21 (benchmarks/github/README.md, "Licences") |
 
 Fast boards are retained. Local escape and placement examples can be useful
 even when the full board is easy. Selection should consider diversity and

@@ -17,7 +17,15 @@
    "fine_pads": 618,
    "segments": 15624,
    "vias": 794,
-   "zones": 48
+   "zones": 48,
+   "licence": {
+    "spdx": "Apache-2.0",
+    "allowed": true,
+    "why": "Apache-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "0xCB-dev/0xCB-1337:rev5.0/kikit/panel/pcb-panel.kicad_pcb",
@@ -36,7 +44,17 @@
    "fine_pads": 0,
    "segments": 2876,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "CDFER/Business-Cards:Batch 1/Batch 1.kicad_pcb",
@@ -55,7 +73,17 @@
    "fine_pads": 250,
    "segments": 24906,
    "vias": 374,
-   "zones": 805
+   "zones": 805,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ],
+    "kind": "restricted",
+    "training": false
+   }
   },
   {
    "key": "little-red-rover/little-red-rover:HARDWARE/little_red_rover/little_red_rover.kicad_pcb",
@@ -74,7 +102,17 @@
    "fine_pads": 0,
    "segments": 1096,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": true,
+    "why": "HARDWARE/LICENSE: CERN OHL",
+    "files": [
+     "HARDWARE/LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "baldengineer/bit-preserve:Tandy-RS/TRS-80 Color Computer/Color Computer 2/26-313xB/coco2/coco2.kicad_pcb",
@@ -93,7 +131,17 @@
    "fine_pads": 0,
    "segments": 3563,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: Creative Commons",
+    "files": [
+     "LICENSE.md"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/variations/poly_corne/poly_corne_split42_right.kicad_pcb",
@@ -112,7 +160,15 @@
    "fine_pads": 714,
    "segments": 7488,
    "vias": 1372,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/poly_kybd_split72_right.kicad_pcb",
@@ -131,7 +187,15 @@
    "fine_pads": 723,
    "segments": 7242,
    "vias": 1368,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/poly_kybd_split72_left.kicad_pcb",
@@ -150,7 +214,15 @@
    "fine_pads": 723,
    "segments": 7524,
    "vias": 1354,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "0xCB-dev/0xCB-1337:rev4.0/panel/panel.kicad_pcb",
@@ -169,7 +241,17 @@
    "fine_pads": 0,
    "segments": 1432,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "oro-os/link:pcb/link/link.kicad_pcb",
@@ -188,7 +270,15 @@
    "fine_pads": 391,
    "segments": 3112,
    "vias": 806,
-   "zones": 274
+   "zones": 274,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tomunderwood99/CharlieBoard:hardware/PCB Production/KICAD Files/Blue Line/Blue Line.kicad_pcb",
@@ -207,7 +297,15 @@
    "fine_pads": 0,
    "segments": 135,
    "vias": 28,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "ikajdan/katia:hardware/katia.kicad_pcb",
@@ -226,7 +324,15 @@
    "fine_pads": 128,
    "segments": 2109,
    "vias": 1301,
-   "zones": 768
+   "zones": 768,
+   "licence": {
+    "spdx": "CERN-OHL-P-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "GlasgowEmbedded/glasgow:hardware/boards/glasgow/revC3/glasgow.kicad_pcb",
@@ -245,7 +351,15 @@
    "fine_pads": 0,
    "segments": 4715,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "0BSD",
+    "allowed": true,
+    "why": "0BSD",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "obsilab/Quanta75:Quanta75_RP2040Stamp_JLCPCBAoptimized/Quanta75_RP2040Stamp_JLCPCBAoptimized.kicad_pcb",
@@ -264,7 +378,15 @@
    "fine_pads": 0,
    "segments": 1708,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-P-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001/pcb_xiao/bumwings_v001_xiao.kicad_pcb",
@@ -283,7 +405,15 @@
    "fine_pads": 0,
    "segments": 887,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "ASH-ART/Qfwfq:PCB Files/qfwfq.kicad_pcb",
@@ -302,7 +432,15 @@
    "fine_pads": 0,
    "segments": 718,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001/pcb_xiao_s/bumwings_v001_xiao_s.kicad_pcb",
@@ -321,7 +459,15 @@
    "fine_pads": 0,
    "segments": 828,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "maniekx86/M8SBC-486:pcb/homebrew_486.kicad_pcb",
@@ -340,7 +486,17 @@
    "fine_pads": 144,
    "segments": 10279,
    "vias": 1150,
-   "zones": 4
+   "zones": 4,
+   "licence": {
+    "spdx": null,
+    "allowed": true,
+    "why": "pcb/LICENSE: AGPL",
+    "files": [
+     "pcb/LICENSE"
+    ],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001R/pcb_R64_xiao_sd/bumwings_v001R64_xiao_sd.kicad_pcb",
@@ -359,7 +515,15 @@
    "fine_pads": 0,
    "segments": 884,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001R/pcb_R55_xiao_sd/bumwings_v001R55_xiao_sd.kicad_pcb",
@@ -378,7 +542,15 @@
    "fine_pads": 0,
    "segments": 787,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "CRImier/MyKiCad:Reverse-engineering/sony_vaio_p_re/vaio_re.kicad_pcb",
@@ -397,7 +569,15 @@
    "fine_pads": 604,
    "segments": 7149,
    "vias": 523,
-   "zones": 20
+   "zones": 20,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "earth75/atat-1800:ATAT1800.kicad_pcb",
@@ -416,7 +596,15 @@
    "fine_pads": 224,
    "segments": 2202,
    "vias": 680,
-   "zones": 3
+   "zones": 3,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "doudar/SmartSpin2k:Hardware/V3 - Integrated PCB/PCB/SS2K_KiCad_Files/SmartSpin2k_Panelized/SmartSpin2k_Panelized.kicad_pcb",
@@ -435,7 +623,15 @@
    "fine_pads": 0,
    "segments": 6759,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "GPL-2.0",
+    "allowed": true,
+    "why": "GPL-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "byrantech/laptop:motherboard/motherboard.kicad_pcb",
@@ -454,7 +650,15 @@
    "fine_pads": 778,
    "segments": 4080,
    "vias": 734,
-   "zones": 20
+   "zones": 20,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/backup/poly_kb_molecule_7x5_wave_left.kicad_pcb",
@@ -473,7 +677,15 @@
    "fine_pads": 0,
    "segments": 14059,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "sporkus/capybully_keyboard:kicad/pcb/capybully.kicad_pcb",
@@ -492,7 +704,15 @@
    "fine_pads": 0,
    "segments": 715,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "tengigabytes/MokyaLora:hardware/kicad/MokyaLora.kicad_pcb",
@@ -511,7 +731,19 @@
    "fine_pads": 277,
    "segments": 2066,
    "vias": 836,
-   "zones": 31
+   "zones": 31,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE",
+     "LICENSE-CC-BY-SA-4.0.txt",
+     "LICENSE-CERN-OHL-S-2.0.txt"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "obsilab/Quanta75:Quanta75_BareRP2040_JLCPCBAoptimized/Quanta75_BareRP2040_JLCPCBAoptimized.kicad_pcb",
@@ -530,7 +762,15 @@
    "fine_pads": 80,
    "segments": 1905,
    "vias": 95,
-   "zones": 3
+   "zones": 3,
+   "licence": {
+    "spdx": "CERN-OHL-P-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/KrishveerCard/src/krishveercard.kicad_pcb",
@@ -549,7 +789,15 @@
    "fine_pads": 226,
    "segments": 680,
    "vias": 87,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "CDFER/Business-Cards:USB_Cable_Tester_MK2/PCB/USB Cable Tester.kicad_pcb",
@@ -568,7 +816,17 @@
    "fine_pads": 34,
    "segments": 13018,
    "vias": 110,
-   "zones": 172
+   "zones": 172,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ],
+    "kind": "restricted",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/PixelWave/src/PixelWave.kicad_pcb",
@@ -587,7 +845,15 @@
    "fine_pads": 32,
    "segments": 3180,
    "vias": 705,
-   "zones": 4
+   "zones": 4,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "briskspirit/Sisu_SSE-9:Sisu_SSE-9.kicad_pcb",
@@ -606,7 +872,15 @@
    "fine_pads": 242,
    "segments": 2419,
    "vias": 1076,
-   "zones": 49
+   "zones": 49,
+   "licence": {
+    "spdx": "Unlicense",
+    "allowed": true,
+    "why": "Unlicense",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/backup/poly_kb_molecule_4x5.kicad_pcb",
@@ -625,7 +899,15 @@
    "fine_pads": 0,
    "segments": 10331,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "OpenDrone-hw/OpenESC-30x30:hardware/4in1-panel.kicad_pcb",
@@ -644,7 +926,15 @@
    "fine_pads": 392,
    "segments": 2655,
    "vias": 2604,
-   "zones": 82
+   "zones": 82,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "vd-rd/sbc_allwinner_a13:hardware/module.kicad_pcb",
@@ -663,7 +953,15 @@
    "fine_pads": 230,
    "segments": 4511,
    "vias": 501,
-   "zones": 1175
+   "zones": 1175,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "tzarc/keyboards:Ghoul/v1.0/ghoul.kicad_pcb",
@@ -682,7 +980,15 @@
    "fine_pads": 0,
    "segments": 2087,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/variations/poly_corne/poly_corne_split42_left.kicad_pcb",
@@ -701,7 +1007,15 @@
    "fine_pads": 416,
    "segments": 4264,
    "vias": 753,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "anyshake/explorer:hardware/Explorer.kicad_pcb",
@@ -720,7 +1034,17 @@
    "fine_pads": 48,
    "segments": 1687,
    "vias": 1057,
-   "zones": 975
+   "zones": 975,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: AGPL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "rosco-m68k/rosco_m68k:design/r2/kicad/rosco_m68k.kicad_pcb",
@@ -739,7 +1063,26 @@
    "fine_pads": 72,
    "segments": 3716,
    "vias": 402,
-   "zones": 6
+   "zones": 6,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "COPYING.NEWLIB: free software licence",
+    "files": [
+     "COPYING.NEWLIB",
+     "LICENCE.adventure",
+     "LICENCE.hardware.txt",
+     "LICENSE",
+     "LICENSE.docs",
+     "LICENSE.kermit",
+     "LICENSE.littlefs",
+     "LICENSE.mklittlefs",
+     "LICENSE.musashi",
+     "LICENSE.shmall"
+    ],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "bitshiftcrazy/d20_pcb:hardware/d20_pcb.kicad_pcb",
@@ -758,7 +1101,17 @@
    "fine_pads": 0,
    "segments": 453,
    "vias": 46,
-   "zones": 3
+   "zones": 3,
+   "licence": {
+    "spdx": null,
+    "allowed": true,
+    "why": "hardware/LICENSE: CERN OHL",
+    "files": [
+     "hardware/LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "emertcakir/OpenAirScope:hardware/OpenAirStation-V0-Draft/OpenAirScope.kicad_pcb",
@@ -777,7 +1130,15 @@
    "fine_pads": 204,
    "segments": 1797,
    "vias": 473,
-   "zones": 409
+   "zones": 409,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "Huaqiu-Electronics/ecad-viewer:packages/kicad-parser/tests/demos/video/video.kicad_pcb",
@@ -796,7 +1157,15 @@
    "fine_pads": 100,
    "segments": 7932,
    "vias": 808,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "crmaykish/mackerel-68k:hardware/mackerel-30-proto/mackerel-30-proto.kicad_pcb",
@@ -815,7 +1184,15 @@
    "fine_pads": 0,
    "segments": 2615,
    "vias": 294,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "transistorfet/computie:hardware/k30-SBC/k30-SBC.kicad_pcb",
@@ -834,7 +1211,15 @@
    "fine_pads": 0,
    "segments": 3635,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "CRImier/MyKiCad:Laptop mods/framework_mobo_lefthalf/framework_mobo_lefthalf.kicad_pcb",
@@ -853,7 +1238,15 @@
    "fine_pads": 101,
    "segments": 1653,
    "vias": 203,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "stonedDiscord/MegaDrive:MegaDrive.kicad_pcb",
@@ -872,7 +1265,15 @@
    "fine_pads": 0,
    "segments": 9611,
    "vias": 785,
-   "zones": 8
+   "zones": 8,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "CDFER/Business-Cards:WLED_Matrix/PCB/WLED Matrix.kicad_pcb",
@@ -891,7 +1292,17 @@
    "fine_pads": 58,
    "segments": 9048,
    "vias": 111,
-   "zones": 361
+   "zones": 361,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ],
+    "kind": "restricted",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/Koeg-Board/src/koeg-board-pcb.kicad_pcb",
@@ -910,7 +1321,15 @@
    "fine_pads": 128,
    "segments": 2438,
    "vias": 417,
-   "zones": 9
+   "zones": 9,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001/pcb_core52840/bumwings_v001_core.kicad_pcb",
@@ -929,7 +1348,15 @@
    "fine_pads": 0,
    "segments": 979,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "Ladniy/jiran-ble-lite:pcb/jiran-ble-lite/jiran-ble-lite.kicad_pcb",
@@ -948,7 +1375,15 @@
    "fine_pads": 0,
    "segments": 1176,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-P-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "0xCB-dev/0xCB-1337:rev5.0/pcb.kicad_pcb",
@@ -967,7 +1402,17 @@
    "fine_pads": 0,
    "segments": 719,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "Goga64/ULK:KiCad/ULK_sl_PG1316s/ULK_sl_PG1316s/ULK_sl_PG1316s.kicad_pcb",
@@ -986,7 +1431,15 @@
    "fine_pads": 0,
    "segments": 736,
    "vias": 60,
-   "zones": 44
+   "zones": 44,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "zli117/CyberKeeb2040:PCB/MainBoard/MainBoard.kicad_pcb",
@@ -1005,7 +1458,15 @@
    "fine_pads": 0,
    "segments": 2145,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CC-BY-SA-4.0",
+    "allowed": true,
+    "why": "CC-BY-SA-4.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "bismarx-v1/Sumec-MiniSumo:-PCB-/SUMEC_MK_IV/SUMEC_MK_IV.kicad_pcb",
@@ -1024,7 +1485,15 @@
    "fine_pads": 24,
    "segments": 573,
    "vias": 541,
-   "zones": 164
+   "zones": 164,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/backup/poly_kb_molecule_4x4.kicad_pcb",
@@ -1043,7 +1512,15 @@
    "fine_pads": 0,
    "segments": 8270,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/backup/poly_kb_molecule_5x4_wave.kicad_pcb",
@@ -1062,7 +1539,15 @@
    "fine_pads": 0,
    "segments": 9969,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "Goga64/ULK:KiCad/ULK_pg1316s_Original_Silkscreen/ULK.kicad_pcb",
@@ -1081,7 +1566,15 @@
    "fine_pads": 0,
    "segments": 618,
    "vias": 63,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001/pcb_rp2040zero/bumwings_v001.kicad_pcb",
@@ -1100,7 +1593,15 @@
    "fine_pads": 0,
    "segments": 801,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "iandchasse/silkscreen-pcb:silkscreen_pcb.kicad_pcb",
@@ -1119,7 +1620,15 @@
    "fine_pads": 50,
    "segments": 1734,
    "vias": 192,
-   "zones": 4
+   "zones": 4,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "CDFER/Business-Cards:USB_Keypad/PCB/USB Keypad.kicad_pcb",
@@ -1138,7 +1647,17 @@
    "fine_pads": 72,
    "segments": 5815,
    "vias": 78,
-   "zones": 286
+   "zones": 286,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: Hippocratic License",
+    "files": [
+     "LICENSE.md"
+    ],
+    "kind": "restricted",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/Hugo's Keyboard/src/keyboar!.kicad_pcb",
@@ -1157,7 +1676,15 @@
    "fine_pads": 0,
    "segments": 1030,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "crmaykish/mackerel-68k:hardware/mackerel-10-v1/mackerel-10-v1.kicad_pcb",
@@ -1176,7 +1703,15 @@
    "fine_pads": 0,
    "segments": 2261,
    "vias": 200,
-   "zones": 3
+   "zones": 3,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/BAGEL-MK1/BAGEL-MK1.1-Avocado/BAGEL-MK1.1-Avocado.kicad_pcb",
@@ -1195,7 +1730,15 @@
    "fine_pads": 228,
    "segments": 2054,
    "vias": 820,
-   "zones": 60
+   "zones": 60,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "greatscottgadgets/hackrf:hardware/hackrf-one/hackrf-one.kicad_pcb",
@@ -1214,7 +1757,15 @@
    "fine_pads": 0,
    "segments": 3817,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "GPL-2.0",
+    "allowed": true,
+    "why": "GPL-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "stonedDiscord/nonSNES:SNSP-CPU-01/SNSP-CPU-01.kicad_pcb",
@@ -1233,7 +1784,15 @@
    "fine_pads": 0,
    "segments": 8639,
    "vias": 1197,
-   "zones": 104
+   "zones": 104,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "byrantech/laptop:power/power.kicad_pcb",
@@ -1252,7 +1811,15 @@
    "fine_pads": 64,
    "segments": 1129,
    "vias": 167,
-   "zones": 4
+   "zones": 4,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001R/pcb_R64_rp2040zero_sd/bumwings_v001R64_rp2040zero_sd.kicad_pcb",
@@ -1271,7 +1838,15 @@
    "fine_pads": 0,
    "segments": 866,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "siderakb/ergo-snm-keyboard:ErgoSNM_Keyboard/rev1/ErgoSNM_keyboard.kicad_pcb",
@@ -1290,7 +1865,15 @@
    "fine_pads": 0,
    "segments": 1154,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-P-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-P-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "byrantech/laptop:keyboard/keyboard.kicad_pcb",
@@ -1309,7 +1892,15 @@
    "fine_pads": 90,
    "segments": 1484,
    "vias": 571,
-   "zones": 81
+   "zones": 81,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "ebastler/osprey:osprey_rev_a/osprey_rev_a.kicad_pcb",
@@ -1328,7 +1919,17 @@
    "fine_pads": 0,
    "segments": 1350,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "ohdsp/DSP-ADAU1452:KiCad/DSP-ADAU1452.kicad_pcb",
@@ -1347,7 +1948,17 @@
    "fine_pads": 72,
    "segments": 1992,
    "vias": 355,
-   "zones": 25
+   "zones": 25,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.TXT: GPL",
+    "files": [
+     "LICENSE.TXT"
+    ],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001R/pcb_R55_rp2040zero_sd/bumwings_v001R55_rp2040zero_sd.kicad_pcb",
@@ -1366,7 +1977,15 @@
    "fine_pads": 0,
    "segments": 738,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "tubbytwins/bumwings-kbd:v001R/pcb_R64_nano_sd/bumwings_v001R64_nano_sd.kicad_pcb",
@@ -1385,7 +2004,15 @@
    "fine_pads": 0,
    "segments": 855,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "Neotron-Compute/Neotron-Pico:Kicad/neotron-pico.kicad_pcb",
@@ -1404,7 +2031,15 @@
    "fine_pads": 0,
    "segments": 1627,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "0xCB-dev/0xCB-Static:rev1.0/0xcb-static.kicad_pcb",
@@ -1423,7 +2058,17 @@
    "fine_pads": 0,
    "segments": 725,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "wntrblm/Castor_and_Pollux:hardware/mainboard/mainboard.kicad_pcb",
@@ -1442,7 +2087,18 @@
    "fine_pads": 58,
    "segments": 1820,
    "vias": 358,
-   "zones": 11
+   "zones": 11,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.md: CERN OHL",
+    "files": [
+     "LICENSE.md",
+     "hardware/mainboard/LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "Seeed-Studio/OSHW-reCamera-Series:hardware/recamera-2002/sensors/s101-ov5647/PCB/V1.1/reCamera S101 v1.1.kicad_pcb",
@@ -1461,7 +2117,15 @@
    "fine_pads": 186,
    "segments": 711,
    "vias": 334,
-   "zones": 8
+   "zones": 8,
+   "licence": {
+    "spdx": "Apache-2.0",
+    "allowed": true,
+    "why": "Apache-2.0",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "Open-Muscle/OpenMuscle-FlexGrid:KiCad/OM-FlexGrid V2/OM-FlexGrid-Flex/OM-FlexGrid-Flex.kicad_pcb",
@@ -1480,7 +2144,15 @@
    "fine_pads": 0,
    "segments": 498,
    "vias": 120,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/E-Fidget Lite V3/E-Fidget-Lite/E-Fidget-Lite.kicad_pcb",
@@ -1499,7 +2171,15 @@
    "fine_pads": 0,
    "segments": 226,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/BAGEL-MK1/BAGEL-MK1-revA/BAGEL-MK1.kicad_pcb",
@@ -1518,7 +2198,15 @@
    "fine_pads": 228,
    "segments": 1079,
    "vias": 525,
-   "zones": 49
+   "zones": 49,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "CRImier/MyKiCad:ESP8266/protoesp/protoesp.kicad_pcb",
@@ -1537,7 +2225,15 @@
    "fine_pads": 0,
    "segments": 2743,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "apfaudio/eurorack-pmod:hardware/eurorack-pmod-r3.5/eurorack-pmod-pcb.kicad_pcb",
@@ -1556,7 +2252,17 @@
    "fine_pads": 154,
    "segments": 1920,
    "vias": 331,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "OpenDrone-hw/OpenRX:panel/OpenRX-panel-rev2.kicad_pcb",
@@ -1575,7 +2281,15 @@
    "fine_pads": 419,
    "segments": 1587,
    "vias": 538,
-   "zones": 106
+   "zones": 106,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "stonedDiscord/nonSNES:SNSP-CPU-1CHIP/SNSP-CPU-1CHIP.kicad_pcb",
@@ -1594,7 +2308,15 @@
    "fine_pads": 0,
    "segments": 4345,
    "vias": 686,
-   "zones": 50
+   "zones": 50,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "MbFredys/PCB-Modular-Multi-Protocol-Hub:Kicad Files/Hub.kicad_pcb",
@@ -1613,7 +2335,18 @@
    "fine_pads": 171,
    "segments": 2027,
    "vias": 331,
-   "zones": 14
+   "zones": 14,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "COPYING: CERN OHL",
+    "files": [
+     "COPYING",
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "headblockhead/slab-pcb:interchange-pcb-right/interchange-pcb-right.kicad_pcb",
@@ -1632,7 +2365,15 @@
    "fine_pads": 0,
    "segments": 1725,
    "vias": 203,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "Spaceflight-Rocketry-Giessen-e-V/Telemetry:onboard/pcb/TelemetryOnboard.kicad_pcb",
@@ -1651,7 +2392,15 @@
    "fine_pads": 112,
    "segments": 671,
    "vias": 269,
-   "zones": 56
+   "zones": 56,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/MotionCube/src/MotionCubeViewAllForces.kicad_pcb",
@@ -1670,7 +2419,15 @@
    "fine_pads": 32,
    "segments": 299,
    "vias": 29,
-   "zones": 4
+   "zones": 4,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "crmaykish/mackerel-68k:hardware/mackerel-08-v1/mackerel-08-v1.kicad_pcb",
@@ -1689,7 +2446,15 @@
    "fine_pads": 0,
    "segments": 2060,
    "vias": 208,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "sporkus/le_chiffre_keyboard_stm32:kicad/pcb_36key/stm32_chiffre_36keys.kicad_pcb",
@@ -1708,7 +2473,15 @@
    "fine_pads": 0,
    "segments": 1068,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/MIDAS-MK1/MIDAS-MK1.1-revA/MIDAS-MK1.1.kicad_pcb",
@@ -1727,7 +2500,15 @@
    "fine_pads": 0,
    "segments": 1144,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "duckyb/eternal-keypad:pcb-kicad/eternal-keypad.kicad_pcb",
@@ -1746,7 +2527,15 @@
    "fine_pads": 0,
    "segments": 554,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "bitshiftcrazy/spell_tome:spell_tome_bottom.kicad_pcb",
@@ -1765,7 +2554,17 @@
    "fine_pads": 0,
    "segments": 137,
    "vias": 6,
-   "zones": 1
+   "zones": 1,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/MIDAS-MK1/MIDAS-MK1-revA/MIDAS-MK1.kicad_pcb",
@@ -1784,7 +2583,15 @@
    "fine_pads": 0,
    "segments": 1104,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "sporkus/le_chiffre_keyboard_stm32:kicad/pcb/stm32_hotswap_chiffre.kicad_pcb",
@@ -1803,7 +2610,15 @@
    "fine_pads": 0,
    "segments": 957,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   },
   {
    "key": "OpenDrone-hw/OpenESC-30x30:hardware/4in1.kicad_pcb",
@@ -1822,7 +2637,15 @@
    "fine_pads": 192,
    "segments": 1220,
    "vias": 1702,
-   "zones": 39
+   "zones": 39,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "0xCB-dev/0xCB-1337:rev4.0/1337-v4.0.kicad_pcb",
@@ -1841,7 +2664,17 @@
    "fine_pads": 0,
    "segments": 358,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE.svg: CERN OHL",
+    "files": [
+     "LICENSE.svg"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "Twisted-Fields/rp2040-motor-controller:RP2040_base/RP2040_base.kicad_pcb",
@@ -1860,7 +2693,17 @@
    "fine_pads": 148,
    "segments": 4544,
    "vias": 553,
-   "zones": 31
+   "zones": 31,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "CRImier/MyKiCad:Raspberry Pi stuff/zpn_devboard/zpn_devboard.kicad_pcb",
@@ -1879,7 +2722,15 @@
    "fine_pads": 202,
    "segments": 4033,
    "vias": 298,
-   "zones": 7
+   "zones": 7,
+   "licence": {
+    "spdx": "GPL-3.0",
+    "allowed": true,
+    "why": "GPL-3.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/MIDAS-MK2/MIDAS-MK2.1-revA/MIDAS-MK2.1.kicad_pcb",
@@ -1898,7 +2749,15 @@
    "fine_pads": 188,
    "segments": 1196,
    "vias": 432,
-   "zones": 40
+   "zones": 40,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "ISSUIUC/ISS-PCB:boards/MIDAS-MK2/MIDAS-MK2-revA/MIDAS-MK2.kicad_pcb",
@@ -1917,7 +2776,15 @@
    "fine_pads": 176,
    "segments": 1192,
    "vias": 401,
-   "zones": 40
+   "zones": 40,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "Open-Muscle/OpenMuscle-FlexGrid:KiCad/OM-FlexGrid V0/OM-60-Flex/OM-60-Flex.kicad_pcb",
@@ -1936,7 +2803,15 @@
    "fine_pads": 0,
    "segments": 418,
    "vias": 120,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "Jana-Marie/ligra:ligra_back/ligra_back.kicad_pcb",
@@ -1955,7 +2830,15 @@
    "fine_pads": 0,
    "segments": 380,
    "vias": 251,
-   "zones": 5
+   "zones": 5,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "OpenDrone-hw/OpenESC-20x20:hardware/4in1-mini.kicad_pcb",
@@ -1974,7 +2857,17 @@
    "fine_pads": 200,
    "segments": 1194,
    "vias": 1129,
-   "zones": 44
+   "zones": 44,
+   "licence": {
+    "spdx": "NOASSERTION",
+    "allowed": true,
+    "why": "LICENSE: CERN OHL",
+    "files": [
+     "LICENSE"
+    ],
+    "kind": "unclassified",
+    "training": false
+   }
   },
   {
    "key": "duckyb/urchin:main.kicad_pcb",
@@ -1993,7 +2886,15 @@
    "fine_pads": 0,
    "segments": 469,
    "vias": 53,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "MIT",
+    "allowed": true,
+    "why": "MIT",
+    "files": [],
+    "kind": "permissive",
+    "training": true
+   }
   },
   {
    "key": "OpenDrone-hw/OpenFC-Lite:hardware/OpenFC.kicad_pcb",
@@ -2012,7 +2913,15 @@
    "fine_pads": 117,
    "segments": 1157,
    "vias": 596,
-   "zones": 19
+   "zones": 19,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "headblockhead/slab-pcb:slab-pcb-left/slab-pcb-left.kicad_pcb",
@@ -2031,7 +2940,15 @@
    "fine_pads": 0,
    "segments": 1572,
    "vias": 239,
-   "zones": 2
+   "zones": 2,
+   "licence": {
+    "spdx": "CERN-OHL-S-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-S-2.0",
+    "files": [],
+    "kind": "copyleft",
+    "training": false
+   }
   },
   {
    "key": "hackclub/OnBoard:projects/onboard-live-Woagboard/src/woagboard.kicad_pcb",
@@ -2050,7 +2967,15 @@
    "fine_pads": 48,
    "segments": 813,
    "vias": 119,
-   "zones": 9
+   "zones": 9,
+   "licence": {
+    "spdx": null,
+    "allowed": false,
+    "why": "no licence file (all rights reserved)",
+    "files": [],
+    "kind": "unlicensed",
+    "training": false
+   }
   },
   {
    "key": "thpoll83/PolyKybd:poly_kybd/backup/poly_kb_molecule_5x2_shifted.kicad_pcb",
@@ -2069,7 +2994,15 @@
    "fine_pads": 0,
    "segments": 5224,
    "vias": 0,
-   "zones": 0
+   "zones": 0,
+   "licence": {
+    "spdx": "CERN-OHL-W-2.0",
+    "allowed": true,
+    "why": "CERN-OHL-W-2.0",
+    "files": [],
+    "kind": "weak-copyleft",
+    "training": false
+   }
   }
  ],
  "rejected": {
