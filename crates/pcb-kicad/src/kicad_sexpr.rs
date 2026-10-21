@@ -59,12 +59,32 @@ pub(crate) fn set_form_at(node: &mut Expr, at: [f64; 3]) -> Result<(), String> {
 }
 
 pub(crate) fn expression_coordinate(node: &Expr, index: usize, label: &str) -> Result<f64, String> {
-    node.children()
-        .get(index)
-        .and_then(Expr::atom)
-        .ok_or_else(|| format!("{label} is missing"))?
+    finite_number(
+        node.children()
+            .get(index)
+            .and_then(Expr::atom)
+            .ok_or_else(|| format!("{label} is missing"))?,
+        label,
+    )
+}
+
+/// A number of a file (a coordinate, a size, an angle), refused as the
+/// input's error, naming `label`, when it is not finite: Rust reads `NaN`,
+/// `inf` and `1e999` as numbers, and until 2026-10-21 they reached the
+/// lattice's sizing (`usize::MAX + 1`) and a rule area's sort (a panic).
+/// Every coordinate the readers take from a form goes through here
+/// (`form_f64`, `expression_coordinate`).
+pub(crate) fn finite_number(text: &str, label: &str) -> Result<f64, String> {
+    let value = text
         .parse::<f64>()
-        .map_err(|error| format!("invalid {label}: {error}"))
+        .map_err(|error| format!("invalid {label}: {error}"))?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(crate::verdict::input_error(format!(
+            "{label} is {text}: coordinates and sizes must be finite numbers"
+        )))
+    }
 }
 
 pub(crate) fn form_atom<'a>(node: &'a Expr, head: &str, index: usize) -> Option<&'a str> {
@@ -72,10 +92,26 @@ pub(crate) fn form_atom<'a>(node: &'a Expr, head: &str, index: usize) -> Option<
 }
 
 pub(crate) fn form_f64(node: &Expr, head: &str, index: usize) -> Result<f64, String> {
-    form_atom(node, head, index)
-        .ok_or_else(|| format!("{head} form is missing coordinate {index}"))?
-        .parse::<f64>()
-        .map_err(|error| format!("invalid {head} coordinate: {error}"))
+    let text = form_atom(node, head, index)
+        .ok_or_else(|| format!("{head} form is missing coordinate {index}"))?;
+    match text.parse::<f64>() {
+        Ok(value) if value.is_finite() => Ok(value),
+        Ok(_) => Err(crate::verdict::input_error(format!(
+            "{} {head} coordinate {index} is {text}: coordinates and sizes must be finite numbers",
+            item_name(node)
+        ))),
+        Err(error) => Err(format!("invalid {head} coordinate: {error}")),
+    }
+}
+
+/// An item for a message: its head and, when it has them, its reference
+/// or position (`a gr_line`, `the footprint R1`).
+fn item_name(node: &Expr) -> String {
+    let head = node.head().unwrap_or("form");
+    match footprint_reference(node) {
+        Some(reference) if !reference.is_empty() => format!("the {head} {reference}'s"),
+        _ => format!("a {head}'s"),
+    }
 }
 
 pub(crate) fn form_xy(node: &Expr, head: &str) -> Result<[f64; 2], String> {
@@ -93,9 +129,7 @@ pub(crate) fn form_at(node: &Expr) -> Result<[f64; 3], String> {
         // for texts: the flag is not a rotation.
         match at.children().get(3).and_then(Expr::atom) {
             None | Some("unlocked" | "locked") => 0.0,
-            Some(angle) => angle
-                .parse::<f64>()
-                .map_err(|error| format!("invalid at rotation: {error}"))?,
+            Some(angle) => finite_number(angle, "an at form's rotation")?,
         },
     ])
 }
@@ -154,14 +188,38 @@ pub(crate) fn root_head(items: &[Expr]) -> Option<&str> {
     items.first()?.atom()
 }
 
+/// How deep lists may nest in a file read: KiCad's own files nest a dozen
+/// levels (a footprint's pad's primitive's points), and every reader that
+/// walks a tree recursively (the writer's indentation aside, which walks
+/// with its own stack) stays within a few hundred kilobytes of stack at
+/// this depth, on any thread. A file nested deeper is refused as the
+/// input's error: until 2026-10-21 a few hundred thousand "(" overflowed
+/// the stack (SIGSEGV, no verdict).
+pub(crate) const MAX_NESTING: usize = 1000;
+
+/// Parses a KiCad S-expression file. Its errors are the input's
+/// (`verdict::input_error`): a file that does not parse or nests deeper
+/// than `MAX_NESTING`. Numbers are read where they are used, and refused
+/// there when they are not finite (`finite_number`): a word such as `inf` is a
+/// KiCad 5 name or a tstamp as often as a number.
 pub(crate) fn parse(source: &str) -> Result<Expr, String> {
     let mut parser = Parser { source, offset: 0 };
-    let expression = parser.expression()?;
+    let expression = parser.expression().map_err(crate::verdict::input_error)?;
     parser.whitespace();
     if parser.offset != source.len() {
-        return Err(format!("trailing input at byte {}", parser.offset));
+        return Err(crate::verdict::input_error(format!(
+            "trailing input at byte {}",
+            parser.offset
+        )));
     }
     Ok(expression)
+}
+
+/// An open list while parsing: its items so far and whether its "(" was
+/// missing (a teardrop setting's, `Parser::list`).
+struct Open {
+    items: Vec<Expr>,
+    without_opening: bool,
 }
 
 struct Parser<'a> {
@@ -179,48 +237,63 @@ impl Parser<'_> {
         }
     }
 
-    fn list(&mut self) -> Result<Expr, String> {
-        self.bump();
-        let mut items = Vec::new();
-        loop {
-            self.whitespace();
-            match self.peek() {
-                Some(')') => {
-                    self.bump();
-                    return Ok(Expr::List(items));
-                }
-                // KiCad reads a teardrop setting's opening parenthesis as
-                // optional (PCB_IO_KICAD_SEXPR_PARSER's
-                // parseTEARDROP_PARAMETERS: a key after a missing "(" ends
-                // at its ")" as usual), and a pad written as
-                // "(curved_edges no)filter_ratio 0.9)" loads; read as a
-                // list, the stray ")" closed the pad and then the board
-                // (RoyalBlue54L-Feather: "trailing input at byte 14111").
-                Some(character)
-                    if character != '('
-                        && matches!(items.first(), Some(Expr::Atom(head)) if head == "teardrops") =>
-                {
-                    items.push(self.list_without_opening()?)
-                }
-                Some(_) => items.push(self.expression()?),
-                None => return Err("unterminated list".into()),
-            }
-        }
+    /// The line of the parser's place, for messages.
+    fn line(&self) -> usize {
+        self.source[..self.offset].matches('\n').count() + 1
     }
 
-    /// A list whose "(" is missing: its items up to and with its ")".
-    fn list_without_opening(&mut self) -> Result<Expr, String> {
-        let mut items = Vec::new();
+    /// A list and the lists in it, with a stack of the open ones rather
+    /// than recursion (`MAX_NESTING`).
+    fn list(&mut self) -> Result<Expr, String> {
+        self.bump();
+        let mut open = vec![Open {
+            items: Vec::new(),
+            without_opening: false,
+        }];
         loop {
             self.whitespace();
-            match self.peek() {
-                Some(')') => {
-                    self.bump();
-                    return Ok(Expr::List(items));
+            let Some(character) = self.peek() else {
+                return Err("unterminated list".into());
+            };
+            if character == ')' {
+                self.bump();
+                let list = Expr::List(open.pop().expect("a list is open").items);
+                match open.last_mut() {
+                    Some(parent) => parent.items.push(list),
+                    None => return Ok(list),
                 }
-                Some(_) => items.push(self.expression()?),
-                None => return Err("unterminated list".into()),
+                continue;
             }
+            let top = open.last().expect("a list is open");
+            // KiCad reads a teardrop setting's opening parenthesis as
+            // optional (PCB_IO_KICAD_SEXPR_PARSER's
+            // parseTEARDROP_PARAMETERS: a key after a missing "(" ends
+            // at its ")" as usual), and a pad written as
+            // "(curved_edges no)filter_ratio 0.9)" loads; read as a
+            // list, the stray ")" closed the pad and then the board
+            // (RoyalBlue54L-Feather: "trailing input at byte 14111").
+            let missing_opening = character != '('
+                && !top.without_opening
+                && matches!(top.items.first(), Some(Expr::Atom(head)) if head == "teardrops");
+            if character == '(' || missing_opening {
+                if open.len() >= MAX_NESTING {
+                    return Err(format!(
+                        "lists nested deeper than {MAX_NESTING} levels at line {} (byte {}): no KiCad file nests so deep",
+                        self.line(),
+                        self.offset
+                    ));
+                }
+                if character == '(' {
+                    self.bump();
+                }
+                open.push(Open {
+                    items: Vec::new(),
+                    without_opening: missing_opening,
+                });
+                continue;
+            }
+            let atom = self.atom()?;
+            open.last_mut().expect("a list is open").items.push(atom);
         }
     }
 
@@ -270,6 +343,43 @@ impl Parser<'_> {
     }
 }
 
+/// A string's text as KiCad reads it: a backslash takes the character
+/// after it as it is (`\"` a quote, `\\` a backslash), as the custom
+/// rules' reader (`project_rules::dru`) and KiCad's DSN lexer read them.
+/// `Expr::atom` keeps the escapes (the writer writes atoms back as read);
+/// compare names from other files (the project's JSON, the custom rules)
+/// with a board's through this.
+pub(crate) fn unescape(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\\') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            if let Some(next) = characters.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(character);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Whether `form` is a footprint (or KiCad 5 module) with its name: a
+/// list of at least the head and a name atom. A file's `(footprint)`
+/// (a damaged library file, a hostile board) is refused where it is
+/// read, before code that writes the name (`items[1]`) or reads the
+/// items after it.
+pub(crate) fn footprint_form_error(form: &Expr) -> Option<String> {
+    match form.children() {
+        [_, Expr::Atom(_), ..] => None,
+        [] | [_] => Some("a footprint form without its name".into()),
+        _ => Some("a footprint form whose name is not a string".into()),
+    }
+}
+
 fn unquote(atom: &str) -> &str {
     atom.strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
@@ -281,7 +391,7 @@ fn unquote(atom: &str) -> &str {
 /// order moved them ([`canonical_order::source_order`]).
 pub(crate) fn encode(expression: &Expr) -> String {
     let mut output = String::new();
-    encode_into(expression, 0, &mut output, true);
+    encode_into(expression, &mut output, true);
     output
 }
 
@@ -289,38 +399,71 @@ pub(crate) fn encode(expression: &Expr) -> String {
 /// canonical order (for keys and digests).
 pub(crate) fn encode_canonical(expression: &Expr) -> String {
     let mut output = String::new();
-    encode_into(expression, 0, &mut output, false);
+    encode_into(expression, &mut output, false);
     output
 }
 
-fn encode_into(expression: &Expr, depth: usize, output: &mut String, source_order: bool) {
-    match expression {
-        Expr::Atom(atom) => output.push_str(atom),
-        Expr::List(items) => {
-            let order = if source_order && expression.head() == Some("footprint") {
-                canonical_order::source_order(expression)
-            } else {
-                None
-            };
+/// Writes `expression`, with a stack of the open lists rather than
+/// recursion (a tree built in code is not bound by `MAX_NESTING`).
+fn encode_into<'a>(expression: &'a Expr, output: &mut String, source_order: bool) {
+    struct Frame<'a> {
+        items: &'a [Expr],
+        order: Option<Vec<usize>>,
+        next: usize,
+        depth: usize,
+        data: bool,
+    }
+    let open = |list: &'a Expr, depth: usize, output: &mut String| -> Frame<'a> {
+        let order = if source_order && list.head() == Some("footprint") {
+            canonical_order::source_order(list)
+        } else {
+            None
+        };
+        output.push('(');
+        Frame {
+            items: list.children(),
+            order,
+            next: 0,
+            depth,
             // Embedded data (an image's base64) one string a line, as
             // KiCad writes it: KiCad reads lines of at most 1 MB, and an
             // image written on one 24 MB line made the board unreadable
             // (stonedDiscord's EMP).
-            let data = expression.head() == Some("data");
-            output.push('(');
-            for index in 0..items.len() {
-                let item = &items[order.as_ref().map_or(index, |order| order[index])];
-                if index > 0 {
-                    if matches!(item, Expr::List(_)) || (data && index > 1) {
-                        output.push('\n');
-                        output.push_str(&"  ".repeat(depth + 1));
-                    } else {
-                        output.push(' ');
-                    }
-                }
-                encode_into(item, depth + 1, output, source_order);
-            }
+            data: list.head() == Some("data"),
+        }
+    };
+    let Expr::List(_) = expression else {
+        if let Expr::Atom(atom) = expression {
+            output.push_str(atom);
+        }
+        return;
+    };
+    let mut stack = vec![open(expression, 0, output)];
+    while let Some(frame) = stack.last_mut() {
+        let index = frame.next;
+        if index == frame.items.len() {
             output.push(')');
+            stack.pop();
+            continue;
+        }
+        frame.next += 1;
+        let item = &frame.items[frame.order.as_ref().map_or(index, |order| order[index])];
+        if index > 0 {
+            if matches!(item, Expr::List(_)) || (frame.data && index > 1) {
+                output.push('\n');
+                for _ in 0..=frame.depth {
+                    output.push_str("  ");
+                }
+            } else {
+                output.push(' ');
+            }
+        }
+        match item {
+            Expr::Atom(atom) => output.push_str(atom.as_str()),
+            Expr::List(_) => {
+                let depth = frame.depth + 1;
+                stack.push(open(item, depth, output));
+            }
         }
     }
 }
@@ -370,6 +513,122 @@ mod tests {
             "{text}"
         );
         assert_eq!(parse(&text).unwrap(), image);
+    }
+
+    /// `(a (a (a ...)))`, `depth` lists deep, inside a board's footprint.
+    fn nested_board(depth: usize) -> String {
+        format!(
+            "(kicad_pcb (footprint \"L:F\" (layer \"B.Cu\") (at 1 2) (net 1 \"GND\") {}{}))",
+            "(a ".repeat(depth - 2),
+            ")".repeat(depth - 2)
+        )
+    }
+
+    #[test]
+    fn nesting_up_to_the_limit_parses_and_every_walk_keeps_to_the_stack() {
+        // On a test thread's 2 MiB stack: the parser, the writer, the
+        // counts, the flip's mirror and the drop at the deepest nesting
+        // read, in a debug build too.
+        let text = nested_board(MAX_NESTING);
+        let mut board = parse(&text).unwrap();
+        assert_eq!(parse(&encode(&board)).unwrap(), board);
+        assert_eq!(
+            crate::board_router::expression_count(&board),
+            16 + 2 * (MAX_NESTING as u64 - 2)
+        );
+        let mut nets = BTreeSet::new();
+        collect_named_nets(&board, &mut nets);
+        assert_eq!(nets.into_iter().collect::<Vec<_>>(), ["GND"]);
+        if let Expr::List(items) = &mut board {
+            crate::flip::flip_footprint(&mut items[1]).unwrap();
+        }
+        drop(board);
+        // One level more is the input's error, with its line.
+        let error = parse(&nested_board(MAX_NESTING + 1)).unwrap_err();
+        assert!(
+            error.contains("nested deeper than 1000 levels at line 1"),
+            "{error}"
+        );
+        assert!(crate::verdict::is_input_error(&error));
+        // Far deeper: no recursion to overflow.
+        assert!(parse(&"(".repeat(200_000)).is_err());
+    }
+
+    #[test]
+    fn numbers_that_are_not_finite_are_refused_where_they_are_read() {
+        // Rust reads NaN, inf and 1e999 as numbers; a coordinate or size
+        // that is one is the input's error, naming the item.
+        for (text, message) in [
+            (
+                "(gr_line (start NaN 0))",
+                "a gr_line's start coordinate 1 is NaN",
+            ),
+            (
+                "(gr_line (start 0 -inf))",
+                "a gr_line's start coordinate 2 is -inf",
+            ),
+            (
+                "(via (at +Infinity 0))",
+                "a via's at coordinate 1 is +Infinity",
+            ),
+            ("(via (at 1e999 0))", "a via's at coordinate 1 is 1e999"),
+            (r#"(via (at "NaN" 0))"#, "a via's at coordinate 1 is NaN"),
+        ] {
+            let item = parse(text).unwrap();
+            let error = form_xy(&item, item.children()[1].head().unwrap()).unwrap_err();
+            assert!(error.starts_with(message), "{error}");
+            assert!(crate::verdict::is_input_error(&error));
+        }
+        let footprint =
+            parse(r#"(footprint "L:R" (at 1 2 nan) (property "Reference" "R7"))"#).unwrap();
+        assert!(form_at(&footprint).unwrap_err().contains("rotation is nan"));
+        let footprint =
+            parse(r#"(footprint "L:R" (at inf 2) (property "Reference" "R7"))"#).unwrap();
+        assert!(
+            form_at(&footprint)
+                .unwrap_err()
+                .starts_with("the footprint R7's at coordinate 1 is inf")
+        );
+        let point = parse("(xy 1e400 0)").unwrap();
+        assert!(
+            expression_coordinate(&point, 1, "polygon x")
+                .unwrap_err()
+                .contains("1e400")
+        );
+        // A word that reads as a number is a name where a name is read: a
+        // KiCad 5 board's unquoted net "inf", a tstamp "inf".
+        let board = parse("(kicad_pcb (net 3 inf) (tstamp inf) (x 1e5 -2.5E-3 .5 1e308))").unwrap();
+        assert_eq!(form_atom(&board, "net", 2), Some("inf"));
+        assert_eq!(form_f64(&board, "x", 4).unwrap(), 1e308);
+    }
+
+    #[test]
+    fn escapes_are_undone_as_kicad_reads_them() {
+        assert_eq!(unescape("GND"), "GND");
+        assert!(matches!(unescape("GND"), std::borrow::Cow::Borrowed(_)));
+        assert_eq!(unescape(r#"A\"B"#), r#"A"B"#);
+        assert_eq!(unescape(r"A\\B"), r"A\B");
+        assert_eq!(unescape(r"A\"), "A");
+        // As the writer quotes them.
+        let name = r#"x"y\z"#;
+        assert_eq!(unescape(unquote(&quote(name))), name);
+    }
+
+    #[test]
+    fn a_footprint_form_needs_its_name() {
+        for (text, refused) in [
+            ("(footprint)", true),
+            ("(module)", true),
+            ("(footprint (at 0 0))", true),
+            (r#"(footprint "L:R")"#, false),
+            ("(footprint R (layer F.Cu))", false),
+        ] {
+            assert_eq!(
+                footprint_form_error(&parse(text).unwrap()).is_some(),
+                refused,
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -309,13 +309,16 @@ pub(crate) fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, Str
             .filter(|point| point.head() == Some("xy"))
             .map(|point| {
                 let coordinate = |index: usize| {
-                    point
-                        .children()
-                        .get(index)
-                        .and_then(Expr::atom)
-                        .ok_or_else(|| "rule-area xy point is missing a coordinate".to_string())?
-                        .parse::<f64>()
-                        .map_err(|error| format!("invalid rule-area xy coordinate: {error}"))
+                    finite_number(
+                        point
+                            .children()
+                            .get(index)
+                            .and_then(Expr::atom)
+                            .ok_or_else(|| {
+                                "rule-area xy point is missing a coordinate".to_string()
+                            })?,
+                        "a rule area's xy coordinate",
+                    )
                 };
                 Ok::<[f64; 2], String>([coordinate(1)?, coordinate(2)?])
             })
@@ -336,9 +339,10 @@ pub(crate) fn rule_area_polygon_points(zone: &Expr) -> Result<Vec<[f64; 2]>, Str
                     (outline[*a][0] - hole[*b][0]).powi(2) + (outline[*a][1] - hole[*b][1]).powi(2);
                 let dc =
                     (outline[*c][0] - hole[*d][0]).powi(2) + (outline[*c][1] - hole[*d][1]).powi(2);
-                da.partial_cmp(&dc).unwrap()
+                // Total: a NaN (which the parser refuses) cannot panic here.
+                da.total_cmp(&dc)
             })
-            .unwrap();
+            .expect("a rule area's outline and hole have points");
         let mut joined = outline[..=i].to_vec();
         joined.extend(hole[j..].iter().chain(hole[..=j].iter()));
         joined.extend_from_slice(&outline[i..]);

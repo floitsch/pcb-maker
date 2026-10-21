@@ -143,6 +143,11 @@ pub struct KiCadBoardRouterResult {
     /// Where the run's wall clock went (`KiCadWallAccounting`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_accounting: Option<KiCadWallAccounting>,
+    /// What the board's reading left out without an error
+    /// (`lower::input_warnings`): copper on a layer the stack lacks, a
+    /// text box without its box. Empty on an ordinary board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Where a route's wall clock went, beside its work: the routers' phases

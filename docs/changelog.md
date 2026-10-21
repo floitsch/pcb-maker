@@ -11,6 +11,113 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (robustness against hostile boards)
+
+The findings of the review of the readers against hostile or odd input
+(docs/reviews/2026-10-21-review-robustness.md), in its order. Branch
+robustness-fixes; snapshots x1490 (a first version that refused
+non-finite numbers in the parser) x1491 (the commit before the rebase on 2094b6b, measured) and x1492 (rebased). Before, two
+inputs ended the process without a verdict (a stack overflow, an OOM
+kill), a downloaded board could make the import write outside its
+output directory, and seven panics were reachable from a file.
+
+**The lattice bounded before it is allocated** (3.2). The outline's
+extent is at most 2000 mm (`outline::MAX_BOARD_EXTENT_MM`; KiCad holds
+32-bit nanometres, about 2.1 m either way): beyond, `board_loops`
+returns the input's error with the extent and the corners (a stray
+Edge.Cuts line to 10 m made a lattice of 10^10 nodes a map). Then the
+lowering, before any map, sizes the lattice at the router's coarsest
+pitch from the outline alone (`pcb_router::grid::LatticeSize`: nodes,
+and a floor on the maps of 32 + 6 bytes a node, layer and rule class,
+under every one of 1 644 lattices in the logs of 2026-10 by 1.25 or
+more) and refuses it (exit 2) when a router of 1.7 times those maps and
+460 MB (the ladder's estimate without its margin) exceeds
+`PCB_MAKER_MEMORY_MB` or `memory_mb`, the cgroup, the address space
+limit or MemAvailable (read once a run, `check_lattice_fits`); the
+verdict's first next action names the extent, the pitch and the nodes,
+and the retry takes the same output directory (an input error that
+notes an action writes its verdict, `verdict::note_input_action`). In
+the router, `Grid::choose` saturates instead of overflowing on an
+infinite outline and `Grid::check_size` (at most 2^32 nodes a layer)
+runs before `build_statics`; `Router::try_new` returns it.
+
+**No recursion to overflow** (3.1). The S-expression parser keeps its
+open lists on a stack and refuses nesting past 1000 levels
+(`kicad_sexpr::MAX_NESTING`; KiCad's files nest a dozen) as the input's
+error with its line; the writer (`encode`), `collect_named_nets`,
+`expression_count` and `renew_uuids` walk with stacks; the recursive
+walks left (the flip's mirror, the zone point maps) and the drop of a
+tree stay within a 2 MiB thread at the limit (unit test, debug build).
+A custom rule condition nested past 200 levels does not parse (reported
+unmodelled, as a condition that does not parse always was), chains of
+`||` and `&&` are built balanced (2 000 alternatives nest a dozen levels; the
+truth is the same, both are associative), and a rule file nested past
+1000 levels is the rules file's error. Parse errors of every KiCad file
+are the input's (exit 2, not 4), as are the lowering's.
+
+**Paths** (1.1 to 1.4). A footprint taken from a `--footprints-from`
+board whose nickname or name is no file name (`../../x:../../y`) is the
+input's error before anything is written (`fs_util::file_name_error`:
+empty, `.`, `..`, a separator or NUL, a leading `~` or `$`); a
+netlist's footprint name that climbs out of its library is not found;
+every command checks its board id the same way (`check_board_id`). The
+import's library copy (`copy_library_tree`, for the schematic flow)
+copies files only: links are left out, folders at most 8 deep, a library
+outside the project or holding the output directory (`${KIPRJMOD}/.`)
+is not copied, with a note.
+
+**Panics** (2.1 to 2.7). A footprint form without its name is refused
+where it is read (`footprint_form_error`: the --footprints-from board,
+the routed board; a library file of one is reported missing). A text
+box of fewer than three corners on a mask layer is left out (it panicked
+every route and layout of the board). Every coordinate, size and angle
+read from a form goes through `finite_number` (`form_f64`, `form_at`,
+`expression_coordinate`, a rule area's points, a drill, an arc's points):
+NaN, inf and 1e999 are the input's error naming the item (`a gr_line's
+start coordinate 1 is inf`). Refusing them in the parser (x1490) was
+wrong: 56 of the intake's boards carry `(tstamp inf)`, and a KiCad 5
+board writes a net named inf unquoted. A `(property "Footprint")`
+without value is passed over, and footprint-link normalisation writes
+the sheets only once all were read. `(net 1 "GND" x)` names GND (the
+third field, as the net's name is read), not x. 32 copper layers are a
+mask of 32 bits, not 0; the custom rules' layer shifts are checked.
+
+**Misreads** (4.1 to 4.3). A net name meets the project's JSON
+(`netclass_assignments`, `netclass_patterns`, KiCad 6's class lists) and
+the custom rules unescaped (`kicad_sexpr::unescape`: `A\"B` in the board
+is `A"B` there); a net-class pattern that is no expression by itself
+(`x)|(?:.*`, which escaped the anchoring and matched every net) is no
+expression anchored either. Copper (segments, arcs, vias, zones) on a
+copper layer the stack lacks and text boxes without a box are listed in
+board-router.json's `warnings` (empty, and not written, on an ordinary
+board) and lead the route's next actions.
+
+**Left out.** The review's 3.3 (quadratic outline chaining) and 3.4
+(custom rules polynomial in the groups); they cost time, not the
+process. A depth limit of 1000 rather than the review's 10 000: the
+recursive walks of the readers stay within a test thread's 2 MiB at
+1000 in a debug build, not at 10 000.
+
+**Unchanged on ordinary boards.** Short tier (3 x 2) x1491 against
+build/short-fence-x1403: all 12 rows identical and the 12 result boards
+byte for byte (6 passes, strict 5, unconnected 20, work 2961 s both).
+Fingerprints (Castor, k30, jetson, Sisu; route mode from v16, 1 x 4,
+budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+build/fp-robust-x1491): Castor and k30 identical to build/fp-fence-x1402,
+fingerprints and boards; jetson and Sisu differ from x1402, which predates
+bbdb205 (probe overhead), and are identical, fingerprints and boards, to
+x1404 (main's commit of the fence package, build/fp-robust-base-x1404);
+the routed boards of all four are byte for byte those of build/fp-base-x1404
+and build/fp-fab-x1450. No parsing change changed routing.
+
+**Timing.** The largest intake board (HDMI2RGB raw, 39 MB): the parser
+takes 6 % fewer instructions (callgrind of inspect-kicad-board: parse
+5.30e9 to 4.97e9, the whole command 7.99e9 to 7.40e9; collect_named_nets
+1.86e9 to 0.14e9); the lowering (`PCB_ROUTER_BUILD_TRACE`'s seconds,
+three runs each interleaved on a loaded machine) 0.078-0.105 s to
+0.070-0.092 s; the writer 4 to 15 % faster (indentation without an
+allocation a line). An A/B in one binary of the parser with the
+non-finite check in it (x1490's) was 1 to 4 % slower.
 ## Committed on 2026-10-21 (harness review fixes)
 
 The findings of the independent harness review

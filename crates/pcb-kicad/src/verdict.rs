@@ -1306,7 +1306,9 @@ pub fn error_verdict(
     } else if error.contains(crate::native_report::KICAD_TIMEOUT_MESSAGE) {
         vec!["kicad-cli did not finish within its limit: set PCB_KICAD_TIMEOUT to more seconds (default 900) and run again into a new output directory".into()]
     } else if status == KiCadRunStatus::UsageError {
-        vec!["fix the arguments or input files the error names; nothing was routed".into()]
+        let mut actions = noted_input_actions();
+        actions.push("fix the arguments or input files the error names; nothing was routed".into());
+        actions
     } else {
         vec!["an internal error: the output directory may hold partial results; report the error with the input".into()]
     };
@@ -1344,6 +1346,9 @@ pub fn route_facts(
     facts.skipped = result.skipped.clone();
     facts.unmodelled_rules = result.rules.project.unmodelled.clone();
     facts.attempts_failed = result.attempts_failed.clone();
+    // What the board's reading left out (copper on a layer the stack
+    // lacks): the next_actions lead with it.
+    facts.input_warnings = result.warnings.clone();
     Ok(facts)
 }
 
@@ -1365,6 +1370,30 @@ pub fn input_error(message: impl Into<String>) -> String {
         errors.push(message.clone());
     }
     message
+}
+
+/// What the input's error asks of the agent, noted where the error is
+/// found (`note_input_action`), for the verdict's next_actions.
+static INPUT_ACTIONS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Notes an action that fixes an input error about to be returned (the
+/// outline's extent and the pitch of a lattice that does not fit): an
+/// input error's verdict (`error_verdict`) lists it first.
+pub fn note_input_action(action: impl Into<String>) {
+    if let Ok(mut actions) = INPUT_ACTIONS.lock() {
+        let action = action.into();
+        if !actions.contains(&action) {
+            actions.push(action);
+        }
+    }
+}
+
+/// The actions noted for input errors so far (`note_input_action`).
+pub fn noted_input_actions() -> Vec<String> {
+    INPUT_ACTIONS
+        .lock()
+        .map(|actions| actions.clone())
+        .unwrap_or_default()
 }
 
 /// Whether `error` is, or wraps, a message marked by `input_error`.

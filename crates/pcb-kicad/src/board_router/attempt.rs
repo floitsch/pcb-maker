@@ -292,6 +292,8 @@ pub(super) fn write_attempt(
     seconds: [f64; 2],
 ) -> Result<KiCadBoardRouterResult, String> {
     let [lowering_seconds, mut routing_seconds] = seconds;
+    // Read before the items on undefined layers move away.
+    let warnings = input_warnings(&pcb);
     let moved = move_undefined_layers(&mut pcb);
     if moved > 0 {
         eprintln!(
@@ -314,7 +316,7 @@ pub(super) fn write_attempt(
         routing_seconds += tightening.elapsed().as_secs_f64();
     }
     let nets = emit_routes(&mut pcb, board, &result, layer_names, true)?;
-    finish_routed_board(
+    let mut report = finish_routed_board(
         &pcb,
         board,
         &result,
@@ -325,5 +327,7 @@ pub(super) fn write_attempt(
         output_directory,
         config,
         [lowering_seconds, routing_seconds],
-    )
+    )?;
+    report.warnings = warnings;
+    Ok(report)
 }

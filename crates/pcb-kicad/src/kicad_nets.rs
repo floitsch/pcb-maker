@@ -5,15 +5,22 @@
 
 use super::*;
 
+/// The net names `root` and the forms in it name (with a stack, not
+/// recursion: a tree built in code is not bound by the parser's nesting).
 pub(crate) fn collect_named_nets(root: &Expr, named_nets: &mut BTreeSet<String>) {
-    if root.head() == Some("net")
-        && let Some(name) = net_name_from_form(root)
-        && !name.is_empty()
-    {
-        named_nets.insert(normalize_net(name).to_string());
-    }
-    for child in root.children() {
-        collect_named_nets(child, named_nets);
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if node.head() == Some("net")
+            && let Some(name) = net_name_from_form(node)
+            && !name.is_empty()
+        {
+            named_nets.insert(normalize_net(name).to_string());
+        }
+        pending.extend(
+            node.children()
+                .iter()
+                .filter(|item| matches!(item, Expr::List(_))),
+        );
     }
 }
 
@@ -37,12 +44,17 @@ pub(crate) fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, E
                 continue;
             };
             let connection = normalize_net(name).to_string();
-            let atom = pad.child("net").unwrap().children().last().unwrap().clone();
+            // The field `node_net` read the name from (the third of
+            // `(net 1 "GND")`, the second of `(net "GND")`), not the last:
+            // `(net 1 "GND" x)` named its copper "x".
+            let Some(atom) = pad.child("net").and_then(net_name_field).cloned() else {
+                continue;
+            };
             if let Some(previous) = names.get(&connection) {
                 if previous.atom() != Some(name) {
                     return Err(format!(
                         "ambiguous native net identity {connection:?}: pads name both {:?} and {name:?}",
-                        previous.atom().unwrap()
+                        previous.atom().unwrap_or_default()
                     ));
                 }
             } else {
@@ -180,19 +192,24 @@ pub(crate) fn footprint_uuid(node: &Expr) -> Option<String> {
 }
 
 pub(crate) fn net_name_from_form(node: &Expr) -> Option<&str> {
+    net_name_field(node)?.atom()
+}
+
+/// The field of a `net` form that names the net (`net_name_from_form`).
+pub(crate) fn net_name_field(node: &Expr) -> Option<&Expr> {
     if node.head() != Some("net") {
         return None;
     }
     let fields = node.children();
     match fields.len() {
-        3.. => fields.get(2)?.atom(),
+        3.. => fields.get(2).filter(|field| field.atom().is_some()),
         // `(net 5)` is a net code (KiCad 9 and before: segments, vias,
         // zones), not a name; KiCad 10 quotes the name (`(net "5")`), and
         // a net may be named by a number (Soraxem's usb-dmx: nets "14"
         // and "0", whose pads KiCad wants connected like any other).
         2 => match &fields[1] {
             Expr::Atom(raw) if net_code(raw) => None,
-            field => field.atom(),
+            field => field.atom().map(|_| field),
         },
         _ => None,
     }
@@ -233,6 +250,21 @@ fn net_code(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_net_form_of_four_fields_names_the_third() {
+        // `(net 1 "GND" x)`: the copper was renamed "x", and a second pad
+        // of the net panicked (`previous.atom().unwrap()` on a list).
+        let pcb = parse(
+            r#"(kicad_pcb
+              (footprint "a" (pad "1" smd rect (net 1 "GND" x)) (pad "2" smd rect (net 1 "GND" (y))))
+              (footprint "b" (pad "1" smd rect (net 1 "GND"))))"#,
+        )
+        .unwrap();
+        let names = unambiguous_pad_net_names(&pcb).unwrap();
+        assert_eq!(names["GND"].atom(), Some("GND"));
+        assert_eq!(names.len(), 1);
+    }
 
     #[test]
     fn a_net_form_names_a_net_unless_it_is_a_code() {

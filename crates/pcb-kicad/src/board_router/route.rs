@@ -815,6 +815,7 @@ pub(crate) fn finish_routed_board(
         lowering_work_seconds: 0.0,
         wall_accounting: None,
         kept_copper: None,
+        warnings: input_warnings(pcb),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

@@ -86,6 +86,14 @@ fn sexps(text: &str) -> Result<Vec<Sexp>, String> {
                 continue;
             }
             '(' => {
+                // Deeper than any rule file nests: the tree's drop and walks
+                // recurse (`kicad_sexpr::MAX_NESTING`).
+                if stack.len() > crate::kicad_sexpr::MAX_NESTING {
+                    return Err(format!(
+                        "lists nested deeper than {} levels",
+                        crate::kicad_sexpr::MAX_NESTING
+                    ));
+                }
                 stack.push(Vec::new());
                 line_start = false;
             }
@@ -155,7 +163,10 @@ pub(crate) fn length_mm(text: &str) -> Option<f64> {
         .unwrap_or(text.len());
     // An exponent's `e` must not eat a unit (`1em` is not a length anyway).
     let (number, unit) = text.split_at(split);
-    let value: f64 = number.parse().ok()?;
+    let value: f64 = number
+        .parse()
+        .ok()
+        .filter(|value: &f64| value.is_finite())?;
     let scale = match unit.trim().to_ascii_lowercase().as_str() {
         "" | "mm" => 1.0,
         "mil" | "mils" | "thou" => 0.0254,
@@ -349,9 +360,53 @@ fn normalise(name: &str) -> String {
         .collect()
 }
 
+/// How deep a condition's expression may be: its tree (chains of `||` and
+/// `&&` balanced, `balanced`) and the parser's own nesting (parentheses,
+/// `!`, calls). KiCad's conditions are a few levels
+/// deep; deeper is refused as the input's error, before the tree (whose
+/// evaluation, walks and drop recurse) grows past it: until 2026-10-21
+/// `((((` or `!!!!` by the hundred thousand overflowed the stack.
+pub(crate) const MAX_CONDITION_DEPTH: usize = 200;
+
 struct ExParser {
     tokens: Vec<Token>,
     at: usize,
+    /// The parser's nesting now (parentheses, `!`, `-`, calls).
+    nesting: usize,
+}
+
+/// An expression and its tree's depth.
+type Parsed = Result<(Ex, usize), String>;
+
+fn too_deep() -> String {
+    format!("the condition nests deeper than {MAX_CONDITION_DEPTH} levels")
+}
+
+/// The depth of a node over children of `depths`, refused past the limit.
+fn node_depth(depths: &[usize]) -> Result<usize, String> {
+    let depth = depths.iter().copied().max().unwrap_or(0) + 1;
+    if depth > MAX_CONDITION_DEPTH {
+        return Err(too_deep());
+    }
+    Ok(depth)
+}
+
+/// A chain of `||` or `&&` as a tree of `join`s as deep as the logarithm
+/// of its length, in its order (`a || b || c` is `(a || b) || c`, as
+/// read left to right): a condition listing a thousand nets nests ten
+/// levels, not a thousand. Both are associative, so the tree's shape
+/// changes no truth.
+fn balanced(mut operands: Vec<(Ex, usize)>, join: fn(Box<Ex>, Box<Ex>) -> Ex) -> Parsed {
+    if operands.len() == 1 {
+        return Ok(operands.pop().expect("one operand"));
+    }
+    let right = operands.split_off(operands.len().div_ceil(2));
+    let (left, left_depth) = balanced(operands, join)?;
+    let (right, right_depth) = balanced(right, join)?;
+    Ok((
+        join(Box::new(left), Box::new(right)),
+        node_depth(&[left_depth, right_depth])?,
+    ))
 }
 
 impl ExParser {
@@ -368,24 +423,35 @@ impl ExParser {
         }
     }
 
-    fn or(&mut self) -> Result<Ex, String> {
-        let mut left = self.and()?;
+    /// Runs `parse` one nesting level deeper, refused past the limit.
+    fn nested(&mut self, parse: impl FnOnce(&mut Self) -> Parsed) -> Parsed {
+        if self.nesting >= MAX_CONDITION_DEPTH {
+            return Err(too_deep());
+        }
+        self.nesting += 1;
+        let parsed = parse(self);
+        self.nesting -= 1;
+        parsed
+    }
+
+    fn or(&mut self) -> Parsed {
+        let mut operands = vec![self.and()?];
         while self.eat("||") {
-            left = Ex::Or(Box::new(left), Box::new(self.and()?));
+            operands.push(self.and()?);
         }
-        Ok(left)
+        balanced(operands, Ex::Or)
     }
 
-    fn and(&mut self) -> Result<Ex, String> {
-        let mut left = self.comparison()?;
+    fn and(&mut self) -> Parsed {
+        let mut operands = vec![self.comparison()?];
         while self.eat("&&") {
-            left = Ex::And(Box::new(left), Box::new(self.comparison()?));
+            operands.push(self.comparison()?);
         }
-        Ok(left)
+        balanced(operands, Ex::And)
     }
 
-    fn comparison(&mut self) -> Result<Ex, String> {
-        let left = self.additive()?;
+    fn comparison(&mut self) -> Parsed {
+        let (left, left_depth) = self.additive()?;
         let operator = match self.peek() {
             Some(Token::Symbol("==")) => Compare::Equal,
             Some(Token::Symbol("!=")) => Compare::NotEqual,
@@ -393,47 +459,60 @@ impl ExParser {
             Some(Token::Symbol("<=")) => Compare::LessEqual,
             Some(Token::Symbol(">")) => Compare::Greater,
             Some(Token::Symbol(">=")) => Compare::GreaterEqual,
-            _ => return Ok(left),
+            _ => return Ok((left, left_depth)),
         };
         self.at += 1;
-        let right = self.additive()?;
-        Ok(Ex::Compare(operator, Box::new(left), Box::new(right)))
+        let (right, right_depth) = self.additive()?;
+        let depth = node_depth(&[left_depth, right_depth])?;
+        Ok((
+            Ex::Compare(operator, Box::new(left), Box::new(right)),
+            depth,
+        ))
     }
 
-    fn additive(&mut self) -> Result<Ex, String> {
-        let left = self.unary()?;
+    fn additive(&mut self) -> Parsed {
+        let (left, depth) = self.unary()?;
         if matches!(self.peek(), Some(Token::Symbol("+" | "-" | "*" | "/"))) {
             // Arithmetic (`A.Width * 2`): read it, decide nothing with it.
             while self.eat("+") || self.eat("-") || self.eat("*") || self.eat("/") {
                 self.unary()?;
             }
-            return Ok(Ex::Opaque("arithmetic".into()));
+            return Ok((Ex::Opaque("arithmetic".into()), 1));
         }
-        Ok(left)
+        Ok((left, depth))
     }
 
-    fn unary(&mut self) -> Result<Ex, String> {
+    fn unary(&mut self) -> Parsed {
         if self.eat("!") {
-            return Ok(Ex::Not(Box::new(self.unary()?)));
+            return self.nested(|parser| {
+                let (inner, depth) = parser.unary()?;
+                Ok((Ex::Not(Box::new(inner)), node_depth(&[depth])?))
+            });
         }
         if self.eat("-") {
-            return Ok(match self.unary()? {
-                Ex::Number(value) => Ex::Number(-value),
-                _ => Ex::Opaque("negation".into()),
+            return self.nested(|parser| {
+                Ok(match parser.unary()?.0 {
+                    Ex::Number(value) => (Ex::Number(-value), 1),
+                    _ => (Ex::Opaque("negation".into()), 1),
+                })
             });
         }
         self.primary()
     }
 
-    fn arguments(&mut self) -> Result<Vec<Ex>, String> {
+    /// A call's arguments and the deepest of them.
+    fn arguments(&mut self) -> Result<(Vec<Ex>, usize), String> {
         let mut arguments = Vec::new();
+        let mut deepest = 0;
         if self.eat(")") {
-            return Ok(arguments);
+            return Ok((arguments, deepest));
         }
         loop {
-            arguments.push(self.or()?);
+            let (argument, depth) = self.or()?;
+            arguments.push(argument);
+            deepest = deepest.max(depth);
             if self.eat(")") {
-                return Ok(arguments);
+                return Ok((arguments, deepest));
             }
             if !self.eat(",") {
                 return Err("expected ',' or ')' in a call".into());
@@ -441,19 +520,19 @@ impl ExParser {
         }
     }
 
-    fn primary(&mut self) -> Result<Ex, String> {
+    fn primary(&mut self) -> Parsed {
         let token = self.peek().cloned().ok_or("unexpected end of condition")?;
         self.at += 1;
         match token {
-            Token::Symbol("(") => {
-                let inner = self.or()?;
-                if !self.eat(")") {
+            Token::Symbol("(") => self.nested(|parser| {
+                let inner = parser.or()?;
+                if !parser.eat(")") {
                     return Err("expected ')'".into());
                 }
                 Ok(inner)
-            }
-            Token::Text(text) => Ok(Ex::Text(text)),
-            Token::Number(value) => Ok(Ex::Number(value)),
+            }),
+            Token::Text(text) => Ok((Ex::Text(text), 1)),
+            Token::Number(value) => Ok((Ex::Number(value), 1)),
             Token::Word(word) => {
                 let side = match word.as_str() {
                     "A" => Some(Side::A),
@@ -469,18 +548,27 @@ impl ExParser {
                     };
                     self.at += 1;
                     if self.eat("(") {
-                        return Ok(Ex::Call(side, normalise(&name), self.arguments()?));
+                        return self.nested(|parser| {
+                            let (arguments, depth) = parser.arguments()?;
+                            Ok((
+                                Ex::Call(side, normalise(&name), arguments),
+                                node_depth(&[depth])?,
+                            ))
+                        });
                     }
-                    return Ok(Ex::Property(side, normalise(&name)));
+                    return Ok((Ex::Property(side, normalise(&name)), 1));
                 }
                 if self.eat("(") {
-                    self.arguments()?;
-                    return Ok(Ex::Opaque(format!("{word}()")));
+                    self.nested(|parser| parser.arguments().map(|_| (Ex::Null, 1)))?;
+                    return Ok((Ex::Opaque(format!("{word}()")), 1));
                 }
-                Ok(match word.to_ascii_lowercase().as_str() {
-                    "null" | "undefined" => Ex::Null,
-                    _ => Ex::Opaque(word),
-                })
+                Ok((
+                    match word.to_ascii_lowercase().as_str() {
+                        "null" | "undefined" => Ex::Null,
+                        _ => Ex::Opaque(word),
+                    },
+                    1,
+                ))
             }
             Token::Symbol(symbol) => Err(format!("unexpected {symbol:?} in condition")),
         }
@@ -491,11 +579,12 @@ fn parse_condition(text: &str) -> Result<Ex, String> {
     let mut parser = ExParser {
         tokens: lex(text)?,
         at: 0,
+        nesting: 0,
     };
     if parser.tokens.is_empty() {
         return Ok(Ex::Number(1.0));
     }
-    let ex = parser.or()?;
+    let (ex, _) = parser.or()?;
     if parser.at != parser.tokens.len() {
         return Err("trailing input in condition".into());
     }
@@ -1653,7 +1742,7 @@ fn lower_constraint(
                                 );
                                 // (Unknown where the whole was known: kept.)
                                 if truth != T3::False {
-                                    mask |= 1 << index;
+                                    mask |= 1u32.checked_shl(index as u32).unwrap_or(0);
                                 }
                             }
                             per_kind.push(mask);
@@ -1779,7 +1868,9 @@ fn lower_constraint(
                         .copper_layers
                         .iter()
                         .enumerate()
-                        .filter(|(index, _)| layers_seen & (1 << index) != 0)
+                        .filter(|(index, _)| {
+                            layers_seen & 1u32.checked_shl(*index as u32).unwrap_or(0) != 0
+                        })
                         .map(|(_, name)| name.as_str())
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -2069,6 +2160,63 @@ fn narrower_than_nets(condition: &Ex, rule: &Rule) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conditions_past_the_depth_limit_are_refused_and_chains_stay_shallow() {
+        // `((((` and `!!!!` by the thousand overflowed the stack until
+        // 2026-10-21.
+        for text in [
+            format!(
+                "{}A.NetName == 'X'{}",
+                "(".repeat(100_000),
+                ")".repeat(100_000)
+            ),
+            format!("{}(A.NetName == 'X')", "!".repeat(100_000)),
+            format!("{}1", "-".repeat(100_000)),
+            format!(
+                "A.insideArea({}'X'{})",
+                "(".repeat(10_000),
+                ")".repeat(10_000)
+            ),
+        ] {
+            let error = parse_condition(&text).unwrap_err();
+            assert!(error.contains("nests deeper than 200 levels"), "{error}");
+        }
+        // Within the limit, as before.
+        let nested = format!("{}A.NetName == 'X'{}", "(".repeat(150), ")".repeat(150));
+        assert!(parse_condition(&nested).is_ok());
+        // Ten thousand alternatives: a tree of depth 15, the same truth as
+        // read left to right.
+        let chain = (0..10_000)
+            .map(|index| format!("A.NetName == 'N{index}'"))
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let ex = parse_condition(&chain).unwrap();
+        fn depth(ex: &Ex) -> usize {
+            match ex {
+                Ex::Or(a, b) | Ex::And(a, b) => 1 + depth(a).max(depth(b)),
+                _ => 1,
+            }
+        }
+        assert_eq!(depth(&ex), 15);
+        let mut leaves = Vec::new();
+        net_leaves(&ex, &mut leaves, &mut false);
+        assert_eq!(leaves.len(), 10_000);
+        // Three operands nest as before: `(a || b) || c`.
+        assert_eq!(
+            parse_condition("A.Type == 'via' || A.Type == 'pad' || A.Type == 'track'").unwrap(),
+            Ex::Or(
+                Box::new(parse_condition("A.Type == 'via' || A.Type == 'pad'").unwrap()),
+                Box::new(parse_condition("A.Type == 'track'").unwrap())
+            )
+        );
+        // A rule file nested past the reader's limit.
+        let deep = format!("(version 1){}{}", "(".repeat(5_000), ")".repeat(5_000));
+        assert!(sexps(&deep).unwrap_err().contains("nested deeper than"));
+        // A length past f64's range is no length.
+        assert_eq!(length_mm("1e999mm"), None);
+        assert_eq!(length_mm("0.2mm"), Some(0.2));
+    }
+
     use super::*;
 
     fn nets(entries: &[(&str, &[&str])]) -> Vec<NetFacts> {

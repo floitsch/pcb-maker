@@ -1,0 +1,6 @@
+(kicad_pcb
+  (footprint "Local:R" (at 4 5 90)
+    (property "Reference" "R1")
+    (pad "1" thru_hole circle (at 0 0) (size 1 1)
+      (drill 0.5) (layers "*.Cu" "*.Mask")))
+  (gr_rect (start 0 0) (end 10 10) (layer "Edge.Cuts")))

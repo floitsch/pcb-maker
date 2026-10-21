@@ -85,11 +85,17 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
     let room = (status == KiCadRunStatus::UsageError)
         .then(pcb_kicad::noted_room)
         .flatten();
-    // No kicad-cli (`check_kicad`): the verdict says what to install.
+    // No kicad-cli (`check_kicad`): the verdict says what to install. An
+    // input error writes no verdict otherwise unless it noted what would
+    // fix it (the room a constraint needs, a lattice too large for the
+    // memory).
     let kicad =
         status == KiCadRunStatus::UsageError && message.contains(pcb_kicad::KICAD_REQUIREMENT);
     if !directory.exists() {
-        if (status == KiCadRunStatus::UsageError && room.is_none() && !kicad)
+        if (status == KiCadRunStatus::UsageError
+            && room.is_none()
+            && !kicad
+            && pcb_kicad::noted_input_actions().is_empty())
             || fs::create_dir_all(directory).is_err()
         {
             return;
@@ -238,6 +244,7 @@ fn positional_count(
 
 /// The project directory holds `<board-id>.kicad_pcb`.
 fn check_project(directory: &str, board_id: &str) -> Result<(), Failure> {
+    pcb_kicad::check_board_id(board_id).map_err(Failure::Usage)?;
     let board = Path::new(directory).join(format!("{board_id}.kicad_pcb"));
     if !Path::new(directory).is_dir() {
         return Err(Failure::Usage(format!(

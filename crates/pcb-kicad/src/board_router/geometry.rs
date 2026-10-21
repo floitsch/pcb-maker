@@ -684,8 +684,8 @@ fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
     let point = |name: &str| -> Option<[f64; 2]> {
         let form = arc.child(name)?;
         Some([
-            form.children().get(1)?.atom()?.parse().ok()?,
-            form.children().get(2)?.atom()?.parse().ok()?,
+            finite_number(form.children().get(1)?.atom()?, "an arc's x").ok()?,
+            finite_number(form.children().get(2)?.atom()?, "an arc's y").ok()?,
         ])
     };
     let (start, middle, end) = (point("start")?, point("mid")?, point("end")?);

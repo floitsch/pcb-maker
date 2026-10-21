@@ -92,7 +92,12 @@ impl NetClassPattern {
     fn new(text: &str) -> Self {
         Self {
             text: text.to_string(),
-            regex: regex_lite::Regex::new(&format!("^(?:{text})$")).ok(),
+            // A pattern that is no expression by itself is none anchored
+            // either: `x)|(?:.*` closes the anchoring group and matched
+            // every net (KiCad reports the expression as invalid).
+            regex: regex_lite::Regex::new(text)
+                .ok()
+                .and_then(|_| regex_lite::Regex::new(&format!("^(?:{text})$")).ok()),
         }
     }
 
@@ -336,13 +341,17 @@ pub fn resolve_project_rules(
     let mut connection_rules = BTreeMap::new();
     let mut net_facts = Vec::new();
     for raw in nets {
+        // The name as KiCad reads it: the board's atom keeps its escapes
+        // (`A\"B`), the project's JSON and the custom rules hold the
+        // text (`A"B`).
+        let text = unescape(&raw);
         let mut names: Vec<String> = Vec::new();
         let mut add = |name: &str| {
             if !names.iter().any(|known| known == name) {
                 names.push(name.to_string());
             }
         };
-        match &assignments[raw.as_str()] {
+        match &assignments[text.as_ref()] {
             serde_json::Value::String(name) => add(name),
             serde_json::Value::Array(entries) => {
                 for name in entries.iter().filter_map(serde_json::Value::as_str) {
@@ -351,11 +360,14 @@ pub fn resolve_project_rules(
             }
             _ => {}
         }
-        if let Some(name) = listed.get(&raw).or_else(|| listed.get(normalize_net(&raw))) {
+        if let Some(name) = listed
+            .get(text.as_ref())
+            .or_else(|| listed.get(normalize_net(&text)))
+        {
             add(name);
         }
         for (pattern, name) in &patterns {
-            if pattern.matches(&raw) {
+            if pattern.matches(&text) {
                 add(name);
             }
         }
@@ -370,7 +382,7 @@ pub fn resolve_project_rules(
             resolve(&classes)
         };
         net_facts.push(dru::NetFacts {
-            name: raw.clone(),
+            name: text.to_string(),
             classes: if classes.is_empty() {
                 vec!["Default".to_string()]
             } else {
@@ -942,6 +954,46 @@ mod tests {
         assert_eq!(rules("USB_DP").clearance_mm, 0.15);
         assert_eq!(rules("USB_DP").via_size_mm, 0.5);
         assert_eq!(rules("SDA").clearance_mm, 0.15);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn escaped_net_names_meet_the_projects_and_a_pattern_cannot_escape_its_anchors() {
+        // A net `A"B` is `"A\"B"` in the board and `A"B` in the project's
+        // JSON and the custom rules: until 2026-10-21 it fell to Default
+        // without a word. `x)|(?:.*` closed the anchoring group and put
+        // every net in its class.
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-rules-escapes-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let source = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A\"B"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "C\\D"))
+                (pad "3" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#;
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(&pcb, source).unwrap();
+        let project = directory.join("board.kicad_pro");
+        fs::write(
+            &project,
+            r#"{"net_settings": {
+                  "classes": [
+                    {"name": "Default", "clearance": 0.14, "track_width": 0.25, "via_diameter": 0.7, "via_drill": 0.3},
+                    {"name": "QUOTE", "clearance": 0.2, "track_width": 0.5, "priority": 1},
+                    {"name": "SLASH", "clearance": 0.2, "track_width": 0.6, "priority": 2},
+                    {"name": "ALL", "clearance": 0.3, "track_width": 0.9, "priority": 0}],
+                  "netclass_assignments": {"A\"B": "QUOTE"},
+                  "netclass_patterns": [
+                    {"netclass": "SLASH", "pattern": "C\\\\D"},
+                    {"netclass": "ALL", "pattern": "x)|(?:.*"}]}}"#,
+        )
+        .unwrap();
+        crate::note_net_names(&parse(source).unwrap());
+        let config = resolve_project_rules(&project, &pcb).unwrap();
+        let width = |net: &str| config.connection_rules[normalize_net(net)].trace_width_mm;
+        assert_eq!(width(r#"A\"B"#), 0.5);
+        assert_eq!(width(r"C\\D"), 0.6);
+        assert_eq!(width("GND"), 0.25);
         fs::remove_dir_all(&directory).unwrap();
     }
 

@@ -356,6 +356,11 @@ fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
 /// connectors (Female and Male became Socket and Plug).
 fn find_footprint(libraries: &BTreeMap<String, PathBuf>, id: &str) -> Option<(PathBuf, String)> {
     let (library, name) = id.split_once(':')?;
+    // A name that is no file name (`lib:../../../tmp/evil`) reads no file
+    // outside the libraries: not found.
+    if file_name_error(name).is_some() {
+        return None;
+    }
     let mut names = vec![name.to_string()];
     let renamed = name.replace("_Female", "_Socket").replace("_Male", "_Plug");
     if renamed != name {
@@ -518,41 +523,22 @@ fn set_property(
     Ok(())
 }
 
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
-    if from.is_dir() {
-        fs::create_dir_all(to)
-            .map_err(|error| format!("failed to create {}: {error}", to.display()))?;
-        for entry in fs::read_dir(from)
-            .map_err(|error| error.to_string())?
-            .flatten()
-        {
-            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
-        }
-    } else if from.exists() {
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::copy(from, to)
-            .map_err(|error| format!("failed to copy {}: {error}", from.display()))?;
-    }
-    Ok(())
-}
-
 /// Gives every UUID inside a footprint instance its own value (library
 /// files carry one set for all instances; KiCad makes new ones when it
 /// adds a footprint). KiCad 6 and 7 files call them `tstamp`.
 fn renew_uuids(item: &mut Expr, owner: &str) {
-    let Expr::List(items) = item else {
-        return;
-    };
-    if matches!(items.first().and_then(Expr::atom), Some("uuid" | "tstamp"))
-        && let Some(old) = items.get(1).and_then(Expr::atom).map(str::to_owned)
-    {
-        items[1] = Expr::Atom(format!("\"{}\"", uuid_of(&format!("{owner} {old}"))));
-        return;
-    }
-    for child in items.iter_mut() {
-        renew_uuids(child, owner);
+    let mut pending = vec![item];
+    while let Some(item) = pending.pop() {
+        let Expr::List(items) = item else {
+            continue;
+        };
+        if matches!(items.first().and_then(Expr::atom), Some("uuid" | "tstamp"))
+            && let Some(old) = items.get(1).and_then(Expr::atom).map(str::to_owned)
+        {
+            items[1] = Expr::Atom(format!("\"{}\"", uuid_of(&format!("{owner} {old}"))));
+            continue;
+        }
+        pending.extend(items.iter_mut());
     }
 }
 
@@ -612,6 +598,7 @@ pub fn import_kicad_netlist_from(
     layers: usize,
     footprints_from: Option<&Path>,
 ) -> Result<KiCadNetlistImport, String> {
+    check_board_id(board_id)?;
     let designer = footprints_from
         .map(crate::board_footprints::BoardFootprints::read)
         .transpose()?;
@@ -699,7 +686,7 @@ pub fn import_kicad_netlist_from(
                     .is_some_and(|extension| extension == "kicad_sch")
                     && let Ok(relative) = path.strip_prefix(&project)
                 {
-                    copy_tree(&path, &output.join(relative))?;
+                    copy_library_tree(&path, &output.join(relative), &project, output)?;
                 }
             }
         }
@@ -735,7 +722,12 @@ pub fn import_kicad_netlist_from(
                 }) {
                     continue;
                 }
-                copy_tree(&project.join(relative), &output.join(relative))?;
+                copy_library_tree(
+                    &project.join(relative),
+                    &output.join(relative),
+                    &project,
+                    output,
+                )?;
             }
         }
         path
@@ -1030,7 +1022,10 @@ pub fn import_kicad_netlist_from(
                 match fs::read_to_string(&file)
                     .map_err(|error| error.to_string())
                     .and_then(|text| parse(&text))
-                {
+                    .and_then(|footprint| match footprint_form_error(&footprint) {
+                        Some(why) => Err(format!("the file holds {why}")),
+                        None => Ok(footprint),
+                    }) {
                     Ok(footprint) => (footprint, found),
                     Err(error) => {
                         missing.push(format!("{reference} ({found} unreadable: {error})"));
@@ -1491,6 +1486,18 @@ fn write_local_libraries(
         let Some((nickname, name)) = id.split_once(':') else {
             continue;
         };
+        // The id comes from the --footprints-from board: a nickname or name
+        // that is no file name (`../../x:../../y`) would write outside the
+        // output directory.
+        if let Some(why) = file_name_error(nickname).or_else(|| file_name_error(name)) {
+            return Err(crate::verdict::input_error(format!(
+                "the footprint {id:?} of {}: its library nickname or name {why}; the footprints taken from a board are written to <out>/<nickname>.pretty/<name>.kicad_mod",
+                board.map_or_else(
+                    || "the board".to_string(),
+                    |board| board.display().to_string()
+                )
+            )));
+        }
         nicknames.insert(nickname.to_string());
         let folder = output.join(format!("{nickname}.pretty"));
         fs::create_dir_all(&folder)
@@ -1690,7 +1697,10 @@ fn add_parts(
                 match fs::read_to_string(&file)
                     .map_err(|error| error.to_string())
                     .and_then(|text| parse(&text))
-                {
+                    .and_then(|footprint| match footprint_form_error(&footprint) {
+                        Some(why) => Err(format!("the file holds {why}")),
+                        None => Ok(footprint),
+                    }) {
                     Ok(footprint) => (footprint, BTreeMap::new(), None, found),
                     Err(error) => {
                         missing.push(format!("{part} (add: {found} unreadable: {error})"));
@@ -2554,6 +2564,167 @@ mod tests {
         all.sort();
         all.dedup();
         assert_eq!(all.len(), count, "an id twice: {all:?}");
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    fn hostile(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/hostile")
+            .join(name)
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-hostile-import-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn footprint_ids_and_names_never_make_paths_outside_their_folders() {
+        let directory = scratch("paths");
+        // 1.2: a netlist's `lib:../evil` reads no file beside the library.
+        let library = directory.join("lib.pretty");
+        fs::create_dir_all(&library).unwrap();
+        fs::write(library.join("R.kicad_mod"), "(footprint \"R\")").unwrap();
+        fs::write(directory.join("evil.kicad_mod"), "(footprint \"evil\")").unwrap();
+        let libraries = BTreeMap::from([("lib".to_string(), library.clone())]);
+        assert!(find_footprint(&libraries, "lib:R").is_some());
+        assert!(find_footprint(&libraries, "lib:../evil").is_none());
+        assert!(find_footprint(&libraries, "lib:..").is_none());
+        // 1.1: a --footprints-from board whose footprint id climbs out of
+        // the output directory: refused, nothing written outside it.
+        let netlist = directory.join("t.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "J1") (value "X") (footprint "../../x:../../y") (sheetpath (names "/") (tstamps "/")) (tstamps "1111")))
+              (nets (net (code "1") (name "/TARGET") (node (ref "J1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let output = directory.join("a/b/out");
+        let error = import_kicad_netlist_from(
+            &netlist,
+            &output,
+            "t",
+            2,
+            Some(&hostile("climbing-footprint-id.kicad_pcb")),
+        )
+        .unwrap_err();
+        assert!(error.contains("its library nickname or name"), "{error}");
+        assert!(crate::verdict::is_input_error(&error));
+        assert!(!directory.join("a/x.pretty").exists());
+        assert!(!directory.join("x.pretty").exists());
+        // A board id that climbs: refused before anything is written.
+        let error = import_kicad_netlist(&netlist, &directory.join("c"), "../t", 2).unwrap_err();
+        assert!(error.contains("the board id"), "{error}");
+        assert!(!directory.join("c").exists());
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_library_footprint_without_its_name_is_reported_missing_not_a_panic() {
+        // 2.1: `(footprint)` in a project's .pretty failed the whole import
+        // (index out of bounds).
+        let directory = scratch("short");
+        let library = directory.join("lib.pretty");
+        fs::create_dir_all(&library).unwrap();
+        fs::copy(
+            hostile("short-footprint.kicad_mod"),
+            library.join("R.kicad_mod"),
+        )
+        .unwrap();
+        let netlist = directory.join("t.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "R1") (value "1k") (footprint "lib:R") (sheetpath (names "/") (tstamps "/")) (tstamps "1111")))
+              (nets (net (code "1") (name "A") (node (ref "R1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let report = import_kicad_netlist(&netlist, &directory.join("out"), "t", 2).unwrap();
+        assert_eq!(report.missing.len(), 1, "{:?}", report.missing);
+        assert!(
+            report.missing[0].contains("the file holds a footprint form without its name"),
+            "{:?}",
+            report.missing
+        );
+        // From a --footprints-from board: the input's error.
+        let error = import_kicad_netlist_from(
+            &netlist,
+            &directory.join("out2"),
+            "t",
+            2,
+            Some(&hostile("short-footprint.kicad_pcb")),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("a footprint form without its name"),
+            "{error}"
+        );
+        assert!(crate::verdict::is_input_error(&error));
+        // And the forms that index past the name refuse it.
+        let short = parse("(footprint)").unwrap();
+        assert!(crate::board_footprints::library_form(&short, "L:R").is_err());
+        assert!(crate::board_footprints::posed(&short, [0.0; 3]).is_err());
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_library_that_holds_the_output_or_links_out_is_not_copied() {
+        // 1.3: `${KIPRJMOD}/.` (or a link `lib -> .`) copied the project
+        // into its own output, again and again.
+        let directory = scratch("copy");
+        let project = directory.join("project");
+        let output = project.join("out");
+        fs::create_dir_all(project.join("lib.pretty")).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(project.join("lib.pretty/R.kicad_mod"), "(footprint \"R\")").unwrap();
+        fs::write(directory.join("secret.kicad_mod"), "(footprint \"S\")").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&project, project.join("lib.pretty/loop")).unwrap();
+            std::os::unix::fs::symlink(
+                directory.join("secret.kicad_mod"),
+                project.join("lib.pretty/secret.kicad_mod"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(&directory, project.join("outside.pretty")).unwrap();
+        }
+        // The project itself: not copied.
+        copy_library_tree(&project.join("."), &output.join("."), &project, &output).unwrap();
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        // An ordinary library: its files, not its links.
+        copy_library_tree(
+            &project.join("lib.pretty"),
+            &output.join("lib.pretty"),
+            &project,
+            &output,
+        )
+        .unwrap();
+        assert!(output.join("lib.pretty/R.kicad_mod").is_file());
+        assert!(!output.join("lib.pretty/loop").exists());
+        assert!(!output.join("lib.pretty/secret.kicad_mod").exists());
+        // A link out of the project: not copied.
+        #[cfg(unix)]
+        {
+            copy_library_tree(
+                &project.join("outside.pretty"),
+                &output.join("outside.pretty"),
+                &project,
+                &output,
+            )
+            .unwrap();
+            assert!(!output.join("outside.pretty").exists());
+        }
         fs::remove_dir_all(&directory).unwrap();
     }
 }

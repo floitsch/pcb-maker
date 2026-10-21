@@ -53,6 +53,95 @@ pub fn check_capacity(board: &Board) -> Result<(), String> {
     Ok(())
 }
 
+/// The most nodes a layer of the lattice may have: the maps and the
+/// search's records index a layer's nodes in 32 bits.
+pub const MAX_LATTICE_NODES: usize = u32::MAX as usize;
+
+/// A floor on the router's lattice maps, in bytes per node and layer:
+/// `LATTICE_BYTES_A_NODE` and `LATTICE_BYTES_A_CLASS` per rule class.
+/// Under every one of 1 644 lattices the logs of 2026-10 measured (the
+/// router's `memory: N MB in maps` line, its classes counted after the
+/// neck classes it adds) by a factor of 1.25 or more, so that what the
+/// floor refuses would not have fitted (`LatticeSize::maps_bytes_floor`).
+pub const LATTICE_BYTES_A_NODE: f64 = 32.0;
+pub const LATTICE_BYTES_A_CLASS: f64 = 6.0;
+
+/// The lattice a board needs at a pitch, from its outline's extent alone,
+/// before anything is chosen or built: what bounds the maps before they
+/// are allocated (`Grid::choose` puts the origin up to a pitch before the
+/// outline, so its lattice has these nodes or one more each way).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LatticeSize {
+    /// The outline's extent, millimetres (infinite or NaN when the
+    /// outline's coordinates are, or when it has none).
+    pub extent: [f64; 2],
+    pub pitch: f64,
+    /// Nodes along each axis, as floating point (an absurd board's count
+    /// does not fit an integer).
+    pub nodes: [f64; 2],
+}
+
+impl LatticeSize {
+    pub fn of(board: &Board, pitch: f64) -> Self {
+        let mut minimum = [f64::INFINITY; 2];
+        let mut maximum = [f64::NEG_INFINITY; 2];
+        for point in &board.outline {
+            for axis in 0..2 {
+                // Not `f64::min`: a NaN must not drop out of the extent.
+                if point[axis].is_nan() || point[axis] < minimum[axis] {
+                    minimum[axis] = point[axis];
+                }
+                if point[axis].is_nan() || point[axis] > maximum[axis] {
+                    maximum[axis] = point[axis];
+                }
+            }
+        }
+        let extent = [maximum[0] - minimum[0], maximum[1] - minimum[1]];
+        Self {
+            extent,
+            pitch,
+            nodes: extent.map(|extent| (extent / pitch).floor() + 1.0),
+        }
+    }
+
+    /// Nodes on one layer.
+    pub fn cells(&self) -> f64 {
+        self.nodes[0] * self.nodes[1]
+    }
+
+    /// A floor on the router's lattice maps, in bytes, with `layers`
+    /// copper layers and `classes` rule classes (`LATTICE_BYTES_A_NODE`).
+    pub fn maps_bytes_floor(&self, layers: usize, classes: usize) -> f64 {
+        self.cells()
+            * layers as f64
+            * (LATTICE_BYTES_A_NODE + LATTICE_BYTES_A_CLASS * classes as f64)
+    }
+
+    /// Whether the maps can index the lattice at all: a finite outline
+    /// and at most `MAX_LATTICE_NODES` nodes a layer.
+    pub fn check(&self) -> Result<(), String> {
+        if !(self
+            .extent
+            .iter()
+            .all(|extent| extent.is_finite() && *extent >= 0.0)
+            && self.pitch.is_finite()
+            && self.pitch > 0.0)
+        {
+            return Err(format!(
+                "the board's outline spans {:?} mm at a pitch of {} mm: the lattice needs a finite outline and pitch",
+                self.extent, self.pitch
+            ));
+        }
+        if self.cells().is_nan() || self.cells() > MAX_LATTICE_NODES as f64 {
+            return Err(format!(
+                "the board's outline spans {:.1} x {:.1} mm: at a pitch of {} mm its lattice has {:.0} x {:.0} nodes a layer, more than the router's maps index ({MAX_LATTICE_NODES})",
+                self.extent[0], self.extent[1], self.pitch, self.nodes[0], self.nodes[1]
+            ));
+        }
+        Ok(())
+    }
+}
+
 pub fn owner16(net: NetId) -> u16 {
     debug_assert!(net + 1 < BLOCKED16 as u32);
     (net + 1) as u16
@@ -200,6 +289,19 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
 impl Grid {
     pub fn cells(&self) -> usize {
         self.nx * self.ny
+    }
+
+    /// Whether the maps can hold this lattice: at most
+    /// `MAX_LATTICE_NODES` nodes a layer (checked before any map is
+    /// allocated; `cells` would overflow past it).
+    pub fn check_size(&self) -> Result<(), String> {
+        match self.nx.checked_mul(self.ny) {
+            Some(cells) if cells <= MAX_LATTICE_NODES && self.pitch > 0.0 => Ok(()),
+            _ => Err(format!(
+                "a lattice of {} x {} nodes at a pitch of {} mm: more than the router's maps index ({MAX_LATTICE_NODES} nodes a layer)",
+                self.nx, self.ny, self.pitch
+            )),
+        }
     }
 
     pub fn index(&self, x: usize, y: usize) -> usize {
@@ -386,8 +488,11 @@ impl Grid {
             // clearance stay legal).
             origin[axis] = ((phase[axis] + steps * pitch) * 1.0e6).round() / 1.0e6;
         }
-        let nx = ((bounds.maximum[0] - origin[0]) / pitch).ceil() as usize + 1;
-        let ny = ((bounds.maximum[1] - origin[1]) / pitch).ceil() as usize + 1;
+        // Saturating: an outline the router cannot hold (an infinite
+        // coordinate) gives a lattice `check_size` refuses, not an
+        // overflow here.
+        let nx = (((bounds.maximum[0] - origin[0]) / pitch).ceil() as usize).saturating_add(1);
+        let ny = (((bounds.maximum[1] - origin[1]) / pitch).ceil() as usize).saturating_add(1);
         Self {
             origin,
             pitch,
@@ -1114,6 +1219,40 @@ mod tests {
             merged_pads: Vec::new(),
             no_via_pads: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_lattice_is_sized_and_checked_before_any_map_is_allocated() {
+        // 10 x 10 mm at 0.1 mm: 101 x 101 nodes, a floor of 2 layers x
+        // (32 + 6) bytes for one class.
+        let mut board = board_of(2, 2);
+        let size = LatticeSize::of(&board, 0.1);
+        assert_eq!(size.nodes, [101.0, 101.0]);
+        assert_eq!(size.maps_bytes_floor(2, 1), 101.0 * 101.0 * 2.0 * 38.0);
+        assert!(size.check().is_ok());
+        let grid = Grid::choose(&board, &[0.1]);
+        assert!(grid.check_size().is_ok());
+        assert!(grid.nx >= 101 && grid.nx <= 102);
+        // An infinite or NaN coordinate (until 2026-10-21 `usize::MAX + 1`):
+        // refused, the choice saturated, nothing allocated.
+        for bad in [f64::INFINITY, f64::NAN] {
+            board.outline[1][0] = bad;
+            assert!(LatticeSize::of(&board, 0.1).check().is_err(), "{bad}");
+            let grid = Grid::choose(&board, &[0.1]);
+            if bad.is_infinite() {
+                assert!(grid.check_size().is_err());
+                let routed = crate::router::Router::try_new(&board, &crate::Config::default());
+                assert!(routed.is_err());
+            }
+        }
+        // A 10 m board at 0.1 mm: 10^10 nodes a layer, past 32 bits.
+        board.outline = vec![[0.0, 0.0], [10_000.0, 0.0], [10_000.0, 10_000.0]];
+        let error = LatticeSize::of(&board, 0.1).check().unwrap_err();
+        assert!(
+            error.contains("more than the router's maps index"),
+            "{error}"
+        );
+        assert!(Grid::choose(&board, &[0.1]).check_size().is_err());
     }
 
     #[test]

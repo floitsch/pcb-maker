@@ -72,6 +72,17 @@ impl BoardFootprints {
                 file.display()
             )));
         }
+        if let Some(why) = board
+            .children()
+            .iter()
+            .filter(|item| matches!(item.head(), Some("footprint" | "module")))
+            .find_map(footprint_form_error)
+        {
+            return Err(crate::verdict::input_error(format!(
+                "--footprints-from {}: the board has {why}",
+                file.display()
+            )));
+        }
         let footprints = board
             .children()
             .iter()
@@ -222,7 +233,8 @@ fn turn_at(item: &mut Expr, turn: f64) {
     let angle = at
         .get(3)
         .and_then(Expr::atom)
-        .and_then(|atom| atom.parse::<f64>().ok());
+        .and_then(|atom| atom.parse::<f64>().ok())
+        .filter(|angle| angle.is_finite());
     let unlocked = at.iter().any(|value| value.atom() == Some("unlocked"));
     let new = normal_angle(angle.unwrap_or(0.0) + turn);
     at.truncate(3);
@@ -242,11 +254,13 @@ fn map_zone_points(zone: &mut Expr, map: &dyn Fn([f64; 2]) -> [f64; 2]) {
             items
                 .get(1)
                 .and_then(Expr::atom)
-                .and_then(|atom| atom.parse::<f64>().ok()),
+                .and_then(|atom| atom.parse::<f64>().ok())
+                .filter(|value| value.is_finite()),
             items
                 .get(2)
                 .and_then(Expr::atom)
-                .and_then(|atom| atom.parse::<f64>().ok()),
+                .and_then(|atom| atom.parse::<f64>().ok())
+                .filter(|value| value.is_finite()),
         ) {
             let [x, y] = map([x, y]);
             items[1] = number(x);
@@ -275,6 +289,9 @@ fn repose(items: &mut [Expr], turn: f64, zones: &dyn Fn([f64; 2]) -> [f64; 2]) {
 /// `Name`): on the front, at the origin, unrotated, without links to a
 /// symbol or nets.
 pub(crate) fn library_form(footprint: &Expr, name: &str) -> Result<Expr, String> {
+    if let Some(why) = footprint_form_error(footprint) {
+        return Err(why);
+    }
     let mut footprint = footprint.clone();
     if let Expr::List(items) = &mut footprint {
         items[0] = Expr::Atom("footprint".into());
@@ -331,6 +348,9 @@ pub(crate) fn library_form(footprint: &Expr, name: &str) -> Result<Expr, String>
 /// A library-form footprint put at a pose on the front: `(at x y angle)`
 /// set, pad and text angles made absolute, zones in board coordinates.
 pub(crate) fn posed(footprint: &Expr, at: [f64; 3]) -> Result<Expr, String> {
+    if let Some(why) = footprint_form_error(footprint) {
+        return Err(why);
+    }
     let mut footprint = footprint.clone();
     let Expr::List(items) = &mut footprint else {
         return Err("footprint is not a list".into());

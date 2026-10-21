@@ -43,6 +43,7 @@ pub fn normalize_kicad_footprint_links(
     directory: &Path,
     board_id: &str,
 ) -> Result<KiCadFootprintLinkNormalizationReport, String> {
+    check_board_id(board_id)?;
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
     let schematic_path = directory.join(format!("{board_id}.kicad_sch"));
     let board_source = fs::read_to_string(&board_path)
@@ -84,6 +85,7 @@ pub fn normalize_kicad_footprint_links(
     let mut visited = BTreeSet::new();
     let mut updates = BTreeMap::new();
     let mut schematic_files = Vec::new();
+    let mut writes: Vec<(PathBuf, String)> = Vec::new();
     while let Some(current_path) = pending.pop_front() {
         if !current_path.starts_with(&project_root) {
             return Err(format!(
@@ -161,15 +163,13 @@ pub fn normalize_kicad_footprint_links(
             let Expr::List(symbol_items) = symbol else {
                 unreachable!("symbol form must be a list")
             };
-            let property = symbol_items
+            // The property `schematic_property` read: the first with a
+            // value (a `(property "Footprint")` before it has none).
+            let Some(Expr::List(property_items)) = symbol_items
                 .iter_mut()
-                .find(|item| {
-                    item.head() == Some("property")
-                        && item.children().get(1).and_then(Expr::atom) == Some("Footprint")
-                })
-                .expect("Footprint property was read above");
-            let Expr::List(property_items) = property else {
-                unreachable!("property form must be a list")
+                .find(|item| is_property_with_value(item, "Footprint"))
+            else {
+                unreachable!("the Footprint property was read above")
             };
             property_items[2] = Expr::Atom(quote(board_link));
             changed = true;
@@ -183,19 +183,25 @@ pub fn normalize_kicad_footprint_links(
                 },
             );
         }
-        if changed {
-            fs::write(&current_path, format!("{}\n", encode(&schematic))).map_err(|error| {
-                format!(
-                    "failed to write normalized {}: {error}",
-                    current_path.display()
-                )
-            })?;
-        }
+        // Written once every sheet has been read: a sheet that fails
+        // leaves every file as it was.
+        let after_sha256 = if changed {
+            let text = format!("{}\n", encode(&schematic));
+            let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+            writes.push((current_path.clone(), text));
+            digest
+        } else {
+            before_sha256.clone()
+        };
         schematic_files.push(KiCadSchematicLinkNormalization {
             schematic_path: relative,
             before_sha256,
-            after_sha256: file_sha256(&current_path)?,
+            after_sha256,
         });
+    }
+    for (path, text) in writes {
+        fs::write(&path, text)
+            .map_err(|error| format!("failed to write normalized {}: {error}", path.display()))?;
     }
     let root_audit = schematic_files
         .iter()
@@ -215,11 +221,18 @@ pub fn normalize_kicad_footprint_links(
 }
 
 fn schematic_property(node: &Expr, name: &str) -> Option<String> {
-    node.children().iter().find_map(|item| {
-        (item.head() == Some("property") && item.children().get(1)?.atom()? == name)
-            .then(|| item.children().get(2)?.atom().map(str::to_owned))
-            .flatten()
-    })
+    node.children()
+        .iter()
+        .find(|item| is_property_with_value(item, name))
+        .and_then(|item| item.children()[2].atom().map(str::to_owned))
+}
+
+/// Whether `item` is the property `name` with a value: `(property "Name"
+/// "value" ...)`.
+fn is_property_with_value(item: &Expr, name: &str) -> bool {
+    item.head() == Some("property")
+        && item.children().get(1).and_then(Expr::atom) == Some(name)
+        && item.children().get(2).and_then(Expr::atom).is_some()
 }
 
 #[cfg(test)]
@@ -280,6 +293,52 @@ mod tests {
             fs::read_to_string(&schematic)
                 .unwrap()
                 .contains("(property \"Footprint\" \"Local:R\")")
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_footprint_property_without_a_value_is_passed_over() {
+        // A `(property "Footprint")` before the full one: the value was read
+        // from the second and written into the first (index out of
+        // bounds), after earlier sheets had been rewritten.
+        let directory = env::temp_dir().join(format!(
+            "pcb-maker-footprint-link-without-value-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let hostile = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/hostile");
+        for extension in ["kicad_pcb", "kicad_sch"] {
+            fs::copy(
+                hostile.join(format!("footprint-property-without-value.{extension}")),
+                directory.join(format!("board.{extension}")),
+            )
+            .unwrap();
+        }
+        let report = normalize_kicad_footprint_links(&directory, "board").unwrap();
+        assert_eq!(report.updated_references.len(), 1);
+        let schematic = fs::read_to_string(directory.join("board.kicad_sch")).unwrap();
+        assert!(
+            schematic.contains("(property \"Footprint\")"),
+            "{schematic}"
+        );
+        assert!(
+            schematic.contains("(property \"Footprint\" \"Local:R\")"),
+            "{schematic}"
+        );
+        assert_eq!(
+            report.schematic_after_sha256,
+            file_sha256(&directory.join("board.kicad_sch")).unwrap()
+        );
+        // A board id that names a path: refused.
+        assert!(
+            normalize_kicad_footprint_links(&directory, "../board")
+                .unwrap_err()
+                .contains("the board id")
         );
         fs::remove_dir_all(directory).unwrap();
     }

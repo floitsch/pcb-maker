@@ -499,6 +499,86 @@ pub(crate) fn statics_mb_of(report: &str) -> Option<f64> {
         .ok()
 }
 
+/// The limits as this process first read them for a lattice check
+/// (`check_lattice_fits`), with the router setting `memory_mb` they were
+/// read with: later lowerings of the run judge against the same numbers
+/// (MemAvailable included), so that whether a board is refused does not
+/// change halfway through a run, and read no files.
+static LIMITS_AT_FIRST_CHECK: std::sync::Mutex<Option<(Option<u64>, MemoryLimits)>> =
+    std::sync::Mutex::new(None);
+
+/// The input's error when the router's lattice for `board` cannot be
+/// held, checked before any lattice map is allocated: an outline the maps
+/// cannot index (`LatticeSize::check`), or a router whose peak, estimated
+/// from a floor on its maps at the coarsest pitch the router knows (the
+/// ladder's own estimate: `PEAK_RESIDENT_PER_MAPS` times the maps and
+/// `RESIDENT_OVERHEAD_MB`, without the safety margin), exceeds a limit
+/// of the process's own (`PCB_MAKER_MEMORY_MB` or the router setting
+/// `memory_mb`, the cgroup, the address space) or the machine's available
+/// memory. Until 2026-10-21 one stray Edge.Cuts line made a lattice of
+/// 10^10 nodes a map and the kernel killed the run without a verdict.
+/// The verdict's next_actions name the extent and the pitch.
+pub(crate) fn check_lattice_fits(
+    board: &pcb_router::Board,
+    config: &KiCadBoardRouterConfig,
+) -> Result<(), String> {
+    let pitch = config
+        .grid_pitches_mm
+        .iter()
+        .flatten()
+        .chain(pcb_router::router::Config::default().pitches.iter())
+        .copied()
+        .filter(|pitch| pitch.is_finite() && *pitch > 0.0)
+        .fold(0.0, f64::max);
+    let size = pcb_router::grid::LatticeSize::of(board, pitch);
+    let refuse = |message: String| {
+        crate::verdict::note_input_action(format!(
+            "the board outline spans {:.1} x {:.1} mm: at the router's coarsest pitch of {pitch} mm that is {:.0} x {:.0} lattice nodes a layer; check Edge.Cuts for an item far from the board",
+            size.extent[0], size.extent[1], size.nodes[0], size.nodes[1]
+        ));
+        Err(crate::verdict::input_error(message))
+    };
+    if let Err(message) = size.check() {
+        return refuse(message);
+    }
+    let maps_mb = size.maps_bytes_floor(board.layer_count, board.classes.len()) / BYTES_PER_MB;
+    let setting = config.memory_mb.map(f64::to_bits);
+    let limits = {
+        let mut first = LIMITS_AT_FIRST_CHECK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match &*first {
+            Some((read_with, limits)) if *read_with == setting => limits.clone(),
+            _ => {
+                let limits = MemoryLimits::read(config.memory_mb);
+                *first = Some((setting, limits.clone()));
+                limits
+            }
+        }
+    };
+    for limit in &limits.limits {
+        let router_mb = limit.router_mb(maps_mb) / MEMORY_SAFETY;
+        let (allowed, what) = if limit.shared {
+            (limit.free_mb, "available")
+        } else {
+            (limit.limit_mb, "allowed")
+        };
+        if router_mb > allowed {
+            return refuse(format!(
+                "the board outline spans {:.1} x {:.1} mm: at the router's coarsest pitch of {pitch} mm its lattice has {:.0} x {:.0} nodes on {} layers for {} rule classes, at least {maps_mb:.0} MB of maps, a router of at least {router_mb:.0} MB, more than the {allowed:.0} MB {} {what}",
+                size.extent[0],
+                size.extent[1],
+                size.nodes[0],
+                size.nodes[1],
+                board.layer_count,
+                board.classes.len(),
+                limit.source
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The megabytes of a router's lattice maps, from its memory report
 /// (`memory: N MB in maps (...)`).
 pub(crate) fn maps_mb_of(report: &str) -> Option<f64> {

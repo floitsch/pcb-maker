@@ -21,6 +21,45 @@ pub(super) struct BoardLoops {
     pub board_cutouts: Vec<bool>,
 }
 
+/// The largest extent a board outline may have, in millimetres. KiCad
+/// holds coordinates as 32-bit nanometres (about 2.1 m either way of the
+/// origin), and no fabricator makes a board this long; an outline past it
+/// is a stray Edge.Cuts item (a line drawn to 10 m), whose lattice would
+/// take the machine's memory before anything else could refuse it.
+pub(crate) const MAX_BOARD_EXTENT_MM: f64 = 2000.0;
+
+/// The input's error when the board's pieces (`[min x, min y, max x, max
+/// y]` each) together span more than `MAX_BOARD_EXTENT_MM`.
+fn check_extent(pieces: &[[f64; 4]]) -> Result<(), String> {
+    let all = pieces.iter().fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |all, piece| {
+            [
+                all[0].min(piece[0]),
+                all[1].min(piece[1]),
+                all[2].max(piece[2]),
+                all[3].max(piece[3]),
+            ]
+        },
+    );
+    let size = [all[2] - all[0], all[3] - all[1]];
+    if size
+        .iter()
+        .all(|extent| extent.is_finite() && *extent <= MAX_BOARD_EXTENT_MM)
+    {
+        return Ok(());
+    }
+    Err(crate::verdict::input_error(format!(
+        "the board outline (Edge.Cuts) spans {:.1} x {:.1} mm, from ({:.3}, {:.3}) to ({:.3}, {:.3}): more than the {MAX_BOARD_EXTENT_MM:.0} mm any board can have; a stray Edge.Cuts item drawn far from the board?",
+        size[0], size[1], all[0], all[1], all[2], all[3]
+    )))
+}
+
 /// Longest chord error accepted when flattening arcs.
 pub(super) const ARC_TOLERANCE: f64 = 0.005;
 
@@ -655,6 +694,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             )
         })
         .collect();
+    check_extent(&piece_boxes)?;
     let piece_loops = pieces.clone();
     let mut pieces = pieces.into_iter();
     let mut outline = pieces.next().expect("at least one loop");
@@ -692,6 +732,24 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_outline_past_two_metres_is_the_inputs_error() {
+        // One stray Edge.Cuts line made a 10 m board, whose lattice took
+        // the machine's memory.
+        let pcb = parse(
+            r#"(kicad_pcb
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (gr_rect (start 3000 0) (end 3001 1) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let error = board_loops(&pcb).err().unwrap();
+        assert!(error.contains("spans 3001.0 x 10.0 mm"), "{error}");
+        assert!(crate::verdict::is_input_error(&error));
+        let pcb = parse(r#"(kicad_pcb (gr_rect (start 0 0) (end 1999 1999) (layer "Edge.Cuts")))"#)
+            .unwrap();
+        assert!(board_loops(&pcb).is_ok());
+    }
 
     #[test]
     fn a_loop_outside_the_board_is_another_piece_not_a_cutout() {

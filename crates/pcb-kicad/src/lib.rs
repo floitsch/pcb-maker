@@ -66,8 +66,8 @@ mod verdict;
 pub use verdict::{
     DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference,
     KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, error_verdict, input_error, is_cosmetic,
-    is_input_error, judge, kicad_drc_report, load_drc_tally, read_drc_tally, reference_findings,
-    room_action, route_facts, split_findings, tally_drc, wall_cuts,
+    is_input_error, judge, kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally,
+    reference_findings, room_action, route_facts, split_findings, tally_drc, wall_cuts,
 };
 mod work_rate;
 pub use work_rate::{
@@ -155,6 +155,7 @@ pub use verification::{
     kicad_verifier_implementation_sha256, verify_materialized_rung,
 };
 mod fs_util;
+pub use fs_util::check_board_id;
 use fs_util::*;
 mod layer_render;
 pub use layer_render::{KiCadLayerRenderConfig, KiCadLayerRenderReport, render_board_layers};

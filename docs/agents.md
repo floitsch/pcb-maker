@@ -481,6 +481,37 @@ whole (a temporary file renamed into place), so a killed run's best
 attempt so far cannot pass for a result. Errors and incomplete results
 print one line on stderr.
 
+**Boards the reader refuses** (exit 2, `usage_error`, one line naming
+the place; since 2026-10-21). A board, footprint library, schematic or
+netlist that does not parse is the input's error, as are: lists nested
+more than 1000 levels deep (KiCad's own files nest a dozen); a
+coordinate, size or angle that is not a finite number (`NaN`, `inf`,
+`1e999`, which Rust reads as numbers), named with its item (`a gr_line's
+start coordinate 1 is inf`, `the footprint J3's at coordinate 1 is
+18e999`; a word such as `inf` where a name is read, a KiCad 5 net or a
+tstamp, stays a name); a board outline (Edge.Cuts) that spans more than 2000 mm (a stray
+Edge.Cuts item far from the board: the message gives the extent and
+the corners); a lattice the memory cannot hold (the outline's extent at
+the router's coarsest pitch, a floor on its maps, against
+`PCB_MAKER_MEMORY_MB` or the router setting `memory_mb`, the cgroup,
+the address space limit or the machine's available memory: the verdict's
+first next action names the extent, the pitch and the nodes; fix the
+outline and run again into the same output directory); a footprint form
+without its name (`(footprint)`); a board id that is no file stem (`..`,
+a path separator, a leading `~` or `$`); and a footprint taken from a
+`--footprints-from` board whose library nickname or name is no file
+name (`../../x:../../y`, which would be written outside the output
+directory). A library footprint file that holds no footprint is reported
+missing (exit 1), and a netlist's footprint name that climbs out of its
+library (`lib:../../x`) is not found. A custom rule condition nested more
+than 200 levels deep does not parse and is reported unmodelled, as other
+conditions that do not parse are. What the reader leaves out without an
+error is listed in `board-router.json`'s `warnings` and leads the
+verdict's next actions: copper (segments, arcs, vias, zones) on a copper
+layer the board's stack lacks (`In3.Cu` on a two-layer board; the router
+ignores it there and the written board moves it to Cmts.User) and text
+boxes of fewer than three corners.
+
 **The pass rule**: KiCad's own DRC on the result decides, not the router's
 count. A result is complete when KiCad reports no unconnected item and no
 error that the reference board does not have at the same place

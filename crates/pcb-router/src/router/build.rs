@@ -78,6 +78,7 @@ impl Router {
     /// copper layers).
     pub fn try_new(board: &Board, config: &Config) -> Result<Self, String> {
         crate::grid::check_capacity(board)?;
+        Grid::choose(board, &config.pitches).check_size()?;
         Ok(Self::new(board, config))
     }
 
@@ -103,6 +104,11 @@ impl Router {
         let (board, neck_of, class_rules) = Self::with_neck_classes(board, config);
         let board = &board;
         let grid = Grid::choose(board, &config.pitches);
+        // Before any map is allocated (pcb-kicad's lowering refuses a
+        // board whose lattice does not fit the memory first).
+        if let Err(message) = grid.check_size() {
+            panic!("{message} (Router::try_new returns it as an error)");
+        }
         if config.verbose {
             eprintln!(
                 "lattice: pitch {} mm, origin {:?}, {} x {} nodes",

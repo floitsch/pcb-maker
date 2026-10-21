@@ -301,6 +301,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let board_id = arguments.next().ok_or_else(|| {
                 "usage: pcb-maker verify-kicad-rung <directory> <board-id>".to_string()
             })?;
+            pcb_kicad::check_board_id(&board_id)?;
             if arguments.next().is_some() {
                 return Err("usage: pcb-maker verify-kicad-rung <directory> <board-id>".into());
             }
@@ -329,6 +330,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker repair-kicad-silkscreen <source-directory> <board-id> <output-directory>";
             let source = arguments.next().ok_or(usage)?;
             let board_id = arguments.next().ok_or(usage)?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or(usage)?;
             if arguments.next().is_some() {
                 return Err(usage.into());
@@ -360,6 +362,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker normalize-kicad-footprint-links <directory> <board-id> [report.json]";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let report_path = arguments.next();
             if arguments.next().is_some() {
                 return Err(usage.into());
@@ -451,6 +454,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let input = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let mut layers = 2;
             let mut footprints_from = None;
             while let Some(argument) = arguments.next() {
@@ -490,6 +494,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker export-kicad-fab <project-dir> <board-id> <out-dir>";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             if arguments.next().is_some() {
                 return Err(usage.into());
@@ -506,6 +511,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker score-kicad-board <project-dir> <board-id>";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             if arguments.next().is_some() {
                 return Err(usage.into());
             }
@@ -520,6 +526,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker describe-kicad-board <project-dir> <board-id>";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             if arguments.next().is_some() {
                 return Err(usage.into());
             }
@@ -560,6 +567,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let model = arguments.next().ok_or_else(|| usage.to_string())?;
             let router = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             let score = pcb_kicad::score_kicad_congestion(
@@ -640,6 +648,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let job: pcb_kicad::KiCadCongestionJob = match arguments.next() {
                 Some(path) => serde_json::from_str(
@@ -667,6 +676,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker swap-kicad-pins <source-directory> <board-id> <output-directory> <pin-swaps.json> [config.json]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let spec = pcb_kicad::read_pin_swap_spec(Path::new(
                 &arguments.next().ok_or_else(|| usage.to_string())?,
@@ -704,6 +714,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let config = board_router_config(arguments.next().as_deref(), &source, &board_id)?;
             pcb_kicad::dump_kicad_pour_map(
@@ -717,6 +728,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker repair-kicad-necks <routed-directory> <board-id> [config.json|auto] (changes the directory in place)";
             let directory = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let config = board_router_config(arguments.next().as_deref(), &directory, &board_id)?;
             let repair = pcb_kicad::repair_kicad_necks(Path::new(&directory), &board_id, &config)?;
             println!(
@@ -747,6 +759,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker bench-search <source-directory> <board-id> <iterations> [config.json|auto]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let iterations: usize = arguments
                 .next()
                 .and_then(|value| value.parse().ok())
@@ -762,6 +775,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let usage = "usage: pcb-maker route-kicad-board-freerouting <source-directory> <board-id> <output-directory> <config.json>";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let config = arguments.next().ok_or_else(|| usage.to_string())?;
             if arguments.next().is_some() {

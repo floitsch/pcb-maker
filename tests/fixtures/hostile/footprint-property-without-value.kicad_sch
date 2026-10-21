@@ -1,0 +1,5 @@
+(kicad_sch
+  (symbol (lib_id "Device:R") (at 1 2 0)
+    (property "Reference" "R1")
+    (property "Footprint")
+    (property "Footprint" "Device:R")))

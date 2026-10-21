@@ -2776,3 +2776,94 @@ mod solid_starved_tests {
         assert!(solid_kept(None, &report(3, 10)));
     }
 }
+
+/// Hostile and odd boards (docs/reviews/2026-10-21-review-robustness.md).
+mod robustness_tests {
+    use super::*;
+
+    fn config() -> KiCadBoardRouterConfig {
+        KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.25,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        }
+    }
+
+    fn hostile(name: &str) -> Expr {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/hostile")
+            .join(name);
+        parse(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn thirty_two_copper_layers_are_all_of_a_mask() {
+        // `(1 << 32) - 1` was 0 in a release build: every through-hole pad,
+        // via and cutout on no layer.
+        let pcb = hostile("32-layers.kicad_pcb");
+        let layers = LayerTable::from_pcb(&pcb).unwrap();
+        assert_eq!(layers.len(), 32);
+        assert_eq!(layers.all(), u32::MAX);
+        assert_eq!(layers.mask_of(["*.Cu"].into_iter()).unwrap(), u32::MAX);
+        assert_eq!(layers.mask_of(["B.Cu"].into_iter()).unwrap(), 1 << 31);
+        let board = lower(&pcb, &config(), true).unwrap().board;
+        assert!(
+            board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.layers == u32::MAX)
+        );
+        let two = LayerTable::from_pcb(&hostile("unknown-layers.kicad_pcb")).unwrap();
+        assert_eq!(two.all(), 0b11);
+    }
+
+    #[test]
+    fn a_text_box_of_one_corner_on_a_mask_layer_is_left_out() {
+        let pcb = hostile("text-box-one-corner.kicad_pcb");
+        assert!(lower(&pcb, &config(), true).is_ok());
+        assert_eq!(
+            input_warnings(&pcb),
+            ["J1's text box has fewer than three corners: it is left out"]
+        );
+    }
+
+    #[test]
+    fn copper_on_layers_the_stack_lacks_is_warned_of() {
+        let warnings = input_warnings(&hostile("unknown-layers.kicad_pcb"));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(warnings[0].contains("1 segment on In3.Cu"), "{warnings:?}");
+        assert!(warnings[1].contains("1 via on In7.Cu (the first at 5.000, 15.000)"));
+        // An ordinary board: none.
+        let plated =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plated-branch.kicad_pcb");
+        let pcb = parse(&fs::read_to_string(plated).unwrap()).unwrap();
+        assert!(input_warnings(&pcb).is_empty());
+    }
+
+    #[test]
+    fn a_lattice_past_the_memory_is_refused_by_the_lowering() {
+        let pcb = hostile("huge-lattice.kicad_pcb");
+        let config = KiCadBoardRouterConfig {
+            memory_mb: Some(2000.0),
+            ..config()
+        };
+        let error = lower(&pcb, &config, true).err().unwrap();
+        assert!(error.contains("1900.0 x 1900.0 mm"), "{error}");
+        assert!(error.contains("2000 MB"), "{error}");
+        assert!(crate::verdict::is_input_error(&error));
+        assert!(
+            crate::verdict::noted_input_actions()
+                .iter()
+                .any(|action| action.contains("coarsest pitch of 0.127 mm"))
+        );
+        // The same board at a sane size lowers.
+        let plated =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plated-branch.kicad_pcb");
+        let pcb = parse(&fs::read_to_string(plated).unwrap()).unwrap();
+        assert!(lower(&pcb, &config, true).is_ok());
+    }
+}
