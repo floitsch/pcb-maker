@@ -288,6 +288,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the placer's progress lines.",
     ),
     (
+        "PCB_GLOBAL_DEBUG",
+        Kind::Diagnostic,
+        "the global route's negotiation, a line per iteration (nets to reroute, overflow, search work; docs/global-route.md).",
+    ),
+    (
         "PCB_PLACER_TRACE",
         Kind::Diagnostic,
         "`<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.",

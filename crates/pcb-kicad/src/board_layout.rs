@@ -846,7 +846,9 @@ pub fn layout_kicad_board(
     };
     // Only where the race runs: one router seed, no pin swaps.
     let pre_ranking = config.congestion_score != "none"
-        && (config.congestion_score == "rudy" || congestion_model.is_some())
+        && (config.congestion_score == "rudy"
+            || config.congestion_score == "global"
+            || congestion_model.is_some())
         && router_config.seeds.unwrap_or(1) <= 1
         && config.pin_swaps.is_none()
         && config.swappable.is_empty();

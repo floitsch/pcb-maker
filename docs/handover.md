@@ -265,14 +265,14 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
 | --- | --- |
 | Current state, open problems | this file |
 | What each round measured and changed | [changelog.md](changelog.md), newest first |
-| Design notes | [router.md](router.md), [placer.md](placer.md), [constraints.md](constraints.md), [agents.md](agents.md), [congestion-model.md](congestion-model.md), [coupling.md](coupling.md) |
+| Design notes | [router.md](router.md), [placer.md](placer.md), [constraints.md](constraints.md), [agents.md](agents.md), [congestion-model.md](congestion-model.md), [coupling.md](coupling.md), [global-route.md](global-route.md) |
 | Results tables | [benchmarks.md](benchmarks.md), [benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md) (tiers), [benchmarks/github/README.md](../benchmarks/github/README.md) (harvest, Freerouting) |
 | Sweep logs | `build/github-layout-v16.log` and `build/github-layout-v16/` (v17: `build/github-layout-v17*` once it lands), `build/github-freerouting-x738*.log` |
 | Tier references | `build/quick30-x1152.log`, `build/short-x1170.log` (complete: `build/short-x1083.log`), `build/sch-x1161.log` |
 | Snapshot binaries | `build/bin/pcb-maker-xNNN` (x1170 = main 54eff39); `scripts/snapshot.sh <n>` builds and copies one, never over an existing number |
 | Tasks | committed in `benchmarks/agent-tasks/tasks/v7/` (every tier since 2026-10-21) and `tasks/v6/` (the quick and short tiers before; v7 is v6 plus uuids on six panels, none in those tiers), copies of `build/github-tasks-v6/` and `-v7/`, from `benchmarks/agent-tasks/from_pcbench.py --corpus benchmarks/github/boards.json`; tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |
 | Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence); their schematics in `benchmarks/real/external/github-sch/` (`benchmarks/github/schematics.json`) |
-| Code | `crates/pcb-router`, `pcb-placer`, `pcb-kicad`, `pcb-congestion`, `pcb-topo`; the command line in `src/` (agent commands in `agent_cli.rs`, the rest in `main.rs`); `pcb-kicad/src/lib.rs` lists its modules (the file layer `kicad_sexpr`, `kicad_nets`, `copper_emit`; `geometry`, `copper_geometry`; `board_placer/`, `board_router/`, `board_layout`; `verification`, `native_report`, `drc_cache`, `verdict`; [README](../README.md#repository)) |
+| Code | `crates/pcb-router`, `pcb-placer`, `pcb-kicad`, `pcb-congestion`, `pcb-global` (the coarse global route), `pcb-topo`; the command line in `src/` (agent commands in `agent_cli.rs`, the rest in `main.rs`); `pcb-kicad/src/lib.rs` lists its modules (the file layer `kicad_sexpr`, `kicad_nets`, `copper_emit`; `geometry`, `copper_geometry`; `board_placer/`, `board_router/`, `board_layout`; `verification`, `native_report`, `drc_cache`, `verdict`; [README](../README.md#repository)) |
 | The removed research stack | git history up to be4b012: the crates layout-trace-routing, pcb-routing, pcb-coordinator, pcb-placement, pcb-validate, pcb-viewer, pcb-benchmark and pcb-pipeline, 54 research commands (check, validate, place, route-grid, the semantic ladder, the route candidates, benchmark-route-*, ...), their tests and fixtures; list in [changelog.md](changelog.md#committed-on-2026-10-20-quality-research-stack-removed); pcb-kicad's research modules (the semantic ladder, the sequential and adaptive routers, the grid router and its inspections, via actions, route relaxation), the crates pcb-engine, pcb-grid-router, layout-trace-model and pcb-core and nine more commands in git history up to b306347 ([changelog.md](changelog.md#committed-on-2026-10-21-quality-pcb-kicad-research-removed-librs-split)) |
 | Worktrees | one per package of work, `../pcb-maker-<name>`, made by `scripts/worktree.sh` |
 | Agent memory | `~/.claude/projects/-home-flo-programming-pcb-maker/memory/` |
@@ -370,6 +370,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_SPOKE_DEBUG`: the spoke model's decisions per pad.
 - `PCB_ROUTER_DUMP_MANUAL_SPOKES`: dump-pour-map also adds the manual spokes and says how many.
 - `PCB_PLACER_DEBUG`: the placer's progress lines.
+- `PCB_GLOBAL_DEBUG`: the global route's negotiation, a line per iteration (nets to reroute, overflow, search work; docs/global-route.md).
 - `PCB_PLACER_TRACE`: `<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.
 - `PCB_PLACER_DESIGNER`: `<board>`: the designer's poses judged by the placer's model (their wirelength, what each illegal movable part meets), and with `PCB_PLACER_TRACE` in the trace beside ours.
 - `PCB_PLACER_DESIGNER_LEVEL`: `full`: judge the designer's poses at the full spacing; `tight`, `touch`: with tight bodies, and courtyards touching (default: the smallest spacing, no halos).

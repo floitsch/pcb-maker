@@ -37,7 +37,7 @@ step() {
   echo
 }
 
-step cargo test --release -p pcb-router -p pcb-kicad -p pcb-placer
+step cargo test --release -p pcb-router -p pcb-kicad -p pcb-placer -p pcb-global
 step cargo test --release -p pcb-maker --test cli_exit_codes "${walkthrough[@]}" --test native_verification \
   --test router_fingerprint --test config_reference
 step python3 -m pytest -q benchmarks/agent-tasks

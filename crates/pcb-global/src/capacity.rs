@@ -660,6 +660,28 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_pad_on_a_boundary_passes_its_own_net() {
+        // The boundary x = 2 closed by copper of no net, but for a pad of
+        // net 0 that it cuts: no track passes, the pad's own escape does.
+        let mut board = empty_board(4.0, 2.0, 1);
+        board.obstacles.push(wall([2.0, 1.0], [0.5, 1.0], 1));
+        let mut pad = wall([2.0, 1.0], [0.3, 0.2], 1);
+        pad.net = Some(0);
+        board.obstacles.push(pad);
+        let config = GlobalConfig {
+            tile_mm: 2.0,
+            ..GlobalConfig::default()
+        };
+        let frame = Frame::of_board(&board, config.tile_mm);
+        let capacity = Capacity::build(&board, &frame, &config);
+        assert_eq!(capacity.edges[0][0], 1.0, "{:?}", capacity.edges);
+        // Without the pad the boundary is closed.
+        board.obstacles.pop();
+        let capacity = Capacity::build(&board, &frame, &config);
+        assert_eq!(capacity.edges[0][0], 0.0, "{:?}", capacity.edges);
+    }
+
+    #[test]
     fn the_outline_bounds_the_boundaries() {
         // An L: the upper right tile is outside.
         let mut board = empty_board(4.0, 4.0, 1);

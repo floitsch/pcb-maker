@@ -57,7 +57,7 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all --check
       - name: clippy
-        run: cargo clippy --release -p pcb-router -p pcb-kicad -p pcb-placer -- -D warnings
+        run: cargo clippy --release -p pcb-router -p pcb-kicad -p pcb-placer -p pcb-global -- -D warnings
 
   walkthrough:
     name: agent walkthrough (KiCad in the loop)
