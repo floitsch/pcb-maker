@@ -406,7 +406,7 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct KiCadRepairs {
     /// A pad's own straight track into its pour island (the router's
-    /// `island_stubs`, `PCB_ROUTER_NO_ISLAND_STUBS`); `null`: not counted
+    /// `island_stubs`, `PCB_ROUTER_ISLAND_STUBS`); `null`: not counted
     /// (the router does not report them yet).
     pub island_stubs: Option<usize>,
     /// Tracks the connection-width repair kept (`neck_repair`), and their
@@ -439,7 +439,7 @@ impl KiCadRepairs {
 pub const RESULT_ENVIRONMENT: [&str; 14] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_SEEDS",
-    "PCB_ROUTER_NO_ISLAND_STUBS",
+    "PCB_ROUTER_ISLAND_STUBS",
     "PCB_ROUTER_NO_WALL_GUARD",
     "PCB_SKIP_NATIVE",
     "PCB_MIN_CONNECTION_FLOOR",

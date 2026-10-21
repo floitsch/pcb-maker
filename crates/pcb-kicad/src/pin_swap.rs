@@ -69,6 +69,7 @@ pub struct KiCadPinSwapConfig {
     /// Annealing moves per unit.
     #[serde(default = "default_moves_per_unit")]
     pub moves_per_unit: usize,
+    /// Seed of the annealing's moves.
     #[serde(default)]
     pub seed: u64,
 }

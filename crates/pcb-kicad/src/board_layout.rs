@@ -49,6 +49,8 @@ pub struct KiCadBoardLayoutConfig {
     /// clock only guards against a machine far busier or slower than the
     /// work rates say: `wall_guard_seconds`). A load margin, not a budget.
     pub wall_guard: f64,
+    /// The settings of the layout's placement (as place-kicad-board's
+    /// placer config; its constraints relative to the source directory).
     pub placer: KiCadBoardPlacerConfig,
     /// Interchangeable pins (`pin-swaps.json`; relative to the source
     /// directory). The nets on them are permuted after placement.
@@ -57,6 +59,7 @@ pub struct KiCadBoardLayoutConfig {
     /// functions such as `GPIO*` or pad numbers, globs) whose nets may be
     /// permuted. Used when `pin_swaps` is not given.
     pub swappable: Vec<KiCadSwappable>,
+    /// The pin-swap estimate's settings, for `pin_swaps` and `swappable`.
     pub pin_swap: KiCadPinSwapConfig,
     /// The placement race's pre-ranking (`docs/congestion-model.md`): the
     /// placer makes `congestion_candidates` placements (seeds), they are
@@ -72,14 +75,21 @@ pub struct KiCadBoardLayoutConfig {
     ///   overflow summed over the board), or `open+rudy` (the sum of a
     ///   placement's ranks by `open` and by RUDY).
     pub congestion_model: Option<PathBuf>,
+    /// With a pre-ranking score, the placer makes at least this many
+    /// placements to rank (its `placement_seeds` when that is more).
     pub congestion_candidates: usize,
+    /// With a pre-ranking score, how many of the best-ranked placements
+    /// the race routes (at least one).
     pub congestion_probes: usize,
+    /// How the race ranks the placements before probing them (the values
+    /// above, at `congestion_model`).
     pub congestion_score: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadSwappable {
+    /// The part's reference (`U1`).
     pub part: String,
     /// Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs.
     pub pins: Vec<String>,

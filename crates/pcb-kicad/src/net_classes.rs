@@ -11,16 +11,21 @@ use crate::project_rules::wildcard_match;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KiCadNetClassRequest {
+    /// The class's name in the `.kicad_pro` (not empty, not `Default`).
     pub name: String,
     /// Net names or KiCad wildcard patterns (`*`, `?`), with or without the
     /// sheet path's leading `/`.
     pub nets: Vec<String>,
+    /// Track width of the class's nets (unset: what each net had).
     #[serde(default)]
     pub track_width_mm: Option<f64>,
+    /// Clearance of the class's nets (unset: what each net had).
     #[serde(default)]
     pub clearance_mm: Option<f64>,
+    /// Via diameter of the class's nets (unset: what each net had).
     #[serde(default)]
     pub via_diameter_mm: Option<f64>,
+    /// Via drill of the class's nets (unset: what each net had).
     #[serde(default)]
     pub via_drill_mm: Option<f64>,
 }

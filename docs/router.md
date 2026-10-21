@@ -9,6 +9,9 @@ cargo run --release -- route-kicad-board \
   <source-directory> <board-id> <output-directory> [config.json|auto]
 ```
 
+Every key of `config.json` with its type, default and doc comment is in
+the generated [configuration reference](config-reference.md).
+
 The command parses the board once, routes every connection in memory, checks
 the result with an exact internal verifier, writes the project once, and runs
 native KiCad verification once as the final gate. It exits non-zero when the
@@ -1174,8 +1177,9 @@ followed them).
 
 ## Known limits / next steps
 
-- Two copper layers, through vias only (the core is N-layer; the adapter is
-  not yet).
+- Through vias only: inner layers are routed (and take the automatic
+  planes on four or more layers), but there are no blind, buried or
+  micro vias.
 - Existing tracks are obstacles; they are not yet adopted as tree components.
 - Only pours covering at least 10 % of the board are connected through;
   smaller zones are treated as routing. Arcs in existing copper are refused.

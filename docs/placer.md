@@ -12,6 +12,9 @@ cargo run --release -- place-kicad-board <source-dir> <board-id> <out-dir> [plac
 cargo run --release -- layout-kicad-board <source-dir> <board-id> <out-dir> <router.json> [layout.json]
 ```
 
+Every key of `placer.json` and `layout.json` with its type, default and
+doc comment is in the generated [configuration reference](config-reference.md).
+
 ## Results (2026-09-21, cold: all movable footprints re-placed, zero copper)
 
 Every board below is placed and routed automatically, is electrically complete

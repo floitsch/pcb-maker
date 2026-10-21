@@ -19,10 +19,14 @@ type Boxes = Vec<(Point, Point)>;
 
 #[derive(Clone, Debug)]
 pub struct AnnealConfig {
+    /// Stages of the annealing schedule: the overlap penalty grows and the
+    /// move radius shrinks from stage to stage.
     pub stages: usize,
+    /// Moves tried per movable part in each stage.
     pub moves_per_part: usize,
     /// Initial move radius as a fraction of the board's larger side.
     pub initial_radius: f64,
+    /// Seed of the annealer's moves.
     pub seed: u64,
     /// No further stage starts after this wall-clock time.
     pub deadline: Option<std::time::Instant>,

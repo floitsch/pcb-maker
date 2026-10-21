@@ -12,6 +12,9 @@ pub struct KiCadBoardPlacerConfig {
     pub spacing_mm: f64,
     /// Footprint origins are snapped to multiples of this.
     pub grid_mm: f64,
+    /// Movable parts keep the angle the board gives them; otherwise each
+    /// may take any quarter turn of it (and square angles too when it
+    /// stands at an odd one).
     pub keep_rotation: bool,
     /// References that must keep their pose, in addition to locked
     /// footprints, footprints without nets, and footprints on the board edge.
@@ -36,10 +39,13 @@ pub struct KiCadBoardPlacerConfig {
     /// (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its
     /// courtyard so its pins can escape.
     pub track_pitch_mm: f64,
+    /// Pins per track of halo (see `track_pitch_mm`); 0 gives no part a
+    /// pin-count halo.
     pub pins_per_halo_track: f64,
     /// Factor on the routing halos the pin counts ask for (not on
     /// `halo_overrides_mm`): less room for escapes, shorter wires.
     pub halo_scale: f64,
+    /// The largest pin-count halo, in mm, before `halo_scale`.
     pub maximum_halo_mm: f64,
     /// Per-reference halos replacing the pin-count rule (routing feedback).
     pub halo_overrides_mm: BTreeMap<String, f64>,
@@ -48,6 +54,8 @@ pub struct KiCadBoardPlacerConfig {
     /// Distance movable courtyards keep from the board edge (at least the
     /// copper-to-edge clearance, since pads may reach the courtyard).
     pub edge_margin_mm: f64,
+    /// The global placement's seed for the first of the
+    /// `placement_seeds`; seed k of the race uses this plus k.
     pub seed: u64,
     /// Wall-clock time by which placement returns its best result (set by
     /// the layout from its budget; placement of a 404-part panel ran past

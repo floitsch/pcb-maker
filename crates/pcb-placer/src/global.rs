@@ -25,12 +25,16 @@ type NetPin = (Point, Option<(usize, usize)>);
 
 #[derive(Clone, Debug)]
 pub struct GlobalConfig {
+    /// Bins per side of the density grid the charge is spread on.
     pub bins: usize,
     /// Fraction of the whitespace (free area not needed by bodies and their
     /// halos) that is occupied by filler charge. 1 lets wirelength pull the
     /// parts into a compact cluster; 0 spreads them over the whole board.
     pub whitespace_fill: f64,
+    /// The density overflow at which the global placement stops (after
+    /// its first 20 iterations).
     pub stop_overflow: f64,
+    /// Iterations of the global placement at most.
     pub max_iterations: usize,
     /// Growth of the density weight per iteration.
     pub lambda_growth: f64,
@@ -38,14 +42,20 @@ pub struct GlobalConfig {
     pub rotation_interval: usize,
     /// Nets with more pins are ignored when choosing rotations.
     pub rotation_net_limit: usize,
+    /// Every this many iterations the poses are kept as a frame (for
+    /// animations); 0 keeps none but the last.
     pub frame_interval: usize,
+    /// Seed of the start's noise: the parts start near the fixed parts'
+    /// pin centroid (or the board's centre), the fillers anywhere.
     pub seed: u64,
     /// Routing demand as charge: every net's wire area (its half perimeter
     /// times `track_pitch`, over `routing_layers`) spreads over its
     /// bounding box and counts like body area there, so parts leave room
     /// where the wires will run. 0 turns it off; 1 counts the wires once.
     pub routing_demand: f64,
+    /// Signal layers the routing demand spreads over (at least 1).
     pub routing_layers: f64,
+    /// Track pitch of the routing demand's wire area, in mm.
     pub track_pitch: f64,
 }
 

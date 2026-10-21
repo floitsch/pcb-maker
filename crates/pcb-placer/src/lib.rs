@@ -20,8 +20,12 @@ pub use problem::{Component, Pin, Point, Pose, Problem, Side};
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
+    /// The global (electrostatic) placement's settings.
     pub global: GlobalConfig,
+    /// The annealer's settings.
     pub anneal: anneal::AnnealConfig,
+    /// Passes of the wirelength-reducing local search on the legal
+    /// placement (`legal::refine`), also after each relation repair.
     pub refine_passes: usize,
     /// Halos shrink until bodies plus margins fit into this share of the
     /// free board area.

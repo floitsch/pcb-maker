@@ -152,27 +152,19 @@ fn print_help() {
         "\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, export-kicad-fab"
     );
     println!(
-        "(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 9 or newer) must be"
+        "(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 10) must be"
     );
     println!("on the PATH.\n");
     println!("{}\n", agent_cli::EXIT_CODES);
-    println!("Environment:");
-    println!("  RAYON_NUM_THREADS          search threads of the router; default: every core.");
-    println!(
-        "  PCB_ROUTER_SEEDS           with router config auto: route that many ways and keep the best; default 1."
-    );
-    println!(
-        "  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then"
-    );
-    println!(
-        "                             router_complete_unverified at best, exit 1); default unset."
-    );
-    println!(
-        "  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset."
-    );
-    println!(
-        "  PCB_PLACER_WORK_SECONDS    place-kicad-board's work budget in seconds of work; default 600.\n"
-    );
+    println!("Environment (docs/handover.md, \"Switches\", lists every variable):");
+    for (name, effect) in ENVIRONMENT_HELP {
+        let mut lines = effect.lines();
+        println!("  {name:<26} {}", lines.next().unwrap_or(""));
+        for line in lines {
+            println!("  {:<26} {line}", "");
+        }
+    }
+    println!();
     println!(
         "Research and benchmark commands (no detailed help; exit 0 done, 1 failed or incomplete, 2 usage,"
     );
@@ -181,6 +173,65 @@ fn print_help() {
         println!("  pcb-maker {line}");
     }
 }
+
+/// The user-facing environment variables `--help` lists, with their
+/// effect (tools/config-reference checks that every user-facing variable
+/// of its index is here).
+const ENVIRONMENT_HELP: &[(&str, &str)] = &[
+    (
+        "RAYON_NUM_THREADS",
+        "search threads of the router and the placer; default: every core.",
+    ),
+    (
+        "PCB_WORK_RATE",
+        "<expansions/s>[,<placer units/s>]: the work rates pinned, not measured at the\nstart (a verdict's work_rate and placer_work_rate repeat its run).",
+    ),
+    (
+        "PCB_ROUTER_SEEDS",
+        "with router config auto: route that many ways and keep the best; default 1.",
+    ),
+    (
+        "PCB_SKIP_NATIVE",
+        "with router config auto: skip KiCad's check (the verdict is then\nrouter_complete_unverified at best, exit 1); default unset.",
+    ),
+    (
+        "PCB_ROUTER_NO_WALL_GUARD",
+        "the work alone ends runs, never the wall clock; default unset.",
+    ),
+    (
+        "PCB_PLACER_WORK_SECONDS",
+        "place-kicad-board's work budget in seconds of work; default 600.",
+    ),
+    (
+        "PCB_KICAD_TIMEOUT",
+        "seconds one kicad-cli report may take before it is killed; default 900.",
+    ),
+    (
+        "PCB_MIN_CONNECTION_FLOOR",
+        "warning: floor track widths at the minimum connection width also when KiCad\nrates connection_width a warning; off: never; default: at error severity only.",
+    ),
+    (
+        "PCB_KICAD_NO_NECK_REPAIR",
+        "no connection-width neck repair after the final DRC; default unset.",
+    ),
+    (
+        "PCB_ROUTER_ISLAND_STUBS",
+        "pads get straight tracks into fill islands their spokes reach (silences\nKiCad's isolated-island finding); default unset (off).",
+    ),
+    (
+        "PCB_MAKER_CACHE_DIR",
+        "root of the DRC cache; default $XDG_CACHE_HOME/pcb-maker or ~/.cache/pcb-maker.",
+    ),
+    ("PCB_MAKER_NO_CACHE", "1: no DRC cache; default unset."),
+    (
+        "PCB_MAKER_KICAD_USER_LIBS",
+        "1: KiCad's checks load the user's global libraries; default: empty tables.",
+    ),
+    (
+        "PCB_MAKER_MEMORY_MB",
+        "a memory limit in MB: the ladder runs as many routers at once as fit.",
+    ),
+];
 
 /// The usage line of a research command.
 fn research_usage(command: &str) -> Option<String> {

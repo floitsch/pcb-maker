@@ -56,10 +56,10 @@ designer's, constraints met); 3527 unconnected in all, 82 new DRC errors,
 [benchmarks.md](benchmarks.md#layout-sweep-v16-2026-10-15), triage in
 [changelog.md](changelog.md#triage-of-v16-2026-10-15-x931--x932).
 
-- v17 (x1170, tasks v7, 8 x 2): 48 of 109 pass, unconnected 2708, new errors 38, cut 2 (docs/benchmarks.md "Layout sweep v17").
-under the lock). Fill in when it lands:
-
-    v17 (x____, tasks v7): __ of 109 pass, __ unconnected, __ new errors, __ cut; build/github-layout-v17.log
+**Layout sweep v17** (x1170, tasks v7, 8 jobs x 2 threads): **48 of 109
+pass**, 2708 unconnected, 38 new DRC errors, 2 rows cut.
+`build/github-layout-v17.log`; table in
+[benchmarks.md](benchmarks.md#layout-sweep-v17-2026-10-16).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30
@@ -167,9 +167,9 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
 4. **Crowded placement** (OpenESC, SNSP, video, hackrf, BAGEL, 4in1-mini).
    The designer's placement routes 4in1-mini to 5 open where ours ends at
    48-56, and more seeds do not close it (placement seeds after honest
-   work). Built and off: `replicate_channels`, `supply_via_room`,
-   `routing_demand`, `routing_room`, `bus_rows`, `shared_halos`,
-   `anneal_far_side_gaps`. The legaliser is not the lever (4 %); removing
+   work). Built and off: `routing_demand`, `routing_room`,
+   `shared_halos`, `anneal_far_side_gaps`; built, off and removed on
+   2026-10-16: `replicate_channels`, `supply_via_room`, `bus_rows`. The legaliser is not the lever (4 %); removing
    halos loses routing. Next: routing room from congestion rather than pin
    count, bus-aligned rows for video, seeded orientation starts in the
    race, and seed-repeated pairs as the judge: the race's probes pick by
@@ -292,96 +292,87 @@ handover.md changelog.md` for the links into these two files).
 
 ## Switches
 
-Environment variables the binary reads. Defaults are what an agent gets;
-none is needed for normal use.
+Environment variables the binary reads, one line each. Defaults are what
+an agent gets; none is needed for normal use. The index is generated from
+the code (tools/config-reference: every `PCB_*` name in the crates'
+sources needs its line there, and `cargo test --test config_reference`
+fails until the index is regenerated); the config keys are in
+[config-reference.md](config-reference.md).
 
-User-facing:
+<!-- The environment index is generated: cargo run -p config-reference. -->
 
-- `PCB_SKIP_NATIVE`: with the `auto` router config, no KiCad checks
-  (machines without kicad-cli); the router's own count decides.
-- `PCB_ROUTER_SEEDS=N`: with the `auto` router config, N seeds routed side
-  by side and the best kept (the seeded portfolio).
-- `PCB_ROUTER_NO_WALL_GUARD`: no wall-clock guard in the router, and the
-  layout sets no wall-clock deadline; work alone decides (determinism
-  checks, the walkthrough test).
-- `PCB_WORK_RATE=<expansions/s>[,<placer units/s>]`: the work rates
-  pinned instead of measured at the start (a verdict's `work_rate` and
-  `placer_work_rate` repeat its run; `3.15e6,150e6` the reference's, run.py's
-  default). `pcb-maker calibrate-work-rate [rounds]` prints the
-  measurement alone.
-- `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget
-  (default 600 s, the layout's share).
-- `PCB_MAKER_CACHE_DIR`: root of the DRC cache and of the library-free
-  kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else
-  `~/.cache/pcb-maker`).
-- `PCB_MAKER_NO_CACHE=1`: no DRC cache (both sides of a CPU pair).
-- `PCB_MAKER_KICAD_USER_LIBS=1`: kicad-cli's DRC and ERC run with the
-  user's KiCad configuration (global libraries) instead of empty tables.
-- `PCB_KICAD_TIMEOUT`: seconds a kicad-cli report may take (default 900).
-- `PCB_MIN_CONNECTION_FLOOR=warning|off`: floor track widths at the board's
-  minimum connection width also when connection_width is a warning, or
-  never (default: only at error severity).
-- `PCB_KICAD_NO_NECK_REPAIR`: no connection-width neck repair after the
-  final DRC.
-- `PCB_MAKER_TEST_PANIC`: panic once a run has started
-  (tests/cli_exit_codes.rs).
+User-facing (`pcb-maker --help` lists them):
 
-Diagnostics (stderr unless said):
+- `RAYON_NUM_THREADS`: threads of the router's searches and of the placer's seed pool (default: every core); results do not depend on it.
+- `PCB_WORK_RATE`: `<expansions/s>[,<placer units/s>]`: the work rates pinned instead of measured at the start (a verdict's `work_rate` and `placer_work_rate` repeat its run; `3.15e6,150e6` is the reference's, run.py's default); wins over the router settings `work_rate` and `placer_work_rate`. `pcb-maker calibrate-work-rate [rounds]` prints the measurement alone.
+- `PCB_ROUTER_SEEDS`: `N`: with the `auto` router config, N seeds routed side by side and the best kept (the router setting `seeds`).
+- `PCB_SKIP_NATIVE`: with the `auto` router config, no KiCad checks (`skip_native_verification`; machines without kicad-cli): the verdict is `router_complete_unverified` at best, exit 1.
+- `PCB_ROUTER_NO_WALL_GUARD`: no wall-clock guard in the router, and the layout sets no wall-clock deadline: work alone ends runs (determinism checks, the walkthrough test).
+- `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget in seconds of work (default 600, the layout's share).
+- `PCB_KICAD_TIMEOUT`: seconds one kicad-cli report may take before it is killed (default 900).
+- `PCB_MIN_CONNECTION_FLOOR`: `warning`: floor the router's track widths at the board's minimum connection width also when KiCad rates connection_width a warning; `off`: never (default: only at error severity).
+- `PCB_KICAD_NO_NECK_REPAIR`: no connection-width neck repair after the final DRC.
+- `PCB_ROUTER_ISLAND_STUBS`: turns the router's island stubs on (`island_stubs`, off since 2026-10-21): a pad's straight track into a fill island its spokes reach, which only silences KiCad's isolated-island finding.
+- `PCB_MAKER_CACHE_DIR`: root of the DRC cache and of the library-free kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`).
+- `PCB_MAKER_NO_CACHE`: anything but `0`: no DRC cache (both sides of a CPU pair).
+- `PCB_MAKER_KICAD_USER_LIBS`: anything but `0`: kicad-cli's DRC and ERC run with the user's KiCad configuration (global libraries) instead of empty library tables.
+- `PCB_MAKER_MEMORY_MB`: a resident memory limit in megabytes beside the router setting `memory_mb` and the limits the process reads itself (RLIMIT_AS, the cgroup's): the ladder runs as many routers side by side as fit the tightest.
 
-- `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches,
-  resolve, what blocks a stub, lattice details).
-- `PCB_ROUTER_DUMP=x0,y0,x1,y1`: prints that region of the lattice per
-  layer (static blocks, own pads, occupancy, where vias may not go).
-- `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase
-  (determinism and byte-identity checks; compare as a multiset when
-  attempts run side by side).
-- `PCB_ROUTER_FINGERPRINT_ALL`: also hashes every occupancy map and pour
-  mask into each fingerprint.
-- `PCB_ROUTER_POUR_TRACE`: per pour analysis its counts, modelled work and
-  wall time (calibrating the pour work constants).
-- `PCB_ROUTER_POUR_DUMP=<dir>`: writes the pour maps at each finish.
-- `PCB_ROUTER_SEARCH_RATE`: the search times itself for the
-  `profile rate:` line (calibrating `EXPANSIONS_PER_SECOND`).
+Switches and experiment hooks (change the result):
+
+- `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
+- `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
+- `PCB_ROUTER_SEED`: `N`: perturbs the net order and seeds the history with noise, so that one board routes many ways.
+- `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).
+- `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
+
+Diagnostics (stderr unless said; the result does not change):
+
+- `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).
+- `PCB_ROUTER_DUMP`: `x0,y0,x1,y1`: prints that region of the lattice per layer (static blocks, own pads, occupancy, where vias may not go).
+- `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase (determinism and byte-identity checks; compare as a multiset when attempts run side by side).
+- `PCB_ROUTER_FINGERPRINT_ALL`: with `PCB_ROUTER_FINGERPRINT`, also hashes every occupancy map and pour mask into each fingerprint.
+- `PCB_ROUTER_POUR_TRACE`: per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).
+- `PCB_ROUTER_POUR_DUMP`: `<dir>`: writes the pour maps at each finish.
+- `PCB_ROUTER_SEARCH_RATE`: the search times itself for the `profile rate:` line (calibrating `REFERENCE_EXPANSIONS_PER_SECOND`).
 - `PCB_ROUTER_TIMING`: where a reroute's time goes (layout moves).
 - `PCB_ROUTER_SPOKE_DEBUG`: the spoke model's decisions per pad.
-- `PCB_ROUTER_DUMP_MANUAL_SPOKES`: dump-pour-map also adds the manual
-  spokes and says how many.
+- `PCB_ROUTER_DUMP_MANUAL_SPOKES`: dump-pour-map also adds the manual spokes and says how many.
 - `PCB_PLACER_DEBUG`: the placer's progress lines.
-- `PCB_PLACER_TRACE=<file>`: per seed the weighted wirelength after each
-  stage and per part how far each stage moved it.
-- `PCB_PLACER_DESIGNER=<board>`: with the trace, the designer's poses
-  beside ours and whether the placer would call them legal.
-- `PCB_PLACER_DESIGNER_LEVEL=full`: judge the designer's poses at the full
-  spacing (default: the loosest level).
-- `PCB_PLACER_CHECK_OVERLAP`: the annealer checks its incremental overlap
-  against a full recount.
-- `PCB_LADDER_STATS`: the probe ladder prints each probe's other
-  statistics (the ladder's judge).
+- `PCB_PLACER_TRACE`: `<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.
+- `PCB_PLACER_DESIGNER`: `<board>`: the designer's poses judged by the placer's model (their wirelength, what each illegal movable part meets), and with `PCB_PLACER_TRACE` in the trace beside ours.
+- `PCB_PLACER_DESIGNER_LEVEL`: `full`: judge the designer's poses at the full spacing; `tight`, `touch`: with tight bodies, and courtyards touching (default: the smallest spacing, no halos).
+- `PCB_PLACER_CHECK_OVERLAP`: the annealer checks its incremental overlap against a full recount.
+- `PCB_LADDER_STATS`: the probe ladder prints each probe's other statistics (the ladder's judge).
 - `PCB_KICAD_NECKS_DEBUG`: the neck finder per net and layer.
 - `PCB_LABELS_DEBUG`: copper texts the label mover could not place.
 - `PCB_OUTLINE_DEBUG`: the outline's area, vertices and cutouts.
-- `PCB_PROBES_SIDE_BY_SIDE=N`: at most N probes at once (1: one after the
-  other).
-- `PCB_NARROW_RESERVE=share`: the share of the first attempt's work kept
-  for the narrow-signal step (default 0.75).
-- `PCB_ROUTER_SEED=N`: perturbs the net order and seeds the history with
-  noise, so one board routes many ways.
+- `PCB_TOPO_DEBUG`: the topological engine's failures in short (overflowing edges by kind, failed and unrouted wires).
+- `PCB_TOPO_SVG`: `<dir>`: the topological engine writes an SVG picture of every stage there.
+- `PCB_TOPO_TAUT`: the topological engine reports taut wires that do not settle.
+- `PCB_TOPO_TRACE`: `N`: the topological engine traces the radii of wire N.
+
+Tests and research commands:
+
+- `PCB_MAKER_KICAD_VERIFICATION_CACHE`: `<dir>`: verify-kicad-rung caches its KiCad checks there.
+- `PCB_MAKER_KICAD_VERIFICATION_CACHE_EVENTS`: `<file>`: verify-kicad-rung's cache appends its hits and misses there (tests/native_verification.rs).
+- `PCB_MAKER_TEST_PANIC`: panic once a run has started (tests/cli_exit_codes.rs).
+- `PCB_MAKER_TEST_DROP_DRC`: the route's drc.json removed before the verdict reads it (tests/cli_exit_codes.rs).
+
+<!-- End of the generated environment index. -->
 
 The old-path A/B switches (each restored the code before a change) were
 removed on 2026-10-16: the router's (`PCB_ROUTER_OLD_*`,
-`PCB_ROUTER_NO_*` but `NO_ISLAND_STUBS` and `NO_WALL_GUARD`,
-`PCB_ROUTER_REROUTE_FRACTION`, the speculation switches,
-`PCB_ROUTER_CLEANUP_WINDOW`; changelog.md, "quality: pcb-router") and
-the layout's, ladder's and placer's (`PCB_KICAD_OLD_ZONE_ARCS`,
-`PCB_LADDER_OLD_RESERVE`, `PCB_LADDER_FORCE_RUNG`,
-`PCB_LADDER_SHORT_RESUME`, `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`,
-`PCB_LAYOUT_NARROW_CONTINUATION` and `_FLOOR`, `PCB_PLACER_CHANNEL_SELF`,
-`PCB_JACOBI_BATCH`; changelog.md, "quality: pcb-kicad").
-`PCB_ROUTER_NO_ISLAND_STUBS` turns off the island stubs
-(`Config::island_stubs`, on), a default Florian has not settled. Other
-experiment hooks in the code, undocumented on purpose: `PCB_TOPO_*`,
-`PCB_MAKER_KICAD_VERIFICATION_CACHE*`; test fixtures
-`PCB_MAKER_JOINT_RETAINED_FIXTURE_ROOT`, `PCB_MAKER_KEEP_TEST_ARTIFACTS`.
+`PCB_ROUTER_NO_*` but `NO_WALL_GUARD`, `NO_SPOKELESS_TRACKS` and
+`NO_LOST_SPOKES`, `PCB_ROUTER_REROUTE_FRACTION`, the speculation
+switches, `PCB_ROUTER_CLEANUP_WINDOW`; changelog.md, "quality:
+pcb-router") and the layout's, ladder's and placer's
+(`PCB_KICAD_OLD_ZONE_ARCS`, `PCB_LADDER_OLD_RESERVE`,
+`PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`,
+`PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`, `PCB_LAYOUT_NARROW_CONTINUATION` and
+`_FLOOR`, `PCB_PLACER_CHANNEL_SELF`, `PCB_JACOBI_BATCH`; changelog.md,
+"quality: pcb-kicad"). `PCB_ROUTER_NO_ISLAND_STUBS` became
+`PCB_ROUTER_ISLAND_STUBS` when the island stubs went off on 2026-10-21.
 
 ## Gotchas
 

@@ -15,7 +15,12 @@ pub struct Config {
     /// Cost factor for running across a layer's preferred axis. Layers
     /// alternate between horizontal and vertical preference.
     pub against_direction: f64,
+    /// The price of sharing a lattice node with another net (the present
+    /// congestion factor) in the negotiation's first iteration; a reroute
+    /// starts at the price the negotiation reached, at least this.
     pub present_factor: f64,
+    /// Factor on the price of sharing after every negotiation iteration,
+    /// up to `present_cap`.
     pub present_growth: f64,
     /// Upper bound of the present-congestion factor. Beyond it contested
     /// nodes act as walls the heuristic knows nothing about, and searches
@@ -40,10 +45,14 @@ pub struct Config {
     /// once the price of sharing is at its cap.
     pub stall_at_cap: usize,
     /// At the price cap, how much fewer conflicted nets count as progress
-    /// (a share of the last low; at least two nets when above zero). Zero:
-    /// any new low resets the stall count, which lets a board crawl down
-    /// one net every few iterations for hundreds of seconds (Sisu: 27-32
-    /// conflicted from iteration 6 to 38).
+    /// (a share of the last low; at least two nets when above zero). Zero,
+    /// the default, turns it off: any new low resets the stall count, as
+    /// below the cap. That can let a board crawl down one net every few
+    /// iterations for hundreds of seconds (Sisu: 27-32 conflicted from
+    /// iteration 6 to 38), so the layout's in-place router (its first
+    /// route and the moves, which compare placements) and its placement
+    /// race set 0.1 unless the router settings give `stall_drop`; the
+    /// final ladder and the first route's resume keep the default.
     pub stall_drop: f64,
     /// Iterations without fewer conflicted nets after which negotiation
     /// stops below the price cap (`stall_at_cap` at it).
@@ -121,7 +130,11 @@ pub struct Config {
     /// may run along the row inside the escape zone. Tried on Tiny Tapeout
     /// (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet.
     pub escape_stub_mm: f64,
+    /// History cost added to a lattice node (and its tile) for every net
+    /// still in conflict there after an iteration; also the amplitude of
+    /// the noise a `seed` puts into the history.
     pub history_increment: f64,
+    /// Negotiation iterations at most (each reroutes the conflicted nets).
     pub max_iterations: usize,
     /// Minimum search window margin around a net's terminals.
     pub window_margin: f64,
@@ -149,6 +162,8 @@ pub struct Config {
     /// the via cost multiplied by `via_reduction_factor`, this many times,
     /// keeping a round only if nothing opens and vias go down.
     pub via_reduction_rounds: usize,
+    /// Factor on the via cost per via reduction round: round k (from 0)
+    /// routes at the via cost times this to the power k + 1.
     pub via_reduction_factor: f64,
     /// Heuristic weight while reducing vias (searches there are long
     /// same-layer detours; a little greed keeps them cheap).
@@ -201,11 +216,13 @@ pub struct Config {
     pub parallel: bool,
     /// Values above 1 trade path optimality for search speed.
     pub heuristic_weight: f64,
-    /// Print one progress line per iteration to stderr.
     /// Perturbs the net order and seeds the history with noise of one
     /// history increment, so the same board can be routed several ways
-    /// (`None`: the deterministic order).
+    /// (`None`: the deterministic order, or `PCB_ROUTER_SEED`'s).
     pub seed: Option<u64>,
+    /// Print progress to stderr: one line per negotiation iteration and
+    /// what the clean-up, the via reduction and the spoke repairs did (the
+    /// KiCad router always sets it).
     pub verbose: bool,
     /// A wall-clock time by which routing returns what it has, however
     /// much work its budgets still allow: every budget counts as spent

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 spec = importlib.util.spec_from_file_location('triage', Path(__file__).with_name('triage.py'))
 triage = importlib.util.module_from_spec(spec)
@@ -32,17 +33,45 @@ class TriageTests(unittest.TestCase):
         return path
 
     def test_timeout_kills_descendants_and_keeps_cpu_measurement(self):
+        # Deterministic under load: the timeout fires on a clock of the
+        # test's own, which passes the limit only once the descendant has
+        # been started and named (the pid file is renamed into place whole;
+        # a real 0.4 s could pass before the interpreters under nice had
+        # started it), and a descendant reaped between the look into /proc
+        # and the read (ESRCH, the failure seen one run in three) counts
+        # as gone.
         pidfile = self.root / 'child.pid'
-        code = "import subprocess,time,sys\np=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\nopen(sys.argv[1],'w').write(str(p.pid))\ntime.sleep(60)\n"
+        code = ("import os,subprocess,time,sys\n"
+                "p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(600)'])\n"
+                "open(sys.argv[1]+'.tmp','w').write(str(p.pid))\n"
+                "os.rename(sys.argv[1]+'.tmp',sys.argv[1])\n"
+                "time.sleep(600)\n")
         command = self.executable('parent', code)
-        result = triage.run_process([command, pidfile], self.root / 'timeout.log', .4)
+
+        class Clock:
+            """0 until the descendant is named, then far past the timeout."""
+            sleep = staticmethod(time.sleep)
+
+            @staticmethod
+            def monotonic():
+                return 1000.0 if pidfile.exists() else 0.0
+
+        started = time.monotonic()
+        with unittest.mock.patch.object(triage, 'time', Clock):
+            result = triage.run_process([command, pidfile], self.root / 'timeout.log', 1)
         self.assertEqual(result['stop_reason'], 'wall_timeout')
-        self.assertLess(result['wall_seconds'], 2)
         self.assertIn('cpu_seconds', result)
+        # Both processes sleep 600 s: well under that, the kill ended them.
+        self.assertLess(time.monotonic() - started, 300)
         child = int(pidfile.read_text())
-        for _ in range(40):
-            stat = Path(f'/proc/{child}/stat')
-            if not stat.exists() or stat.read_text().split()[2] == 'Z':
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            try:
+                state = Path(f'/proc/{child}/stat').read_text().rsplit(')', 1)[1].split()[0]
+            except (FileNotFoundError, ProcessLookupError):
+                # Gone, or reaped between the lookup and the read (ESRCH).
+                break
+            if state == 'Z':
                 break
             time.sleep(.025)
         else:

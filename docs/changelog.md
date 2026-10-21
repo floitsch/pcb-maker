@@ -11,6 +11,113 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (config reference and stale docs)
+
+Review finding 10: the agent-facing surface is about 130 config keys and
+about 50 environment variables, most keys named in no document, and the
+documents carried stale statements.
+
+**The reference is generated.** `tools/config-reference` (a workspace
+crate; `cargo run -p config-reference`) writes
+[config-reference.md](config-reference.md) from the config structs: the
+field names, types, doc comments and serde attributes from their
+sources, the defaults from the structs at run time (a settings file of
+`{}` read through serde and serialized again; the core configs'
+`Default` printed with `{:#?}`; a default read from the environment, as
+the router's `island_stubs`, shown with and without its variable). One
+table each for the router settings (with `topological`, `pin_swap`,
+`add_pours`, `net_classes` and the connection rules), the router core
+(`pcb_router::Config`, with the settings `core_config` copies into each
+field, read from that function), the placer settings, the layout
+settings (with `swappable`), the placer core (`Config`, `global`,
+`anneal`, with what `place_kicad_board` copies), and, as an output,
+board-router.json's `rules` (the project-rules report). Each key is
+marked when docs/router.md or docs/placer.md names it in code, and
+internal (`#[serde(skip)]`) fields are marked as such. The same tool
+writes the hand-over's environment index ("Switches", one line per
+variable, grouped user-facing, switches, diagnostics, tests): every
+`PCB_*` string literal of the crates' sources outside tests needs its
+line in the tool's `ENVIRONMENT`, a line whose variable the code no
+longer names is an error, and every user-facing variable must be in
+`pcb-maker --help` (`ENVIRONMENT_HELP` in src/main.rs).
+`tests/config_reference.rs` (in scripts/check.sh) fails while either
+file differs from what the tool makes of the tree, or while one of those
+checks fails; it names the first differing line.
+
+Counts (13 structs, 249 fields; the three report structs aside): 155
+file keys, 12 internal (serde-skipped: 10 router settings, 2 placer
+settings), 82 fields of the core configs. With a doc comment: 194 of 249
+before, 233 now; the other 16 are in crates/pcb-kicad/src/board_router/
+config.rs (14 router settings, 2 of `topological`), which the ladder
+fault isolation package has open: their comments are written and wait
+as a patch for after it lands. Named in router.md or placer.md: 35 of
+the 155 file keys (unchanged; the reference now documents every key).
+No field is unused: each is read somewhere outside its definition.
+
+**Doc comments written** for every field that had none (from the use
+sites): router core `present_factor`, `present_growth`,
+`history_increment`, `max_iterations`, `via_reduction_factor`,
+`verbose`; placer settings `keep_rotation`, `pins_per_halo_track`,
+`maximum_halo_mm`, `seed`; layout `placer`, `pin_swap`,
+`congestion_candidates`, `congestion_probes`, `congestion_score` and
+`swappable[].part`; `net_classes[]` `name` and its four sizes; the
+connection rules' four sizes; `pin_swap.seed`; placer core `global`,
+`anneal`, `refine_passes`, `global.bins`, `stop_overflow`,
+`max_iterations`, `frame_interval`, `seed`, `routing_layers`,
+`track_pitch`, `anneal.stages`, `moves_per_part`, `seed`.
+
+**Stale statements fixed** (no behaviour change except the verdict's
+environment echo and the KiCad version warning):
+
+- router `stall_drop`: the doc called 0 pathological while 0 is the
+  default. It now says what the code does: 0 turns the threshold off
+  (any new low counts, as below the cap), the final ladder keeps it, and
+  the layout's in-place router (first route and moves) and placement race
+  set 0.1 unless the router settings give `stall_drop`.
+- router `seed` carried `verbose`'s first line; each has its own now.
+- `pcb-maker --help` listed five variables; it lists the fourteen
+  user-facing ones (added `PCB_WORK_RATE`, `PCB_KICAD_TIMEOUT`,
+  `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`,
+  `PCB_ROUTER_ISLAND_STUBS`, `PCB_MAKER_CACHE_DIR`, `PCB_MAKER_NO_CACHE`,
+  `PCB_MAKER_KICAD_USER_LIBS`, `PCB_MAKER_MEMORY_MB`).
+- The verdict's `environment` echoed `PCB_ROUTER_NO_ISLAND_STUBS`, which
+  nothing reads since the island stubs went off; it echoes
+  `PCB_ROUTER_ISLAND_STUBS` (verdict.rs, docs/agents.md). The hand-over's
+  switch list said the same and named two test fixtures the code no
+  longer has.
+- docs/router.md's limit "Two copper layers, through vias only": inner
+  layers are routed; the limit is through vias only.
+- docs/handover.md: the leftover "Fill in when it lands: v17" template
+  and its fragment, replaced by the v17 result it was waiting for; the
+  open problem listing `bus_rows`, `supply_via_room` and
+  `replicate_channels` as built and off (removed on 2026-10-16).
+- docs/constraints.md documented `bus_rows`, which the placer config
+  rejects since 2026-10-16; the paragraph also called `keep_on_pieces`
+  opt-in while it is on by default.
+- docs/changelog.md: seven sections out of date order (2026-10-16 and
+  2026-10-20 among the 2026-10-21 ones) moved, sections verbatim (two
+  got the blank line before the next heading they lacked).
+- README and `--help`: "KiCad 9 or newer", while the import writes KiCad
+  10 boards and nothing ran on KiCad 9: KiCad 10 (checked with
+  `kicad-cli version` 10.0.7). native_report.rs asks `kicad-cli version`
+  (cached, as the DRC cache does) before the first KiCad check of a
+  process and warns once on stderr when it is older than 10.
+
+**The flaky expansion test.**
+benchmarks/expansion/test_triage.py's
+`test_timeout_kills_descendants_and_keeps_cpu_measurement` failed about
+one run in three under load (6 of 15 runs at load 18 here). The
+traceback caught: `ProcessLookupError` from reading `/proc/<pid>/stat` of the descendant
+after `exists()`: the kill worked, and the process was reaped between
+the look and the read (ESRCH). A second race waited behind it: the
+0.4 s wall timeout could pass before the parent, under `nice -n 19`
+and `prlimit`, had started the descendant and written its pid. The test
+now runs `run_process` on a clock of its own that passes the timeout
+only once the pid file (renamed into place whole) exists, counts a
+descendant gone on either error, and bounds its waits at 300 s where
+both processes would sleep 600 s: 20 of 20 runs passed at load about 20.
+benchmarks/expansion's tests are now in scripts/check.sh (41 pass).
+
 ## Committed on 2026-10-21 (project rules at scale)
 
 The intake (docs/benchmarks.md, "Expansion intake") showed the router
@@ -1057,92 +1164,119 @@ rules (the bound, the probes' share, the negotiation, the rung shares,
 the step's share and its time). `bash scripts/check.sh` passes.
 
 
-## Committed on 2026-10-16 (quality: pcb-kicad)
+## Committed on 2026-10-21 (parser and writer robustness)
 
-A code-quality pass over the layout, router and placer adapters of
-`pcb-kicad` with no behaviour change. Binaries x1190 (step 1), x1191
-(step 2), x1192 (step 3), x1193 (rebased on the research removal), x1194
-(rebased on the pcb-router quality package, for the final gates), x1195
-(this commit on 3d28004).
+The reader and writer defects that the 5 834-board intake
+(benchmarks/expansion/data/analysis: model_error_boards.csv,
+verification_unknown_boards.csv, source_issue_boards.csv and the four
+boards with new malformed_courtyard findings in drc_failure_boards.csv)
+put on us. Binaries x1230 (the code on f720ab7) and x1231 (rebased on
+8877428, the pcb-router quality package). Each defect has a unit test
+from the board's own geometry where its licence allows (MIT, BSD,
+Apache), a synthetic equivalent otherwise. Each board was run as the
+intake ran it (strip-kicad-tracks, route-kicad-board on the designer's
+placement with the intake's router-config.json: 30 s of work, one seed,
+90 s wall guard; then drc-kicad-board), with x1211 before and x1230
+after (scratch runs, not kept).
 
-**Removed switches and options** (each restored code from before a change
-the measurements settled):
+| Defect | Boards | Cause | Fix | x1211 | x1230 |
+| --- | --- | --- | --- | --- | --- |
+| rule area "fewer than three points" | Boardoza LSM303, McbeEringi 30led, tobycm skibidi disc | a zone outline that is one arc ending where it starts: KiCad reads it as a full circle (its arc centre is halfway between start and mid; 30led's own B.Mask fill of that outline is a 26 mm circle), we as two points | `outline::pts_points` lowers a closed arc as the circle (`full_circle`, shared with the Edge.Cuts arc); so the areas are kept as KiCad keeps them, not skipped | error | routed 17/17, 26/26, 14/14; KiCad: no rule-area finding; Boardoza 80 track_width (0.127 mm tracks, see below), 30led hole_clearance 4 as the designer's, tobycm 5 unconnected (below) |
+| custom-pad primitive gr_bbox | 2 kicad-assistant QA boards | the pad editor's number box, which KiCad parses as a proxy shape (`SetIsProxyItem`) and leaves out of the pad's copper | lowered to nothing | error | 86/87 and 62/63 at the budget, KiCad loads and checks them (2 and 3 unconnected) |
+| degenerate copper polygon | BratwurstPower | an fp_poly of three points, the last the first, 2 nm wide, negative stroke: `pts_points` dropped the repeated point, two left | the closing point is dropped only while three stay: a zero-area shape, as KiCad keeps it (Edge.Cuts skips polygons with fewer than three distinct points as before) | error | 67/67, KiCad: 1 starved_thermal |
+| roundrect pad without roundrect_rratio | jayis1 lumen-tap | required | KiCad's default 0.25 when absent; a ratio that is there must still be a number | error | 14/14, KiCad: 1 shorting_items + 1 solder_mask_bridge (the designer's: 2 + 2, 39 unconnected) |
+| ambiguous net identity "/A15" vs "A15" | gametank exp_port_mod_board | a KiCad 10 board has no net table, and `note_net_names` read the bare names from the table alone: none, so "/A15" folded into "A15" | `note_net_names` also takes the pads' names; the writer spells a connection that is a bare net as it is (`written_net_name`; "/A15" then is connection "/A15", written "//A15", and `canonicalize_copper_net_names` finds each pad's spelling) | error | 41/41, KiCad: the designer's copper_edge_clearance 22 and invalid_outline 2, no shorts |
+| image data on one 24 MB line | stonedDiscord EMP | the encoder writes a list's atoms on one line; KiCad reads lines of at most 1 MB | a `data` list one string a line, as KiCad writes it | KiCad cannot load the result | KiCad loads it: courtyards_overlap 9 (the designer's 9), 0 unconnected |
+| footprint graphics reordered on write | AccordeurDeGuitare, 3 dacha boards | the canonical order sorts a footprint's graphics, and KiCad chains a courtyard in file order: MK1's courtyard (two zero-length lines, two arcs) closes in the designer's order only | `canonical_order` notes each footprint's source order of graphics (by a digest of its reference and graphics); `encode` writes them back in that order while they are unchanged (a flipped footprint or a moved label is written as held); keys and digests use `encode_canonical` | malformed_courtyard 3, 10, 22, 16 | 0, 6, 18, 14: the designer's counts |
+| outline "do not form closed loops" although KiCad accepts it | 8 hermod keyboard halves, 4 panels (Pips801 minibadge, SEM-karifa rudolf, prrpls406 and programmer panels) | outlines drawn from 10-20 um segments: the chaining snaps each end to the nearest one seen before and drops pieces shorter than its 0.02 mm tolerance, which tears such outlines apart | when that chaining fails, KiCad's own (`chain_as_kicad`: integer nanometres, an unused exact hit first, else the nearest end within 0.02 mm, closed when the end is back within 0.02 mm of the start); outlines that chained before are untouched | strip-kicad-tracks fails | all 12 load and route: hermod 119/119 to 133/133 (one 123/124, cut), Pips801 99/99, rudolf 162/162 clean, programmer 16/16, prrpls406 27/162 at the budget (41 unconnected); KiCad's findings the designer's plus those below |
+| "trailing input" | RoyalBlue54L-Feather | "(curved_edges no)filter_ratio 0.9)" in each teardrops form: KiCad's teardrop reader takes the "(" as optional, ours closed the pad and then the board | in a `teardrops` list a bare key starts a list that ends at its ")" | strip fails | loads; 43-46/68 at the budget (cut), 30 unconnected, the designer's other findings |
 
-- `PCB_LADDER_OLD_RESERVE`: the ladder's narrow-step reserve is a floor
-  ("narrow reserve floor" below); `narrow_step_reserve` is the floored one.
-- `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`: the ladder judge's
-  experiment hooks (`experiments/congestion/ladder_judge.py` used them; the
-  predictor is a closed negative). `PCB_LADDER_STATS` stays.
-- `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` ("first-route budget").
-- `PCB_LAYOUT_NARROW_CONTINUATION` and `_FLOOR`: after the narrow-signal
-  attempt run alone only the other pour mode runs ("after the narrow
-  attempt"); the stop, seeds and ladder variants and their seed helpers
-  are gone.
-- `PCB_KICAD_OLD_ZONE_ARCS` ("zone seams").
-- Placer options `bus_rows` (with `bus_row_gap_scale` and the row
-  constraint's internal `turns`), `supply_via_room` (with
-  `supply_via_room_mm`) and `replicate_channels` (with
-  `PCB_PLACER_CHANNEL_SELF`, the channel lowering and `lower_placement`'s
-  channels argument): all off, none won. A placer config that still sets
-  one is now rejected (the config denies unknown fields);
-  docs/constraints.md still documents `bus_rows`.
+**Not fixed here** (in files other packages own):
 
-- `jacobi_batch` in the router config and `PCB_JACOBI_BATCH` in
-  src/main.rs: the router no longer reads it (pcb-router quality).
+- **SeanBP Edge-Card-CAEN, "no routable connections"**: its 70 nets are
+  named "1", "3", ..., "139", and `board_router::routable_net` rejects
+  names of digits only (meant for single-pin placeholders). Counting
+  digit names shared by two pads as `note_jumper_nets` counts
+  `unconnected-(` names (a two-line change, tried on a scratch build)
+  routes 70/70, but KiCad then finds 70 unconnected: every net joins a
+  test point on F.Cu and one on B.Cu 0.3 mm apart, which the router takes
+  as one terminal; KiCad needs a via. Both for the board_router package.
+- tobycm skibidi disc: copper rings drawn as `gr_circle` with a net on
+  `(layers "F.Cu" "F.Mask")` are not modelled; KiCad: 5 unconnected.
+- Boardoza LSM303: 80 GND tracks of 0.127 mm on a project of 0.2 mm
+  minimum width (the board's own narrow width).
+- hermod halves: hole_to_hole 62 and 14, hole_clearance 5 and 10 from
+  vias near switch holes (a custom rule of 0.5 mm the router does not
+  read); prrpls406: hole_to_hole 24.
 
-Kept: the user-facing kill switches (island stubs,
-solid starved thermals, `PCB_KICAD_NO_NECK_REPAIR`) and every diagnostic
-switch.
+**Tiers.** Short tier (x1230, `--jobs 6 --threads 4`, under the lock):
+`build/short-x1230.log` equals `build/short-x1170.log` row for row
+(routed, vias, length, work, KiCad findings): 7/12, unconnected 19, new
+errors 2, work 2501 s. Expansion tier (x1231, `--jobs 8 --threads 1`):
+`build/expansion-x1231.log` against `build/expansion-x1211.log`: 14/46
+pass and the same outcome classes (clean_medium 1, clean_slow 11,
+cut_wall_clock 9, incomplete_at_budget 21, incomplete_early 4); the 33
+rows the 90 s wall guard cut in neither run are identical (routed, vias,
+length, work seconds, KiCad findings, outcome); the 13 cut in both differ
+as cut rows do with the load. Four stripped boards (EMG_DAQ_ADS1292,
+Barklind, power-manifold backplane, anthracite-bottom) have another
+SHA-256: their embedded files' `(data |...|)` is back on its lines, the
+same tokens in the same order. None of the 46 boards is among the fixed
+ones. x1231 and x1230 give byte-identical routed boards (four of the
+boards above checked).
 
-**Clippy** is clean on the files of this pass: dead code (the wall
-guard's `Labels`, `Check` and `Report` steps, never asked: asking would
-only fire the guard later; `courtyard_shapes`; `default_edge_rule`, a
-serde default on a Serialize-only result; `turned_box`), the move trial's
-restore before returning an error (the error ends the layout), type
-aliases, allows with reasons for long argument lists and the negated
-comparisons that reject NaN, `clamp` where the bounds are constants and
-the value never NaN.
+Tests: `outline::tests` (closing as KiCad, the closed-arc circle, the
+degenerate polygon), `canonical_order::tests::footprint_graphics_are_written_in_the_files_order`,
+`roundrect_pad::tests::roundrect_without_a_ratio_takes_kicads_quarter`,
+`tests::a_custom_pads_number_box_is_no_copper`,
+`tests::a_teardrop_setting_without_its_opening_parenthesis_reads_as_kicad_reads_it`,
+`tests::embedded_data_is_written_one_string_a_line`,
+`tests::colliding_normalized_pad_names_stay_two_nets_when_the_board_declares_both`
+(now the KiCad 10 case); `route_obstructions`' malformed-roundrect test
+no longer counts a missing ratio as malformed.
 
-**Splits** (moves): `board_router.rs` (6750 lines) into
-`board_router/{config, result, lower, tools, geometry, memory, budget,
-route, pour_plan, attempt, tests}.rs`, `board_placer.rs` (5300 lines) into
-`board_placer/{config, result, rules, bodies, decoupling, courtyards,
-lower, edges, trace, seed_race, place, tests}.rs`; `mod.rs` re-exports, so
-paths outside are unchanged. A line multiset check of old against new
-finds only rustfmt reflows, the module lines and `lower_board`'s own copy
-of `polygon_area` (the same products in the same order), which gives way
-to the module's.
+## Committed on 2026-10-21 (expansion tier)
 
-Lines: step 1 -1236 (148 added, 1384 removed), step 2 -39, step 3 +159
-(module headers and rustfmt reflows of the moved code).
+The intake's proposed 46-board tier (benchmarks/expansion/analysis) as a
+run.py tier: `--tier expansion` (benchmarks/agent-tasks/README.md, "The
+expansion tier"). No Rust change; binary x1211.
 
-**Gates**, after each step: the tests of pcb-kicad, pcb-placer and
-pcb-router and the CLI exit-code and walkthrough tests; place-kicad-board
-on the short tier's prepared x1170 sources (spell_tome_bottom,
-USB_Cable_Tester, urchin, eternal-keypad, OpenFC, Blue_Line; 4 threads,
-120 s of placement work), boards byte-identical to x1170; layout mode, one
-run a side, 4 threads, on TelemetryOnboard and MokyaLora (the ladder keeps
-244 s for the step; Telemetry releases it complete) and vaio_re (the
-narrow-signal attempt alone, then the other pour mode): rows identical
-but CPU, wall and memory, boards byte-identical to x1170
-(`build/qc-lay-x1170`, `-x1190`, `-x1191`, `-x1192`).
-At the end, on x1194: the short tier under the lock (6 jobs, 4 threads)
-against build/short-x1170.log, all 12 rows identical but CPU, wall,
-load and memory, every board byte-identical (7/12, unconnected 19, new
-errors 2, 1134 vias, work 2501 s); the schematic tier against x1193 (the
-same code on the previous base) all 12 rows and boards identical. Against
-build/sch-x1161.log the rows differ in `work_seconds` and
-`kicad_check_work_seconds` only (x1161 predates the KiCad check work
-accounting, d490aad), boards identical, but TelemetryOnboard (108/108 to
-107/108): x1170, main's code before this pass, gives the x1193 row and
-board exactly (build/sch-x1170-telemetry), so the change is the check
-work's, not this pass's. On 3d28004 (x1195): scripts/check.sh, and
-place-kicad-board on the six boards byte-identical to main's x1232.
+- **Route-mode tasks** (`"mode": "route"` in a task): the designer's
+  placement, fetched into `build/github-expansion/<task>/source` when not
+  there (the harvest's copy when its SHA-256 matches, else GitHub at the
+  pinned commit with harvest.py's fetch; every file verified, staged, and
+  nothing kept on a mismatch), stripped with the intake's exact
+  `strip-kicad-tracks <original> <copy>`, routed with `route-kicad-board`
+  at the task's `budget_seconds` times the budget scale with the intake's
+  router settings (one seed, no KiCad check inside), wall guard (max(90,
+  3 x budget)) and process timeout (max(180, 3 x budget + 60)), then
+  checked with `drc-kicad-board`. Rows add `license`, `fetched`,
+  `fetched_from`, `source_sha256`, `stripped_sha256`, `budget_seconds`,
+  `routing_seconds`, `open`, `drc_seconds` and `outcome` (the intake's
+  class); `peak_rss_mb` covers the DRC too and the summary counts the
+  outcomes. `constraints` is optional in every task.
+- **Licences**: every task carries its repository's licence and every row
+  prints it; a board without one (missing, empty, `NOASSERTION`) is not
+  fetched.
+- `expansion.json` (budget_scale 1: 30 s; `--budget-scale 10`: the deep
+  run's 300 s) and `expansion-tasks.json`, written by `from_expansion.py`
+  from the proposal, the CSV, the harvest's manifest and the quick run's
+  results; `--harvest-data`; `--timeout` defaults to the intake's in route
+  mode. compare.py reads the rows unchanged. Tests:
+  `test_expansion.py` (task list, router settings, strip arguments against
+  triage.py's, the fetch with a fake GitHub, the outcome classes).
 
-Not taken (behaviour changes, for a later agent): `routable_net` rejects
-net names made only of digits (SeanBP Edge-Card-CAEN); the writer's
-footprint file order in a process-global registry rather than on the
-board (this pass did not touch `encode`).
+**First run, x1211** (8 jobs x 1 thread, load 13-23, 471 s): 14/46 pass;
+clean_slow 11, clean_medium 1, incomplete_at_budget 21, cut_wall_clock 9,
+incomplete_early 4. 45 of 46 boards have the intake's outcome class (the
+other is the same route in fewer wall seconds: B1's line is wall time).
+All 46 stripped boards match the intake's, and all 32 routes that neither
+run's 90 s wall guard cut are identical, work seconds included: the
+1.57x calibration was already in the intake's binary (015676c precedes
+be4b012) and the router has not changed since. 13 rows are cut by the
+wall guard and depend on the load. Three B4 boards at 300 s pass with the
+intake's deep work seconds.
+
 ## Committed on 2026-10-20 (MIDAS-MK1 refusal)
 
 In layout sweep v17 (x1170, tasks v7) MIDAS-MK1 ended "incomplete: 6
@@ -1229,266 +1363,6 @@ and J6 0.03 mm apart on the back, J9 against the outline; panel fixes,
 byte-identical: too many stuck parts for the passes). SmartSpin2k
 finished in v17 and was not rerun.
 
-## Committed on 2026-10-21 (parser and writer robustness)
-
-The reader and writer defects that the 5 834-board intake
-(benchmarks/expansion/data/analysis: model_error_boards.csv,
-verification_unknown_boards.csv, source_issue_boards.csv and the four
-boards with new malformed_courtyard findings in drc_failure_boards.csv)
-put on us. Binaries x1230 (the code on f720ab7) and x1231 (rebased on
-8877428, the pcb-router quality package). Each defect has a unit test
-from the board's own geometry where its licence allows (MIT, BSD,
-Apache), a synthetic equivalent otherwise. Each board was run as the
-intake ran it (strip-kicad-tracks, route-kicad-board on the designer's
-placement with the intake's router-config.json: 30 s of work, one seed,
-90 s wall guard; then drc-kicad-board), with x1211 before and x1230
-after (scratch runs, not kept).
-
-| Defect | Boards | Cause | Fix | x1211 | x1230 |
-| --- | --- | --- | --- | --- | --- |
-| rule area "fewer than three points" | Boardoza LSM303, McbeEringi 30led, tobycm skibidi disc | a zone outline that is one arc ending where it starts: KiCad reads it as a full circle (its arc centre is halfway between start and mid; 30led's own B.Mask fill of that outline is a 26 mm circle), we as two points | `outline::pts_points` lowers a closed arc as the circle (`full_circle`, shared with the Edge.Cuts arc); so the areas are kept as KiCad keeps them, not skipped | error | routed 17/17, 26/26, 14/14; KiCad: no rule-area finding; Boardoza 80 track_width (0.127 mm tracks, see below), 30led hole_clearance 4 as the designer's, tobycm 5 unconnected (below) |
-| custom-pad primitive gr_bbox | 2 kicad-assistant QA boards | the pad editor's number box, which KiCad parses as a proxy shape (`SetIsProxyItem`) and leaves out of the pad's copper | lowered to nothing | error | 86/87 and 62/63 at the budget, KiCad loads and checks them (2 and 3 unconnected) |
-| degenerate copper polygon | BratwurstPower | an fp_poly of three points, the last the first, 2 nm wide, negative stroke: `pts_points` dropped the repeated point, two left | the closing point is dropped only while three stay: a zero-area shape, as KiCad keeps it (Edge.Cuts skips polygons with fewer than three distinct points as before) | error | 67/67, KiCad: 1 starved_thermal |
-| roundrect pad without roundrect_rratio | jayis1 lumen-tap | required | KiCad's default 0.25 when absent; a ratio that is there must still be a number | error | 14/14, KiCad: 1 shorting_items + 1 solder_mask_bridge (the designer's: 2 + 2, 39 unconnected) |
-| ambiguous net identity "/A15" vs "A15" | gametank exp_port_mod_board | a KiCad 10 board has no net table, and `note_net_names` read the bare names from the table alone: none, so "/A15" folded into "A15" | `note_net_names` also takes the pads' names; the writer spells a connection that is a bare net as it is (`written_net_name`; "/A15" then is connection "/A15", written "//A15", and `canonicalize_copper_net_names` finds each pad's spelling) | error | 41/41, KiCad: the designer's copper_edge_clearance 22 and invalid_outline 2, no shorts |
-| image data on one 24 MB line | stonedDiscord EMP | the encoder writes a list's atoms on one line; KiCad reads lines of at most 1 MB | a `data` list one string a line, as KiCad writes it | KiCad cannot load the result | KiCad loads it: courtyards_overlap 9 (the designer's 9), 0 unconnected |
-| footprint graphics reordered on write | AccordeurDeGuitare, 3 dacha boards | the canonical order sorts a footprint's graphics, and KiCad chains a courtyard in file order: MK1's courtyard (two zero-length lines, two arcs) closes in the designer's order only | `canonical_order` notes each footprint's source order of graphics (by a digest of its reference and graphics); `encode` writes them back in that order while they are unchanged (a flipped footprint or a moved label is written as held); keys and digests use `encode_canonical` | malformed_courtyard 3, 10, 22, 16 | 0, 6, 18, 14: the designer's counts |
-| outline "do not form closed loops" although KiCad accepts it | 8 hermod keyboard halves, 4 panels (Pips801 minibadge, SEM-karifa rudolf, prrpls406 and programmer panels) | outlines drawn from 10-20 um segments: the chaining snaps each end to the nearest one seen before and drops pieces shorter than its 0.02 mm tolerance, which tears such outlines apart | when that chaining fails, KiCad's own (`chain_as_kicad`: integer nanometres, an unused exact hit first, else the nearest end within 0.02 mm, closed when the end is back within 0.02 mm of the start); outlines that chained before are untouched | strip-kicad-tracks fails | all 12 load and route: hermod 119/119 to 133/133 (one 123/124, cut), Pips801 99/99, rudolf 162/162 clean, programmer 16/16, prrpls406 27/162 at the budget (41 unconnected); KiCad's findings the designer's plus those below |
-| "trailing input" | RoyalBlue54L-Feather | "(curved_edges no)filter_ratio 0.9)" in each teardrops form: KiCad's teardrop reader takes the "(" as optional, ours closed the pad and then the board | in a `teardrops` list a bare key starts a list that ends at its ")" | strip fails | loads; 43-46/68 at the budget (cut), 30 unconnected, the designer's other findings |
-
-**Not fixed here** (in files other packages own):
-
-- **SeanBP Edge-Card-CAEN, "no routable connections"**: its 70 nets are
-  named "1", "3", ..., "139", and `board_router::routable_net` rejects
-  names of digits only (meant for single-pin placeholders). Counting
-  digit names shared by two pads as `note_jumper_nets` counts
-  `unconnected-(` names (a two-line change, tried on a scratch build)
-  routes 70/70, but KiCad then finds 70 unconnected: every net joins a
-  test point on F.Cu and one on B.Cu 0.3 mm apart, which the router takes
-  as one terminal; KiCad needs a via. Both for the board_router package.
-- tobycm skibidi disc: copper rings drawn as `gr_circle` with a net on
-  `(layers "F.Cu" "F.Mask")` are not modelled; KiCad: 5 unconnected.
-- Boardoza LSM303: 80 GND tracks of 0.127 mm on a project of 0.2 mm
-  minimum width (the board's own narrow width).
-- hermod halves: hole_to_hole 62 and 14, hole_clearance 5 and 10 from
-  vias near switch holes (a custom rule of 0.5 mm the router does not
-  read); prrpls406: hole_to_hole 24.
-
-**Tiers.** Short tier (x1230, `--jobs 6 --threads 4`, under the lock):
-`build/short-x1230.log` equals `build/short-x1170.log` row for row
-(routed, vias, length, work, KiCad findings): 7/12, unconnected 19, new
-errors 2, work 2501 s. Expansion tier (x1231, `--jobs 8 --threads 1`):
-`build/expansion-x1231.log` against `build/expansion-x1211.log`: 14/46
-pass and the same outcome classes (clean_medium 1, clean_slow 11,
-cut_wall_clock 9, incomplete_at_budget 21, incomplete_early 4); the 33
-rows the 90 s wall guard cut in neither run are identical (routed, vias,
-length, work seconds, KiCad findings, outcome); the 13 cut in both differ
-as cut rows do with the load. Four stripped boards (EMG_DAQ_ADS1292,
-Barklind, power-manifold backplane, anthracite-bottom) have another
-SHA-256: their embedded files' `(data |...|)` is back on its lines, the
-same tokens in the same order. None of the 46 boards is among the fixed
-ones. x1231 and x1230 give byte-identical routed boards (four of the
-boards above checked).
-
-Tests: `outline::tests` (closing as KiCad, the closed-arc circle, the
-degenerate polygon), `canonical_order::tests::footprint_graphics_are_written_in_the_files_order`,
-`roundrect_pad::tests::roundrect_without_a_ratio_takes_kicads_quarter`,
-`tests::a_custom_pads_number_box_is_no_copper`,
-`tests::a_teardrop_setting_without_its_opening_parenthesis_reads_as_kicad_reads_it`,
-`tests::embedded_data_is_written_one_string_a_line`,
-`tests::colliding_normalized_pad_names_stay_two_nets_when_the_board_declares_both`
-(now the KiCad 10 case); `route_obstructions`' malformed-roundrect test
-no longer counts a missing ratio as malformed.
-
-## Committed on 2026-10-16 (quality: pcb-router)
-
-A code-quality package for `crates/pcb-router`, no algorithm change:
-every step routes byte-identically to x1170 (main 54eff39). Branch
-`quality-router`, four commits, snapshots x1180 to x1183 (one per step)
-and x1184 (the four rebased on main, the gates' last binary). Finished on
-2026-10-21 after a pause; the date is the package's start.
-
-**1. Settled switches removed** (x1180; the router crate -350 lines).
-Each restored the code before a change for A/B runs, and the changelog
-section that introduced it records the measurement that settled it. Gone,
-with their old code paths, the current path the only one:
-`PCB_ROUTER_OLD_SPOKES`, `NO_MANUAL_SPOKES` (the fields `kicad_spokes`
-and `manual_spokes` stay switchable: router.json sets them),
-`NO_ISLAND_VIAS` (`island_vias`), `OLD_TRACKED` (`track_meets_spokes`),
-`NO_FOREIGN_SPOKES`, `OLD_TRACK_PIECES` (`track_touch_fill`),
-`NO_NECK_JOINS`, `OLD_SPOKE_FRAMES`, `NO_INNER_PADS`, `OLD_TRACK_ENDS`
-(`track_end_tolerance`), `NO_INNER_SPOKES`, `OLD_TRACKS_FILL`
-(`tracks_rung_fill` and `Router::hatch_any_plane`), `OLD_TRACK_RUNS`
-(`track_end_junctions`), `NO_ZONE_SEAMS`, `OLD_SPOKE_CLEAR`
-(`spoke_clear_to_fill`), `OLD_HOPELESS` (`unreachable_terminals`),
-`OLD_RESOLVE` (`resolve_keeps_partial`), `OLD_FILL_CLEARANCE` (board.rs),
-`OLD_POLYGON_DISTANCES` (grid.rs), `REROUTE_FRACTION`, and the
-`jacobi_batch` option with `route_jacobi` (`PCB_JACOBI_BATCH` is still
-read by src/main.rs into the pcb-kicad field, which no longer reaches the
-router). `PCB_ROUTER_NO_ISLAND_STUBS` stays (a default for Florian). The
-tests' "old" halves went; their current halves stay.
-
-**2. Parked speculation removed** (x1181; -791 lines): `speculate`,
-`speculate_cleanup`, `speculate_paths`, `route_batches` (now a loop over
-`route_batch`), `ReadSet` and its notes in the search, the planner and the
-per-search escapes loop (which only noted reads), `changed_cells`,
-`mark_dirty_blocks`, `clean_up_window`, `clean_up_batch`, the speculative
-part of `clean_up`, the profile line's speculation counts, and
-`PCB_ROUTER_NO_SPECULATION`, `SPECULATE_PATHS`, `SPECULATION_CHECK`,
-`SPECULATION_NO_TILES`, `CLEANUP_WINDOW`. The code is in e256657, which
-added it (router.md, "Known limits"). Also `hard_thermal_guards` and
-`stitch_in_negotiation` (off, measured worse in the 2026-10-09 sections,
-unset by pcb-kicad). `pour_whole_rip_up` stays: it is on by default.
-
-**3. Clippy** (x1182; +33 lines): pcb-router is clippy-clean
-(`cargo clippy -p pcb-router --all-targets`): iterators for the indexed
-loops, `is_multiple_of`, `as_chunks`, a slice for `stitching_vias`'
-parent, type aliases (`FrameHook`, `SpokeCorridors`, `CellWindow`,
-`SpokePad`, `RoutedItem`), `too_many_arguments` allowed on `plan_corridor`
-with a reason, `neg_cmp_op_on_partial_ord` allowed where a NaN crossing
-must count as not beyond.
-
-**4. router.rs split** (x1183; pure moves, +324 lines of headers and
-`use`): router.rs (15 395 lines at 54eff39, 14 291 before the split) keeps
-the shared state and helpers in 920 lines; `router/` has config, result,
-heap, wall, hash, profile, and `impl Router` in build, escapes, guards,
-prepare, stamping, route_net, planner, search, update, batching, global,
-driver, fixed, negotiate, pour_refresh, vias, finish, pour_analysis,
-spokes, manual_spokes, pour_dump, stitch, cleanup, resolve, output; the
-tests in router/tests.rs. Methods are `pub(super)`; the paths pcb-kicad
-uses are re-exported (`router::{Config, Router, EXPANSIONS_PER_SECOND,
-GUARD, wall_cuts, wall_guard, note_wall_cut, WALL_CUTS, build_totals,
-congestion::tile_frame}`). router.md, "How it works", lists the files.
-
-**Gates**, after every step: `cargo test --release -p pcb-router -p
-pcb-kicad` (58 router tests, the dropped halves aside, and pcb-kicad's
-365). Route mode on the v16 placements (`--route-from
-build/github-layout-v16 --tasks build/github-tasks-v6/tasks.json --jobs 2
---threads 4`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`) of
-Castor, k30-SBC, jetson, Sisu, urchin and spell_tome, x1180, x1181, x1182
-and x1184 (the four commits rebased on fb4b7e6) each against x1170: the
-same board md5, vias, length, work seconds (1649.8, 1032.0, 418.5, 310.7,
-16.8, 1.0), verdict and fingerprints on every board (`build/qb-x1170*`,
-`build/qb-x118*`). `PCB_ROUTER_FINGERPRINT_ALL` at a quarter budget, two
-threads, on Castor and k30-SBC, x1184 against x1170: identical
-(`build/qb-fpall-*`). The starved-thermal census (census.py, fill3 KiCad
-cache, 44 boards) 162 predicted / 7 missed / 26 false alarms / 2 not
-modelled for x1170 and every step, the whole output identical
-(`build/qb-census`). Short tier (tasks v6, 6 x 4 under the lock) x1184
-against `build/short-x1170.log`: all 12 rows identical apart from CPU,
-wall, load and memory (unconnected 19, new errors 2, 1134 vias, 21228 mm,
-work 2501 s, passes 7, first-route open terminals 26).
-
-Not pure clean-ups, for the reviewer: pcb-kicad's `jacobi_batch` field
-(board_router.rs) and the `PCB_JACOBI_BATCH` line of src/main.rs stay but
-do nothing now (the three lines that passed the field on were removed so
-that pcb-kicad compiles); the verbose `profile:` line lost its speculation
-counts and the `PCB_ROUTER_DEBUG` batch sizes their `j` marks; the
-net-count assertion of `build` keeps its 15-bit limit, which the hard
-guard's bit no longer needs.
-
-## Committed on 2026-10-21 (expansion tier)
-
-The intake's proposed 46-board tier (benchmarks/expansion/analysis) as a
-run.py tier: `--tier expansion` (benchmarks/agent-tasks/README.md, "The
-expansion tier"). No Rust change; binary x1211.
-
-- **Route-mode tasks** (`"mode": "route"` in a task): the designer's
-  placement, fetched into `build/github-expansion/<task>/source` when not
-  there (the harvest's copy when its SHA-256 matches, else GitHub at the
-  pinned commit with harvest.py's fetch; every file verified, staged, and
-  nothing kept on a mismatch), stripped with the intake's exact
-  `strip-kicad-tracks <original> <copy>`, routed with `route-kicad-board`
-  at the task's `budget_seconds` times the budget scale with the intake's
-  router settings (one seed, no KiCad check inside), wall guard (max(90,
-  3 x budget)) and process timeout (max(180, 3 x budget + 60)), then
-  checked with `drc-kicad-board`. Rows add `license`, `fetched`,
-  `fetched_from`, `source_sha256`, `stripped_sha256`, `budget_seconds`,
-  `routing_seconds`, `open`, `drc_seconds` and `outcome` (the intake's
-  class); `peak_rss_mb` covers the DRC too and the summary counts the
-  outcomes. `constraints` is optional in every task.
-- **Licences**: every task carries its repository's licence and every row
-  prints it; a board without one (missing, empty, `NOASSERTION`) is not
-  fetched.
-- `expansion.json` (budget_scale 1: 30 s; `--budget-scale 10`: the deep
-  run's 300 s) and `expansion-tasks.json`, written by `from_expansion.py`
-  from the proposal, the CSV, the harvest's manifest and the quick run's
-  results; `--harvest-data`; `--timeout` defaults to the intake's in route
-  mode. compare.py reads the rows unchanged. Tests:
-  `test_expansion.py` (task list, router settings, strip arguments against
-  triage.py's, the fetch with a fake GitHub, the outcome classes).
-
-**First run, x1211** (8 jobs x 1 thread, load 13-23, 471 s): 14/46 pass;
-clean_slow 11, clean_medium 1, incomplete_at_budget 21, cut_wall_clock 9,
-incomplete_early 4. 45 of 46 boards have the intake's outcome class (the
-other is the same route in fewer wall seconds: B1's line is wall time).
-All 46 stripped boards match the intake's, and all 32 routes that neither
-run's 90 s wall guard cut are identical, work seconds included: the
-1.57x calibration was already in the intake's binary (015676c precedes
-be4b012) and the router has not changed since. 13 rows are cut by the
-wall guard and depend on the load. Three B4 boards at 300 s pass with the
-intake's deep work seconds.
-
-## Committed on 2026-10-16 (quality: placer, topo, congestion)
-
-A code-quality pass over `pcb-placer`, `pcb-topo` and `pcb-congestion`
-with no behaviour change. Binary x1200 (this code; main had no Rust change
-since 54eff39).
-
-**Clippy.** `cargo clippy --release -p pcb-placer -p pcb-topo -p
-pcb-congestion` reported 19 warnings in the three crates (6 + 11 + 2),
-now none, also with `--all-targets` (the 26 left in that output are
-`pcb-router`'s, a dependency):
-
-- `needless_range_loop` (8): iterators with `enumerate` in
-  `global.rs` (filler sides), `legal.rs` (`refine`'s bucket fill),
-  `features.rs` (layer slots) and `layers.rs` (the layer DP, the
-  stretches, the clusters, the stretch costs); same order, same values;
-- `type_complexity` (7): aliases `Boxes` (anneal.rs), `NetPin`
-  (global.rs), `Level` (lib.rs, the relaxation levels' tuple),
-  `WireRoom` (layers.rs), `Ring` (realize.rs);
-- `too_many_arguments` (2, `realize::pull`, `cached_crossing_cost`):
-  allowed, as elsewhere in the crates;
-- `chunks_exact_to_as_chunks`, `unnecessary_sort_by` (a stable
-  `sort_by_key` on the same key), `manual_is_multiple_of`: as suggested;
-- with `--all-targets`, `excessive_precision` in the tiny model's test:
-  allowed, the expected values are PyTorch's as printed.
-
-No NaN-sensitive comparison was among them.
-
-**File sizes.** No `pcb-placer` file is over 2 500 lines (the largest:
-legal.rs 1 713, constraints.rs 1 277, lib.rs 1 119), so nothing was split.
-
-**Kept on purpose** (documented, off or parked), untouched:
-
-- `shared_halos` (placer option, off): the field `Problem::shared_halos`
-  (problem.rs:147), its branches in lib.rs:386, global.rs:297,
-  anneal.rs:225, legal.rs:482, room.rs:186; the KiCad option in
-  board_placer.rs:143;
-- `anneal_far_side_gaps` (off): board_placer.rs:146 sets
-  `AnnealConfig::legal_far_side`; the annealer's `far_overlap` and
-  `far_courtyards` (anneal.rs:374-479, about 106 lines) and `build_state`;
-- `routing_room` (off): crates/pcb-placer/src/room.rs (428 lines),
-  `Config::routing_room` in lib.rs (about lines 967-1063),
-  crates/pcb-kicad/src/placement_room.rs (676 lines);
-- the topological engine: crates/pcb-topo (8 files, 5 730 lines), called
-  from board_router.rs (around line 5159), docs/topological.md;
-- the congestion network: crates/pcb-congestion/src/model.rs (190 lines),
-  crates/pcb-kicad/src/congestion_rank.rs (225 lines);
-  crates/pcb-congestion/src/features.rs (790 lines) also holds
-  `rudy_overflow`, which the race uses.
-
-**Identity.** Tests (`-p pcb-placer -p pcb-topo -p pcb-congestion -p
-pcb-kicad`, release) pass. `place-kicad-board` on the short tier's prepared
-sources (build/short-x1170, with each board's layout.json, 4 threads):
-spell_tome_bottom, USB_Cable_Tester, urchin, eternal-keypad, OpenFC and
-Blue_Line give byte-identical boards with x1170 and x1200.
-`score-congestion` (q-ensemble.onnx) on urchin's and OpenFC's placements:
-the same `open`, `overflow` and tiles. Route mode on Castor (v16
-placement, quarter budget, 4 threads, `PCB_ROUTER_FINGERPRINT=1
-PCB_ROUTER_FINGERPRINT_ALL=1`): the same four fingerprints in the same
-order, the same routed board (md5) and row (126/126, 187 vias, 5490 mm,
-work 150.4 s).
 ## Committed on 2026-10-20 (quality: research stack removed)
 
 The research stack of August and September 2026 removed, as Florian
@@ -1577,6 +1451,241 @@ pcb-congestion's 2; pcb-placement's 12 left with it).
 in every row but the CPU, wall and memory fields: 7 of 12 pass,
 unconnected 19, new errors 2, vias 1134, length 21228 mm, work 2501 s, cut
 0, first-route open terminals 26.
+
+## Committed on 2026-10-16 (quality: pcb-kicad)
+
+A code-quality pass over the layout, router and placer adapters of
+`pcb-kicad` with no behaviour change. Binaries x1190 (step 1), x1191
+(step 2), x1192 (step 3), x1193 (rebased on the research removal), x1194
+(rebased on the pcb-router quality package, for the final gates), x1195
+(this commit on 3d28004).
+
+**Removed switches and options** (each restored code from before a change
+the measurements settled):
+
+- `PCB_LADDER_OLD_RESERVE`: the ladder's narrow-step reserve is a floor
+  ("narrow reserve floor" below); `narrow_step_reserve` is the floored one.
+- `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`: the ladder judge's
+  experiment hooks (`experiments/congestion/ladder_judge.py` used them; the
+  predictor is a closed negative). `PCB_LADDER_STATS` stays.
+- `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` ("first-route budget").
+- `PCB_LAYOUT_NARROW_CONTINUATION` and `_FLOOR`: after the narrow-signal
+  attempt run alone only the other pour mode runs ("after the narrow
+  attempt"); the stop, seeds and ladder variants and their seed helpers
+  are gone.
+- `PCB_KICAD_OLD_ZONE_ARCS` ("zone seams").
+- Placer options `bus_rows` (with `bus_row_gap_scale` and the row
+  constraint's internal `turns`), `supply_via_room` (with
+  `supply_via_room_mm`) and `replicate_channels` (with
+  `PCB_PLACER_CHANNEL_SELF`, the channel lowering and `lower_placement`'s
+  channels argument): all off, none won. A placer config that still sets
+  one is now rejected (the config denies unknown fields);
+  docs/constraints.md still documents `bus_rows`.
+
+- `jacobi_batch` in the router config and `PCB_JACOBI_BATCH` in
+  src/main.rs: the router no longer reads it (pcb-router quality).
+
+Kept: the user-facing kill switches (island stubs,
+solid starved thermals, `PCB_KICAD_NO_NECK_REPAIR`) and every diagnostic
+switch.
+
+**Clippy** is clean on the files of this pass: dead code (the wall
+guard's `Labels`, `Check` and `Report` steps, never asked: asking would
+only fire the guard later; `courtyard_shapes`; `default_edge_rule`, a
+serde default on a Serialize-only result; `turned_box`), the move trial's
+restore before returning an error (the error ends the layout), type
+aliases, allows with reasons for long argument lists and the negated
+comparisons that reject NaN, `clamp` where the bounds are constants and
+the value never NaN.
+
+**Splits** (moves): `board_router.rs` (6750 lines) into
+`board_router/{config, result, lower, tools, geometry, memory, budget,
+route, pour_plan, attempt, tests}.rs`, `board_placer.rs` (5300 lines) into
+`board_placer/{config, result, rules, bodies, decoupling, courtyards,
+lower, edges, trace, seed_race, place, tests}.rs`; `mod.rs` re-exports, so
+paths outside are unchanged. A line multiset check of old against new
+finds only rustfmt reflows, the module lines and `lower_board`'s own copy
+of `polygon_area` (the same products in the same order), which gives way
+to the module's.
+
+Lines: step 1 -1236 (148 added, 1384 removed), step 2 -39, step 3 +159
+(module headers and rustfmt reflows of the moved code).
+
+**Gates**, after each step: the tests of pcb-kicad, pcb-placer and
+pcb-router and the CLI exit-code and walkthrough tests; place-kicad-board
+on the short tier's prepared x1170 sources (spell_tome_bottom,
+USB_Cable_Tester, urchin, eternal-keypad, OpenFC, Blue_Line; 4 threads,
+120 s of placement work), boards byte-identical to x1170; layout mode, one
+run a side, 4 threads, on TelemetryOnboard and MokyaLora (the ladder keeps
+244 s for the step; Telemetry releases it complete) and vaio_re (the
+narrow-signal attempt alone, then the other pour mode): rows identical
+but CPU, wall and memory, boards byte-identical to x1170
+(`build/qc-lay-x1170`, `-x1190`, `-x1191`, `-x1192`).
+At the end, on x1194: the short tier under the lock (6 jobs, 4 threads)
+against build/short-x1170.log, all 12 rows identical but CPU, wall,
+load and memory, every board byte-identical (7/12, unconnected 19, new
+errors 2, 1134 vias, work 2501 s); the schematic tier against x1193 (the
+same code on the previous base) all 12 rows and boards identical. Against
+build/sch-x1161.log the rows differ in `work_seconds` and
+`kicad_check_work_seconds` only (x1161 predates the KiCad check work
+accounting, d490aad), boards identical, but TelemetryOnboard (108/108 to
+107/108): x1170, main's code before this pass, gives the x1193 row and
+board exactly (build/sch-x1170-telemetry), so the change is the check
+work's, not this pass's. On 3d28004 (x1195): scripts/check.sh, and
+place-kicad-board on the six boards byte-identical to main's x1232.
+
+Not taken (behaviour changes, for a later agent): `routable_net` rejects
+net names made only of digits (SeanBP Edge-Card-CAEN); the writer's
+footprint file order in a process-global registry rather than on the
+board (this pass did not touch `encode`).
+
+## Committed on 2026-10-16 (quality: pcb-router)
+
+A code-quality package for `crates/pcb-router`, no algorithm change:
+every step routes byte-identically to x1170 (main 54eff39). Branch
+`quality-router`, four commits, snapshots x1180 to x1183 (one per step)
+and x1184 (the four rebased on main, the gates' last binary). Finished on
+2026-10-21 after a pause; the date is the package's start.
+
+**1. Settled switches removed** (x1180; the router crate -350 lines).
+Each restored the code before a change for A/B runs, and the changelog
+section that introduced it records the measurement that settled it. Gone,
+with their old code paths, the current path the only one:
+`PCB_ROUTER_OLD_SPOKES`, `NO_MANUAL_SPOKES` (the fields `kicad_spokes`
+and `manual_spokes` stay switchable: router.json sets them),
+`NO_ISLAND_VIAS` (`island_vias`), `OLD_TRACKED` (`track_meets_spokes`),
+`NO_FOREIGN_SPOKES`, `OLD_TRACK_PIECES` (`track_touch_fill`),
+`NO_NECK_JOINS`, `OLD_SPOKE_FRAMES`, `NO_INNER_PADS`, `OLD_TRACK_ENDS`
+(`track_end_tolerance`), `NO_INNER_SPOKES`, `OLD_TRACKS_FILL`
+(`tracks_rung_fill` and `Router::hatch_any_plane`), `OLD_TRACK_RUNS`
+(`track_end_junctions`), `NO_ZONE_SEAMS`, `OLD_SPOKE_CLEAR`
+(`spoke_clear_to_fill`), `OLD_HOPELESS` (`unreachable_terminals`),
+`OLD_RESOLVE` (`resolve_keeps_partial`), `OLD_FILL_CLEARANCE` (board.rs),
+`OLD_POLYGON_DISTANCES` (grid.rs), `REROUTE_FRACTION`, and the
+`jacobi_batch` option with `route_jacobi` (`PCB_JACOBI_BATCH` is still
+read by src/main.rs into the pcb-kicad field, which no longer reaches the
+router). `PCB_ROUTER_NO_ISLAND_STUBS` stays (a default for Florian). The
+tests' "old" halves went; their current halves stay.
+
+**2. Parked speculation removed** (x1181; -791 lines): `speculate`,
+`speculate_cleanup`, `speculate_paths`, `route_batches` (now a loop over
+`route_batch`), `ReadSet` and its notes in the search, the planner and the
+per-search escapes loop (which only noted reads), `changed_cells`,
+`mark_dirty_blocks`, `clean_up_window`, `clean_up_batch`, the speculative
+part of `clean_up`, the profile line's speculation counts, and
+`PCB_ROUTER_NO_SPECULATION`, `SPECULATE_PATHS`, `SPECULATION_CHECK`,
+`SPECULATION_NO_TILES`, `CLEANUP_WINDOW`. The code is in e256657, which
+added it (router.md, "Known limits"). Also `hard_thermal_guards` and
+`stitch_in_negotiation` (off, measured worse in the 2026-10-09 sections,
+unset by pcb-kicad). `pour_whole_rip_up` stays: it is on by default.
+
+**3. Clippy** (x1182; +33 lines): pcb-router is clippy-clean
+(`cargo clippy -p pcb-router --all-targets`): iterators for the indexed
+loops, `is_multiple_of`, `as_chunks`, a slice for `stitching_vias`'
+parent, type aliases (`FrameHook`, `SpokeCorridors`, `CellWindow`,
+`SpokePad`, `RoutedItem`), `too_many_arguments` allowed on `plan_corridor`
+with a reason, `neg_cmp_op_on_partial_ord` allowed where a NaN crossing
+must count as not beyond.
+
+**4. router.rs split** (x1183; pure moves, +324 lines of headers and
+`use`): router.rs (15 395 lines at 54eff39, 14 291 before the split) keeps
+the shared state and helpers in 920 lines; `router/` has config, result,
+heap, wall, hash, profile, and `impl Router` in build, escapes, guards,
+prepare, stamping, route_net, planner, search, update, batching, global,
+driver, fixed, negotiate, pour_refresh, vias, finish, pour_analysis,
+spokes, manual_spokes, pour_dump, stitch, cleanup, resolve, output; the
+tests in router/tests.rs. Methods are `pub(super)`; the paths pcb-kicad
+uses are re-exported (`router::{Config, Router, EXPANSIONS_PER_SECOND,
+GUARD, wall_cuts, wall_guard, note_wall_cut, WALL_CUTS, build_totals,
+congestion::tile_frame}`). router.md, "How it works", lists the files.
+
+**Gates**, after every step: `cargo test --release -p pcb-router -p
+pcb-kicad` (58 router tests, the dropped halves aside, and pcb-kicad's
+365). Route mode on the v16 placements (`--route-from
+build/github-layout-v16 --tasks build/github-tasks-v6/tasks.json --jobs 2
+--threads 4`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`) of
+Castor, k30-SBC, jetson, Sisu, urchin and spell_tome, x1180, x1181, x1182
+and x1184 (the four commits rebased on fb4b7e6) each against x1170: the
+same board md5, vias, length, work seconds (1649.8, 1032.0, 418.5, 310.7,
+16.8, 1.0), verdict and fingerprints on every board (`build/qb-x1170*`,
+`build/qb-x118*`). `PCB_ROUTER_FINGERPRINT_ALL` at a quarter budget, two
+threads, on Castor and k30-SBC, x1184 against x1170: identical
+(`build/qb-fpall-*`). The starved-thermal census (census.py, fill3 KiCad
+cache, 44 boards) 162 predicted / 7 missed / 26 false alarms / 2 not
+modelled for x1170 and every step, the whole output identical
+(`build/qb-census`). Short tier (tasks v6, 6 x 4 under the lock) x1184
+against `build/short-x1170.log`: all 12 rows identical apart from CPU,
+wall, load and memory (unconnected 19, new errors 2, 1134 vias, 21228 mm,
+work 2501 s, passes 7, first-route open terminals 26).
+
+Not pure clean-ups, for the reviewer: pcb-kicad's `jacobi_batch` field
+(board_router.rs) and the `PCB_JACOBI_BATCH` line of src/main.rs stay but
+do nothing now (the three lines that passed the field on were removed so
+that pcb-kicad compiles); the verbose `profile:` line lost its speculation
+counts and the `PCB_ROUTER_DEBUG` batch sizes their `j` marks; the
+net-count assertion of `build` keeps its 15-bit limit, which the hard
+guard's bit no longer needs.
+
+## Committed on 2026-10-16 (quality: placer, topo, congestion)
+
+A code-quality pass over `pcb-placer`, `pcb-topo` and `pcb-congestion`
+with no behaviour change. Binary x1200 (this code; main had no Rust change
+since 54eff39).
+
+**Clippy.** `cargo clippy --release -p pcb-placer -p pcb-topo -p
+pcb-congestion` reported 19 warnings in the three crates (6 + 11 + 2),
+now none, also with `--all-targets` (the 26 left in that output are
+`pcb-router`'s, a dependency):
+
+- `needless_range_loop` (8): iterators with `enumerate` in
+  `global.rs` (filler sides), `legal.rs` (`refine`'s bucket fill),
+  `features.rs` (layer slots) and `layers.rs` (the layer DP, the
+  stretches, the clusters, the stretch costs); same order, same values;
+- `type_complexity` (7): aliases `Boxes` (anneal.rs), `NetPin`
+  (global.rs), `Level` (lib.rs, the relaxation levels' tuple),
+  `WireRoom` (layers.rs), `Ring` (realize.rs);
+- `too_many_arguments` (2, `realize::pull`, `cached_crossing_cost`):
+  allowed, as elsewhere in the crates;
+- `chunks_exact_to_as_chunks`, `unnecessary_sort_by` (a stable
+  `sort_by_key` on the same key), `manual_is_multiple_of`: as suggested;
+- with `--all-targets`, `excessive_precision` in the tiny model's test:
+  allowed, the expected values are PyTorch's as printed.
+
+No NaN-sensitive comparison was among them.
+
+**File sizes.** No `pcb-placer` file is over 2 500 lines (the largest:
+legal.rs 1 713, constraints.rs 1 277, lib.rs 1 119), so nothing was split.
+
+**Kept on purpose** (documented, off or parked), untouched:
+
+- `shared_halos` (placer option, off): the field `Problem::shared_halos`
+  (problem.rs:147), its branches in lib.rs:386, global.rs:297,
+  anneal.rs:225, legal.rs:482, room.rs:186; the KiCad option in
+  board_placer.rs:143;
+- `anneal_far_side_gaps` (off): board_placer.rs:146 sets
+  `AnnealConfig::legal_far_side`; the annealer's `far_overlap` and
+  `far_courtyards` (anneal.rs:374-479, about 106 lines) and `build_state`;
+- `routing_room` (off): crates/pcb-placer/src/room.rs (428 lines),
+  `Config::routing_room` in lib.rs (about lines 967-1063),
+  crates/pcb-kicad/src/placement_room.rs (676 lines);
+- the topological engine: crates/pcb-topo (8 files, 5 730 lines), called
+  from board_router.rs (around line 5159), docs/topological.md;
+- the congestion network: crates/pcb-congestion/src/model.rs (190 lines),
+  crates/pcb-kicad/src/congestion_rank.rs (225 lines);
+  crates/pcb-congestion/src/features.rs (790 lines) also holds
+  `rudy_overflow`, which the race uses.
+
+**Identity.** Tests (`-p pcb-placer -p pcb-topo -p pcb-congestion -p
+pcb-kicad`, release) pass. `place-kicad-board` on the short tier's prepared
+sources (build/short-x1170, with each board's layout.json, 4 threads):
+spell_tome_bottom, USB_Cable_Tester, urchin, eternal-keypad, OpenFC and
+Blue_Line give byte-identical boards with x1170 and x1200.
+`score-congestion` (q-ensemble.onnx) on urchin's and OpenFC's placements:
+the same `open`, `overflow` and tiles. Route mode on Castor (v16
+placement, quarter budget, 4 threads, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_FINGERPRINT_ALL=1`): the same four fingerprints in the same
+order, the same routed board (md5) and row (126/126, 187 vias, 5490 mm,
+work 150.4 s).
 
 ## Committed on 2026-10-16 (stamp)
 

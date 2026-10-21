@@ -138,19 +138,12 @@ Parts a constraint already places keep to it; a `near` to a part's body
 still leaves room for its pin. Parts tied together by `near` (yours or
 these) may come closer than the routing halo of a big IC keeps others.
 
-Two more rules are opt-in (placer config, off by default):
-- `"bus_rows": true`: identical through-hole footprints whose pads of one
-  number carry one signal net, pin for pin (SIMM sockets, a bank of DIP
-  memories: at least a quarter of the pads and four of them), become a
-  `row` the placer makes
-  itself: stacked along the parts' shorter side, a gap of their halo
-  times the share of pads off the bus apart (`bus_row_gap_scale` scales
-  it), in as many lines as suit the board's shape; the row may also take
-  quarter turns. Parts a constraint names, fixed parts, repeated
-  references and boards of several pieces are left out.
-- `"keep_on_pieces": false`: on a board of several pieces (a board with a
-  breakaway beside it), the parts a net joins to fixed parts on one piece
-  stay on that piece (as a `region`); on by default, this switches it off.
+One more rule is a placer config switch, on by default: on a board of
+several pieces (a board with a breakaway beside it), the parts a net
+joins to fixed parts on one piece stay on that piece (as a `region`);
+`"keep_on_pieces": false` switches it off. (The placer option
+`bus_rows`, rows of identical bus parts, was off, won nothing and was
+removed on 2026-10-16; a placer config that sets it is rejected.)
 
 A footprint's own rule areas (a U.FL's or an antenna's keepout) move and
 turn with it. One that forbids pads but allows footprints keeps the other

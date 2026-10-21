@@ -239,12 +239,47 @@ impl Drop for ReportDirectory {
     }
 }
 
+/// The oldest KiCad major version pcb-maker is checked against: it writes
+/// KiCad 10's file format, and every benchmark ran on KiCad 10.0.7.
+const KICAD_MAJOR: u32 = 10;
+
+/// The warning for a kicad-cli of `version` (`kicad-cli version`'s output)
+/// older than [`KICAD_MAJOR`]; `None` for a current or unreadable one.
+fn old_kicad_warning(version: &str) -> Option<String> {
+    let major: u32 = version
+        .trim()
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    (major < KICAD_MAJOR).then(|| {
+        format!(
+            "warning: kicad-cli {} is older than KiCad {KICAD_MAJOR}: pcb-maker writes KiCad {KICAD_MAJOR} boards and is tested with KiCad 10.0.7 only; its checks may fail or differ",
+            version.trim()
+        )
+    })
+}
+
+/// Warns once per process, before the first KiCad check, when `program`
+/// is older than KiCad 10 (its version is asked once and cached).
+fn warn_if_old_kicad(program: &OsStr) {
+    static CHECKED: std::sync::Once = std::sync::Once::new();
+    CHECKED.call_once(|| {
+        if let Some(warning) =
+            crate::drc_cache::tool_version(program).and_then(|version| old_kicad_warning(&version))
+        {
+            eprintln!("{warning}");
+        }
+    });
+}
+
 pub(super) fn run_kicad_report(
     arguments: &[&str],
     output: &Path,
     input: &Path,
 ) -> Result<(), String> {
     let program = OsStr::new("kicad-cli");
+    warn_if_old_kicad(program);
     // ERC too: its library warnings are not counted (`is_erc_library_warning`).
     let config_home = match arguments.get(..2) {
         Some(["pcb", "drc"]) => crate::kicad_config::drc_config_home(program, input),
@@ -373,6 +408,7 @@ pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), St
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let program = OsStr::new("kicad-cli");
+    warn_if_old_kicad(program);
     let mut command = Command::new(program);
     command
         .args([
@@ -474,6 +510,15 @@ mod tests {
             }
         }
         report
+    }
+
+    #[test]
+    fn kicad_older_than_10_is_warned_about() {
+        assert!(old_kicad_warning("9.0.1\n").is_some_and(|text| text.contains("kicad-cli 9.0.1")));
+        assert!(old_kicad_warning("8.0.9-rc1").is_some());
+        assert_eq!(old_kicad_warning("10.0.7"), None);
+        assert_eq!(old_kicad_warning("11.0.0"), None);
+        assert_eq!(old_kicad_warning("unknown"), None);
     }
 
     #[test]
