@@ -1332,8 +1332,8 @@ def schematic_admitted(task, arguments, token):
     if verdict.get("schematic_parity_issues") is not None:
         row["parity"] = verdict["schematic_parity_issues"]
         row["parity_by_type"] = verdict.get("schematic_parity_by_type")
-    row["pass"] = bool(row.get("pass")) and not report["missing"]
-    row["pass_strict"] = bool(row.get("pass_strict")) and not report["missing"]
+    # Every footprint found: the pass rules' own condition (compare.passes,
+    # compare.passes_strict: the row's `missing`, set above), not again here.
     # Where the flow stopped: the first stage that fell short.
     if report["missing"]:
         row.update(stopped="import", why=f"{len(report['missing'])} footprints missing: "

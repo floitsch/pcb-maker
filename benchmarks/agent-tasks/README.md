@@ -999,6 +999,33 @@ the rows are uncut (CUT rows are marked).
 `designer.json` gives the memory gate and the runner each board's peak
 and seconds from its v17 layout row (x1170).
 
+**Matched budgets** (the review's H3, 2026-10-22). The tier gives the
+router the layout's whole `total_seconds` (1500 s of work), but in a
+layout the placement race and the moves take their share first and the
+final ladder gets what is left (board_layout.rs: `total_seconds` less
+the work so far and the seed pool's excess). So the plain split measures
+the routing gap with more routing work than the layout's router had, and
+whatever the smaller budget loses shows up as placement gap. Layout rows
+carry the final ladder's work since 2026-10-22 (`ladder_budget_seconds`,
+`ladder_budget_share` of `total_seconds`; null where no final ladder ran;
+from board-layout.json's `final_ladder_budget_seconds` since x1500, from
+layout.log before), and compare.py --gap prints both sides' budgets. The
+matched comparison routes the designer's placement at the layout's
+final-ladder share: `--budget-scale <median ladder_budget_share of the
+layout run>` (v18: 0.695, the median over the 62 rows whose final ladder
+ran; 0.684 over the 46 of them left open):
+
+```sh
+benchmarks/agent-tasks/run.py build/designer-x1404-matched --tier designer --binary build/bin/pcb-maker-x1404 \
+  --budget-scale 0.695 --quality --jobs 8 --threads 1 --min-free-gb 14 > build/designer-x1404-matched.log
+benchmarks/agent-tasks/compare.py --gap build/github-layout-v18c.log build/designer-x1404-matched.log --targets
+```
+
+The layout's router also had the first route before the final ladder,
+so even matched the designer route has somewhat less routing work in all;
+and splitting by subtraction assumes the two causes add up: the split is
+an accounting of where the open connections are, not a measured cause.
+
 The first full run with a layout sweep of the same binary (x1315,
 2026-10-21; the two boards it timed out on rerun at 2 x 2 into
 `build/designer-x1315b`, timing out again): 50 of 109 pass the strict
