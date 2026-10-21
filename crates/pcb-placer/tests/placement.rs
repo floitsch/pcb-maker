@@ -1446,3 +1446,67 @@ fn parts_without_room_go_first_until_none_takes_anothers_place() {
     assert!(poses[1].position[0] < 13.0 && poses[1].position[1] < 64.6 - 9.55);
     assert!(poses[2].position[1] > 82.0 && poses[3].position[1] > 82.0);
 }
+
+#[test]
+fn pads_of_a_part_held_by_its_copper_keep_the_copper_to_edge_clearance_on_every_side() {
+    use pcb_placer::constraints::Edge;
+    // A module held at the left edge by its copper (the edge_copper
+    // level), its top pad near the top edge: the project's copper-to-edge
+    // clearance (0.3 mm) holds there too, not the copper clearance (0.2).
+    let module = Component {
+        name: "U3".into(),
+        body_center: [0.0, 0.0],
+        body_size: [4.0, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin {
+            offset: [0.0, -1.5],
+            net: 0,
+        }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: vec![[-0.5, -2.0, 0.5, -1.0]],
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = Problem {
+        outline: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]],
+        components: vec![module],
+        net_weights: vec![1.0],
+        poses: vec![Pose {
+            position: [2.5, 10.0],
+            angle: 0.0,
+        }],
+        spacing: 0.0,
+        grid: 0.0,
+        edge_margin: 0.5,
+        min_spacing: 0.2,
+        far_side_pads_only: false,
+        shared_halos: false,
+        pieces: Vec::new(),
+        constraints: Default::default(),
+    };
+    problem.constraints.edges.push((0, Edge::Left, 1.0));
+    problem.constraints.edge_copper = true;
+    problem.constraints.copper_edge = 0.3;
+    let legal = |y: f64| {
+        let pose = Pose {
+            position: [2.5, y],
+            angle: 0.0,
+        };
+        pcb_placer::legal::is_legal(&problem, &[pose], 0, pose, std::iter::empty())
+    };
+    // The pad's top edge 0.25 mm from the board's: too close.
+    assert!(!legal(2.25));
+    assert!(legal(2.31));
+}

@@ -70,6 +70,14 @@ pub struct KiCadBoardPlacerResult {
     /// The same parts by their index in the placement problem.
     #[serde(skip)]
     pub on_marks: Vec<usize>,
+    /// The board's marks that belong to a movable part (on it at its input
+    /// position, `attach_marks`) and so are no obstacles: the mark, its
+    /// layer and anchor, and the part.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attached_marks: Vec<String>,
+    /// The same, as (the mark's place among the board's marks, the part).
+    #[serde(skip)]
+    pub attached_mark_pairs: Vec<(usize, usize)>,
     /// Per footprint, the halo the placement gave it where routing room
     /// set the halos (`core::Relaxation::halos`).
     #[serde(skip)]

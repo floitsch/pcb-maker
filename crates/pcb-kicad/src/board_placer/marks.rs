@@ -40,6 +40,89 @@ pub(crate) struct BoardMark {
     pub boxes: Vec<MarkBox>,
 }
 
+impl BoardMark {
+    /// How reports name it: what it is, its layer and anchor.
+    pub(crate) fn key(&self) -> String {
+        format!(
+            "{} ({} at {:.2}, {:.2})",
+            self.what, self.layer, self.at[0], self.at[1]
+        )
+    }
+}
+
+/// The marks that belong to a movable part rather than to the board: a
+/// mark whose boxes overlap the part's body (courtyard and pads) on the
+/// mark's side, or its holes and pads there from the other side, at the
+/// part's input position (a connector's pin names inside its courtyard,
+/// a chip's name on its outline). Such a mark labels the part, which the
+/// placement moves: it is no obstacle (`labels.attached` reports it). A
+/// part stacked with others at one origin (a task's unplaced parts, the
+/// fence's movable parts) says nothing about where it belongs and claims
+/// no mark; of several parts, the one overlapping most. Returns (the
+/// mark's place in `marks`, the part).
+pub(super) fn attach_marks(
+    problem: &core::Problem,
+    footprints: usize,
+    marks: &[(usize, BoardMark)],
+) -> Vec<(usize, usize)> {
+    let movable: Vec<usize> = (0..footprints)
+        .filter(|part| !problem.components[*part].fixed)
+        .collect();
+    let origin = |part: usize| problem.poses[part].position;
+    let placed: Vec<usize> = movable
+        .iter()
+        .copied()
+        .filter(|part| {
+            !movable.iter().any(|other| {
+                other != part
+                    && (origin(*other)[0] - origin(*part)[0]).abs() < 0.01
+                    && (origin(*other)[1] - origin(*part)[1]).abs() < 0.01
+            })
+        })
+        .collect();
+    let overlap = |a: (core::problem::Point, core::problem::Point), b: MarkBox| {
+        let width = (a.0[0] + a.1[0]).min(b[2]) - (a.0[0] - a.1[0]).max(b[0]);
+        let height = (a.0[1] + a.1[1]).min(b[3]) - (a.0[1] - a.1[1]).max(b[1]);
+        if width > 0.0 && height > 0.0 {
+            width * height
+        } else {
+            0.0
+        }
+    };
+    let mut attached = Vec::new();
+    for (place, (_, mark)) in marks.iter().enumerate() {
+        let side = if mark.back {
+            core::Side::Back
+        } else {
+            core::Side::Front
+        };
+        let mut best: Option<(f64, usize)> = None;
+        for &part in &placed {
+            let component = &problem.components[part];
+            let pose = problem.poses[part];
+            let boxes = if component.side.collides(side) {
+                vec![(component.center(pose), component.half_extent(pose.angle))]
+            } else {
+                let mut boxes = component.far_boxes(pose);
+                boxes.extend(component.boxes_of(&component.far_copper, pose));
+                boxes
+            };
+            let area: f64 = boxes
+                .iter()
+                .flat_map(|b| mark.boxes.iter().map(move |m| (*b, *m)))
+                .map(|(b, m)| overlap(b, m))
+                .sum();
+            if area > 0.0 && best.is_none_or(|(most, _)| area > most) {
+                best = Some((area, part));
+            }
+        }
+        if let Some((_, part)) = best {
+            attached.push((place, part));
+        }
+    }
+    attached
+}
+
 /// Most boxes one cluster of graphics blocks with (a dense logo is
 /// coarsened to a grid of runs).
 const MAXIMUM_BOXES: usize = 48;

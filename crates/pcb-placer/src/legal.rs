@@ -275,14 +275,22 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             }
         }
         if touching.iter().any(|touch| *touch) {
-            // Copper on the constrained side may reach the edge; elsewhere it
-            // keeps the copper clearance (the edge margin is room for
-            // routing, which a tab does not need).
+            // Copper on the constrained side may come as close to the edge as
+            // the project's copper-to-edge clearance; elsewhere it keeps the
+            // copper clearance too (the edge margin is room for routing,
+            // which a tab does not need), and never less than that
+            // copper-to-edge clearance: every side is a board edge, the side
+            // an overhang reaches past too (the fence's ESP32 module, its top
+            // pads 0.2 mm from the edge against the project's 0.3 mm; the
+            // router cannot move a pad).
             let margins = touching.map(|touch| {
                 if touch {
                     problem.constraints.copper_edge - 1.0e-6
                 } else {
-                    problem.min_spacing.min(problem.edge_margin)
+                    problem
+                        .min_spacing
+                        .min(problem.edge_margin)
+                        .max(problem.constraints.copper_edge - 1.0e-6)
                 }
             });
             return component.pad_boxes(pose).iter().all(|(center, half)| {

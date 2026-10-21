@@ -108,6 +108,12 @@ pub struct KiCadLabelReport {
     /// (`keep_board_marks`), so they are reported rather than moved.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overlaps: Vec<String>,
+    /// The board's marks that belong to a movable part (on it at its input
+    /// position): no obstacles, left where the input put them while the
+    /// part moved, not reported as overlaps. The mark, its layer and
+    /// anchor, and the part.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attached: Vec<String>,
 }
 
 fn visible(property: &Expr) -> bool {
@@ -159,6 +165,7 @@ pub(crate) fn place_labels(
     pcb: &mut Expr,
     keep_marks: bool,
     fixed: &BTreeSet<String>,
+    attached: &[String],
 ) -> Result<KiCadLabelReport, String> {
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
@@ -459,6 +466,7 @@ pub(crate) fn place_labels(
     }
     let mut report = KiCadLabelReport {
         labels: labels.len(),
+        attached: attached.to_vec(),
         ..Default::default()
     };
     let mut taken: [Vec<Box2>; 2] = [Vec::new(), Vec::new()];
@@ -779,6 +787,13 @@ pub(crate) fn place_labels(
     // The parts on the board's marks: their pads, silkscreen and the
     // labels that found no free spot.
     for mark in &marks {
+        let key = mark.key();
+        if attached.iter().any(|line| {
+            line.strip_prefix(key.as_str())
+                .is_some_and(|rest| rest.starts_with(':'))
+        }) {
+            continue;
+        }
         let side = mark.back as usize;
         let on_mark = |b: Box2| mark.boxes.iter().any(|m| overlaps(*m, b, 0.0));
         let mut hits: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
@@ -945,6 +960,7 @@ pub(crate) fn place_copper_texts(
         moved: 0,
         stuck: Vec::new(),
         overlaps: Vec::new(),
+        attached: Vec::new(),
     };
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
@@ -1337,7 +1353,7 @@ mod tests {
     #[test]
     fn the_polish_keeps_board_texts_and_reports_the_parts_on_them() {
         let mut pcb = parse(BOARD).unwrap();
-        let report = place_labels(&mut pcb, true, &BTreeSet::new()).unwrap();
+        let report = place_labels(&mut pcb, true, &BTreeSet::new(), &[]).unwrap();
         assert_eq!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
         assert_eq!(text_at(&pcb, "STACK"), [10.0, 5.0, 0.0]);
         assert_eq!(report.overlaps.len(), 1, "{:?}", report.overlaps);
@@ -1353,14 +1369,14 @@ mod tests {
         let mut pcb = parse(BOARD).unwrap();
         let fixed = BTreeSet::from(["R22".to_string()]);
         assert!(
-            place_labels(&mut pcb, true, &fixed)
+            place_labels(&mut pcb, true, &fixed, &[])
                 .unwrap()
                 .overlaps
                 .is_empty()
         );
         // Before 2026-10-21 the text moved off the part.
         let mut pcb = parse(BOARD).unwrap();
-        let report = place_labels(&mut pcb, false, &BTreeSet::new()).unwrap();
+        let report = place_labels(&mut pcb, false, &BTreeSet::new(), &[]).unwrap();
         assert_ne!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
         assert!(report.overlaps.is_empty());
     }

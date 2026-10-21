@@ -893,6 +893,9 @@ pub fn layout_kicad_board(
     work += placement.work_seconds;
     pool_excess += (placement.pool_work_seconds - placement.work_seconds).max(0.0);
     let pool_excess = pool_excess;
+    // The marks that belong to a movable part were taken from the input;
+    // the placed board's lowerings keep them so.
+    placer_config.attached_marks = Some(placement.attached_mark_pairs.clone());
     if wall_passed() {
         core::router::note_wall_cut(
             "placement",
@@ -1749,7 +1752,8 @@ pub fn layout_kicad_board(
         .filter(|(_, component)| component.fixed)
         .map(|(reference, _)| reference.clone())
         .collect();
-    let mut labels = crate::labels::place_labels(&mut pcb, keep_marks, &fixed)?;
+    let mut labels =
+        crate::labels::place_labels(&mut pcb, keep_marks, &fixed, &placement.attached_marks)?;
     if !labels.stuck.is_empty() {
         eprintln!("labels without a free spot: {:?}", labels.stuck);
     }

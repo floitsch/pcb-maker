@@ -393,15 +393,76 @@ fn a_part_that_would_sit_under_a_board_label_is_placed_beside_it() {
 }
 
 #[test]
+fn a_mark_on_a_movable_part_at_its_input_position_belongs_to_it() {
+    // J1's pin names inside its courtyard (a connector the placement may
+    // move): no obstacle. "TITLE" over free space and "TP" over a fixed
+    // test pad: obstacles. "STACK" over two parts stacked at one origin
+    // (a task's unplaced parts): an obstacle, the stack says nothing.
+    let pcb = parse(
+        r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+        (gr_text "1 2 3" (at 10 10 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (gr_text "TITLE" (at 30 25 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+        (gr_text "TP" (at 50 10 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (gr_text "STACK" (at 30 5 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
+        (footprint "J" (layer "F.Cu") (at 10 10)
+            (property "Reference" "J1")
+            (fp_rect (start -4 -1.5) (end 4 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -2.5 0) (size 1 1) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 2.5 0) (size 1 1) (layers "F.Cu") (net 2 "B")))
+        (footprint "TP" (layer "F.Cu") (at 50 10) (locked yes)
+            (property "Reference" "TP1")
+            (fp_rect (start -1.3 -1.3) (end 1.3 1.3) (layer "F.CrtYd"))
+            (pad "1" smd circle (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "A")))
+        (footprint "R" (layer "F.Cu") (at 30 5)
+            (property "Reference" "R1")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "B")))
+        (footprint "R" (layer "F.Cu") (at 30 5)
+            (property "Reference" "R2")
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 2 "B"))))"#,
+    )
+    .unwrap();
+    let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+    assert_eq!(
+        lowered.attached_report,
+        ["text \"1 2 3\" (F.SilkS at 10.00, 10.00): J1"]
+    );
+    let problem = &lowered.problem;
+    let r1 = 2;
+    let legal = |position: [f64; 2]| {
+        let mut poses = problem.poses.clone();
+        poses[r1].position = position;
+        poses[r1 + 1].position = [5.0, 25.0];
+        !core::legal::illegal_components(problem, &poses).contains(&r1)
+    };
+    // On J1's own names (J1 itself moved away): free; on the others: not.
+    let mut moved = problem.poses.clone();
+    moved[0].position = [10.0, 20.0];
+    let mut on_names = moved.clone();
+    on_names[r1].position = [10.0, 10.0];
+    on_names[r1 + 1].position = [5.0, 25.0];
+    assert!(!core::legal::illegal_components(problem, &on_names).contains(&r1));
+    assert!(!legal([30.0, 25.0]));
+    assert!(!legal([30.0, 5.0]));
+    assert!(legal([40.0, 18.0]));
+}
+
+#[test]
 fn board_marks_give_way_when_nothing_else_seats_a_part() {
-    // A label across the whole of a small board: the resistor has no spot
-    // off it, so it lies there (and the placement says so).
+    // A label across the whole of a small board: the resistor (off the
+    // board in the input, so the label is not its own) has no spot off
+    // it, so it lies there (and the placement says so).
     let board = r#"(kicad_pcb (version 20240108)
         (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
         (net 0 "") (net 1 "A") (net 2 "B")
         (gr_rect (start 0 0) (end 12 6) (layer "Edge.Cuts"))
         (gr_text "ABCDE" (at 6 3 0) (layer "F.SilkS") (effects (font (size 3 2) (thickness 0.3))))
-        (footprint "Lib:R" (layer "F.Cu") (at 3 3)
+        (footprint "Lib:R" (layer "F.Cu") (at 20 3)
             (property "Reference" "R1")
             (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
             (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net 1 "A"))
@@ -416,6 +477,7 @@ fn board_marks_give_way_when_nothing_else_seats_a_part() {
     fs::write(source.join("board.kicad_pcb"), board).unwrap();
     let config = KiCadBoardPlacerConfig {
         placement_seeds: 1,
+        free: vec!["R1".into()],
         ..KiCadBoardPlacerConfig::default()
     };
     let result = place_kicad_board(&source, "board", &root.join("placed"), &config).unwrap();
@@ -1522,7 +1584,8 @@ mod order_tests {
         }
         let _ = fs::remove_dir_all(&root);
         // The same poses, and the same board written: the output is in the
-        // canonical order whatever order the input was in.
+        // canonical order whatever order the input was in (the writer's
+        // courtyard order comes from the content: `source_order`).
         assert_eq!(placed[0].0, placed[1].0);
         assert!(placed[0].1 == placed[1].1, "the placed boards differ");
     }

@@ -192,7 +192,9 @@ pub struct KiCadBoardPlacerConfig {
     /// from font size, thickness and justification; graphics on the
     /// silkscreen by their strokes, in clusters, leaving out a cluster that
     /// spans most of the board; a part meets a silkscreen mark without its
-    /// routing halo), and a part that finds no room off them at a level
+    /// routing halo; a mark on a movable part at its input position
+    /// belongs to that part and is none: `attached_marks` in
+    /// `board-placer.json`), and a part that finds no room off them at a level
     /// lies on them (`parts_on_marks` in `board-placer.json`); the layout
     /// routes around copper texts instead of moving them afterwards, and
     /// the polish moves only the parts' reference and value labels.
@@ -202,6 +204,12 @@ pub struct KiCadBoardPlacerConfig {
     /// mark get a warning. On; off: the behaviour before 2026-10-21 (the
     /// marks are no obstacles, the polish moves them off the parts).
     pub keep_board_marks: bool,
+    /// The board's marks that belong to a movable part, taken from the
+    /// input (`attach_marks`: the mark's place among the board's marks,
+    /// the part); set by the layout for the lowerings of the placed board,
+    /// where the parts no longer lie where the input had them.
+    #[serde(skip)]
+    pub attached_marks: Option<Vec<(usize, usize)>>,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -251,6 +259,7 @@ impl Default for KiCadBoardPlacerConfig {
             routing_demand: 0.0,
             orientation_search: true,
             keep_board_marks: true,
+            attached_marks: None,
         }
     }
 }

@@ -24,69 +24,124 @@
 
 use super::*;
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
 
-/// Footprint graphics the canonical order moved: by a digest of the
-/// footprint's reference and graphics in the canonical order, each
-/// graphic's index among the graphics of the file read. The writer
-/// ([`source_order`]) puts them back: KiCad chains a footprint's
-/// courtyard from its graphics in file order, and a courtyard with
-/// zero-length lines (AccordeurDeGuitare's MK1: two arcs and two
-/// points) is closed in the designer's order and "malformed" in ours.
-/// A footprint whose graphics changed since (flipped, a label moved) is
-/// written in the canonical order.
-static SOURCE_ORDERS: OnceLock<Mutex<HashMap<u64, Vec<usize>>>> = OnceLock::new();
-
-fn source_orders() -> std::sync::MutexGuard<'static, HashMap<u64, Vec<usize>>> {
-    SOURCE_ORDERS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// The digest of a footprint's reference and graphics, in their order.
-fn graphics_digest(footprint: &Expr) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    footprint_reference(footprint).hash(&mut hasher);
-    for item in footprint
-        .children()
-        .iter()
-        .filter(|item| item.head().is_some_and(graphic))
-    {
-        encode_canonical(item).hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-/// The order to write a footprint's items in: its graphics in the order
-/// of the file it was read from, when the canonical order moved them and
-/// they are unchanged since; None to write them as they are.
+/// The order to write a footprint's items in, from its content alone (so
+/// that a board is written alike whatever order it was read in): the
+/// canonical order, but each courtyard's graphics, in the courtyard's
+/// places, in the order KiCad's own save writes them
+/// (`FOOTPRINT::cmp_drawings`: by shape, segments before rectangles,
+/// arcs, circles and polygons, then start and end point, then the arc's
+/// middle, the polygon's points and the stroke, then the uuid). KiCad
+/// chains a courtyard from its graphics in file order: AccordeurDeGuitare's
+/// MK1 (two zero-length lines and two arcs) closes only with the lines
+/// first, and dacha's boards (every courtyard segment drawn twice, points
+/// between) give KiCad's DRC more malformed courtyards in any other order.
+/// `None`: write the items as they are held.
+///
+/// Until 2026-10-21 the writer restored each footprint's graphics in the
+/// order of the file read, from a process-wide map keyed by the
+/// footprint's reference and graphics: two files with one footprint in
+/// two orders were written apart (the placer's order test failed alone
+/// and passed or failed by timing beside the lowering test, which reads
+/// the same footprints), the last file read won, and a turned footprint's
+/// `fp_text` changed the key and lost the order it was kept for. Files
+/// KiCad saved are in this order already, so the two agree on them.
 pub(crate) fn source_order(footprint: &Expr) -> Option<Vec<usize>> {
     let items = footprint.children();
-    let places: Vec<usize> = (0..items.len())
-        .filter(|&index| items[index].head().is_some_and(graphic))
-        .collect();
+    let courtyard = |index: &usize| {
+        items[*index].head().is_some_and(graphic)
+            && form_atom(&items[*index], "layer", 1).is_some_and(|layer| layer.ends_with(".CrtYd"))
+    };
+    let places: Vec<usize> = (0..items.len()).filter(courtyard).collect();
     if places.len() < 2 {
         return None;
     }
-    if SOURCE_ORDERS
-        .get()
-        .is_none_or(|_| source_orders().is_empty())
-    {
-        return None;
-    }
-    let digest = graphics_digest(footprint);
-    let sources = source_orders().get(&digest)?.clone();
-    if sources.len() != places.len() {
+    let mut sorted = places.clone();
+    sorted.sort_by(|a, b| {
+        let (shape_a, numbers_a, uuid_a) = save_key(&items[*a]);
+        let (shape_b, numbers_b, uuid_b) = save_key(&items[*b]);
+        shape_a
+            .cmp(&shape_b)
+            .then_with(|| {
+                numbers_a
+                    .iter()
+                    .zip(&numbers_b)
+                    .map(|(x, y)| x.total_cmp(y))
+                    .find(|ordering| ordering.is_ne())
+                    .unwrap_or_else(|| numbers_a.len().cmp(&numbers_b.len()))
+            })
+            .then_with(|| uuid_a.cmp(&uuid_b))
+    });
+    if sorted == places {
         return None;
     }
     let mut order: Vec<usize> = (0..items.len()).collect();
-    for (canonical, source) in sources.into_iter().enumerate() {
-        order[places[source]] = places[canonical];
+    for (place, item) in places.into_iter().zip(sorted) {
+        order[place] = item;
     }
     Some(order)
+}
+
+/// A courtyard graphic's key in KiCad's save order: its shape's rank, the
+/// numbers it compares by, its uuid.
+fn save_key(item: &Expr) -> (u8, Vec<f64>, String) {
+    let shape = match item.head() {
+        Some("fp_line") => 0,
+        Some("fp_rect") => 1,
+        Some("fp_arc") => 2,
+        Some("fp_circle") => 3,
+        Some("fp_poly") => 4,
+        Some("fp_curve") => 5,
+        _ => 6,
+    };
+    let point = |name: &str| -> Vec<f64> {
+        item.child(name)
+            .map(|form| {
+                form.children()
+                    .iter()
+                    .skip(1)
+                    .take(2)
+                    .filter_map(|value| value.atom().and_then(|atom| atom.parse::<f64>().ok()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut numbers = Vec::new();
+    if shape == 3 {
+        numbers.extend(point("center"));
+    } else {
+        numbers.extend(point("start"));
+    }
+    numbers.extend(point("end"));
+    numbers.extend(point("mid"));
+    if let Some(pts) = item.child("pts") {
+        numbers.push(pts.children().len() as f64);
+        for xy in pts
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("xy"))
+        {
+            numbers.extend(
+                xy.children()
+                    .iter()
+                    .skip(1)
+                    .take(2)
+                    .filter_map(|value| value.atom().and_then(|atom| atom.parse::<f64>().ok())),
+            );
+        }
+    }
+    let width = item
+        .child("stroke")
+        .and_then(|stroke| form_atom(stroke, "width", 1))
+        .or_else(|| form_atom(item, "width", 1))
+        .and_then(|width| width.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    numbers.push(width);
+    let uuid = form_atom(item, "uuid", 1)
+        .or_else(|| form_atom(item, "tstamp", 1))
+        .unwrap_or("")
+        .to_string();
+    (shape, numbers, uuid)
 }
 
 /// Parses a `.kicad_pcb` text and sorts it ([`canonical_order`]).
@@ -233,7 +288,7 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
                 .then_with(|| a.4.cmp(&b.4))
         },
     );
-    let sources = sort_in_place(
+    sort_in_place(
         items,
         |item| item.head().is_some_and(graphic),
         |item| {
@@ -245,14 +300,6 @@ pub(crate) fn canonical_footprint(footprint: &mut Expr) {
         },
         |a, b| a.cmp(b),
     );
-    if sources
-        .iter()
-        .enumerate()
-        .any(|(index, source)| index != *source)
-    {
-        let digest = graphics_digest(footprint);
-        source_orders().insert(digest, sources);
-    }
     let Expr::List(items) = footprint else {
         return;
     };
@@ -307,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn footprint_graphics_are_written_in_the_files_order() {
+    fn footprint_courtyards_are_written_in_kicads_save_order() {
         // AccordeurDeGuitare's microphone MK1 (pixzrr/AccordeurDeGuitare,
         // carteCMS/cms-KiCad, Apache-2.0): its courtyard is two points and
         // two arcs, and KiCad closes it only in this order; sorted, the
@@ -338,26 +385,31 @@ mod tests {
         let sorted = parse_board(text).unwrap();
         // Held in the canonical order: arcs before points, F.CrtYd first.
         assert_eq!(heads(&sorted)[..2], ["fp_arc c245", "fp_arc d37d"]);
-        // Written in the file's.
+        // Written with the courtyard in KiCad's save order (lines before
+        // arcs, by their points), which is the file's here.
         let written = parse(&encode(&sorted)).unwrap();
         assert_eq!(heads(&written), heads(&source));
         assert_eq!(encode(&sorted), encode(&source));
         // Keys and digests see the canonical order.
         assert_ne!(encode_canonical(&sorted), encode(&sorted));
-        // A footprint whose graphics changed is written as it is held.
-        let mut changed = sorted.clone();
-        if let Expr::List(items) = &mut changed
-            && let Some(Expr::List(footprint)) = items
-                .iter_mut()
-                .find(|item| item.head() == Some("footprint"))
-            && let Some(Expr::List(line)) = footprint
-                .iter_mut()
-                .find(|item| item.head() == Some("fp_line"))
-        {
-            line.push(Expr::Atom("changed".into()));
-        }
-        let written = parse(&encode(&changed)).unwrap();
-        assert_eq!(heads(&written), heads(&changed));
+        // The same footprint read in another order is written alike: the
+        // order comes from the content, not from the file read.
+        let footprint_start = text.find("(fp_line").unwrap();
+        let footprint_end = text.find("(pad ").unwrap();
+        let mut graphics: Vec<&str> = text[footprint_start..footprint_end]
+            .split("\n")
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        graphics.reverse();
+        let reversed = format!(
+            "{}{}\n            {}",
+            &text[..footprint_start],
+            graphics.join("\n            "),
+            &text[footprint_end..]
+        );
+        assert_ne!(reversed, text);
+        assert_eq!(encode(&parse_board(&reversed).unwrap()), encode(&sorted));
     }
 
     #[test]

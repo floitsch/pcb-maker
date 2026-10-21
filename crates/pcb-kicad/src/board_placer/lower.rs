@@ -36,6 +36,11 @@ pub(crate) struct LoweredPlacement {
     pub routing_layers: f64,
     /// Per net of the problem: whether a pour carries it.
     pub poured: Vec<bool>,
+    /// The board's marks that belong to a movable part (`attach_marks`):
+    /// (the mark's place in `board_marks`, the part); no obstacles.
+    pub attached_marks: Vec<(usize, usize)>,
+    /// The same, said: the mark, its layer and anchor, and the part.
+    pub attached_report: Vec<String>,
 }
 
 /// `*` matches any run of characters, `?` one character, and a backslash
@@ -1406,6 +1411,24 @@ pub(crate) fn lower_placement(
             }
         }
     }
+    // A mark on a movable part at its input position belongs to that part
+    // (a connector's pin names inside its courtyard): no obstacle. Taken
+    // from the input once (`attached_marks` in the config carries it to
+    // the lowerings of the placed board).
+    let attached = match &config.attached_marks {
+        Some(attached) => attached.clone(),
+        None => attach_marks(&problem, footprint_count, &marks),
+    };
+    let mut attached_report = Vec::new();
+    for &(place, part) in &attached {
+        let Some((index, mark)) = marks.get(place) else {
+            continue;
+        };
+        problem.components[*index].side = core::Side::Neither;
+        problem.constraints.yielding.retain(|other| other != index);
+        problem.constraints.halo_free.retain(|other| other != index);
+        attached_report.push(format!("{}: {}", mark.key(), references[part]));
+    }
     // A fixed part on a mark of the input (a header's pin names inside its
     // courtyard, a test pad under its name): both stay as the input put
     // them; said, not refused.
@@ -1543,5 +1566,7 @@ pub(crate) fn lower_placement(
         constraint_warnings,
         routing_layers,
         poured,
+        attached_marks: attached,
+        attached_report,
     })
 }

@@ -51,8 +51,41 @@ graphics"; docs/constraints.md):
   parts whose silkscreen, pads or stuck label lie on a mark are reported
   in `board-layout.json` (`labels.overlaps`) and the verdict's
   next_actions; fixed parts are not (the placement warned).
+- A mark on a movable part at its input position belongs to that part
+  (`attach_marks`): no obstacle, left in place, listed as
+  `attached_marks` in `board-placer.json` and `labels.attached` in
+  `board-layout.json`. Parts stacked at one origin claim nothing. (The
+  coordinator's refinement after the first measurement; x1419.)
 - `keep_board_marks` (placer config, on) switches it all; off restores
   the behaviour before.
+- Fence issue 12 (benchmarks/fence/README.md, D): at the placer's
+  `edge_copper` levels a part held at an edge was judged by its pads,
+  which kept the project's copper-to-edge clearance on the held side but
+  only min(copper clearance, edge margin) on the others, the side an
+  overhang reaches past among them: the fence ESP32's top pads 0.2 mm
+  from the edge against the project's 0.3 mm (15 copper_edge_clearance).
+  Every side now keeps at least the copper-to-edge clearance
+  (`legal::on_board`; unit test in tests/placement.rs);
+  docs/constraints.md said the router enforced it, which it cannot.
+- The writer's footprint graphic order comes from the content again:
+  each courtyard's graphics in KiCad's save order (`FOOTPRINT::
+  cmp_drawings`: segments before rectangles, arcs, circles, polygons, then
+  by start and end point; `canonical_order::source_order`), the rest in
+  the canonical order. Since 3d28004 the writer restored each
+  footprint's graphics in the order of the file read, from a process-wide
+  map keyed by reference and graphics, so the result was not
+  byte-identical from any input order (placer.md promises it):
+  `a_placement_does_not_depend_on_the_order_of_the_file` failed every
+  time alone (five of five on main ded766d, also on 8608a51 and bbdb205)
+  and passed or failed in the full suite by when the lowering test beside
+  it read the same footprints in the other order; the last board read
+  won, and a turned footprint's `fp_text` changed the key. KiCad-saved
+  files are in KiCad's order, so the malformed courtyards the map was
+  built for stay the designer's: re-written with kicad-cli 10.0.7's DRC,
+  AccordeurDeGuitare 0 (designer 0), dacha legacy_pi_mocap 6 (6), pi_rack
+  18 (18), compute_r1 14 (14); with the canonical order alone 14, 22 and
+  16 (and MK1 malformed). The order test passes five of five, as written
+  (byte comparison), and the full suite three of three.
 
 **Designers' texts lie on their parts.** On the 107 boards of tasks v7
 with an outline, 3144 of 6088 board texts on the silkscreen (by a rough

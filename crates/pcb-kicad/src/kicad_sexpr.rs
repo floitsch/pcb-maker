@@ -386,9 +386,10 @@ fn unquote(atom: &str) -> &str {
         .unwrap_or(atom)
 }
 
-/// The text of `expression` as written to a file: a footprint's graphics
-/// in the order of the file they were read from when only the canonical
-/// order moved them ([`canonical_order::source_order`]).
+/// The text of `expression` as written to a file: each footprint's
+/// courtyard graphics in KiCad's save order, which KiCad chains them in
+/// ([`canonical_order::source_order`]); the same whatever order the board
+/// was read in.
 pub(crate) fn encode(expression: &Expr) -> String {
     let mut output = String::new();
     encode_into(expression, &mut output, true);

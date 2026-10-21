@@ -636,6 +636,22 @@ polygons), which the polish never moved either. Inner-layer copper texts
 are not marks (the placer models no inner layer) but stay where they are
 too, and the router routes around them.
 
+**A mark on a movable part belongs to that part** (`attach_marks`): one
+whose boxes overlap a movable part's body (courtyard and pads) on its
+side, or the part's holes and pads there from the other side, at the
+part's input position labels that part (a connector's pin names inside
+its courtyard, a chip's name on its outline). The placement moves the
+part, so the mark is no obstacle; it stays where the input put it and is
+listed in `board-placer.json` (`attached_marks`) and `board-layout.json`
+(`labels.attached`), not among the overlaps. Of several parts, the one
+overlapping most claims it. Parts stacked at one origin claim nothing:
+their input position says nothing (four of the fence's five movable
+parts lie at one spot under its back title; a benchmark task stacks every movable
+part at one point, so in the tiers' tasks almost nothing attaches, see
+below). Marks over fixed parts, over free space and at the edge stay
+obstacles. The attachments are taken from the input once; the layout's
+lowerings of the placed board keep them.
+
 **What a mark does.** It is a fixed obstacle on its side with a
 keepout's semantics: a part's body (courtyard and pads) on that side
 stays the spacing away, and a part on the other side keeps its holes and
