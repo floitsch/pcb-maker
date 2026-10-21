@@ -32,6 +32,11 @@ pub struct RoutingResult {
     pub searches: u64,
     /// Why the routing is not complete, when it is not.
     pub diagnostics: Diagnostics,
+    /// A pad's own straight tracks into the fill island its spokes reach
+    /// (`Config::island_stubs`), added by this router's finishes: they
+    /// change no connection, they only answer KiCad's isolated-island
+    /// rule (the verdict's `repairs.island_stubs`).
+    pub island_stubs: usize,
 }
 
 /// A machine-readable account of what stood in the way.

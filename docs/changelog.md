@@ -16,7 +16,9 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 starved_thermal was the second largest finding type the router adds
 beyond the designer's board in the 5 834-board intake: 120 boards, 103
 blocked by it alone (benchmarks/expansion/data/analysis/drc_failure_boards.csv).
-Snapshots x1240 (first candidate) and x1241 (this commit, on 0d13e80).
+Snapshots x1240 (first candidate), x1241 (the thermal changes, on
+0d13e80), x1242 (island stubs off) and x1243 (both commits rebased on
+9da1213).
 Working files, scripts and logs: `build/thermal-scale` (`tools/`:
 `static_census.py`, `rows2.py`, `findings.py`, `table.py`, `cmp.py`,
 `mktasks.py`; `starved-tasks.json`).
@@ -83,7 +85,8 @@ Unit tests, one per cause:
 `a_pad_without_a_spoke_in_the_model_gets_a_track_into_the_fill`,
 `a_net_crossing_a_starved_pads_spoke_is_routed_around_it`.
 
-**Gates.**
+**Gates.** Both sides of every route-mode pair below (x1232 and x1241,
+x1225 and x1242) predate main's work bound for route mode (9a2cf41).
 
 - Census, 44 boards (fill3 KiCad cache): 162 / 7 / 26 / 2 for x1241 as
   for x1184, every verdict line the same (`build/thermal-scale/census/c44-x1241.txt`).
@@ -117,6 +120,42 @@ Unit tests, one per cause:
   moves where it made 49 (159 vias to 146). The candidate x1240 (the zone
   clearance in the pour masks too) lost OpenFC (82/82 to 80/82, its first
   route 1 open terminal to 2); x1241 leaves the masks alone.
+
+**Island stubs off** (Florian's decision; snapshot x1242, x1241 with
+`Config::island_stubs` false; `PCB_ROUTER_ISLAND_STUBS=1` turns them on,
+`PCB_ROUTER_NO_ISLAND_STUBS` is gone; the island vias stay on). A stub
+changes no connection, it only silences KiCad's isolated-island finding.
+What it costs:
+
+- Short tier: nothing. No layout of x1241's short tier added a stub in any
+  attempt, so the switch reads the same code path.
+- Full corpus: v17 (x1170) has 168 island-stub lines on 29 boards, 9 of
+  them passing. Route mode on those 9 placements
+  (`--route-from build/github-layout-v17`, tasks v7, 8 x 1,
+  `PCB_ROUTER_NO_WALL_GUARD=1`): x1225 passes 9, x1242 8, x1242 with
+  stubs on 9. The one lost: mackerel-30-proto (2 starved thermals beyond the
+  designer's, four in KiCad's report, all "spokes connected to isolated
+  island" of through-hole pads on In1.Cu and In2.Cu; x1225 added 3 stubs
+  there). Island vias and the thermal fixes recover none of
+  its two; they do carry the other eight, whose x1225 routes had stubs in
+  some attempt (homebrew_486 3, Castor, k30, SNSP 1 each) and pass without.
+  The 20 failing boards cannot lose a pass.
+- Expansion tier: x1241 added a stub on 9 of its 46 rows (in some
+  attempt). Those 9 again with x1242 (8 x 1 under the lock): the 7 rows
+  neither run cut have KiCad's findings unchanged, LC_PAMV4b and flexypin
+  still pass; ZSWatch (cut by the deadline in both runs, the same rung)
+  loses its pass: its winning attempt's one stub, on X602.1, leaves "3
+  spokes connected to isolated island" on F.Cu. Passes 14 to 13.
+- Total: one pass lost in the short and expansion tiers (ZSWatch), one of
+  the nine v17 passes (mackerel-30-proto); neither island vias nor this
+  package's repairs recover them.
+- The count reaches the result: `RoutingResult::island_stubs` (stubs
+  this router's finishes added; pcb-topo fills 0), with a unit test. For
+  pcb-kicad (verdict.rs, the board router's result): carry it from the
+  winning attempt's `RoutingResult` into `KiCadBoardRouterResult` and
+  board-router.json, read it in `KiCadRepairs::of` as
+  `Some(result.island_stubs)`, and list `PCB_ROUTER_ISLAND_STUBS` in
+  `RESULT_ENVIRONMENT` in place of `PCB_ROUTER_NO_ISLAND_STUBS`.
 
 **Not done (pcb-kicad's lowering, board_router/).** The lowering lists
 zone connections per pad label (`solid_pads`, `isolated_pads`); a label

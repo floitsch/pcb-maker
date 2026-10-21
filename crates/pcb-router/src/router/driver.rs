@@ -309,6 +309,7 @@ impl Router {
             expansions: self.scratch.expansions,
             searches: self.scratch.searches,
             diagnostics: Diagnostics::default(),
+            island_stubs: self.island_stubs,
         }
     }
 

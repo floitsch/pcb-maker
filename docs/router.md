@@ -532,6 +532,10 @@ own on that layer into the island (`island_stubs`): the island then holds
 two items and the DRC counts its spokes. The stub changes no connection
 (the island hung on the pad already); it is what KiCad's rule asks for.
 k30's tracks rung: 14 starved thermals to 1; mackerel-30's: 19 to 3.
+The stubs are off since 2026-10-21 (Florian: they only silence KiCad's
+isolated-island finding; `PCB_ROUTER_ISLAND_STUBS=1` turns them on); the
+island vias stay on. What that costs: changelog, "starved thermals at
+scale".
 
 ### Starved thermals at scale (2026-10-21)
 

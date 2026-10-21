@@ -1576,7 +1576,7 @@ fn a_track_leaving_a_through_hole_pad_between_its_spokes_does_not_join_their_isl
 }
 
 #[test]
-fn a_pad_in_an_island_gets_a_track_into_it() {
+fn a_pad_in_an_island_gets_a_track_into_it_with_island_stubs() {
     // Layer 0's island holds only P.1, and its track on layer 1 counts
     // as a spoke, so the island's spokes do not: a starved thermal. No
     // straight track reaches kept fill and no other layer has a pour to
@@ -1587,6 +1587,7 @@ fn a_pad_in_an_island_gets_a_track_into_it() {
         &board,
         &Config {
             pitches: vec![0.1],
+            island_stubs: true,
             ..Config::default()
         },
     );
@@ -1604,18 +1605,21 @@ fn a_pad_in_an_island_gets_a_track_into_it() {
     assert!(added.nodes.iter().all(|node| node.layer == 0));
     assert!(router.branch_is_legal(0, &added));
     assert_eq!(Router::spokes_short(&island_record(&router)), 0);
-    // Without island stubs nothing helps.
+    // The result reports it (the verdict's `repairs.island_stubs`).
+    assert_eq!(router.snapshot().island_stubs, 1);
+    // Without island stubs (the default) nothing helps.
+    assert!(!Config::default().island_stubs);
     let mut router = Router::new(
         &board,
         &Config {
             pitches: vec![0.1],
-            island_stubs: false,
             ..Config::default()
         },
     );
     router.nets[0].branches = vec![layer_one_track(&router)];
     router.stamp(0);
     assert_eq!(router.add_manual_spokes(), 0);
+    assert_eq!(router.snapshot().island_stubs, 0);
 }
 
 #[test]

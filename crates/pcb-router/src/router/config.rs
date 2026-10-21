@@ -85,7 +85,9 @@ pub struct Config {
     /// island, and the DRC counts its spokes and the track. It changes no
     /// connection (the island was the pad's already); k30 and mackerel-30's
     /// tracks rungs, whose inner planes the signals cut into islands around
-    /// through-hole pads.
+    /// through-hole pads. Off since 2026-10-21 (Florian: it only silences
+    /// KiCad's isolated-island finding; the island vias stay on);
+    /// `PCB_ROUTER_ISLAND_STUBS=1` turns it on.
     pub island_stubs: bool,
     /// A pad the spoke model finds with no spoke at all into a pour it
     /// lies in, and no track of its own into the fill, gets one straight
@@ -241,7 +243,7 @@ impl Default for Config {
             spoke_clearance: true,
             kicad_spokes: true,
             manual_spokes: true,
-            island_stubs: std::env::var_os("PCB_ROUTER_NO_ISLAND_STUBS").is_none(),
+            island_stubs: std::env::var_os("PCB_ROUTER_ISLAND_STUBS").is_some(),
             spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
             pour_aware_polish: true,

@@ -536,6 +536,7 @@ impl Router {
                     });
                     self.stamp(net);
                     added += 1;
+                    self.island_stubs += 1;
                     continue;
                 }
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {

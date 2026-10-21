@@ -936,6 +936,9 @@ pub struct Router {
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,
+    /// Island stubs `add_manual_spokes` added (`Config::island_stubs`),
+    /// over every finish of this router: `RoutingResult::island_stubs`.
+    island_stubs: usize,
     search_seconds: f64,
     /// Wall time of the last full negotiation.
     negotiation_seconds: f64,
