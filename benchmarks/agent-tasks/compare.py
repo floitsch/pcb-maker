@@ -50,7 +50,15 @@ boards with the same input (x768 on tasks v5 against x776 on v6 read as
 designer: the same boards routed on the designer's placement) and prints
 per board the placement gap (layout open less designer-route open) and the
 routing gap (designer-route open), with corpus totals (README.md, "The
-designer tier")."""
+designer tier"); `--targets` leaves out the boards that are not targets.
+It names the routing work of both sides where the rows record it.
+
+A row whose binary was killed (run.py's `killed`; in older logs an exit
+code that is none of the verdict's, 0 to 4) has no result: KILLED, a
+failure, out of better / same / worse. Rows without a result count as
+failures in the strict count too. Each run's strict rules are named
+("strict: before rule 2; after rules 1 (105 rows), 3 (4 rows)"), and a
+strict count over several rules is marked MIXED RULES."""
 
 import argparse
 import hashlib
@@ -226,9 +234,24 @@ def by_name(rows):
     return table
 
 
+def killed(row):
+    """Whether a row's binary was killed (run.py's `killed`; in older logs
+    an exit code that is none of the verdict's, 0 to 4: the OOM killer's
+    -9 left fr2-route-x1367's bumwings_v001_core and ghoul and
+    fr2-route-x1371-r2's katia with the best attempt so far, judged as a
+    result). Such a row has no result: a failure, never a pass, and out of
+    better / same / worse."""
+    if row is None:
+        return False
+    if row.get("killed"):
+        return True
+    code = row.get("exit")
+    return isinstance(code, int) and not isinstance(code, bool) and not 0 <= code <= 4
+
+
 def unconnected(row):
     native = row.get("native")
-    if row.get("error") or native is None:
+    if row.get("error") or native is None or killed(row):
         return None
     return native.get("unconnected")
 
@@ -243,20 +266,31 @@ def passes(row):
     designer's, no unexpected constraint miss): run.py sets each row's
     `pass` with it, and compare.py applies it again, since rows written
     before the rule changed carry the old flag."""
-    if row is None or row.get("error") or row.get("native") is None:
+    if row is None or unconnected(row) is None:
         return False
-    return unconnected(row) == 0 and not errors(row) and not row.get("unexpected_misses")
+    # The schematic tier also needs every footprint found (`missing`).
+    return unconnected(row) == 0 and not errors(row) and not row.get("unexpected_misses") and not row.get("missing")
+
+
+def judged_strictly(row):
+    """Whether a row carries the strict rule's judgement or a run's
+    verdict under it (`pass_strict`, `new_findings_strict`)."""
+    return row is not None and ("new_findings_strict" in row or "pass_strict" in row)
 
 
 def passes_strict(row):
     """The strict rule's pass (run.py sets each row's `pass_strict` with
-    it, compare.py applies it again as `passes`): None for a row written
-    before the rule."""
-    if row is None or "new_findings_strict" not in row and "pass_strict" not in row:
+    it, compare.py applies it again as `passes`): None for a row with a
+    result written before the rule. A row without a result (an error, a
+    timeout, a kill) fails under every rule: False."""
+    if row is None:
         return None
-    if row.get("error") or row.get("native") is None or "new_findings_strict" not in row:
+    if unconnected(row) is None:
         return False
-    return unconnected(row) == 0 and not row["new_findings_strict"] and not row.get("unexpected_misses")
+    if "new_findings_strict" not in row:
+        return False if "pass_strict" in row else None
+    return (unconnected(row) == 0 and not row["new_findings_strict"] and not row.get("unexpected_misses")
+            and not row.get("missing"))
 
 
 def strict_errors(row):
@@ -274,6 +308,26 @@ def strict_rule(row):
 def strict_rules(rows):
     """The strict rules a run's rows were judged under, sorted."""
     return sorted({rule for rule in map(strict_rule, rows) if rule is not None})
+
+
+def rule_mix(rows):
+    """{rule: rows judged under it} of a run (strict_rule)."""
+    mix = {}
+    for rule in map(strict_rule, rows):
+        if rule is not None:
+            mix[rule] = mix.get(rule, 0) + 1
+    return mix
+
+
+def rule_mix_text(rows):
+    """A run's strict rules with their rows ("rule 3" or "rules 1 (105
+    rows), 3 (4 rows)"), None without a strict judgement."""
+    mix = rule_mix(rows)
+    if not mix:
+        return None
+    if len(mix) == 1:
+        return f"rule {next(iter(mix))}"
+    return "rules " + ", ".join(f"{rule} ({count} rows)" for rule, count in sorted(mix.items()))
 
 
 def rules_warning(before_rows, after_rows):
@@ -312,7 +366,10 @@ def objectives(rows):
     results = [row for row in rows if unconnected(row) is not None]
     with_work = [row for row in rows if row.get("work_seconds") is not None]
     with_first = [row for row in rows if row.get("first_unconnected_terminals") is not None]
-    with_strict = [row for row in rows if passes_strict(row) is not None]
+    # The strict count: the rows judged by it and, where any is, the rows
+    # without a result (failures under every rule).
+    with_strict = [row for row in rows if passes_strict(row) is not None] \
+        if any(judged_strictly(row) for row in rows) else []
     with_repairs = [row["repairs"] for row in rows if row.get("repairs")]
     stubs = [repairs["island_stubs"] for repairs in with_repairs if repairs.get("island_stubs") is not None]
     return {
@@ -502,6 +559,10 @@ def objectives_line(o, label="objectives"):
 def cell(row):
     if row is None:
         return "-"
+    if killed(row) and not row.get("killed"):
+        # An older log's killed row: no `error`, its files judged.
+        text = f"KILLED (exit {row.get('exit')})"
+        return text + " SPL" if spliced(row) else text
     if row.get("error"):
         text = f"ERROR ({str(row['error'])[:30]})"
         text += " CUT" if cut(row) else ""
@@ -557,8 +618,41 @@ def gap_totals(table):
             "designer_without_result": [entry["name"] for entry in table if entry["designer"] is None]}
 
 
-def print_gap(layout_path, designer_path, markdown=False):
+# The boards docs/handover.md lists under "Not targets" for their rules or
+# their panel, which the gap split leaves out with --targets (the 97 target
+# boards of the v18 split): the PolyKybd molecule panels, the OpenESC 4in1
+# panel, the OpenRX panel, krishveercard and SUMEC.
+NOT_TARGETS = ("thpoll83__PolyKybd__poly_kb_molecule_4x4", "thpoll83__PolyKybd__poly_kb_molecule_4x5",
+               "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted", "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+               "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left", "OpenDrone-hw__OpenESC-30x30__4in1-panel",
+               "OpenDrone-hw__OpenRX__OpenRX-panel-rev2", "hackclub__OnBoard__krishveercard",
+               "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV")
+
+
+def budget_line(layout, designer):
+    """The routing work each side had, where the rows say (run.py's
+    `ladder_budget_seconds` and `ladder_budget_share` on layout rows, the
+    designer tier's `budget_seconds`): the gap is only a split of causes
+    when the router had the same work on both placements (review
+    2026-10-21, H3). None where neither side says."""
+    shares = [row["ladder_budget_share"] for row in layout.values() if row.get("ladder_budget_share") is not None]
+    budgets = sorted({row["budget_seconds"] for row in designer.values() if row.get("budget_seconds") is not None})
+    parts = []
+    if budgets:
+        parts.append("designer route " + "/".join(f"{budget:g}" for budget in budgets) + " s of work")
+    if shares:
+        parts.append(f"layout's final ladder a median {median(shares):.3f} of its total ({len(shares)} rows where "
+                     "it ran)")
+    elif layout:
+        parts.append("layout's final ladder not recorded (rows before x1500: rejudge or derive it from layout.log)")
+    return "budgets: " + "; ".join(parts) if parts else None
+
+
+def print_gap(layout_path, designer_path, markdown=False, targets=False):
     layout, designer = by_name(rows_of(layout_path)), by_name(rows_of(designer_path))
+    if targets:
+        layout = {name: row for name, row in layout.items() if name not in NOT_TARGETS}
+        designer = {name: row for name, row in designer.items() if name not in NOT_TARGETS}
     not_designer = [name for name, row in designer.items() if row.get("placement") != "designer"]
     if not_designer:
         print(f"warning: {len(not_designer)} rows of {designer_path} are not designer-tier rows "
@@ -567,7 +661,16 @@ def print_gap(layout_path, designer_path, markdown=False):
     width = max((len(entry["name"]) for entry in table), default=10)
     sep = " | " if markdown else "  "
     print(f"placement gap = layout open - designer-route open; routing gap = designer-route open "
-          f"(KiCad's unconnected items); layout {layout_path}, designer {designer_path}")
+          f"(KiCad's unconnected items); layout {layout_path}, designer {designer_path}"
+          + (f"; the {len(NOT_TARGETS)} boards that are not targets left out" if targets else ""))
+    binaries = [sorted({row.get("binary_sha256") or row.get("binary") or "?" for row in table.values()})
+                for table in (layout, designer)]
+    if binaries[0] != ["?"] and binaries[1] != ["?"] and binaries[0] != binaries[1]:
+        print(f"BINARIES DIFFER: layout {', '.join(b[:12] for b in binaries[0])}; designer "
+              f"{', '.join(b[:12] for b in binaries[1])}: the split mixes the two binaries' changes")
+    budgets = budget_line(layout, designer)
+    if budgets:
+        print(budgets)
     header = ["connections", "layout", "designer", "placement gap", "routing gap"]
     print(f"{'board':{width}}{sep}" + sep.join(f"{h:>13}" for h in header))
     if markdown:
@@ -618,9 +721,11 @@ def main():
                         help="before is a layout run, after a designer-tier run (run.py --tier designer): per "
                              "board the placement gap (layout open less designer-route open) and the routing gap "
                              "(designer-route open), with corpus totals")
+    parser.add_argument("--targets", action="store_true",
+                        help="with --gap: leave out the boards that are not targets (NOT_TARGETS, docs/handover.md)")
     arguments = parser.parse_args()
     if arguments.gap:
-        print_gap(arguments.before, arguments.after, arguments.markdown)
+        print_gap(arguments.before, arguments.after, arguments.markdown, arguments.targets)
         return
     before_rows, after_rows = rows_of(arguments.before), rows_of(arguments.after)
     if arguments.score:
@@ -630,7 +735,9 @@ def main():
     after = by_name(after_rows)
     after_directory = {name: output_directory(arguments.after) for name in after}
     for path in arguments.splice:
-        spliced_in = by_name(rows_of(path))
+        # Marked as run.py --splice-from marks them: SPL, counted below.
+        spliced_in = {name: {**row, "spliced": True, "spliced_from": row.get("spliced_from") or str(path)}
+                      for name, row in by_name(rows_of(path)).items()}
         after.update(spliced_in)
         after_directory.update({name: output_directory(path) for name in spliced_in})
     common = sorted(set(before) & set(after))
@@ -649,6 +756,14 @@ def main():
     warning = rules_warning([before[n] for n in common], [after[n] for n in common])
     if warning:
         print(warning)
+    mixes = (rule_mix_text([before[n] for n in common]), rule_mix_text([after[n] for n in common]))
+    if any(mixes):
+        print(f"strict: before {mixes[0] or '-'}; after {mixes[1] or '-'}")
+    dead = [(label, n) for label, table in (("before", before), ("after", after)) for n in common if killed(table[n])]
+    if dead:
+        print(f"KILLED: {len(dead)} rows whose binary was killed (no result, a failure, not in better / same / "
+              "worse): " + ", ".join(f"{n} ({label}, exit {(before if label == 'before' else after)[n].get('exit')})"
+                                     for label, n in dead))
     if lists_differ(before_identity, after_identity):
         print(f"TASK LISTS DIFFER, {len(other_input)} BOARDS ON OTHER INPUTS (INPUT): {lists}")
     elif other_input:
@@ -702,11 +817,14 @@ def main():
     passes_after = sum(1 for n in common if passes(after[n]))
 
     def strict_count(table):
-        known = [n for n in common if passes_strict(table[n]) is not None]
-        if not known:
+        rows = [table[n] for n in common]
+        if not any(judged_strictly(row) for row in rows):
             return "-"
+        known = [n for n in common if passes_strict(table[n]) is not None]
         count = sum(1 for n in known if passes_strict(table[n]))
-        return f"{count}" + (f" of {len(known)} rows" if len(known) != len(common) else "")
+        text = f"{count}" + (f" of {len(known)} rows" if len(known) != len(common) else "")
+        # A sum over several rules is not one rule's count.
+        return text + (" MIXED RULES" if len(rule_mix(rows)) > 1 else "")
 
     print()
     print(f"{len(common)} boards in both: better {better}, same {same}, worse {worse}; "

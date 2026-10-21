@@ -74,6 +74,53 @@ class StrictRules(unittest.TestCase):
         self.assertIn("3 mask-opening bridges not counted", compare.objectives_line(o))
 
 
+class StrictCounts(unittest.TestCase):
+    """Rows without a result fail the strict rule too (review 2026-10-21,
+    L1), the schematic tier's missing footprints fail both rules (L3)."""
+
+    def test_rows_without_a_result_count_as_strict_failures(self):
+        rows = [row("a", "1/1", 0, 0, 0, new_findings_strict={}), {"name": "b", "error": "timed out", "native": None}]
+        self.assertIs(compare.passes_strict(rows[1]), False)
+        o = compare.objectives(rows)
+        self.assertEqual((o["strict_rows"], o["passes_strict"]), (2, 1))
+        # A log before the rule has no strict count at all.
+        self.assertEqual(compare.objectives([rows[1], row("c", "1/1", 0, 0, 0)])["strict_rows"], 0)
+
+    def test_missing_footprints_fail(self):
+        schematic = row("a", "1/1", 0, 0, 0, new_findings_strict={}, missing=2)
+        self.assertFalse(compare.passes(schematic))
+        self.assertFalse(compare.passes_strict(schematic))
+        self.assertTrue(compare.passes({**schematic, "missing": 0}))
+
+
+class SplicedRows(unittest.TestCase):
+    def test_rows_of_splice_are_marked_and_counted(self):
+        import json
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            for name, rows in (("before.log", [row("a", "1/1", 1, 0, 0), row("b", "1/1", 1, 0, 0)]),
+                               ("after.log", [row("a", "1/1", 0, 0, 0), row("b", "1/1", 1, 0, 0)]),
+                               ("rerun.log", [row("b", "1/1", 0, 0, 0)])):
+                (scratch / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
+            output = subprocess.run([sys.executable, str(Path(compare.__file__)), str(scratch / "before.log"),
+                                     str(scratch / "after.log"), "--splice", str(scratch / "rerun.log")],
+                                    capture_output=True, text=True, check=True).stdout
+        self.assertIn("pass SPL", output)
+        self.assertIn("after: 1 of the 2 rows spliced", output)
+
+
+class GapTargets(unittest.TestCase):
+    def test_the_budget_line_names_both_sides_work(self):
+        layout = {"a": row("a", "1/1", 0, 0, 0, ladder_budget_share=0.6),
+                  "b": row("b", "1/1", 0, 0, 0, ladder_budget_share=0.8), "c": row("c", "1/1", 0, 0, 0)}
+        designer = {"a": row("a", "1/1", 0, 0, 0, budget_seconds=1042.5, placement="designer")}
+        line = compare.budget_line(layout, designer)
+        self.assertIn("1042.5 s of work", line)
+        self.assertIn("median 0.700", line)
+
+
 class Measures(unittest.TestCase):
     def test_a_score_report_gives_every_measure(self):
         report = {"economy": {"vias": 3, "track_length_mm": 12.5},

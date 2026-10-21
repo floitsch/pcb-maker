@@ -257,6 +257,150 @@ class StrictMaskOpenings(unittest.TestCase):
             self.assertEqual([violation["type"] for violation in kept], ["solder_mask_bridge"])
 
 
+def zone_neck(actual, uuid="8951654c-dd26-460d-9f97-f89e9425e93d", at=(0.0, 0.0), **violation):
+    """A KiCad connection_width violation on a pour (KiCad places the
+    zone item at (0, 0))."""
+    return {"type": "connection_width", "severity": "error",
+            "description": f"Copper connection too narrow (board setup constraints minimum connection width "
+                           f"0.1270 mm; actual {actual:.4f} mm) (F.Cu)",
+            "items": [{"description": "Zone [GND] on F.Cu and B.Cu, priority 0", "uuid": uuid,
+                       "pos": {"x": at[0], "y": at[1]}}], **violation}
+
+
+class OneItemFindings(unittest.TestCase):
+    """Rule 3 (review 2026-10-21, H2): a finding of one item is at the
+    designer's place only where its item is."""
+
+    def test_usb_keypads_neck_on_the_pour_is_ours(self):
+        # designer-x1315b: our one connection_width on zone 8951654c, the
+        # stripped baseline 45 on the same zone, every one at (0, 0).
+        ours = run.counting_findings({"violations": [zone_neck(0.1098)]})
+        baseline = run.counting_findings({"violations": [zone_neck(0.05 + index / 1000) for index in range(45)]})
+        split = run.strict_findings(ours, baseline)
+        self.assertEqual((split["new"], split["preexisting"]), ({"connection_width": 1}, {}))
+
+    def test_a_zone_finding_with_a_place_of_its_own_matches_there(self):
+        # A report that gives the finding a position stands in for the
+        # zone's (0, 0).
+        ours = run.counting_findings({"violations": [zone_neck(0.1, pos={"x": 20.0, "y": 30.0})]})
+        here = run.counting_findings({"violations": [zone_neck(0.1, pos={"x": 20.03, "y": 30.0})]})
+        there = run.counting_findings({"violations": [zone_neck(0.1, pos={"x": 25.0, "y": 30.0})]})
+        self.assertEqual(run.strict_findings(ours, here)["preexisting"], {"connection_width": 1})
+        self.assertEqual(run.strict_findings(ours, there)["new"], {"connection_width": 1})
+
+    def test_one_item_matches_by_place_not_by_uuid(self):
+        pad = finding("starved_thermal", ("p1", (10.0, 10.0)))
+        self.assertTrue(run.same_place(finding("starved_thermal", ("p1", (10.02, 10.0))), pad))
+        # The same pad elsewhere (the part moved): not the designer's.
+        self.assertFalse(run.same_place(finding("starved_thermal", ("p1", (30.0, 10.0))), pad))
+        # Another item at the pad's place: there.
+        self.assertTrue(run.same_place(finding("starved_thermal", ("q7", (10.0, 10.04))), pad))
+        self.assertFalse(run.same_place(finding("starved_thermal", ("p1", None)), pad))
+
+    def test_two_items_keep_the_rule_of_before(self):
+        designer = finding("hole_to_hole", ("h1", (85.0, 13.8)), ("h2", (85.0, 13.2)))
+        self.assertTrue(run.same_place(finding("hole_to_hole", ("h2", (20.0, 5.0)), ("h1", (20.6, 5.0))), designer))
+
+
+class KilledRuns(unittest.TestCase):
+    """A run the machine killed is no result (review 2026-10-21, H1)."""
+
+    def test_codes_outside_the_verdicts_are_kills(self):
+        for code in (-9, -11, 137, 101, 5):
+            self.assertTrue(run.killed(code), code)
+        for code in (0, 1, 2, 3, 4, "timeout", None):
+            self.assertFalse(run.killed(code), code)
+
+    def test_a_killed_row_has_an_error_and_no_judgement(self):
+        row = run.killed_row({"name": "katia"}, -9, "ladder: 3 of 3 rungs\n")
+        self.assertEqual((row["error"], row["cut"], row["pass"], row["killed"]),
+                         ("killed by signal 9 (SIGKILL)", ["killed"], False, True))
+        self.assertNotIn("native", row)
+        self.assertIn("exit 137", run.killed_text(137, "x\n"))
+
+    def test_compare_counts_an_old_killed_row_as_a_failure(self):
+        # fr2-route-x1371-r2's katia: exit -9, the best attempt so far
+        # judged as a result, no error.
+        old = {"name": "katia", "exit": -9, "routed": "149/162", "native": {"unconnected": 93, "errors": {}},
+               "new_findings_strict": {}, "pass": False}
+        self.assertTrue(compare.killed(old))
+        self.assertIsNone(compare.unconnected(old))
+        self.assertFalse(compare.passes({**old, "native": {"unconnected": 0, "errors": {}}}))
+        self.assertIs(compare.passes_strict(old), False)
+        self.assertIn("KILLED (exit -9)", compare.cell(old))
+        self.assertEqual(compare.objectives([old])["failed"], 1)
+
+
+@unittest.skipUnless(Path("/proc").is_dir(), "needs /proc")
+class ProcessGroups(unittest.TestCase):
+    """A timeout kills the board's whole tree, and the gate admits the next
+    board only once it is gone (review 2026-10-21, M4)."""
+
+    def test_a_timeout_kills_the_grandchildren(self):
+        started = []
+        code, _, _, _, _ = run.run_measured(["sh", "-c", "sleep 60 & sleep 60"], timeout=1,
+                                            on_start=started.append)
+        self.assertEqual(code, "timeout")
+        self.assertEqual(run.harness_common.group_members(started[0]), [])
+
+    def test_a_child_left_running_is_ended(self):
+        started = []
+        code, _, _, _, _ = run.run_measured(["sh", "-c", "sleep 60 > /dev/null 2>&1 & exit 0"], timeout=30,
+                                            on_start=started.append)
+        self.assertEqual(code, 0)
+        self.assertEqual(run.harness_common.group_members(started[0]), [])
+
+    def test_run_group_kills_the_group_on_a_timeout(self):
+        before = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run.harness_common.run_group(["sh", "-c", "sleep 60 & sleep 60"], timeout=1, capture_output=True)
+        self.assertLess(time.monotonic() - before, 30)
+
+
+class Provenance(unittest.TestCase):
+    """Rows name their binary, spliced rows their log (review 2026-10-21,
+    M2 and M3)."""
+
+    def test_spliced_rows_name_their_source(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "old.log"
+            log.write_text(json.dumps({"name": "a", "pass": True}) + "\n"
+                           + json.dumps({"name": "b", "pass": False, "spliced": True,
+                                         "spliced_from": "build/older.log"}) + "\n")
+            rows = run.spliced_rows(log, ["a", "b", "c"])
+            self.assertEqual(set(rows), {"a", "b"})
+            self.assertEqual((rows["a"]["spliced_from"], rows["b"]["spliced_from"]), (str(log), "build/older.log"))
+
+    def test_the_rules_of_a_spliced_run(self):
+        rows = [{"new_findings_strict": {}}, {"new_findings_strict": {}, "strict_rule": 3}, {"error": "x"}]
+        self.assertEqual(run.rules_of(rows), {1: 1, 3: 1})
+        self.assertEqual(compare.rule_mix_text(rows), "rules 1 (1 rows), 3 (1 rows)")
+
+    def test_the_stretch_cap_is_the_binarys(self):
+        self.assertEqual(run.wall_stretch_max({}), run.WALL_STRETCH_MAX)
+        self.assertEqual(run.wall_stretch_max({"PCB_WALL_STRETCH_MAX": "6"}), 6.0)
+        for text in ("0.5", "x", "inf"):
+            self.assertEqual(run.wall_stretch_max({"PCB_WALL_STRETCH_MAX": text}), run.WALL_STRETCH_MAX, text)
+
+
+class FinalLadder(unittest.TestCase):
+    """The layout's final ladder's work (review 2026-10-21, H3)."""
+
+    def test_from_the_report(self):
+        self.assertEqual(run.final_ladder_budget({"final_ladder_budget_seconds": 917.8}, "", 1500),
+                         (917.8, "report"))
+        self.assertEqual(run.final_ladder_budget({"final_ladder_budget_seconds": None}, "", 1500), (None, "report"))
+
+    def test_from_an_older_layouts_log(self):
+        log = ("layout: placed (199 s, work 56 s, 14 seeds kept of 14 run, seed 12 kept; 80 s more of it in the "
+               "pool of seeds, 623 s of seeds in all)\nlayout: routed (489 s, work 502 s)\n"
+               "layout: 918 s of work left: the narrow-signal attempt instead of the ladder (pours connected)\n")
+        budget, source = run.final_ladder_budget({"work_seconds": 502.2}, log, 1500)
+        self.assertEqual((round(budget, 1), source), (917.8, "log"))
+        self.assertEqual(run.final_ladder_budget({"work_seconds": 40.0}, "layout: routed (3 s, work 40 s)\n"
+                                                 "layout: done\n", 1500), (None, "log"))
+
+
 class CommittedTaskLists(unittest.TestCase):
     """benchmarks/agent-tasks/tasks/v6 and v7: the lists the tiers run."""
 

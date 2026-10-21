@@ -62,6 +62,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -101,9 +102,11 @@ DEFAULT_TIMEOUT_SECONDS = 1800
 WALL_GUARD = 2.0
 # With the rates pinned, a binary stretches its wall-clock guards by the
 # pinned rate over the one it measured at its start, at most this much
-# (pcb-kicad's MAX_WALL_STRETCH; docs/router.md, "Determinism and the wall
-# clock"): the harness's timeouts allow for it.
+# (pcb-kicad's MAX_WALL_STRETCH, or PCB_WALL_STRETCH_MAX where that is a
+# number of at least 1: wall_stretch_max; docs/router.md, "Determinism and
+# the wall clock"): the harness's timeouts allow for it.
 WALL_STRETCH_MAX = 4.0
+WALL_STRETCH_VARIABLE = "PCB_WALL_STRETCH_MAX"
 # The work rates every board runs at unless --work-rate says otherwise
 # (PCB_WORK_RATE: search expansions and placement units a second of work
 # stands for): the reference's, so that rows compare across machines and
@@ -232,8 +235,11 @@ SAME_PLACE_MM = 0.05
 # summary.json; compare.py warns when two runs were judged under different
 # ones. 1: the designer's findings at the same place (2026-10-19). 2: also
 # solder mask bridges of a designer's opening that bridges on the
-# designer's board already (2026-10-21, `strict_mask_openings`).
-STRICT_RULE = 2
+# designer's board already (2026-10-21, `strict_mask_openings`). 3: a
+# finding with one item is at the same place only where its item is, within
+# SAME_PLACE_MM: the same uuid alone no longer does, and a zone item KiCad
+# places at (0, 0) has no place (2026-10-22, review 2026-10-21 H2).
+STRICT_RULE = 3
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
 DESIGNER_BRIDGES = "designer-mask-bridges.json"
@@ -255,10 +261,29 @@ def counting_findings(drc):
         items = []
         for item in violation.get("items", []):
             position = item.get("pos")
-            items.append((item.get("uuid"), (position["x"], position["y"]) if position else None,
-                          item.get("description") or ""))
+            at = (position["x"], position["y"]) if position else None
+            description = item.get("description") or ""
+            # KiCad places a zone item at (0, 0) whatever the problem's
+            # place: the finding's own position stands in where a report
+            # has one (KiCad 10's has none).
+            if zone_origin((None, at, description)) and violation.get("pos"):
+                at = (violation["pos"]["x"], violation["pos"]["y"])
+            items.append((item.get("uuid"), at, description))
         findings.append((violation["type"], items))
     return findings
+
+
+def zone_origin(item):
+    """Whether a finding's item is a zone KiCad places at (0, 0): a place
+    that says nothing about where the problem is."""
+    description = item[2] if len(item) > 2 else ""
+    return description.startswith("Zone") and item[1] is not None and tuple(item[1]) == (0.0, 0.0)
+
+
+def located(item):
+    """Where a finding's item is, None where KiCad does not say (no
+    position, or a zone at (0, 0): zone_origin)."""
+    return None if zone_origin(item) else item[1]
 
 
 def mask_opening(item):
@@ -306,9 +331,17 @@ def same_place(ours, theirs):
     """Whether finding `ours` is `theirs` at the same place: the same type
     and either the same items (uuids) moved together (the distances between
     them kept: a part's own finding goes with the part), or items at the
-    same positions (verdict.rs, same_place)."""
+    same positions (verdict.rs, same_place). A finding of one item has no
+    distances to keep: it is at the same place only where its item is
+    within SAME_PLACE_MM of theirs, and never where either item has no
+    place (`located`: a connection_width on a pour names the zone at
+    (0, 0), and the designer's 45 on USB_Keypad's GND pour answered for
+    any of ours on it until rule 3)."""
     if ours[0] != theirs[0] or not ours[1] or len(ours[1]) != len(theirs[1]):
         return False
+    if len(ours[1]) == 1:
+        mine, reference = located(ours[1][0]), located(theirs[1][0])
+        return mine is not None and reference is not None and _distance(mine, reference) <= SAME_PLACE_MM
     mine = [item[0] for item in ours[1]]
     reference = [item[0] for item in theirs[1]]
     if None not in mine and None not in reference and sorted(mine) == sorted(reference):
@@ -519,6 +552,37 @@ def verdict_extras(row, verdict):
             row[key] = round(verdict[key], 3) if key == "work_wall_ratio" else verdict[key]
 
 
+def killed(code):
+    """Whether a binary's exit code is none of its verdict's (0 to 4,
+    docs/agents.md "Exit codes"): a signal (negative: the OOM killer's -9,
+    a crash's -11), a shell's 128 + n, a panic past the verdict. Such a
+    run wrote whatever it had at that moment (route mode's best attempt
+    before x1500): its files are not a result."""
+    return isinstance(code, int) and not isinstance(code, bool) and not 0 <= code <= 4
+
+
+def killed_text(code, output):
+    """The `error` of a killed run."""
+    if code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = "?"
+        return f"killed by signal {-code} ({name})"
+    last = output.strip().splitlines()[-1][:200] if output.strip() else "no output"
+    if code > 128:
+        return f"exit {code} (a signal {code - 128} through a shell?): {last}"
+    return f"exit {code}, none of the verdict's: {last}"
+
+
+def killed_row(row, code, output):
+    """The row of a run that was killed (`killed`): `error` and `killed`
+    set, `cut: ["killed"]` (the machine, not the binary, ended it), no
+    judging of whatever it left (compare.py counts it as a failure)."""
+    row.update(exit=code, killed=True, error=killed_text(code, output), cut=["killed"], **{"pass": False})
+    return row
+
+
 def native(result_directory, allowed=None):
     """KiCad's copper errors and unconnected items on the result; `allowed`
     errors per type (the designer's own board's) are not counted."""
@@ -711,15 +775,19 @@ def take_lock(path=LOCK_FILE, poll_seconds=30, log=None):
 
 
 def run_measured(command, timeout=None, env=None, on_start=None):
-    """Runs `command` with its output captured. Returns (exit code, or
-    "timeout" after killing it; output; peak resident set in MB; the
+    """Runs `command` with its output captured, in a process group of its
+    own. Returns (exit code, or "timeout" after killing its group; output; peak resident set in MB; the
     command's own peak in MB; CPU seconds of the process tree). The first peak is wait4's ru_maxrss: the
     largest of the process and the children it waited for (kicad-cli's DRC
     alone takes 2.2 GB, on any board), for this process alone, so that jobs
     side by side do not see each other's peaks. The second is the
     process's own VmHWM, sampled twice a second: the router's memory.
     `on_start` gets the pid."""
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    # A process group of its own: a timeout kills the binary and its
+    # kicad-cli together, and whatever the binary leaves behind is killed
+    # when it ends (end_group).
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                               start_new_session=True)
     if on_start:
         on_start(process.pid)
     chunks = []
@@ -734,14 +802,18 @@ def run_measured(command, timeout=None, env=None, on_start=None):
             code = os.waitstatus_to_exitcode(status)
             break
         if deadline is not None and time.monotonic() > deadline:
-            process.kill()
+            harness_common.kill_group(process.pid)
             _, status, usage = os.wait4(process.pid, 0)
             code = "timeout"
             break
         time.sleep(0.5)
     # Reaped here: Popen must not wait for it again.
     process.returncode = code if isinstance(code, int) else -9
-    # A killed board's kicad-cli may hold the pipe a little longer.
+    # The rest of its group (a timed-out board's kicad-cli, a child the
+    # binary left running): killed, and waited for until it is gone, so
+    # that the memory gate admits the next board only once this board's
+    # whole tree has ended.
+    harness_common.end_group(process.pid)
     reader.join(60)
     output = (chunks[0] if chunks else b"").decode(errors="replace")
     return code, output, round(usage.ru_maxrss / 1024), round(own), round(usage.ru_utime + usage.ru_stime, 1)
@@ -867,10 +939,23 @@ LAYOUT_BUDGETS = {"total_seconds": 1500.0, "move_seconds": 600.0, "polish_second
 ROUTE_BUDGET = ("ladder_budget_seconds", 1200.0)
 
 
+def wall_stretch_max(environ=None):
+    """The binary's cap on its stretch, as it reads it (work_rate.rs,
+    wall_stretch_cap): PCB_WALL_STRETCH_MAX when it is a finite number of
+    at least 1, else WALL_STRETCH_MAX. The boards inherit run.py's
+    environment."""
+    text = (os.environ if environ is None else environ).get(WALL_STRETCH_VARIABLE)
+    try:
+        cap = float(text.strip()) if text is not None else None
+    except ValueError:
+        cap = None
+    return cap if cap is not None and cap >= 1.0 and cap != float("inf") else WALL_STRETCH_MAX
+
+
 def wall_stretch_allowance(arguments):
-    """How far a binary may stretch its wall-clock guards: WALL_STRETCH_MAX
+    """How far a binary may stretch its wall-clock guards: wall_stretch_max
     with the rates pinned (--work-rate other than `measured`), else 1."""
-    return 1.0 if getattr(arguments, "work_rate", "measured") == "measured" else WALL_STRETCH_MAX
+    return 1.0 if getattr(arguments, "work_rate", "measured") == "measured" else wall_stretch_max()
 
 
 def scaled_timeout(arguments, budget=None, guard=None):
@@ -973,13 +1058,41 @@ def run_admitted(task, arguments, token):
         # on the machine's load.
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
-    return layout_result(row, task, work, code, output, allowed, designer_seconds, baseline=baseline)
+    if killed(code):
+        return killed_row(row, code, output)
+    return layout_result(row, task, work, code, output, allowed, designer_seconds, baseline=baseline,
+                         total_seconds=layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]))
 
 
-def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=None, baseline=None):
+# A line of the layout's log after "layout: routed (" that only its final
+# ladder prints: an attempt, the ladder's own lines, the narrow-signal
+# attempt that stands in for it.
+FINAL_LADDER_LINE = re.compile(r"^(attempt |ladder:|layout: \d+ s of work left: the narrow)", re.M)
+POOL_EXCESS = re.compile(r"layout: placed \(.*?; (\d+(?:\.\d+)?) s more of it in the pool of seeds")
+
+
+def final_ladder_budget(result, output, total):
+    """The work the layout's final ladder had (board_layout.rs: the layout's
+    `total_seconds` less its work so far and the pool of seeds' excess),
+    None where no final ladder ran, and where the number is from: the
+    report's `final_ladder_budget_seconds` (x1500 and later), else the
+    layout's log (`output`: the report's work at "layout: routed" and the
+    "placed" line's pool excess)."""
+    if "final_ladder_budget_seconds" in result:
+        return result["final_ladder_budget_seconds"], "report"
+    parts = output.split("layout: routed (", 1)
+    if len(parts) < 2 or not FINAL_LADDER_LINE.search(parts[1]) or result.get("work_seconds") is None:
+        return None, "log"
+    excess = POOL_EXCESS.findall(output)
+    return max(0.0, total - result["work_seconds"] - (float(excess[-1]) if excess else 0.0)), "log"
+
+
+def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=None, baseline=None,
+                  total_seconds=None):
     """The row of a layout that ended (not by the harness's timeout): the
     binary's verdict, the report's numbers and the pass rule. KiCad's
-    findings come from `drc_directory`/drc.json (default: the result's)."""
+    findings come from `drc_directory`/drc.json (default: the result's).
+    `total_seconds` is the layout's budget (for the final ladder's share)."""
     report = work / "layout/board-layout.json"
     # The binary's own verdict (docs/agents.md, "Exit codes"): its status
     # and exit code go into the row; the pass rule below stays the
@@ -1040,6 +1153,15 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
         row["kicad_check_work_seconds"] = round(check_work, 1)
     if result.get("first_unconnected_terminals") is not None:
         row["first_unconnected_terminals"] = result["first_unconnected_terminals"]
+    # The final ladder's work and its share of the layout's budget (review
+    # 2026-10-21, H3): a route on the designer's placement at this share
+    # (run.py --tier designer --budget-scale) gets the routing work this
+    # layout's last router got. None where no final ladder ran.
+    total = total_seconds or LAYOUT_BUDGETS["total_seconds"]
+    ladder, source = final_ladder_budget(result, output, total)
+    row["ladder_budget_seconds"] = None if ladder is None else round(ladder, 1)
+    row["ladder_budget_share"] = None if ladder is None else round(ladder / total, 3)
+    row["ladder_budget_source"] = source
     # A board passes on KiCad's connectivity, not on the router's own count
     # (Florian, 2026-10-07): KiCad joins a pad through a pour's fill that
     # the router, routing pours as tracks, does not credit (MokyaLora's
@@ -1171,6 +1293,10 @@ def schematic_admitted(task, arguments, token):
         row.update(error=f"timed out after {timeout} s", cut=["timeout"])
         placed = (work / "layout/placed" / f"{board_id}.kicad_pcb").exists()
         return stop("routing" if placed else "placement", f"the harness's timeout ({timeout} s)")
+    if killed(code):
+        killed_row(row, code, output)
+        placed = (work / "layout/placed" / f"{board_id}.kicad_pcb").exists()
+        return stop("routing" if placed else "placement", row["error"])
     # The documented check of the result: drc-kicad-board (KiCad's DRC
     # through its cache; the layout's own DRC ran on the same board).
     result = work / "layout/result"
@@ -1180,7 +1306,7 @@ def schematic_admitted(task, arguments, token):
                                                     work / "drc/drc.json"])
         row["drc_line"] = (drc_out.strip().splitlines() or [""])[-1][:200]
     layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=work / "drc",
-                  baseline=baseline)
+                  baseline=baseline, total_seconds=layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]))
     verdict_file = work / "layout/verdict.json"
     verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else {}
     if verdict.get("schematic_parity_issues") is not None:
@@ -1264,6 +1390,8 @@ def route_admitted(task, arguments, token):
     if code == "timeout":
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
+    if killed(code):
+        return killed_row(row, code, output)
     return route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
 
 
@@ -1374,6 +1502,8 @@ def designer_admitted(task, arguments, token):
     if code == "timeout":
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
+    if killed(code):
+        return killed_row(row, code, output)
     result = router_report(work)
     route_result(row, task, work, code, output, allowed, designer_seconds, baseline, result)
     if result is not None:
@@ -1590,6 +1720,13 @@ def route_task_admitted(task, arguments, token):
         row.update(load=[round(load_before, 1), round(os.getloadavg()[0], 1)], error=f"timed out after {timeout} s",
                    cut=["timeout"], outcome="unresolved_timeout", **{"pass": False})
         return row
+    if killed(code):
+        # Nothing it left is judged, and no DRC runs on a partial board
+        # (the intake's class of a signal: triage.py's process_signal).
+        row["load"] = [round(load_before, 1), round(os.getloadavg()[0], 1)]
+        killed_row(row, code, output)
+        row["outcome"] = "process_signal"
+        return row
     # KiCad's check of the result where the router skipped its own (the
     # intake's skip_native_verification): drc-kicad-board, refilled.
     routed_board = work / "route" / f"{board_id}.kicad_pcb"
@@ -1663,9 +1800,52 @@ def parallelism(tiered, jobs, threads, cores):
 
 def spliced_rows(path, names):
     """The rows of `names` in an earlier log (compare.rows_of: a log or an
-    output directory), the last of each board, marked spliced."""
+    output directory), the last of each board, marked spliced and with
+    the log they came from (`spliced_from`: the row's own where it was
+    spliced there already and says from where, else `path`)."""
     rows = by_name(rows_of(path))
-    return {name: {**rows[name], "spliced": True} for name in names if name in rows}
+    return {name: {**rows[name], "spliced": True, "spliced_from": rows[name].get("spliced_from") or str(path)}
+            for name in names if name in rows}
+
+
+def run_parts(ordered, ran, arguments, wall):
+    """The parts a spliced run's rows came from (summary.json's `parts`):
+    this run's (its rows, jobs, threads, wall and binary) and, per log the
+    spliced rows name (`spliced_from`), their count with that run's jobs,
+    threads and wall from its summary.json where it has one (its own part
+    of it when it was spliced too) and the binaries its rows name."""
+    parts = [{"log": "this run", "output": str(arguments.output), "rows": len(ran), "jobs": arguments.jobs,
+              "threads": arguments.threads, "wall_seconds": round(wall), "binary": str(arguments.binary),
+              "binary_sha256": arguments.binary_sha256}]
+    sources = {}
+    for row in ordered:
+        if row.get("spliced"):
+            sources.setdefault(row.get("spliced_from") or "unknown", []).append(row)
+    for log, rows in sources.items():
+        part = {"log": log, "rows": len(rows)}
+        recorded = harness_common.read_json(compare.output_directory(log) / "summary.json") if log != "unknown" \
+            else None
+        if isinstance(recorded, dict):
+            own = next((entry for entry in recorded.get("parts") or [] if entry.get("log") == "this run"), recorded)
+            for key in ("jobs", "threads", "wall_seconds"):
+                if own.get(key) is not None:
+                    part[key] = own[key]
+        binaries = sorted({row.get("binary") for row in rows if row.get("binary")})
+        if binaries:
+            part["binaries"] = binaries
+        parts.append(part)
+    return parts
+
+
+def rules_of(rows):
+    """{strict rule: rows judged under it} (compare.strict_rule; rows
+    without a strict judgement are left out)."""
+    rules = {}
+    for row in rows:
+        rule = compare.strict_rule(row)
+        if rule is not None:
+            rules[rule] = rules.get(rule, 0) + 1
+    return rules
 
 
 def main():
@@ -1790,6 +1970,10 @@ def main():
         arguments.tasks_label = str(tasks_path)
     arguments.tasks_sha256 = hashlib.sha256(tasks_path.read_bytes()).hexdigest()
     print(f"tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})", file=sys.stderr)
+    # Every row names the binary it ran (review 2026-10-21, M2): a
+    # snapshot's path alone does not say which build it is.
+    arguments.binary_sha256 = file_sha256(arguments.binary) if arguments.binary.is_file() else None
+    print(f"binary {arguments.binary} (sha256 {(arguments.binary_sha256 or '?')[:12]})", file=sys.stderr)
     arguments.expected_mb = arguments.expected_gb * 1024
     arguments.gate = MemoryGate(arguments.min_free_gb)
     tasks = []
@@ -1878,7 +2062,11 @@ def main():
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
             row.update(tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
+                       binary=str(arguments.binary), binary_sha256=arguments.binary_sha256,
                        **identities.get(row["name"], {}))
+            # The strict rule this run judges by, also on rows it could
+            # not judge (no result).
+            row.setdefault("strict_rule", STRICT_RULE)
             rows[row["name"]] = row
             print(json.dumps(row), flush=True)
     wall = time.monotonic() - started
@@ -1888,15 +2076,24 @@ def main():
     passed = sum(1 for row in ordered if row["pass"])
     peak = max((row.get("peak_rss_mb") or 0 for row in ran), default=0)
     spliced_count = len(ordered) - len(ran)
-    # The strict rule beside it (rows of older runs spliced in may lack it).
+    # The strict rule beside it: rows of older runs spliced in were judged
+    # under the rule of their run (compare.strict_rule; rows without
+    # `strict_rule` are rule 1), and a sum over several rules says so.
     strict = sum(1 for row in ordered if row.get("pass_strict"))
+    rules = rules_of(ordered)
+    if len(rules) > 1:
+        strict_text = ("strict rules " + ", ".join(f"{rule} ({count} rows)" for rule, count in sorted(rules.items()))
+                       + f": {strict} pass, A MIX OF RULES (rejudge.py judges the spliced rows again)")
+    else:
+        strict_text = f"strict rule {next(iter(rules), STRICT_RULE)}: {strict} pass"
     print(f"{passed}/{len(ordered)} tasks pass ({wall:.0f} s wall, "
           f"largest peak {peak / 1024:.1f} GB"
           + (f"; {spliced_count} rows spliced from {arguments.splice_from}" if spliced_count else "") + ")"
-          + f"; strict rule {STRICT_RULE}: {strict} pass")
+          + f"; {strict_text}")
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
-    summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale, strict_rule=STRICT_RULE,
+    summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
+                   strict_rule=next(iter(rules)) if len(rules) == 1 else STRICT_RULE,
                    mode="schematic" if arguments.schematic else "route" if arguments.route_from
                    or arguments.designer else run_mode(tasks),
                    spliced=spliced_count,
@@ -1910,7 +2107,18 @@ def main():
                    # The work rates every board was pinned at (PCB_WORK_RATE;
                    # "measured": each binary measured its machine) and the
                    # median of what the binaries measured.
-                   work_rate=arguments.work_rate, **measured_rates(ran))
+                   work_rate=arguments.work_rate, binary=str(arguments.binary),
+                   binary_sha256=arguments.binary_sha256,
+                   # Over every row, the spliced ones too (each its own
+                   # binary's measurement); this run's own rows' beside.
+                   **measured_rates(ordered))
+    if len(rules) > 1:
+        summary["strict_rules"] = {str(rule): count for rule, count in sorted(rules.items())}
+    if spliced_count:
+        # The parts the rows came from, with each part's jobs and wall:
+        # `wall_seconds`, `jobs` and `threads` above are this run's own.
+        summary["parts"] = run_parts(ordered, ran, arguments, wall)
+        summary["this_run_rates"] = measured_rates(ran)
     if arguments.designer:
         summary["placement"] = "designer"
     outcomes = {}
