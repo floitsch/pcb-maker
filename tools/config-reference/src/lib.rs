@@ -293,6 +293,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "panic once a run has started (tests/cli_exit_codes.rs).",
     ),
     (
+        "PCB_MAKER_TEST_PANIC_ATTEMPT",
+        Kind::Test,
+        "`<kind>[:<n>|:all]`: the n-th (default the first) attempt of the router's ladder of a kind (probe, continuation, rung, seeds, step), or every one, panics; the ladder records it in `attempts_failed` and goes on (docs/router.md, \"The ladder in code, and its faults\"; tests/cli_exit_codes.rs).",
+    ),
+    (
         "PCB_MAKER_TEST_DROP_DRC",
         Kind::Test,
         "the route's drc.json removed before the verdict reads it (tests/cli_exit_codes.rs).",

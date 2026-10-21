@@ -252,7 +252,11 @@ pub(crate) fn lower(
     let lowered = lower_board(pcb, config, connect_pours);
     LOWER_CALLS.fetch_add(1, Relaxed);
     LOWER_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
-    lowered
+    // A board the router's maps cannot hold (its nets in 16 bits, its
+    // layers in 32) is the input's fault, not a panic in the router.
+    let lowered = lowered?;
+    core::grid::check_capacity(&lowered.board).map_err(crate::verdict::input_error)?;
+    Ok(lowered)
 }
 
 fn lower_board(
@@ -283,6 +287,9 @@ fn lower_board(
     let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> =
         Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
+    // The same per pad, by obstacle index.
+    let mut solid_pad_obstacles: Vec<usize> = Vec::new();
+    let mut isolated_pad_obstacles: Vec<usize> = Vec::new();
     let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
         std::collections::HashMap::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
@@ -465,9 +472,9 @@ fn lower_board(
                     let label = format!("{reference}.{}", pad_name.trim_matches('"'));
                     // KiCad's zone connection: the pad's own, else its
                     // footprint's (0 none, 1 thermal, 2 solid).
-                    match form_atom(pad, "zone_connect", 1)
-                        .or_else(|| form_atom(item, "zone_connect", 1))
-                    {
+                    let zone_connect = form_atom(pad, "zone_connect", 1)
+                        .or_else(|| form_atom(item, "zone_connect", 1));
+                    match zone_connect {
                         Some("0") => isolated_pads.push(label.clone()),
                         Some("2") => solid_pads.push(label.clone()),
                         _ => {}
@@ -563,6 +570,11 @@ fn lower_board(
                         }
                     }
                     let pad_obstacle = obstacles.len();
+                    match zone_connect {
+                        Some("0") => isolated_pad_obstacles.push(pad_obstacle),
+                        Some("2") => solid_pad_obstacles.push(pad_obstacle),
+                        _ => {}
+                    }
                     // A custom pad's box holds its primitives: its
                     // spokes stay along the axes of its copper's box.
                     if pad.children().get(3).and_then(Expr::atom) != Some("custom")
@@ -1173,6 +1185,9 @@ fn lower_board(
                 isolated_pads.sort();
                 isolated_pads
             },
+            // In obstacle order already.
+            solid_pad_obstacles,
+            isolated_pad_obstacles,
             pad_spokes,
             merged_pads,
         },

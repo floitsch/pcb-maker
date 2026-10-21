@@ -395,7 +395,11 @@ one. The decisions that change what the ladder attempts go by the limit
 itself, a fixed number, not by what is free: a finer pitch is not tried
 when one router of it (its maps grow with the square of the pitch ratio)
 does not fit a limit of the process's own, and the probes do not run when
-two do not (besides the old rule against 0.4 of MemTotal). Without such
+two do not, and not when one router of it would take more than 0.4 of
+MemTotal (until 2026-10-21 that rule took the process's peak resident
+size after the ladder's first rung, which followed how many probes had
+run side by side; now the same maps estimate, resident). No decision of
+the ladder reads the process's peak any more. Without such
 a limit nothing changes but how many run at once, which never changes a
 result. The ladder logs the limits as it starts (`memory limits: ...`)
 and every side-by-side count with its reason (`ladder: 1 of 3 rungs side
@@ -403,7 +407,8 @@ by side (about 2090 MB a router (561 MB of maps), 2428 MB usable under the
 address space limit (RLIMIT_AS))`); board-router.json has them as
 `memory_limits`. The layout's placement race sizes its probes from
 `memory_mb`, which is MemAvailable or less under a limit of the
-process's own.
+process's own (a count only: its outcome is the one of probing one
+placement after the other).
 
 ## Two-level search
 
@@ -883,6 +888,32 @@ before, and no row was cut by the wall guard (13 before); at 300 s
 negotiation a rung and 75 s a probe, the narrow-signal step had the
 budget plus a half, and only the regular ladder's next rung checked the
 budget. The layout's ladder (its deadline_work path) is unchanged.
+
+**The ladder in code, and its faults** (2026-10-21). The ladder is
+`Ladder` in board_router/ladder.rs, its steps in order (`Ladder::run`):
+`probes` (the rung probes, their leader's continuation), `rungs` (every
+pitch's rungs and the last rung's seed retry, `pitch_skipped` for the
+finer pitches' gates), `seed_rounds`, `steps` (narrow-signal, then
+minimum clearance). Its bookkeeping (the work, the reserves, the bound,
+the best board, the check gate) is the struct's state; the routing,
+KiCad's check and the memory measure are a `LadderRunner`, route.rs's
+`KiCadRunner` for the board and a scripted one in ladder_tests.rs that
+tests the transitions. Every attempt runs isolated (`isolate`,
+`catch_unwind`; a thread's join error counts the same): a panic in a
+probe, the continuation, a rung, a seed retry or round, or a step is
+logged (`ladder: <attempt> failed (panic: ...); the ladder goes on with
+its best board`), listed in `attempts_failed` of board-router.json and in
+the verdict's `next_actions`, and the ladder goes on with the best board
+it holds; only when no attempt gave a board does the run end with an
+internal error (exit 4, "no attempt of the ladder produced a board: N
+failed (...)"). A panicked probe counts no work (its router is gone); a
+panicked continuation leaves the probed rung to the regular rungs.
+`PCB_MAKER_TEST_PANIC_ATTEMPT=<kind>[:<n>|:all]` (probe, continuation,
+rung, seeds, step) makes the n-th attempt of a kind panic, for tests. A
+board beyond the router's maps (more than 65 533 nets, more than 32
+copper layers; `pcb_router::grid::check_capacity`) is an input error of
+the lowering (exit 2) naming the limit and the count, no longer a panic
+in the router (whose nets were limited to 15 bits until then).
 
 **KiCad's checks in the ladder** (2026-10-15). Every attempt routes
 without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board;

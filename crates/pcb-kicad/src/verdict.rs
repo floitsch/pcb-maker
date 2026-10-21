@@ -405,9 +405,10 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
 /// that change no connection.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct KiCadRepairs {
-    /// A pad's own straight track into its pour island (the router's
-    /// `island_stubs`, `PCB_ROUTER_ISLAND_STUBS`); `null`: not counted
-    /// (the router does not report them yet).
+    /// A pad's own straight track into its pour island (the kept
+    /// attempt's `island_stubs` in board-router.json; off unless
+    /// `PCB_ROUTER_ISLAND_STUBS` is set); `null`: not counted (a run
+    /// without a routed board).
     pub island_stubs: Option<usize>,
     /// Tracks the connection-width repair kept (`neck_repair`), and their
     /// length.
@@ -424,7 +425,7 @@ impl KiCadRepairs {
     pub fn of(result: &crate::KiCadBoardRouterResult) -> Self {
         let neck = result.neck_repair.as_ref().filter(|repair| repair.kept);
         Self {
-            island_stubs: None,
+            island_stubs: Some(result.island_stubs),
             neck_tracks: neck.map_or(0, |repair| repair.tracks),
             neck_track_mm: neck.map_or(0.0, |repair| repair.track_mm),
             pour_mode: result.pours.clone(),
@@ -436,7 +437,7 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 14] = [
+pub const RESULT_ENVIRONMENT: [&str; 15] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_SEEDS",
     "PCB_ROUTER_ISLAND_STUBS",
@@ -451,6 +452,7 @@ pub const RESULT_ENVIRONMENT: [&str; 14] = [
     "PCB_PROBES_SIDE_BY_SIDE",
     "PCB_LADDER_STATS",
     "PCB_WORK_RATE",
+    "PCB_MAKER_TEST_PANIC_ATTEMPT",
 ];
 
 /// The variables of `RESULT_ENVIRONMENT` that are set, with their values.
@@ -487,6 +489,9 @@ pub struct KiCadRunFacts {
     pub wall_seconds: f64,
     pub outputs: BTreeMap<String, String>,
     pub skipped: Vec<String>,
+    /// Attempts of the router's ladder that panicked, each with its
+    /// message (`attempts_failed` in board-router.json).
+    pub attempts_failed: Vec<String>,
     /// Whether the run routed (a placement alone has no copper to judge).
     pub routes: bool,
     /// The placement's room (`placement_room`), when there was one.
@@ -520,6 +525,7 @@ impl KiCadRunFacts {
             wall_seconds: 0.0,
             outputs: BTreeMap::new(),
             skipped: Vec::new(),
+            attempts_failed: Vec::new(),
             routes: true,
             room: None,
             repairs: None,
@@ -740,6 +746,13 @@ fn next_actions(
     unknown: &[String],
 ) -> Vec<String> {
     let mut actions = Vec::new();
+    if !facts.attempts_failed.is_empty() {
+        actions.push(format!(
+            "{} attempts of the router's ladder failed (a panic; attempts_failed in board-router.json has each message): the board is the best of the other attempts; report the panic ({})",
+            facts.attempts_failed.len(),
+            facts.attempts_failed.join("; ")
+        ));
+    }
     if !facts.unplaced.is_empty() {
         actions.push(format!(
             "give the unplaced parts room: a larger outline, a looser region or edge constraint, or the other side ({})",
@@ -1058,6 +1071,7 @@ pub fn route_facts(
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
     facts.unmodelled_rules = result.rules.project.unmodelled.clone();
+    facts.attempts_failed = result.attempts_failed.clone();
     Ok(facts)
 }
 

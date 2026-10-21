@@ -98,6 +98,15 @@ pub struct KiCadBoardRouterResult {
     /// tightest first (`MemoryLimits::describe`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub memory_limits: String,
+    /// Attempts of the ladder that panicked, each with its message: the
+    /// ladder went on without them (`Ladder`, "fault isolation").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempts_failed: Vec<String>,
+    /// The island stubs the kept attempt's router added (pcb-router's
+    /// `RoutingResult::island_stubs`; none unless `PCB_ROUTER_ISLAND_STUBS`
+    /// is set): the verdict's `repairs.island_stubs`.
+    #[serde(default)]
+    pub island_stubs: usize,
 }
 
 fn is_zero(value: &f64) -> bool {

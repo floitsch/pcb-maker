@@ -371,6 +371,101 @@ fn a_panic_exits_4_with_one_line_and_a_report() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// The ladder's fault isolation (`PCB_MAKER_TEST_PANIC_ATTEMPT`): a panic
+/// in the first rung is recorded and the finer pitch's rung gives the
+/// board; the run is no internal error.
+#[test]
+fn a_panic_in_one_attempt_keeps_the_ladder_going() {
+    let root = scratch("attempt-panic");
+    let project = project(&root);
+    let out = root.join("out");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_ROUTER_SEED", "0")
+        .env("PCB_MAKER_TEST_PANIC_ATTEMPT", "rung")
+        .env_remove("RUST_BACKTRACE")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    assert_eq!(code(&output), 1, "{text}");
+    assert!(
+        text.contains("failed (panic: PCB_MAKER_TEST_PANIC_ATTEMPT"),
+        "{text}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
+    let failed = report["attempts_failed"]
+        .as_array()
+        .expect("attempts_failed");
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(
+        failed[0]
+            .as_str()
+            .is_some_and(|failure| failure.starts_with("the rung pours=")
+                && failure.contains("pitch=regular: panic: PCB_MAKER_TEST_PANIC_ATTEMPT")),
+        "{failed:?}"
+    );
+    // The board is the finer lattice's.
+    assert!(report["grid_pitch_mm"].as_f64().unwrap() < 0.1);
+    let verdict = &report["verdict"];
+    assert_eq!(verdict["status"], "router_complete_unverified");
+    assert!(
+        verdict["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action.as_str().is_some_and(
+                |action| action.starts_with("1 attempts of the router's ladder failed")
+            )),
+        "{verdict}"
+    );
+    assert_eq!(
+        verdict["environment"]["PCB_MAKER_TEST_PANIC_ATTEMPT"],
+        "rung"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Every attempt panicking leaves no board: exit 4, the failures named.
+#[test]
+fn every_attempt_panicking_exits_4() {
+    let root = scratch("attempts-panic");
+    let project = project(&root);
+    let out = root.join("out");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_MAKER_TEST_PANIC_ATTEMPT", "rung:all")
+        .env_remove("RUST_BACKTRACE")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    assert_eq!(code(&output), 4, "{text}");
+    let verdict: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(verdict["status"], "internal_error");
+    assert!(
+        verdict["error"].as_str().is_some_and(
+            |error| error.contains("no attempt of the ladder produced a board: 3 failed")
+        ),
+        "{verdict}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn a_closed_stdout_ends_quietly_with_exit_0() {
     // `pcb-maker --help | head -1`: the reader closes the pipe early.

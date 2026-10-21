@@ -12,6 +12,7 @@ mod attempt;
 mod budget;
 mod config;
 mod geometry;
+mod ladder;
 mod lower;
 mod memory;
 mod pour_plan;
@@ -21,5 +22,5 @@ mod route;
 mod tests;
 mod tools;
 
-pub(crate) use self::{attempt::*, budget::*, geometry::*, lower::*, memory::*};
+pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{config::*, pour_plan::*, result::*, route::*, tools::*};

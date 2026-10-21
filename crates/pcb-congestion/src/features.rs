@@ -677,6 +677,8 @@ mod tests {
             planes: Vec::new(),
             solid_pads: Vec::new(),
             isolated_pads: Vec::new(),
+            solid_pad_obstacles: Vec::new(),
+            isolated_pad_obstacles: Vec::new(),
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
         }

@@ -357,6 +357,7 @@ Tests and research commands:
 - `PCB_MAKER_KICAD_VERIFICATION_CACHE`: `<dir>`: verify-kicad-rung caches its KiCad checks there.
 - `PCB_MAKER_KICAD_VERIFICATION_CACHE_EVENTS`: `<file>`: verify-kicad-rung's cache appends its hits and misses there (tests/native_verification.rs).
 - `PCB_MAKER_TEST_PANIC`: panic once a run has started (tests/cli_exit_codes.rs).
+- `PCB_MAKER_TEST_PANIC_ATTEMPT`: `<kind>[:<n>|:all]`: the n-th (default the first) attempt of the router's ladder of a kind (probe, continuation, rung, seeds, step), or every one, panics; the ladder records it in `attempts_failed` and goes on (docs/router.md, "The ladder in code, and its faults"; tests/cli_exit_codes.rs).
 - `PCB_MAKER_TEST_DROP_DRC`: the route's drc.json removed before the verdict reads it (tests/cli_exit_codes.rs).
 
 <!-- End of the generated environment index. -->

@@ -36,6 +36,16 @@ impl Router {
         (board, neck_of)
     }
 
+    /// `new`, or the error of a board the router's maps cannot hold
+    /// (`grid::check_capacity`: more than `MAX_NETS` nets or `MAX_LAYERS`
+    /// copper layers).
+    pub fn try_new(board: &Board, config: &Config) -> Result<Self, String> {
+        crate::grid::check_capacity(board)?;
+        Ok(Self::new(board, config))
+    }
+
+    /// Builds the router for `board`. Panics on a board the maps cannot
+    /// hold (`try_new` returns that as an error).
     pub fn new(board: &Board, config: &Config) -> Self {
         let started = std::time::Instant::now();
         let router = Self::build(board, config);
@@ -60,11 +70,12 @@ impl Router {
         }
         let cells = grid.cells();
         let layers = board.layer_count;
-        assert!(
-            board.nets.len() + 1 < 1 << 15,
-            "{} nets: the search records name nets in 15 bits",
-            board.nets.len()
-        );
+        // The search records (`Hot`) name nets in 16 bits as the static
+        // maps do; until 2026-10-21 in 15, a bit kept for a hard guard
+        // flag that no longer exists.
+        if let Err(message) = crate::grid::check_capacity(board) {
+            panic!("{message} (Router::try_new returns it as an error)");
+        }
         let searched = searched_classes(board, &neck_of);
         let statics: Vec<_> = (0..board.classes.len())
             .map(|class| StaticMaps::build(board, &grid, class, searched[class]))

@@ -11,6 +11,139 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (ladder fault isolation)
+
+Review finding 8: `route_kicad_board` (board_router/route.rs) was about
+1 500 lines of closures over `Cell`s with no test of its control flow; its
+worker threads were joined with `.expect`, and two asserts reachable from
+the input (nets in 15 bits, layers at most 32) panicked, so a panic in one
+probe or rung lost every board the ladder held (exit 4). And the finer
+pitch's machine-memory gate read the process's peak resident size, which
+follows how many probes ran side by side. Branch ladder-fault-isolation;
+snapshots x1310 (main at b306347, the baseline), x1311, x1312 (this on
+b306347), x1313 (on 535edb5), x1314 (on 5a99d89).
+
+**The ladder as steps** (board_router/ladder.rs, a move). `Ladder` holds
+the ladder's state (its work, the reserve of a layout's ladder and route
+mode's, the work bound, the best board and attempt, the check gate, the
+skipped steps, the failures) and runs its steps in order (`Ladder::run`):
+`probes` (the rung probes side by side, their leader's continuation,
+`continue_probe`), `rungs` (per pitch: `pitch_skipped` for the finer
+pitches' four gates, `pitch` with `rungs_side_by_side`, `rung_wave`, the
+last rung's `seed_retry`), `seed_rounds`, `steps` (narrow-signal, then
+minimum clearance, each `step`). The closures became methods
+(`spent`, `bound_left`, `rung_left`, `judge`, `step_has_time`, `blocked`,
+...); `ladder_rungs` and `ladder_pitches` are the rung and lattice lists.
+What routes, checks and measures is a `LadderRunner`: route.rs's
+`KiCadRunner` (lowering, `Router::new`, `probe`, `resume`,
+`write_attempt`, `route_kicad_board_once`, `check_attempt`, the memory
+limits) and the scripted `Fake` of ladder_tests.rs. route.rs went from 2 146
+to 800 lines (the preparation, the runner, the finish, `route_seeds`,
+`core_config`, `finish_routed_board`); every log line and json field
+stays.
+
+**Fault isolation.** Every probe (its router's build too), the
+continuation, every rung (in its thread), the rung's seed retry, every
+seed round and both steps run under `catch_unwind` (`isolate`; a thread
+join's error counts the same, `route_seeds` passes a seed thread's panic
+on with its own message), and so does KiCad's judgement of each. A panic
+is logged (`ladder: the rung pours=tracks pitch=regular failed (panic:
+...); the ladder goes on with its best board`), listed in
+`attempts_failed` of board-router.json (absent when empty) and in the
+verdict's `next_actions` ("N attempts of the router's ladder failed ...:
+the board is the best of the other attempts; report the panic"), and the
+ladder goes on: a failed probe counts no work and leaves the lead to the
+next best; a failed continuation leaves the probed rung to the regular
+rungs; a failed rung or seed round leaves the best board. Only when no
+attempt produced a board does the run end in an error, an internal one
+(exit 4: "no attempt of the ladder produced a board: N failed (...)"),
+where `expect("at least one routing attempt")` panicked before. The test
+hook `PCB_MAKER_TEST_PANIC_ATTEMPT=<kind>[:<n>|:all]` (probe,
+continuation, rung, seeds, step) makes the n-th attempt of a kind panic;
+it is in `RESULT_ENVIRONMENT`. Not covered: a panic outside the attempts
+(the preparation, the finish, the neck repair) still ends the run, and
+main.rs's panic hook keeps the first panic's message, which may then be
+an isolated attempt's.
+
+**Capacity limits** (pcb-router grid.rs, build.rs). `check_capacity`
+returns an error naming the limit and the board's count: more than
+`MAX_NETS` (65 533) nets ("the board has N nets: the router names nets in
+16 bits, at most 65533") or `MAX_LAYERS` (32) copper layers. The lowering
+calls it and returns it as an input error (exit 2); `Router::try_new`
+returns it; `Router::new` and the static maps keep it as an assert. The
+net limit went from 15 bits (32 766 nets) to the 16 of the static maps:
+the search records (`Hot`) hold `owner(net)` in a u16 and the bit kept
+for a hard guard flag is unused since the router split (changelog,
+"quality: pcb-router").
+
+**Memory decisions.** The finer-pitch gate against 0.4 of MemTotal now
+takes the router's estimate from the first attempt's maps
+(`router_peak_mb`, resident) instead of the process's peak resident size
+after the first rung (which included the probes side by side and, in a
+layout, the first route); the probes' first router no longer falls back
+to the growth of the resident size when its memory report has no maps.
+No ladder decision reads the peak any more, so no `cut` kind is needed;
+how many routers run side by side still follows what is free now
+(MemAvailable, the cgroup's use), which by design changes no result. The
+layout's placement race (board_layout.rs, not this package) sizes its
+side-by-side count from `memory_mb()`'s MemAvailable the same way.
+
+**Folded in from the thermals package.** The kept attempt's
+`island_stubs` (pcb-router's `RoutingResult::island_stubs`) is in
+board-router.json and the verdict's `repairs.island_stubs` (was `null`);
+`PCB_ROUTER_ISLAND_STUBS` is in `RESULT_ENVIRONMENT` in place of
+`PCB_ROUTER_NO_ISLAND_STUBS`. The lowering records each pad's zone
+connection by obstacle index beside the label lists
+(`Board::solid_pad_obstacles`, `isolated_pad_obstacles`: the pad's own
+`zone_connect`, else its footprint's), so that 74th's J3.S1 (SMD shield
+pads without a zone connection, through-hole ones with the zone's) can be
+told apart; the router does not read them yet (`kicad_spokes`,
+`thermal_ring_pads`, `prepare_net` are the follow-up).
+
+**Tests.** ladder_tests.rs (11, the scripted runner): the rung and
+lattice lists; the hook's parsing and `isolate`; four probes sharing half
+the budget, the leader continuing with at most half of what is left and
+its deadline at the bound, a complete continuation ending the ladder; a
+panic in one probe (the hook and a router panic) recorded and the next
+best leading; a panicked continuation falling back to all rungs; route
+mode's first rung with all that is left, its work kept for the
+narrow-signal step, the next rung's share, the seed retry, the step last
+with what was kept, every router with a work deadline and the work within
+the bound; a panic in a rung that runs beside others keeping the best
+board and no rung directory behind; every attempt failing leaving no
+board; a panic in the seeds keeping the rung's board; a layout's ladder
+keeping 300 s for the step with the next rung's deadline where the
+reserve begins; a finer pitch skipped by its maps against a small
+machine. grid.rs: the capacity limits. tests.rs: each pad's zone
+connection. cli_exit_codes.rs: `PCB_MAKER_TEST_PANIC_ATTEMPT=rung` on
+the three-pad board (the regular rung panics, the 0.075 mm rung's board
+is kept, exit 1 as without KiCad's check, `attempts_failed` and the
+next action), `rung:all` (exit 4, "no attempt of the ladder produced a
+board: 3 failed"). The probe hook through the binary needs a board of four
+layers and 120 connections; the scripted runner tests it.
+
+**Identity.** Route mode on the v16 placements of Castor, k30-SBC,
+jetson and Sisu (`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+4 threads), x1310 against x1312: the same board (md5), the same
+fingerprints (4, 6, 29, 26), vias (159, 560, 615, 410) and work (310.7,
+448.1, 1219.0, 989.5 s) on every board; the rows differ only in
+`repairs.island_stubs` (null to 0). Short tier (tasks v6, under the lock)
+x1310 against x1312: every row identical apart from timing and
+`repairs.island_stubs`, all 12 result boards byte-identical (19
+unconnected, 1125 vias, 2517 s of work, 7 passes; against short-x1170
+main itself moved: 1134 to 1125 vias, 2501 to 2517 s, the thermals
+package). Expansion tier (30 s, 8 x 1) x1310 against x1312: all 46 rows
+identical apart from `routing_seconds` and `repairs` (807 unconnected,
+4038 vias, 1279 s of work, 14 passes, 0 cut). Rebased on 5a99d89 (the
+runtime calibration, project rules), x1277 (main) against x1314 with
+`PCB_WORK_RATE=3.15e6,150e6`: the same four fingerprint runs identical
+(boards, fingerprints, vias, work; rows apart from `repairs` and the
+measured rates and work/wall ratio), the short tier identical (all 12
+boards byte-identical, 2517 s of work, 7 passes) and the expansion tier
+identical on all 46 rows (787 unconnected, 4022 vias, 1275 s, 14 passes,
+0 cut) apart from timing and `repairs`. Logs in build/ladder3 (qb-, qb2-,
+short-, short2-, expansion-, expansion2-).
+
 ## Committed on 2026-10-21 (config reference and stale docs)
 
 Review finding 10: the agent-facing surface is about 130 config keys and

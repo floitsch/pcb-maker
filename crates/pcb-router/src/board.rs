@@ -152,6 +152,13 @@ pub struct Board {
     /// joins a pour (no connection): both sorted.
     pub solid_pads: Vec<String>,
     pub isolated_pads: Vec<String>,
+    /// The same per pad, as indices into `obstacles` (sorted): a pad's own
+    /// zone connection, else its footprint's. A label can name pads of
+    /// both kinds (74th's J3.S1, a USB-C shield: its SMD pads have no
+    /// zone connection, its through-hole pads the zone's thermal one),
+    /// which the label lists cannot tell apart.
+    pub solid_pad_obstacles: Vec<usize>,
+    pub isolated_pad_obstacles: Vec<usize>,
     /// Per pad (index into `obstacles`), the frame KiCad builds its
     /// thermal spokes in, where the lowering knows it; pads without one get
     /// spokes along the axes of their bounding box (diagonal for a circle).

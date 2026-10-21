@@ -864,6 +864,57 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn each_pad_keeps_its_own_zone_connection_beside_its_labels() {
+        // 74th's J3.S1: one label, SMD shield pads without a zone
+        // connection, through-hole ones with the zone's (thermal); J4 is
+        // solid for the footprint, but its pad 2 is thermal by its own.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 30 10) (layer "Edge.Cuts"))
+          (footprint "usb" (at 5 5) (property "Reference" "J3")
+            (pad "S1" smd rect (at -2 0) (size 1 1) (layers "F.Cu") (net "GND") (zone_connect 0))
+            (pad "S1" thru_hole circle (at 2 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu") (net "GND"))
+            (pad "1" smd rect (at 0 2) (size 0.5 1) (layers "F.Cu") (net "/D")))
+          (footprint "hdr" (at 20 5) (property "Reference" "J4") (zone_connect 2)
+            (pad "1" thru_hole circle (at 0 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu") (net "GND"))
+            (pad "2" thru_hole circle (at 2.54 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu") (net "/D") (zone_connect 1))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let pad = |label: &str, x: f64| {
+            board
+                .obstacles
+                .iter()
+                .position(|obstacle| {
+                    obstacle.label == label && obstacle.kind == core::ObstacleKind::Copper && {
+                        let bounds = obstacle.shape.aabb();
+                        ((bounds.minimum[0] + bounds.maximum[0]) / 2.0 - x).abs() < 1e-6
+                    }
+                })
+                .unwrap_or_else(|| panic!("{label} at {x}"))
+        };
+        // The labels as before: J3.S1 counts as isolated, J4.1 as solid.
+        assert_eq!(board.isolated_pads, vec!["J3.S1".to_string()]);
+        assert_eq!(board.solid_pads, vec!["J4.1".to_string()]);
+        // Per pad: only the SMD shield pad is isolated, the through-hole
+        // one is not listed (the zone's connection); J4.2 is thermal by
+        // its own setting.
+        assert_eq!(board.isolated_pad_obstacles, vec![pad("J3.S1", 3.0)]);
+        assert_eq!(board.solid_pad_obstacles, vec![pad("J4.1", 20.0)]);
+        assert!(!board.isolated_pad_obstacles.contains(&pad("J3.S1", 7.0)));
+    }
+
+    #[test]
     fn overlapping_pads_of_one_number_are_one_terminal() {
         let pcb = parse(
             r#"(kicad_pcb

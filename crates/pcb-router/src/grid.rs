@@ -24,6 +24,35 @@ pub fn owner(net: NetId) -> u32 {
 /// bytes of a lattice-sized map. Boards have far fewer nets.
 pub const BLOCKED16: u16 = u16::MAX;
 
+/// The most nets the router's maps name: the 16-bit maps (`owner16`, the
+/// search's `Hot` guard and cover, the via cover's low half) hold
+/// `owner(net)` below `BLOCKED16`.
+pub const MAX_NETS: usize = BLOCKED16 as usize - 2;
+
+/// The most copper layers the router's maps hold (`free_layers`: a bit a
+/// layer in 32 bits).
+pub const MAX_LAYERS: usize = 32;
+
+/// Whether the router's maps can hold `board`: at most `MAX_NETS` nets and
+/// `MAX_LAYERS` copper layers. An error names the limit and the board's
+/// count; `Router::new` asserts it (`Router::try_new` returns it), and
+/// pcb-kicad's lowering returns it as an input error.
+pub fn check_capacity(board: &Board) -> Result<(), String> {
+    if board.nets.len() > MAX_NETS {
+        return Err(format!(
+            "the board has {} nets: the router names nets in 16 bits, at most {MAX_NETS}",
+            board.nets.len()
+        ));
+    }
+    if board.layer_count > MAX_LAYERS {
+        return Err(format!(
+            "the board has {} copper layers: the router holds at most {MAX_LAYERS} (a bit a layer in 32 bits)",
+            board.layer_count
+        ));
+    }
+    Ok(())
+}
+
 pub fn owner16(net: NetId) -> u16 {
     debug_assert!(net + 1 < BLOCKED16 as u32);
     (net + 1) as u16
@@ -469,9 +498,11 @@ fn claim16(cell: &mut u16, net: Option<NetId>) {
 impl StaticMaps {
     /// `searched`: whether a search runs with this class (see the type).
     pub fn build(board: &Board, grid: &Grid, class: ClassId, searched: bool) -> Self {
+        // Input-reachable only through a caller that skips the check
+        // (`check_capacity`; the router's build checks it first).
         assert!(
-            board.nets.len() < BLOCKED16 as usize - 1,
-            "{} nets: the static maps name nets in 16 bits",
+            board.nets.len() <= MAX_NETS,
+            "{} nets: the static maps name nets in 16 bits (check_capacity)",
             board.nets.len()
         );
         let rules = board.classes[class];
@@ -751,8 +782,8 @@ impl StaticMaps {
             fill.values.shrink_to_fit();
         }
         assert!(
-            board.layer_count <= 32,
-            "{} copper layers",
+            board.layer_count <= MAX_LAYERS,
+            "{} copper layers: free_layers holds 32 (check_capacity)",
             board.layer_count
         );
         let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
@@ -929,6 +960,54 @@ fn mark_tight_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A board of `nets` empty nets on `layers` layers.
+    fn board_of(nets: usize, layers: usize) -> Board {
+        Board {
+            layer_count: layers,
+            outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+            edge_clearance: 0.2,
+            hole_clearance: 0.2,
+            hole_to_hole: 0.2,
+            classes: Vec::new(),
+            neck_width: 0.1,
+            obstacles: Vec::new(),
+            nets: (0..nets)
+                .map(|net| crate::board::Net {
+                    name: format!("n{net}"),
+                    class: 0,
+                    terminals: Vec::new(),
+                })
+                .collect(),
+            planes: Vec::new(),
+            solid_pads: Vec::new(),
+            isolated_pads: Vec::new(),
+            solid_pad_obstacles: Vec::new(),
+            isolated_pad_obstacles: Vec::new(),
+            pad_spokes: Default::default(),
+            merged_pads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_board_beyond_the_maps_capacity_is_an_error_naming_the_limit_and_the_count() {
+        assert_eq!(check_capacity(&board_of(MAX_NETS, MAX_LAYERS)), Ok(()));
+        // 16 bits: up to 65 533 nets (until 2026-10-21 the router asserted
+        // fewer than 32 767).
+        assert!(check_capacity(&board_of(40_000, 4)).is_ok());
+        let nets = check_capacity(&board_of(MAX_NETS + 1, 4)).unwrap_err();
+        assert!(
+            nets.contains("65534 nets") && nets.contains("at most 65533"),
+            "{nets}"
+        );
+        let layers = check_capacity(&board_of(2, 33)).unwrap_err();
+        assert!(
+            layers.contains("33 copper layers") && layers.contains("at most 32"),
+            "{layers}"
+        );
+        let routed = crate::router::Router::try_new(&board_of(2, 33), &crate::Config::default());
+        assert_eq!(routed.err(), Some(layers));
+    }
 
     /// A concave polygon of many corners (a ring of `count` points whose
     /// radius alternates, like a cutout with notches) around `center`.
