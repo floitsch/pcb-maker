@@ -11,6 +11,93 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-16 (quality: pcb-kicad)
+
+A code-quality pass over the layout, router and placer adapters of
+`pcb-kicad` with no behaviour change. Binaries x1190 (step 1), x1191
+(step 2), x1192 (step 3), x1193 (rebased on the research removal), x1194
+(rebased on the pcb-router quality package, for the final gates), x1195
+(this commit on 3d28004).
+
+**Removed switches and options** (each restored code from before a change
+the measurements settled):
+
+- `PCB_LADDER_OLD_RESERVE`: the ladder's narrow-step reserve is a floor
+  ("narrow reserve floor" below); `narrow_step_reserve` is the floored one.
+- `PCB_LADDER_FORCE_RUNG`, `PCB_LADDER_SHORT_RESUME`: the ladder judge's
+  experiment hooks (`experiments/congestion/ladder_judge.py` used them; the
+  predictor is a closed negative). `PCB_LADDER_STATS` stays.
+- `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET` ("first-route budget").
+- `PCB_LAYOUT_NARROW_CONTINUATION` and `_FLOOR`: after the narrow-signal
+  attempt run alone only the other pour mode runs ("after the narrow
+  attempt"); the stop, seeds and ladder variants and their seed helpers
+  are gone.
+- `PCB_KICAD_OLD_ZONE_ARCS` ("zone seams").
+- Placer options `bus_rows` (with `bus_row_gap_scale` and the row
+  constraint's internal `turns`), `supply_via_room` (with
+  `supply_via_room_mm`) and `replicate_channels` (with
+  `PCB_PLACER_CHANNEL_SELF`, the channel lowering and `lower_placement`'s
+  channels argument): all off, none won. A placer config that still sets
+  one is now rejected (the config denies unknown fields);
+  docs/constraints.md still documents `bus_rows`.
+
+- `jacobi_batch` in the router config and `PCB_JACOBI_BATCH` in
+  src/main.rs: the router no longer reads it (pcb-router quality).
+
+Kept: the user-facing kill switches (island stubs,
+solid starved thermals, `PCB_KICAD_NO_NECK_REPAIR`) and every diagnostic
+switch.
+
+**Clippy** is clean on the files of this pass: dead code (the wall
+guard's `Labels`, `Check` and `Report` steps, never asked: asking would
+only fire the guard later; `courtyard_shapes`; `default_edge_rule`, a
+serde default on a Serialize-only result; `turned_box`), the move trial's
+restore before returning an error (the error ends the layout), type
+aliases, allows with reasons for long argument lists and the negated
+comparisons that reject NaN, `clamp` where the bounds are constants and
+the value never NaN.
+
+**Splits** (moves): `board_router.rs` (6750 lines) into
+`board_router/{config, result, lower, tools, geometry, memory, budget,
+route, pour_plan, attempt, tests}.rs`, `board_placer.rs` (5300 lines) into
+`board_placer/{config, result, rules, bodies, decoupling, courtyards,
+lower, edges, trace, seed_race, place, tests}.rs`; `mod.rs` re-exports, so
+paths outside are unchanged. A line multiset check of old against new
+finds only rustfmt reflows, the module lines and `lower_board`'s own copy
+of `polygon_area` (the same products in the same order), which gives way
+to the module's.
+
+Lines: step 1 -1236 (148 added, 1384 removed), step 2 -39, step 3 +159
+(module headers and rustfmt reflows of the moved code).
+
+**Gates**, after each step: the tests of pcb-kicad, pcb-placer and
+pcb-router and the CLI exit-code and walkthrough tests; place-kicad-board
+on the short tier's prepared x1170 sources (spell_tome_bottom,
+USB_Cable_Tester, urchin, eternal-keypad, OpenFC, Blue_Line; 4 threads,
+120 s of placement work), boards byte-identical to x1170; layout mode, one
+run a side, 4 threads, on TelemetryOnboard and MokyaLora (the ladder keeps
+244 s for the step; Telemetry releases it complete) and vaio_re (the
+narrow-signal attempt alone, then the other pour mode): rows identical
+but CPU, wall and memory, boards byte-identical to x1170
+(`build/qc-lay-x1170`, `-x1190`, `-x1191`, `-x1192`).
+At the end, on x1194: the short tier under the lock (6 jobs, 4 threads)
+against build/short-x1170.log, all 12 rows identical but CPU, wall,
+load and memory, every board byte-identical (7/12, unconnected 19, new
+errors 2, 1134 vias, work 2501 s); the schematic tier against x1193 (the
+same code on the previous base) all 12 rows and boards identical. Against
+build/sch-x1161.log the rows differ in `work_seconds` and
+`kicad_check_work_seconds` only (x1161 predates the KiCad check work
+accounting, d490aad), boards identical, but TelemetryOnboard (108/108 to
+107/108): x1170, main's code before this pass, gives the x1193 row and
+board exactly (build/sch-x1170-telemetry), so the change is the check
+work's, not this pass's. On 3d28004 (x1195): scripts/check.sh, and
+place-kicad-board on the six boards byte-identical to main's x1232.
+
+Not taken (behaviour changes, for a later agent): `routable_net` rejects
+net names made only of digits (SeanBP Edge-Card-CAEN); the writer's
+footprint file order in a process-global registry rather than on the
+board (this pass did not touch `encode`).
+
 ## Committed on 2026-10-21 (parser and writer robustness)
 
 The reader and writer defects that the 5 834-board intake
