@@ -72,6 +72,10 @@ for the detailed router.
 build/short-charge-x1381: 12 rows and the 12 result boards identical.
 Fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from v16, 2 x 4,
 budget scale 0.25) x1441 against build/fp-fence-x1385: every fingerprint
+and every board identical. (x1442 differs from x1441 only where the
+score is `global`. All three snapshots are this package on 043c247, as
+x1385 is; the branch was rebased onto later main afterwards, with no
+conflict outside this changelog.)
 and every board identical.
 ## Committed on 2026-10-21 (agent contract review fixes)
 
