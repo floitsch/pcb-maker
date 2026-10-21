@@ -11,6 +11,134 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (free dimension)
+
+An agent that may choose one side of the board ("the height can be
+anything; JLCPCB charges more past 100 mm") ran the layout at several
+sizes by hand, and the results are not monotone (the fence report's
+two-layer board at 34, 40 and 46 mm: 32, 1 and 2 KiCad unconnected).
+Now the layout config says it: `"free_dimension": {"edge": "bottom",
+"min": 34, "max": 60, "step": 2, "prefer_below": [100], "band_mm": 10}`
+and `layout-kicad-board` searches the sizes itself
+(docs/constraints.md, "A free dimension"; docs/agents.md). Branch
+free-dimension; snapshots x1420 (the fence runs), x1421 (the commit:
+x1420 formatted, doc comments; the short tier).
+
+**What moves.** The edge of a rectangular outline (the constraints'
+`outline` with width and height, or the board's own gr_rect or four
+lines; polygons, pieces, cutouts, an automatic size, arcs on the
+board's outline are refused, exit 2) and everything within `band_mm` of
+it (default 0.5: what lies on it): footprints by their origin, board
+texts and other rigid items by their anchor, lines, polygons, tracks and
+zones point by point (a pour over the board grows with it), `region`
+and `keepout` boxes by their side nearest the edge and `place`/`add`
+points, re-expressed relative to the corner when that moves (`top`,
+`left`). The rest keeps its board coordinates. A size where a fixed part
+or a rule area that lay inside the outline would leave it, or a fixed
+part carried by the edge would land on one that stays, is listed as
+infeasible without a run. On the fence board `band_mm` 10 moves exactly
+what the generator moves for its 40 and 46 mm variants (J1, the LED
+row, its resistor networks and capacitors; nothing 12 mm from the edge
+or farther).
+
+**The search.** Each size is a layout of its own (this binary as a
+child process, the parent's work rates pinned, threads shared among the
+probes side by side), in `<out-dir>/free-dimension/<size>mm-<kind>/`.
+From the smallest size upward, `parallel` sizes at a time at
+`probe_seconds` (default a ninth of `total_seconds`, which is the whole
+search's budget) while the work spent leaves `confirm_seconds` (default
+a third) for the full run; the first batch with a clean size ends the
+probes and the smallest clean size is laid out again at the full
+budget; without a clean probe the closest size (unplaced, KiCad
+unconnected, errors, missed constraints, size) gets it. The result is
+the smallest clean run (the confirmation, else its clean probe), else
+the closest; its layout is moved to `<out-dir>` with its paths
+rewritten, `free-dimension.json` lists every run, the verdict gains
+`free_dimension` {chosen, kind, clean, probes, reason, the search's
+work and wall}, and when nothing is clean the first next action names
+the closest size and what blocked it. Clean is the verdict `complete`
+(`accept` `pass_strict`, default) or KiCad 0 unconnected and no new
+error by the count rule with every part placed (`pass`).
+
+**The fence boards** (breadboard-enhancer hw/build v5 and v5-2l-x0, 34
+mm inputs, the report's layout.json with its 83 fixed parts and three
+keepouts, router `auto`; `PCB_WORK_RATE=3.15e6,150e6`, load 40 to 80).
+
+Two layers, 0.127 mm rules (v5-2l-x0), bottom edge 34 to 60 mm step 2,
+prefer_below 100, band 10, total_seconds 6000, probes 500 s, full run
+1500 s, 4 side by side on 16 threads:
+
+| mm | run | budget s | KiCad unconnected | errors | work s | wall s | vias | length mm | chosen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 34 | probe | 500 | 19 | starved_thermal 1 | 265 | 488 | 450 | 4094 | |
+| 36 | probe | 500 | 8 | starved_thermal 1 | 423 | 613 | 299 | 3780 | |
+| 38 | probe | 500 | 3 | 0 | 428 | 634 | 319 | 4180 | |
+| 40 | probe | 500 | 0 | starved_thermal 1 | 523 | 591 | 466 | 4509 | |
+| 42 | probe | 500 | 0 | starved_thermal 1 | 675 | 549 | 306 | 4368 | |
+| 44 | probe | 500 | 0 | 0 | 328 | 540 | 477 | 4856 | |
+| 46 | probe | 500 | 0 | 0 | 229 | 363 | 461 | 5140 | |
+| 48 | probe | 500 | 0 | 0 | 205 | 312 | 502 | 5208 | |
+| 44 | confirm | 1500 | 0 | 0 | 329 | 523 | 477 | 4856 | yes |
+
+44 mm chosen, exit 0, 9 runs, 3406 s of work, 1716 s wall; 50 to 60 mm
+untried. The confirmation repeats the probe's board (the layout ended
+complete well inside both budgets). 40 and 42 mm route every connection
+and fail on one starved thermal each (the router's
+`solid_starved_thermals` would take them; not tried: the search keeps
+the given router config); 42 mm's probe took 675 s of work on a 500 s
+budget (its final ladder 511 s after 164 s of placement and moves: the
+layout's budget, not the search's).
+
+Four layers (v5, routes clean at 34 mm), the same ladder with the
+defaults (total_seconds 1500: probes 167 s, full run 500 s, 3 side by
+side on 12 threads):
+
+| mm | run | budget s | KiCad unconnected | errors | work s | wall s | vias | length mm | chosen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 34 | probe | 167 | 0 | 0 | 116 | 160 | 210 | 3849 | |
+| 36 | probe | 167 | 0 | 0 | 106 | 170 | 192 | 3859 | |
+| 38 | probe | 167 | 0 | 0 | 118 | 162 | 186 | 3924 | |
+| 34 | confirm | 500 | 0 | 0 | 226 | 369 | 201 | 3887 | yes |
+
+34 mm (its own size) chosen, exit 0, 566 s of work, 546 s wall.
+
+**Unchanged without the key.** The layout config gains one optional
+field (not serialised when unset); a single layout given one refuses it
+(the command's search). Short tier (6 x 2, `--no-lock`) x1421 against
+build/short-charge-x1381: all 12 rows identical and the 12 result boards byte for byte (8 passes, strict 7, unconnected 18, work 2749 s both). Fingerprints (Castor, k30,
+jetson, Sisu, route mode from v16, 2 x 4, budget scale 0.25,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`) x1421 against
+x1385 (Sisu and k30 rerun one job at a time after the memory rule, build/fp-fd-x1385-part and -x1385b): every fingerprint and every routed board identical on all four, and identical to build/fp-charge-x1381 too.
+
+**Left out.** Rounded or polygonal outlines on the board itself (give a
+rectangle with `corner_radius` in constraints.json), cutouts, two free
+edges at once; probes beyond a clean one in the same batch still run
+(the fence: 46 and 48 mm, 434 s of work) and the confirmation runs even
+when the probe ended well inside its budget (it repeated the probe's
+board here); a smaller size at the full budget is not retried when a
+larger one is clean at the probe budget (the results are not monotone:
+40 mm might pass at 1500 s).
+
+Unit tests (crates/pcb-kicad/src/free_dimension.rs): the ladder with
+its thresholds, the bottom edge's outline, band, label, rule area and
+pour, the default band, the top edge's corner and relative boxes, a
+constraints outline resized, outlines refused, infeasible sizes (a fixed
+part outside, a rule area, a carried part on a fixed one, a keepout
+box), the smallest clean size over a non-monotone sequence, a failed
+confirmation keeping its clean probe, the closest size given the full
+budget, a price threshold exceeded only when nothing below is clean,
+budgets and verdicts read. CLI test
+(a_free_dimension_searches_the_sizes_and_keeps_one_layout): input
+errors exit 2 in one line, a search without KiCad's check keeps the
+closest size's layout as the result with its table. `bash
+scripts/check.sh` and the clippy gate pass. Docs: constraints.md ("A
+free dimension"), agents.md (the run, the cookbook, the verdict's
+field), config reference (the `free_dimension` table).
+
+Logs: build/dim1/v5-2l-free-x1420(.log), build/dim1/v5-free-x1420(.log),
+build/short-fd-x1421, build/fp-fd-x1421, build/fp-fd-x1385-part, build/fp-fd-x1385b.
+
+## Committed on 2026-10-22 (all pour work charged)
 ## Measured on 2026-10-21 (layout sweep v18, designer tier)
 
 The deciding measurement for where the next work goes: the full layout
