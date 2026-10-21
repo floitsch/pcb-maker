@@ -346,9 +346,28 @@ pub fn route_kicad_board(
         .is_none()
         .then(|| ladder_work_bound(ladder_budget));
     let bound_left = || work_bound.map(|bound| (bound - spent(ladder_work_now.get())).max(0.0));
-    // Whether the bound leaves room for another attempt (always, in a
-    // layout's ladder).
-    let bound_allows = || bound_left().is_none_or(|left| bound_allows_attempt(left, ladder_budget));
+    // Route mode: where the narrow-signal (or minimum-clearance) step
+    // applies, once the ladder's first attempt leaves connections open,
+    // up to that attempt's work is kept for the step (`route_reserve`);
+    // the rungs and seeds after it see what is left without it. A complete
+    // board releases it. On a 30 s budget facade60's first attempt took
+    // 20 s, its two other rungs 4 s each and nothing, and its step (23 to
+    // 5 open on x1231's overrun) did not run.
+    let route_reserve = std::cell::Cell::new(0.0f64);
+    let route_reserve_wanted = work_bound.is_some() && narrow_step_applies(config);
+    let mut route_reserve_set = false;
+    let rung_left = || bound_left().map(|left| (left - route_reserve.get()).max(0.0));
+    let keep_for_route_step = |first_work: f64| {
+        let kept = route_step_reserve(first_work, bound_left().unwrap_or(0.0));
+        route_reserve.set(kept);
+        eprintln!(
+            "ladder: {kept:.1} s of work kept for the narrow-signal step ({:.1} s left under the bound, the first attempt took {first_work:.1} s)",
+            bound_left().unwrap_or(0.0)
+        );
+    };
+    // Whether the bound leaves room for another rung or seed round
+    // (always, in a layout's ladder).
+    let bound_allows = || rung_left().is_none_or(|left| bound_allows_attempt(left, ladder_budget));
     if let Some(bound) = work_bound {
         eprintln!(
             "ladder: a budget of {ladder_budget:.0} s of work, at most {bound:.0} s with its tolerance ({:.0} %); wall guard {}",
@@ -801,6 +820,10 @@ pub fn route_kicad_board(
                     work_of(router_expansions)
                 );
             }
+            if route_reserve_wanted && !route_reserve_set && opens.0 > 0 {
+                route_reserve_set = true;
+                keep_for_route_step(work_of(router_expansions));
+            }
             probe_complete = opens.0 == 0;
             best = Some((opens, result));
             best_attempt = Some((attempt.clone(), connect));
@@ -829,7 +852,7 @@ pub fn route_kicad_board(
         }
         // Route mode: a finer lattice whose attempt would take more than is
         // left under the ladder's bound is not started.
-        if let (Some(pitch), Some((seconds, previous)), Some(left)) = (pitch, slowest, bound_left())
+        if let (Some(pitch), Some((seconds, previous)), Some(left)) = (pitch, slowest, rung_left())
         {
             let projected = seconds * (previous / pitch[0]).powi(2);
             if projected > left {
@@ -895,7 +918,7 @@ pub fn route_kicad_board(
         // judged in rung order as one after another, a rung the order
         // would not have reached counting for nothing.
         let pitch_negotiation = config.negotiation_seconds.is_none().then(|| {
-            if let Some(left) = bound_left() {
+            if let Some(left) = rung_left() {
                 bounded_negotiation(left / modes.len() as f64 / 3.0, left)
             } else {
                 let remaining = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
@@ -973,9 +996,10 @@ pub fn route_kicad_board(
             if best.is_some() && (past_deadline() || short_of_work) {
                 if work_bound.is_some() && short_of_work {
                     eprintln!(
-                        "ladder: its work bound is reached ({:.0} s left of {:.0} s): no further attempts",
+                        "ladder: its work bound is reached ({:.0} s left of {:.0} s, {:.0} s of it kept for the narrow-signal step): no further attempts",
                         bound_left().unwrap_or(0.0),
-                        work_bound.unwrap_or(0.0)
+                        work_bound.unwrap_or(0.0),
+                        route_reserve.get()
                     );
                     skipped.push(format!(
                         "further rungs of the attempt ladder did not run: its work bound ({:.0} s, ladder_budget_seconds and {:.0} %) was reached",
@@ -1010,9 +1034,8 @@ pub fn route_kicad_board(
                     route_deadline.set(bound_left());
                 } else if !share_fixed {
                     share_fixed = true;
-                    route_deadline.set(
-                        bound_left().map(|left| rung_share(left, candidates.len() - position)),
-                    );
+                    route_deadline
+                        .set(rung_left().map(|left| rung_share(left, candidates.len() - position)));
                 }
             }
             let attempt = rung_attempt(mode);
@@ -1137,7 +1160,7 @@ pub fn route_kicad_board(
                 // the work kept for the narrow-signal step.
                 && (reserve.get() == 0.0 || work_left() - check_charge - reserve.get() >= retry as f64 * attempt_seconds)
                 // Route mode: nor beyond the ladder's bound.
-                && bound_left().is_none_or(|left| left >= retry as f64 * attempt_seconds)
+                && rung_left().is_none_or(|left| left >= retry as f64 * attempt_seconds)
             {
                 seeds_tried = true;
                 let mut seeded = attempt.clone();
@@ -1152,7 +1175,7 @@ pub fn route_kicad_board(
                         reserve.get(),
                         retry,
                     ));
-                } else if let Some(left) = bound_left() {
+                } else if let Some(left) = rung_left() {
                     seeded.router_deadline_work = Some(rung_share(left, retry));
                 }
                 let retry_directory = output_directory.with_extension("seeds");
@@ -1235,6 +1258,10 @@ pub fn route_kicad_board(
                     work_left()
                 );
             }
+            if route_reserve_wanted && !route_reserve_set && opens.0 > 0 {
+                route_reserve_set = true;
+                keep_for_route_step(attempt_seconds);
+            }
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
             if slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
@@ -1267,6 +1294,13 @@ pub fn route_kicad_board(
                     reserve.get()
                 );
                 reserve.set(0.0);
+            }
+            if best.as_ref().is_some_and(|(opens, _)| opens.0 == 0) && route_reserve.get() > 0.0 {
+                eprintln!(
+                    "ladder: the board is complete: the {:.0} s kept for the narrow-signal step are released",
+                    route_reserve.get()
+                );
+                route_reserve.set(0.0);
             }
             // Another way of connecting the pours is always worth trying
             // while connections are open (a complete board matters more
@@ -1324,6 +1358,9 @@ pub fn route_kicad_board(
                     .max(0.0) as usize,
             );
         }
+        if let Some(left) = rung_left() {
+            affordable = affordable.min((left / cost).floor().max(0.0) as usize);
+        }
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
         if opens.0 == 0
             || best_seeded
@@ -1354,7 +1391,7 @@ pub fn route_kicad_board(
                 reserve.get(),
                 retry,
             ));
-        } else if let Some(left) = bound_left() {
+        } else if let Some(left) = rung_left() {
             seeded.router_deadline_work = Some(rung_share(left, retry));
         }
         next_seed += retry as u64;
@@ -1404,6 +1441,8 @@ pub fn route_kicad_board(
     // load; without it, the step needs an attempt's work as before (route
     // mode: no work deadline).
     let kept = reserve.replace(0.0);
+    // Route mode: what was kept for the step is its own now.
+    let route_kept = route_reserve.replace(0.0);
     // The step's own check is in what was kept: its routing has the rest
     // (and of what is left, what its check leaves).
     let kept_routing = (kept - check_charge).max(0.0);
@@ -1412,7 +1451,7 @@ pub fn route_kicad_board(
         if kept > 0.0 {
             routing_left() >= narrow_step_minimum(kept_routing)
         } else if work_bound.is_some() {
-            bound_allows()
+            bound_left().is_some_and(|left| route_step_has_time(left, route_kept, ladder_budget))
         } else {
             !no_time_for_another()
         }
@@ -1470,8 +1509,8 @@ pub fn route_kicad_board(
         && let Some(why) = blocked()
     {
         eprintln!(
-            "the narrow-signal step did not run: {why} ({:.0} s of work left)",
-            work_left()
+            "the narrow-signal step did not run: {why} ({:.1} s of work left)",
+            bound_left().unwrap_or_else(work_left)
         );
         skipped.push(format!(
             "the narrow-signal step (signals at {narrow} mm) did not run: {why}"

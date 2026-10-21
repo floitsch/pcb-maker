@@ -1688,6 +1688,22 @@ mod work_bound_tests {
     }
 
     #[test]
+    fn the_narrow_step_keeps_what_the_first_attempt_took() {
+        // facade60: 20 s for the first attempt, 9 s left: all of it.
+        assert_eq!(route_step_reserve(20.0, 9.1), 9.1);
+        // akita: 0.6 s of 30.9.
+        assert_eq!(route_step_reserve(0.6, 30.9), 0.6);
+        assert_eq!(route_step_reserve(5.0, -1.0), 0.0);
+        // The step runs with half of what was kept, never with nothing.
+        assert!(route_step_has_time(0.3, 0.6, 30.0));
+        assert!(!route_step_has_time(0.2, 0.6, 30.0));
+        assert!(!route_step_has_time(0.0, 0.0, 30.0));
+        // Without a reserve, as any attempt.
+        assert!(route_step_has_time(1.5, 0.0, 30.0));
+        assert!(!route_step_has_time(1.0, 0.0, 30.0));
+    }
+
+    #[test]
     fn no_attempt_starts_with_less_than_a_twentieth_of_the_budget() {
         assert!(bound_allows_attempt(1.5, 30.0));
         assert!(!bound_allows_attempt(1.4, 30.0));

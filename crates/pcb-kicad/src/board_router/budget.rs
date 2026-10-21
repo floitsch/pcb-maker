@@ -166,6 +166,26 @@ pub(crate) fn bound_allows_attempt(left: f64, budget: f64) -> bool {
     left >= LADDER_MIN_ATTEMPT_SHARE * budget
 }
 
+/// Route mode: the work kept for the narrow-signal step once the
+/// ladder's first attempt (of `first_work`) left connections open: as
+/// much as that attempt took, at most what is `left` under the bound.
+pub(crate) fn route_step_reserve(first_work: f64, left: f64) -> f64 {
+    first_work.max(0.0).min(left.max(0.0))
+}
+
+/// Route mode: whether the narrow-signal step may run with `left` under
+/// the bound: with work kept for it (`kept`), if half of that is still
+/// there (the last rung may have run past its share); without, as any
+/// attempt (`bound_allows_attempt`). Never with nothing left.
+pub(crate) fn route_step_has_time(left: f64, kept: f64, budget: f64) -> bool {
+    left > 0.0
+        && if kept > 0.0 {
+            left >= 0.5 * kept
+        } else {
+            bound_allows_attempt(left, budget)
+        }
+}
+
 /// Which attempts of a ladder KiCad checks. An attempt's quality is the
 /// router's open count (unconnected terminals and internal violations)
 /// plus KiCad's unconnected items, then KiCad's starved thermals, then
