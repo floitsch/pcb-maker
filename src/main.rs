@@ -162,9 +162,11 @@ fn print_help() {
         "  PCB_ROUTER_SEEDS           with router config auto: route that many ways and keep the best; default 1."
     );
     println!(
-        "  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then the"
+        "  PCB_SKIP_NATIVE            with router config auto: skip KiCad's check (the verdict is then"
     );
-    println!("                             router's own count); default unset.");
+    println!(
+        "                             router_complete_unverified at best, exit 1); default unset."
+    );
     println!(
         "  PCB_ROUTER_NO_WALL_GUARD   the work alone ends runs, never the wall clock; default unset."
     );

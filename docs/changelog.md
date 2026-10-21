@@ -11,6 +11,114 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (verdict integrity)
+
+Three defects an independent review found in the verdict
+(docs/agents.md, "Read the verdict"), fixed, and one measurement. Binary
+x1290 (on 0d13e80).
+
+**Exit 0 without KiCad's judgement.** `native_report.rs` deletes a
+report before each check; a kicad-cli failure or timeout inside the
+neck repair (`necks::repair_with`, its trial checks and its restore of
+the unrepaired board) was swallowed into `necks.json`'s note and the
+repair returned `kept: false`, so the router did not check again, the
+result directory held no `drc.json`, and `route_facts` read that as
+"KiCad did not check": the router's count decided, `complete`, exit 0
+on a board the router calls complete, with the next action blaming
+`PCB_SKIP_NATIVE`. Reproduced on WLED_Matrix's v17 placement in route
+mode with a kicad-cli wrapper that fails every DRC after the repair's
+`--save-board` (and `PCB_MAKER_NO_CACHE=1`: with the DRC cache on, the
+restore's check of the unrepaired board is a hit and hides it): no
+`drc.json`, `board-router.json` with `native` set, the verdict
+`kicad_unconnected_items: null`, "(router's count; KiCad did not
+check)" (exit 1 there only because the router left 5 connections open).
+Fixed three ways:
+
+- The neck repair keeps the result directory's board, `drc.json`,
+  `erc.json`, `verification.json` and preview before it starts and puts
+  them back when a check fails (`necks.json`'s note says so; `kept`
+  false, `tracks` 0): the directory always holds the report of the board
+  it holds. Same reproduction: `drc.json` there, the verdict KiCad's
+  (12 unconnected items, `kicad_checked: true`).
+- `route_facts` returns an error when KiCad checked the board (`native`
+  set) but `drc.json` is missing or unreadable: an internal error, exit
+  4, with the reason, never a verdict on the router's count.
+- Without KiCad's check (`PCB_SKIP_NATIVE`, `skip_native_verification`)
+  a route is never `complete`: the new status
+  `router_complete_unverified` (exit 1) when the router's count finds
+  nothing open, and `kicad_checked: false` in the verdict.
+
+**The pass rule's baseline.** The verdict (`split_findings`) and run.py
+(`native`) subtracted the reference's error count per type anywhere on
+the board, so a new error of a type the designer also has was hidden,
+and nine v17 rows had designer counts at KiCad's cap (199, 499 for
+clearance), which are floors. New, the strict rule
+(`split_findings_strict`, run.py's `strict_findings`): a finding is the
+reference's when it has the same type and either the same items (every
+uuid, the same set) still the same distances apart (a part's own
+finding goes with the part: TelemetryOnboard's 72 matches are U1, U2,
+J1 and J2's own pad clearances and mask bridges, placed elsewhere), or
+items at the same positions within 0.05 mm; each reference finding
+answers for one. A type the reference has 199 times or more is
+`preexisting_unknown` and none of it is subtracted. The verdict decides
+on `new_findings_strict` and keeps the old count as `new_findings`; it
+gains `clean_without_subtraction`. run.py's baseline is KiCad's DRC of
+the designer's board stripped as the task strips it
+(`strip-kicad-tracks`: tracks, vias and small zones; the fixed geometry
+on its own), through drc-kicad-board's cache and only for results with
+errors that count; rows gain `new_findings_strict`,
+`preexisting_strict`, `strict_unknown`, `clean_without_subtraction` and
+`pass_strict` beside the unchanged `pass`; compare.py prints a strict
+column beside each run's cell, the strict pass count beside the pass
+count and the strict new errors in the objectives.
+
+The v17 sweep re-judged (build/github-layout-v17, its result boards'
+own `drc.json`, one baseline DRC per board): **46 of the 48 passes stay
+passes**; 21 are clean without any subtraction, 25 pass with findings
+the stripped designer board has at the same place. The two that do not:
+
+| Board | Strict new findings | Why |
+| --- | --- | --- |
+| hackclub OnBoard krishveercard | clearance 199 (unknown) | The stripped designer board has clearance at the cap (199; 215 on the full board). Every one of our 199 is at a designer finding's place (J4's own pads at 0.17 mm against 0.2), so without the cap rule it would pass; but a capped count says nothing about the findings past the cap. |
+| ASH-ART Qfwfq | starved_thermal 1, hole_clearance 199 (unknown) | C4 pad 2 (GND, B.Cu) has one spoke of two: the designer's three starved thermals are elsewhere, so it is our own. hole_clearance is capped on both boards (the switches' PTH against their NPTH pads, K33...); without the cap rule 155 of our 199 match and 44 do not, the two capped lists holding different subsets. |
+
+**Repairs and environment.** The verdict and board-router.json
+(board-layout.json) gain `repairs`: `neck_tracks` and `neck_track_mm`
+(the connection-width repair's kept tracks; `NeckRepair` gains
+`track_mm`), `pour_mode` and `pours_as_tracks` (the kept board's
+`pours`), and `island_stubs`, `null`: the stubs are added in pcb-router
+(`manual_spokes.rs`), which reports no count yet; counting them needs a
+counter there (another package's). The verdict gains `environment`: the
+result-changing variables that were set (`RESULT_ENVIRONMENT`:
+PCB_ROUTER_SEED, PCB_ROUTER_SEEDS, PCB_ROUTER_NO_ISLAND_STUBS,
+PCB_ROUTER_NO_WALL_GUARD, PCB_SKIP_NATIVE, PCB_MIN_CONNECTION_FLOOR,
+PCB_KICAD_NO_NECK_REPAIR, PCB_KICAD_TIMEOUT, PCB_MAKER_KICAD_USER_LIBS,
+PCB_PLACER_WORK_SECONDS, PCB_NARROW_RESERVE, PCB_PROBES_SIDE_BY_SIDE,
+PCB_LADDER_STATS). run.py rows carry `repairs` (and `environment` when
+set); compare.py sums the neck tracks, their length, the island stubs
+where counted and the rows kept with pours as tracks. The router's
+behaviour and the island stubs' default are unchanged.
+
+Tests: verdict unit tests for the strict rule (the hidden same-type
+finding, items moved together, the cap) and the unverified status;
+run.py's strict rule in test_run.py; CLI tests for the three exit paths:
+`a_route_kicad_did_not_check_is_never_complete` (exit 1, the
+environment and repairs echoed), `a_kicad_failure_in_the_neck_repair_leaves_the_last_report`
+(a fake kicad-cli that crashes after the repair's save; fails on the old
+necks.rs) and `a_missing_report_after_kicads_check_is_an_internal_error`
+(exit 4; the hook `PCB_MAKER_TEST_DROP_DRC` removes the report).
+
+Short tier under the lock (x1290, 6 x 4, load 3-6) against
+build/short-x1170.log (build/short-x1290.log): every routing row the same
+(routed, KiCad's unconnected and errors, vias, length, first-route open
+terminals; 299 s wall, cut 0); MIDAS-MK1.1's work 285.1 to 287.5 s, as
+x1223 to x1261 have it since the placer commit 0d13e80. Passes 7 and 7,
+strict 7: new errors 2 by the old rule, 202 strict (eternal-keypad's
+hole_clearance at the cap, 199 unknown, and its shorting_items 1;
+WLED_Matrix's connection_width 1, hidden before by the designer's
+connection_width elsewhere, and its copper_edge_clearance 1). Repairs: 7
+neck tracks (1.31 mm: WLED_Matrix 4, USB_Keypad 3), one board kept with
+pours as tracks (WLED_Matrix). Binary of the rebased commit: x1291.
 ## GPU grid A* prototype (2026-10-21)
 
 A bounded go/no-go experiment on branch `gpu-astar-prototype` (not for

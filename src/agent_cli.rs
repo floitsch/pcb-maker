@@ -125,6 +125,10 @@ fn write_verdict(
         .map_err(|error| format!("failed to read {}: {error}", report.display()))?;
     let mut content: serde_json::Value = serde_json::from_str(&text)
         .map_err(|error| format!("failed to parse {}: {error}", report.display()))?;
+    // What the run repaired for KiCad's DRC, beside the router's numbers.
+    if let Some(repairs) = value.get("repairs") {
+        content["repairs"] = repairs.clone();
+    }
     content["verdict"] = value;
     fs::write(
         report,
@@ -318,9 +322,10 @@ fn check_reference(
         project.display()
     );
     facts.reference = match pcb_kicad::reference_findings(project, board_id, report) {
-        Ok(errors) => KiCadReference::Findings {
+        Ok((errors, findings)) => KiCadReference::Findings {
             from: project.to_path_buf(),
             errors,
+            findings,
         },
         Err(error) => KiCadReference::Failed {
             from: project.to_path_buf(),
@@ -412,7 +417,12 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             .map(|native| native.complete)
             .unwrap_or(false),
     );
-    let mut facts = pcb_kicad::route_facts(command, &result, output);
+    // Test hook: KiCad's report gone before the verdict reads it
+    // (tests/cli_exit_codes.rs).
+    if std::env::var_os("PCB_MAKER_TEST_DROP_DRC").is_some() {
+        let _ = fs::remove_file(output.join("drc.json"));
+    }
+    let mut facts = pcb_kicad::route_facts(command, &result, output).map_err(Failure::Internal)?;
     facts.work_seconds = Some(result.work_seconds);
     facts.outputs = existing(&outputs);
     check_reference(
@@ -705,7 +715,8 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         }
     };
     print_layout(&result).map_err(Failure::Internal)?;
-    let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory);
+    let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory)
+        .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
     // The placement's room (the parts and the outline the layout kept).
     facts.room = fs::read_to_string(output.join("placed/board-placer.json"))
@@ -980,17 +991,21 @@ pub const EXIT_CODES: &str = "\
 Exit codes of the commands for agents (the JSON report of a route, layout or placement carries the
 same as verdict.status and verdict.exit_code):
   0  complete: the run finished and the result passes: KiCad reports no unconnected item and no
-     DRC error beyond the reference board's (per type; warnings and silkscreen, text and library
-     findings do not count); a placement or layout also places every part and keeps every constraint
+     DRC error that the reference board does not have at the same place (warnings and silkscreen,
+     text and library findings do not count); a placement or layout also places every part and
+     keeps every constraint
   1  incomplete: the run finished and wrote its result, but connections are open, there are new
-     DRC errors, constraints are missed or parts found no place; the report says which and what to do
+     DRC errors, constraints are missed or parts found no place; the report says which and what to do.
+     Also router_complete_unverified: KiCad's check was skipped (PCB_SKIP_NATIVE,
+     skip_native_verification) and only the router's own count finds nothing open
   2  usage or input error: bad arguments, a missing or invalid input file or config, unknown keys
      or parts, an output directory that exists; nothing was routed (no files are written unless the
      run had already created its output directory)
   3  incomplete and cut short by the wall clock (verdict.cut): the result depends on the machine's
      load; rerun on a less loaded machine or with a larger budget
   4  internal error or panic: one line on stderr; the report holds verdict.error when the run had
-     started (its output directory may hold partial results)
+     started (its output directory may hold partial results); also when KiCad checked the result
+     but its report is missing or unreadable
   A process killed by a signal (the harness's timeout, out of memory) has no verdict; its exit
   status is the signal's (128 + n in a shell).";
 
@@ -1010,15 +1025,17 @@ usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-co
                        net_classes (default: the project's), ladder_budget_seconds (default 1200 s
                        of work), deadline_seconds (default none: the work alone ends the run),
                        solid_starved_thermals (default false).
-  --reference <dir>    the project whose board's DRC errors count as pre-existing (per type), not as
-                       the route's; default <project-dir> (the input as given); none counts every
-                       error. Checked only when the result has errors (one more KiCad DRC).
+  --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
+                       the same place), not as the route's; default <project-dir> (the input as
+                       given); none counts every error. Checked only when the result has errors
+                       (one more KiCad DRC).
 
 Existing tracks and vias are replaced; copper zones stay and are used. <out-dir> receives the project
 with the routed board, KiCad's erc.json and drc.json, and board-router.json: per-net results,
 diagnostics (dead_pads, hot_spots, starved_thermals), cut, work_seconds, skipped, and verdict
-(status, exit_code, reason, open_connections, kicad_unconnected_items, new_findings,
-preexisting_findings, outputs, next_actions).";
+(status, exit_code, reason, kicad_checked, open_connections, kicad_unconnected_items,
+new_findings_strict, preexisting_findings, clean_without_subtraction, repairs, environment, outputs,
+next_actions).";
 
 const LAYOUT_HELP: &str = "\
 Places and routes a KiCad board: parts not locked, not netless and not fixed are placed anew, the
@@ -1035,8 +1052,9 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
                        default none), total_seconds (the budget in seconds of work, default 1500),
                        moves (part moves after the first route, default 40), polish_seconds (default
                        60), swappable / pin_swaps (default none). docs/agents.md, docs/constraints.md.
-  --reference <dir>    the project whose board's DRC errors count as pre-existing (per type); default
-                       none (the input of a layout is not a placed board): every error counts.
+  --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
+                       the same place); default none (the input of a layout is not a placed board):
+                       every error counts.
 
 <out-dir>/result is the finished project (with drc.json and erc.json), <out-dir>/placed the placement
 (placement.html animates it, board-placer.json reports constraints, hints and utilization), and

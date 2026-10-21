@@ -15,7 +15,15 @@ movable footprint at one point and removes the outline (a fresh netlist
 import), and lays it out with `layout-kicad-board` from the task's
 constraints. A task passes when every constraint holds (except the ones the
 task lists as geometrically impossible), every connection is routed, and
-native KiCad reports no unconnected item and no copper error.
+native KiCad reports no unconnected item and no copper error beyond the
+designer's board's count of its type (`pass`). The strict rule
+(`pass_strict`, `new_findings_strict`) subtracts only the findings the
+designer's board has at the same place: KiCad's DRC of the designer's board
+with its tracks, vias and small zones stripped (what the fixed geometry
+brings on its own; `strict_findings`), a type it has at KiCad's cap not at
+all. `clean_without_subtraction` says the result has no error that counts
+before any subtraction. `repairs` is the binary's verdict's (island stubs,
+connection-width repair tracks, the pour mode kept).
 
 Each row records the board's peak memory: `peak_rss_mb` for the process
 tree (kicad-cli's DRC included, 2.2 GB on any board) and `layout_rss_mb` for
@@ -175,6 +183,188 @@ def unplace(board, point, remove_outline, keep=()):
     pieces.append(text[last:])
     board.write_text("".join(pieces))
     return netless
+
+
+# KiCad's DRC reports at most this many findings of a type (verdict.rs,
+# KICAD_FINDING_CAP): a designer count at or above it is a floor, so the
+# strict rule subtracts none of that type.
+KICAD_FINDING_CAP = 199
+# How far (mm) an item may lie from the designer's for the finding to be at
+# the same place (verdict.rs, SAME_PLACE_MM).
+SAME_PLACE_MM = 0.05
+
+
+def counting_findings(drc):
+    """The findings of a DRC report that count (errors, not excluded, not
+    cosmetic): (type, [(uuid, (x, y))]) each."""
+    findings = []
+    for violation in drc.get("violations", []):
+        if violation.get("severity") != "error" or violation.get("excluded") or COSMETIC.match(violation["type"]):
+            continue
+        items = []
+        for item in violation.get("items", []):
+            position = item.get("pos")
+            items.append((item.get("uuid"), (position["x"], position["y"]) if position else None))
+        findings.append((violation["type"], items))
+    return findings
+
+
+def same_place(ours, theirs):
+    """Whether finding `ours` is `theirs` at the same place: the same type
+    and either the same items (uuids) moved together (the distances between
+    them kept: a part's own finding goes with the part), or items at the
+    same positions (verdict.rs, same_place)."""
+    if ours[0] != theirs[0] or not ours[1] or len(ours[1]) != len(theirs[1]):
+        return False
+    mine = [uuid for uuid, _ in ours[1]]
+    reference = [uuid for uuid, _ in theirs[1]]
+    if None not in mine and None not in reference and sorted(mine) == sorted(reference):
+        at_ours = {uuid: at for uuid, at in ours[1]}
+        at_theirs = {uuid: at for uuid, at in theirs[1]}
+        rigid = True
+        for index, first in enumerate(mine):
+            for second in mine[index + 1:]:
+                points = (at_ours[first], at_ours[second], at_theirs[first], at_theirs[second])
+                if None in points:
+                    continue
+                if abs(_distance(points[0], points[1]) - _distance(points[2], points[3])) > SAME_PLACE_MM:
+                    rigid = False
+        if rigid:
+            return True
+    used = [False] * len(theirs[1])
+    for _, at in ours[1]:
+        if at is None:
+            return False
+        for index, (_, other) in enumerate(theirs[1]):
+            if not used[index] and other is not None and _distance(at, other) <= SAME_PLACE_MM:
+                used[index] = True
+                break
+        else:
+            return False
+    return True
+
+
+def _distance(a, b):
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+def strict_findings(ours, reference):
+    """Splits our findings (counting_findings) into the reference's at the
+    same place and our own: {"new": {type: n}, "preexisting": {type: n},
+    "unknown": [types the reference has at KiCad's cap]}; every finding of
+    an unknown type is new. `reference` None: no baseline, all are new."""
+    reference = reference or []
+    counts = {}
+    for kind, _ in reference:
+        counts[kind] = counts.get(kind, 0) + 1
+    new, preexisting, unknown = {}, {}, []
+    used = [False] * len(reference)
+    for finding in ours:
+        kind = finding[0]
+        if counts.get(kind, 0) >= KICAD_FINDING_CAP:
+            if kind not in unknown:
+                unknown.append(kind)
+            new[kind] = new.get(kind, 0) + 1
+            continue
+        for index, theirs in enumerate(reference):
+            if not used[index] and same_place(finding, theirs):
+                used[index] = True
+                preexisting[kind] = preexisting.get(kind, 0) + 1
+                break
+        else:
+            new[kind] = new.get(kind, 0) + 1
+    return {"new": new, "preexisting": preexisting, "unknown": unknown}
+
+
+class StrictBaseline:
+    """The strict rule's baseline for one task: KiCad's DRC of the
+    designer's board stripped as run.py strips it (`strip-kicad-tracks`:
+    tracks, vias and small zones go; pours and the placement stay), through
+    drc-kicad-board's cache. Taken only when a result has errors that count;
+    `findings()` is None without a baseline (the task has no designer
+    budget, or the check failed: then every error counts)."""
+
+    def __init__(self, directory, board_id, work, binary, enabled=True):
+        self.directory, self.board_id, self.work, self.binary = Path(directory), board_id, work, binary
+        self.enabled = enabled and binary is not None
+        self.taken = False
+        self.result = None
+        self.error = None
+
+    def findings(self):
+        if not self.enabled or self.taken:
+            return self.result
+        self.taken = True
+        project = self.work / "baseline"
+        try:
+            if not has_drc_command(self.binary):
+                self.error = "the binary has no drc-kicad-board"
+                return None
+            project.mkdir(parents=True, exist_ok=True)
+            original = self.directory / f"{self.board_id}.kicad_pcb"
+            for extension in (".kicad_pro", ".kicad_dru"):
+                sidecar = original.with_suffix(extension)
+                if sidecar.is_file():
+                    shutil.copyfile(sidecar, project / sidecar.name)
+            board = project / original.name
+            subprocess.run([str(self.binary), "strip-kicad-tracks", str(original), str(board)],
+                           capture_output=True, check=True, timeout=600)
+            report = self.work / "baseline-drc.json"
+            subprocess.run([str(self.binary), "drc-kicad-board", str(project), self.board_id, str(report)],
+                           capture_output=True, timeout=900)
+            self.result = counting_findings(json.loads(report.read_text()))
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            self.error = str(error)[:200]
+            self.result = None
+        finally:
+            shutil.rmtree(project, ignore_errors=True)
+        return self.result
+
+
+def strict_native(result_directory, baseline):
+    """The strict rule on the result's drc.json: strict_findings against the
+    baseline (taken only when the result has errors that count), and
+    whether it is clean without any subtraction; None without a report."""
+    report = result_directory / "drc.json"
+    if not report.exists():
+        return None
+    drc = json.loads(report.read_text())
+    ours = counting_findings(drc)
+    reference = baseline.findings() if (ours and baseline is not None) else None
+    split = strict_findings(ours, reference)
+    split["clean"] = not ours and not drc.get("unconnected_items")
+    if ours and baseline is not None and baseline.enabled and reference is None:
+        split["baseline_error"] = baseline.error or "no baseline"
+    return split
+
+
+def strict_row(row, strict, unexpected=()):
+    """The strict rule's fields of a row (after `native` was set)."""
+    if strict is None:
+        row["pass_strict"] = False
+        return
+    row["new_findings_strict"] = strict["new"]
+    if strict["preexisting"]:
+        row["preexisting_strict"] = strict["preexisting"]
+    if strict["unknown"]:
+        row["strict_unknown"] = strict["unknown"]
+    if strict.get("baseline_error"):
+        row["strict_baseline_error"] = strict["baseline_error"]
+    row["clean_without_subtraction"] = strict["clean"]
+    copper = row.get("native")
+    row["pass_strict"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0
+                              and not strict["new"])
+
+
+def verdict_extras(row, verdict):
+    """The binary's repairs and the result-changing environment it echoed
+    (verdict.json; binaries since the verdict-integrity change)."""
+    if not verdict:
+        return
+    if verdict.get("repairs") is not None:
+        row["repairs"] = verdict["repairs"]
+    if verdict.get("environment"):
+        row["environment"] = verdict["environment"]
 
 
 def native(result_directory, allowed=None):
@@ -411,6 +601,7 @@ def run_admitted(task, arguments, token):
     designer_started = time.monotonic()
     allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
+    baseline = StrictBaseline(directory, task["board_id"], work, arguments.binary, bool(task.get("designer_budget")))
     subprocess.run([str(arguments.binary), "strip-kicad-tracks", str(board), str(board)],
                    capture_output=True, check=True)
     # Constraints are optional: without them the layout gets an empty set.
@@ -471,10 +662,10 @@ def run_admitted(task, arguments, token):
         # on the machine's load.
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
-    return layout_result(row, task, work, code, output, allowed, designer_seconds)
+    return layout_result(row, task, work, code, output, allowed, designer_seconds, baseline=baseline)
 
 
-def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=None):
+def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=None, baseline=None):
     """The row of a layout that ended (not by the harness's timeout): the
     binary's verdict, the report's numbers and the pass rule. KiCad's
     findings come from `drc_directory`/drc.json (default: the result's)."""
@@ -488,6 +679,7 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
     verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else None
     if verdict:
         row["verdict"] = verdict.get("status")
+    verdict_extras(row, verdict)
     if not report.exists():
         if verdict:
             # Parts without a legal place, or an error: the verdict says which.
@@ -542,6 +734,7 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
     # the router, routing pours as tracks, does not credit (MokyaLora's
     # one open pad, 261/262 with KiCad at 0 unconnected).
     row["pass"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    strict_row(row, strict_native(drc_directory or work / "layout/result", baseline), unexpected)
     return row
 
 
@@ -580,6 +773,7 @@ def schematic_admitted(task, arguments, token):
     designer_started = time.monotonic()
     allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
+    baseline = StrictBaseline(directory, board_id, work, arguments.binary, bool(task.get("designer_budget")))
     started = time.monotonic()
     load_before = os.getloadavg()[0]
     # The designer's board gives the footprints no library has, and its
@@ -675,13 +869,15 @@ def schematic_admitted(task, arguments, token):
         drc_code, drc_out, drc_err = schematic.run([arguments.binary, "drc-kicad-board", result, board_id,
                                                     work / "drc/drc.json"])
         row["drc_line"] = (drc_out.strip().splitlines() or [""])[-1][:200]
-    layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=work / "drc")
+    layout_result(row, task, work, code, output, allowed, designer_seconds, drc_directory=work / "drc",
+                  baseline=baseline)
     verdict_file = work / "layout/verdict.json"
     verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else {}
     if verdict.get("schematic_parity_issues") is not None:
         row["parity"] = verdict["schematic_parity_issues"]
         row["parity_by_type"] = verdict.get("schematic_parity_by_type")
     row["pass"] = bool(row.get("pass")) and not report["missing"]
+    row["pass_strict"] = bool(row.get("pass_strict")) and not report["missing"]
     # Where the flow stopped: the first stage that fell short.
     if report["missing"]:
         row.update(stopped="import", why=f"{len(report['missing'])} footprints missing: "
@@ -730,6 +926,7 @@ def route_admitted(task, arguments, token):
     designer_started = time.monotonic()
     allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
+    baseline = StrictBaseline(directory, task["board_id"], work, arguments.binary, bool(task.get("designer_budget")))
     router = dict(task.get("router") or {})
     if arguments.budget_scale != 1:
         key, default = ROUTE_BUDGET
@@ -759,10 +956,10 @@ def route_admitted(task, arguments, token):
     if code == "timeout":
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
-    return route_result(row, task, work, code, output, allowed, designer_seconds)
+    return route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
 
 
-def route_result(row, task, work, code, output, allowed, designer_seconds):
+def route_result(row, task, work, code, output, allowed, designer_seconds, baseline=None):
     """The row of a route that ended (not by the harness's timeout):
     `work`/route's report, KiCad's findings in `work`/route/drc.json less
     the designer's (`allowed`), and the pass rule (a layout's)."""
@@ -771,6 +968,7 @@ def route_result(row, task, work, code, output, allowed, designer_seconds):
     if not report.exists():
         verdict_file = work / "route/verdict.json"
         verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else None
+        verdict_extras(row, verdict)
         if verdict:
             row["verdict"] = verdict.get("status")
             row["error"] = verdict.get("reason", "")[:300]
@@ -781,6 +979,7 @@ def route_result(row, task, work, code, output, allowed, designer_seconds):
     result = json.loads(report.read_text())
     if result.get("verdict"):
         row["verdict"] = result["verdict"].get("status")
+    verdict_extras(row, result.get("verdict"))
     copper = native(work / "route", allowed)
     if allowed:
         row["designer_findings"] = allowed
@@ -796,6 +995,7 @@ def route_result(row, task, work, code, output, allowed, designer_seconds):
     if result.get("work_seconds") is not None:
         row["work_seconds"] = round(result["work_seconds"], 1)
     row["pass"] = bool(copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    strict_row(row, strict_native(work / "route", baseline))
     return row
 
 
@@ -1001,6 +1201,7 @@ def route_task_admitted(task, arguments, token):
     designer_started = time.monotonic()
     allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
+    baseline = StrictBaseline(directory, board_id, work, arguments.binary, bool(task.get("designer_budget")))
     router = route_task_config(task, arguments.budget_scale)
     budget = router[ROUTE_BUDGET[0]]
     (work / "router.json").write_text(json.dumps(router))
@@ -1032,7 +1233,7 @@ def route_task_admitted(task, arguments, token):
         row.update(drc_seconds=round(time.monotonic() - drc_started, 1), peak_rss_mb=max(peak_mb, drc_peak),
                    cpu_seconds=round(cpu_seconds + drc_cpu, 1))
     row["load"] = [round(load_before, 1), round(os.getloadavg()[0], 1)]
-    route_result(row, task, work, code, output, allowed, designer_seconds)
+    route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
     report = work / "route/board-router.json"
     if report.exists():
         result = json.loads(report.read_text())
@@ -1274,9 +1475,12 @@ def main():
     passed = sum(1 for row in ordered if row["pass"])
     peak = max((row.get("peak_rss_mb") or 0 for row in ran), default=0)
     spliced_count = len(ordered) - len(ran)
+    # The strict rule beside it (rows of older runs spliced in may lack it).
+    strict = sum(1 for row in ordered if row.get("pass_strict"))
     print(f"{passed}/{len(ordered)} tasks pass ({wall:.0f} s wall, "
           f"largest peak {peak / 1024:.1f} GB"
-          + (f"; {spliced_count} rows spliced from {arguments.splice_from}" if spliced_count else "") + ")")
+          + (f"; {spliced_count} rows spliced from {arguments.splice_from}" if spliced_count else "") + ")"
+          + f"; strict rule: {strict} pass")
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,

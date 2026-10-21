@@ -3,15 +3,18 @@
 //! The verdict of a command run, for agents: whether the result is
 //! complete, and the process's exit code that says so.
 //!
-//! The rule is the benchmarks' pass rule (`benchmarks/agent-tasks/run.py`,
-//! `benchmarks/corpus/run.py`): KiCad's own DRC on the result decides. A
-//! result is complete when KiCad reports no unconnected item and no error
-//! beyond the ones the reference board (the designer's, or the input of a
-//! route) already has, counted per type. Warnings, excluded findings and
-//! cosmetic types (silkscreen, text, library metadata, missing courtyards,
-//! isolated copper) do not count. A layout or placement must also keep its
-//! placement constraints and place every part. Without KiCad's check (it
-//! was skipped), the router's own count decides.
+//! The rule: KiCad's own DRC on the result decides. A result is complete
+//! when KiCad reports no unconnected item and no error beyond the ones the
+//! reference board (the designer's, or the input of a route) already has
+//! at the same place: the same type and the same items (by uuid, moved
+//! together) or items at the same positions (`split_findings_strict`). A
+//! type the reference has at KiCad's cap (`KICAD_FINDING_CAP`) is not
+//! subtracted. Warnings, excluded findings and cosmetic types (silkscreen,
+//! text, library metadata, missing courtyards, isolated copper) do not
+//! count. A layout or placement must also keep its placement constraints
+//! and place every part. Without KiCad's check (it was skipped) the
+//! router's own count can only say `router_complete_unverified` (exit 1);
+//! a check that ran but left no readable report is an internal error.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -57,6 +60,10 @@ pub fn is_cosmetic(kind: &str) -> bool {
 pub enum KiCadRunStatus {
     Complete,
     Incomplete,
+    /// The router's own count finds nothing open, but KiCad did not check
+    /// the board (`PCB_SKIP_NATIVE`, `skip_native_verification`): no claim
+    /// that it passes (exit 1).
+    RouterCompleteUnverified,
     Cut,
     UsageError,
     InternalError,
@@ -66,12 +73,37 @@ impl KiCadRunStatus {
     pub fn exit_code(self) -> u8 {
         match self {
             Self::Complete => EXIT_COMPLETE,
-            Self::Incomplete => EXIT_INCOMPLETE,
+            Self::Incomplete | Self::RouterCompleteUnverified => EXIT_INCOMPLETE,
             Self::UsageError => EXIT_USAGE,
             Self::Cut => EXIT_CUT,
             Self::InternalError => EXIT_INTERNAL,
         }
     }
+}
+
+/// KiCad's DRC reports at most this many findings of one type (its error
+/// limit; a type spread over several of KiCad's tests can reach a few
+/// hundred more, as 499 clearances): a count at or above it is a floor,
+/// not a count.
+pub const KICAD_FINDING_CAP: usize = 199;
+
+/// How far (mm) an item of a finding may lie from the reference's item for
+/// the two findings to be at the same place.
+pub const SAME_PLACE_MM: f64 = 0.05;
+
+/// One item a DRC finding names: its uuid and its position.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DrcItem {
+    pub uuid: Option<String>,
+    pub at: Option<[f64; 2]>,
+}
+
+/// One finding that counts (error severity, not excluded, not cosmetic),
+/// with its items, for matching against the reference's findings.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DrcFinding {
+    pub kind: String,
+    pub items: Vec<DrcItem>,
 }
 
 /// A KiCad DRC report, counted as the pass rule counts it.
@@ -80,6 +112,8 @@ pub struct DrcTally {
     /// Error-severity findings by type, excluded and cosmetic ones left
     /// out.
     pub errors: BTreeMap<String, usize>,
+    /// The same findings one by one, with their items.
+    pub findings: Vec<DrcFinding>,
     pub cosmetic: usize,
     /// Warning-severity findings that are not cosmetic.
     pub warnings: usize,
@@ -104,6 +138,21 @@ pub fn tally_drc(report: &Value) -> DrcTally {
             tally.cosmetic += 1;
         } else if finding["severity"].as_str() == Some("error") {
             *tally.errors.entry(kind.to_string()).or_default() += 1;
+            tally.findings.push(DrcFinding {
+                kind: kind.to_string(),
+                items: finding["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|item| DrcItem {
+                        uuid: item["uuid"].as_str().map(str::to_string),
+                        at: item["pos"]["x"]
+                            .as_f64()
+                            .zip(item["pos"]["y"].as_f64())
+                            .map(|(x, y)| [x, y]),
+                    })
+                    .collect(),
+            });
         } else {
             tally.warnings += 1;
         }
@@ -121,8 +170,19 @@ pub fn tally_drc(report: &Value) -> DrcTally {
 }
 
 pub fn read_drc_tally(path: &Path) -> Option<DrcTally> {
-    let text = fs::read_to_string(path).ok()?;
-    Some(tally_drc(&serde_json::from_str(&text).ok()?))
+    load_drc_tally(path).ok()
+}
+
+/// `read_drc_tally`, saying why a report cannot be read.
+pub fn load_drc_tally(path: &Path) -> Result<DrcTally, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let report: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+    if !report["violations"].is_array() {
+        return Err(format!("{} holds no DRC violations list", path.display()));
+    }
+    Ok(tally_drc(&report))
 }
 
 /// The errors per type of the reference board (the findings that were
@@ -134,20 +194,23 @@ pub enum KiCadReference {
     Findings {
         from: PathBuf,
         errors: BTreeMap<String, usize>,
+        /// The findings one by one, for the strict rule.
+        findings: Vec<DrcFinding>,
     },
     /// KiCad could not check the reference; every error counts.
     Failed { from: PathBuf, error: String },
 }
 
-/// KiCad's DRC errors by type on `project`'s board, counted as the
-/// benchmarks count the designer's board: zones refilled, errors only. The
-/// report is kept at `report` (see `kicad_drc_report`).
+/// KiCad's DRC errors on `project`'s board, counted as the benchmarks
+/// count the designer's board: zones refilled, errors only; by type and
+/// one by one. The report is kept at `report` (see `kicad_drc_report`).
 pub fn reference_findings(
     project: &Path,
     board_id: &str,
     report: &Path,
-) -> Result<BTreeMap<String, usize>, String> {
-    Ok(tally_drc(&kicad_drc_report(project, board_id, report, true)?).errors)
+) -> Result<(BTreeMap<String, usize>, Vec<DrcFinding>), String> {
+    let tally = tally_drc(&kicad_drc_report(project, board_id, report, true)?);
+    Ok((tally.errors, tally.findings))
 }
 
 /// KiCad's DRC of `project`'s board, every severity, zones refilled when
@@ -196,7 +259,10 @@ pub fn kicad_drc_report(
 }
 
 /// Splits a result's errors into the ones beyond the reference's (new)
-/// and the ones the reference accounts for, per type.
+/// and the ones the reference accounts for, per type: the old rule, which
+/// hides a new error of a type the reference has anywhere on the board
+/// (kept as `new_findings` for comparisons; `split_findings_strict`
+/// decides).
 pub fn split_findings(
     errors: &BTreeMap<String, usize>,
     reference: &BTreeMap<String, usize>,
@@ -213,6 +279,187 @@ pub fn split_findings(
         }
     }
     (new, preexisting)
+}
+
+fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// Whether `ours` is the reference's finding `theirs` at the same place:
+/// the same type and either the same items (every uuid on both sides, the
+/// same set) moved together (the distances between them kept, so a part's
+/// own finding goes with the part), or items at the same positions, each
+/// within `SAME_PLACE_MM`.
+pub fn same_place(ours: &DrcFinding, theirs: &DrcFinding) -> bool {
+    if ours.kind != theirs.kind || ours.items.is_empty() || ours.items.len() != theirs.items.len() {
+        return false;
+    }
+    let uuids = |finding: &DrcFinding| -> Option<Vec<String>> {
+        let mut uuids: Vec<String> = finding
+            .items
+            .iter()
+            .map(|item| item.uuid.clone())
+            .collect::<Option<_>>()?;
+        uuids.sort();
+        Some(uuids)
+    };
+    if let (Some(mine), Some(reference)) = (uuids(ours), uuids(theirs))
+        && mine == reference
+    {
+        let at = |finding: &DrcFinding, uuid: &str| {
+            finding
+                .items
+                .iter()
+                .find(|item| item.uuid.as_deref() == Some(uuid))
+                .and_then(|item| item.at)
+        };
+        let rigid = mine.iter().enumerate().all(|(index, first)| {
+            mine[index + 1..].iter().all(|second| {
+                match (
+                    at(ours, first),
+                    at(ours, second),
+                    at(theirs, first),
+                    at(theirs, second),
+                ) {
+                    (Some(a), Some(b), Some(c), Some(d)) => {
+                        (distance(a, b) - distance(c, d)).abs() <= SAME_PLACE_MM
+                    }
+                    _ => true,
+                }
+            })
+        });
+        if rigid {
+            return true;
+        }
+    }
+    let mut used = vec![false; theirs.items.len()];
+    ours.items.iter().all(|item| {
+        let Some(at) = item.at else {
+            return false;
+        };
+        let found = theirs.items.iter().enumerate().position(|(index, other)| {
+            !used[index]
+                && other
+                    .at
+                    .is_some_and(|other| distance(at, other) <= SAME_PLACE_MM)
+        });
+        if let Some(index) = found {
+            used[index] = true;
+        }
+        found.is_some()
+    })
+}
+
+/// A result's errors split by the strict rule.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StrictSplit {
+    /// Per type, the findings no reference finding is at the same place
+    /// as (`same_place`), and every finding of a type in `unknown`.
+    pub new: BTreeMap<String, usize>,
+    /// Per type, the findings the reference has at the same place.
+    pub preexisting: BTreeMap<String, usize>,
+    /// Types of the result that the reference has at KiCad's cap
+    /// (`KICAD_FINDING_CAP`): whether they were there before is unknown,
+    /// so none is subtracted.
+    pub unknown: Vec<String>,
+}
+
+/// Splits a result's findings into the reference's (the same type at the
+/// same place, each reference finding answering for one) and the run's own.
+pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> StrictSplit {
+    let mut reference_counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for finding in reference {
+        *reference_counts.entry(finding.kind.as_str()).or_default() += 1;
+    }
+    let capped = |kind: &str| {
+        reference_counts
+            .get(kind)
+            .is_some_and(|count| *count >= KICAD_FINDING_CAP)
+    };
+    let mut split = StrictSplit::default();
+    let mut used = vec![false; reference.len()];
+    for finding in ours {
+        let kind = finding.kind.as_str();
+        if capped(kind) {
+            if !split.unknown.iter().any(|known| known == kind) {
+                split.unknown.push(kind.to_string());
+            }
+            *split.new.entry(kind.to_string()).or_default() += 1;
+            continue;
+        }
+        let matched = reference
+            .iter()
+            .enumerate()
+            .position(|(index, theirs)| !used[index] && same_place(finding, theirs));
+        if let Some(index) = matched {
+            used[index] = true;
+            *split.preexisting.entry(kind.to_string()).or_default() += 1;
+        } else {
+            *split.new.entry(kind.to_string()).or_default() += 1;
+        }
+    }
+    split
+}
+
+/// What the run repaired to satisfy KiCad's DRC, beyond routing: tracks
+/// that change no connection.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct KiCadRepairs {
+    /// A pad's own straight track into its pour island (the router's
+    /// `island_stubs`, `PCB_ROUTER_NO_ISLAND_STUBS`); `null`: not counted
+    /// (the router does not report them yet).
+    pub island_stubs: Option<usize>,
+    /// Tracks the connection-width repair kept (`neck_repair`), and their
+    /// length.
+    pub neck_tracks: usize,
+    pub neck_track_mm: f64,
+    /// The kept board's pour mode (`pours` of board-router.json:
+    /// `connect`, `tracks`, `none`, ...), and whether it routed the pour
+    /// nets as tracks.
+    pub pour_mode: String,
+    pub pours_as_tracks: bool,
+}
+
+impl KiCadRepairs {
+    pub fn of(result: &crate::KiCadBoardRouterResult) -> Self {
+        let neck = result.neck_repair.as_ref().filter(|repair| repair.kept);
+        Self {
+            island_stubs: None,
+            neck_tracks: neck.map_or(0, |repair| repair.tracks),
+            neck_track_mm: neck.map_or(0.0, |repair| repair.track_mm),
+            pour_mode: result.pours.clone(),
+            pours_as_tracks: result.pours == "tracks" || result.pours.contains("as tracks"),
+        }
+    }
+}
+
+/// Environment variables that change what a run does or reports (the
+/// router's seed and switches, KiCad's check and its repairs, the budgets'
+/// guards), echoed into the verdict when set.
+pub const RESULT_ENVIRONMENT: [&str; 13] = [
+    "PCB_ROUTER_SEED",
+    "PCB_ROUTER_SEEDS",
+    "PCB_ROUTER_NO_ISLAND_STUBS",
+    "PCB_ROUTER_NO_WALL_GUARD",
+    "PCB_SKIP_NATIVE",
+    "PCB_MIN_CONNECTION_FLOOR",
+    "PCB_KICAD_NO_NECK_REPAIR",
+    "PCB_KICAD_TIMEOUT",
+    "PCB_MAKER_KICAD_USER_LIBS",
+    "PCB_PLACER_WORK_SECONDS",
+    "PCB_NARROW_RESERVE",
+    "PCB_PROBES_SIDE_BY_SIDE",
+    "PCB_LADDER_STATS",
+];
+
+/// The variables of `RESULT_ENVIRONMENT` that are set, with their values.
+pub fn result_environment() -> BTreeMap<String, String> {
+    RESULT_ENVIRONMENT
+        .iter()
+        .filter_map(|name| {
+            std::env::var_os(name).map(|value| (name.to_string(), value.to_string_lossy().into()))
+        })
+        .collect()
 }
 
 /// What a finished run produced, as the verdict needs it.
@@ -243,6 +490,8 @@ pub struct KiCadRunFacts {
     pub routes: bool,
     /// The placement's room (`placement_room`), when there was one.
     pub room: Option<crate::placement_room::KiCadRoom>,
+    /// What the run repaired for KiCad's DRC (a route's or a layout's).
+    pub repairs: Option<KiCadRepairs>,
 }
 
 impl KiCadRunFacts {
@@ -269,6 +518,7 @@ impl KiCadRunFacts {
             skipped: Vec::new(),
             routes: true,
             room: None,
+            repairs: None,
         }
     }
 
@@ -297,14 +547,29 @@ pub struct KiCadVerdict {
     pub open_connections: usize,
     /// Pads the router did not reach, by its own count.
     pub unconnected_terminals: usize,
+    /// Whether KiCad's DRC checked the result (false with
+    /// `PCB_SKIP_NATIVE` or `skip_native_verification`, and for a
+    /// placement).
+    pub kicad_checked: bool,
     /// KiCad's unconnected items on the result (`None`: KiCad did not
     /// check it). This, not the router's count, decides.
     pub kicad_unconnected_items: Option<usize>,
-    /// KiCad errors per type beyond the reference's: the run's own.
+    /// KiCad errors per type that the reference board does not have at the
+    /// same place (`split_findings_strict`): the run's own. They decide.
+    pub new_findings_strict: BTreeMap<String, usize>,
+    /// KiCad errors per type beyond the reference's count of that type
+    /// anywhere on the board: the old rule, kept for comparisons (it hides
+    /// a new error of a type the reference has).
     pub new_findings: BTreeMap<String, usize>,
-    /// KiCad errors per type the reference board has as well (the
-    /// designer's own findings); they do not count.
+    /// KiCad errors per type the reference board has at the same place
+    /// (the designer's own findings); they do not count.
     pub preexisting_findings: BTreeMap<String, usize>,
+    /// Types the reference has at KiCad's cap (199 findings or more of the
+    /// type): not subtracted, since its true count is unknown.
+    pub preexisting_unknown: Vec<String>,
+    /// KiCad checked the result and finds no unconnected item and no error
+    /// that counts, with nothing subtracted.
+    pub clean_without_subtraction: bool,
     /// The project whose board the pre-existing findings come from, or
     /// `null` when there was none or none was needed.
     pub preexisting_from: Option<String>,
@@ -346,6 +611,13 @@ pub struct KiCadVerdict {
     /// to try when parts found no place (`null` for a route).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room: Option<crate::placement_room::KiCadRoom>,
+    /// What the run repaired for KiCad's DRC (`KiCadRepairs`; absent for a
+    /// placement and an error).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repairs: Option<KiCadRepairs>,
+    /// The result-changing environment variables that were set
+    /// (`RESULT_ENVIRONMENT`), with their values.
+    pub environment: BTreeMap<String, String>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -404,16 +676,20 @@ pub fn decide(
         ));
     }
     if problems.is_empty() {
+        if facts.routes && facts.native.is_none() {
+            return (
+                KiCadRunStatus::RouterCompleteUnverified,
+                format!(
+                    "router_complete_unverified: the router's count finds {}/{} connections and no clearance violation, but KiCad did not check the board (PCB_SKIP_NATIVE or skip_native_verification)",
+                    facts.routed_connections, facts.routable_connections
+                ),
+            );
+        }
         let reason = if !facts.routes {
             "complete: every part placed, every constraint kept".to_string()
-        } else if facts.native.is_some() {
-            format!(
-                "complete: {}/{} connections, KiCad finds no unconnected item and no error beyond the reference's",
-                facts.routed_connections, facts.routable_connections
-            )
         } else {
             format!(
-                "complete by the router's count ({}/{} connections); KiCad did not check it",
+                "complete: {}/{} connections, KiCad finds no unconnected item and no error beyond the reference's at the same place",
                 facts.routed_connections, facts.routable_connections
             )
         };
@@ -440,6 +716,7 @@ fn next_actions(
     facts: &KiCadRunFacts,
     status: KiCadRunStatus,
     new_findings: &BTreeMap<String, usize>,
+    unknown: &[String],
 ) -> Vec<String> {
     let mut actions = Vec::new();
     if !facts.unplaced.is_empty() {
@@ -503,6 +780,12 @@ fn next_actions(
     if !facts.constraints_missed.is_empty() {
         actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
     }
+    if !unknown.is_empty() {
+        actions.push(format!(
+            "the reference board has {} at KiCad's cap of {KICAD_FINDING_CAP} findings: none of them is subtracted (preexisting_unknown)",
+            unknown.join(", ")
+        ));
+    }
     if let KiCadReference::Failed { error, .. } = &facts.reference {
         actions.push(format!(
             "the reference board could not be checked ({error}): every DRC error counted as new"
@@ -527,7 +810,7 @@ fn next_actions(
         });
     }
     if facts.routes && facts.native.is_none() {
-        actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the verdict is the router's own count".into());
+        actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
     }
     if status != KiCadRunStatus::Complete {
         actions.extend(facts.skipped.iter().cloned());
@@ -586,17 +869,31 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         .as_ref()
         .map(|native| native.errors.clone())
         .unwrap_or_default();
-    let (new_findings, preexisting_findings, preexisting_from) = match &facts.reference {
+    let findings = facts
+        .native
+        .as_ref()
+        .map(|native| native.findings.clone())
+        .unwrap_or_default();
+    let (new_findings, strict, preexisting_from) = match &facts.reference {
         KiCadReference::Findings {
             from,
             errors: reference,
-        } => {
-            let (new, preexisting) = split_findings(&errors, reference);
-            (new, preexisting, Some(from.display().to_string()))
-        }
-        KiCadReference::None | KiCadReference::Failed { .. } => (errors, BTreeMap::new(), None),
+            findings: reference_findings,
+        } => (
+            split_findings(&errors, reference).0,
+            split_findings_strict(&findings, reference_findings),
+            Some(from.display().to_string()),
+        ),
+        KiCadReference::None | KiCadReference::Failed { .. } => (
+            errors.clone(),
+            StrictSplit {
+                new: errors,
+                ..Default::default()
+            },
+            None,
+        ),
     };
-    let (status, reason) = decide(facts, &new_findings);
+    let (status, reason) = decide(facts, &strict.new);
     KiCadVerdict {
         status,
         exit_code: status.exit_code(),
@@ -607,10 +904,17 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             .routable_connections
             .saturating_sub(facts.routed_connections),
         unconnected_terminals: facts.unconnected_terminals,
+        kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
-        next_actions: next_actions(facts, status, &new_findings),
+        next_actions: next_actions(facts, status, &strict.new, &strict.unknown),
+        clean_without_subtraction: facts
+            .native
+            .as_ref()
+            .is_some_and(|native| native.unconnected == 0 && native.errors.is_empty()),
+        new_findings_strict: strict.new,
         new_findings,
-        preexisting_findings,
+        preexisting_findings: strict.preexisting,
+        preexisting_unknown: strict.unknown,
         preexisting_from,
         cosmetic_findings: facts.native.as_ref().map_or(0, |native| native.cosmetic),
         warnings: facts.native.as_ref().map_or(0, |native| native.warnings),
@@ -634,6 +938,8 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
         room: facts.room.clone(),
+        repairs: facts.repairs.clone(),
+        environment: result_environment(),
     }
 }
 
@@ -671,17 +977,25 @@ pub fn error_verdict(
 }
 
 /// The router's facts for a route's verdict (`directory`: the routed
-/// project, with KiCad's `drc.json`).
+/// project, with KiCad's `drc.json`). When KiCad checked the board, its
+/// report must be there: a missing or unreadable one is an error (the
+/// verdict would otherwise rest on the router's count while saying KiCad
+/// had judged).
 pub fn route_facts(
     command: &str,
     result: &crate::KiCadBoardRouterResult,
     directory: &Path,
-) -> KiCadRunFacts {
+) -> Result<KiCadRunFacts, String> {
     let mut facts = KiCadRunFacts::new(command);
-    facts.native = result
-        .native
-        .as_ref()
-        .and_then(|_| read_drc_tally(&directory.join("drc.json")));
+    if result.native.is_some() {
+        let report = directory.join("drc.json");
+        facts.native = Some(load_drc_tally(&report).map_err(|error| {
+            format!(
+                "KiCad checked the board but its report is missing or unreadable ({error}); no verdict without it"
+            )
+        })?);
+    }
+    facts.repairs = Some(KiCadRepairs::of(result));
     facts.routable_connections = result.routable_connections;
     facts.routed_connections = result.routed_connections;
     facts.unconnected_terminals = result.unconnected_terminals;
@@ -691,7 +1005,7 @@ pub fn route_facts(
     facts.hot_spots = result.diagnostics.hot_spots.len();
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
-    facts
+    Ok(facts)
 }
 
 /// The kinds of wall-clock cut this process saw (`pcb_router`'s
@@ -789,29 +1103,144 @@ mod tests {
         );
     }
 
+    fn finding(kind: &str, items: &[(&str, f64, f64)]) -> serde_json::Value {
+        json!({"type": kind, "severity": "error", "description": kind,
+               "items": items.iter().map(|(uuid, x, y)| json!({"description": "item", "uuid": uuid, "pos": {"x": x, "y": y}})).collect::<Vec<_>>()})
+    }
+
+    fn report(violations: Vec<serde_json::Value>) -> serde_json::Value {
+        json!({"violations": violations, "unconnected_items": [], "schematic_parity": []})
+    }
+
+    fn reference(violations: Vec<serde_json::Value>) -> KiCadReference {
+        let tally = tally_drc(&report(violations));
+        KiCadReference::Findings {
+            from: "designer".into(),
+            errors: tally.errors,
+            findings: tally.findings,
+        }
+    }
+
     #[test]
     fn a_designer_finding_does_not_make_a_route_incomplete() {
         // USB_Cable_Tester in route mode: 0 unconnected, one courtyard
         // overlap that the designer's board has too (exit 1 before).
-        let mut facts = routed(DrcTally {
-            errors: map(&[("courtyards_overlap", 1)]),
-            ..Default::default()
-        });
+        let overlap = finding("courtyards_overlap", &[("a", 1.0, 2.0), ("b", 3.0, 2.0)]);
+        let mut facts = routed(tally_drc(&report(vec![overlap.clone()])));
         assert!(facts.needs_reference());
         assert_eq!(judge(&facts).exit_code, EXIT_INCOMPLETE);
-        facts.reference = KiCadReference::Findings {
-            from: "designer".into(),
-            errors: map(&[("courtyards_overlap", 2), ("clearance", 6)]),
-        };
+        facts.reference = reference(vec![
+            overlap,
+            finding("courtyards_overlap", &[("c", 9.0, 9.0), ("d", 9.5, 9.0)]),
+            finding("clearance", &[("e", 5.0, 5.0)]),
+        ]);
         let verdict = judge(&facts);
         assert_eq!(verdict.status, KiCadRunStatus::Complete);
         assert_eq!(verdict.exit_code, EXIT_COMPLETE);
+        assert!(verdict.new_findings_strict.is_empty());
         assert!(verdict.new_findings.is_empty());
+        assert!(!verdict.clean_without_subtraction);
         assert_eq!(
             verdict.preexisting_findings,
             map(&[("courtyards_overlap", 1)])
         );
         assert!(verdict.next_actions.is_empty());
+    }
+
+    #[test]
+    fn only_a_finding_at_the_references_place_is_preexisting() {
+        // The designer has one clearance finding; the result has it and a
+        // new one of the same type elsewhere: the old per-type rule hid the
+        // new one, the strict rule counts it.
+        let theirs = finding("clearance", &[("p1", 10.0, 10.0), ("p2", 10.4, 10.0)]);
+        let elsewhere = finding("clearance", &[("t1", 30.0, 12.0), ("p9", 30.3, 12.0)]);
+        let mut facts = routed(tally_drc(&report(vec![theirs.clone(), elsewhere])));
+        facts.reference = reference(vec![
+            theirs,
+            finding("clearance", &[("p5", 50.0, 50.0), ("p6", 50.2, 50.0)]),
+        ]);
+        let verdict = judge(&facts);
+        assert!(verdict.new_findings.is_empty(), "the old rule hides it");
+        assert_eq!(verdict.new_findings_strict, map(&[("clearance", 1)]));
+        assert_eq!(verdict.preexisting_findings, map(&[("clearance", 1)]));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(verdict.reason.contains("clearance 1"), "{}", verdict.reason);
+    }
+
+    #[test]
+    fn findings_match_by_items_moved_together_or_by_position() {
+        let at = |kind: &str, items: &[(Option<&str>, f64, f64)]| DrcFinding {
+            kind: kind.into(),
+            items: items
+                .iter()
+                .map(|(uuid, x, y)| DrcItem {
+                    uuid: uuid.map(str::to_string),
+                    at: Some([*x, *y]),
+                })
+                .collect(),
+        };
+        // A footprint's own hole-to-hole finding moves and turns with it.
+        let designer = at(
+            "hole_to_hole",
+            &[(Some("h1"), 85.0, 13.8), (Some("h2"), 85.0, 13.2)],
+        );
+        let moved = at(
+            "hole_to_hole",
+            &[(Some("h2"), 20.0, 5.0), (Some("h1"), 20.6, 5.0)],
+        );
+        assert!(same_place(&moved, &designer));
+        // The same two items no longer side by side: not the same finding.
+        let apart = at(
+            "hole_to_hole",
+            &[(Some("h1"), 20.0, 5.0), (Some("h2"), 22.0, 5.0)],
+        );
+        assert!(!same_place(&apart, &designer));
+        // New items (our tracks) at the designer's positions match there.
+        let ours = at(
+            "hole_to_hole",
+            &[(Some("x1"), 85.02, 13.8), (None, 85.0, 13.23)],
+        );
+        assert!(same_place(&ours, &designer));
+        let off = at(
+            "hole_to_hole",
+            &[(Some("x1"), 85.2, 13.8), (None, 85.0, 13.2)],
+        );
+        assert!(!same_place(&off, &designer));
+        // Another type never matches.
+        let clearance = at(
+            "clearance",
+            &[(Some("h1"), 85.0, 13.8), (Some("h2"), 85.0, 13.2)],
+        );
+        assert!(!same_place(&clearance, &designer));
+        // Each reference finding answers for one of ours.
+        let split = split_findings_strict(&[designer.clone(), designer.clone()], &[designer]);
+        assert_eq!(split.new, map(&[("hole_to_hole", 1)]));
+        assert_eq!(split.preexisting, map(&[("hole_to_hole", 1)]));
+    }
+
+    #[test]
+    fn a_type_at_kicads_cap_is_unknown_and_not_subtracted() {
+        let ours = finding("hole_clearance", &[("a", 1.0, 1.0)]);
+        let mut capped: Vec<serde_json::Value> = (0..KICAD_FINDING_CAP)
+            .map(|index| finding("hole_clearance", &[("z", index as f64, 40.0)]))
+            .collect();
+        capped.push(ours.clone());
+        let mut facts = routed(tally_drc(&report(vec![ours])));
+        facts.reference = reference(capped);
+        let verdict = judge(&facts);
+        assert_eq!(
+            verdict.preexisting_unknown,
+            vec!["hole_clearance".to_string()]
+        );
+        assert_eq!(verdict.new_findings_strict, map(&[("hole_clearance", 1)]));
+        assert!(verdict.new_findings.is_empty());
+        assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("KiCad's cap"))
+        );
     }
 
     #[test]
@@ -839,10 +1268,24 @@ mod tests {
     }
 
     #[test]
-    fn without_kicads_check_the_routers_count_decides() {
+    fn without_kicads_check_a_route_is_never_complete() {
         let mut facts = routed(DrcTally::default());
         facts.native = None;
-        assert_eq!(judge(&facts).exit_code, EXIT_COMPLETE);
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::RouterCompleteUnverified);
+        assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
+        assert!(!verdict.kicad_checked);
+        assert!(!verdict.clean_without_subtraction);
+        assert!(
+            verdict.reason.starts_with("router_complete_unverified"),
+            "{}",
+            verdict.reason
+        );
+        assert!(!verdict.reason.contains("complete:"), "{}", verdict.reason);
+        assert_eq!(
+            serde_json::to_value(verdict.status).unwrap(),
+            "router_complete_unverified"
+        );
         facts.internal_violations = 1;
         assert_eq!(judge(&facts).exit_code, EXIT_INCOMPLETE);
         facts.internal_violations = 0;
@@ -892,10 +1335,10 @@ mod tests {
 
     #[test]
     fn a_failed_reference_counts_every_error() {
-        let mut facts = routed(DrcTally {
-            errors: map(&[("clearance", 1)]),
-            ..Default::default()
-        });
+        let mut facts = routed(tally_drc(&report(vec![finding(
+            "clearance",
+            &[("a", 1.0, 1.0)],
+        )])));
         facts.reference = KiCadReference::Failed {
             from: "designer".into(),
             error: "kicad-cli failed".into(),
@@ -939,11 +1382,12 @@ mod tests {
             KiCadRunStatus::UsageError,
             KiCadRunStatus::Cut,
             KiCadRunStatus::InternalError,
+            KiCadRunStatus::RouterCompleteUnverified,
         ]
         .iter()
         .map(|status| status.exit_code())
         .collect();
-        assert_eq!(codes, vec![0, 1, 2, 3, 4]);
+        assert_eq!(codes, vec![0, 1, 2, 3, 4, 1]);
     }
 
     #[test]

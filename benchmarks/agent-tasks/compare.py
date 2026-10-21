@@ -17,6 +17,13 @@ worse. A row copied from an earlier log (run.py --splice-from) is marked
 SPL and counted in the totals. Below the totals, each run's continuous
 objectives over the boards in both (README.md, "How to measure").
 
+The strict rule (run.py's `pass_strict`: only the designer's findings at
+the same place are subtracted) has its own column beside each cell
+(`yes`, `no`, `-` for rows written before it) and its pass count beside
+the pass count; the objectives add the strict new errors and the repairs
+the binary reported (connection-width tracks and their length, island
+stubs where counted, rows kept with the pours as tracks).
+
 The first line names each run's task list (run.py's `tasks` and
 `tasks_sha256` rows; for logs before them, the build/github-tasks-*
 lists whose constraints every prepared board contains). When the lists
@@ -186,6 +193,25 @@ def passes(row):
     return unconnected(row) == 0 and not errors(row) and not row.get("unexpected_misses")
 
 
+def passes_strict(row):
+    """The strict rule's pass (run.py's `pass_strict`, recomputed as
+    `passes`): None for a row written before the rule."""
+    if row is None or "new_findings_strict" not in row and "pass_strict" not in row:
+        return None
+    if row.get("error") or row.get("native") is None or "new_findings_strict" not in row:
+        return False
+    return unconnected(row) == 0 and not row["new_findings_strict"] and not row.get("unexpected_misses")
+
+
+def strict_errors(row):
+    return sum((row.get("new_findings_strict") or {}).values())
+
+
+def strict_cell(row):
+    verdict = passes_strict(row)
+    return "-" if verdict is None else "yes" if verdict else "no"
+
+
 def cut(row):
     """Whether the wall clock, not the work, ended part of the run."""
     return row is not None and bool(row.get("cut"))
@@ -204,9 +230,20 @@ def objectives(rows):
     results = [row for row in rows if unconnected(row) is not None]
     with_work = [row for row in rows if row.get("work_seconds") is not None]
     with_first = [row for row in rows if row.get("first_unconnected_terminals") is not None]
+    with_strict = [row for row in rows if passes_strict(row) is not None]
+    with_repairs = [row["repairs"] for row in rows if row.get("repairs")]
+    stubs = [repairs["island_stubs"] for repairs in with_repairs if repairs.get("island_stubs") is not None]
     return {
         "rows": len(rows),
         "passes": sum(1 for row in rows if passes(row)),
+        "strict_rows": len(with_strict),
+        "passes_strict": sum(1 for row in with_strict if passes_strict(row)),
+        "new_errors_strict": sum(strict_errors(row) for row in with_strict if unconnected(row) is not None),
+        "repair_rows": len(with_repairs),
+        "neck_tracks": sum(repairs.get("neck_tracks") or 0 for repairs in with_repairs),
+        "neck_track_mm": round(sum(repairs.get("neck_track_mm") or 0 for repairs in with_repairs), 2),
+        "island_stubs": sum(stubs) if stubs else None,
+        "pours_as_tracks": sum(1 for repairs in with_repairs if repairs.get("pours_as_tracks")),
         "failed": len(rows) - len(results),
         "unconnected": sum(unconnected(row) for row in results),
         "new_errors": sum(errors(row) for row in results),
@@ -222,8 +259,11 @@ def objectives(rows):
 
 
 def objectives_line(o, label="objectives"):
-    text = (f"{label}: unconnected {o['unconnected']}, new errors {o['new_errors']}, vias {o['vias']}, "
-            f"length {o['length_mm']:.0f} mm, CPU {o['cpu_seconds']} s")
+    text = f"{label}: unconnected {o['unconnected']}, new errors {o['new_errors']}"
+    if o.get("strict_rows"):
+        text += f" (strict {o['new_errors_strict']}"
+        text += f", {o['strict_rows']} rows)" if o["strict_rows"] != o["rows"] else ")"
+    text += f", vias {o['vias']}, length {o['length_mm']:.0f} mm, CPU {o['cpu_seconds']} s"
     if o["work_rows"]:
         text += f", work {o['work_seconds']} s"
         if o["work_rows"] != o["rows"]:
@@ -233,6 +273,12 @@ def objectives_line(o, label="objectives"):
         text += f", first-route open terminals {o['first_unconnected_terminals']}"
         if o["first_rows"] != o["rows"]:
             text += f" ({o['first_rows']} rows)"
+    if o.get("repair_rows"):
+        stubs = "not counted" if o["island_stubs"] is None else o["island_stubs"]
+        text += (f", repairs: {o['neck_tracks']} neck tracks ({o['neck_track_mm']:.2f} mm), island stubs {stubs}, "
+                 f"{o['pours_as_tracks']} kept with pours as tracks")
+        if o["repair_rows"] != o["rows"]:
+            text += f" ({o['repair_rows']} rows)"
     text += f"; {o['rows']} rows"
     if o["failed"]:
         text += f", {o['failed']} without a result"
@@ -300,9 +346,9 @@ def main():
     common.sort(key=lambda n: (delta(n), n))
     width = max((len(n) for n in list(before) + list(after)), default=10)
     sep = " | " if arguments.markdown else "  "
-    print(f"{'board':{width}}{sep}{'before':>24}{sep}{'after':>24}{sep}{'s':>6}")
+    print(f"{'board':{width}}{sep}{'before':>24}{sep}{'strict':>6}{sep}{'after':>24}{sep}{'strict':>6}{sep}{'s':>6}")
     if arguments.markdown:
-        print(f"{'-' * width} | {'-' * 24} | {'-' * 24} | {'-' * 6}")
+        print(f"{'-' * width} | {'-' * 24} | {'-' * 6} | {'-' * 24} | {'-' * 6} | {'-' * 6}")
     better = same = worse = cut_rows = input_rows = 0
     total_before = total_after = 0
     for name in common:
@@ -322,19 +368,31 @@ def main():
             else:
                 same += 1
         after_cell = cell(a) + (" INPUT" if name in other_input else "")
-        print(f"{name:{width}}{sep}{cell(b):>24}{sep}{after_cell:>24}{sep}{round(a.get('seconds', 0)):>6}")
+        print(f"{name:{width}}{sep}{cell(b):>24}{sep}{strict_cell(b):>6}{sep}{after_cell:>24}{sep}"
+              f"{strict_cell(a):>6}{sep}{round(a.get('seconds', 0)):>6}")
     only_after = sorted(set(after) - set(before))
     only_before = sorted(set(before) - set(after))
     for name in only_after:
         a = after[name]
-        print(f"{name:{width}}{sep}{'-':>24}{sep}{cell(a):>24}{sep}{round(a.get('seconds', 0)):>6}")
+        print(f"{name:{width}}{sep}{'-':>24}{sep}{'-':>6}{sep}{cell(a):>24}{sep}{strict_cell(a):>6}{sep}"
+              f"{round(a.get('seconds', 0)):>6}")
     for name in only_before:
-        print(f"{name:{width}}{sep}{cell(before[name]):>24}{sep}{'-':>24}{sep}{'':>6}")
+        print(f"{name:{width}}{sep}{cell(before[name]):>24}{sep}{strict_cell(before[name]):>6}{sep}{'-':>24}{sep}"
+              f"{'-':>6}{sep}{'':>6}")
     passes_before = sum(1 for n in common if passes(before[n]))
     passes_after = sum(1 for n in common if passes(after[n]))
+
+    def strict_count(table):
+        known = [n for n in common if passes_strict(table[n]) is not None]
+        if not known:
+            return "-"
+        count = sum(1 for n in known if passes_strict(table[n]))
+        return f"{count}" + (f" of {len(known)} rows" if len(known) != len(common) else "")
+
     print()
     print(f"{len(common)} boards in both: better {better}, same {same}, worse {worse}; "
-          f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after}"
+          f"unconnected {total_before} -> {total_after}; passes {passes_before} -> {passes_after} "
+          f"(strict {strict_count(before)} -> {strict_count(after)})"
           + (f"; {cut_rows} cut by the wall clock in either run (not in better/same/worse)" if cut_rows else "")
           + (f"; {input_rows} on other inputs (INPUT, not in better/same/worse)" if input_rows else ""))
     for label, table in (("before", before), ("after", after)):

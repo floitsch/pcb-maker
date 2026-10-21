@@ -170,12 +170,13 @@ fn usage_and_input_errors_exit_2_with_one_line() {
 }
 
 #[test]
-fn a_complete_route_exits_0_and_its_report_says_so() {
+fn a_route_kicad_did_not_check_is_never_complete() {
     let root = scratch("route");
     let project = project(&root);
     let out = root.join("out");
     let output = binary()
         .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_ROUTER_SEED", "0")
         .args([
             "route-kicad-board",
             &project.display().to_string(),
@@ -185,10 +186,16 @@ fn a_complete_route_exits_0_and_its_report_says_so() {
         ])
         .output()
         .unwrap();
-    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    // The router's count finds every connection made, but without KiCad's
+    // check that is no pass: exit 1, router_complete_unverified.
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
     let verdict = verdict(&out.join("board-router.json"));
-    assert_eq!(verdict["status"], "complete");
-    assert_eq!(verdict["exit_code"], 0);
+    assert_eq!(verdict["status"], "router_complete_unverified");
+    assert_eq!(verdict["exit_code"], 1);
+    assert_eq!(verdict["kicad_checked"], false);
+    assert_eq!(verdict["kicad_unconnected_items"], serde_json::Value::Null);
+    assert_eq!(verdict["clean_without_subtraction"], false);
+    assert!(!verdict["reason"].as_str().unwrap().starts_with("complete"));
     let file: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
     assert_eq!(file, verdict);
@@ -200,6 +207,14 @@ fn a_complete_route_exits_0_and_its_report_says_so() {
             .as_str()
             .is_some_and(|path| Path::new(path).is_absolute() && Path::new(path).exists())
     );
+    // The switches that were set, and what the run repaired.
+    assert_eq!(verdict["environment"]["PCB_SKIP_NATIVE"], "1");
+    assert_eq!(verdict["environment"]["PCB_ROUTER_SEED"], "0");
+    assert_eq!(verdict["repairs"]["neck_tracks"], 0);
+    assert!(verdict["repairs"]["pour_mode"].is_string());
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
+    assert_eq!(report["repairs"], verdict["repairs"]);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -234,6 +249,9 @@ fn with_kicads_check_the_exit_code_is_the_verdicts() {
         stderr(&output)
     );
     assert_eq!(verdict["kicad_unconnected_items"], 0);
+    assert_eq!(verdict["kicad_checked"], true);
+    assert!(verdict["new_findings_strict"].is_object());
+    assert!(verdict["clean_without_subtraction"].is_boolean());
     assert!(verdict["outputs"]["drc"].as_str().is_some());
     fs::remove_dir_all(root).unwrap();
 }
@@ -450,5 +468,189 @@ fn drc_exits_by_the_findings_that_count_and_caches_the_report() {
         .unwrap();
     assert_eq!(code(&output), 0);
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: pcb-maker drc-kicad-board "));
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A DRC report of the test board (`t.kicad_pcb`) with `violations`.
+#[cfg(unix)]
+fn drc_report(violations: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"$schema": "https://schemas.kicad.org/drc.v1.json", "source": "t.kicad_pcb",
+        "date": "2026-10-21T12:00:00", "kicad_version": "10.0.7", "coordinate_units": "mm",
+        "included_severities": ["error", "warning", "exclusion"], "violations": violations,
+        "unconnected_items": [], "schematic_parity": []})
+}
+
+/// A fake kicad-cli on the PATH for the neck repair: every DRC reports
+/// `report` until the repair saves its refilled copy (`--save-board`, which
+/// gets `filled` as KiCad's fill); every DRC after that fails, as a
+/// kicad-cli that crashes or times out.
+#[cfg(unix)]
+fn crashing_kicad(directory: &Path, report: &serde_json::Value, filled: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = directory.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("kicad-cli");
+    let mark = directory.join("saved");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = version ]; then echo 10.0.7; exit 0; fi\n\
+             save=no\nfor argument in \"$@\"; do [ \"$argument\" = --save-board ] && save=yes; done\n\
+             if [ $save = no ] && [ -e {mark} ]; then echo 'kicad-cli crashed' >&2; exit 3; fi\n\
+             while [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = --output ]; then\n    shift\n    cat > \"$1\" <<'REPORT'\n{report}\nREPORT\n    shift\n    [ $save = yes ] && {{ cp {filled} \"$1\"; touch {mark}; }}\n    exit 0\n  fi\n  shift\ndone\nexit 99\n",
+            mark = mark.display(),
+            filled = filled.display(),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    bin
+}
+
+#[test]
+#[cfg(unix)]
+fn a_kicad_failure_in_the_neck_repair_leaves_the_last_report() {
+    use serde_json::json;
+    let root = scratch("necks");
+    let project = project(&root);
+    // A minimum connection width, so that the repair runs.
+    fs::write(
+        project.join("t.kicad_pro"),
+        json!({"board": {"design_settings": {"rules": {"min_connection": 0.127}}}}).to_string(),
+    )
+    .unwrap();
+    // KiCad's fill as the repair's save gets it: two squares of /TARGET on
+    // B.Cu joined by a bridge 0.06 mm wide.
+    let square = |x0: f64, y0: f64, x1: f64, y1: f64| {
+        format!(
+            "(filled_polygon (layer \"B.Cu\") (pts (xy {x0} {y0}) (xy {x1} {y0}) (xy {x1} {y1}) (xy {x0} {y1})))"
+        )
+    };
+    let zone = format!(
+        "(zone (net \"/TARGET\") (layer \"B.Cu\") (uuid \"6a1c1a5e-0000-4000-8000-000000000001\") (polygon (pts (xy 2 2) (xy 9 2) (xy 9 6) (xy 2 6))) {} {} {})",
+        square(3.0, 3.0, 5.0, 5.0),
+        square(5.3, 3.0, 7.3, 5.0),
+        square(4.95, 3.97, 5.35, 4.03)
+    );
+    let board = fs::read_to_string(project.join("t.kicad_pcb")).unwrap();
+    let filled = root.join("filled.kicad_pcb");
+    fs::write(
+        &filled,
+        format!(
+            "{}\n  {zone})\n",
+            board.trim_end().strip_suffix(')').unwrap()
+        ),
+    )
+    .unwrap();
+    let neck = json!({"type": "connection_width", "severity": "error",
+        "description": "Copper connection too narrow (board setup constraints minimum connection width 0.1270 mm; actual 0.0600 mm) (B.Cu)",
+        "items": [{"description": "Zone [/TARGET] on B.Cu", "pos": {"x": 5.1, "y": 4.0}, "uuid": "6a1c1a5e-0000-4000-8000-000000000001"}]});
+    let report = drc_report(json!([neck]));
+    let bin = crashing_kicad(&root, &report, &filled);
+    let out = root.join("out");
+    let output = binary()
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("PCB_MAKER_NO_CACHE", "1")
+        .env_remove("PCB_SKIP_NATIVE")
+        .env_remove("PCB_KICAD_NO_NECK_REPAIR")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    assert!(root.join("saved").exists(), "the repair ran: {text}");
+    let necks: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("necks.json")).unwrap()).unwrap();
+    assert!(necks["found"].as_u64().unwrap() >= 1, "{necks}");
+    assert_eq!(necks["kept"], false, "{necks}");
+    assert!(
+        necks["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("kicad-cli") && note.contains("as before the repair")),
+        "{necks}"
+    );
+    // The board and KiCad's report on it are the ones before the repair:
+    // the verdict rests on KiCad's check, not on the router's count.
+    assert!(
+        !fs::read_to_string(out.join("t.kicad_pcb"))
+            .unwrap()
+            .contains("(width 0.127)"),
+        "no trial's repair track is left on the board"
+    );
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("drc.json")).unwrap()).unwrap();
+    assert_eq!(written, report);
+    assert_eq!(code(&output), 1, "{text}");
+    let verdict = verdict(&out.join("board-router.json"));
+    assert_eq!(verdict["status"], "incomplete", "{verdict}");
+    assert_eq!(verdict["kicad_checked"], true);
+    assert_eq!(verdict["kicad_unconnected_items"], 0);
+    assert_eq!(
+        verdict["new_findings_strict"],
+        json!({"connection_width": 1})
+    );
+    assert_eq!(verdict["repairs"]["neck_tracks"], 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn a_missing_report_after_kicads_check_is_an_internal_error() {
+    let root = scratch("dropped");
+    let project = project(&root);
+    let report = drc_report(serde_json::json!([]));
+    let bin = fake_kicad(&root, &report, 0);
+    let out = root.join("out");
+    let output = binary()
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("PCB_MAKER_CACHE_DIR", root.join("cache"))
+        .env("PCB_MAKER_TEST_DROP_DRC", "1")
+        .env_remove("PCB_SKIP_NATIVE")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    assert_eq!(code(&output), 4, "{text}");
+    assert!(
+        text.lines().last().is_some_and(|line| line
+            .starts_with("error: KiCad checked the board but its report is missing or unreadable")),
+        "{text}"
+    );
+    let verdict: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(verdict["status"], "internal_error");
+    assert_eq!(verdict["exit_code"], 4);
+    assert_eq!(verdict["kicad_checked"], false);
+    assert!(
+        verdict["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("drc.json")),
+        "{verdict}"
+    );
     fs::remove_dir_all(root).unwrap();
 }

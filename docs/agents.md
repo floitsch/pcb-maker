@@ -351,22 +351,38 @@ same. `pcb-maker --help` and `pcb-maker <command> --help` list them too.
 | --- | --- | --- | --- |
 | 0 | `complete` | The run finished and the result passes. | Use it. |
 | 1 | `incomplete` | The run finished and wrote its result, but connections are open, there are new DRC errors, constraints are missed or parts found no place. | Read `next_actions`. |
+| 1 | `router_complete_unverified` | KiCad's check was skipped (`PCB_SKIP_NATIVE`, `skip_native_verification`; `kicad_checked: false`) and the router's own count finds nothing open. Not a pass: KiCad's connectivity and DRC decide, and they did not run. | Check the board (`drc-kicad-board`) before using it. |
 | 2 | `usage_error` | Bad arguments or input: a missing file, invalid JSON, an unknown key or part, an output directory that exists. Nothing was routed. | Fix the input the message names. |
 | 3 | `cut` | Incomplete, and the wall clock (not the work) cut the run short (`cut`): the result depends on the machine's load. | Rerun on a less loaded machine or with a larger budget. |
-| 4 | `internal_error` | An internal error or a panic. | Report it with the input. |
+| 4 | `internal_error` | An internal error or a panic; also a KiCad check that ran but left no readable report (`drc.json`) for the verdict to rest on. | Report it with the input. |
 
 A process killed by a signal (a harness's timeout, out of memory) has no
 verdict; its exit status is the signal's (128 + n in a shell). Errors
 and incomplete results print one line on stderr.
 
-**The pass rule** is the benchmarks' (`benchmarks/agent-tasks/run.py`):
-KiCad's own DRC on the result decides, not the router's count. A result is
-complete when KiCad reports no unconnected item and no error beyond the
-ones the reference board already has, counted per type. Warnings,
-excluded findings and cosmetic types (`silk_*`, `text_*`, library
-findings, `missing_courtyard`, `isolated_copper`) do not count. A layout or
-placement must also place every part and keep every constraint. Without
-KiCad's check (`PCB_SKIP_NATIVE`), the router's own count decides.
+**The pass rule**: KiCad's own DRC on the result decides, not the router's
+count. A result is complete when KiCad reports no unconnected item and no
+error that the reference board does not have at the same place
+(`new_findings_strict` is empty). A finding is the reference's when it has
+the same type and either the same items (every item's uuid, the same set)
+still the same distances apart (a part's own finding, such as two holes of
+one footprint too close, goes with the part wherever it is placed), or
+items at the same positions within 0.05 mm (a fixed part's, an outline's);
+each reference finding answers for one finding of the result. A type the
+reference has 199 times or more (KiCad's report stops at a cap: 199 and
+499 are the counts seen, so such a count is a floor) is listed in
+`preexisting_unknown` and none of its findings is subtracted. Warnings, excluded findings and cosmetic
+types (`silk_*`, `text_*`, library findings, `missing_courtyard`,
+`isolated_copper`) do not count. A layout or placement must also place
+every part and keep every constraint. Without KiCad's check
+(`PCB_SKIP_NATIVE`, `skip_native_verification`) a route is never
+`complete`: `router_complete_unverified` at best (exit 1). A check that ran
+but whose report is missing or unreadable when the verdict reads it is an
+internal error (exit 4), never a verdict on the router's count. The old
+rule (errors beyond the reference's count of their type anywhere on the
+board: a new error of a type the reference has was hidden) is kept as
+`new_findings` for comparisons; the benchmarks report both
+(`benchmarks/agent-tasks/run.py`: `pass` and `pass_strict`).
 
 **The reference board** is where pre-existing findings come from (a
 fiducial near a hole, a rule the designer tightened later): `--reference
@@ -374,7 +390,10 @@ fiducial near a hole, a rule the designer tightened later): `--reference
 board as given); layout mode to none, since its input is not a placed
 board. `--reference none` counts every error. The reference is checked
 (one more KiCad DRC, kept as `reference-drc.json`) only when the result has
-errors that count.
+errors that count. A reference with its tracks stripped (a board as handed
+to the router) says what the fixed geometry brings on its own; the
+benchmarks' strict rule uses the designer's board stripped so
+(`strip-kicad-tracks`: tracks, vias and small zones).
 
 `<out-dir>/verdict.json` is written for every run that got as far as an
 output directory, also for an error (with `error`) or when the layout
@@ -384,10 +403,16 @@ A finished run also carries it as `verdict` in its report:
 | Field | Meaning |
 | --- | --- |
 | `status`, `exit_code`, `reason` | As above; `reason` is one line. |
+| `kicad_checked` | Whether KiCad's DRC checked the result (`false` with `PCB_SKIP_NATIVE` or `skip_native_verification`, and for a placement or an error). |
 | `open_connections`, `unconnected_terminals` | The router's own count of unfinished connections and unreached pads. |
 | `kicad_unconnected_items` | KiCad's count, which decides (`null`: KiCad did not check). |
-| `new_findings` | KiCad errors per type beyond the reference's: the run's own. |
-| `preexisting_findings`, `preexisting_from` | Errors per type the reference board has too, and its project. |
+| `new_findings_strict` | KiCad errors per type that the reference does not have at the same place: the run's own. They decide. |
+| `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
+| `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
+| `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): not subtracted. |
+| `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
+| `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
+| `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_NO_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`. Empty when none is. |
 | `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
 | `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |

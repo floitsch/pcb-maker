@@ -23,6 +23,9 @@
 //! filler prunes), and a short track of the net, as wide as the minimum,
 //! is laid along each where it keeps every clearance. The board is checked
 //! again and kept only if the necks went down and nothing else got worse.
+//! When a check fails (kicad-cli crashes or times out), the board and its
+//! reports go back to what they were before the repair: the result
+//! directory never lacks the report of the board it holds.
 
 use super::*;
 use crate::board_router::{KiCadBoardRouterConfig, LayerTable};
@@ -49,6 +52,8 @@ pub struct NeckRepair {
     /// board with them was kept.
     pub tracks: usize,
     pub kept: bool,
+    /// The kept repair tracks' total length, mm.
+    pub track_mm: f64,
     pub seconds: f64,
     /// KiCad's fills of a scratch copy (a save with the zones refilled):
     /// each counts a check's work in a layout, as the DRC checks do.
@@ -741,9 +746,21 @@ pub(crate) fn repair_connection_width(
         after: before.len(),
         ..Default::default()
     };
+    let saved = Saved::take(directory, board_id)?;
     let outcome = repair_with(directory, board_id, config, &report, &before, &mut repair);
     if let Err(error) = outcome {
-        repair.note = Some(error);
+        // A check failed and the board in the directory may be a trial's
+        // without its report: back to the board and the reports as they
+        // were (the report of the board the directory holds).
+        saved.restore()?;
+        repair.tracks = 0;
+        repair.track_mm = 0.0;
+        repair.kept = false;
+        repair.after = repair.before;
+        repair.note = Some(format!(
+            "{} (the board and its reports are as before the repair)",
+            error.trim_end()
+        ));
     }
     repair.seconds = started.elapsed().as_secs_f64();
     eprintln!(
@@ -767,6 +784,46 @@ pub(crate) fn repair_connection_width(
     )
     .map_err(|error| format!("failed to write {}: {error}", marker.display()))?;
     Ok(Some(repair))
+}
+
+/// The files of a result directory that a check rewrites (the board, the
+/// reports, the preview), as they were: `None` for one that was not there.
+struct Saved(Vec<(PathBuf, Option<Vec<u8>>)>);
+
+impl Saved {
+    fn take(directory: &Path, board_id: &str) -> Result<Self, String> {
+        let names = [
+            format!("{board_id}.kicad_pcb"),
+            "drc.json".into(),
+            "erc.json".into(),
+            "verification.json".into(),
+            "preview.json".into(),
+            "preview.svg".into(),
+            "preview-labels.json".into(),
+        ];
+        let mut files = Vec::new();
+        for name in names {
+            let path = directory.join(name);
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(format!("failed to read {}: {error}", path.display())),
+            };
+            files.push((path, bytes));
+        }
+        Ok(Self(files))
+    }
+
+    fn restore(&self) -> Result<(), String> {
+        for (path, bytes) in &self.0 {
+            match bytes {
+                Some(bytes) => fs::write(path, bytes)
+                    .map_err(|error| format!("failed to restore {}: {error}", path.display()))?,
+                None => remove_if_present(path)?,
+            }
+        }
+        Ok(())
+    }
 }
 
 /// `repair_connection_width` as a command (`pcb-maker repair-kicad-necks`).
@@ -1027,6 +1084,13 @@ fn repair_with(
         }
     }
     repair.tracks = kept.len();
+    repair.track_mm = kept
+        .iter()
+        .map(|&index| {
+            let track = &tracks[index];
+            (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1])
+        })
+        .sum();
     repair.after = best;
     repair.kept = !kept.is_empty();
     if last_checked.as_ref() != Some(&kept) {
