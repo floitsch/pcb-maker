@@ -3,7 +3,9 @@
 #
 # The test set to run before a commit, in the checkout this script lives in:
 # the unit and integration tests of the three core crates, the root
-# package's three CLI tests, the benchmark runner's and the harvest's
+# package's CLI tests (exit codes, the agent walkthrough, native
+# verification, the router's fingerprints at 1 and 4 threads), the
+# benchmark runner's and the harvest's
 # Python tests (benchmarks/agent-tasks, benchmarks/github), then a
 # release build. Prints each step's wall time and where the binary is.
 # Needs kicad-cli on the PATH for the CLI tests (without it they say so and
@@ -11,8 +13,16 @@
 # boards on a work budget.
 #
 #   bash scripts/check.sh
+#   bash scripts/check.sh --no-walkthrough   # CI: the walkthrough is a job of its own
 
 set -euo pipefail
+
+walkthrough=(--test agent_walkthrough)
+case "${1:-}" in
+  --no-walkthrough) walkthrough=() ;;
+  "") ;;
+  *) echo "usage: $0 [--no-walkthrough]" >&2; exit 2 ;;
+esac
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
@@ -27,7 +37,8 @@ step() {
 }
 
 step cargo test --release -p pcb-router -p pcb-kicad -p pcb-placer
-step cargo test --release -p pcb-maker --test cli_exit_codes --test agent_walkthrough --test native_verification
+step cargo test --release -p pcb-maker --test cli_exit_codes "${walkthrough[@]}" --test native_verification \
+  --test router_fingerprint
 step python3 -m pytest -q benchmarks/agent-tasks
 step python3 -m pytest -q benchmarks/github
 # A cargo test of the library crates does not refresh

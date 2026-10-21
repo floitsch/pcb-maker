@@ -1,0 +1,85 @@
+# Copyright (C) 2026 Toit contributors.
+name: check
+
+# The pre-commit test set (scripts/check.sh) on every push and pull
+# request: the core crates' tests, the CLI tests, the benchmark runner's
+# and the harvest's Python tests, a release build and the router's
+# fingerprint test at 1 and 4 threads; clippy and rustfmt as gates; the
+# KiCad-in-the-loop walkthrough as a second job where kicad-cli is
+# installed (GitHub's runners have none: the job says so and passes).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python test tools
+        run: python -m pip install pytest
+      - name: scripts/check.sh without the walkthrough
+        # The walkthrough lays boards out with KiCad in the loop: the
+        # second job runs it where kicad-cli is there.
+        run: bash scripts/check.sh --no-walkthrough
+
+  lint:
+    name: clippy and rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: lint
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --release -p pcb-router -p pcb-kicad -p pcb-placer -- -D warnings
+
+  walkthrough:
+    name: agent walkthrough (KiCad in the loop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect kicad-cli
+        id: kicad
+        run: |
+          if command -v kicad-cli >/dev/null 2>&1; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "kicad-cli $(kicad-cli version)"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=walkthrough skipped::kicad-cli is not installed on this runner; the KiCad-in-the-loop walkthrough (tests/agent_walkthrough.rs) did not run"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.kicad.outputs.available == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.kicad.outputs.available == 'true'
+        with:
+          key: walkthrough
+      - name: Walkthrough
+        if: steps.kicad.outputs.available == 'true'
+        run: cargo test --release -p pcb-maker --test agent_walkthrough
