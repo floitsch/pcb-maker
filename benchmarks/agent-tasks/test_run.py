@@ -88,7 +88,7 @@ class CommittedTaskLists(unittest.TestCase):
                     self.assertTrue((directory / task["constraints"]).is_file(), (version, task["name"]))
 
     def test_tiers_name_the_committed_list_and_its_boards(self):
-        for tier in ("quick", "short", "schematic"):
+        for tier in ("quick", "short", "schematic", "designer"):
             entry = json.loads(run.TIERS[tier].read_text())
             self.assertEqual(entry["tasks"], "benchmarks/agent-tasks/tasks/v7/tasks.json", tier)
             _, tasks = self.load("v7")

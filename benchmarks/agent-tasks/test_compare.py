@@ -44,6 +44,23 @@ class Normalised(unittest.TestCase):
         self.assertEqual((n["ground_cut_delta_mm"], n["ground_boards"], n["ground_pour_lost"]), (-30.0, 1, 1))
 
 
+class Gap(unittest.TestCase):
+    def test_placement_and_routing_gap_per_board_and_in_all(self):
+        layout = {"a": row("a", "90/100", 10, 0, 0), "b": row("b", "20/20", 1, 0, 0),
+                  "c": {"name": "c", "error": "incomplete: 3 parts without a legal place", "native": None}}
+        designer = {name: row(name, f"{n}/{n}", u, 0, 0, placement="designer")
+                    for name, n, u in (("a", 100, 4), ("b", 20, 2), ("c", 30, 0))}
+        table = {entry["name"]: entry for entry in compare.gap_rows(layout, designer)}
+        self.assertEqual((table["a"]["placement_gap"], table["a"]["routing_gap"]), (6, 4))
+        self.assertEqual((table["b"]["placement_gap"], table["b"]["routing_gap"]), (-1, 2))
+        self.assertIsNone(table["c"]["placement_gap"])
+        totals = compare.gap_totals(list(table.values()))
+        self.assertEqual((totals["both"], totals["layout_open"], totals["placement_gap"], totals["routing_gap"]),
+                         (2, 11, 5, 6))
+        self.assertEqual((totals["placement_worse"], totals["placement_better"]), (1, 1))
+        self.assertEqual(totals["layout_without_result"], ["c"])
+
+
 class Measures(unittest.TestCase):
     def test_a_score_report_gives_every_measure(self):
         report = {"economy": {"vias": 3, "track_length_mm": 12.5},

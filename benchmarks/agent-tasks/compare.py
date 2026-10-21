@@ -2,7 +2,8 @@
 # Copyright (C) 2026 Toit contributors.
 """Compares two layout sweeps board by board, on KiCad's connectivity.
 
-    benchmarks/agent-tasks/compare.py <before.log> <after.log> [--splice <rerun.log> ...]
+    benchmarks/agent-tasks/compare.py <before.log> <after.log> [--splice <rerun.log> ...] [--score BINARY]
+    benchmarks/agent-tasks/compare.py --gap <layout.log> <designer.log>
 
 Each argument is a runner log (its JSON lines) or an output directory (its
 results.json). A spliced log replaces the after-run's rows of the same
@@ -37,7 +38,13 @@ differ it says so in capitals. A board whose prepared constraints
 differ between the runs ran on another input: it is marked INPUT and left
 out of better / same / worse, and the objectives are given again over the
 boards with the same input (x768 on tasks v5 against x776 on v6 read as
-174 more vias from three commits that changed no routing)."""
+174 more vias from three commits that changed no routing).
+
+`--gap` joins a layout run with a designer-tier run (run.py --tier
+designer: the same boards routed on the designer's placement) and prints
+per board the placement gap (layout open less designer-route open) and the
+routing gap (designer-route open), with corpus totals (README.md, "The
+designer tier")."""
 
 import argparse
 import hashlib
@@ -474,6 +481,93 @@ def cell(row):
     return text
 
 
+def gap_rows(layout, designer):
+    """The placement and routing gap per board (`--gap`): `layout` and
+    `designer` map names to rows of a layout run and of a designer-tier
+    run. Per board in both: KiCad's unconnected items of the layout
+    (`layout`), of the route on the designer's placement (`designer`),
+    the placement gap (layout less designer: what our placement adds) and
+    the routing gap (designer: what our router leaves on a human's
+    placement); None where a run has no result (a placement that failed,
+    a timeout)."""
+    table = []
+    for name in sorted(set(layout) & set(designer)):
+        ours, theirs = unconnected(layout[name]), unconnected(designer[name])
+        table.append({"name": name, "connections": connections(designer[name]) or connections(layout[name]),
+                      "layout": ours, "designer": theirs,
+                      "placement_gap": None if ours is None or theirs is None else ours - theirs,
+                      "routing_gap": theirs,
+                      "cut": cut(layout[name]) or cut(designer[name]),
+                      "layout_error": (layout[name].get("error") or "")[:60] if ours is None else None})
+    return table
+
+
+def gap_totals(table):
+    """Corpus totals of gap_rows over the boards where both runs have a
+    result, and the boards where the layout has none."""
+    both = [entry for entry in table if entry["placement_gap"] is not None]
+    layout_open = sum(entry["layout"] for entry in both)
+    return {"boards": len(table), "both": len(both),
+            "layout_open": layout_open, "designer_open": sum(entry["designer"] for entry in both),
+            "placement_gap": sum(entry["placement_gap"] for entry in both),
+            "routing_gap": sum(entry["routing_gap"] for entry in both),
+            "placement_worse": sum(1 for entry in both if entry["placement_gap"] > 0),
+            "placement_same": sum(1 for entry in both if entry["placement_gap"] == 0),
+            "placement_better": sum(1 for entry in both if entry["placement_gap"] < 0),
+            "routing_open_boards": sum(1 for entry in both if entry["routing_gap"] > 0),
+            "cut": sum(1 for entry in table if entry["cut"]),
+            "layout_without_result": [entry["name"] for entry in table if entry["layout"] is None],
+            "designer_without_result": [entry["name"] for entry in table if entry["designer"] is None]}
+
+
+def print_gap(layout_path, designer_path, markdown=False):
+    layout, designer = by_name(rows_of(layout_path)), by_name(rows_of(designer_path))
+    not_designer = [name for name, row in designer.items() if row.get("placement") != "designer"]
+    if not_designer:
+        print(f"warning: {len(not_designer)} rows of {designer_path} are not designer-tier rows "
+              f"(run.py --tier designer): {not_designer[:3]}")
+    table = gap_rows(layout, designer)
+    width = max((len(entry["name"]) for entry in table), default=10)
+    sep = " | " if markdown else "  "
+    print(f"placement gap = layout open - designer-route open; routing gap = designer-route open "
+          f"(KiCad's unconnected items); layout {layout_path}, designer {designer_path}")
+    header = ["connections", "layout", "designer", "placement gap", "routing gap"]
+    print(f"{'board':{width}}{sep}" + sep.join(f"{h:>13}" for h in header))
+    if markdown:
+        print(f"{'-' * width} | " + " | ".join("-" * 13 for _ in header))
+
+    def text(value):
+        return "-" if value is None else str(value)
+
+    for entry in sorted(table, key=lambda e: (-(e["placement_gap"] if e["placement_gap"] is not None else -1e9),
+                                              e["name"])):
+        cells = [text(entry["connections"]), text(entry["layout"]), text(entry["designer"]),
+                 text(entry["placement_gap"]), text(entry["routing_gap"])]
+        note = " CUT" if entry["cut"] else ""
+        if entry["layout_error"]:
+            note += f" (layout: {entry['layout_error']})"
+        print(f"{entry['name']:{width}}{sep}" + sep.join(f"{c:>13}" for c in cells) + note)
+    totals = gap_totals(table)
+    print()
+    print(f"{totals['both']} of {totals['boards']} boards with both results: layout open {totals['layout_open']}, "
+          f"designer-route open {totals['designer_open']}; placement gap {totals['placement_gap']:+d} "
+          f"(worse on {totals['placement_worse']} boards, same {totals['placement_same']}, better "
+          f"{totals['placement_better']}), routing gap {totals['routing_gap']} (on {totals['routing_open_boards']} "
+          f"boards); {totals['cut']} rows cut by the wall clock")
+    if totals["layout_open"]:
+        print(f"share of the layout's open connections: placement {totals['placement_gap'] / totals['layout_open']:.0%}, "
+              f"routing {totals['routing_gap'] / totals['layout_open']:.0%}")
+    if totals["layout_without_result"]:
+        print(f"{len(totals['layout_without_result'])} boards the layout has no result for (placement or timeout): "
+              + ", ".join(totals["layout_without_result"][:8]))
+    if totals["designer_without_result"]:
+        print(f"{len(totals['designer_without_result'])} boards the designer route has no result for: "
+              + ", ".join(totals["designer_without_result"][:8]))
+    only = sorted(set(layout) - set(designer))
+    if only:
+        print(f"{len(only)} layout boards without a designer row")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("before")
@@ -483,7 +577,14 @@ def main():
     parser.add_argument("--score", type=Path, metavar="BINARY",
                         help="score the result boards with this binary's score-kicad-board (the ground pours' cut "
                              "for the normalised line; rows from run.py --quality carry it already)")
+    parser.add_argument("--gap", action="store_true",
+                        help="before is a layout run, after a designer-tier run (run.py --tier designer): per "
+                             "board the placement gap (layout open less designer-route open) and the routing gap "
+                             "(designer-route open), with corpus totals")
     arguments = parser.parse_args()
+    if arguments.gap:
+        print_gap(arguments.before, arguments.after, arguments.markdown)
+        return
     before_rows, after_rows = rows_of(arguments.before), rows_of(arguments.after)
     if arguments.score:
         add_scores(before_rows, output_directory(arguments.before), arguments.score)

@@ -865,6 +865,47 @@ docs/changelog.md): the ladder's work stays within the budget and 5 %
 end with more open connections (93 in all), four with fewer. The rows no
 longer depend on the load.
 
+## The designer tier (`--tier designer`)
+
+**The deciding experiment for placement versus routing work.** A layout
+that leaves connections open has two causes mixed: a placement that
+cannot be routed, and a router that cannot route what a human could.
+The designer tier separates them: every board of the corpus (tasks/v7,
+`designer.json`) routed on the designer's own placement, and
+`compare.py --gap` joins it with a layout run of the same list:
+
+- **routing gap** = KiCad's unconnected items of the route on the
+  designer's placement: what our router leaves open on a placement a
+  human routed. Router work moves it.
+- **placement gap** = the layout's unconnected items less the routing
+  gap: what our placement adds (negative where our placement routes
+  better than the designer's). Placement work moves it.
+
+The corpus totals and each gap's share of the layout's open connections
+say where the next work pays. A board the layout has no result for (no
+legal placement, a timeout) is listed apart.
+
+```sh
+benchmarks/agent-tasks/run.py build/designer-x1225 --tier designer \
+  --binary build/bin/pcb-maker-x1225 > build/designer-x1225.log   # about 5 hours at 8 x 2
+benchmarks/agent-tasks/compare.py --gap build/github-layout-v17.log build/designer-x1225.log
+```
+
+Each board: the designer's project copied as the layout tier copies it,
+its tracks and vias stripped as the layout tier strips them
+(`strip-kicad-tracks`: the pours that cover a good part of the board and
+every rule area stay, unfilled; small filled zones are hand routing and
+go, as they go for the layout), the project's own rules (.kicad_pro,
+.kicad_dru), the task's router settings, `route-kicad-board` with the
+layout tier's budget (`route_budget_seconds`, 1500 s of work; the layout's
+`total_seconds`), `--reference none` and the layout's pass rule (KiCad's
+findings less the designer's). Rows are route rows with `placement:
+"designer"`. Compare a designer run with a layout run of the same binary
+(or say which binaries) and the same list; the gap is only as sound as
+the rows are uncut (CUT rows are marked).
+`designer.json` gives the memory gate and the runner each board's peak
+and seconds from its v17 layout row (x1170).
+
 ## Route mode (`--route-from`)
 
 For router experiments: `--route-from <earlier output directory>` routes

@@ -9,6 +9,7 @@
     benchmarks/agent-tasks/run.py <output> --tier quick --only A B --splice-from build/quick30-x782.log
     benchmarks/agent-tasks/run.py <output> --tier schematic --binary PATH
     benchmarks/agent-tasks/run.py <output> --tier expansion --jobs 8 --threads 1 --binary PATH
+    benchmarks/agent-tasks/run.py <output> --tier designer --binary PATH
 
 Each task copies a real board, strips its tracks, optionally stacks every
 movable footprint at one point and removes the outline (a fresh netlist
@@ -43,7 +44,9 @@ designer's own placement: run.py fetches its files at the pinned commit
 when they are not there (verified against the task's SHA-256; never
 without a licence), strips the tracks as the intake did and routes with
 `route-kicad-board` and the task's `budget_seconds` of work (README.md,
-"The expansion tier"). A tier run, or a run of a whole task list, takes
+"The expansion tier"). `--tier designer` routes every board on the
+designer's own placement (designer_admitted; compare.py --gap joins it
+with a layout run: README.md, "The designer tier"). A tier run, or a run of a whole task list, takes
 build/quick-tier.lock first and waits for it (one tier at a time on the
 machine; `--no-lock` skips it). Every row has `mode` (layout, route or schematic); the run ends with
 the pass line and a line of continuous objectives (README.md, "How to
@@ -71,7 +74,7 @@ import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
 TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json",
-         "expansion": HERE / "expansion.json"}
+         "expansion": HERE / "expansion.json", "designer": HERE / "designer.json"}
 # A tier's default parallelism (no --jobs and --threads given): this many
 # search threads a board and the physical cores / this many boards at once.
 # A layout is the same at any thread count, so this only sets the wall: the
@@ -734,6 +737,8 @@ def scaled_timeout(arguments):
 def run_admitted(task, arguments, token):
     if arguments.schematic:
         return schematic_admitted(task, arguments, token)
+    if arguments.designer:
+        return designer_admitted(task, arguments, token)
     if arguments.route_from:
         return route_admitted(task, arguments, token)
     if task.get("mode") == "route":
@@ -1144,6 +1149,75 @@ def route_result(row, task, work, code, output, allowed, designer_seconds, basel
     return row
 
 
+# The designer tier's ladder budget, in work seconds: the layout tier's
+# total_seconds, so that the two runs of a board get the same work.
+DESIGNER_ROUTE_BUDGET = LAYOUT_BUDGETS["total_seconds"]
+
+
+def designer_admitted(task, arguments, token):
+    """The designer tier (`--tier designer`): the task's board on the
+    designer's placement, its tracks and vias stripped as the layout tier
+    strips them (strip-kicad-tracks: the pours that cover a good part of
+    the board and every rule area stay, unfilled; small filled zones are
+    hand routing and go, as in the layout tier), the project's own files and
+    rules with it, routed with `route-kicad-board`, the task's router
+    settings and the tier's ladder budget (the layout tier's 1500 s of
+    work, times the budget scale). The row is a route row (route_result:
+    KiCad's findings less the designer's) with `placement: "designer"`;
+    compare.py --gap joins it with a layout row of the same board."""
+    name = task["name"]
+    directory = task_directory(task)
+    board_id = task["board_id"]
+    work = arguments.output / name
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    row = {"name": name, "mode": "route", "placement": "designer"}
+    if arguments.budget_scale != 1:
+        row["budget_scale"] = arguments.budget_scale
+    prepared = work / "placed"
+    # The designer's project as the layout tier copies it.
+    shutil.copytree(directory, prepared, ignore=shutil.ignore_patterns(
+        ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+    board = prepared / f"{board_id}.kicad_pcb"
+    strip = subprocess.run(strip_command(arguments.binary, board, board), capture_output=True, text=True)
+    if strip.returncode != 0:
+        row.update(error=f"strip-kicad-tracks: {(strip.stderr or strip.stdout).strip()[-200:]}", **{"pass": False})
+        return row
+    row["stripped_sha256"] = file_sha256(board)
+    designer_started = time.monotonic()
+    allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
+    designer_seconds = round(time.monotonic() - designer_started, 1)
+    # The strict rule's baseline, as for the other modes.
+    baseline = StrictBaseline(directory, board_id, work, arguments.binary, bool(task.get("designer_budget")))
+    router = dict(task.get("router") or {})
+    key, _ = ROUTE_BUDGET
+    router[key] = round(arguments.designer_budget * arguments.budget_scale, 3)
+    (work / "router.json").write_text(json.dumps(router))
+    row["budget_seconds"] = router[key]
+    env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else None
+    command = [str(arguments.binary), "route-kicad-board", str(prepared), board_id, str(work / "route"),
+               str(work / "router.json"), "--reference", "none"]
+    started = time.monotonic()
+    load_before = os.getloadavg()[0]
+    timeout = scaled_timeout(arguments)
+    code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
+                                                              lambda pid: arguments.gate.started(token, pid))
+    (work / "route.log").write_text(output)
+    row.update(seconds=round(time.monotonic() - started, 1), cpu_seconds=cpu_seconds,
+               load=[round(load_before, 1), round(os.getloadavg()[0], 1)], peak_rss_mb=peak_mb,
+               layout_rss_mb=own_mb)
+    if code == "timeout":
+        row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
+        return row
+    route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
+    report = work / "route/board-router.json"
+    if report.exists():
+        result = json.loads(report.read_text())
+        row["open"] = result["routable_connections"] - result["routed_connections"]
+    return row
+
+
 # Route-mode tasks (`"mode": "route"`, the expansion tier): the designer's
 # placement, fetched at a pinned commit, stripped and routed as the
 # 2026-10-18 intake did (benchmarks/expansion/triage.py and run.py).
@@ -1510,6 +1584,10 @@ def main():
     arguments.schematic = arguments.tier == "schematic"
     if arguments.schematic and arguments.route_from is not None:
         parser.error("--route-from does not go with --tier schematic (it lays out from the schematic)")
+    arguments.designer = arguments.tier == "designer"
+    arguments.designer_budget = (tier or {}).get("route_budget_seconds", DESIGNER_ROUTE_BUDGET)
+    if arguments.designer and arguments.route_from is not None:
+        parser.error("--route-from does not go with --tier designer (it routes the designer's placement)")
     if arguments.route_from is not None and not arguments.route_from.is_dir():
         parser.error(f"--route-from: {arguments.route_from} is not a directory")
     if arguments.splice_from is not None and not arguments.splice_from.exists():
@@ -1615,6 +1693,9 @@ def main():
               + (f", {', '.join(f'{b * arguments.budget_scale:g}' for b in budgets)} s of work" if budgets else "")
               + (f", timeout {scaled_timeout(arguments)} s" if arguments.timeout_given
                  else ", the intake's timeouts"), file=sys.stderr)
+    elif arguments.designer:
+        print(f"mode route on the designer's placement, {arguments.designer_budget * arguments.budget_scale:g} s "
+              f"of work, timeout {scaled_timeout(arguments)} s", file=sys.stderr)
     elif arguments.route_from is not None or arguments.budget_scale != 1:
         mode = "schematic" if arguments.schematic else "route from " + str(arguments.route_from) if arguments.route_from \
             else "layout"
@@ -1630,7 +1711,7 @@ def main():
             except Exception as error:
                 return {"name": task["name"], "pass": False, "error": f"runner: {type(error).__name__}: {error}",
                         "mode": "schematic" if arguments.schematic else "route" if arguments.route_from
-                        else task.get("mode", "layout")}
+                        or arguments.designer else task.get("mode", "layout")}
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
@@ -1655,7 +1736,7 @@ def main():
     summary = objectives(ordered)
     summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
                    mode="schematic" if arguments.schematic else "route" if arguments.route_from
-                   else run_mode(tasks),
+                   or arguments.designer else run_mode(tasks),
                    spliced=spliced_count,
                    tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
                    # Search threads per board (None: all CPUs, one job) and
@@ -1664,6 +1745,8 @@ def main():
                    # Whether jobs and threads were the tier's default
                    # (TIER_THREADS) or given.
                    parallelism=arguments.parallelism)
+    if arguments.designer:
+        summary["placement"] = "designer"
     outcomes = {}
     for row in ordered:
         if row.get("outcome"):

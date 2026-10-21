@@ -1,0 +1,872 @@
+{
+ "description": "Designer tier: every board of the corpus (tasks/v7) routed on the designer's own placement (run.py --tier designer): the designer's board with its tracks and vias stripped as the layout tier strips them (strip-kicad-tracks keeps the large pours and the rule areas), the project's own rules, route-kicad-board with the layout tier's 1500 s of work (route_budget_seconds). Joined with a layout run of the same list (compare.py --gap layout.log designer.log), it splits what the layout leaves open into a placement gap (layout open less designer-route open) and a routing gap (designer-route open): the deciding experiment for placement versus routing work (README.md, \"The designer tier\"). Per board, as the memory gate's and the runner's estimates: peak_rss_mb and seconds of its v17 layout row (build/github-layout-v17.log, x1170, layout mode: an upper bound for a route), and that row's result (v17).",
+ "tasks": "benchmarks/agent-tasks/tasks/v7/tasks.json",
+ "route_budget_seconds": 1500,
+ "boards": {
+  "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "peak_rss_mb": 584,
+   "seconds": 205.6,
+   "v17": {
+    "routed": "47/47",
+    "unconnected": 0
+   }
+  },
+  "0xCB-dev__0xCB-1337__panel": {
+   "peak_rss_mb": 17143,
+   "seconds": 1495.3,
+   "v17": {
+    "routed": "149/188",
+    "unconnected": 65
+   }
+  },
+  "0xCB-dev__0xCB-1337__pcb": {
+   "peak_rss_mb": 798,
+   "seconds": 247.6,
+   "v17": {
+    "routed": "85/85",
+    "unconnected": 0
+   }
+  },
+  "0xCB-dev__0xCB-1337__pcb-panel": {
+   "peak_rss_mb": 4718,
+   "seconds": 1207.5,
+   "v17": {
+    "error": "internal error: kicad-cli timed out after 900 s"
+   }
+  },
+  "0xCB-dev__0xCB-Static__0xcb-static": {
+   "peak_rss_mb": 1797,
+   "seconds": 139.6,
+   "v17": {
+    "routed": "74/74",
+    "unconnected": 0
+   }
+  },
+  "ASH-ART__Qfwfq__qfwfq": {
+   "peak_rss_mb": 3934,
+   "seconds": 531.8,
+   "v17": {
+    "routed": "64/64",
+    "unconnected": 0
+   }
+  },
+  "CDFER__Business-Cards__Batch_1": {
+   "peak_rss_mb": 5491,
+   "seconds": 1520.6,
+   "v17": {
+    "routed": "115/204",
+    "unconnected": 415
+   }
+  },
+  "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "peak_rss_mb": 428,
+   "seconds": 202.6,
+   "v17": {
+    "routed": "54/54",
+    "unconnected": 0
+   }
+  },
+  "CDFER__Business-Cards__USB_Keypad": {
+   "peak_rss_mb": 2362,
+   "seconds": 101.0,
+   "v17": {
+    "routed": "37/39",
+    "unconnected": 2
+   }
+  },
+  "CDFER__Business-Cards__WLED_Matrix": {
+   "peak_rss_mb": 2875,
+   "seconds": 338.6,
+   "v17": {
+    "routed": "99/104",
+    "unconnected": 12
+   }
+  },
+  "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "peak_rss_mb": 407,
+   "seconds": 136.1,
+   "v17": {
+    "routed": "71/71",
+    "unconnected": 0
+   }
+  },
+  "CRImier__MyKiCad__protoesp": {
+   "peak_rss_mb": 1202,
+   "seconds": 1245.7,
+   "v17": {
+    "routed": "71/104",
+    "unconnected": 58
+   }
+  },
+  "CRImier__MyKiCad__vaio_re": {
+   "peak_rss_mb": 2531,
+   "seconds": 687.8,
+   "v17": {
+    "routed": "262/267",
+    "unconnected": 4
+   }
+  },
+  "CRImier__MyKiCad__zpn_devboard": {
+   "peak_rss_mb": 4345,
+   "seconds": 603.8,
+   "v17": {
+    "routed": "166/167",
+    "unconnected": 1
+   }
+  },
+  "GlasgowEmbedded__glasgow__glasgow__revC3": {
+   "peak_rss_mb": 997,
+   "seconds": 752.8,
+   "v17": {
+    "routed": "129/226",
+    "unconnected": 165
+   }
+  },
+  "Goga64__ULK__ULK": {
+   "peak_rss_mb": 23215,
+   "seconds": 1523.8,
+   "v17": {
+    "routed": "68/70",
+    "unconnected": 2
+   }
+  },
+  "Goga64__ULK__ULK_sl_PG1316s": {
+   "peak_rss_mb": 24724,
+   "seconds": 1596.8,
+   "v17": {
+    "routed": "68/70",
+    "unconnected": 3
+   }
+  },
+  "Huaqiu-Electronics__ecad-viewer__video": {
+   "peak_rss_mb": 10158,
+   "seconds": 887.4,
+   "v17": {
+    "routed": "262/371",
+    "unconnected": 201
+   }
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1": {
+   "peak_rss_mb": 940,
+   "seconds": 262.6,
+   "v17": {
+    "routed": "138/138",
+    "unconnected": 0
+   }
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado": {
+   "peak_rss_mb": 2282,
+   "seconds": 574.8,
+   "v17": {
+    "routed": "144/144",
+    "unconnected": 2
+   }
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA": {
+   "peak_rss_mb": 2781,
+   "seconds": 540.2,
+   "v17": {
+    "routed": "151/156",
+    "unconnected": 5
+   }
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA": {
+   "peak_rss_mb": 171,
+   "seconds": 205.6,
+   "v17": {
+    "error": "incomplete: 6 parts without a legal place (J105, J101, J102, R204, R207, R208)"
+   }
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2": {
+   "peak_rss_mb": 734,
+   "seconds": 243.6,
+   "v17": {
+    "routed": "156/156",
+    "unconnected": 0
+   }
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA": {
+   "peak_rss_mb": 793,
+   "seconds": 385.2,
+   "v17": {
+    "routed": "154/154",
+    "unconnected": 0
+   }
+  },
+  "Jana-Marie__ligra__ligra_back": {
+   "peak_rss_mb": 778,
+   "seconds": 194.6,
+   "v17": {
+    "routed": "33/33",
+    "unconnected": 0
+   }
+  },
+  "Ladniy__jiran-ble-lite__jiran-ble-lite": {
+   "peak_rss_mb": 15700,
+   "seconds": 494.2,
+   "v17": {
+    "routed": "104/105",
+    "unconnected": 20
+   }
+  },
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub": {
+   "peak_rss_mb": 6264,
+   "seconds": 292.1,
+   "v17": {
+    "routed": "145/159",
+    "unconnected": 22
+   }
+  },
+  "Neotron-Compute__Neotron-Pico__neotron-pico": {
+   "peak_rss_mb": 27876,
+   "seconds": 1413.1,
+   "v17": {
+    "routed": "176/190",
+    "unconnected": 24
+   }
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex": {
+   "peak_rss_mb": 953,
+   "seconds": 295.7,
+   "v17": {
+    "routed": "21/21",
+    "unconnected": 0
+   }
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex": {
+   "peak_rss_mb": 1151,
+   "seconds": 542.4,
+   "v17": {
+    "routed": "19/19",
+    "unconnected": 0
+   }
+  },
+  "OpenDrone-hw__OpenESC-20x20__4in1-mini": {
+   "peak_rss_mb": 855,
+   "seconds": 345.6,
+   "v17": {
+    "routed": "123/152",
+    "unconnected": 46
+   }
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1": {
+   "peak_rss_mb": 906,
+   "seconds": 417.7,
+   "v17": {
+    "routed": "91/152",
+    "unconnected": 111
+   }
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1-panel": {
+   "peak_rss_mb": 171,
+   "seconds": 111.5,
+   "v17": {
+    "error": "incomplete: 216 parts without a legal place (Rsense1, Rsense1, Rsense2, U2, U5, U6, U7, U8, U9, U10, C13, C14, C15, C16,"
+   }
+  },
+  "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "peak_rss_mb": 2602,
+   "seconds": 320.1,
+   "v17": {
+    "routed": "82/82",
+    "unconnected": 0
+   }
+  },
+  "OpenDrone-hw__OpenRX__OpenRX-panel-rev2": {
+   "peak_rss_mb": 369,
+   "seconds": 417.2,
+   "v17": {
+    "routed": "53/127",
+    "unconnected": 219
+   }
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "peak_rss_mb": 2081,
+   "seconds": 112.0,
+   "v17": {
+    "routed": "55/56",
+    "unconnected": 4
+   }
+  },
+  "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard": {
+   "peak_rss_mb": 3709,
+   "seconds": 321.6,
+   "v17": {
+    "routed": "108/108",
+    "unconnected": 0
+   }
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base": {
+   "peak_rss_mb": 2093,
+   "seconds": 578.2,
+   "v17": {
+    "routed": "152/186",
+    "unconnected": 44
+   }
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard": {
+   "peak_rss_mb": 2730,
+   "seconds": 1047.5,
+   "v17": {
+    "routed": "320/340",
+    "unconnected": 24
+   }
+  },
+  "anyshake__explorer__Explorer": {
+   "peak_rss_mb": 3492,
+   "seconds": 609.8,
+   "v17": {
+    "routed": "148/150",
+    "unconnected": 2
+   }
+  },
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb": {
+   "peak_rss_mb": 1493,
+   "seconds": 678.8,
+   "v17": {
+    "routed": "128/133",
+    "unconnected": 6
+   }
+  },
+  "baldengineer__bit-preserve__coco2": {
+   "peak_rss_mb": 4294,
+   "seconds": 723.5,
+   "v17": {
+    "routed": "173/173",
+    "unconnected": 0
+   }
+  },
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV": {
+   "peak_rss_mb": 11534,
+   "seconds": 923.9,
+   "v17": {
+    "routed": "66/69",
+    "unconnected": 14
+   }
+  },
+  "bitshiftcrazy__d20_pcb__d20_pcb": {
+   "peak_rss_mb": 2746,
+   "seconds": 323.7,
+   "v17": {
+    "routed": "18/19",
+    "unconnected": 1
+   }
+  },
+  "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "peak_rss_mb": 469,
+   "seconds": 97.5,
+   "v17": {
+    "routed": "18/18",
+    "unconnected": 0
+   }
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9": {
+   "peak_rss_mb": 3102,
+   "seconds": 621.8,
+   "v17": {
+    "routed": "184/192",
+    "unconnected": 13
+   }
+  },
+  "byrantech__laptop__keyboard": {
+   "peak_rss_mb": 5850,
+   "seconds": 391.2,
+   "v17": {
+    "routed": "132/136",
+    "unconnected": 4
+   }
+  },
+  "byrantech__laptop__motherboard": {
+   "peak_rss_mb": 9048,
+   "seconds": 935.4,
+   "v17": {
+    "routed": "232/236",
+    "unconnected": 4
+   }
+  },
+  "byrantech__laptop__power": {
+   "peak_rss_mb": 1237,
+   "seconds": 681.3,
+   "v17": {
+    "routed": "112/115",
+    "unconnected": 3
+   }
+  },
+  "crmaykish__mackerel-68k__mackerel-08-v1": {
+   "peak_rss_mb": 2758,
+   "seconds": 219.1,
+   "v17": {
+    "routed": "96/96",
+    "unconnected": 0
+   }
+  },
+  "crmaykish__mackerel-68k__mackerel-10-v1": {
+   "peak_rss_mb": 4294,
+   "seconds": 649.3,
+   "v17": {
+    "routed": "155/155",
+    "unconnected": 0
+   }
+  },
+  "crmaykish__mackerel-68k__mackerel-30-proto": {
+   "peak_rss_mb": 4641,
+   "seconds": 515.3,
+   "v17": {
+    "routed": "217/217",
+    "unconnected": 0
+   }
+  },
+  "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
+   "peak_rss_mb": 5787,
+   "seconds": 1054.6,
+   "v17": {
+    "routed": "553/585",
+    "unconnected": 39
+   }
+  },
+  "duckyb__eternal-keypad__eternal-keypad": {
+   "peak_rss_mb": 1770,
+   "seconds": 176.6,
+   "v17": {
+    "routed": "69/69",
+    "unconnected": 0
+   }
+  },
+  "duckyb__urchin__main": {
+   "peak_rss_mb": 1231,
+   "seconds": 37.5,
+   "v17": {
+    "routed": "68/68",
+    "unconnected": 0
+   }
+  },
+  "earth75__atat-1800__ATAT1800": {
+   "peak_rss_mb": 10295,
+   "seconds": 1078.0,
+   "v17": {
+    "routed": "255/278",
+    "unconnected": 29
+   }
+  },
+  "ebastler__osprey__osprey_rev_a": {
+   "peak_rss_mb": 9037,
+   "seconds": 692.3,
+   "v17": {
+    "routed": "100/103",
+    "unconnected": 2
+   }
+  },
+  "emertcakir__OpenAirScope__OpenAirScope": {
+   "peak_rss_mb": 3871,
+   "seconds": 552.2,
+   "v17": {
+    "routed": "179/184",
+    "unconnected": 5
+   }
+  },
+  "greatscottgadgets__hackrf__hackrf-one": {
+   "peak_rss_mb": 2010,
+   "seconds": 386.2,
+   "v17": {
+    "routed": "319/319",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__E-Fidget-Lite": {
+   "peak_rss_mb": 325,
+   "seconds": 78.5,
+   "v17": {
+    "routed": "20/20",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__MotionCubeViewAllForces": {
+   "peak_rss_mb": 1662,
+   "seconds": 58.0,
+   "v17": {
+    "routed": "20/20",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__PixelWave": {
+   "peak_rss_mb": 4830,
+   "seconds": 495.3,
+   "v17": {
+    "routed": "343/343",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__keyboar_": {
+   "peak_rss_mb": 3734,
+   "seconds": 567.8,
+   "v17": {
+    "routed": "102/102",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__koeg-board-pcb": {
+   "peak_rss_mb": 7849,
+   "seconds": 1082.5,
+   "v17": {
+    "routed": "158/175",
+    "unconnected": 25
+   }
+  },
+  "hackclub__OnBoard__krishveercard": {
+   "peak_rss_mb": 5232,
+   "seconds": 416.2,
+   "v17": {
+    "routed": "43/43",
+    "unconnected": 0
+   }
+  },
+  "hackclub__OnBoard__woagboard": {
+   "peak_rss_mb": 10161,
+   "seconds": 903.4,
+   "v17": {
+    "routed": "84/91",
+    "unconnected": 8
+   }
+  },
+  "headblockhead__slab-pcb__interchange-pcb-right": {
+   "peak_rss_mb": 3789,
+   "seconds": 897.4,
+   "v17": {
+    "routed": "83/83",
+    "unconnected": 4
+   }
+  },
+  "headblockhead__slab-pcb__slab-pcb-left": {
+   "peak_rss_mb": 7483,
+   "seconds": 801.9,
+   "v17": {
+    "routed": "75/76",
+    "unconnected": 1
+   }
+  },
+  "iandchasse__silkscreen-pcb__silkscreen_pcb": {
+   "peak_rss_mb": 3286,
+   "seconds": 476.2,
+   "v17": {
+    "routed": "113/113",
+    "unconnected": 1
+   }
+  },
+  "ikajdan__katia__katia": {
+   "peak_rss_mb": 19601,
+   "seconds": 1665.7,
+   "v17": {
+    "routed": "157/162",
+    "unconnected": 75
+   }
+  },
+  "little-red-rover__little-red-rover__little_red_rover": {
+   "peak_rss_mb": 4532,
+   "seconds": 264.7,
+   "v17": {
+    "routed": "64/64",
+    "unconnected": 0
+   }
+  },
+  "maniekx86__M8SBC-486__homebrew_486": {
+   "peak_rss_mb": 3833,
+   "seconds": 637.3,
+   "v17": {
+    "routed": "190/190",
+    "unconnected": 0
+   }
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized": {
+   "peak_rss_mb": 8309,
+   "seconds": 1065.8,
+   "v17": {
+    "routed": "147/172",
+    "unconnected": 34
+   }
+  },
+  "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized": {
+   "peak_rss_mb": 5420,
+   "seconds": 327.7,
+   "v17": {
+    "routed": "162/162",
+    "unconnected": 0
+   }
+  },
+  "ohdsp__DSP-ADAU1452__DSP-ADAU1452": {
+   "peak_rss_mb": 5433,
+   "seconds": 806.9,
+   "v17": {
+    "routed": "153/190",
+    "unconnected": 68
+   }
+  },
+  "oro-os__link__link": {
+   "peak_rss_mb": 8197,
+   "seconds": 1163.0,
+   "v17": {
+    "routed": "246/251",
+    "unconnected": 11
+   }
+  },
+  "rosco-m68k__rosco_m68k__rosco_m68k__kicad": {
+   "peak_rss_mb": 2659,
+   "seconds": 316.6,
+   "v17": {
+    "routed": "148/148",
+    "unconnected": 0
+   }
+  },
+  "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard": {
+   "peak_rss_mb": 2336,
+   "seconds": 311.2,
+   "v17": {
+    "routed": "58/58",
+    "unconnected": 0
+   }
+  },
+  "sporkus__capybully_keyboard__capybully": {
+   "peak_rss_mb": 7025,
+   "seconds": 1096.5,
+   "v17": {
+    "routed": "32/32",
+    "unconnected": 1
+   }
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
+   "peak_rss_mb": 2571,
+   "seconds": 534.3,
+   "v17": {
+    "routed": "76/76",
+    "unconnected": 0
+   }
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre": {
+   "peak_rss_mb": 8966,
+   "seconds": 667.4,
+   "v17": {
+    "routed": "75/75",
+    "unconnected": 0
+   }
+  },
+  "stonedDiscord__MegaDrive__MegaDrive": {
+   "peak_rss_mb": 5866,
+   "seconds": 1701.4,
+   "v17": {
+    "routed": "246/298",
+    "unconnected": 163
+   }
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-01": {
+   "peak_rss_mb": 5841,
+   "seconds": 1322.1,
+   "v17": {
+    "routed": "306/363",
+    "unconnected": 136
+   }
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-1CHIP": {
+   "peak_rss_mb": 2864,
+   "seconds": 512.3,
+   "v17": {
+    "routed": "212/212",
+    "unconnected": 0
+   }
+  },
+  "tengigabytes__MokyaLora__MokyaLora": {
+   "peak_rss_mb": 5456,
+   "seconds": 573.3,
+   "v17": {
+    "routed": "261/262",
+    "unconnected": 0
+   }
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_left": {
+   "peak_rss_mb": 3566,
+   "seconds": 963.9,
+   "v17": {
+    "routed": "238/247",
+    "unconnected": 11
+   }
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right": {
+   "peak_rss_mb": 6047,
+   "seconds": 1150.0,
+   "v17": {
+    "routed": "403/420",
+    "unconnected": 19
+   }
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x4": {
+   "peak_rss_mb": 171,
+   "seconds": 152.1,
+   "v17": {
+    "error": "incomplete: 4 parts without a legal place (J4, J6, J6, J5)"
+   }
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x5": {
+   "peak_rss_mb": 171,
+   "seconds": 156.6,
+   "v17": {
+    "error": "incomplete: 9 parts without a legal place (J6, J6, J6, J6, J6, J6, J6, J5, SW1)"
+   }
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted": {
+   "peak_rss_mb": 171,
+   "seconds": 197.6,
+   "v17": {
+    "error": "incomplete: 3 parts without a legal place (J6, J6, J5)"
+   }
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave": {
+   "peak_rss_mb": 1086,
+   "seconds": 1503.8,
+   "v17": {
+    "routed": "3/28",
+    "unconnected": 499
+   }
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left": {
+   "peak_rss_mb": 171,
+   "seconds": 183.1,
+   "v17": {
+    "error": "incomplete: 1 parts without a legal place (J9)"
+   }
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_left": {
+   "peak_rss_mb": 6560,
+   "seconds": 1267.5,
+   "v17": {
+    "routed": "394/420",
+    "unconnected": 39
+   }
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_right": {
+   "peak_rss_mb": 5981,
+   "seconds": 964.4,
+   "v17": {
+    "routed": "401/420",
+    "unconnected": 28
+   }
+  },
+  "tomunderwood99__CharlieBoard__Blue_Line": {
+   "peak_rss_mb": 2193,
+   "seconds": 11.5,
+   "v17": {
+    "routed": "26/26",
+    "unconnected": 0
+   }
+  },
+  "transistorfet__computie__k30-SBC": {
+   "peak_rss_mb": 2017,
+   "seconds": 560.7,
+   "v17": {
+    "routed": "173/173",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001": {
+   "peak_rss_mb": 4252,
+   "seconds": 144.1,
+   "v17": {
+    "routed": "72/72",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd": {
+   "peak_rss_mb": 4863,
+   "seconds": 173.1,
+   "v17": {
+    "routed": "70/70",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd": {
+   "peak_rss_mb": 5194,
+   "seconds": 359.2,
+   "v17": {
+    "routed": "75/75",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd": {
+   "peak_rss_mb": 5035,
+   "seconds": 151.1,
+   "v17": {
+    "routed": "85/85",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
+   "peak_rss_mb": 4854,
+   "seconds": 59.5,
+   "v17": {
+    "routed": "81/81",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd": {
+   "peak_rss_mb": 5005,
+   "seconds": 341.2,
+   "v17": {
+    "routed": "89/89",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_core": {
+   "peak_rss_mb": 6589,
+   "seconds": 279.6,
+   "v17": {
+    "routed": "98/98",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao": {
+   "peak_rss_mb": 6642,
+   "seconds": 198.6,
+   "v17": {
+    "routed": "81/81",
+    "unconnected": 0
+   }
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s": {
+   "peak_rss_mb": 5428,
+   "seconds": 334.2,
+   "v17": {
+    "routed": "78/78",
+    "unconnected": 0
+   }
+  },
+  "tzarc__keyboards__ghoul": {
+   "peak_rss_mb": 10577,
+   "seconds": 1535.5,
+   "v17": {
+    "routed": "142/148",
+    "unconnected": 6
+   }
+  },
+  "vd-rd__sbc_allwinner_a13__module": {
+   "peak_rss_mb": 2905,
+   "seconds": 568.2,
+   "v17": {
+    "routed": "221/223",
+    "unconnected": 8
+   }
+  },
+  "wntrblm__Castor_and_Pollux__mainboard": {
+   "peak_rss_mb": 1609,
+   "seconds": 339.6,
+   "v17": {
+    "routed": "126/126",
+    "unconnected": 0
+   }
+  },
+  "zli117__CyberKeeb2040__MainBoard": {
+   "peak_rss_mb": 4850,
+   "seconds": 402.2,
+   "v17": {
+    "routed": "118/118",
+    "unconnected": 0
+   }
+  }
+ }
+}
