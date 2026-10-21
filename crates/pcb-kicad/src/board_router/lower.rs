@@ -1168,8 +1168,8 @@ fn lower_board(
                     continue;
                 };
                 let net = item_net(item, &net_codes)
-                    .filter(|raw| routable_net(raw))
-                    .map(normalize_net)
+                    .filter(|raw| net_names.routable(raw))
+                    .map(|raw| net_names.normalize(raw))
                     .map(|name| net_id(name, &mut nets, &mut classes))
                     .transpose()?;
                 let radius = form_f64(item, "width", 1)? / 2.0 + outline::ARC_TOLERANCE;

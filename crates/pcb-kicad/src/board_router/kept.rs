@@ -196,6 +196,7 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board) -> KiCadKeptCopper {
                     pad: description.pad,
                     anchor: description.anchor,
                     layers: board.obstacles[description.pad].layers,
+                    padstack: false,
                 });
             }
         }
@@ -207,6 +208,9 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board) -> KiCadKeptCopper {
                 .iter_mut()
                 .filter(|existing| existing.net == net && existing.host < terminals)
             {
+                // A padstack's shape whose pad was merged into another
+                // terminal is another pad of that terminal.
+                existing.padstack &= host_of[existing.host] == existing.host;
                 existing.host = renumbered[host_of[existing.host]];
             }
             let mut index = 0;
