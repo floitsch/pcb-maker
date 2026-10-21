@@ -11,6 +11,8 @@
 //! 4 internal error or panic.
 
 use pcb_kicad::{KiCadReference, KiCadRunFacts, KiCadRunStatus, KiCadVerdict};
+
+mod free_dimension;
 use std::{
     collections::BTreeMap,
     fs,
@@ -672,6 +674,24 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         None => Default::default(),
     };
     check_constraints(source, &config.placer)?;
+    // A free dimension: the layout at several sizes (src/agent_cli/free_dimension.rs).
+    if let Some(free) = &config.free_dimension {
+        let layout_json = match positional.get(4) {
+            Some(path) => read_json::<serde_json::Value>(path)?,
+            None => serde_json::json!({}),
+        };
+        return free_dimension::layout(free_dimension::FreeDimensionLayout {
+            source,
+            board_id,
+            output: Path::new(output),
+            router_argument: positional.get(3).map(String::as_str),
+            router: &router,
+            layout_json,
+            config: &config,
+            free,
+            reference: values.get("--reference").map(String::as_str),
+        });
+    }
     let output = Path::new(output);
     let result_directory = output.join("result");
     let outputs = BTreeMap::from([
@@ -1095,7 +1115,10 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
                        options, with constraints: a constraints.json path relative to <project-dir>;
                        default none), total_seconds (the budget in seconds of work, default 1500),
                        moves (part moves after the first route, default 40), polish_seconds (default
-                       60), swappable / pin_swaps (default none). docs/agents.md, docs/constraints.md.
+                       60), swappable / pin_swaps (default none), free_dimension (default none:
+                       the outline as given; with {\"edge\": \"bottom\", \"min\": 34, \"max\": 60, \"step\": 2}
+                       the board is laid out at several heights, the smallest clean one kept;
+                       total_seconds is then the whole search's). docs/agents.md, docs/constraints.md.
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
                        the same place); default none (the input of a layout is not a placed board):
                        every error counts.
@@ -1106,7 +1129,10 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
 cut, work_seconds and verdict; <out-dir>/verdict.json the verdict alone. When parts find no legal
 place the layout stops before routing (exit 1) and writes no board-layout.json: verdict.json holds
 unplaced, room (utilization per side, the area missing, an outline to try) and next_actions the
-hints (how full each side is, which constraint holds a part).";
+hints (how full each side is, which constraint holds a part). With free_dimension, <out-dir> holds
+the chosen size's layout as above, free-dimension.json (every size tried: budget, KiCad unconnected,
+errors, work, chosen) and free-dimension/ (each size's project and layout); the verdict adds
+free_dimension (chosen, probes, reason).";
 
 const PLACE_HELP: &str = "\
 Places a KiCad board's movable parts (no routing): for checking constraints in seconds.

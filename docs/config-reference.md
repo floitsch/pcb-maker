@@ -35,8 +35,9 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 56 | - | 0 | 56 | - |
 | [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 11 |
-| [Layout settings](#layout-settings) | 15 | 15 | 0 | 15 | 6 |
+| [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
+| [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 7 | - | 0 | 7 | - |
@@ -359,6 +360,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `congestion_candidates` | `usize` | `16` | - | With a pre-ranking score, the placer makes at least this many placements to rank (its `placement_seeds` when that is more). |
 | `congestion_probes` | `usize` | `3` | - | With a pre-ranking score, how many of the best-ranked placements the race routes (at least one). |
 | `congestion_score` | `String` | `"rudy"` | placer.md | How the race ranks the placements before probing them (the values above, at `congestion_model`). |
+| `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 
 ## Layout settings: swappable entries
 
@@ -369,6 +371,24 @@ One entry of `swappable`. Source: `KiCadSwappable` in [crates/pcb-kicad/src/boar
 | `swappable[].part` | `String` | required | - | The part's reference (`U1`). |
 | `swappable[].pins` | `Vec<String>` | required | - | Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs. |
 | `swappable[].except` | `Vec<String>` | optional | - | Pads to leave alone (strapping pins, a UART the bootloader uses). |
+
+## Layout settings: free_dimension
+
+The `free_dimension` object of the layout settings: one edge of a rectangular outline that `layout-kicad-board` moves to find the smallest clean board (docs/constraints.md, "A free dimension"). Source: `KiCadFreeDimension` in [crates/pcb-kicad/src/free_dimension.rs](../crates/pcb-kicad/src/free_dimension.rs).
+
+| Key | Type | Default | Docs | Description |
+|---|---|---|---|---|
+| `free_dimension.edge` | `String` | required | - | The edge of the rectangular outline that moves: `bottom`, `top`, `left` or `right`. The opposite edge stays where it is. |
+| `free_dimension.min` | `Option<f64>` | optional | router.md | The smallest extent of the board along the free axis (its height for `top` and `bottom`, its width for `left` and `right`), in millimetres; with `max` and `step`. |
+| `free_dimension.max` | `Option<f64>` | optional | - | The largest extent along the free axis, in millimetres. |
+| `free_dimension.step` | `Option<f64>` | optional | - | The sizes tried: `min`, `min + step`, ... up to `max` (and `max` itself). |
+| `free_dimension.sizes` | `Vec<f64>` | optional | - | The sizes tried, instead of a range and a step. |
+| `free_dimension.prefer_below` | `Vec<f64>` | optional | - | Price thresholds (JLCPCB's 100 mm): a size at or below one is preferred over any larger size, and is tried itself when it lies in the range. |
+| `free_dimension.accept` | `Option<String>` | optional | - | What counts as clean: `pass_strict` (default: the layout's verdict is complete, exit 0: KiCad finds no unconnected item and no error that counts, every part placed, every constraint kept) or `pass` (electrically good: KiCad finds no unconnected item and no new error by the count rule, every part placed; missed soft constraints allowed). |
+| `free_dimension.band_mm` | `Option<f64>` | optional | - | What moves with the edge: everything within this distance of it (fixed parts by their origin, board texts by their anchor, drawn shapes and zones point by point, constraint boxes by their side nearest the edge). Default 0.5 mm: what lies on the edge. |
+| `free_dimension.probe_seconds` | `Option<f64>` | optional | router.md | The work budget of one probe (default a third of `confirm_seconds`). |
+| `free_dimension.confirm_seconds` | `Option<f64>` | optional | - | The work budget of the confirmation at the chosen size (default a third of the layout's `total_seconds`, which is the whole search's budget). |
+| `free_dimension.parallel` | `Option<usize>` | optional | - | Probes run side by side (default: a quarter of the threads, at most 4, at most one per 3 GB of available memory). |
 
 ## Placer core
 

@@ -94,7 +94,12 @@ pub use placement_constraints::{
     read_placement_constraints,
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
+pub mod free_dimension;
 mod outline;
+pub use free_dimension::{
+    KiCadFreeDimension, KiCadFreeDimensionPlan, KiCadFreeDimensionRun, KiCadFreeDimensionSearch,
+    KiCadFreeDimensionStep,
+};
 mod pin_swap;
 pub use pin_swap::{
     KiCadPinChange, KiCadPinSwapConfig, KiCadPinSwapEstimate, KiCadPinSwapResult, KiCadPinSwapSpec,

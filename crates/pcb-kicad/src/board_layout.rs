@@ -84,6 +84,12 @@ pub struct KiCadBoardLayoutConfig {
     /// How the race ranks the placements before probing them (the values
     /// above, at `congestion_model`).
     pub congestion_score: String,
+    /// One edge of a rectangular outline the layout may move, to find the
+    /// smallest board that comes out clean (docs/constraints.md, "A free
+    /// dimension"): `layout-kicad-board` then lays the board out at
+    /// several sizes, `total_seconds` being the whole search's budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_dimension: Option<crate::free_dimension::KiCadFreeDimension>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -174,6 +180,7 @@ impl Default for KiCadBoardLayoutConfig {
             congestion_candidates: 16,
             congestion_probes: 3,
             congestion_score: "rudy".into(),
+            free_dimension: None,
         }
     }
 }
@@ -681,6 +688,13 @@ pub fn layout_kicad_board(
         return Err(format!(
             "output directory {} already exists",
             output_directory.display()
+        ));
+    }
+    // The search over sizes is the command's (each size a layout of its
+    // own): a layout at one size has none.
+    if config.free_dimension.is_some() {
+        return Err(crate::verdict::input_error(
+            "free_dimension: the layout-kicad-board command searches the sizes; a single layout takes none",
         ));
     }
     fs::create_dir_all(output_directory)

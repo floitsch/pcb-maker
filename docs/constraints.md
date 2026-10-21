@@ -231,6 +231,115 @@ polygon or pieces have the size they are given (`area_factor`, `aspect`
 and `shrink` with them are errors). `corner_radius` works with an
 automatic size; cutouts need a size.
 
+## A free dimension (`free_dimension`)
+
+When one side of the board may be any length ("the height can change;
+it only has to stay under 100 mm, where JLCPCB charges more"), say so in
+the layout config instead of laying the board out at several sizes by
+hand. `layout-kicad-board` then lays it out at a ladder of sizes and
+keeps the smallest one that comes out clean:
+
+```json
+{"placer": {"constraints": "constraints.json"},
+ "total_seconds": 6000,
+ "free_dimension": {"edge": "bottom", "min": 34, "max": 60, "step": 2,
+                    "prefer_below": [100], "band_mm": 10}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `edge` | The edge that moves: `bottom` or `top` (the height changes), `right` or `left` (the width). The opposite edge stays. |
+| `min`, `max`, `step` | The board's extent along that axis to try, in millimetres: `min`, `min + step`, ... and `max`. Or `sizes`: a list. |
+| `prefer_below` | Price thresholds. A size at or below one is preferred over any larger size; the search goes past it only when nothing at or below it is clean. A threshold inside the range is tried itself. |
+| `accept` | What counts as clean: `pass_strict` (default): the layout's verdict is `complete` (exit 0: KiCad finds no unconnected item and no error that counts, every part placed, every constraint kept); `pass`: electrically good (KiCad finds no unconnected item and no error beyond the reference's count, every part placed; a missed soft constraint is allowed, and the verdict then says `incomplete`). Cosmetic findings never count. |
+| `band_mm` | What moves with the edge (default 0.5: what lies on it). See below. |
+| `probe_seconds`, `confirm_seconds` | The budgets (below). |
+| `parallel` | Probes side by side (default a quarter of the threads, at most 4, at most one per 3 GB of free memory). |
+
+The outline must be a rectangle: the constraints' `outline` with a
+`width` and a `height` (`corner_radius` is kept; a polygon, pieces,
+cutouts or an automatic size are refused), or, without one, the board's
+own Edge.Cuts as one `gr_rect` or lines along the sides of a box
+(graphics inside it, cutouts, are left alone; arcs or slanted sides on
+the outline are refused, exit 2). The size the board has is one size
+like the others: `min` may be smaller.
+
+**What moves with the edge.** Everything within `band_mm` of the moving
+edge (or beyond it) moves with it; everything else keeps its place in
+board coordinates:
+- footprints by their origin (a fixed connector row at the bottom edge,
+  its decoupling capacitors, the LEDs a generator put along it);
+- board texts, images, dimensions, circles and arcs by their anchor
+  (a text's position, a circle's centre, an arc's middle);
+- lines, rectangles, polygons, tracks and zones point by point: a point
+  in the band moves, so a pour over the whole board grows with it and a
+  rule area at the edge moves whole;
+- `region` and `keepout` boxes by their side nearest the edge, `place`
+  and `add` points by the point, whatever their `origin`: a box relative
+  to the outline's corner that stays is written relative to the corner
+  at that size (the corner moves when `top` or `left` is free);
+- `edge` constraints and the words of `place` and `region` (`bottom`,
+  `top-right`, `bottom-half`) are relative to the outline anyway.
+
+Choose `band_mm` to take what belongs to the edge: on the fence board
+the generator's bottom band (the header J1 1.3 mm from the edge, the
+LED row 4.2 mm, its resistor networks and capacitors 8.2 mm) moves with
+`"band_mm": 10`, and the parts 12 mm from the edge and farther stay, as
+the generator itself lays out its 40 and 46 mm variants.
+
+**Sizes that cannot work** are reported without a run: a fixed part
+(`fixed`, the placer's `fixed` and `fixed_patterns`, locked, placed
+with `x` and `y`, or without nets) or a rule area (a board zone that is
+a keepout, a `keepout` or `region` box, a `place` point) that lay inside
+the outline and would reach beyond it, and a fixed part carried by the
+edge that would land on a fixed part that stays. They are listed in
+`free-dimension.json` as `infeasible` with the reasons; when no size is
+feasible the run is an input error (exit 2).
+
+**The search.** Results are not monotone in the size (the fence board at
+34, 40 and 46 mm: 32, 1 and 2 unconnected), so the sizes are not
+bisected. From the smallest size upward, `parallel` sizes at a time are
+laid out at the probe budget, each a layout of its own with the same
+seed (the parent's work rates pinned for all, so a size's probe is the
+same however many run beside it). The first batch with a clean size
+stops the probes; the smallest clean size is laid out again at the full
+budget (the confirmation). If no probe is clean when the budget or the
+ladder runs out, the size that came closest (fewest parts unplaced,
+then fewest KiCad unconnected items, then errors, then missed
+constraints, then the smaller size) gets the full budget instead. The
+result is the smallest clean run (the confirmation when it is clean,
+else the clean probe), or else the closest.
+
+**The budget.** `total_seconds` is the whole search's work.
+`confirm_seconds` (default a third of it) is kept for the full run;
+`probe_seconds` (default a third of that, as the short tier's budget
+scale) is each probe's. Probes start while the work spent and one more
+batch leave the full run its budget: with the defaults, six probes. The
+fence example above (6000 s, probes 500 s, full 1500 s) affords nine
+probes.
+
+**What comes back.** `<out-dir>` is the chosen run's layout, as without
+the key (`result/`, `placed/`, `board-layout.json`, `verdict.json`, its
+paths rewritten), so the next steps are unchanged. Beside it:
+- `free-dimension.json`: the ladder, the budgets, the reason and every
+  run (`size_mm`, `kind` `probe`, `confirm`, `closest` or `infeasible`,
+  `budget_seconds`, `status`, `clean`, `kicad_unconnected`, `errors`
+  and `errors_by_type` under the strict rule, `errors_count_rule`,
+  `strict`, `constraints_missed`, `unplaced`, `work_seconds`,
+  `wall_seconds`, `chosen`, `reasons`, `directory`), and `untried`:
+  sizes the budget left;
+- `free-dimension/<size>mm-<kind>/`: each run's project (`input/`, the
+  board at that size), `layout.json`, `layout.log` and `layout/`;
+- the verdict's `free_dimension`: `chosen` (mm), `kind`, `clean`,
+  `probes` (runs made), `reason` (which smaller sizes failed and how,
+  a threshold exceeded), `edge`, the search's `work_seconds` and
+  `wall_seconds` (the verdict's own are the chosen run's), `report`.
+  When no size is clean, the first of `next_actions` names the size
+  that came closest and what blocked it; the rest are that layout's.
+
+The exit code is the chosen run's. `place-kicad-board` reads only the
+layout config's `placer` object and places at the size given.
+
 ## Parts the schematic does not have (`add`)
 
 A board often carries parts its schematic lacks: mounting holes plated on

@@ -830,3 +830,132 @@ fn a_missing_report_after_kicads_check_is_an_internal_error() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A layout with a free dimension: input errors exit 2 before any layout,
+/// and a search ends with the chosen size's layout as the result, the
+/// table of every size beside it.
+#[test]
+fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
+    let root = scratch("free-dimension");
+    let project = project(&root);
+    let layout = |name: &str, config: serde_json::Value, extra: &[(&str, &str)]| {
+        let path = root.join(format!("{name}.json"));
+        fs::write(&path, config.to_string()).unwrap();
+        let out = root.join(name);
+        let mut command = binary();
+        for (key, value) in extra {
+            command.env(key, value);
+        }
+        let output = command
+            .args([
+                "layout-kicad-board",
+                &project.display().to_string(),
+                "t",
+                &out.display().to_string(),
+                "auto",
+                &path.display().to_string(),
+            ])
+            .output()
+            .unwrap();
+        (output, out)
+    };
+    // An edge that is none, and sizes where the fixed J3 (at x 18 of a
+    // 20 mm board) would end outside: input errors, one line, exit 2.
+    for (name, config) in [
+        (
+            "edge",
+            serde_json::json!({"free_dimension": {"edge": "middle", "sizes": [20]}}),
+        ),
+        (
+            "stranded",
+            serde_json::json!({"placer": {"fixed": ["J3"]},
+                               "free_dimension": {"edge": "right", "sizes": [5, 10]}}),
+        ),
+    ] {
+        let (output, _) = layout(name, config, &[]);
+        assert_eq!(code(&output), 2, "{name}: {}", stderr(&output));
+        assert_eq!(stderr(&output).lines().count(), 1, "{}", stderr(&output));
+    }
+    let (output, _) = layout(
+        "stranded2",
+        serde_json::json!({"placer": {"fixed": ["J3"]},
+                           "free_dimension": {"edge": "right", "sizes": [5]}}),
+        &[],
+    );
+    assert!(
+        stderr(&output).contains("fixed part J3"),
+        "{}",
+        stderr(&output)
+    );
+    // Without KiCad's check no size is clean: the closest is kept (the
+    // smallest of equals), its layout is the result.
+    let (output, out) = layout(
+        "search",
+        serde_json::json!({"total_seconds": 30, "moves": 0,
+                           "placer": {"fixed": ["J3"]},
+                           "free_dimension": {"edge": "bottom", "sizes": [16, 20, 24],
+                                              "probe_seconds": 2, "confirm_seconds": 6,
+                                              "parallel": 2}}),
+        &[("PCB_SKIP_NATIVE", "1"), ("PCB_ROUTER_SEED", "0")],
+    );
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let verdict = verdict(&out.join("board-layout.json"));
+    assert_eq!(verdict["status"], "router_complete_unverified");
+    let free = &verdict["free_dimension"];
+    assert_eq!(free["chosen"], 16.0, "{free}");
+    assert_eq!(free["clean"], false);
+    assert!(
+        free["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("no size was clean: 16 mm came closest"),
+        "{free}"
+    );
+    assert!(
+        verdict["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("no size from 16 to 24 mm was clean"),
+        "{verdict}"
+    );
+    // The result is where a layout puts it, at the chosen size.
+    let board = verdict["outputs"]["board"].as_str().unwrap();
+    assert_eq!(Path::new(board), out.join("result/t.kicad_pcb"));
+    let text = fs::read_to_string(board).unwrap();
+    assert!(text.contains("(end 20 16)"), "{text}");
+    let table: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("free-dimension.json")).unwrap())
+            .unwrap();
+    let runs = table["runs"].as_array().unwrap();
+    // The probes, two side by side, then the closest at the full budget.
+    let kinds: Vec<(f64, &str, f64)> = runs
+        .iter()
+        .map(|run| {
+            (
+                run["size_mm"].as_f64().unwrap(),
+                run["kind"].as_str().unwrap(),
+                run["budget_seconds"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (16.0, "probe", 2.0),
+            (20.0, "probe", 2.0),
+            (24.0, "probe", 2.0),
+            (16.0, "closest", 6.0)
+        ],
+        "{table}"
+    );
+    assert_eq!(
+        runs.iter().filter(|run| run["chosen"] == true).count(),
+        1,
+        "{table}"
+    );
+    assert!(
+        out.join("free-dimension/20mm-probe/input/t.kicad_pcb")
+            .is_file()
+    );
+    fs::remove_dir_all(root).unwrap();
+}

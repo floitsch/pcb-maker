@@ -235,6 +235,7 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "Battery holder on the back" | `"back": ["BT1"]` |
 | "A HAT: the Pi's outline is fixed, parts go inside it" | `"fixed": ["J5"]`, `"hollow": ["J5"]` |
 | "As small as possible" | `"outline": {"shrink": true}`: the smallest board a quick route completes (each size tried costs a placement and a route) |
+| "The height can be anything, keep it under 100 mm" | in `layout.json`: `"free_dimension": {"edge": "bottom", "min": 34, "max": 60, "step": 2, "prefer_below": [100]}`: the smallest height whose layout comes out clean ([constraints.md](constraints.md#a-free-dimension-free_dimension)) |
 | "100 x 60 mm with 3 mm round corners" | `"outline": {"width": 100, "height": 60, "corner_radius": 3}` |
 | "It must fit the enclosure: an L, the right part 30 mm lower" | `"outline": {"polygon": [[0, 0], [115, 0], [115, 30], [230, 30], [230, 125], [0, 125]]}`; `"edge": "top"` for a part in the right part puts it against the step |
 | "A window for the display, nothing in it" | `"outline": {"width": 80, "height": 50, "cutouts": [{"x": [20, 60], "y": [10, 35]}]}` (relative to the outline's corner; a `polygon` works too) |
@@ -292,6 +293,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
   - `pin_swaps`: see below.
+- **A side that may be any length.** `free_dimension` in the layout
+  config names the edge that moves and the sizes to try (`"edge":
+  "bottom", "min": 34, "max": 60, "step": 2`, optional `prefer_below`
+  price thresholds and `band_mm`, what moves with the edge): the layout
+  runs at a third of a third of `total_seconds` per size, several sizes
+  side by side, from the smallest upward, lays the first clean size out
+  again at a third of `total_seconds`, and returns that layout as its
+  result, with `free-dimension.json` listing every size tried
+  ([constraints.md](constraints.md#a-free-dimension-free_dimension)).
+  `total_seconds` is then the whole search's budget: give it several
+  layouts' worth (the fence board: 6000).
 - **Pin swapping.** `"swappable": [{"part": "U1", "pins": ["GPIO*"],
   "except": ["GPIO0"]}]` in the layout config lets pcb-maker reassign
   interchangeable pins (pad functions or numbers, globs); `"pin_swaps":
@@ -451,6 +463,7 @@ A finished run also carries it as `verdict` in its report:
 | `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
+| `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |
 
 `room` says how full the board is and how large it would need to be, so
 that an agent enlarges it in one step:

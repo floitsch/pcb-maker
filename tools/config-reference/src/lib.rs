@@ -922,6 +922,19 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
+            title: "Layout settings: free_dimension",
+            prefix: "free_dimension.",
+            intro: "The `free_dimension` object of the layout settings: one edge of a rectangular outline that `layout-kicad-board` moves to find the smallest clean board (docs/constraints.md, \"A free dimension\").",
+            file: "crates/pcb-kicad/src/free_dimension.rs",
+            name: "KiCadFreeDimension",
+            fields: parse(
+                "crates/pcb-kicad/src/free_dimension.rs",
+                "KiCadFreeDimension",
+            )?,
+            defaults: Defaults::Entry,
+            role: Role::File,
+        },
+        Table {
             title: "Placer core",
             prefix: "",
             intro: "`pcb_placer::Config` (its defaults are `Config::new()`'s): not a file. The KiCad placer builds it from the placer settings in `place_kicad_board`.",
