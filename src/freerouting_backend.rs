@@ -23,8 +23,6 @@ struct Config {
     maximum_seconds: u64,
     maximum_passes: u32,
     pipeline_maximum_seconds: u64,
-    #[serde(default)]
-    island_bridges: Option<pcb_kicad::KiCadIslandBridgeConfig>,
 }
 
 fn default_python() -> PathBuf {
@@ -38,16 +36,6 @@ impl Config {
             || self.pipeline_maximum_seconds < self.maximum_seconds
         {
             return Err("external routing requires positive search/pass bounds and a pipeline bound at least as large as the search bound".into());
-        }
-        if let Some(bridge) = &self.island_bridges {
-            if bridge.maximum_attempts == 0 || bridge.maximum_pair_candidates == 0 {
-                return Err("island bridges require positive attempt and pair bounds".into());
-            }
-            if !bridge.routing.connection_rules.is_empty()
-                || bridge.routing.routing_demand.is_some()
-            {
-                return Err("backend island bridges require native-compiled rules and no net-specific forecasts".into());
-            }
         }
         Ok(())
     }
@@ -124,7 +112,9 @@ fn native_physical_clean(native: &Value) -> bool {
     .all(|key| native[*key].as_u64() == Some(0))
 }
 
-fn bridge_eligible(report: &Value) -> bool {
+/// A finished, preserved import whose only native findings are open
+/// connections: its board is still the selection.
+fn clean_with_only_opens(report: &Value) -> bool {
     report["status"] == "finished"
         && report["complete"] == false
         && report["native"]["complete"] == false
@@ -141,23 +131,12 @@ fn bridge_eligible(report: &Value) -> bool {
             .is_some_and(|n| n > 0)
 }
 
-fn bridge_complete(report: &Value) -> bool {
-    report["status"] == "complete"
-        && report["source_unchanged"] == true
-        && report["selected_native"]["complete"] == true
-        && native_physical_clean(&report["selected_native"])
-        && report["selected_native"]["selected_net_unconnected_items"].as_u64() == Some(0)
-        && report["selected_directory"]
-            .as_str()
-            .is_some_and(|p| !p.is_empty())
-}
-
 enum StageOutcome {
     Exited(ExitStatus),
     TimedOut,
 }
 
-/// Both child stages inherit one deadline and own their complete process group.
+/// The child stage runs until the deadline and owns its complete process group.
 fn wait_stage(command: &mut Command, deadline: Instant) -> Result<StageOutcome, String> {
     if Instant::now() >= deadline {
         return Ok(StageOutcome::TimedOut);
@@ -187,31 +166,16 @@ fn wait_stage(command: &mut Command, deadline: Instant) -> Result<StageOutcome, 
     }
 }
 
-/// The bridge file is its atomically published native incumbent, including on timeout.
-/// This receipt never rewrites the independent external or bridge evidence.
+/// Publishes final-selection.json atomically; it never rewrites the
+/// external evidence.
 fn publish_selection(
     output: &Path,
     external: &Value,
-    bridge: Option<&Value>,
     status: &str,
     elapsed: Duration,
 ) -> Result<(), String> {
-    let incumbent = bridge.filter(|b| {
-        b["source_unchanged"] == true
-            && native_physical_clean(&b["selected_native"])
-            && b["selected_native"]["selected_net_unconnected_items"]
-                .as_u64()
-                .is_some()
-            && b["selected_directory"].as_str().is_some()
-    });
-    let (stage, directory, native) = if let Some(b) = incumbent {
-        (
-            serde_json::json!("island_bridges"),
-            b["selected_directory"].clone(),
-            b["selected_native"].clone(),
-        )
-    } else if native_physical_clean(&external["native"])
-        && (require_complete(external).is_ok() || bridge_eligible(external))
+    let (stage, directory, native) = if native_physical_clean(&external["native"])
+        && (require_complete(external).is_ok() || clean_with_only_opens(external))
     {
         (
             serde_json::json!("external"),
@@ -221,17 +185,12 @@ fn publish_selection(
     } else {
         (Value::Null, Value::Null, Value::Null)
     };
-    let render = directory.as_str().map(|path| {
-        Path::new(path).join(if incumbent.is_some() {
-            "preview.svg"
-        } else {
-            "inspection-combined.svg"
-        })
-    });
+    let render = directory
+        .as_str()
+        .map(|path| Path::new(path).join("inspection-combined.svg"));
     let receipt = serde_json::json!({"schema_version":1, "status":status,
         "complete":status == "complete", "selected_stage":stage, "selected_directory":directory,
         "selected_native":native, "selected_render":render, "external_report":output.join("routing/report.json"),
-        "island_bridge_report":bridge.map(|_| output.join("island-bridges/island-bridges.json")),
         "pipeline_elapsed_seconds":elapsed.as_secs_f64()});
     let temporary = output.join(".final-selection.next.json");
     fs::write(
@@ -366,7 +325,7 @@ pub fn run(source: &Path, board_id: &str, output: &Path, config_path: &Path) -> 
     let status = match outcome {
         StageOutcome::Exited(status) => status,
         StageOutcome::TimedOut => {
-            publish_selection(&output, &report, None, "timed_out", started.elapsed())?;
+            publish_selection(&output, &report, "timed_out", started.elapsed())?;
             return Err(format!(
                 "external pipeline timed out; retained artifacts: {}",
                 output.display()
@@ -374,105 +333,23 @@ pub fn run(source: &Path, board_id: &str, output: &Path, config_path: &Path) -> 
         }
     };
     if !status.success() {
-        publish_selection(&output, &report, None, "error", started.elapsed())?;
+        publish_selection(&output, &report, "error", started.elapsed())?;
         return Err(format!(
             "external pipeline failed ({status}); see {} and {}",
             log_path.display(),
             report_path.display()
         ));
     }
-    let mut selected = routing.join("result");
-    let mut selected_stage = "external";
-    let mut bridge_report = None;
-    if require_complete(&report).is_err() {
-        let Some(bridge_config) = config
-            .island_bridges
-            .as_ref()
-            .filter(|_| bridge_eligible(&report))
-        else {
-            publish_selection(&output, &report, None, "incomplete", started.elapsed())?;
-            return Err(format!(
-                "{}; see {}",
-                require_complete(&report).unwrap_err(),
-                report_path.display()
-            ));
-        };
-        let bridge_output = output.join("island-bridges");
-        let bridge_config_path = output.join("island-bridge-config.json");
-        fs::write(
-            &bridge_config_path,
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(bridge_config).map_err(|e| e.to_string())?
-            ),
-        )
-        .map_err(|e| e.to_string())?;
-        let bridge_log_path = output.join("island-bridges.log");
-        let bridge_log = fs::File::create(&bridge_log_path).map_err(|e| e.to_string())?;
-        let mut bridge_command = Command::new(&executable);
-        bridge_command
-            .arg("bridge-kicad-open-connections")
-            .arg(&selected)
-            .arg(board_id)
-            .arg(&bridge_config_path)
-            .arg(&bridge_output)
-            .stdout(Stdio::from(
-                bridge_log.try_clone().map_err(|e| e.to_string())?,
-            ))
-            .stderr(Stdio::from(bridge_log));
-        let outcome = wait_stage(&mut bridge_command, deadline)?;
-        let path = bridge_output.join("island-bridges.json");
-        bridge_report = read_json(&path).ok();
-        let final_status = match outcome {
-            StageOutcome::TimedOut => "timed_out",
-            StageOutcome::Exited(status)
-                if status.success() && bridge_report.as_ref().is_some_and(bridge_complete) =>
-            {
-                "complete"
-            }
-            StageOutcome::Exited(_) => "incomplete",
-        };
-        if final_status != "complete" {
-            publish_selection(
-                &output,
-                &report,
-                bridge_report.as_ref(),
-                final_status,
-                started.elapsed(),
-            )?;
-            return Err(format!(
-                "native island bridge stage {final_status}; last atomic incumbent retained; see {} and {}",
-                path.display(),
-                bridge_log_path.display()
-            ));
-        }
-        selected = PathBuf::from(
-            bridge_report.as_ref().unwrap()["selected_directory"]
-                .as_str()
-                .unwrap(),
-        );
-        selected_stage = "external plus native island bridges";
+    let selected = routing.join("result");
+    if let Err(incomplete) = require_complete(&report) {
+        publish_selection(&output, &report, "incomplete", started.elapsed())?;
+        return Err(format!("{incomplete}; see {}", report_path.display()));
     }
-    publish_selection(
-        &output,
-        &report,
-        bridge_report.as_ref(),
-        "complete",
-        started.elapsed(),
-    )?;
-    println!(
-        "native-complete {selected_stage} route: {}",
-        selected.display()
-    );
+    publish_selection(&output, &report, "complete", started.elapsed())?;
+    println!("native-complete external route: {}", selected.display());
     println!(
         "combined render: {}",
-        selected
-            .join(if bridge_report.is_some() {
-                "preview.svg"
-            } else {
-                "inspection-combined.svg"
-            })
-            .display()
+        selected.join("inspection-combined.svg").display()
     );
     Ok(())
 }
@@ -501,7 +378,6 @@ mod tests {
             "maximum_passes":2, "pipeline_maximum_seconds":90});
         let config: Config = serde_json::from_value(base.clone()).unwrap();
         assert!(config.validate().is_ok());
-        assert!(config.island_bridges.is_none());
         for field in ["rules", "all_copper_signal_layers", "outside_outline"] {
             let mut changed = base.clone();
             changed[field] = json!(true);
@@ -515,14 +391,14 @@ mod tests {
     }
 
     #[test]
-    fn bridge_stage_requires_finished_preserved_import_with_only_native_opens() {
+    fn selection_keeps_a_finished_preserved_import_with_only_native_opens() {
         let eligible = json!({"status":"finished", "complete":false,
             "imported":true, "source_unchanged":true, "fixed_placement_matches":true,
             "project_and_classes_unchanged":true, "dimensional_mismatches":[],
             "native":{"complete":false, "selected_net_unconnected_items":1,
                 "drc_design_violations":0, "erc_violations":0, "schematic_parity_issues":0,
                 "library_metadata_warnings":3}});
-        assert!(bridge_eligible(&eligible));
+        assert!(clean_with_only_opens(&eligible));
         for key in [
             "imported",
             "source_unchanged",
@@ -531,7 +407,7 @@ mod tests {
         ] {
             let mut changed = eligible.clone();
             changed[key] = json!(false);
-            assert!(!bridge_eligible(&changed), "{key}");
+            assert!(!clean_with_only_opens(&changed), "{key}");
         }
         for key in [
             "drc_design_violations",
@@ -540,85 +416,26 @@ mod tests {
         ] {
             let mut changed = eligible.clone();
             changed["native"][key] = json!(1);
-            assert!(!bridge_eligible(&changed), "{key}");
+            assert!(!clean_with_only_opens(&changed), "{key}");
             changed["native"][key] = Value::Null;
-            assert!(!bridge_eligible(&changed), "missing {key}");
+            assert!(!clean_with_only_opens(&changed), "missing {key}");
         }
         for value in [json!(0), Value::Null] {
             let mut changed = eligible.clone();
             changed["native"]["selected_net_unconnected_items"] = value;
-            assert!(!bridge_eligible(&changed));
+            assert!(!clean_with_only_opens(&changed));
         }
         let mut changed = eligible.clone();
         changed["dimensional_mismatches"] = json!(["width"]);
-        assert!(!bridge_eligible(&changed));
+        assert!(!clean_with_only_opens(&changed));
         changed = eligible;
         changed["status"] = json!("failed");
-        assert!(!bridge_eligible(&changed));
+        assert!(!clean_with_only_opens(&changed));
     }
 
     #[test]
-    fn bridge_completion_requires_atomic_status_source_and_native_evidence() {
-        let complete = json!({"status":"complete", "source_unchanged":true,
-            "selected_directory":"candidate-000", "selected_native":{"complete":true,
-                "selected_net_unconnected_items":0, "drc_design_violations":0,
-                "erc_violations":0, "schematic_parity_issues":0,
-                "intentional_no_connect_groups":1, "library_metadata_warnings":2}});
-        assert!(bridge_complete(&complete));
-        for key in [
-            "selected_net_unconnected_items",
-            "drc_design_violations",
-            "erc_violations",
-            "schematic_parity_issues",
-        ] {
-            let mut changed = complete.clone();
-            changed["selected_native"][key] = json!(1);
-            assert!(!bridge_complete(&changed), "{key}");
-            changed["selected_native"][key] = Value::Null;
-            assert!(!bridge_complete(&changed), "missing {key}");
-        }
-        for status in ["running", "incomplete", "error"] {
-            let mut changed = complete.clone();
-            changed["status"] = json!(status);
-            assert!(!bridge_complete(&changed));
-        }
-        let mut changed = complete.clone();
-        changed["source_unchanged"] = json!(false);
-        assert!(!bridge_complete(&changed));
-        changed = complete.clone();
-        changed["selected_native"]["complete"] = json!(false);
-        assert!(!bridge_complete(&changed));
-        changed = complete;
-        changed["selected_directory"] = Value::Null;
-        assert!(!bridge_complete(&changed));
-    }
-
-    #[test]
-    fn bridge_option_is_bounded_and_has_no_named_endpoint_policy() {
-        let base = json!({"jar":"router.jar", "java":"java", "maximum_seconds":30,
-            "maximum_passes":2, "pipeline_maximum_seconds":90,
-            "island_bridges":{"routing":{}, "maximum_attempts":2, "maximum_pair_candidates":8}});
-        let config: Config = serde_json::from_value(base.clone()).unwrap();
-        assert!(config.validate().is_ok());
-        assert!(config.island_bridges.is_some());
-        let mut changed = base.clone();
-        changed["island_bridges"]["maximum_attempts"] = json!(0);
-        assert!(
-            serde_json::from_value::<Config>(changed)
-                .unwrap()
-                .validate()
-                .is_err()
-        );
-        for key in ["connection", "start", "finish"] {
-            let mut changed = base.clone();
-            changed["island_bridges"][key] = json!("N");
-            assert!(serde_json::from_value::<Config>(changed).is_err());
-        }
-    }
-
-    #[test]
-    fn expired_shared_deadline_does_not_start_another_stage() {
-        let mut command = Command::new("nonexistent-island-bridge-deadline-control");
+    fn expired_deadline_does_not_start_the_stage() {
+        let mut command = Command::new("nonexistent-stage-deadline-control");
         assert!(matches!(
             wait_stage(&mut command, Instant::now()).unwrap(),
             StageOutcome::TimedOut

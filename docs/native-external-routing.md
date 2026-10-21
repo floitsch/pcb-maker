@@ -1,9 +1,9 @@
 # Optional Freerouting backend
 
 `route-kicad-board-freerouting` routes a cold native KiCad project while retaining
-its placement and physical rules. The existing adaptive router remains the
-default. The external backend shares the verified whole-board export/import
-pipeline; its Python and Java helpers are bundled into the executable.
+its placement and physical rules. It shares the verified whole-board
+export/import pipeline of `experiments/whole-board`; its Python and Java
+helpers are bundled into the executable.
 
 ```sh
 pcb-maker route-kicad-board-freerouting source board-id output external.json
@@ -47,30 +47,13 @@ See `output/routing/report.json`, `output/backend.log`, and
 `output/routing/result/inspection-combined.svg`. An unproven DSN shape-equivalence
 field is separate from the final native validity check.
 
-To try bounded internal bridges after the external router leaves open
-connections, add `island_bridges` to the configuration:
-
-```json
-"island_bridges": {
-  "routing": { "resolution_mm": 0.25, "max_expansions": 2000000 },
-  "maximum_attempts": 4,
-  "maximum_pair_candidates": 8
-}
-```
-
-This optional stage discovers native copper islands and chooses existing-pad
-pairs automatically. It runs only after a preserved imported board has native
-opens and no DRC/ERC/parity findings. Physical rules are compiled from that
-native project; net-specific rules or forecasts are not accepted in this backend
-option. Both stages share `pipeline_maximum_seconds`. The bridge process group
-is terminated at the remaining deadline, retaining its last atomic selection.
-
 `output/final-selection.json` identifies the final selected project and render.
-The external report remains separate even when bridges complete the board.
-Bridge-selected boards use their updated `preview.svg`; the original external
-render shows the external stage only.
 
-To route a newly generated native placement, pass `--freerouting-config
-external.json` to `experiments/whole-board/area_probe.py` together with `--route`.
-It is mutually exclusive with `--adaptive-config`; placement constraints and
-full native acceptance remain unchanged.
+The optional island-bridge stage (`island_bridges`, which ran
+`bridge-kicad-open-connections` on the open connections Freerouting left) was
+removed on 2026-10-21 with the research grid router it used; it is in git
+history up to 0d13e80.
+
+`experiments/whole-board/area_probe.py` (`--freerouting-config external.json`
+with `--route`) predates the removal of the research commands it also calls
+(`place`, `route-kicad-board-adaptive`) and no longer runs as a whole.
