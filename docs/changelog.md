@@ -138,7 +138,6 @@ field), config reference (the `free_dimension` table).
 Logs: build/dim1/v5-2l-free-x1420(.log), build/dim1/v5-free-x1420(.log),
 build/short-fd-x1421, build/fp-fd-x1421, build/fp-fd-x1385-part, build/fp-fd-x1385b.
 
-## Committed on 2026-10-22 (all pour work charged)
 ## Measured on 2026-10-21 (layout sweep v18, designer tier)
 
 The deciding measurement for where the next work goes: the full layout
