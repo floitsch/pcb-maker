@@ -2022,6 +2022,10 @@ mod work_bound_tests {
         // Without a reserve, as any attempt.
         assert!(route_step_has_time(1.5, 0.0, 30.0));
         assert!(!route_step_has_time(1.0, 0.0, 30.0));
+        // megaduck: 3.9 s left, the first attempt's first iteration 17.5 s.
+        assert!(!first_iteration_fits(3.9, 17.5));
+        assert!(first_iteration_fits(3.9, 3.0));
+        assert!(first_iteration_fits(3.9, 0.0));
     }
 
     #[test]

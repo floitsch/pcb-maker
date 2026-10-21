@@ -69,6 +69,20 @@ class WorkRateAndTimeout(unittest.TestCase):
         arguments.budget_scale = 1.0
         self.assertEqual(run.scaled_timeout(arguments, 40), 1000)
 
+    def test_the_timeout_allows_for_the_stretched_guard(self):
+        class Arguments:
+            timeout_given = False
+            timeout = run.DEFAULT_TIMEOUT_SECONDS
+            budget_scale = 1.0
+            work_rate = run.REFERENCE_WORK_RATE
+        arguments = Arguments()
+        # Pinned rates: the binary may stretch its guard four times.
+        self.assertEqual(run.wall_stretch_allowance(arguments), 4.0)
+        self.assertEqual(run.scaled_timeout(arguments), 1500 * 2 * 4 + 300)
+        self.assertEqual(run.intake_timeout(30, 4.0), 420.0)
+        arguments.work_rate = "measured"
+        self.assertEqual(run.scaled_timeout(arguments), 3300)
+
     def test_rows_carry_the_verdicts_rates(self):
         row = {}
         run.verdict_extras(row, {"work_rate": 3.15e6, "placer_work_rate": 150e6, "work_rate_source": "PCB_WORK_RATE",

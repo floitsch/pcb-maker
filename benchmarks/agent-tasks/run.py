@@ -92,6 +92,11 @@ FIXED_TIMEOUT_SECONDS = 300
 # budget) past the budget plus FIXED_TIMEOUT_SECONDS (scaled_timeout).
 DEFAULT_TIMEOUT_SECONDS = 1800
 WALL_GUARD = 2.0
+# With the rates pinned, a binary stretches its wall-clock guards by the
+# pinned rate over the one it measured at its start, at most this much
+# (pcb-kicad's MAX_WALL_STRETCH; docs/router.md, "Determinism and the wall
+# clock"): the harness's timeouts allow for it.
+WALL_STRETCH_MAX = 4.0
 # The work rates every board runs at unless --work-rate says otherwise
 # (PCB_WORK_RATE: search expansions and placement units a second of work
 # stands for): the reference's, so that rows compare across machines and
@@ -411,7 +416,7 @@ def verdict_extras(row, verdict):
     # The work rates the binary ran at and what it measured, and its work
     # over its wall clock (binaries since the runtime calibration).
     for key in ("work_rate", "placer_work_rate", "work_rate_source", "work_rate_measured",
-                "placer_work_rate_measured", "work_wall_ratio"):
+                "placer_work_rate_measured", "work_wall_ratio", "wall_stretch"):
         if verdict.get(key) is not None:
             row[key] = round(verdict[key], 3) if key == "work_wall_ratio" else verdict[key]
 
@@ -768,11 +773,18 @@ LAYOUT_BUDGETS = {"total_seconds": 1500.0, "move_seconds": 600.0, "polish_second
 ROUTE_BUDGET = ("ladder_budget_seconds", 1200.0)
 
 
+def wall_stretch_allowance(arguments):
+    """How far a binary may stretch its wall-clock guards: WALL_STRETCH_MAX
+    with the rates pinned (--work-rate other than `measured`), else 1."""
+    return 1.0 if getattr(arguments, "work_rate", "measured") == "measured" else WALL_STRETCH_MAX
+
+
 def scaled_timeout(arguments, budget=None, guard=None):
     """The harness's timeout for a board: --timeout as given (beyond its
     fixed 300 s scaled with the budget), else the layout's wall-clock guard
     past the board's budget in work (`budget`: the layout's total_seconds,
-    route mode's ladder budget; default the layout's, scaled) plus the
+    route mode's ladder budget; default the layout's, scaled), stretched as
+    far as the binary may stretch it (`wall_stretch_allowance`), plus the
     fixed 300 s, at least 1800 s. The guard (`guard`, default WALL_GUARD,
     the layout's wall_guard) is a load margin: the harness waits for it."""
     if arguments.timeout_given:
@@ -782,7 +794,8 @@ def scaled_timeout(arguments, budget=None, guard=None):
         return round(fixed + (arguments.timeout - fixed) * arguments.budget_scale)
     if budget is None:
         budget = LAYOUT_BUDGETS["total_seconds"] * arguments.budget_scale
-    return round(max(DEFAULT_TIMEOUT_SECONDS, budget * (guard or WALL_GUARD) + FIXED_TIMEOUT_SECONDS))
+    stretched = budget * (guard or WALL_GUARD) * wall_stretch_allowance(arguments)
+    return round(max(DEFAULT_TIMEOUT_SECONDS, stretched + FIXED_TIMEOUT_SECONDS))
 
 
 def run_admitted(task, arguments, token):
@@ -1294,10 +1307,11 @@ def intake_deadline(budget):
     return max(90.0, 3 * budget)
 
 
-def intake_timeout(budget):
+def intake_timeout(budget, stretch=1.0):
     """The intake's whole-process guard for that ladder (180 s at 30 s,
-    960 s at 300 s)."""
-    return max(180.0, 3 * budget + 60)
+    960 s at 300 s), its wall guard stretched `stretch` times (the binary's
+    stretch for pinned rates: `wall_stretch_allowance`)."""
+    return max(180.0, 3 * budget * stretch + 60)
 
 
 def strip_command(binary, original, stripped):
@@ -1479,7 +1493,8 @@ def route_task_admitted(task, arguments, token):
     env = dict(os.environ, RAYON_NUM_THREADS=str(arguments.threads)) if arguments.threads else None
     command = [str(arguments.binary), "route-kicad-board", str(prepared), board_id, str(work / "route"),
                str(work / "router.json"), "--reference", "none"]
-    timeout = scaled_timeout(arguments) if arguments.timeout_given else intake_timeout(budget)
+    timeout = (scaled_timeout(arguments) if arguments.timeout_given
+               else intake_timeout(budget, wall_stretch_allowance(arguments)))
     started = time.monotonic()
     load_before = os.getloadavg()[0]
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,

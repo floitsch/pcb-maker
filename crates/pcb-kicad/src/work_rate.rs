@@ -28,6 +28,16 @@ use pcb_placer as placer;
 use pcb_router as core;
 use serde::Serialize;
 
+/// The most the wall-clock guards stretch for a pinned rate faster than
+/// the machine (`KiCadWorkRate::wall_stretch`): a machine at a quarter of
+/// the pinned rate still ends its runs where the work does; a slower one
+/// is cut as before, and a run that hangs still ends.
+pub const MAX_WALL_STRETCH: f64 = 4.0;
+
+/// The variable that sets another cap than `MAX_WALL_STRETCH` (1: no
+/// stretch, the guards as before 2026-10-22).
+pub const WALL_STRETCH_VARIABLE: &str = "PCB_WALL_STRETCH_MAX";
+
 /// The variable that pins the rates.
 pub const WORK_RATE_VARIABLE: &str = "PCB_WORK_RATE";
 
@@ -112,6 +122,45 @@ impl KiCadWorkRate {
         }
     }
 
+    /// How many times longer than the applied rates say this machine
+    /// takes a second of work: the applied rate over the measured one where
+    /// the rates are pinned (`PCB_WORK_RATE`, the router settings) faster
+    /// than the machine measured at the start, at least 1 and at most
+    /// `MAX_WALL_STRETCH` (`PCB_WALL_STRETCH_MAX`); 1 with the rates
+    /// measured. The search's rate, and with `placement` the larger of it
+    /// and the placer's. The wall-clock guards (route mode's
+    /// `deadline_seconds`, the layout's `wall_guard`, `GUARD`) stretch by
+    /// it: they are a margin for load and for what the work does not
+    /// count, and a pinned rate the machine does not reach is neither (the
+    /// tiers pin the reference's; at load 60 this machine measures 0.3 to
+    /// 0.4 of it, and the 90 s guard of a 30 s budget cut every board that
+    /// used its budget).
+    pub fn wall_stretch(&self, placement: bool) -> f64 {
+        let Some(measured) = &self.measured else {
+            return 1.0;
+        };
+        if self.source == "measured" || self.source == "reference" {
+            return 1.0;
+        }
+        let ratio = |applied: f64, measured: f64| {
+            if measured > 0.0 && applied.is_finite() {
+                applied / measured
+            } else {
+                1.0
+            }
+        };
+        let search = ratio(self.expansions_per_second, measured.expansions_per_second);
+        let stretch = if placement {
+            search.max(ratio(
+                self.placer_work_per_second,
+                measured.placer_work_per_second,
+            ))
+        } else {
+            search
+        };
+        stretch.clamp(1.0, wall_stretch_cap())
+    }
+
     /// One line for the log.
     pub fn line(&self) -> String {
         let measured = match &self.measured {
@@ -128,8 +177,18 @@ impl KiCadWorkRate {
             ),
             None => String::new(),
         };
+        let stretch = if self.wall_stretch(true) > 1.0 {
+            format!(
+                "; the wall-clock guards stretch {:.2} times (a layout's {:.2}: the pinned rate over the measured, at most {})",
+                self.wall_stretch(false),
+                self.wall_stretch(true),
+                wall_stretch_cap()
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "work rate: {:.4e} expansions/s, {:.4e} placer units/s ({}){measured}",
+            "work rate: {:.4e} expansions/s, {:.4e} placer units/s ({}){measured}{stretch}",
             self.expansions_per_second, self.placer_work_per_second, self.source
         )
     }
@@ -227,6 +286,7 @@ pub fn calibrate(config: Option<(f64, Option<f64>)>) -> Result<KiCadWorkRate, St
         .map_err(crate::verdict::input_error)?;
     core::router::set_expansions_per_second(rate.expansions_per_second);
     placer::set_work_per_second(rate.placer_work_per_second);
+    core::router::set_wall_stretch(rate.wall_stretch(false));
     let applied = APPLIED.get_or_init(|| rate);
     eprintln!("{}", applied.line());
     Ok(applied.clone())
@@ -291,6 +351,16 @@ pub fn measure() -> KiCadMeasuredRate {
         threads,
         seconds: started.elapsed().as_secs_f64(),
     }
+}
+
+/// `MAX_WALL_STRETCH`, or `PCB_WALL_STRETCH_MAX` when it is a number of
+/// at least 1.
+fn wall_stretch_cap() -> f64 {
+    std::env::var(WALL_STRETCH_VARIABLE)
+        .ok()
+        .and_then(|text| text.trim().parse::<f64>().ok())
+        .filter(|cap| cap.is_finite() && *cap >= 1.0)
+        .unwrap_or(MAX_WALL_STRETCH)
 }
 
 fn rate(work: u64, seconds: f64) -> f64 {
@@ -558,6 +628,28 @@ mod tests {
         assert!(resolve(Some("slow"), None, None).is_err());
         assert!(resolve(None, Some((0.0, None)), None).is_err());
         assert!(resolve(None, Some((1.0e6, Some(-1.0))), None).is_err());
+    }
+
+    #[test]
+    fn the_guards_stretch_for_a_pinned_rate_faster_than_the_machine() {
+        // Measured 2.5e6 and 100e6 against the reference's 3.15e6 and 150e6.
+        let pinned = resolve(Some("3.15e6,150e6"), None, Some(measured())).unwrap();
+        assert!((pinned.wall_stretch(false) - 1.26).abs() < 1e-9);
+        assert!((pinned.wall_stretch(true) - 1.5).abs() < 1e-9);
+        // A machine at a tenth: at most MAX_WALL_STRETCH.
+        let slow = KiCadMeasuredRate {
+            expansions_per_second: 3.15e5,
+            ..measured()
+        };
+        let pinned = resolve(Some("3.15e6"), None, Some(slow)).unwrap();
+        assert_eq!(pinned.wall_stretch(false), MAX_WALL_STRETCH);
+        // A pinned rate slower than the machine, the rates measured, or
+        // nothing measured: no stretch.
+        let pinned = resolve(Some("1e6,50e6"), None, Some(measured())).unwrap();
+        assert_eq!(pinned.wall_stretch(true), 1.0);
+        let applied = resolve(None, None, Some(measured())).unwrap();
+        assert_eq!(applied.wall_stretch(true), 1.0);
+        assert_eq!(KiCadWorkRate::reference().wall_stretch(true), 1.0);
     }
 
     #[test]

@@ -17,10 +17,13 @@ pub fn route_kicad_board(
     let with_deadline;
     let config = match (config.deadline, config.deadline_seconds) {
         (None, Some(seconds)) => {
+            // Stretched where a pinned rate is faster than the machine
+            // (`KiCadWorkRate::wall_stretch`).
+            let stretch = crate::work_rate::work_rate().wall_stretch(false);
             with_deadline = KiCadBoardRouterConfig {
                 deadline: Some(
                     std::time::Instant::now()
-                        + std::time::Duration::from_secs_f64(seconds.max(0.0)),
+                        + std::time::Duration::from_secs_f64(seconds.max(0.0) * stretch),
                 ),
                 ..config.clone()
             };
@@ -270,6 +273,9 @@ pub fn route_kicad_board(
             ladder.work, ladder.ladder_budget
         );
     }
+    let accounting = KiCadWallAccounting::now(ladder.started.elapsed().as_secs_f64(), ladder.work);
+    eprintln!("{}", accounting.line());
+    result.wall_accounting = Some(accounting);
     result.kicad_checks_charged = ladder.checks_charged.checks;
     result.kicad_check_work_seconds = ladder.checks_charged.work();
     result.attempts_failed = std::mem::take(&mut ladder.failed);
@@ -567,7 +573,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // load; the clock stays as a guard.
         router_config.negotiation_expansions =
             (seconds * core::router::expansions_per_second()) as u64;
-        router_config.negotiation_seconds = seconds * core::router::GUARD;
+        router_config.negotiation_seconds = seconds * core::router::guard();
         // The polish after it may not take longer than the negotiation was
         // allowed.
         router_config.via_reduction_seconds = seconds.min(300.0);
@@ -580,7 +586,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         let seconds = router_config.negotiation_seconds;
         router_config.negotiation_expansions =
             (seconds * core::router::expansions_per_second()) as u64;
-        router_config.negotiation_seconds = seconds * core::router::GUARD;
+        router_config.negotiation_seconds = seconds * core::router::guard();
     }
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
@@ -736,6 +742,9 @@ pub(crate) fn finish_routed_board(
         memory_limits: String::new(),
         attempts_failed: Vec::new(),
         island_stubs: result.island_stubs,
+        manual_spokes_work_seconds: result.manual_spokes_work,
+        first_iteration_expansions: result.first_iteration_expansions,
+        wall_accounting: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

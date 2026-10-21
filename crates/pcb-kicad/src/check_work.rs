@@ -48,24 +48,57 @@ pub(crate) const SECONDS_PER_THOUSAND_HATCH_HOLES: f64 = 1.7;
 /// checks measured took 50 to 60 s, under load).
 pub(crate) const MAX_CHECK_SECONDS: f64 = 50.0;
 
+/// A board whose outline is drawn in more than this many graphic items on
+/// Edge.Cuts (a panel's tabs and mouse bites, a keyboard's cut-outs)
+/// counts `COMPLEX_OUTLINE_SECONDS` more per check (2026-10-22).
+pub(crate) const COMPLEX_OUTLINE_ITEMS: usize = 200;
+
+/// What a complex outline adds to a check. The slow boards without
+/// hatched zones the constant missed by four to nine times are the
+/// complex outlines (v18b's routed boards checked again uncached, one at
+/// a time, load 22, kicad-cli's wall clock: katia 404 Edge.Cuts items
+/// 15.5 s, ULK 411 33.1 s, ghoul 496 28.8 s, slab-pcb-left 1030 15.1 s,
+/// interchange 1162 33.8 s, SmartSpin2k's panel 1367 28.8 s, the 0xCB
+/// panel 6369 and 8100 hatch holes 41.7 s against its 17.4 s): with 20 s
+/// they are within 0.64 to 1.43 of the model, beyond about 400 items the
+/// time no longer grows with the count. The twelve boards of 100 items or
+/// fewer measured beside them (2.8 to 5.4 s) and every board of the short
+/// tier (at most 140) are unchanged. Not explained: d20_pcb (194 k polygon
+/// vertices, 17.4 s), Quanta75 (87 k, 14.4 s), PixelWave (5000 texts,
+/// 12.1 s); the vertex count alone also marks fast boards (urchin,
+/// 0xcb-static, and Blue_Line's 359 k).
+pub(crate) const COMPLEX_OUTLINE_SECONDS: f64 = 20.0;
+
 /// What the model reads from a board: its hatched copper zones and their
 /// holes.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct CheckInputs {
     pub hatched_zones: usize,
     pub hatch_holes: f64,
+    /// Graphic items on Edge.Cuts (the board's and its footprints').
+    pub edge_items: usize,
 }
 
 /// The model's inputs from the board as given (before routing: the
 /// layout's zones are the designer's, its added planes are solid).
 pub(crate) fn check_inputs(pcb: &Expr) -> CheckInputs {
+    let edge_items = edge_items(pcb);
     let Ok(layers) = LayerTable::from_pcb(pcb) else {
-        return CheckInputs::default();
+        return CheckInputs {
+            edge_items,
+            ..CheckInputs::default()
+        };
     };
     let Ok(pours) = pours(pcb, &layers) else {
-        return CheckInputs::default();
+        return CheckInputs {
+            edge_items,
+            ..CheckInputs::default()
+        };
     };
-    let mut inputs = CheckInputs::default();
+    let mut inputs = CheckInputs {
+        edge_items,
+        ..CheckInputs::default()
+    };
     for pour in &pours {
         let Some(hatch) = &pour.hatch else { continue };
         let pitch = hatch.thickness + hatch.gap;
@@ -79,9 +112,42 @@ pub(crate) fn check_inputs(pcb: &Expr) -> CheckInputs {
     inputs
 }
 
+/// The graphic items on Edge.Cuts in `node` (the board's lines, arcs,
+/// circles, rectangles, polygons and curves, its footprints' too).
+fn edge_items(node: &Expr) -> usize {
+    const GRAPHICS: [&str; 12] = [
+        "gr_line",
+        "gr_arc",
+        "gr_circle",
+        "gr_rect",
+        "gr_poly",
+        "gr_curve",
+        "fp_line",
+        "fp_arc",
+        "fp_circle",
+        "fp_rect",
+        "fp_poly",
+        "fp_curve",
+    ];
+    if node.head().is_some_and(|head| GRAPHICS.contains(&head)) {
+        return usize::from(
+            node.child("layer")
+                .and_then(|layer| layer.children().get(1))
+                .and_then(Expr::atom)
+                == Some("Edge.Cuts"),
+        );
+    }
+    node.children().iter().map(edge_items).sum()
+}
+
 /// The modelled seconds of one check from the model's inputs.
 pub(crate) fn check_seconds(inputs: CheckInputs) -> f64 {
-    (CHECK_SECONDS + SECONDS_PER_THOUSAND_HATCH_HOLES * inputs.hatch_holes / 1000.0)
+    let outline = if inputs.edge_items > COMPLEX_OUTLINE_ITEMS {
+        COMPLEX_OUTLINE_SECONDS
+    } else {
+        0.0
+    };
+    (CHECK_SECONDS + SECONDS_PER_THOUSAND_HATCH_HOLES * inputs.hatch_holes / 1000.0 + outline)
         .min(MAX_CHECK_SECONDS)
 }
 
@@ -166,6 +232,33 @@ mod tests {
     }
 
     #[test]
+    fn a_complex_outline_counts_more() {
+        let lines = |count: usize| {
+            (0..count)
+                .map(|index| {
+                    format!(
+                        "(gr_line (start {index} 0) (end {index} 1) (stroke (width 0.1) (type solid)) (layer \"Edge.Cuts\"))"
+                    )
+                })
+                .collect::<String>()
+        };
+        let plain = check_inputs(&board(&lines(COMPLEX_OUTLINE_ITEMS)));
+        assert_eq!(plain.edge_items, COMPLEX_OUTLINE_ITEMS);
+        assert_eq!(check_seconds(plain), CHECK_SECONDS);
+        // Footprint graphics on Edge.Cuts count too; other layers do not.
+        let footprint = "(footprint \"x\" (layer \"F.Cu\") (fp_line (start 0 0) (end 1 0) (layer \"Edge.Cuts\")) (fp_line (start 0 0) (end 1 0) (layer \"F.SilkS\")))";
+        let complex = check_inputs(&board(&format!(
+            "{}{footprint}",
+            lines(COMPLEX_OUTLINE_ITEMS)
+        )));
+        assert_eq!(complex.edge_items, COMPLEX_OUTLINE_ITEMS + 1);
+        assert_eq!(
+            check_seconds(complex),
+            CHECK_SECONDS + COMPLEX_OUTLINE_SECONDS
+        );
+    }
+
+    #[test]
     fn a_board_without_hatched_zones_counts_the_constant() {
         assert_eq!(check_seconds(check_inputs(&board(""))), CHECK_SECONDS);
         let solid = board(&zone("\"F.Cu\" \"B.Cu\"", "(thermal_gap 0.5)"));
@@ -201,16 +294,19 @@ mod tests {
         let few = check_seconds(CheckInputs {
             hatched_zones: 1,
             hatch_holes: 1000.0,
+            ..CheckInputs::default()
         });
         let many = check_seconds(CheckInputs {
             hatched_zones: 1,
             hatch_holes: 5000.0,
+            ..CheckInputs::default()
         });
         assert!(CHECK_SECONDS < few && few < many, "{few} {many}");
         assert_eq!(
             check_seconds(CheckInputs {
                 hatched_zones: 1,
-                hatch_holes: 1.0e9
+                hatch_holes: 1.0e9,
+                ..CheckInputs::default()
             }),
             MAX_CHECK_SECONDS
         );

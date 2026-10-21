@@ -273,11 +273,38 @@ fn warn_if_old_kicad(program: &OsStr) {
     });
 }
 
+static KICAD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static KICAD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// kicad-cli's reports and saves in this process (the DRC cache's answers
+/// among them) and their wall seconds, summed over threads.
+pub(crate) fn kicad_totals() -> (u64, f64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (
+        KICAD_CALLS.load(Relaxed),
+        KICAD_NANOS.load(Relaxed) as f64 / 1.0e9,
+    )
+}
+
+/// Counts a kicad-cli run that started at `started` (`kicad_totals`).
+fn note_kicad(started: std::time::Instant) {
+    use std::sync::atomic::Ordering::Relaxed;
+    KICAD_CALLS.fetch_add(1, Relaxed);
+    KICAD_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+}
+
 pub(super) fn run_kicad_report(
     arguments: &[&str],
     output: &Path,
     input: &Path,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = run_kicad_report_untimed(arguments, output, input);
+    note_kicad(started);
+    result
+}
+
+fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> Result<(), String> {
     let program = OsStr::new("kicad-cli");
     warn_if_old_kicad(program);
     // ERC too: its library warnings are not counted (`is_erc_library_warning`).
@@ -403,6 +430,13 @@ fn run_report_command_cached(
 /// that need its geometry (`necks`). Not cached: the cache keeps reports,
 /// not boards. The report goes to `report`.
 pub(super) fn run_kicad_save_board(board: &Path, report: &Path) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let result = run_kicad_save_board_untimed(board, report);
+    note_kicad(started);
+    result
+}
+
+fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), String> {
     let scratch = board
         .parent()
         .filter(|path| !path.as_os_str().is_empty())

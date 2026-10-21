@@ -158,7 +158,8 @@ impl Router {
                 // cut round that leaves something open is reverted below).
                 self.config.negotiation_expansions =
                     ((left * expansions_per_second()) as u64).max(1);
-                self.config.negotiation_seconds = self.config.negotiation_seconds.min(left * GUARD);
+                self.config.negotiation_seconds =
+                    self.config.negotiation_seconds.min(left * guard());
             }
             let via_cost = self.config.via_cost;
             let weight = self.config.heuristic_weight;

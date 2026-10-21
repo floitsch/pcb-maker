@@ -186,6 +186,16 @@ pub(crate) fn route_step_has_time(left: f64, kept: f64, budget: f64) -> bool {
         }
 }
 
+/// Route mode: whether a step's fresh router fits `left` under the bound
+/// with its first negotiation iteration, which it does whatever its work
+/// deadline: projected by the ladder's first attempt's (`first_iteration`,
+/// 0 when unknown). megaduck's narrow-signal step started with 3.9 s left
+/// and did 17.6 s of work in its one iteration, 45 s against a bound of
+/// 32 s.
+pub(crate) fn first_iteration_fits(left: f64, first_iteration: f64) -> bool {
+    left >= first_iteration
+}
+
 /// Which attempts of a ladder KiCad checks. An attempt's quality is the
 /// router's open count (unconnected terminals and internal violations)
 /// plus KiCad's unconnected items, then KiCad's starved thermals, then

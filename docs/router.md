@@ -1162,6 +1162,21 @@ negotiation a rung and 75 s a probe, the narrow-signal step had the
 budget plus a half, and only the regular ladder's next rung checked the
 budget. The layout's ladder (its deadline_work path) is unchanged.
 
+Since 2026-10-22 route mode's ladder also counts each attempt's manual
+spokes (the pour analyses and fill probes that repair starved thermals
+after the negotiation, `add_manual_spokes`; `manual_spokes_work_seconds`
+in board-router.json): no work deadline ends them, and on Vortac's
+panels they were 30 s of every attempt beside 5 s of search, uncounted,
+so the rungs after the continuation ran and the 90 s wall guard cut
+every run. And no step starts with less left under the bound than the
+ladder's first attempt took to the end of its first negotiation
+iteration (`first_iteration_fits`), which a fresh router does whatever
+its deadline: megaduck's narrow-signal step started with 3.9 s left and
+did 17.6 s in its one iteration (45 s of work for a bound of 32 s); the
+step is then skipped, with why. `PCB_LADDER_UNCHARGED_SPOKES` and
+`PCB_LADDER_NO_FIRST_ITERATION_GATE` restore the count and the start rule
+before (for attributing rows). The layout's ladder counts neither.
+
 **The ladder in code, and its faults** (2026-10-21). The ladder is
 `Ladder` in board_router/ladder.rs, its steps in order (`Ladder::run`):
 `probes` (the rung probes, their leader's continuation), `rungs` (every
@@ -1214,7 +1229,11 @@ attempt of the final ladder, the neck repair's checks and its KiCad fill)
 counts a modelled cost in the layout's work: `CHECK_SECONDS` (3.6 s) plus
 `SECONDS_PER_THOUSAND_HATCH_HOLES` (1.7 s) per thousand holes of the
 board's hatched copper zones (area on each copper layer over the square of
-the hatch pitch), at most 50 s; the inputs come from the board file before
+the hatch pitch), and since 2026-10-22 `COMPLEX_OUTLINE_SECONDS` (20 s)
+for a board with more than `COMPLEX_OUTLINE_ITEMS` (200) graphic items on
+Edge.Cuts (the slow plain boards were the complex outlines: katia,
+ghoul, ULK, slab-pcb, SmartSpin2k's panel, 15 to 34 s against 3.6), at
+most 50 s; the inputs come from the board file before
 the layout starts (`layout: a KiCad check counts ...`). The cost does not
 depend on whether the DRC cache answered the check, so a warm run ends
 where a cold one does; a check the gate skips counts nothing. In
@@ -1338,8 +1357,34 @@ that was pour analyses. Not counted: the negotiation's stamping and
 conflict bookkeeping (its limit is search expansions; at one thread its
 wall time runs 10-40 % ahead of search and pour work), the pour analyses
 in the ladder's and the layout's work tallies and in `deadline_work`
-(those still count search expansions), and the manual spokes' fill
-probe.
+(those still count search expansions; route mode's ladder counts the
+manual spokes' since 2026-10-22, "The work bound in route mode").
+
+**The manual spokes** (2026-10-22). `add_manual_spokes` runs after
+every finish: per starved pad a full pour analysis, then one per
+candidate track it tries (Vortac's panel: 34 tracks, 27 s of analyses
+in 28 s of wall clock per attempt, and its fill probes were not counted
+at all). Now an analysis of routes it did not change is reused (the
+state after a kept track is the one its trial analysed; after a track
+not kept, the one before: an analysis is a function of the routes), its
+fill probes count as pour work, it is a phase of its own in the
+profile (`manual spokes`), and it has a budget in work (the
+negotiation's work, at least `MANUAL_SPOKES_SECONDS`, 60 s: a bound no
+ordinary board reaches) and stops at the wall-clock deadline, but not at
+the work deadline (the negotiation before it has usually reached that,
+and starved thermals are repaired however the budget went). On six
+boards with manual spokes (CompassTag, RS485M, Zulassungskarte,
+ch32v003, backplane, nervous-ecg) the boards and the fingerprints are
+those of x1366; Vortac's phase went from 28 s to 13 s.
+
+**Where the wall clock went** (2026-10-22). Every route ends with a
+`wall accounting:` line and board-router.json's `wall_accounting`: the
+ladder's wall clock and work, the machine's measured share of the work
+rate and the guards' stretch (below), then thread seconds (routers side
+by side add up) of the lattices built, the lowerings, the routers'
+preparation, each phase with the search and pour work it counted, and
+kicad-cli's runs. What the phases' wall clock has beyond their work is
+what the budgets do not see.
 
 **The search's calibration** (2026-10-16). `EXPANSIONS_PER_SECOND` is
 the reference's rate: search expansions per second of a router's phases
@@ -1455,6 +1500,31 @@ board whose placement units run faster or slower than the canned ones,
 the load changing after the measurement), not a budget; a run that hangs
 still ends. run.py's timeout follows it: the budget times the guard plus
 300 s, at least 1800 s. `PCB_ROUTER_NO_WALL_GUARD` still drops it.
+
+**The guards stretch for pinned rates** (2026-10-22). With the rates
+pinned (`PCB_WORK_RATE`, the router settings `work_rate`), a second of
+work is a second of the pinned machine's, not of this one: the tiers pin
+the reference's, and at a load of 25 this machine measures 0.4 to 0.6 of
+it, at 60 0.3 to 0.4. Every wall-clock guard was then a budget in
+disguise: route mode's 90 s guard of a 30 s budget held 32 s of work
+only above 0.36 of the reference, so the boards that used their budget
+(OpenDeck, brickpico, Wonkle, ChengminLi, megaduck) were cut whenever
+the tier ran beside other work, and a layout at a work-over-wall ratio
+of 0.32 to 0.42 (v18b's four cut rows: katia, Batch_1, Quanta75, the
+0xCB panel, measured at 0.41 to 0.74 of the reference's search rate and
+0.20 to 0.40 of its placer rate) reached its 2 x budget. Now the guards
+stretch by the pinned rate over the measured one
+(`KiCadWorkRate::wall_stretch`: the search's in route mode, the larger
+of the search's and the placer's in a layout; at least 1, at most
+`MAX_WALL_STRETCH`, 4, or `PCB_WALL_STRETCH_MAX`; 1 with the rates
+measured): route mode's `deadline_seconds`, the layout's `wall_guard`
+and the router's `GUARD` (`guard()`). The `work rate:` line and the
+ladder's line say so; the verdict has `wall_stretch`, and run.py copies
+it into the rows. run.py's timeouts allow for the cap when it pins the
+rates (`WALL_STRETCH_MAX`: the intake's 180 s for a 30 s budget becomes
+420 s, a layout's 3300 s 12 300 s); they are hang guards, the binary's
+own guard ends a run first. A machine slower than a quarter of the
+pinned rate is still cut, and says so.
 
 What remains load-dependent: the measured rates themselves (pin them for
 comparisons), a run that reaches the wall clock first (a machine that

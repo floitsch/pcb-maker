@@ -6,6 +6,10 @@
 
 use super::*;
 
+/// The least work budget of the manual spokes (`add_manual_spokes`), in
+/// seconds of an idle machine.
+pub(super) const MANUAL_SPOKES_SECONDS: f64 = 60.0;
+
 impl Router {
     /// For each pad the spoke model finds a starved thermal (fewer than
     /// two spokes as KiCad counts them), straight tracks from the pad into
@@ -18,6 +22,17 @@ impl Router {
     /// Returns the tracks added.
     pub fn add_manual_spokes(&mut self) -> usize {
         let mut added = 0;
+        // A budget in work (the pour analyses and their fill probes), the
+        // negotiation's work and at least a minute: a bound, which a
+        // board's few starved pads never reach (the clean-up's cap, which
+        // a layout's polish shrinks, is not this phase's). Not ended by
+        // the caller's work deadline, which the negotiation before it has
+        // usually reached: a board's starved thermals are repaired however
+        // its negotiation's budget went. The wall-clock deadline ends it
+        // (Vortac's panel: 30 s of analyses for 34 tracks in every
+        // attempt, also in the rungs that ran on past the deadline).
+        let clock = self.clock();
+        let budget = self.negotiation_seconds.max(MANUAL_SPOKES_SECONDS);
         // Every net with a pour, those routed as tracks too (the tracks
         // rung): KiCad fills their zones all the same, with the masks
         // set for the analysis only.
@@ -39,8 +54,9 @@ impl Router {
                 state.plane = plane;
                 state.plane_class = plane_class;
             }
-            added += self.add_manual_spokes_of(net);
-            added += self.add_inner_spokes(net);
+            let (tracks, report) = self.add_manual_spokes_of(net, &clock, budget);
+            added += tracks;
+            added += self.add_inner_spokes(net, report, &clock, budget);
             if lent {
                 let class = self.board.nets[net as usize].class;
                 let state = &mut self.nets[net as usize];
@@ -61,12 +77,30 @@ impl Router {
     /// larger pad's copper it keeps every clearance that pad keeps. Kept
     /// only if the model then finds the pad no longer short (0xCB's U3.45
     /// corner vias, whose ring and outer spokes the QFN's pins take).
-    pub(super) fn add_inner_spokes(&mut self, net: NetId) -> usize {
+    pub(super) fn add_inner_spokes(
+        &mut self,
+        net: NetId,
+        first: Option<Vec<SpokeRecord>>,
+        clock: &(f64, std::time::Instant),
+        budget: f64,
+    ) -> usize {
         let mut added = 0;
         let mut tried: HashSet<(usize, usize)> = HashSet::new();
+        // The analysis of the state as it is (the last one when nothing
+        // changed since: the analysis is a function of the routes).
+        let mut next = first;
         loop {
-            let mut report = Vec::new();
-            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+            if self.manual_spokes_spent(clock, budget) {
+                break;
+            }
+            let report = match next.take() {
+                Some(report) => report,
+                None => {
+                    let mut report = Vec::new();
+                    self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+                    report
+                }
+            };
             let description = &self.board.nets[net as usize];
             // The pad of its number it lies in on the record's layer: its
             // terminal's, or another pad merged into that terminal (an
@@ -197,6 +231,7 @@ impl Router {
                         }
                     }
                 }
+                probe.charge();
                 best.map(|(_, end)| end)
             };
             if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
@@ -205,13 +240,14 @@ impl Router {
                 );
             }
             let Some(end) = candidate else {
+                next = Some(report);
                 continue;
             };
             let state = &mut self.nets[net as usize];
             state.inner_spokes.push((layer, anchor, end, width));
-            let mut report = Vec::new();
-            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
-            let after = report
+            let mut after_report = Vec::new();
+            self.analyze_pours_reporting(net, &|_| false, Some(&mut after_report));
+            let after = after_report
                 .iter()
                 .find(|record| record.pad == pad && record.layer == layer)
                 .map_or(short, Self::spokes_short);
@@ -223,15 +259,24 @@ impl Router {
                     );
                 }
                 added += 1;
+                next = Some(after_report);
             } else {
                 self.nets[net as usize].inner_spokes.pop();
+                next = Some(report);
             }
         }
         added
     }
 
-    /// `add_manual_spokes` for one net whose pour masks are set.
-    pub(super) fn add_manual_spokes_of(&mut self, net: NetId) -> usize {
+    /// `add_manual_spokes` for one net whose pour masks are set. Returns
+    /// the tracks added and, when it ended on one, the analysis of the
+    /// routes as they are (for `add_inner_spokes`).
+    pub(super) fn add_manual_spokes_of(
+        &mut self,
+        net: NetId,
+        clock: &(f64, std::time::Instant),
+        budget: f64,
+    ) -> (usize, Option<Vec<SpokeRecord>>) {
         let cells = self.grid.cells();
         let nx = self.grid.nx as i64;
         let ny = self.grid.ny as i64;
@@ -240,10 +285,28 @@ impl Router {
         {
             // Per pad and layer: tracks tried; a failed try ends its tries.
             let mut tried: HashMap<(usize, usize), usize> = HashMap::new();
+            // The analysis of the routes as they are, when the last pass
+            // changed nothing or its last trial is what stays (an analysis
+            // is a function of the routes: the same answer, one analysis
+            // fewer a track).
+            type Analysis = (crate::pour::PourMap, Vec<usize>, usize, Vec<SpokeRecord>);
+            let mut next: Option<Analysis> = None;
             loop {
-                let mut report = Vec::new();
-                let (pours, mut parent, main, _) =
-                    self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+                if self.manual_spokes_spent(clock, budget) {
+                    return (added, None);
+                }
+                let (pours, mut parent, main, report) = match next.take() {
+                    Some(analysis) => analysis,
+                    None => {
+                        let mut report = Vec::new();
+                        let (pours, parent, main, _) =
+                            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+                        (pours, parent, main, report)
+                    }
+                };
+                // Unchanged by the finds below (path compression), for
+                // handing on as it came.
+                let pristine = parent.clone();
                 // A pad merged into its terminal has no nodes of its own to
                 // start a track from.
                 let own = |record: &SpokeRecord| {
@@ -262,7 +325,7 @@ impl Router {
                                 && Self::spokeless(record)
                                 && times(record) == 0))
                 }) else {
-                    break;
+                    return (added, Some(report));
                 };
                 // A spokeless pad gets one track into kept fill, nothing
                 // else (`Config::spokeless_tracks`).
@@ -436,6 +499,7 @@ impl Router {
                         }
                     }
                 }
+                probe.charge();
                 let label = self.board.nets[net as usize].terminals[record.terminal]
                     .label
                     .clone();
@@ -456,7 +520,8 @@ impl Router {
                     });
                     self.stamp(net);
                     let mut after = Vec::new();
-                    self.analyze_pours_reporting(net, &|_| false, Some(&mut after));
+                    let (after_pours, after_parent, after_main, _) =
+                        self.analyze_pours_reporting(net, &|_| false, Some(&mut after));
                     counted = after
                         .iter()
                         .find(|record| record.pad == pad && record.layer == layer)
@@ -471,6 +536,7 @@ impl Router {
                         if self.config.verbose {
                             eprintln!("manual spoke: {label} on layer {layer}, {length} nodes");
                         }
+                        next = Some((after_pours, after_parent, after_main, after));
                         break;
                     }
                     self.nets[net as usize].branches.pop();
@@ -482,6 +548,7 @@ impl Router {
                 }
                 if spokeless {
                     tried.insert((record.terminal, record.layer), 2);
+                    next = Some((pours, pristine, main, report));
                     continue;
                 }
                 // No track reaches kept fill: a via from an island to the
@@ -550,9 +617,9 @@ impl Router {
                     );
                 }
                 tried.insert((record.terminal, record.layer), 2);
+                next = Some((pours, pristine, main, report));
             }
         }
-        added
     }
 
     /// Per layer, the pads of `net` whose thermal relief keeps the pour's

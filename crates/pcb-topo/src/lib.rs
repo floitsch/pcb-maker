@@ -861,6 +861,8 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         searches: topology.wires.len() as u64,
         diagnostics: Diagnostics::default(),
         island_stubs: 0,
+        manual_spokes_work: 0.0,
+        first_iteration_expansions: 0,
     }
 }
 

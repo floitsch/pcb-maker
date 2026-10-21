@@ -289,7 +289,7 @@ pub(crate) struct Ladder<'a> {
     /// `refine_budget_seconds`: what a finer pitch's attempt may take.
     budget: f64,
     pub(crate) ladder_budget: f64,
-    started: std::time::Instant,
+    pub(crate) started: std::time::Instant,
     /// The wall clock's margin beyond the work before the guard counts.
     wall_margin: f64,
     pub(crate) memory_at_start: MemoryLimits,
@@ -318,6 +318,15 @@ pub(crate) struct Ladder<'a> {
     reserve_set: bool,
     /// What the ladder's first attempt negotiated (its budget, in work).
     first_negotiation: f64,
+    /// Route mode: whether an attempt's manual spokes count in the
+    /// ladder's work beside its search (`result_work`; not under
+    /// `PCB_LADDER_UNCHARGED_SPOKES`, the count before 2026-10-22).
+    charges_spokes: bool,
+    /// Route mode: the work of the ladder's first attempt up to the end of
+    /// its first negotiation iteration (0: none yet), which a fresh router
+    /// does whatever its work deadline: no step starts with less left
+    /// (not under `PCB_LADDER_NO_FIRST_ITERATION_GATE`).
+    first_iteration: f64,
     /// What the last attempt took, in work, and its pitch (0: none yet).
     last_attempt_work: f64,
     last_attempt_pitch: f64,
@@ -455,6 +464,9 @@ impl<'a> Ladder<'a> {
                 .map_or(0.0, |left| (0.4 * left).min(600.0)),
             reserve_set: false,
             first_negotiation: 0.0,
+            charges_spokes: work_bound.is_some()
+                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none(),
+            first_iteration: 0.0,
             // No attempt starts with less than the last one's work left
             // before the run's nominal end (an attempt checks the deadline
             // only in its negotiation; MokyaLora's last rung started at
@@ -480,12 +492,20 @@ impl<'a> Ladder<'a> {
                 LADDER_WORK_TOLERANCE * 100.0,
                 match config.deadline_seconds {
                     Some(seconds) if config.deadline.is_some() => {
-                        format!("at {seconds:.0} s of wall clock (deadline_seconds)")
+                        let stretch = crate::work_rate::work_rate().wall_stretch(false);
+                        if stretch > 1.0 {
+                            format!(
+                                "at {:.0} s of wall clock (deadline_seconds {seconds:.0} stretched {stretch:.2} times: the pinned rate over the machine's)",
+                                seconds * stretch
+                            )
+                        } else {
+                            format!("at {seconds:.0} s of wall clock (deadline_seconds)")
+                        }
                     }
                     _ if config.deadline.is_some() => "at the caller's deadline".to_string(),
                     _ if core::router::wall_guard() => format!(
                         "at {} times the work, beyond a margin of {:.0} s",
-                        core::router::GUARD,
+                        core::router::guard(),
                         ladder.wall_margin
                     ),
                     _ => "off".to_string(),
@@ -520,12 +540,12 @@ impl<'a> Ladder<'a> {
             work
         } else {
             let wall = self.started.elapsed().as_secs_f64();
-            if wall / core::router::GUARD > work + self.wall_margin {
+            if wall / core::router::guard() > work + self.wall_margin {
                 core::router::note_wall_cut(
                     "ladder",
                     format_args!("{wall:.0} s of wall clock for {work:.0} s of the ladder's work"),
                 );
-                wall / core::router::GUARD
+                wall / core::router::guard()
             } else {
                 work
             }
@@ -593,6 +613,35 @@ impl<'a> Ladder<'a> {
         self.config
             .deadline_work
             .map_or(f64::INFINITY, |left| left - self.work)
+    }
+
+    /// An attempt's work as the ladder counts it: its search expansions
+    /// and, in route mode, its manual spokes (pour analyses and fill
+    /// probes after the negotiation, which no work deadline ends: Vortac's
+    /// panel spent 30 s of them in every attempt beside 5 s of search, and
+    /// the wall guard cut every run).
+    fn result_work(&self, result: &KiCadBoardRouterResult) -> f64 {
+        work_of(result.expansions) + self.spoke_charge(result)
+    }
+
+    /// The part of `result_work` beyond the search.
+    fn spoke_charge(&self, result: &KiCadBoardRouterResult) -> f64 {
+        if self.charges_spokes {
+            result.manual_spokes_work_seconds
+        } else {
+            0.0
+        }
+    }
+
+    /// Route mode: notes the ladder's first attempt's first negotiation
+    /// iteration (`first_iteration`).
+    fn note_first_iteration(&mut self, result: &KiCadBoardRouterResult) {
+        if self.work_bound.is_some()
+            && self.first_iteration == 0.0
+            && std::env::var_os("PCB_LADDER_NO_FIRST_ITERATION_GATE").is_none()
+        {
+            self.first_iteration = work_of(result.first_iteration_expansions);
+        }
     }
 
     /// An attempt's check comes on top of its routing (`check_charge`).
@@ -1135,6 +1184,9 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let mut result = written?;
+        let spokes = self.spoke_charge(&result);
+        self.work += spokes;
+        self.note_first_iteration(&result);
         result.pours = self.pours_name(connect, skeleton).into();
         result.maps_mb = maps_mb.unwrap_or(0.0);
         self.router_maps = Some((result.maps_mb, result.grid_pitch_mm));
@@ -1160,10 +1212,14 @@ impl<'a> Ladder<'a> {
             result.vias,
             self.started.elapsed().as_secs_f64()
         );
-        self.slowest = Some((work_of(result.expansions), result.grid_pitch_mm));
-        self.last_attempt_work = work_of(router_expansions);
+        self.slowest = Some((self.result_work(&result), result.grid_pitch_mm));
+        self.last_attempt_work = work_of(router_expansions) + spokes;
         self.last_attempt_pitch = result.grid_pitch_mm;
-        self.keep_reserves(opens, work_of(router_expansions), probe_seconds + resumed);
+        self.keep_reserves(
+            opens,
+            work_of(router_expansions) + spokes,
+            probe_seconds + resumed,
+        );
         self.probe_complete = opens.0 == 0;
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
@@ -1477,8 +1533,9 @@ impl<'a> Ladder<'a> {
             // What one attempt at this pitch costs, for projecting finer
             // pitches; a seed retry does not change it.
             // In work, as the ladder's budget.
-            let attempt_seconds = work_of(result.expansions);
+            let attempt_seconds = self.result_work(&result);
             self.work += attempt_seconds;
+            self.note_first_iteration(&result);
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
@@ -1740,7 +1797,7 @@ impl<'a> Ladder<'a> {
                 other.pours = result.pours.clone();
                 // The seeds run side by side: about `retry` times
                 // one's work.
-                self.work += work_of(other.expansions) * retry as f64;
+                self.work += self.result_work(&other) * retry as f64;
                 let quality = self.quality();
                 self.judge_isolated(runner, &seeds_name, &mut other, &retry_directory, quality)?
                     .map(|judged| (other, judged))
@@ -1835,7 +1892,7 @@ impl<'a> Ladder<'a> {
             let connect = *connect;
             let attempt = attempt.clone();
             let (best_pitch, best_pours) = (best_result.grid_pitch_mm, best_result.pours.clone());
-            let cost = work_of(best_result.expansions).max(1.0);
+            let cost = self.result_work(best_result).max(1.0);
             // A round's seeds and its one check.
             let mut affordable =
                 ((self.ladder_budget - self.spent(self.work) - cost - self.check_charge) / cost)
@@ -1909,7 +1966,7 @@ impl<'a> Ladder<'a> {
             };
             let mut other = other?;
             other.pours = best_pours;
-            self.work += work_of(other.expansions) * retry as f64;
+            self.work += self.result_work(&other) * retry as f64;
             let Some(other_judged) =
                 self.judge_isolated(runner, &name, &mut other, &scratch, quality)?
             else {
@@ -1964,8 +2021,10 @@ impl<'a> Ladder<'a> {
         if kept.kept > 0.0 {
             self.routing_left() >= narrow_step_minimum(kept.kept_routing)
         } else if self.work_bound.is_some() {
-            self.bound_left()
-                .is_some_and(|left| route_step_has_time(left, kept.route_kept, self.ladder_budget))
+            self.bound_left().is_some_and(|left| {
+                route_step_has_time(left, kept.route_kept, self.ladder_budget)
+                    && first_iteration_fits(left, self.first_iteration)
+            })
         } else {
             !self.no_time_for_another()
         }
@@ -2003,6 +2062,11 @@ impl<'a> Ladder<'a> {
         } else if !self.step_has_time(kept) {
             Some(if kept.kept > 0.0 {
                 "too little work was left of what was kept for it (half of that, at least 180 s)"
+            } else if self.bound_left().is_some_and(|left| {
+                route_step_has_time(left, kept.route_kept, self.ladder_budget)
+                    && !first_iteration_fits(left, self.first_iteration)
+            }) {
+                "its first negotiation iteration would not fit the work left under the ladder's work bound (the ladder's first attempt took longer for its first)"
             } else if self.work_bound.is_some() {
                 "too little work was left under the ladder's work bound (ladder_budget_seconds and its tolerance)"
             } else {
@@ -2105,7 +2169,7 @@ impl<'a> Ladder<'a> {
                         opens.1,
                         result.vias,
                         result.routing_seconds,
-                        work_of(result.expansions)
+                        work_of(result.expansions) + result.manual_spokes_work_seconds
                     )
                 },
                 true,
@@ -2188,7 +2252,7 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let mut result = routed?;
-        self.work += work_of(result.expansions);
+        self.work += self.result_work(&result);
         result.pours = self
             .best
             .as_ref()

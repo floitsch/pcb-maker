@@ -627,6 +627,10 @@ pub struct KiCadVerdict {
     /// What the start-up calibration measured, also beside a pinned rate.
     pub work_rate_measured: Option<f64>,
     pub placer_work_rate_measured: Option<f64>,
+    /// How many times the wall-clock guards stretched for pinned rates
+    /// faster than the machine measured (`KiCadWorkRate::wall_stretch`; 1
+    /// with the rates measured).
+    pub wall_stretch: f64,
     /// Where the results are: `project`, `board`, `drc`, `report`, ...
     pub outputs: BTreeMap<String, String>,
     /// Steps that did not run while the board was incomplete, with why.
@@ -993,6 +997,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             .measured
             .as_ref()
             .map(|measured| measured.placer_work_per_second),
+        wall_stretch: rate.wall_stretch(!facts.command.starts_with("route")),
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
         room: facts.room.clone(),

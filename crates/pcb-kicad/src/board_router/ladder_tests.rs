@@ -61,6 +61,10 @@ struct Fake {
     continued: Outcome,
     route: Box<dyn Fn(&Routed) -> Option<Outcome> + Sync>,
     calls: Mutex<Vec<Call>>,
+    /// Every routed attempt's manual spokes' work and the work of its
+    /// first negotiation iteration (its report's).
+    spokes: f64,
+    first_iteration: f64,
 }
 
 impl Fake {
@@ -73,6 +77,8 @@ impl Fake {
             continued: Outcome { open: 0, work: 1.0 },
             route: Box::new(route),
             calls: Mutex::new(Vec::new()),
+            spokes: 0.0,
+            first_iteration: 0.0,
         }
     }
 
@@ -145,6 +151,9 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         memory_limits: String::new(),
         attempts_failed: Vec::new(),
         island_stubs: 0,
+        manual_spokes_work_seconds: 0.0,
+        first_iteration_expansions: 0,
+        wall_accounting: None,
     }
 }
 
@@ -244,7 +253,11 @@ impl LadderRunner for Fake {
             .work
             .min(routed.deadline_work.unwrap_or(f64::INFINITY));
         write_board(directory, routed.rung)?;
-        Ok(report(outcome.open, work, routed.pitch.unwrap_or(0.1)))
+        let mut result = report(outcome.open, work, routed.pitch.unwrap_or(0.1));
+        result.manual_spokes_work_seconds = self.spokes;
+        result.first_iteration_expansions =
+            (self.first_iteration.min(work) * core::router::expansions_per_second()).round() as u64;
+        Ok(result)
     }
 
     fn check(&self, _: &mut KiCadBoardRouterResult, _: &Path) -> Result<(), String> {
@@ -562,6 +575,85 @@ fn route_mode_rungs_seeds_and_the_narrow_step_stay_within_the_bound() {
     // step varies that attempt.
     assert_eq!(kept(&ladder, &out), (1, "tracks".into()));
     assert!(ladder.failed.is_empty());
+}
+
+/// Route mode: an attempt's manual spokes count in the ladder's work
+/// beside its search, and the rungs after it share what is left of that.
+#[test]
+fn route_mode_counts_the_manual_spokes() {
+    let config = route_mode(100.0);
+    let out = output("spokes");
+    let mut fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: if routed.rung == "tracks" { 6 } else { 5 },
+            work: 10.0,
+        })
+    });
+    fake.spokes = 4.0;
+    let mut ladder = ladder(&config, &out, 2);
+    ladder.run(&fake).unwrap();
+    let routes = fake.routes();
+    let bound = ladder_work_bound(100.0);
+    assert_eq!(routes[0].deadline_work, Some(bound));
+    // The first attempt counted 10 s of search and 4 s of spokes.
+    assert_eq!(routes[1].rung, "tracks");
+    assert!((routes[1].deadline_work.unwrap() - (bound - 14.0)).abs() < 1e-6);
+    assert!(ladder.work <= bound + 1e-6, "{}", ladder.work);
+}
+
+/// Route mode: no step starts with less left under the bound than the
+/// first attempt's first negotiation iteration took, which a fresh router
+/// does whatever its work deadline.
+#[test]
+fn route_mode_steps_need_room_for_a_first_iteration() {
+    let config = with_narrow_step(route_mode(30.0));
+    let out = output("first-iteration");
+    let mut fake = Fake::new(|routed| {
+        Some(if routed.narrow {
+            Outcome { open: 1, work: 3.0 }
+        } else {
+            Outcome {
+                open: 5,
+                work: 27.0,
+            }
+        })
+    });
+    fake.first_iteration = 17.0;
+    let mut ladder = ladder(&config, &out, 2);
+    ladder.run(&fake).unwrap();
+    let routes = fake.routes();
+    assert!(routes.iter().all(|routed| !routed.narrow), "{routes:?}");
+    assert!(
+        ladder
+            .skipped
+            .iter()
+            .any(|why| why.contains("first negotiation iteration")),
+        "{:?}",
+        ladder.skipped
+    );
+    // With a first iteration that fits, the step runs.
+    let out = output("first-iteration-fits");
+    let mut fake = Fake::new(|routed| {
+        Some(if routed.narrow {
+            Outcome { open: 1, work: 3.0 }
+        } else {
+            Outcome {
+                open: 5,
+                work: 27.0,
+            }
+        })
+    });
+    fake.first_iteration = 2.0;
+    let mut fitting = super::ladder::Ladder::new(
+        &config,
+        &out,
+        vec!["GND".into()],
+        2,
+        machine(),
+        Some(64000.0),
+    );
+    fitting.run(&fake).unwrap();
+    assert!(fake.routes().iter().any(|routed| routed.narrow));
 }
 
 /// A panic in a rung that runs beside others loses that rung only: the

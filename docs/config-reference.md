@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 81 | 70 | 11 | 81 | 17 |
+| [Router settings](#router-settings) | 81 | 70 | 11 | 81 | 18 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 1 |
@@ -47,7 +47,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `deadline_seconds` | `Option<f64>` | unset | - | Wall-clock seconds from the start of the command by which it returns the best board it has: no attempt starts after it and a running one stops (an agent waits for the answer). Off by default: the budgets count work, so a busy machine routes the same way. |
+| `deadline_seconds` | `Option<f64>` | unset | router.md | Wall-clock seconds from the start of the command by which it returns the best board it has: no attempt starts after it and a running one stops (an agent waits for the answer). Off by default: the budgets count work, so a busy machine routes the same way. |
 | `deadline` (internal) | `Option<std::time::Instant>` | unset (internal) | - | `deadline_seconds` as a time, set when routing starts (or by a caller, such as the layout, with a deadline of its own). |
 | `connection_rules` | `BTreeMap<String, KiCadConnectionRoutingRules>` | `{}` | router.md | Resolved per-connection geometry, keyed by normalized net name. |
 | `default_rules` | `Option<KiCadConnectionRoutingRules>` | unset | - | Geometry for connections without an explicit entry. |

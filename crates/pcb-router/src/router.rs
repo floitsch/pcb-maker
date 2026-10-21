@@ -54,7 +54,7 @@ mod vias;
 mod wall;
 
 pub use config::Config;
-pub use profile::build_totals;
+pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
@@ -121,8 +121,39 @@ pub fn reference_time_scale() -> f64 {
     REFERENCE_EXPANSIONS_PER_SECOND / expansions_per_second()
 }
 /// How much longer than its work the clock may run before it stops a
-/// route-mode negotiation anyway (a loaded machine).
+/// route-mode negotiation anyway (a loaded machine), on a machine as fast
+/// as its work rate says (`guard`).
 pub const GUARD: f64 = 4.0;
+
+static WALL_STRETCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times longer than its work rate says this machine takes a
+/// second of work (pcb-kicad's `KiCadWorkRate::wall_stretch`: a pinned
+/// rate over the measured one, at least 1): the wall-clock guards stretch
+/// by it, so that a pinned rate faster than the machine does not turn
+/// them into budgets. 1 until set.
+pub fn wall_stretch() -> f64 {
+    match WALL_STRETCH.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => 1.0,
+        bits => f64::from_bits(bits),
+    }
+}
+
+/// Sets `wall_stretch` for the rest of the process (at least 1).
+pub fn set_wall_stretch(stretch: f64) {
+    let stretch = if stretch.is_finite() {
+        stretch.max(1.0)
+    } else {
+        1.0
+    };
+    WALL_STRETCH.store(stretch.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `GUARD` stretched by `wall_stretch`: how much longer than its work the
+/// wall clock may run before a guard stops it.
+pub fn guard() -> f64 {
+    GUARD * wall_stretch()
+}
 /// The wall clock a phase budget always has before its guard (`spent`)
 /// may stop it: `GUARD` times a budget under about half a second is less
 /// than one pour analysis takes on a big board (a second of wall), so the
@@ -134,7 +165,7 @@ pub const BUDGET_GUARD_FLOOR: f64 = 5.0;
 /// clock after `elapsed` seconds: `GUARD` times the budget, but never
 /// before `BUDGET_GUARD_FLOOR`.
 pub(crate) fn budget_guard_fires(elapsed: f64, budget: f64) -> bool {
-    elapsed > (budget * GUARD).max(BUDGET_GUARD_FLOOR)
+    elapsed > (budget * guard()).max(BUDGET_GUARD_FLOOR)
 }
 /// The pour analysis's work (`analyze_pours`, one thread), in nanoseconds
 /// of an idle machine: per lattice node inside the net's pour (the fill
@@ -982,6 +1013,10 @@ pub struct Router {
     /// Island stubs `add_manual_spokes` added (`Config::island_stubs`),
     /// over every finish of this router: `RoutingResult::island_stubs`.
     island_stubs: usize,
+    /// `RoutingResult::manual_spokes_work`.
+    manual_spokes_work: f64,
+    /// `RoutingResult::first_iteration_expansions` (0 before it).
+    first_iteration_expansions: u64,
     search_seconds: f64,
     /// Wall time of the last full negotiation.
     negotiation_seconds: f64,

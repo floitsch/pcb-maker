@@ -68,6 +68,12 @@ impl Router {
             for batch in &batches {
                 self.route_batch(batch, present, growth);
             }
+            if self.iterations == 1 {
+                // A fresh router's work up to here is done whatever its
+                // work deadline (route mode's ladder projects it for the
+                // attempts it starts).
+                self.first_iteration_expansions = self.scratch.expansions;
+            }
             let conflicts_started = std::time::Instant::now();
             let mut conflicted = Vec::new();
             for net in order {

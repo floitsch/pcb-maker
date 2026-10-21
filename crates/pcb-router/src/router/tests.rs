@@ -2524,7 +2524,8 @@ fn a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring() {
             .unwrap()
     };
     assert_eq!(Router::spokes_short(&corner(&router)), 1);
-    assert_eq!(router.add_inner_spokes(0), 1);
+    let clock = router.clock();
+    assert_eq!(router.add_inner_spokes(0, None, &clock, f64::INFINITY), 1);
     let after = corner(&router);
     assert_eq!((Router::spokes_short(&after), after.tracks), (0, 1));
     let (layer, start, end, width) = router.nets[0].inner_spokes[0];
@@ -2540,7 +2541,8 @@ fn a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring() {
             .any(|segment| segment.start == start && segment.end == end)
     );
     // Nothing more to add.
-    assert_eq!(router.add_inner_spokes(0), 0);
+    let clock = router.clock();
+    assert_eq!(router.add_inner_spokes(0, None, &clock, f64::INFINITY), 0);
 }
 
 #[test]

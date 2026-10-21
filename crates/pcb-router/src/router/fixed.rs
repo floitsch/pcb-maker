@@ -365,7 +365,7 @@ impl Router {
             } else {
                 limits.1.min(minute)
             };
-            self.config.negotiation_seconds = limits.0.min(60.0 * GUARD);
+            self.config.negotiation_seconds = limits.0.min(60.0 * guard());
         } else {
             self.config.negotiation_seconds = limits.0.min(60.0);
         }

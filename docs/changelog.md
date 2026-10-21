@@ -11,6 +11,230 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (wall guard cuts at small budgets)
+
+A cut row is not the binary's deterministic answer, so cuts must be rare
+and explained. In route mode at 30 s, VortacDesign's and FoCTow's
+toolchanger panels (intake boards) were cut in every run, idle or not;
+ChengminLi's flyback (rules boards), megaduck, and OpenDeck, brickpico
+and Wonkle (expansion tier) when the load was 45 to 70; the layout sweep
+v18 (10 x 2, load 30 to 40) had four cut rows of 76. Branch
+deadline-cuts; snapshots x1370 (on 642e28c), x1371 (rebased on 401ab2f,
+with the check model's outline term); x1366 is the before-binary.
+
+**Where the wall clock went.** Each board alone, one thread, the
+reference's rates pinned, x1366 then x1371 back to back (load 15 to 25;
+"share" is the machine's search rate measured at the start over the
+pinned 3.15e6). x1366's split is from its `profile:` lines, x1371's from
+the new `wall accounting:` line (thread seconds; routers side by side
+add up).
+
+| board | x1366: wall s / work s (share) | cut | where the wall went beyond the work | x1371: wall s / work s (share) | cut |
+| --- | --- | --- | --- | --- | --- |
+| VortacDesign | 92 / 19.1 (0.77); 166 / 20.4 (0.64) earlier | yes, every run | manual spokes 46 s in the continuation's finish, 58-69 s in each rung after it (uncharged); probes' pour refresh (34.6 s of pour work beside 18.3 of search, all probes) | 91 / 31.8 (0.38) | no |
+| FoCTow (the same panel) | 118 / 19.1 (0.37) | yes | as Vortac: manual spokes 59 s in the verbose router alone | 77 / 31.8 (0.42) | no |
+| megaduck | 93 / 46.2 (0.42); 104 / 45.2 (0.45) earlier, cut | at load 25+ | the narrow-signal step's one iteration: 17.6 s of work with 3.9 s left; the rest is the load (search at the machine's rate) | 57 / 27.8 (0.38) | no |
+| ChengminLi | 74 / 28.7 (0.44); 95 / 25.0 (0.39) earlier, cut | at load 28+ | 15 lattice builds of 16 classes (40 thread s), stamping 14 maps, the load | 63 / 29.2 (0.60) | no |
+| OpenDeck | 35 / 32.3 (0.79) | under load only | the load; resolve 23 s for 16 s of search | 47 / 33.6 (0.84) | no |
+| brickpico | 67 / 32.1 (0.44) | under load only | the via reduction's pour checks (8.5 s of pour work), the load | 53 / 32.4 (0.75) | no |
+| Wonkle | 41 / 34.0 (0.80) | under load only | its one attempt's resolve past its deadline (34 s of work for a bound of 32), the load | 51 / 34.2 (0.78) | no |
+
+What was wrong, by cause:
+
+- *The manual spokes* (Vortac, FoCTow). `add_manual_spokes` (straight
+  tracks from starved pads into their pour, after every finish) runs a
+  full pour analysis of GND per pad and one per candidate track: on the
+  panels (642 x 647 nodes, four layers, 122 GND pads) 27 s of analyses
+  in 28 s of wall clock for 34 tracks, in every attempt, beside 5 s of
+  search. No budget counted it, no work deadline ended it, its fill
+  probes were not even counted as pour work, and the rungs that ran on
+  past the deadline did it too (x1366's log: 48 s in the continuation,
+  58, 63 and 69 s in the three rungs side by side). The pour model was
+  right (its modelled work 30.0 s against 27.2 s of wall): the work was
+  real and uncharged.
+- *A step past the bound* (megaduck). The ladder's first attempt took
+  27.6 s; the narrow-signal step started with the 3.9 s kept for it,
+  and a fresh router's first negotiation iteration, which no deadline
+  stops, did 17.6 s of work (33 searches of half a second): 45 s of
+  work against a bound of 32 s.
+- *The pinned rate* (everything cut only under load). The tiers pin
+  the reference's rate; the machine measures 0.4 to 0.6 of it at load
+  25 and 0.3 to 0.4 at 60. A 90 s guard over a 30 s budget then holds
+  only up to 0.36 of the reference, so every board that used its budget
+  was cut whenever the tier ran beside other work. In the rows: the
+  cut rows' `work_wall_ratio` was 0.27 to 0.45 where the measured share
+  was 0.39 to 0.45 (megaduck 0.45 at 0.45, ChengminLi 0.28 at 0.39,
+  brickpico 0.33 at 0.39). The guards did not follow the measured rate:
+  `work_wall_ratio` was recorded, nothing acted on it.
+- *Wall clock beyond the work, everywhere* (the rest of the ratio):
+  the negotiation's pour refresh (counted as pour work, but neither in
+  the negotiation's limit nor in the ladder's tally: Vortac's probes
+  33 s of pour work beside 18 s of search, brickpico's via reduction
+  8.5 s), the lattices (ChengminLi's 16 classes: 15 builds, 22 thread
+  seconds), stamping. Measured, not charged here (below).
+- *KiCad's check model* (layouts only; route mode with
+  `skip_native_verification` runs no check). The constant 3.6 s fits
+  ordinary boards (twelve measured at 2.8 to 5.4 s) but missed the
+  complex outlines by four to nine times; the 0xCB panel's checks took
+  275 s in v18b against 69 s charged.
+- *The search itself* ran at the machine's measured rate on every board
+  (Vortac's phases 2.99e6 a second at a measured share of 0.64, ChengminLi 0.78-1.09e6 at
+  0.39, megaduck 1.2-1.7e6 at 0.45): no memory-bound lattice ran below
+  the calibration; lowering is under 0.2 s on all of them.
+
+The fixes:
+
+1. **Manual spokes reuse their analyses** (exact): an analysis is a
+   function of the routes, so after a kept track the next pass takes the
+   trial's analysis, after a track not kept the one before, and the
+   inner spokes start from the manual spokes' last. Vortac's phase 28 s
+   to 13 s; on CompassTag, RS485M, Zulassungskarte, ch32v003, backplane
+   and nervous-ecg (`PCB_ROUTER_NO_WALL_GUARD`, fingerprints on) every
+   board and fingerprint is x1366's. The phase is a profile phase of its
+   own (`manual spokes`), its fill probes count as pour work, it has a
+   budget in work (the negotiation's, at least 60 s:
+   `MANUAL_SPOKES_SECONDS`, a bound no ordinary board reaches; not the
+   clean-up's cap, which a layout's polish shrinks) and stops at the
+   wall-clock deadline, not at the work deadline.
+2. **Route mode's ladder counts the manual spokes** beside the search
+   (`result_work`; the router's `RoutingResult::manual_spokes_work`,
+   board-router.json's `manual_spokes_work_seconds`). Vortac: the
+   continuation's 6 s of search and 13 s of spokes reach the bound, no
+   rung runs after it (they never won).
+3. **No step without room for its first iteration**: route mode's
+   narrow-signal and minimum-clearance steps start only if what is left
+   under the bound covers the ladder's first attempt's work up to the
+   end of its first negotiation iteration (`first_iteration_fits`,
+   `RoutingResult::first_iteration_expansions`); else they are skipped
+   with why. megaduck: 45.2 s of work to 27.9, the same board (the step
+   lost anyway).
+4. **The wall-clock guards stretch for pinned rates**
+   (`KiCadWorkRate::wall_stretch`): by the pinned rate over the one
+   measured at the start, at least 1, at most 4 (`MAX_WALL_STRETCH`,
+   `PCB_WALL_STRETCH_MAX`), the search's in route mode, the larger of
+   the search's and the placer's in a layout: route mode's
+   `deadline_seconds`, the layout's `wall_guard`, the router's `GUARD`.
+   With the rates measured nothing changes. The verdict and the rows
+   have `wall_stretch`; run.py's timeouts allow for the cap when it
+   pins the rates (`WALL_STRETCH_MAX`: 420 s for the intake's 30 s
+   budget, 12 300 s for a layout of 1500 s; hang guards).
+5. **KiCad's check model: complex outlines.** 20 s more per check
+   (`COMPLEX_OUTLINE_SECONDS`) for a board with more than 200 graphic
+   items on Edge.Cuts (`COMPLEX_OUTLINE_ITEMS`), measured on 20 of
+   v18b's routed boards checked again uncached one at a time (load 22):
+   katia (404 items) 15.5 s, ULK (411) 33.1, ghoul (496) 28.8,
+   slab-pcb-left (1030) 15.1, interchange (1162) 33.8, SmartSpin2k's
+   panel (1367) 28.8, the 0xCB panel (6369, and 8100 hatch holes) 41.7
+   against its 17.4: model over measured 0.64 to 1.43 (was 0.11 to
+   0.42); the twelve boards of at most 100 items (2.8 to 5.4 s) and
+   every short-tier board (at most 140) unchanged. Linear terms in the
+   items or in polygon vertices fit worse (beyond about 400 items the
+   time stops growing; the vertex count also marks fast boards: urchin,
+   0xcb-static, Blue_Line's 359 k). Not explained: d20_pcb (194 k
+   vertices, 17.4 s), Quanta75 (14.4 s), PixelWave (12.1 s).
+6. **Where the wall clock went, in every run**: the `wall accounting:`
+   line and board-router.json's `wall_accounting` (the ladder's wall and
+   work, the machine's share, the stretch, thread seconds of lattices,
+   lowerings, preparation, each router phase with its search and pour
+   work, kicad-cli's runs); the verbose `manual spokes:` line gives its
+   wall clock and pour work.
+
+**Measured.** The named boards: the table above; none cut by x1371.
+x1366's wall over x1371's is not the comparison (the load moved
+between runs); the ratio of work to wall clock against the machine's
+share is: Vortac 0.21 at a share of 0.77 before (the uncounted spokes),
+0.36 at 0.38 after (the work is the wall clock's at the machine's
+rate); megaduck 0.51 to 0.52 at the same share, 46.2 to 27.8 s of work.
+megaduck's row also changed with main's lowering gaps 2 (x1367: 72
+unconnected, 16 vias, the same as x1371).
+
+**Expansion tier** (16 x 1, `--no-lock`; x1365's at 8 x 1, load 37 to
+69; x1370 and x1371 at load 14 to 27): x1370 and x1371 give the same 46
+rows. Against x1365, with `PCB_LADDER_UNCHARGED_SPOKES=1
+PCB_LADDER_NO_FIRST_ITERATION_GATE=1` (build/expansion-cuts-x1370-old):
+45 rows identical, brickpico (cut in x1365) uncut at 32.1 s of work; so
+the manual spokes' reuse, their budget, the stretch and the accounting
+change no row. With the defaults: routed, vias, length, KiCad's findings
+and verdict identical on 44 rows, `work_seconds` +0.1 to +1.3 s on 30
+(their manual spokes, now counted); no row cut (x1365: brickpico). Where
+the count changed where the ladder stops:
+- FUEL4EP: the skeleton rung (111 open, 2.3 s) no longer starts (the
+  bound is reached with the spokes counted); the same board, 30.8 to
+  29.9 s of work.
+- Julkort: the 0.075 mm rungs' shares are smaller by the regular
+  pitch's spokes; the kept connect attempt negotiated 6 iterations, not
+  4: 23/24 both, vias 20 to 23, length 257.2 to 255.1 mm, KiCad the
+  same.
+- RS485M: the 0.05 mm rungs' shares are smaller; their seeds and the
+  tracks rung end at 3 open (were 2), the narrow-signal step varies
+  another best attempt and loses (3 open; was 1): 19/20 to 18/20,
+  KiCad 1 unconnected and 2 starved thermals to 2 unconnected and no
+  error.
+The tier's work 1264 to 1272 s, KiCad unconnected 723 to 724, new
+errors 4 to 2, passes 16 to 16. Wall 2077 to 1519 s summed over the
+rows, the longest row 111 to 72 s (the load differed).
+
+**Short tier** (6 x 2, `--no-lock`) x1370 and x1371 against
+build/short-x1365: all 12 rows identical (routed, vias, length, work,
+KiCad's findings, verdict), none cut; no short-tier board has more than
+140 Edge.Cuts items (1337-v4.0), so the check model is unchanged there.
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode from v16,
+2 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) x1370 against build/fp-lower2-x1366 and
+x1371 against -x1367 (main's, jetson's rings): every fingerprint and
+kept board identical;
+`work_seconds` +0.2 to +2.8 s (the spokes counted; k30 2.8, Castor
+1.6), and their wall clock fell (k30 270 to 181 s, Castor 187 to 115 s
+at a lower load: the reuse).
+
+**The layout sweep's cut rows** (v18b, 10 x 2, load 25 to 69): katia
+(work over wall 0.35; measured 0.41 of the reference's search rate and
+0.20 of the placer's), Batch_1 (0.32; 0.41 and 0.24), Quanta75 (0.39;
+0.74 and 0.34), the 0xCB panel (0.42; 0.65 and 0.40). Their placement
+ran at the placer's share (katia: 548 s of wall for 123 s of work) and
+their routing near the search's: the pinned rate, not a phase. The
+stretch (the larger share's inverse, at most 4: 4.0, 4.0, 3.0, 2.5)
+puts their guards at 12 000, 12 000, 8 800 and 7 500 s, past their
+3000-3200 s. The 0xCB panel's checks also took 275 s for 69 s charged;
+with the outline term (6369 Edge.Cuts items) each charges 37.4 s. Not run again
+here (a full layout each).
+
+**What is still not counted** (measured, left for a decision): the
+negotiation's pour refresh and the finishing phases' pour checks in the
+ladder's tally (Vortac's probes 34.6 s of pour work beside 18.3 s of
+search; brickpico 12.8 s beside 31; on the expansion tier 0 to 12.8 s a
+board, median about 1.5): counting them is honest but moves most pour
+boards' rows (every rung share after the first); the lattice builds
+(ChengminLi 40 thread seconds for 15 builds); the stamping (the
+negotiation's limit is search expansions). With the stretch these cost
+wall clock, not cuts.
+
+**The guard, recommended.** Keep `wall_guard` 2 and route mode's 3 x
+budget as margins over the work at the machine's measured rate, and let
+them stretch with a pinned rate (done here, cap 4): with the rates
+measured a second of work is a second of this machine, and the guard is
+only the margin for what the work does not count; with the rates pinned
+the guard was a load-dependent budget, which is what cut the loaded rows
+(their `work_wall_ratio` sat at the machine's share). run.py's
+timeouts scale with the cap, not with a measurement of their own (the
+binary measures; the harness only needs a hang guard above the
+binary's guard). A tier on a loaded machine now takes longer instead of
+cutting: up to four times a quiet run's wall clock.
+
+Unit tests: ladder_tests (route mode counts the manual spokes; a step
+needs room for a first iteration), work_bound_tests
+(`first_iteration_fits`), work_rate (`wall_stretch`), check_work (the
+outline term, footprint graphics on Edge.Cuts), test_run.py (the
+stretched timeouts). `bash scripts/check.sh` and the clippy gate pass.
+Docs: router.md (the work bound in route mode, the manual spokes, where
+the wall clock went, the guards' stretch, KiCad's checks as work),
+agent-tasks/README.md, config-reference (three variables).
+
+Logs: build/expansion-cuts-x1370, -x1370-old, -x1371;
+build/short-cuts-x1370, -x1371; build/fp-cuts-x1370, -x1370-old,
+-x1371.
+
 ## Committed on 2026-10-22 (lowering gaps 2)
 
 The finding types the previous lowering round left ("Lowering gaps in the

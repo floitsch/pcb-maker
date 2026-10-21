@@ -107,6 +107,131 @@ pub struct KiCadBoardRouterResult {
     /// is set): the verdict's `repairs.island_stubs`.
     #[serde(default)]
     pub island_stubs: usize,
+    /// The work of the router's manual spokes (pcb-router's
+    /// `RoutingResult::manual_spokes_work`, seconds of an idle machine):
+    /// beside the search expansions, route mode's ladder counts it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub manual_spokes_work_seconds: f64,
+    /// The router's search expansions up to the end of its first
+    /// negotiation iteration (`RoutingResult::first_iteration_expansions`).
+    #[serde(skip)]
+    pub first_iteration_expansions: u64,
+    /// Where the run's wall clock went (`KiCadWallAccounting`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_accounting: Option<KiCadWallAccounting>,
+}
+
+/// Where a route's wall clock went, beside its work: the routers' phases
+/// summed over every router and thread of the process (routers side by
+/// side add up, so the thread seconds can exceed the wall clock), with
+/// the work each counted. The work the ladder charges is search
+/// expansions (and, in route mode, the manual spokes); the rest is wall
+/// clock the budgets do not see.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KiCadWallAccounting {
+    /// The ladder's wall clock and its work.
+    pub wall_seconds: f64,
+    pub work_seconds: f64,
+    /// The machine's search rate measured at the start over the rate
+    /// applied (1 with the rates measured; below 1 where a pinned rate is
+    /// faster than the machine) and the wall guards' stretch for it.
+    pub machine_share: f64,
+    pub wall_stretch: f64,
+    /// Lattices built (`Router::new`) and their thread seconds.
+    pub lattices: u64,
+    pub lattice_seconds: f64,
+    /// Lowerings of the board and their thread seconds.
+    pub lowerings: u64,
+    pub lowering_seconds: f64,
+    /// The routers' preparation (escapes, skeletons, plane stubs, the
+    /// global plan), thread seconds.
+    pub prepare_seconds: f64,
+    /// Per router phase: its thread seconds, its search work and its pour
+    /// analyses' work (seconds of an idle machine).
+    pub phases: Vec<KiCadPhaseAccounting>,
+    /// kicad-cli runs (the DRC cache's answers among them) and their
+    /// thread seconds.
+    pub kicad_runs: u64,
+    pub kicad_seconds: f64,
+}
+
+/// One phase of `KiCadWallAccounting`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KiCadPhaseAccounting {
+    pub phase: String,
+    pub wall_seconds: f64,
+    pub search_work_seconds: f64,
+    pub pour_work_seconds: f64,
+}
+
+impl KiCadWallAccounting {
+    /// The process's accounting so far, for a ladder of `wall` seconds and
+    /// `work` seconds of work.
+    pub(crate) fn now(wall: f64, work: f64) -> Self {
+        let routers = pcb_router::router::process_accounting();
+        let (lowerings, lowering_seconds) = super::lower::lowering_totals();
+        let (kicad_runs, kicad_seconds) = crate::native_report::kicad_totals();
+        let rate = crate::work_rate::work_rate();
+        let machine_share = rate.measured.as_ref().map_or(1.0, |measured| {
+            measured.expansions_per_second / rate.expansions_per_second
+        });
+        Self {
+            wall_seconds: wall,
+            work_seconds: work,
+            machine_share,
+            wall_stretch: rate.wall_stretch(false),
+            lattices: routers.builds,
+            lattice_seconds: routers.build_seconds,
+            lowerings,
+            lowering_seconds,
+            prepare_seconds: routers.prepare_seconds,
+            phases: routers
+                .phases
+                .iter()
+                .map(|(phase, wall, search, pour)| KiCadPhaseAccounting {
+                    phase: phase.to_string(),
+                    wall_seconds: *wall,
+                    search_work_seconds: *search,
+                    pour_work_seconds: *pour,
+                })
+                .collect(),
+            kicad_runs,
+            kicad_seconds,
+        }
+    }
+
+    /// One line for the log.
+    pub fn line(&self) -> String {
+        let phases: Vec<String> = self
+            .phases
+            .iter()
+            .filter(|phase| phase.wall_seconds >= 0.05)
+            .map(|phase| {
+                format!(
+                    "{} {:.1} (search work {:.1}, pour work {:.1})",
+                    phase.phase,
+                    phase.wall_seconds,
+                    phase.search_work_seconds,
+                    phase.pour_work_seconds
+                )
+            })
+            .collect();
+        format!(
+            "wall accounting: {:.1} s of wall clock for {:.1} s of the ladder's work (the machine at {:.2} of the work rate, the wall guards stretched {:.2} times); thread seconds: {} lattices {:.1}, {} lowerings {:.1}, preparation {:.1}, {}; {} kicad-cli runs {:.1}",
+            self.wall_seconds,
+            self.work_seconds,
+            self.machine_share,
+            self.wall_stretch,
+            self.lattices,
+            self.lattice_seconds,
+            self.lowerings,
+            self.lowering_seconds,
+            self.prepare_seconds,
+            phases.join(", "),
+            self.kicad_runs,
+            self.kicad_seconds
+        )
+    }
 }
 
 fn is_zero(value: &f64) -> bool {

@@ -37,6 +37,14 @@ pub struct RoutingResult {
     /// change no connection, they only answer KiCad's isolated-island
     /// rule (the verdict's `repairs.island_stubs`).
     pub island_stubs: usize,
+    /// The work of this router's manual spokes (`add_manual_spokes`: the
+    /// pour analyses and fill probes that repair starved thermals after
+    /// the negotiation), over every finish, in seconds of an idle machine.
+    /// Not in `expansions`: route mode's ladder charges it beside them.
+    pub manual_spokes_work: f64,
+    /// The search expansions of this router's first negotiation
+    /// iteration: what a fresh router does whatever its work deadline.
+    pub first_iteration_expansions: u64,
 }
 
 /// A machine-readable account of what stood in the way.

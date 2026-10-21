@@ -732,8 +732,8 @@ pub fn layout_kicad_board(
                 let seconds =
                     crate::check_work::check_seconds(inputs) * core::router::reference_time_scale();
                 eprintln!(
-                    "layout: a KiCad check counts {seconds:.1} s of work ({} hatched zones, {:.0} hatch holes)",
-                    inputs.hatched_zones, inputs.hatch_holes
+                    "layout: a KiCad check counts {seconds:.1} s of work ({} hatched zones, {:.0} hatch holes, {} Edge.Cuts items)",
+                    inputs.hatched_zones, inputs.hatch_holes, inputs.edge_items
                 );
                 seconds
             }
@@ -744,7 +744,10 @@ pub fn layout_kicad_board(
     // budget: on a much busier or slower machine the work would run on
     // past what the agent waits for.
     // (None under `PCB_ROUTER_NO_WALL_GUARD`: the work alone decides.)
-    let guard_seconds = wall_guard_seconds(config.total_seconds, config.wall_guard)?;
+    // Stretched where a pinned rate is faster than the machine
+    // (`KiCadWorkRate::wall_stretch`, the search's or the placer's).
+    let guard_seconds = wall_guard_seconds(config.total_seconds, config.wall_guard)?
+        * crate::work_rate::work_rate().wall_stretch(true);
     let with_deadline = KiCadBoardRouterConfig {
         deadline: router_config.deadline.or(core::router::wall_guard()
             .then(|| layout_started + std::time::Duration::from_secs_f64(guard_seconds))),

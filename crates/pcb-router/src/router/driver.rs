@@ -30,6 +30,7 @@ impl Router {
             self.plan_globally(&order);
         }
         self.profile.prepare += started.elapsed().as_secs_f64();
+        profile::note_prepare(started.elapsed().as_secs_f64());
         self.negotiate(&order, order.clone());
         self.finish_polished(&order, polish)
     }
@@ -48,11 +49,12 @@ impl Router {
             self.plan_globally(&order);
         }
         self.profile.prepare += started.elapsed().as_secs_f64();
+        profile::note_prepare(started.elapsed().as_secs_f64());
         let limit = (
             self.config.negotiation_seconds,
             self.config.negotiation_expansions,
         );
-        self.config.negotiation_seconds = seconds * GUARD;
+        self.config.negotiation_seconds = seconds * guard();
         self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
         self.negotiate(&order, order.clone());
         (
@@ -86,7 +88,7 @@ impl Router {
             self.config.negotiation_seconds,
             self.config.negotiation_expansions,
         );
-        self.config.negotiation_seconds = seconds * GUARD;
+        self.config.negotiation_seconds = seconds * guard();
         self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
         self.hopeless = false;
         let order = self.routing_order();
@@ -145,6 +147,12 @@ impl Router {
         self.profile.phase_pour_work[phase] += now.1 - mark.1;
         self.profile.phase_pour_wall[phase] += (now.2 - mark.2) as f64 / 1.0e9;
         self.profile.phase_wall[phase] += mark.3.elapsed().as_secs_f64();
+        profile::note_phase(
+            phase,
+            mark.3.elapsed().as_secs_f64(),
+            now.0 - mark.0,
+            now.1 - mark.1,
+        );
         self.profile.phase_expansions[phase] += now.4 - mark.4;
     }
 
@@ -190,7 +198,18 @@ impl Router {
     /// clock stops it too, at `GUARD` times the budget and at least
     /// `BUDGET_GUARD_FLOOR` (`budget_guard_fires`).
     pub(super) fn spent(&self, clock: &(f64, std::time::Instant), budget: f64) -> bool {
-        if self.budget_work() - clock.0 > budget || self.past_work_deadline() {
+        self.past_work_deadline() || self.manual_spokes_spent(clock, budget)
+    }
+
+    /// `spent` but for the caller's work deadline: the manual spokes'
+    /// budget (`add_manual_spokes`), which repairs a board's starved
+    /// thermals however its negotiation's budget went.
+    pub(super) fn manual_spokes_spent(
+        &self,
+        clock: &(f64, std::time::Instant),
+        budget: f64,
+    ) -> bool {
+        if self.budget_work() - clock.0 > budget {
             return true;
         }
         if self.wall_guard() && budget_guard_fires(clock.1.elapsed().as_secs_f64(), budget) {
@@ -312,6 +331,8 @@ impl Router {
             searches: self.scratch.searches,
             diagnostics: Diagnostics::default(),
             island_stubs: self.island_stubs,
+            manual_spokes_work: self.manual_spokes_work,
+            first_iteration_expansions: self.first_iteration_expansions,
         }
     }
 

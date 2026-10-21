@@ -233,8 +233,12 @@ measurement). The discipline:
   still works (a caller that holds the lock lets the run through).
   `--no-lock` skips it (a run that must not wait, beside a tier you know
   of). Start only with the load under 40 (`uptime`) and more than 20 GB
-  available (`free -g`). Results above a load of about 45 are unsound (the
-  layout's wall-clock guard fires and the rows are CUT).
+  available (`free -g`). Results above a load of about 45 were unsound
+  (the wall-clock guard fired and the rows were CUT); since 2026-10-22
+  the guards stretch by the pinned rate over the measured one (at most
+  four times, `wall_stretch` in the rows), so a loaded machine takes
+  longer instead, and rows are cut only below a quarter of the
+  reference's rate.
 - **Parallelism: tiers default to 2 search threads a board and physical
   cores / 2 boards at once** (8 x 2 on the 5950X; `TIER_THREADS` in
   run.py, since 2026-10-16; `--jobs` or `--threads` given override it,
@@ -819,8 +823,12 @@ not redistribute them.
   the task's `router` (the intake's `seeds` 1 and
   `skip_native_verification`), `ladder_budget_seconds` = the task's
   `budget_seconds` (30) times the budget scale, and the intake's wall
-  guard `deadline_seconds` = max(90, 3 x budget); the harness's timeout is
-  the intake's max(180, 3 x budget + 60) s unless `--timeout` is given;
+  guard `deadline_seconds` = max(90, 3 x budget), which the binary
+  stretches by the pinned rate over the one it measured, at most four
+  times (`wall_stretch` in the row; docs/router.md, "The guards stretch
+  for pinned rates"); the harness's timeout is the intake's max(180,
+  3 x budget x 4 + 60) s with the rates pinned (max(180, 3 x budget + 60)
+  with `--work-rate measured`) unless `--timeout` is given;
 - `drc-kicad-board` (zones refilled) on the result, the router having
   skipped its own check; the pass rule is the other tiers' (KiCad's
   unconnected items and copper errors less the designer's, with

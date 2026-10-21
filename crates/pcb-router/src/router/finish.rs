@@ -155,10 +155,20 @@ impl Router {
             && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0)
         {
             let started = std::time::Instant::now();
+            let mark = self.phase_mark();
             let added = self.add_manual_spokes();
+            self.phase_charge(6, mark);
+            let now = self.phase_mark();
+            self.manual_spokes_work += (now.0 - mark.0) + (now.1 - mark.1);
             self.profile.thermal_spokes += started.elapsed().as_secs_f64();
             if self.config.verbose && added > 0 {
-                eprintln!("manual spokes: {added} tracks from starved pads into their pours");
+                let now = self.phase_mark();
+                eprintln!(
+                    "manual spokes: {added} tracks from starved pads into their pours ({:.1} s of wall clock, {:.1} s of it pour analyses, {:.1} s of pour work)",
+                    started.elapsed().as_secs_f64(),
+                    (now.2 - mark.2) as f64 / 1.0e9,
+                    now.1 - mark.1,
+                );
             }
         }
         if self.config.verbose {
@@ -299,6 +309,8 @@ impl Router {
             searches: self.scratch.searches,
             grid: self.grid.clone(),
             island_stubs: self.island_stubs,
+            manual_spokes_work: self.manual_spokes_work,
+            first_iteration_expansions: self.first_iteration_expansions,
         }
     }
 

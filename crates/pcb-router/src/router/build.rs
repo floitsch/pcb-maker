@@ -302,6 +302,8 @@ impl Router {
             profile: Profile::default(),
             in_via_reduction: false,
             island_stubs: 0,
+            manual_spokes_work: 0.0,
+            first_iteration_expansions: 0,
             frame_hook: None,
             search_seconds: 0.0,
             negotiation_seconds: 0.0,
