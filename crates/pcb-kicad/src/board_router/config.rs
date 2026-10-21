@@ -222,6 +222,14 @@ pub struct KiCadBoardRouterConfig {
     /// the rungs leave).
     #[serde(default)]
     pub narrow_reserve_share: Option<f64>,
+    /// A limit on this process's memory in megabytes (resident), beside
+    /// `PCB_MAKER_MEMORY_MB` and the limits the process can read itself
+    /// (RLIMIT_AS, the cgroup's memory.max): the ladder runs as many
+    /// routers side by side as fit the tightest (`MemoryLimits`). For a
+    /// harness that kills a run above a resident size it does not set as
+    /// a limit (the intake's 3 GiB).
+    #[serde(default)]
+    pub memory_mb: Option<f64>,
     /// Seconds one negotiation may run (default 900 s). The ladder sets it
     /// per attempt from what is left of its budget, so that a hopeless
     /// first rung leaves time for the next (video's exclusive-plane rung

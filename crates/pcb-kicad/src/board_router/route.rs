@@ -241,11 +241,23 @@ pub fn route_kicad_board(
     // 3299 x 1048 nodes at 0.1 mm, 7 GB a router at 0.05 mm, four seeds of
     // it took 31 GB and the machine's last free byte).
     let mut router_mb: Option<(f64, f64)> = None;
-    // One router may take most of the memory available; routers side by
-    // side (the seeds) half of it, since other work on the machine grows
-    // too.
-    let fits = |megabytes: f64, share: f64| -> bool {
-        memory_mb().is_none_or(|(_, available)| megabytes < available * share)
+    // The first attempt's lattice maps and pitch: routers side by side
+    // (rungs, seeds) are sized from them (`MemoryLimits`: a router's peak
+    // is its maps times a measured ratio and a margin, as many as fit the
+    // tightest of the process's limits and half the memory available).
+    let mut router_maps: Option<(f64, f64)> = None;
+    let memory_at_start = MemoryLimits::read(config.memory_mb);
+    eprintln!(
+        "memory limits: {} (the process holds {:.0} MB resident)",
+        memory_at_start.describe(),
+        resident_mb()
+    );
+    // How many routers of `maps_mb` of maps each run side by side, at
+    // most `wanted`, and why, for the log.
+    let side_by_side_for = |maps_mb: f64, wanted: usize| -> (usize, String) {
+        let limits = MemoryLimits::read(config.memory_mb);
+        let (count, limit) = limits.routers_that_fit(maps_mb, wanted);
+        (count, fit_note(maps_mb, limit))
     };
     let mut extra_rung_tried = false;
     // Steps that did not run, with why: the report's `skipped` when the
@@ -318,6 +330,42 @@ pub fn route_kicad_board(
             }
         }
     };
+    // Route mode (no work deadline): the ladder's whole work (its probes,
+    // rungs, seeds, the probed rung's continuation and the steps after,
+    // each router's clean-up and polish included) stays within its budget
+    // and a tolerance (`ladder_work_bound`): every router stops at its
+    // share of what is left under it (router `deadline_work`), and none
+    // starts with too little left (`bound_allows_attempt`). Until
+    // 2026-10-21 a 30 s budget meant 60 s of negotiation a rung and 75 s
+    // a probe: the intake's clean boards spent a median 53 s and the
+    // probed ones 120 s, and 279 runs were cut by the wall guard. A
+    // layout's ladder (`deadline_work`) is bounded by the layout's end as
+    // before.
+    let work_bound = config
+        .deadline_work
+        .is_none()
+        .then(|| ladder_work_bound(ladder_budget));
+    let bound_left = || work_bound.map(|bound| (bound - spent(ladder_work_now.get())).max(0.0));
+    // Whether the bound leaves room for another attempt (always, in a
+    // layout's ladder).
+    let bound_allows = || bound_left().is_none_or(|left| bound_allows_attempt(left, ladder_budget));
+    if let Some(bound) = work_bound {
+        eprintln!(
+            "ladder: a budget of {ladder_budget:.0} s of work, at most {bound:.0} s with its tolerance ({:.0} %); wall guard {}",
+            LADDER_WORK_TOLERANCE * 100.0,
+            match config.deadline_seconds {
+                Some(seconds) if config.deadline.is_some() => {
+                    format!("at {seconds:.0} s of wall clock (deadline_seconds)")
+                }
+                _ if config.deadline.is_some() => "at the caller's deadline".to_string(),
+                _ if core::router::wall_guard() => format!(
+                    "at {} times the work, beyond a margin of {wall_margin:.0} s",
+                    core::router::GUARD
+                ),
+                _ => "off".to_string(),
+            }
+        );
+    }
     let past_deadline = || {
         let past = config
             .deadline
@@ -325,7 +373,16 @@ pub fn route_kicad_board(
         if past {
             core::router::note_wall_cut(
                 "deadline",
-                format_args!("the ladder at {:.0} s of its work", ladder_work_now.get()),
+                format_args!(
+                    "the ladder at {:.0} s of its work{}",
+                    ladder_work_now.get(),
+                    config
+                        .deadline_seconds
+                        .map(|seconds| format!(
+                            ", the wall guard at {seconds:.0} s (deadline_seconds)"
+                        ))
+                        .unwrap_or_default()
+                ),
             );
         }
         past
@@ -474,6 +531,21 @@ pub fn route_kicad_board(
             }
             rungs.push((mode, board, attempt));
         }
+        // Route mode: the probes together take at most `PROBE_SHARE` of
+        // the budget (in a layout, `probe_seconds` each as before).
+        let probe_work = if work_bound.is_some() && !rungs.is_empty() {
+            let each = bounded_probe_seconds(probe_seconds, ladder_budget, rungs.len());
+            if each < probe_seconds {
+                eprintln!(
+                    "ladder: probes of {each:.1} s of work each ({:.0} % of the {ladder_budget:.0} s budget over {} rungs)",
+                    PROBE_SHARE * 100.0,
+                    rungs.len()
+                );
+            }
+            each
+        } else {
+            probe_seconds
+        };
         if !rungs.is_empty() && (past_deadline() || work_left() < probe_seconds * 3.0 + 180.0) {
             eprintln!("deadline too near for the ladder: no attempts");
             skipped.push(
@@ -490,6 +562,9 @@ pub fn route_kicad_board(
         // budget is work, so its outcome does not depend on what runs
         // beside it.
         let mut first: Option<(core::router::Router, f64)> = None;
+        // The first router's lattice maps (its memory report; what its
+        // building added to the resident size where the report does not
+        // say).
         let mut router_mb_estimate: Option<f64> = None;
         let mut next = 0;
         while next < rungs.len() {
@@ -506,18 +581,31 @@ pub fn route_kicad_board(
                 let started = std::time::Instant::now();
                 let router =
                     core::router::Router::new(&rungs[next].1, &core_config(&rungs[next].2));
-                let megabytes = (resident_mb() - before).max(1.0);
+                let megabytes = maps_mb_of(&router.memory_report())
+                    .unwrap_or_else(|| (resident_mb() - before).max(1.0));
+                // The leading router stays in memory while the next probe
+                // runs: under a limit of the process's own that two do not
+                // fit (decided by the limit, not by what is free), the
+                // rungs run one after the other in the regular ladder.
+                if let Some(limit) = memory_at_start.too_small_for(megabytes, 2) {
+                    eprintln!(
+                        "ladder: no rung probes: two routers of about {:.0} MB each ({megabytes:.0} MB of maps) do not fit {} of {:.0} MB",
+                        limit.router_mb(megabytes),
+                        limit.source,
+                        limit.limit_mb
+                    );
+                    drop(router);
+                    rungs.clear();
+                    break;
+                }
                 first = Some((router, started.elapsed().as_secs_f64()));
                 router_mb_estimate = Some(megabytes);
             }
             // The search scratches and the via reduction's copy come on
-            // top of the maps a new router holds.
-            let side_by_side = memory_mb()
-                .zip(router_mb_estimate)
-                .map_or(1, |((_, available), megabytes)| {
-                    (available * 0.5 / (megabytes * 1.5)) as usize
-                })
-                .clamp(1, rungs.len() - next)
+            // top of the maps a new router holds (`router_peak_mb`).
+            let (fitting, why) =
+                side_by_side_for(router_mb_estimate.unwrap_or(1.0), rungs.len() - next);
+            let side_by_side = fitting
                 // A cap for experiments (1: one after the other).
                 .min(
                     std::env::var("PCB_PROBES_SIDE_BY_SIDE")
@@ -525,6 +613,10 @@ pub fn route_kicad_board(
                         .and_then(|value| value.parse().ok())
                         .unwrap_or(usize::MAX),
                 );
+            eprintln!(
+                "ladder: {side_by_side} of {} probes side by side ({why})",
+                rungs.len() - next
+            );
             let wave = &rungs[next..next + side_by_side];
             let first_router = first.take();
             let probed: Vec<(usize, usize, core::router::Router, f64)> = std::thread::scope(
@@ -544,7 +636,7 @@ pub fn route_kicad_board(
                                 quiet.verbose = quiet.verbose && index == 0;
                                 (core::router::Router::new(board, &quiet), 0.0)
                             });
-                            let unfinished = router.probe(probe_seconds);
+                            let unfinished = router.probe(probe_work);
                             // Experiment hook (the ladder's judge,
                             // docs/congestion-model.md): the probe's other
                             // statistics.
@@ -621,7 +713,8 @@ pub fn route_kicad_board(
         }
         if let Some((_, mode, mut router, board, attempt)) = leader {
             let started = std::time::Instant::now();
-            let remaining = (ladder_budget - spent(ladder_work_now.get())).max(60.0);
+            let remaining = bound_left()
+                .unwrap_or_else(|| (ladder_budget - spent(ladder_work_now.get())).max(60.0));
             let probed = router.expansions();
             // The router's own probe is in its work already.
             router.config_mut().run_work = Some((
@@ -633,8 +726,15 @@ pub fn route_kicad_board(
             if config.deadline_work.is_some() {
                 router.config_mut().deadline_work =
                     Some(work_of(probed) + (work_left() - check_charge).max(0.0));
+            } else if let Some(left) = bound_left() {
+                // Route mode: it stops where the ladder's bound ends.
+                router.config_mut().deadline_work = Some(work_of(probed) + left);
             }
-            let resumed = (remaining / 3.0).clamp(60.0, 900.0);
+            let resumed = if work_bound.is_some() {
+                bounded_negotiation(remaining / 3.0, remaining)
+            } else {
+                (remaining / 3.0).clamp(60.0, 900.0)
+            };
             let routed = router.resume(resumed);
             let router_expansions = router.expansions();
             ladder_work_now.set(ladder_work_now.get() + work_of(router_expansions - probed));
@@ -664,6 +764,8 @@ pub fn route_kicad_board(
                 "tracks"
             }
             .into();
+            result.maps_mb = router_mb_estimate.unwrap_or(0.0);
+            router_maps = Some((result.maps_mb, result.grid_pitch_mm));
             let judged = judge(&mut result, output_directory, None)?;
             let opens = judged.unwrap_or((router_open(&result), 0));
             eprintln!(
@@ -725,6 +827,45 @@ pub fn route_kicad_board(
                 break;
             }
         }
+        // Route mode: a finer lattice whose attempt would take more than is
+        // left under the ladder's bound is not started.
+        if let (Some(pitch), Some((seconds, previous)), Some(left)) = (pitch, slowest, bound_left())
+        {
+            let projected = seconds * (previous / pitch[0]).powi(2);
+            if projected > left {
+                eprintln!(
+                    "skipping pitch {:?}: projected {projected:.0} s exceeds the {left:.0} s left of the ladder's bound",
+                    pitch
+                );
+                skipped.push(format!(
+                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds the {left:.0} s left of the ladder's work bound (ladder_budget_seconds)",
+                    pitch[0]
+                ));
+                break;
+            }
+        }
+        // A limit of the process's own (its address space, its cgroup, an
+        // explicit one) one router of the finer lattice does not fit.
+        if let (Some(pitch), Some((maps, previous))) = (pitch, router_maps) {
+            let projected = maps * (previous / pitch[0]).powi(2);
+            if let Some(limit) = memory_at_start.too_small_for(projected, 1) {
+                eprintln!(
+                    "skipping pitch {:?}: a router of about {:.0} MB ({projected:.0} MB of maps) does not fit {} of {:.0} MB",
+                    pitch,
+                    limit.router_mb(projected),
+                    limit.source,
+                    limit.limit_mb
+                );
+                skipped.push(format!(
+                    "the finer lattice ({} mm) was not tried: a router of about {:.0} MB does not fit {} of {:.0} MB",
+                    pitch[0],
+                    limit.router_mb(projected),
+                    limit.source,
+                    limit.limit_mb
+                ));
+                break;
+            }
+        }
         if let (Some(pitch), Some((megabytes, previous))) = (pitch, router_mb) {
             let projected = megabytes * (previous / pitch[0]).powi(2);
             // Against the machine's memory, not what is available now: the
@@ -754,9 +895,19 @@ pub fn route_kicad_board(
         // judged in rung order as one after another, a rung the order
         // would not have reached counting for nothing.
         let pitch_negotiation = config.negotiation_seconds.is_none().then(|| {
-            let remaining = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
-            (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
+            if let Some(left) = bound_left() {
+                bounded_negotiation(left / modes.len() as f64 / 3.0, left)
+            } else {
+                let remaining = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
+                (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
+            }
         });
+        // Route mode: each rung's work deadline (`rung_share`): the
+        // ladder's first attempt has all that is left under the bound, the
+        // rungs of a pitch after it an even share of what is left when the
+        // first of them starts, decided before they run.
+        let route_deadline: std::cell::Cell<Option<f64>> = std::cell::Cell::new(None);
+        let mut share_fixed = false;
         let pitch_left = (ladder_budget - spent(ladder_work_now.get())).max(0.0);
         let pitch_work_left = work_left().max(0.0);
         let rung_attempt = |mode: usize| -> KiCadBoardRouterConfig {
@@ -776,13 +927,16 @@ pub fn route_kicad_board(
             // the pitch starts (decided before they run, as the budget),
             // less the work kept for the narrow-signal step.
             // Its check follows: the router stops where that still fits.
-            attempt.router_deadline_work = config.deadline_work.map(|_| {
-                if reserve.get() > 0.0 {
-                    deadline_before_reserve(pitch_work_left - check_charge, reserve.get(), 1)
-                } else {
-                    (pitch_work_left - check_charge).max(0.0)
-                }
-            });
+            attempt.router_deadline_work = config
+                .deadline_work
+                .map(|_| {
+                    if reserve.get() > 0.0 {
+                        deadline_before_reserve(pitch_work_left - check_charge, reserve.get(), 1)
+                    } else {
+                        (pitch_work_left - check_charge).max(0.0)
+                    }
+                })
+                .or(route_deadline.get());
             if let Some(pitch) = pitch {
                 attempt.grid_pitches_mm = Some(pitch.clone());
             }
@@ -802,7 +956,9 @@ pub fn route_kicad_board(
             // as projected from the last attempt (on a finer lattice, by
             // the square of the pitch ratio: DSP-ADAU1452's 0.05 mm rung
             // after its 0.075 mm rungs) must leave all of it.
-            let short_of_work = if reserve.get() > 0.0 {
+            let short_of_work = if work_bound.is_some() {
+                !bound_allows()
+            } else if reserve.get() > 0.0 {
                 let cost = pitch.as_ref().map_or(last_attempt_work.get(), |pitch| {
                     projected_attempt_work(
                         last_attempt_work.get(),
@@ -815,8 +971,21 @@ pub fn route_kicad_board(
                 no_time_for_another()
             };
             if best.is_some() && (past_deadline() || short_of_work) {
-                eprintln!("deadline reached: no further attempts");
-                skipped.push("further rungs of the attempt ladder did not run: the run's end was near (its deadline, or too little work left for another attempt)".into());
+                if work_bound.is_some() && short_of_work {
+                    eprintln!(
+                        "ladder: its work bound is reached ({:.0} s left of {:.0} s): no further attempts",
+                        bound_left().unwrap_or(0.0),
+                        work_bound.unwrap_or(0.0)
+                    );
+                    skipped.push(format!(
+                        "further rungs of the attempt ladder did not run: its work bound ({:.0} s, ladder_budget_seconds and {:.0} %) was reached",
+                        work_bound.unwrap_or(0.0),
+                        LADDER_WORK_TOLERANCE * 100.0
+                    ));
+                } else {
+                    eprintln!("deadline reached: no further attempts");
+                    skipped.push("further rungs of the attempt ladder did not run: the run's end was near (its deadline, or too little work left for another attempt)".into());
+                }
                 break 'ladder;
             }
             // The skeleton and the plane stubs only help when the plain
@@ -836,6 +1005,16 @@ pub fn route_kicad_board(
                 }
                 continue;
             }
+            if work_bound.is_some() {
+                if best.is_none() {
+                    route_deadline.set(bound_left());
+                } else if !share_fixed {
+                    share_fixed = true;
+                    route_deadline.set(
+                        bound_left().map(|left| rung_share(left, candidates.len() - position)),
+                    );
+                }
+            }
             let attempt = rung_attempt(mode);
             if ran[mode].is_none() {
                 // The first rung of a pitch without a board yet runs alone
@@ -845,19 +1024,22 @@ pub fn route_kicad_board(
                 let side_by_side = if best.is_none() {
                     1
                 } else {
-                    let each = router_mb.map_or(0.0, |(megabytes, previous)| {
-                        megabytes
-                            * (previous / pitch.as_ref().map_or(previous, |pitch| pitch[0])).powi(2)
-                    }) + 2200.0;
-                    (1..=candidates.len() - position)
-                        .rev()
-                        .find(|count| fits(each * *count as f64, 0.5))
-                        .unwrap_or(1)
+                    let wanted = candidates.len() - position;
+                    match router_maps {
+                        Some((maps, previous)) => {
+                            let each = maps
+                                * (previous / pitch.as_ref().map_or(previous, |pitch| pitch[0]))
+                                    .powi(2);
+                            let (count, why) = side_by_side_for(each, wanted);
+                            eprintln!("ladder: {count} of {wanted} rungs side by side ({why})");
+                            count
+                        }
+                        // No maps known (an engine without a memory
+                        // report): one after the other.
+                        None => 1,
+                    }
                 };
                 let wave: Vec<usize> = candidates[position..position + side_by_side].to_vec();
-                if wave.len() > 1 {
-                    eprintln!("ladder: {} rungs side by side", wave.len());
-                }
                 let routed: Vec<(usize, Result<KiCadBoardRouterResult, String>)> =
                     std::thread::scope(|scope| {
                         let handles: Vec<_> = wave
@@ -911,18 +1093,22 @@ pub fn route_kicad_board(
             if router_mb.is_none() {
                 router_mb = memory_mb().map(|(peak, _)| (peak, result.grid_pitch_mm));
             }
+            if router_maps.is_none() && result.maps_mb > 0.0 {
+                router_maps = Some((result.maps_mb, result.grid_pitch_mm));
+            }
             // Seeds run side by side, each a router of this pitch, as many
-            // at once as fit half the memory available; how many seeds
+            // at once as fit the memory (`MemoryLimits`); how many seeds
             // route does not depend on it.
             let seeds_that_fit = |wanted: usize| -> usize {
-                let Some((megabytes, previous)) = router_mb else {
-                    return wanted;
+                let Some((maps, previous)) = router_maps else {
+                    return 1;
                 };
-                let each = megabytes * (previous / result.grid_pitch_mm).powi(2);
-                (1..=wanted)
-                    .rev()
-                    .find(|count| fits(each * *count as f64, 0.5))
-                    .unwrap_or(1)
+                let each = maps * (previous / result.grid_pitch_mm).powi(2);
+                let (count, why) = side_by_side_for(each, wanted);
+                if count < wanted {
+                    eprintln!("ladder: {count} of {wanted} seeds side by side ({why})");
+                }
+                count
             };
             // What one attempt at this pitch costs, for projecting finer
             // pitches; a seed retry does not change it.
@@ -932,7 +1118,6 @@ pub fn route_kicad_board(
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
             let retry = config.retry_seeds.unwrap_or(4);
-            let retry_side_by_side = seeds_that_fit(retry);
             // Four seeds in parallel cost about twice the attempt; on a
             // board whose attempt takes minutes that time is better spent
             // on the next rung (MIDAS-MK2: two retries, 740 s, both worse).
@@ -951,11 +1136,13 @@ pub fn route_kicad_board(
                 // The seeds count as `retry` attempts of work: not out of
                 // the work kept for the narrow-signal step.
                 && (reserve.get() == 0.0 || work_left() - check_charge - reserve.get() >= retry as f64 * attempt_seconds)
+                // Route mode: nor beyond the ladder's bound.
+                && bound_left().is_none_or(|left| left >= retry as f64 * attempt_seconds)
             {
                 seeds_tried = true;
                 let mut seeded = attempt.clone();
                 seeded.seeds = Some(retry);
-                seeded.seeds_side_by_side = Some(retry_side_by_side);
+                seeded.seeds_side_by_side = Some(seeds_that_fit(retry));
                 seeded.first_seed = Some(1);
                 // Their work counts `retry` times: each stops at its share
                 // of what is left beyond the reserve.
@@ -965,6 +1152,8 @@ pub fn route_kicad_board(
                         reserve.get(),
                         retry,
                     ));
+                } else if let Some(left) = bound_left() {
+                    seeded.router_deadline_work = Some(rung_share(left, retry));
                 }
                 let retry_directory = output_directory.with_extension("seeds");
                 if retry_directory.exists() {
@@ -1136,18 +1325,25 @@ pub fn route_kicad_board(
             );
         }
         let retry = config.retry_seeds.unwrap_or(4).min(affordable);
-        // As many at once as fit half the memory available; how many seeds
-        // route does not depend on it.
-        let side_by_side = router_mb.map_or(retry, |(megabytes, previous)| {
-            let each = megabytes * (previous / best_result.grid_pitch_mm).powi(2);
-            (1..=retry)
-                .rev()
-                .find(|count| fits(each * *count as f64, 0.5))
-                .unwrap_or(1)
-        });
-        if opens.0 == 0 || best_seeded || retry == 0 || past_deadline() || no_time_for_another() {
+        if opens.0 == 0
+            || best_seeded
+            || retry == 0
+            || past_deadline()
+            || no_time_for_another()
+            || !bound_allows()
+        {
             break;
         }
+        // As many at once as fit the memory (`MemoryLimits`); how many
+        // seeds route does not depend on it.
+        let side_by_side = router_maps.map_or(1, |(maps, previous)| {
+            let each = maps * (previous / best_result.grid_pitch_mm).powi(2);
+            let (count, why) = side_by_side_for(each, retry);
+            if count < retry {
+                eprintln!("ladder: {count} of {retry} seeds side by side ({why})");
+            }
+            count
+        });
         let mut seeded = attempt.clone();
         seeded.seeds = Some(retry);
         seeded.seeds_side_by_side = Some(side_by_side);
@@ -1158,6 +1354,8 @@ pub fn route_kicad_board(
                 reserve.get(),
                 retry,
             ));
+        } else if let Some(left) = bound_left() {
+            seeded.router_deadline_work = Some(rung_share(left, retry));
         }
         next_seed += retry as u64;
         if scratch.exists() {
@@ -1213,6 +1411,8 @@ pub fn route_kicad_board(
     let step_has_time = || {
         if kept > 0.0 {
             routing_left() >= narrow_step_minimum(kept_routing)
+        } else if work_bound.is_some() {
+            bound_allows()
         } else {
             !no_time_for_another()
         }
@@ -1229,6 +1429,12 @@ pub fn route_kicad_board(
             // The attempt it varies may carry its pitch's work deadline,
             // taken when that pitch started: the step's is what is left now.
             step.router_deadline_work = Some(routing_left().max(0.0));
+        } else if let Some(left) = bound_left() {
+            // Route mode: within what is left of the ladder's bound, its
+            // negotiation at most half of that.
+            step.negotiation_seconds =
+                Some(step.negotiation_seconds.unwrap_or(900.0).min(0.5 * left));
+            step.router_deadline_work = Some(left);
         }
     };
     // Why a step for a board with connections open does not run, in the
@@ -1241,6 +1447,8 @@ pub fn route_kicad_board(
         } else if !step_has_time() {
             Some(if kept > 0.0 {
                 "too little work was left of what was kept for it (half of that, at least 180 s)"
+            } else if work_bound.is_some() {
+                "too little work was left under the ladder's work bound (ladder_budget_seconds and its tolerance)"
             } else {
                 "too little work was left for another attempt"
             })
@@ -1518,6 +1726,14 @@ pub fn route_kicad_board(
     }
     result.cut = core::router::wall_cuts();
     result.work_seconds = ladder_work_now.get();
+    result.work_bound_seconds = work_bound;
+    result.memory_limits = memory_at_start.describe();
+    if let Some(bound) = work_bound {
+        eprintln!(
+            "ladder: {:.1} s of work of its bound of {bound:.0} s (a budget of {ladder_budget:.0} s)",
+            ladder_work_now.get()
+        );
+    }
     result.kicad_checks_charged = checks_charged.get().checks;
     result.kicad_check_work_seconds = checks_charged.get().work();
     // What did not run matters only to a board left incomplete.
@@ -1534,26 +1750,28 @@ pub fn route_kicad_board(
 }
 
 /// Routes `board` with seeds `first..first + count` in parallel (seed 0 is
-/// the deterministic order) and returns the best result.
+/// the deterministic order) and returns the best result, with the largest
+/// router's lattice maps in megabytes (`route_measured`).
 pub(super) fn route_seeds(
     board: &core::Board,
     config: &core::Config,
     first: u64,
     count: usize,
     side_by_side: usize,
-) -> core::RoutingResult {
+) -> (core::RoutingResult, f64) {
     // In waves of `side_by_side` (memory), in seed order.
     let seeds: Vec<u64> = (first..first + count.max(1) as u64).collect();
     let mut results: Vec<(Option<u64>, core::RoutingResult)> = Vec::new();
+    let mut maps_mb = 0.0f64;
     for wave in seeds.chunks(side_by_side.max(1)) {
-        let routed: Vec<(Option<u64>, core::RoutingResult)> = std::thread::scope(|scope| {
+        let routed: Vec<(Option<u64>, (core::RoutingResult, f64))> = std::thread::scope(|scope| {
             let handles: Vec<_> = wave
                 .iter()
                 .map(|&index| {
                     let mut seeded = config.clone();
                     seeded.seed = (index > 0).then_some(index);
                     seeded.verbose = config.verbose && index == first;
-                    scope.spawn(move || (seeded.seed, core::route(board, &seeded)))
+                    scope.spawn(move || (seeded.seed, route_measured(board, &seeded)))
                 })
                 .collect();
             handles
@@ -1561,7 +1779,10 @@ pub(super) fn route_seeds(
                 .map(|handle| handle.join().expect("routing thread"))
                 .collect()
         });
-        results.extend(routed);
+        for (seed, (result, maps)) in routed {
+            maps_mb = maps_mb.max(maps);
+            results.push((seed, result));
+        }
     }
     let key = |result: &core::RoutingResult| {
         let open: usize = result
@@ -1595,11 +1816,12 @@ pub(super) fn route_seeds(
             score.0, score.1, score.2
         );
     }
-    scored
+    let best = scored
         .into_iter()
         .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .expect("at least one seed")
-        .2
+        .2;
+    (best, maps_mb)
 }
 
 /// The core router configuration for a KiCad configuration.
@@ -1817,6 +2039,9 @@ pub(crate) fn finish_routed_board(
         skipped: Vec::new(),
         neck_repair: None,
         rules: KiCadRulesSummary::of(board, config),
+        maps_mb: 0.0,
+        work_bound_seconds: None,
+        memory_limits: String::new(),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

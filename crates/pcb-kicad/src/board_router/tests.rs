@@ -1491,3 +1491,206 @@ mod check_gate_tests {
         assert!(starved.wants(20, 0, 0.0, None, true));
     }
 }
+
+mod memory_limit_tests {
+    use super::*;
+
+    fn inputs() -> MemoryInputs {
+        MemoryInputs {
+            virtual_mb: 400.0,
+            resident_mb: 100.0,
+            total_mb: Some(64000.0),
+            available_mb: Some(20000.0),
+            ..MemoryInputs::default()
+        }
+    }
+
+    #[test]
+    fn without_a_limit_of_its_own_the_machines_available_memory_decides() {
+        let limits = MemoryLimits::resolve(&inputs());
+        assert_eq!(limits.limits.len(), 1);
+        assert!(limits.limits[0].shared);
+        assert_eq!(limits.hard_free(), None);
+        assert_eq!(limits.machine_available(), Some(20000.0));
+        // Half of it for routers side by side.
+        assert_eq!(limits.limits[0].usable_mb(), 10000.0);
+        assert!(limits.too_small_for(5000.0, 2).is_none());
+    }
+
+    #[test]
+    fn the_address_space_limit_counts_the_virtual_size() {
+        let limits = MemoryLimits::resolve(&MemoryInputs {
+            address_space_mb: Some(3072.0),
+            ..inputs()
+        });
+        let limit = &limits.limits[0];
+        assert_eq!(limit.kind, MemoryKind::AddressSpace);
+        assert_eq!(limit.free_mb, 3072.0 - 400.0);
+        assert_eq!(limits.hard_free(), Some(2672.0));
+        // A router of 300 MB of maps: (2 x 300 + 550) x 1.25 = 1437.5 MB of
+        // address space, one fits beside the 400 held, not two.
+        assert_eq!(limit.router_mb(300.0), 1437.5);
+        let (count, by) = limits.routers_that_fit(300.0, 4);
+        assert_eq!(count, 1);
+        assert_eq!(by.unwrap().source, limit.source);
+        // Never fewer than one, never more than wanted.
+        assert_eq!(limits.routers_that_fit(5000.0, 4).0, 1);
+        assert_eq!(limits.routers_that_fit(1.0, 2).0, 2);
+        assert_eq!(limits.routers_that_fit(1.0, 8).0, 3);
+        // Fixed decisions go by the limit, not by what is free.
+        assert!(limits.too_small_for(300.0, 2).is_none());
+        assert!(limits.too_small_for(300.0, 3).is_some());
+        assert!(limits.too_small_for(1000.0, 1).is_some());
+    }
+
+    #[test]
+    fn the_tightest_of_every_limit_decides() {
+        let limits = MemoryLimits::resolve(&MemoryInputs {
+            address_space_mb: Some(12288.0),
+            cgroup_v2: vec![(8192.0, 1000.0), (4096.0, 1500.0)],
+            cgroup_v1: Some((6000.0, 500.0)),
+            environment_mb: Some(5000.0),
+            setting_mb: Some(4500.0),
+            ..inputs()
+        });
+        let sources: Vec<&str> = limits.limits.iter().map(|limit| limit.source).collect();
+        assert_eq!(
+            sources,
+            [
+                "the address space limit (RLIMIT_AS)",
+                "the cgroup's memory.max",
+                "the cgroup's memory.limit_in_bytes (v1)",
+                "the router setting memory_mb",
+                "the machine's available memory (MemAvailable)",
+            ]
+        );
+        // The cgroup level with the least free holds (4096 - 1500).
+        assert_eq!(limits.limits[1].limit_mb, 4096.0);
+        assert_eq!(limits.limits[1].free_mb, 2596.0);
+        // The explicit limit is the smaller of the setting and the
+        // environment, against the resident size.
+        assert_eq!(limits.limits[3].free_mb, 4400.0);
+        assert_eq!(limits.hard_free(), Some(2596.0));
+        // A router of 100 MB of maps: (1.7 x 100 + 460) x 1.25 = 787.5 MB
+        // resident; three fit the cgroup's 2596 MB.
+        let (count, by) = limits.routers_that_fit(100.0, 8);
+        assert_eq!(count, 3);
+        assert_eq!(by.unwrap().source, "the cgroup's memory.max");
+        assert!(
+            limits
+                .describe()
+                .starts_with("the cgroup's memory.max 4096 MB, 2596 MB free")
+        );
+    }
+
+    #[test]
+    fn the_environment_limits_when_it_is_the_smaller() {
+        let limits = MemoryLimits::resolve(&MemoryInputs {
+            environment_mb: Some(3072.0),
+            setting_mb: Some(4096.0),
+            ..inputs()
+        });
+        assert_eq!(limits.limits[0].source, "PCB_MAKER_MEMORY_MB");
+        assert_eq!(limits.limits[0].free_mb, 2972.0);
+        assert_eq!(limits.limits[0].kind, MemoryKind::Resident);
+    }
+
+    #[test]
+    fn cgroup_paths_are_read_for_both_versions() {
+        let (v2, v1) = cgroup_paths("0::/user.slice/run.scope\n");
+        assert_eq!(v2.as_deref(), Some("/user.slice/run.scope"));
+        assert_eq!(v1, None);
+        let (v2, v1) = cgroup_paths("12:cpu,cpuacct:/a\n9:memory:/batch/job\n0::/\n");
+        assert_eq!(v2.as_deref(), Some("/"));
+        assert_eq!(v1.as_deref(), Some("/batch/job"));
+    }
+
+    #[test]
+    fn the_maps_come_from_the_routers_memory_report() {
+        assert_eq!(
+            maps_mb_of("memory: 244 MB in maps (232 bytes a node; 1102 x 1001 nodes)"),
+            Some(244.0)
+        );
+        assert_eq!(maps_mb_of("lattice: pitch 0.1 mm"), None);
+        // The router's own report still reads (its format is pcb-router's).
+        let pcb = parse(
+            r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 12 8) (layer "Edge.Cuts"))
+              (footprint "a" (at 3 4)
+                (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "F.Cu") (net "/A")))
+              (footprint "b" (at 9 4)
+                (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "F.Cu") (net "/A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let mut quiet = core_config(&config);
+        quiet.verbose = false;
+        let report = core::router::Router::new(&board, &quiet).memory_report();
+        assert!(maps_mb_of(&report).is_some(), "{report}");
+        let (result, maps) = route_measured(&board, &quiet);
+        assert!(maps >= 0.0);
+        assert_eq!(result.routes.len(), board.nets.len());
+    }
+}
+
+mod work_bound_tests {
+    use super::*;
+
+    #[test]
+    fn the_bound_is_the_budget_and_its_tolerance() {
+        assert!((ladder_work_bound(30.0) - 31.5).abs() < 1.0e-9);
+        assert!((ladder_work_bound(300.0) - 315.0).abs() < 1.0e-9);
+    }
+
+    #[test]
+    fn probes_take_at_most_half_the_budget() {
+        // The intake's 4-layer boards: four probes of 75 s on 30 s.
+        assert_eq!(bounded_probe_seconds(75.0, 30.0, 4), 3.75);
+        assert_eq!(bounded_probe_seconds(75.0, 300.0, 4), 37.5);
+        // The default budget keeps the probes' 75 s.
+        assert_eq!(bounded_probe_seconds(75.0, 1200.0, 4), 75.0);
+    }
+
+    #[test]
+    fn a_negotiation_takes_at_most_half_of_what_is_left() {
+        // 30 s: a third of an even share would be 3.3 s and the floor
+        // 60 s; half of what is left wins.
+        assert_eq!(bounded_negotiation(30.0 / 3.0 / 3.0, 31.5), 15.75);
+        // A large budget keeps the share within 60 to 900 s.
+        assert_eq!(
+            bounded_negotiation(1200.0 / 3.0 / 3.0, 1260.0),
+            1200.0 / 9.0
+        );
+        assert_eq!(bounded_negotiation(10.0, 1260.0), 60.0);
+        assert_eq!(bounded_negotiation(5000.0, 20000.0), 900.0);
+        assert_eq!(bounded_negotiation(10.0, -5.0), 0.0);
+    }
+
+    #[test]
+    fn rungs_after_the_first_share_what_is_left() {
+        // Their work deadlines together stay within what is left, however
+        // many run side by side.
+        let left = 20.0;
+        let rungs = 3;
+        assert!(rung_share(left, rungs) * rungs as f64 <= left + 1.0e-9);
+        assert_eq!(rung_share(left, 0), left);
+        assert_eq!(rung_share(-1.0, 2), 0.0);
+    }
+
+    #[test]
+    fn no_attempt_starts_with_less_than_a_twentieth_of_the_budget() {
+        assert!(bound_allows_attempt(1.5, 30.0));
+        assert!(!bound_allows_attempt(1.4, 30.0));
+        assert!(!bound_allows_attempt(0.0, 30.0));
+    }
+}

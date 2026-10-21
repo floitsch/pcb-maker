@@ -85,6 +85,23 @@ pub struct KiCadBoardRouterResult {
     pub neck_repair: Option<crate::necks::NeckRepair>,
     /// The width rules the router routed with.
     pub rules: KiCadRulesSummary,
+    /// The largest lattice maps of this result's router, in megabytes
+    /// (its `memory: N MB in maps`): what the ladder sizes the routers it
+    /// runs side by side from (`MemoryLimits`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub maps_mb: f64,
+    /// Route mode: the most work the ladder could do (its budget and the
+    /// tolerance, `ladder_work_bound`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_bound_seconds: Option<f64>,
+    /// The memory limits as the ladder read them when it started, the
+    /// tightest first (`MemoryLimits::describe`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub memory_limits: String,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// The track width rules of a routing, for whoever reads the report.

@@ -114,6 +114,58 @@ pub(crate) fn deadline_before_reserve(work_left: f64, reserve: f64, routers: usi
     ((work_left - reserve) / routers.max(1) as f64).max(0.0)
 }
 
+/// Route mode (no work deadline): how far the ladder's whole work may go
+/// beyond `ladder_budget_seconds` (`ladder_work_bound`). Every router the
+/// ladder starts stops at its share of what is left under the bound
+/// (router `deadline_work`); beyond it go only what a router does past
+/// its deadline: a fresh router's first negotiation iteration, the batch
+/// or round under way (2026-10-21).
+pub(crate) const LADDER_WORK_TOLERANCE: f64 = 0.05;
+
+/// Route mode: the share of the ladder's budget the rung probes take
+/// together at most (each `probe_seconds`, 75 s, or less: the 4-layer
+/// intake boards probed 4 x 75 s on a 30 s budget).
+pub(crate) const PROBE_SHARE: f64 = 0.5;
+
+/// Route mode: no further attempt (rung, seeds, narrow-signal or
+/// minimum-clearance step) starts with less than this share of the
+/// ladder's budget left under its bound.
+pub(crate) const LADDER_MIN_ATTEMPT_SHARE: f64 = 0.05;
+
+/// Route mode: the most work the ladder does, from its budget.
+pub(crate) fn ladder_work_bound(budget: f64) -> f64 {
+    budget * (1.0 + LADDER_WORK_TOLERANCE)
+}
+
+/// Route mode: the work each rung probe negotiates, `probe_seconds` or
+/// less, so that `rungs` probes take at most `PROBE_SHARE` of `budget`.
+pub(crate) fn bounded_probe_seconds(probe_seconds: f64, budget: f64, rungs: usize) -> f64 {
+    probe_seconds.min(PROBE_SHARE * budget / rungs.max(1) as f64)
+}
+
+/// Route mode: a negotiation of `share` seconds of work, within 60 to 900
+/// s as before, but at most half of the work `left` under the ladder's
+/// bound (the repair, clean-up and polish after it need the rest: a
+/// 30 s budget's rungs negotiated 60 s each).
+pub(crate) fn bounded_negotiation(share: f64, left: f64) -> f64 {
+    share.clamp(60.0, 900.0).min(0.5 * left.max(0.0))
+}
+
+/// Route mode: the work deadline of each rung of a pitch after the
+/// ladder's first attempt, `left` under the bound split evenly over the
+/// `rungs` still to come (decided before they run, side by side or not,
+/// so that their work together stays within the bound). The first
+/// attempt has all that is left.
+pub(crate) fn rung_share(left: f64, rungs: usize) -> f64 {
+    left.max(0.0) / rungs.max(1) as f64
+}
+
+/// Route mode: whether another attempt may start with `left` of the
+/// ladder's bound and a budget of `budget`.
+pub(crate) fn bound_allows_attempt(left: f64, budget: f64) -> bool {
+    left >= LADDER_MIN_ATTEMPT_SHARE * budget
+}
+
 /// Which attempts of a ladder KiCad checks. An attempt's quality is the
 /// router's open count (unconnected terminals and internal violations)
 /// plus KiCad's unconnected items, then KiCad's starved thermals, then

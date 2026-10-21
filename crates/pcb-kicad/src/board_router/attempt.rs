@@ -94,6 +94,8 @@ pub(super) fn route_kicad_board_once(
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
+    // The router's lattice maps, for sizing routers side by side.
+    let mut maps_mb = 0.0;
     let result = match &config.frame_directory {
         _ if config.engine.as_deref() == Some("topological") => {
             let mut topological = pcb_topo::Config {
@@ -105,14 +107,22 @@ pub(super) fn route_kicad_board_once(
             config.topological.apply(&mut topological);
             pcb_topo::route(&board, &topological)
         }
-        None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => route_seeds(
-            &board,
-            &core_config(config),
-            config.first_seed.unwrap_or(0),
-            config.seeds.unwrap_or(1),
-            config.seeds_side_by_side.unwrap_or(usize::MAX),
-        ),
-        None => core::route(&board, &core_config(config)),
+        None if config.seeds.unwrap_or(1) > 1 || config.first_seed.unwrap_or(0) > 0 => {
+            let (result, maps) = route_seeds(
+                &board,
+                &core_config(config),
+                config.first_seed.unwrap_or(0),
+                config.seeds.unwrap_or(1),
+                config.seeds_side_by_side.unwrap_or(usize::MAX),
+            );
+            maps_mb = maps;
+            result
+        }
+        None => {
+            let (result, maps) = route_measured(&board, &core_config(config));
+            maps_mb = maps;
+            result
+        }
         Some(root) => {
             let directory = attempt_frame_directory(root)?;
             let mut router = core::router::Router::new(&board, &core_config(config));
@@ -135,7 +145,7 @@ pub(super) fn route_kicad_board_once(
         }
     };
     let routing_seconds = routing_started.elapsed().as_secs_f64();
-    write_attempt(
+    let mut written = write_attempt(
         pcb,
         &board,
         result,
@@ -145,7 +155,21 @@ pub(super) fn route_kicad_board_once(
         output_directory,
         config,
         [lowering_seconds, routing_seconds],
-    )
+    )?;
+    written.maps_mb = maps_mb;
+    Ok(written)
+}
+
+/// Routes `board` as `core::route` does (`Router::new` and `run`), with
+/// the router's lattice maps in megabytes (its memory report; 0 when the
+/// report does not say).
+pub(super) fn route_measured(
+    board: &core::Board,
+    config: &core::Config,
+) -> (core::RoutingResult, f64) {
+    let router = core::router::Router::new(board, config);
+    let maps_mb = maps_mb_of(&router.memory_report()).unwrap_or(0.0);
+    (router.run(), maps_mb)
 }
 
 /// Moves every `(layer "X")` that names a layer the board's layer table
