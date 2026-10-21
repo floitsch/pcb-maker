@@ -228,6 +228,11 @@ impl Resolved {
             .map_or(self.no_net_group, |net| self.net_group[net as usize])
     }
 
+    /// The largest clearance any rule asks.
+    pub fn largest(&self) -> f64 {
+        self.table.iter().copied().fold(0.0, f64::max)
+    }
+
     /// Whether any clearance rule holds anywhere.
     pub fn has_clearances(&self) -> bool {
         self.table.iter().any(|value| *value > 0.0)

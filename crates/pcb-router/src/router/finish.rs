@@ -203,10 +203,15 @@ impl Router {
             .map(|net| self.materialize(net))
             .unzip();
         // Stubs were only checked against fixed objects; drop any that comes
-        // too close to routed copper of another net.
+        // too close to routed copper of another net, also by the rules
+        // beyond the classes (tuxkeychain: a 0.3 mm GND stub along a
+        // narrower pad, 0.104 mm from HPL's track and stub under a
+        // 0.127 mm rule between outer-layer tracks over classes of 0.1).
         loop {
             let mut offending: Vec<(usize, usize)> = Vec::new();
-            for violation in crate::verify::verify(&self.board, &routes) {
+            for violation in
+                crate::verify::verify_with_rules(&self.board, &routes, self.class_rules.as_deref())
+            {
                 let involved = violation
                     .segment
                     .map(|segment| (violation.net as usize, segment))

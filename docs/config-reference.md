@@ -27,7 +27,7 @@ The environment variables are indexed in the hand-over
 | [Router settings](#router-settings) | 81 | 70 | 11 | 81 | 17 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
-| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 0 |
+| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 1 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
@@ -163,7 +163,7 @@ One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/bo
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `add_pours[].net` | `String` | required | - | The net, as in the board (`GND` or `/GND`). |
-| `add_pours[].layers` | `Vec<String>` | required | - | Copper layers, such as `B.Cu`. |
+| `add_pours[].layers` | `Vec<String>` | required | router.md | Copper layers, such as `B.Cu`. |
 | `add_pours[].clearance_mm` | `Option<f64>` | optional | - | Clearance between the pour and other nets (default 0.3 mm). |
 
 ## Router settings: net_classes entries

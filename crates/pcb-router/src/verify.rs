@@ -54,6 +54,32 @@ fn buckets(bounds: Aabb) -> impl Iterator<Item = (i64, i64)> {
 }
 
 pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
+    verify_with_rules(board, routes, None)
+}
+
+/// `verify` that also holds the rules beyond the classes (`ClassRules` of
+/// the router's split `board`): pair clearances per item kind and layer
+/// between routed copper and against copper obstacles. Without rules, the
+/// classes' clearances only, as `verify`.
+pub fn verify_with_rules(
+    board: &Board,
+    routes: &[NetRoute],
+    rules: Option<&crate::rules::ClassRules>,
+) -> Vec<Violation> {
+    let rules = rules.filter(|rules| rules.clearances);
+    // The clearance the rules ask beyond the classes between an item of
+    // kind `kind_a` of `net_a` and one of kind `kind_b` of `net_b`, on
+    // `layer` (`None`: a via against a via, on every layer).
+    let extra = |net_a: NetId, kind_a: usize, net_b: NetId, kind_b: usize, layer: Option<usize>| {
+        rules.map_or(0.0, |rules| {
+            let group = |net: NetId| rules.class_group[board.nets[net as usize].class];
+            let (a, b) = (group(net_a), group(net_b));
+            match layer {
+                Some(layer) => rules.resolved.extra_on(a, kind_a, b, kind_b, layer),
+                None => rules.resolved.extra_anywhere(a, kind_a, b, kind_b),
+            }
+        })
+    };
     let max_clearance = board
         .classes
         .iter()
@@ -63,7 +89,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                 .clearance
                 .max(obstacle.clearance_override.unwrap_or(0.0))
         }))
-        .fold(board.hole_clearance, f64::max);
+        .fold(board.hole_clearance, f64::max)
+        .max(rules.map_or(0.0, |rules| rules.resolved.largest()));
 
     let mut index: HashMap<(i64, i64), Vec<Item>> = HashMap::new();
     for (obstacle_index, obstacle) in board.obstacles.iter().enumerate() {
@@ -128,7 +155,8 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
 
     for (net, route) in routes.iter().enumerate() {
         let net = net as NetId;
-        let class = board.classes[board.nets[net as usize].class];
+        let class_index = board.nets[net as usize].class;
+        let class = board.classes[class_index];
         // A routed item is described as a centreline plus a copper radius.
         let mut items: Vec<RoutedItem> = route
             .segments
@@ -157,6 +185,11 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
         }));
 
         for (start, end, radius, layer, drill, own_segment) in items {
+            let own_kind = if layer.is_some() {
+                crate::rules::TRACK
+            } else {
+                crate::rules::VIA
+            };
             let at = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
             let layer_mask = layer.map_or(board.all_layers(), |layer| 1 << layer);
             let report_layer = layer.unwrap_or(0);
@@ -220,7 +253,27 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                             }
                             let distance = obstacle.shape.distance_to_segment(start, end);
                             let required = match obstacle.kind {
-                                ObstacleKind::Copper => board.copper_clearance(&class, obstacle),
+                                ObstacleKind::Copper => {
+                                    let clearance = board.copper_clearance(&class, obstacle);
+                                    match (rules, layer) {
+                                        (None, _) => clearance,
+                                        (Some(rules), Some(layer)) => {
+                                            clearance.max(rules.obstacle_extra(
+                                                class_index,
+                                                crate::rules::TRACK,
+                                                obstacle,
+                                                layer,
+                                            ))
+                                        }
+                                        (Some(rules), None) => {
+                                            clearance.max(rules.obstacle_extra_via(
+                                                class_index,
+                                                obstacle,
+                                                board.layer_count,
+                                            ))
+                                        }
+                                    }
+                                }
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
@@ -281,7 +334,13 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 board.nets[other as usize].name.clone(),
                                 segment.layer,
                                 at,
-                                class.clearance.max(other_class.clearance),
+                                class.clearance.max(other_class.clearance).max(extra(
+                                    net,
+                                    own_kind,
+                                    other,
+                                    crate::rules::TRACK,
+                                    Some(segment.layer),
+                                )),
                                 distance - radius - segment.width / 2.0,
                             );
                             if let Some(drill) = drill {
@@ -317,7 +376,13 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
                                 format!("via of {}", board.nets[other as usize].name),
                                 report_layer,
                                 at,
-                                class.clearance.max(other_class.clearance),
+                                class.clearance.max(other_class.clearance).max(extra(
+                                    net,
+                                    own_kind,
+                                    other,
+                                    crate::rules::VIA,
+                                    layer,
+                                )),
                                 distance - radius - via.diameter / 2.0,
                             );
                             if let Some(drill) = drill {

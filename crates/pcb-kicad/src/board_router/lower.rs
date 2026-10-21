@@ -284,8 +284,7 @@ fn lower_board(
     let mut mask_openings: Vec<(Vec<core::Shape>, usize, String, f64, f64)> = Vec::new();
     // Board copper graphics, with the net they carry, placed once the nets
     // of the pads are known.
-    let mut copper_graphics: Vec<(Vec<core::Shape>, core::LayerMask, Option<String>, String)> =
-        Vec::new();
+    let mut copper_graphics: Vec<CopperGraphic> = Vec::new();
     let mut isolated_pads: Vec<String> = Vec::new();
     // The same per pad, by obstacle index.
     let mut solid_pad_obstacles: Vec<usize> = Vec::new();
@@ -385,6 +384,13 @@ fn lower_board(
         .chain(config.default_rules.iter())
         .map(|rules| rules.clearance_mm)
         .fold(f64::INFINITY, f64::min);
+    // Copper of no net (a logo, a footprint's graphic) is in KiCad's
+    // Default class: other copper keeps the larger of both clearances
+    // (tuxkeychain's GRAPHIC3).
+    let no_net_clearance = config
+        .default_rules
+        .as_ref()
+        .map_or(0.0, |rules| rules.clearance_mm);
     for item in pcb.children() {
         match item.head() {
             Some("footprint") => {
@@ -414,45 +420,57 @@ fn lower_board(
                         Some("fp_line" | "fp_arc" | "fp_rect" | "fp_circle" | "fp_poly")
                     )
                 }) {
+                    // KiCad 9 draws a graphic on several layers at once
+                    // (`(layers "B.Cu" "B.Mask")`: tuxkeychain's GRAPHIC3
+                    // logo, copper and a mask opening in one polygon).
+                    let names = item_layer_names(graphic);
                     // Mask graphics open the mask like the board's own
                     // (Sisu's 190 B.Mask polygons, link's connector).
-                    if let Some(side @ ("F.Mask" | "B.Mask")) = form_atom(graphic, "layer", 1) {
+                    let sides = mask_sides(&names, layers.len());
+                    if !sides.is_empty() {
                         let shapes: Vec<core::Shape> = copper_graphic_shapes(graphic)?
                             .into_iter()
                             .map(|shape| place_shape(shape, footprint_at))
                             .collect();
                         if !shapes.is_empty() {
-                            let layer = if side == "F.Mask" {
-                                0
-                            } else {
-                                layers.len() - 1
-                            };
                             let expansion = form_f64(graphic, "solder_mask_margin", 1)
                                 .ok()
                                 .unwrap_or(board_pad_to_mask)
                                 .max(0.0);
-                            mask_openings.push((
-                                shapes,
-                                layer,
-                                graphic.head().unwrap_or("graphic").to_string(),
-                                0.0,
-                                expansion,
-                            ));
+                            for side in sides {
+                                mask_openings.push((
+                                    shapes.clone(),
+                                    side,
+                                    graphic.head().unwrap_or("graphic").to_string(),
+                                    0.0,
+                                    expansion,
+                                ));
+                            }
                         }
+                    }
+                    if names.contains(&"Margin") {
+                        let shapes: Vec<core::Shape> = copper_graphic_shapes(graphic)?
+                            .into_iter()
+                            .map(|shape| place_shape(shape, footprint_at))
+                            .collect();
+                        obstacles.extend(margin_obstacles(
+                            shapes,
+                            &layers,
+                            config,
+                            &format!("{reference} margin {}", graphic.head().unwrap_or("graphic")),
+                        ));
+                    }
+                    let copper = layers.mask_of(names.iter().copied())?;
+                    if copper == 0 {
                         continue;
                     }
-                    let Some(layer) =
-                        form_atom(graphic, "layer", 1).and_then(|name| layers.index(name))
-                    else {
-                        continue;
-                    };
                     for shape in copper_graphic_shapes(graphic)? {
                         obstacles.push(core::Obstacle {
                             shape: place_shape(shape, footprint_at),
-                            layers: 1 << layer,
+                            layers: copper,
                             kind: core::ObstacleKind::Copper,
                             net: None,
-                            clearance: 0.0,
+                            clearance: no_net_clearance,
                             clearance_override: None,
                             blocks_tracks: true,
                             blocks_vias: true,
@@ -460,6 +478,47 @@ fn lower_board(
                                 "{reference} copper {}",
                                 graphic.head().unwrap_or("graphic")
                             ),
+                        });
+                    }
+                }
+                // The footprint's visible texts on copper are copper of no
+                // net, on a mask layer openings, as the board's are
+                // (jnftech's test points with their Value on F.Cu: KiCad's
+                // clearance and shorting_items against "Value field").
+                for text in item.children().iter().filter(|child| {
+                    matches!(child.head(), Some("fp_text" | "property"))
+                        && child.child("layer").is_some()
+                }) {
+                    let names = item_layer_names(text);
+                    let copper = layers.mask_of(names.iter().copied())?;
+                    let sides = mask_sides(&names, layers.len());
+                    if copper == 0 && sides.is_empty() {
+                        continue;
+                    }
+                    let Some(shape) = footprint_text_box(text)? else {
+                        continue;
+                    };
+                    let shape = place_shape(shape, footprint_at);
+                    for side in sides {
+                        mask_openings.push((
+                            vec![shape.clone()],
+                            side,
+                            format!("{reference} text"),
+                            0.0,
+                            0.0,
+                        ));
+                    }
+                    if copper != 0 {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: copper,
+                            kind: core::ObstacleKind::Copper,
+                            net: None,
+                            clearance: no_net_clearance,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!("{reference} copper text"),
                         });
                     }
                 }
@@ -488,12 +547,25 @@ fn lower_board(
                         && !node_net(pad).is_some_and(routable_net))
                         || pad_type == "np_thru_hole";
                     if hole && let Some(shape) = drill_shape(pad, lowered.center)? {
+                        // KiCad 10.0.7's copper_edge_clearance takes an
+                        // unplated slot (a milled hole, its drill sizes
+                        // differ) for board edge: copper keeps the edge
+                        // clearance from it (facade60's H5 and H8, the USB-C
+                        // shell slots of buganini's J1 and J3). A round hole
+                        // keeps only the hole clearance.
+                        let edge = if pad_type == "np_thru_hole"
+                            && matches!(shape, core::Shape::Capsule { .. })
+                        {
+                            config.edge_clearance_mm
+                        } else {
+                            0.0
+                        };
                         obstacles.push(core::Obstacle {
                             shape,
                             layers: layers.all(),
                             kind: core::ObstacleKind::Hole,
                             net: None,
-                            clearance: local_clearance::pad_clearance(pad, item)?,
+                            clearance: local_clearance::pad_clearance(pad, item)?.max(edge),
                             clearance_override: None,
                             blocks_tracks: true,
                             blocks_vias: true,
@@ -824,6 +896,17 @@ fn lower_board(
                         _ => None,
                     })
                     .collect();
+                // KiCad keeps the edge clearance from graphics on Margin
+                // as from the board edge (copper_edge_clearance: "Segment
+                // on Margin", michpro's PY32F002 board).
+                if names.contains(&"Margin") && item.head() != Some("gr_text") {
+                    obstacles.extend(margin_obstacles(
+                        copper_graphic_shapes(item)?,
+                        &layers,
+                        config,
+                        &format!("board margin ({})", item.head().unwrap_or("graphic")),
+                    ));
+                }
                 if copper == 0 && sides.is_empty() {
                     continue;
                 }
@@ -833,7 +916,17 @@ fn lower_board(
                     let net = node_net(item)
                         .filter(|raw| routable_net(raw))
                         .map(|raw| normalize_net(raw).to_string());
-                    copper_graphics.push((shapes.clone(), copper, net, kind.clone()));
+                    let clearance = node_net(item)
+                        .map(normalize_net)
+                        .and_then(|name| config.connection_rules.get(name))
+                        .map_or(no_net_clearance, |rules| rules.clearance_mm);
+                    copper_graphics.push(CopperGraphic {
+                        shapes: shapes.clone(),
+                        layers: copper,
+                        net,
+                        kind: kind.clone(),
+                        clearance,
+                    });
                 }
                 let shapes = if strict_mask && !sides.is_empty() {
                     mask_graphic_shapes(item)?
@@ -926,7 +1019,14 @@ fn lower_board(
     }
     // Copper graphics belong to their net (other nets keep clear) or, without
     // one, to none.
-    for (index, (shapes, copper, net, kind)) in copper_graphics.into_iter().enumerate() {
+    for (index, graphic) in copper_graphics.into_iter().enumerate() {
+        let CopperGraphic {
+            shapes,
+            layers: copper,
+            net,
+            kind,
+            clearance,
+        } = graphic;
         let net = net.and_then(|name| net_ids_lookup(&nets, &name));
         // A filled graphic with a net is copper KiCad wants connected like
         // a pad (Sisu's antenna feed, a rectangle on /RF/ANT, stayed an
@@ -957,7 +1057,7 @@ fn lower_board(
             layers: copper,
             kind: core::ObstacleKind::Copper,
             net,
-            clearance: 0.0,
+            clearance: if net.is_some() { 0.0 } else { clearance },
             clearance_override: None,
             blocks_tracks: true,
             blocks_vias: true,
@@ -1240,4 +1340,71 @@ fn net_ids_lookup(nets: &[core::Net], name: &str) -> Option<core::NetId> {
     nets.iter()
         .position(|net| net.name == name)
         .map(|index| index as core::NetId)
+}
+
+/// A board graphic on copper, placed once the nets of the pads are known.
+struct CopperGraphic {
+    shapes: Vec<core::Shape>,
+    layers: core::LayerMask,
+    /// Its routed net, by name.
+    net: Option<String>,
+    kind: String,
+    /// The clearance of its class (its net's, else Default's), kept where
+    /// it has no routed net.
+    clearance: f64,
+}
+
+/// The layer names of an item with either a `layer` or a `layers` form.
+fn item_layer_names(item: &Expr) -> Vec<&str> {
+    match form_atom(item, "layer", 1) {
+        Some(name) => vec![name],
+        None => item
+            .child("layers")
+            .map(Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .collect(),
+    }
+}
+
+/// The outer copper layers whose solder mask `names` open (F.Mask: the
+/// front, B.Mask: the back).
+fn mask_sides(names: &[&str], layer_count: usize) -> Vec<usize> {
+    names
+        .iter()
+        .filter_map(|name| match *name {
+            "F.Mask" => Some(0),
+            "B.Mask" => Some(layer_count - 1),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A graphic on the Margin layer as KiCad 10.0.7's copper_edge_clearance
+/// sees it: board edge, with its stroke (only Edge.Cuts strokes count as
+/// lines of no width) and its fill, which copper on every layer keeps the
+/// edge clearance from (the zone filler knocks it out too).
+/// `copper_graphic_shapes` already holds an arc's chord error.
+fn margin_obstacles(
+    shapes: Vec<core::Shape>,
+    layers: &LayerTable,
+    config: &KiCadBoardRouterConfig,
+    label: &str,
+) -> impl Iterator<Item = core::Obstacle> {
+    let all = layers.all();
+    let clearance = config.edge_clearance_mm;
+    let label = label.to_string();
+    shapes.into_iter().map(move |shape| core::Obstacle {
+        shape,
+        layers: all,
+        kind: core::ObstacleKind::Keepout,
+        net: None,
+        clearance,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: label.clone(),
+    })
 }

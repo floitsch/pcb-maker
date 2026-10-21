@@ -51,13 +51,21 @@ pub(crate) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
         Some("gr_line" | "fp_line") => {
             vec![capsule(form_xy(item, "start")?, form_xy(item, "end")?)]
         }
+        // The chords lie inside the arc by up to the flattening's
+        // tolerance: the stroke grows by it, so the capsules hold the
+        // true arc (name-card's antenna AE1, a 10.7 mm arc: a track
+        // 0.1978 mm from it under 0.2).
         Some("gr_arc" | "fp_arc") => outline::arc_points(
             form_xy(item, "start")?,
             form_xy(item, "mid")?,
             form_xy(item, "end")?,
         )
         .windows(2)
-        .map(|pair| capsule(pair[0], pair[1]))
+        .map(|pair| core::Shape::Capsule {
+            start: pair[0],
+            end: pair[1],
+            radius: width / 2.0 + outline::ARC_TOLERANCE,
+        })
         .collect(),
         Some("gr_rect" | "fp_rect") => {
             let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
@@ -203,8 +211,62 @@ pub(super) fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Strin
 /// The box KiCad's stroke font fills with a text, from its anchor, size,
 /// thickness and justification.
 fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
+    stroke_text_box_of(
+        item,
+        item.children().get(1).and_then(Expr::atom).unwrap_or(""),
+    )
+}
+
+/// A footprint's text (`fp_text`, a KiCad 8 `property`) on a copper or a
+/// mask layer, as `stroke_text_box` draws it, in the footprint's frame:
+/// its angle is relative to the footprint's (KiCad 7 and 8 alike: a
+/// footprint at 90 degrees with its text at 90 draws it at 180), so
+/// `place_shape` puts it on the board. `None` for a hidden text, which
+/// KiCad's DRC skips. A knockout text is its plate, the box grown by the
+/// stroke.
+pub(super) fn footprint_text_box(item: &Expr) -> Result<Option<core::Shape>, String> {
+    let hidden = |node: &Expr| {
+        node.children().iter().any(|child| {
+            child.atom() == Some("hide")
+                || (child.head() == Some("hide")
+                    && !matches!(
+                        child.children().get(1).and_then(Expr::atom),
+                        Some("no" | "false")
+                    ))
+        })
+    };
+    if hidden(item) || item.child("effects").is_some_and(hidden) {
+        return Ok(None);
+    }
+    let text = item.children().get(2).and_then(Expr::atom).unwrap_or("");
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let shape = stroke_text_box_of(item, text)?;
+    let knockout = item.child("layer").is_some_and(|layer| {
+        layer
+            .children()
+            .iter()
+            .skip(2)
+            .any(|child| child.atom() == Some("knockout"))
+    });
+    if !knockout {
+        return Ok(Some(shape));
+    }
+    let thickness = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"))
+        .and_then(|font| form_f64(font, "thickness", 1).ok())
+        .unwrap_or(0.15);
+    let bounds = shape.aabb().inflated(thickness);
+    let (low, high) = (bounds.minimum, bounds.maximum);
+    Ok(Some(core::Shape::Polygon {
+        points: vec![low, [high[0], low[1]], high, [low[0], high[1]]],
+    }))
+}
+
+fn stroke_text_box_of(item: &Expr, text: &str) -> Result<core::Shape, String> {
     let at = form_at(item)?;
-    let text = item.children().get(1).and_then(Expr::atom).unwrap_or("");
     let font = item
         .child("effects")
         .and_then(|effects| effects.child("font"));

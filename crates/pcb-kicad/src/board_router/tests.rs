@@ -1761,3 +1761,196 @@ mod work_bound_tests {
         assert!(!bound_allows_attempt(0.0, 30.0));
     }
 }
+
+mod lowering_gap_tests {
+    use super::*;
+
+    fn rules(clearance: f64) -> KiCadConnectionRoutingRules {
+        KiCadConnectionRoutingRules {
+            trace_width_mm: 0.2,
+            clearance_mm: clearance,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        }
+    }
+
+    /// A track of net `name` from `start` to `end` on F.Cu, 0.2 wide.
+    fn track(
+        board: &core::Board,
+        name: &str,
+        start: [f64; 2],
+        end: [f64; 2],
+    ) -> Vec<core::Violation> {
+        let net = board.nets.iter().position(|net| net.name == name).unwrap();
+        let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+        routes[net].segments.push(core::board::Segment {
+            layer: 0,
+            start,
+            end,
+            width: 0.2,
+        });
+        core::verify(board, &routes)
+    }
+
+    #[test]
+    fn unplated_slots_and_margin_graphics_keep_the_edge_clearance() {
+        // KiCad 10.0.7's copper_edge_clearance (checked with kicad-cli on
+        // the same shapes): an NPTH slot is board edge, a round NPTH hole
+        // and a plated slot are not; a Margin graphic is edge with its
+        // stroke, on the board or in a footprint; a text on Margin is not.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (45 "Margin" user))
+              (gr_rect (start 0 0) (end 40 40) (layer "Edge.Cuts"))
+              (gr_line (start 30 5) (end 30 15) (stroke (width 0.2) (type default)) (layer "Margin"))
+              (gr_text "M" (at 35 35 0) (layer "Margin") (effects (font (size 1 1) (thickness 0.15))))
+              (footprint "h" (at 10 10) (property "Reference" "H1")
+                (pad "" np_thru_hole circle (at 0 0) (size 2 2) (drill 2) (layers "*.Cu" "*.Mask")))
+              (footprint "h" (at 10 25) (property "Reference" "H2")
+                (pad "" np_thru_hole oval (at 0 0) (size 3 1.5) (drill oval 3 1.5) (layers "*.Cu" "*.Mask")))
+              (footprint "h" (at 20 10) (property "Reference" "H3")
+                (pad "" thru_hole oval (at 0 0) (size 3.4 1.9) (drill oval 3 1.5) (layers "*.Cu" "*.Mask")))
+              (footprint "h" (at 20 25) (property "Reference" "H4")
+                (fp_line (start 3 -3) (end 3 3) (stroke (width 0.1) (type default)) (layer "Margin")))
+              (footprint "c" (at 5 35) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.1)),
+            edge_clearance_mm: 0.5,
+            hole_clearance_mm: 0.25,
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let find = |label: &str| {
+            board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label == label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(find("H1. hole")[0].clearance, 0.0, "a round hole");
+        assert_eq!(find("H2. hole")[0].clearance, 0.5, "an unplated slot");
+        assert_eq!(find("H3. plated hole")[0].clearance, 0.0, "a plated slot");
+        let margin = find("board margin (gr_line)");
+        assert_eq!(margin.len(), 1);
+        assert_eq!(margin[0].kind, core::ObstacleKind::Keepout);
+        assert_eq!(margin[0].layers, 0b11);
+        assert_eq!(margin[0].clearance, 0.5);
+        assert_eq!(find("H4 margin fp_line").len(), 1);
+        assert!(
+            !board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label.contains("gr_text")),
+            "a text on Margin is no edge"
+        );
+        // KiCad's findings, 0.2 mm each: a track 0.2 from the slot, 0.2
+        // from the Margin line's stroke, 0.15 from the footprint's.
+        let near = |violations: Vec<core::Violation>, label: &str| {
+            violations
+                .iter()
+                .find(|violation| violation.other == label)
+                .map(|violation| (violation.required, violation.actual))
+        };
+        let (required, actual) =
+            near(track(&board, "A", [5.0, 26.05], [15.0, 26.05]), "H2. hole").unwrap();
+        assert!((required - 0.5).abs() < 1.0e-9 && (actual - 0.2).abs() < 1.0e-9);
+        let (required, actual) = near(
+            track(&board, "A", [30.4, 5.0], [30.4, 15.0]),
+            "board margin (gr_line)",
+        )
+        .unwrap();
+        assert!((required - 0.5).abs() < 1.0e-9 && (actual - 0.2).abs() < 1.0e-9);
+        assert!(
+            near(
+                track(&board, "A", [23.3, 20.0], [23.3, 30.0]),
+                "H4 margin fp_line"
+            )
+            .is_some()
+        );
+        // The round hole keeps the hole clearance only: 0.2 from it fails
+        // that, 0.3 passes.
+        assert!(near(track(&board, "A", [5.0, 11.3], [15.0, 11.3]), "H1. hole").is_some());
+        assert!(near(track(&board, "A", [5.0, 11.4], [15.0, 11.4]), "H1. hole").is_none());
+    }
+
+    #[test]
+    fn copper_of_no_net_keeps_the_default_class_and_footprint_layers_lists_count() {
+        // tuxkeychain's GRAPHIC3: a footprint polygon on (layers "B.Cu"
+        // "B.Mask") was neither copper nor an opening; KiCad keeps the
+        // Default class's clearance from copper of no net, also against a
+        // net of a smaller class (jnftech's Value texts on F.Cu too).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (38 "B.Mask" user) (39 "F.Mask" user))
+              (gr_rect (start 0 0) (end 40 40) (layer "Edge.Cuts"))
+              (gr_line (start 5 30) (end 15 30) (stroke (width 0.2) (type default)) (layer "F.Cu"))
+              (footprint "Graphics" (layer "B.Cu") (at 20 20 180) (property "Reference" "GRAPHIC3")
+                (fp_poly (pts (xy -1 -1) (xy 1 -1) (xy 1 1) (xy -1 1)) (stroke (width 0) (type solid)) (fill yes) (layers "B.Cu" "B.Mask")))
+              (footprint "tp" (layer "F.Cu") (at 10 10 90) (property "Reference" "TP1" (at 0 -2 90) (layer "F.SilkS"))
+                (property "Value" "VDD" (at 0 -1.143 90) (layer "F.Cu") (effects (font (size 0.5 0.5) (thickness 0.1))))
+                (property "Footprint" "x" (at 0 0 0) (layer "F.Cu") (hide yes) (effects (font (size 0.5 0.5) (thickness 0.1))))
+                (fp_text user "MASK" (at 0 2 0) (layer "F.Mask") (effects (font (size 0.5 0.5) (thickness 0.1))))
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "SIG")))
+              (footprint "c" (at 5 35) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "SIG"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            connection_rules: [("SIG".to_string(), rules(0.1))].into_iter().collect(),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let find = |label: &str| {
+            board
+                .obstacles
+                .iter()
+                .filter(|obstacle| obstacle.label == label)
+                .collect::<Vec<_>>()
+        };
+        let logo = find("GRAPHIC3 copper fp_poly");
+        assert_eq!(logo.len(), 1, "the polygon's fill, no stroke");
+        assert_eq!(
+            (logo[0].layers, logo[0].net, logo[0].clearance),
+            (0b10, None, 0.2)
+        );
+        assert!(
+            board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label == "solder mask opening (fp_poly)"
+                    && obstacle.layers == 0b10),
+            "and an opening on B.Mask"
+        );
+        let line = find("copper gr_line");
+        assert_eq!((line[0].net, line[0].clearance), (None, 0.2));
+        // The Value on F.Cu: 0.5 mm high at 180 degrees, 1.143 left of the
+        // pad (the footprint at 90 turns its (0, -1.143) to (-1.143, 0)).
+        let value = find("TP1 copper text");
+        assert_eq!(value.len(), 1, "the hidden Footprint field is no copper");
+        let bounds = value[0].shape.aabb();
+        let middle = [
+            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+        ];
+        assert!(core::geometry::distance(middle, [10.0 - 1.143, 10.0]) < 1.0e-6);
+        assert!(bounds.maximum[0] - bounds.minimum[0] > bounds.maximum[1] - bounds.minimum[1]);
+        assert!(
+            board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label == "solder mask opening (TP1 text)"),
+            "a footprint text on F.Mask opens it"
+        );
+        // SIG's class keeps 0.1; against the line of no net, Default's 0.2.
+        let found = track(&board, "SIG", [5.0, 30.35], [15.0, 30.35]);
+        let finding = found
+            .iter()
+            .find(|violation| violation.other == "copper gr_line")
+            .unwrap();
+        assert!((finding.required - 0.2).abs() < 1.0e-9);
+        assert!((finding.actual - 0.15).abs() < 1.0e-9);
+    }
+}

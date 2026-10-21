@@ -181,6 +181,12 @@ pub fn resolve_project_rules(
     let pcb_source = fs::read_to_string(pcb_path)
         .map_err(|error| format!("failed to read {}: {error}", pcb_path.display()))?;
     let pcb = parse(&pcb_source)?;
+    // The connections are keyed as the lowering will look them up: a board
+    // with a bare net beside a hierarchical one of the same name keeps the
+    // slash (meshsat's "/VIN_CELL" and "VIN_CELL": keyed "VIN_CELL" while
+    // the lowering asked for "/VIN_CELL", the net routed at Default's 0.14
+    // instead of its class CELL's 0.15).
+    crate::note_net_names(&pcb);
     let mut report = KiCadProjectRulesReport::default();
 
     let rules = &project["board"]["design_settings"]["rules"];
@@ -830,6 +836,41 @@ mod tests {
         assert_eq!(rules("USB_DP").clearance_mm, 0.15);
         assert_eq!(rules("USB_DP").via_size_mm, 0.5);
         assert_eq!(rules("SDA").clearance_mm, 0.15);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_hierarchical_net_beside_a_bare_one_keeps_its_class() {
+        // meshsat's pcb-d: pads on "/VIN_CELL", a bare "VIN_CELL" in the
+        // net table; the project puts "/VIN_CELL" in CELL.
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-rules-bare-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let source = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (net 0 "") (net 1 "/VIN_CELL") (net 2 "VIN_CELL")
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "/VIN_CELL"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "/VIN_CELL"))))"#;
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(&pcb, source).unwrap();
+        let project = directory.join("board.kicad_pro");
+        fs::write(
+            &project,
+            r#"{"net_settings": {
+                  "classes": [
+                    {"name": "Default", "clearance": 0.14, "track_width": 0.25, "via_diameter": 0.7, "via_drill": 0.3},
+                    {"name": "CELL", "clearance": 0.15, "track_width": 0.8, "via_diameter": 1.0, "via_drill": 0.5, "priority": 2}],
+                  "netclass_patterns": [{"netclass": "CELL", "pattern": "/VIN_CELL"}]}}"#,
+        )
+        .unwrap();
+        // Another board's names on this thread before (the bare set is
+        // per thread).
+        crate::note_net_names(&parse("(kicad_pcb)").unwrap());
+        let config = resolve_project_rules(&project, &pcb).unwrap();
+        // The key the lowering asks for.
+        crate::note_net_names(&parse(source).unwrap());
+        let rules = &config.connection_rules[normalize_net("/VIN_CELL")];
+        assert_eq!((rules.clearance_mm, rules.trace_width_mm), (0.15, 0.8));
         fs::remove_dir_all(&directory).unwrap();
     }
 

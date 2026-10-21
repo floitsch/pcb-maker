@@ -11,6 +11,177 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (lowering gaps)
+
+The two rules agents named KiCad findings the router could not see: the
+edge clearance from NPTH holes and Margin graphics, copper graphics of no
+net, and stubs of two nets leaving neighbouring pads. This closes them
+and four more gaps the remaining findings showed, all in the lowering
+(`board_router/lower.rs`, `geometry.rs`, `roundrect_pad.rs`,
+`project_rules.rs`) except the stub check (`pcb-router`: `verify.rs`,
+`router/finish.rs`); docs/router.md, "Board edges and copper of no net".
+
+Binaries: x1322 is main before (ffa49a5); x1330 and x1331 steps on the
+way (x1331: the edge clearance, copper of no net, footprint graphics and
+texts, the stub check); x1332 all of it, measured; x1333 the commit (a
+tuple of the lowering made a struct for clippy: the 20 rules boards
+identical to x1332, rows and boards).
+
+**What changed.**
+
+- **Edge clearance from unplated slots.** KiCad 10.0.7's
+  copper_edge_clearance takes an NPTH pad whose drill sizes differ (a
+  milled slot) for board edge; a round NPTH hole, an oval drill of equal
+  sizes and a plated slot keep only the hole clearance (kicad-cli on a
+  board made for it: "NPTH pad of H2" at 0.2 mm, nothing for the others).
+  The slot's hole obstacle takes the edge clearance as its floor (tracks
+  and vias). buganini's USB-C shell slots (4 findings) and facade60's
+  switch slots (3).
+- **Margin graphics.** A graphic on Margin, on the board or in a
+  footprint, is board edge to KiCad with its stroke and fill (a text on
+  Margin is not): a keepout on every copper layer at the edge clearance
+  (`margin_obstacles`; the zone filler knocks Margin out too). michpro's
+  "Segment on Margin" (1).
+- **Copper of no net keeps the Default class.** Board graphics, footprint
+  copper graphics and footprint texts on copper of no net carry Default's
+  clearance as their floor (a graphic whose net is not routed, that net's
+  class): KiCad keeps the larger of both items' clearances, the router
+  kept only the routed net's.
+- **Footprint graphics on several layers.** KiCad 9 draws a footprint
+  graphic on `(layers "B.Cu" "B.Mask")`; only `(layer ...)` was read, so
+  tuxkeychain's GRAPHIC3 logo was neither copper nor a mask opening (10
+  findings, tracks and vias 0.01 to 0.07 mm from it). Footprint graphics
+  now lower on every copper layer they name and open every mask layer.
+- **Footprint texts on copper and mask layers.** A visible `fp_text` or
+  `property` on a copper layer is copper of no net, on a mask layer an
+  opening (`footprint_text_box`: the stroke font's box in the
+  footprint's frame; KiCad 7 and 8 store the angle relative to the
+  footprint, checked with kicad-cli; knockout texts their plate, hidden
+  ones nothing). The intake's jnftech test points (Value fields on F.Cu:
+  clearance and shorting_items) and Tert2's Reference on a mask layer.
+- **Pad-centre stubs keep the rules.** The cosmetic stub from a route's
+  node inside a pad to the pad's centre is drawn at the track's width; on
+  a pad narrower than the track it reaches past the pad. It is checked
+  against fixed copper when laid and against routed copper when the
+  routes are emitted, where `finish` drops a stub too close; that check
+  (`verify::verify_with_rules`, the classes plus `ClassRules`' pair
+  clearances per item kind and layer; `verify` itself unchanged) now
+  holds the rules. tuxkeychain's three "Minimum Trace Spacing (outer
+  layer)" findings: GND's 0.3 mm stubs along U4's 0.2 mm QFN pad 2,
+  0.104 mm from HPL's track and stub under 0.127. Measured alone (x1322
+  with only this change, tuxkeychain): the same routes less three stub
+  segments, clearance 13 to 10 (the GRAPHIC3 ten), 5 unconnected both.
+- **Arcs.** A copper (or mask, or Margin) arc graphic is flattened to
+  chords up to 0.005 mm inside the arc; its stroke now grows by that
+  tolerance. name-card's antenna AE1 (a 10.7 mm arc): a track 0.1978 mm
+  from it under 0.2 (2 findings).
+- **Zero chamfers are sharp corners.** A rounded-rectangle pad's corner
+  named in `(chamfer ...)` with `chamfer_ratio 0` is sharp in KiCad (not
+  rounded; kicad-cli: 0.1546 mm from the corner, 0.32 from a rounded
+  one); the lowering rounded it. AQEYE's solder jumpers JP1 and JP2 (2
+  findings, tracks 0.126 and 0.112 mm from the inner corners).
+- **Net keys of the project rules.** `resolve_project_rules` keyed the
+  connections before noting the board's bare net names: on a board with
+  both `/VIN_CELL` and `VIN_CELL` (meshsat) the rules were keyed
+  `VIN_CELL` while the lowering asked for `/VIN_CELL` and fell back to
+  Default's (0.25 mm tracks, 0.7 mm vias, 0.14 clearance against CELL's
+  0.8, 1.0 and 0.15: 6 findings).
+
+**Rules boards** (rules-tasks.json, route mode, 30 s, 8 x 1, `--no-lock`),
+x1322 against x1332: 14 rows identical; passes 12 to 18 (strict 12 to
+18), new errors 18 to 0 (strict 19 to 1), unconnected 6 to 4, vias 493
+to 464, work 233 to 230 s.
+
+| board | gap | x1322 | x1332 |
+| --- | --- | --- | --- |
+| buganini Kikakuka gerber | NPTH slots as edge | 5/5, copper_edge_clearance 4 | 5/5, pass |
+| facade60 main | NPTH slots as edge | 92/92, 98 vias, copper_edge_clearance 3 | 92/92, 69 vias, pass |
+| michpro PY32F002 | Margin graphic | 12/12, copper_edge_clearance 1 | 12/12, pass |
+| name-card | arc chord error | 13/13, clearance 2 | 13/13, pass (one track a node over) |
+| AQEYE-SB-D1 | zero chamfer | 28/28, 23 vias, clearance 2 | 28/28, 25 vias, pass |
+| meshsat pcb-d-aprs | net keys | 60/61, 2 unconnected, clearance 6 | 61/61, pass |
+
+x1331 (without the last three) changed the first three rows only. The two
+rows left failing are ChengminLi (the courtyard rule's dead jumper pads)
+and kisurf (8 mm between pins of one part; strict starved_thermal 1),
+both as on x1322.
+
+**Expansion tier** (8 x 1, `--no-lock`), x1322 against x1332 (x1331 the
+same): 45 rows identical; tuxkeychain 38/42 to 35/42, clearance 13 to 0,
+unconnected 5 to 11, vias 69 to 66. Its GRAPHIC3 logo is B.Cu copper the
+routes crossed within 0.01 mm before; routing around it at 30 s leaves
+SDC0_D3, SDC0_D0, SPI1_MISO and SPI_MISO open where SPI1_CLK was (no dead
+pads). Totals: unconnected 787 to 793, new errors 18 (strict 15) to 5
+(strict 2), vias 4022 to 4019, 14 passes both. The new errors left are
+starved_thermal on ZSWatch (1) and anthracite (4, strict 1): the pour
+model, not the lowering.
+
+**Fingerprints**: Castor, k30-SBC, jetson and Sisu, route mode from the
+v16 layouts (`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`, 2 x
+4, budget scale 0.25), x1322 against x1332: every phase fingerprint, the
+board (md5) and the row identical. All four have copper graphics
+(footprint polygons of no net on Castor, k30 and jetson, now at
+Default's clearance, which no class there exceeds; Sisu's GND
+rectangles and polygons), jetson two copper arcs, none near enough a
+route to move it; none has a Margin graphic, an NPTH slot, a zero
+chamfer, a footprint graphic on several layers or a visible footprint
+text on copper or mask.
+
+**Short tier** (tasks v7, 4 x 2, `--no-lock` while the designer tier
+held the lock; results count work), x1322 against x1332: all 12 rows
+identical (routed, vias, length, KiCad's findings, work), all 12 result
+boards byte-identical, no row cut; 7 passes, 19 unconnected, 1125 vias
+both. framework_mobo_lefthalf's one NPTH slot is the only item of these
+gaps in the tier (Default is the smallest class on every short-tier
+project, so copper of no net keeps what it kept); it moved nothing.
+
+**Four intake boards with the text findings** (the intake's stripped
+boards and router settings, route mode, 30 s of work, kicad-cli's DRC;
+in the scratchpad, not a tier), x1322 against x1332: jnftech's SOIC
+board clearance 1 and shorting_items 1 (Value fields) to none, 4
+unconnected both; its UQFN board clearance 5 and shorting_items 2 to
+none, 3 unconnected both (annular_width 6 both: the designer's); Tert2's
+jogi solder_mask_bridge 11 (Reference fields on F.Mask) to 0,
+unconnected 43 to 22 (the edge, hole and clearance findings left are
+the designer's); stonedDiscord's ZLKalt shorting_items 1 to 0 but 0 to
+4 unconnected: the router's pour-connect attempt now counted 0 open and
+was kept without KiCad's check (the intake's settings), and KiCad's fill
+of the B.Cu GND zone leaves four pieces apart (the pour model, not the
+texts, which are on F.Cu).
+
+**Lowering gaps in the intake's findings** (the 2026-10-18 intake's
+result DRC on 1 725 boards, an older binary; findings of routed copper
+against a fixed item, on boards with more of the type than the
+designer's): closed here: copper_edge_clearance against NPTH slots (28
+on 5 boards) and Margin graphics (31 on 5), footprint fields on copper
+(clearance 8 and shorting_items 4 on jnftech's boards, shorting_items 1
+on stonedDiscord's ZLKalt) and on a mask layer (solder_mask_bridge 16, Tert2).
+Not lowering, closed before: clearance against pads and track_width
+(the project rules), copper_edge_clearance against Edge.Cuts and
+hole_to_hole against NPTH pads (rules' values, such as conorcurley5's
+"Clearance: hole to hole (perimeter), different nets"). Left: dimensions on
+copper (shorting_items 3 and clearance 1, two boards: KiCad counts a
+dimension on a copper layer as copper), a multi-line copper text
+(TomKeddie's supercon SAO, 3, not analysed), solder_mask_bridge against
+pads and mask graphics on 11 boards (38 findings, after the 2026-10-15
+mask model; not analysed here), track_dangling and
+track_not_centered_on_via (the router's output, not the lowering).
+
+Unit tests: board_router lowering_gap_tests (an NPTH slot, a round hole,
+a plated slot, Margin on the board and in a footprint and a Margin text
+against tracks through `verify`; a footprint polygon on B.Cu and B.Mask,
+a board line of no net at Default's clearance against a smaller class,
+a footprint Value on F.Cu at its turned position, a hidden field, a
+footprint text on F.Mask), roundrect_pad (a zero chamfer is sharp),
+project_rules (a hierarchical net beside a bare one keeps its class;
+fails without the fix), pcb-router rule_tests (`verify_with_rules` holds
+a track-to-track rule `verify` does not, not against a via). `bash
+scripts/check.sh` and the clippy gate pass.
+
+Logs: build/rules-x1331, -x1332, -x1333; build/expansion-x1331, -x1332,
+build/expansion-lower-stubonly (the stub check alone); build/fp-lower-x1322,
+-x1332; build/short-x1332.
+
 ## Committed on 2026-10-21 (ladder fault isolation)
 
 Review finding 8: `route_kicad_board` (board_router/route.rs) was about

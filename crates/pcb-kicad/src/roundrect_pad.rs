@@ -81,9 +81,11 @@ fn geometry_with(
         if !chamfer_ratio.is_finite() || !(0.0..=0.5).contains(&chamfer_ratio) {
             return Err("chamfer_ratio must be finite and between zero and 0.5".into());
         }
-        if chamfer_ratio > 0.0 {
-            return chamfered_geometry(pad, center, size, angle_degrees, &chamfered, chamfer_ratio);
-        }
+        // A named corner of no chamfer is sharp, not rounded: KiCad draws
+        // a chamfered corner without the rounding, whatever its size
+        // (AQEYE's solder jumpers, chamfer_ratio 0 on the two inner
+        // corners: tracks 0.126 mm from the sharp corner under 0.2).
+        return chamfered_geometry(pad, center, size, angle_degrees, &chamfered, chamfer_ratio);
     }
     let mut size = size;
     let mut ratio_of = pad;
@@ -321,6 +323,32 @@ mod tests {
         assert!(
             geometry_contains(&parts, [0.9, 0.4]),
             "inside the rounded corner's disc"
+        );
+    }
+
+    #[test]
+    fn a_named_corner_without_a_chamfer_is_sharp() {
+        // AQEYE's solder jumper pad (checked with kicad-cli: a track
+        // 0.1546 mm from the sharp corner, 0.32 from a rounded one).
+        let pad = parse(
+            "(pad \"2\" smd roundrect (at 0 0) (size 1 1.2) (layers \"F.Cu\") (roundrect_rratio 0.4) (chamfer_ratio 0) (chamfer top_left bottom_left))",
+        )
+        .unwrap();
+        let geometry = geometry(&pad, [0.0, 0.0], [1.0, 1.2], 0.0).unwrap();
+        let ObstacleGeometry::Union { parts } = geometry else {
+            panic!("union expected");
+        };
+        assert!(
+            geometry_contains(&parts, [-0.49, -0.59]),
+            "top left is sharp"
+        );
+        assert!(
+            geometry_contains(&parts, [-0.49, 0.59]),
+            "bottom left is sharp"
+        );
+        assert!(
+            !geometry_contains(&parts, [0.49, -0.59]),
+            "top right stays rounded"
         );
     }
 

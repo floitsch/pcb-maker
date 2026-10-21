@@ -340,3 +340,50 @@ fn rules_that_split_nothing_route_as_without_them() {
         }
     }
 }
+
+#[test]
+fn the_stub_check_holds_the_rules_beyond_the_classes() {
+    // tuxkeychain: 0.127 mm between outer-layer tracks over classes of
+    // 0.1. Two tracks 0.104 mm apart keep the classes but not the rule;
+    // the verifier the clean-up of pad stubs asks (`verify_with_rules`)
+    // sees it, `verify` (the classes) does not.
+    let mut board = two_nets(1);
+    board.classes[0].clearance = 0.1;
+    let rules = NetRules {
+        clearances: vec![ClearanceRule {
+            first: None,
+            second: None,
+            kinds: kind_bit(TRACK, TRACK),
+            layers: 0,
+            clearance: 0.127,
+        }],
+        ..NetRules::default()
+    };
+    let (split, class_rules) = crate::rules::ClassRules::split(&board, &rules);
+    let track = |y: f64| crate::board::Segment {
+        layer: 0,
+        start: [2.0, y],
+        end: [4.0, y],
+        width: 0.25,
+    };
+    let mut routes = vec![crate::board::NetRoute::default(); 2];
+    routes[0].segments.push(track(3.0));
+    routes[1].segments.push(track(3.0 + 0.25 + 0.104));
+    assert!(crate::verify::verify(&split, &routes).is_empty());
+    let found = crate::verify::verify_with_rules(&split, &routes, Some(&class_rules));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].other_segment, Some((1, 0)));
+    assert!((found[0].required - 0.127).abs() < 1.0e-9);
+    assert!((found[0].actual - 0.104).abs() < 1.0e-9);
+    // At the rule's distance, nothing.
+    routes[1].segments[0] = track(3.0 + 0.25 + 0.127);
+    assert!(crate::verify::verify_with_rules(&split, &routes, Some(&class_rules)).is_empty());
+    // A via of B as close: the rule is between tracks only.
+    routes[1].segments.clear();
+    routes[1].vias.push(crate::board::Via {
+        at: [3.0, 3.0 + 0.125 + 0.3 + 0.104],
+        diameter: 0.6,
+        drill: 0.3,
+    });
+    assert!(crate::verify::verify_with_rules(&split, &routes, Some(&class_rules)).is_empty());
+}

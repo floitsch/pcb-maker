@@ -209,6 +209,53 @@ clearance 0.25: a via 0.769 from the centre kept the copper rule and was
 tracks end on the drill; its vias keep the pad copper's rule
 (`StaticMaps::via_owner`).
 
+### Board edges and copper of no net (2026-10-22)
+
+KiCad 10.0.7's copper_edge_clearance measures copper against more than
+the outline (checked with kicad-cli on boards made for it): an unplated
+slot (an NPTH pad whose drill sizes differ, a milled hole; "NPTH pad of
+J1") is board edge, a round NPTH hole, a plated slot and an oval drill
+of equal sizes are not (they keep the hole clearance); a graphic on the
+Margin layer, on the board or in a footprint, is edge with its stroke
+and its fill (Edge.Cuts strokes count as lines of no width), a text on
+Margin is not. The lowering (`board_router/lower.rs`) gives an unplated
+slot's hole obstacle the edge clearance as its clearance floor (the
+hole kind keeps the larger of it and the hole clearance, tracks and
+vias alike) and lowers Margin graphics as keepouts on every copper layer
+at the edge clearance plus the arcs' chord error (`margin_obstacles`;
+KiCad's zone filler knocks Margin out too, and the static maps' fill
+keeps them). buganini's USB-C shell slots, facade60's switch slots and
+michpro's Margin outline were the rules boards' edge findings.
+
+Copper of no net keeps KiCad's Default class: other copper keeps the
+larger of its own clearance and Default's (a board graphic of no net, a
+footprint's copper graphic, a footprint's text on copper; a graphic
+whose net is not routed keeps that net's class). Before, such copper
+kept only the routed net's clearance. Footprint graphics on several
+layers at once (KiCad 9's `(layers "B.Cu" "B.Mask")`: tuxkeychain's
+GRAPHIC3 logo, 10 findings at 0.01 to 0.07 mm) are copper on their
+copper layers and openings on their mask layers; only a single `(layer
+...)` was read, so they were neither. A footprint's visible texts
+(`fp_text`, KiCad 8's `property`) on a copper layer are copper of no
+net, on a mask layer openings, as the board's texts are: the stroke
+font's box (`footprint_text_box`), in the footprint's frame (KiCad 7 and
+8 store the text's angle relative to the footprint's), a knockout text
+its plate, a hidden one nothing (jnftech's test points with their Value
+on F.Cu: clearance and shorting_items against "Value field" in the
+intake).
+
+Two shapes were smaller than KiCad's: an arc graphic is flattened to
+chords up to 0.005 mm inside the arc, so its stroke now grows by that
+tolerance (name-card's 10.7 mm antenna arc AE1: a track 0.1978 mm from
+it under 0.2); a rounded-rectangle pad's corner named in `(chamfer ...)`
+with a `chamfer_ratio` of 0 is sharp, not rounded (`roundrect_pad.rs`;
+AQEYE's solder jumpers: tracks 0.126 mm from the sharp inner corners
+under 0.2, checked with kicad-cli).
+
+Not lowered yet: dimensions on a copper layer (copper to KiCad:
+shorting_items and clearance against "Dimension ... on F.Cu" on two
+intake boards), footprint text boxes and footprint graphics of a net.
+
 ### Solder mask bridges (2026-10-15)
 
 KiCad 10.0.7's `solder_mask_bridge` (DRC_TEST_PROVIDER_SOLDER_MASK): items
@@ -258,7 +305,11 @@ KiCad 10.0.7's DRC reads it:
   pattern it matches), and each value from the first of them by
   `priority` that has one, else from `Default` (KiCad 8's composite
   classes; a class without a width is Default's width, not 0.2). A pair
-  of nets keeps the larger of the two clearances, as in KiCad.
+  of nets keeps the larger of the two clearances, as in KiCad. The rules
+  are keyed by connection as the lowering looks them up: a board with a
+  bare net beside a hierarchical one of that name (meshsat's
+  `/VIN_CELL` and `VIN_CELL`) keeps the slash (since 2026-10-22; before,
+  the hierarchical net fell back to Default's rules).
 - **Custom rules** (`<project>.kicad_dru`, `project_rules/dru.rs`). The
   file is parsed (comments, units mm/mil/in/um, escapes) and each
   condition evaluated, three-valued, for what the router lays: tracks and
@@ -315,10 +366,9 @@ KiCad 10.0.7's DRC reads it:
   and `drc-kicad-board` prints them on a `next:` line when KiCad finds
   errors.
 
-  What the lowering cannot do yet: the edge clearance from NPTH holes
-  and from Margin graphics (KiCad's copper_edge_clearance names "NPTH pad
-  of J1" and "Segment on Margin"; the router keeps the hole clearance from
-  NPTH holes and ignores Margin: lowering, board_router/lower.rs); a
+  What the lowering cannot do yet (the edge clearance from NPTH slots
+  and Margin graphics it does since 2026-10-22, "Board edges and copper
+  of no net" above): a
   later rule that loosens an earlier one only inside an area or a
   courtyard (ChengminLi's "YPS jumper pins (intended bridge)", 0.5 mm
   between the Y capacitor jumper's primary and secondary pins under the
@@ -365,9 +415,17 @@ without them) routes as before, byte for byte.
   (`stub_is_clear`) too. A pad also keeps what its net's tracks keep: the
   net leaves it by a stub off the lattice that only the pad's clearance
   protects (tuxkeychain's outer-layer 0.127 mm over classes of 0.1 left
-  stubs 0.104 mm from other tracks without it). Stubs of two nets leaving
-  neighbouring pads are still not checked against each other. The internal verifier checks the classes'
-  clearances only; KiCad checks the rest.
+  stubs 0.104 mm from other tracks without it). A pad-centre stub (the
+  cosmetic stub from the node a route ends on inside a pad to the pad's
+  centre, at the track's width: wider than a narrow pad, it reaches past
+  the pad's copper) is checked against fixed copper when it is laid and
+  against every net's routed copper when the routes are emitted, where a
+  stub too close is dropped (`finish`): that check now holds the rules
+  too (`verify::verify_with_rules`; tuxkeychain's 0.3 mm GND stubs along
+  pad 2 of U4, a QFN's 0.2 mm pad, 0.104 mm from the track and the stub
+  of HPL's pad 1 under the 0.127 mm rule, 3 findings). The internal verifier of the board router
+  (`verify`, the attempt ladder's count) checks the classes' clearances
+  only; KiCad checks the rest.
 - **Same-net hole to hole.** Where the project rates hole_to_hole findings
   errors (KiCad 8's `hole_near_hole` too), a via keeps the board's hole to
   hole from the plated holes of its own net's pads (KiCad checks drilled
