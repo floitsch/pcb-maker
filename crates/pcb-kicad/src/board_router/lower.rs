@@ -132,6 +132,29 @@ impl LayerTable {
     }
 }
 
+/// The copper layers of a via: a through via's every layer, a blind,
+/// buried or micro via's (`(via blind ... (layers "F.Cu" "In1.Cu"))`)
+/// the layers from its first to its last. The router's own vias are
+/// through vias; another via is copper on its own layers only.
+fn via_layers(via: &Expr, layers: &LayerTable) -> core::LayerMask {
+    let ends: Vec<usize> = via
+        .child("layers")
+        .map(Expr::children)
+        .unwrap_or_default()
+        .iter()
+        .skip(1)
+        .filter_map(Expr::atom)
+        .filter_map(|name| layers.index(name.trim_matches('"')))
+        .collect();
+    match ends.as_slice() {
+        [first, last] => {
+            let (low, high) = ((*first).min(*last), (*first).max(*last));
+            (low..=high).fold(0, |mask, layer| mask | 1 << layer)
+        }
+        _ => layers.all(),
+    }
+}
+
 /// The drilled hole of a pad: a circle, or a capsule for a slot
 /// (`(drill oval 1 7)`), centred on the pad.
 fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
@@ -568,8 +591,9 @@ fn lower_board(
                         (vec![shape], "text")
                     };
                     // A text box of fewer than three corners has no box
-                    // (`text_box_shapes`): left out, as the board's own are
-                    // (`input_warnings` says so in the report).
+                    // (`text_box_shapes`), nor has a hidden one: left out,
+                    // as the board's own are (`input_warnings` says so in
+                    // the report).
                     if shapes.is_empty() {
                         continue;
                     }
@@ -1125,7 +1149,7 @@ fn lower_board(
                         center: form_xy(item, "at")?,
                         radius: form_f64(item, "size", 1)? / 2.0,
                     },
-                    layers: layers.all(),
+                    layers: via_layers(item, &layers),
                     kind: core::ObstacleKind::Copper,
                     net,
                     clearance: 0.0,
@@ -2069,7 +2093,9 @@ pub(crate) fn input_warnings(pcb: &Expr) -> Vec<String> {
                     .iter()
                     .filter(|child| child.head() == Some("fp_text_box"))
                 {
-                    if matches!(geometry::text_box_shapes(text), Ok(shapes) if shapes.is_empty()) {
+                    if !geometry::text_hidden(text)
+                        && matches!(geometry::text_box_shapes(text), Ok(shapes) if shapes.is_empty())
+                    {
                         boxes.push(format!(
                             "{reference}'s text box has fewer than three corners: it is left out"
                         ));
@@ -2078,7 +2104,9 @@ pub(crate) fn input_warnings(pcb: &Expr) -> Vec<String> {
                 continue;
             }
             Some("gr_text_box") => {
-                if matches!(geometry::text_box_shapes(item), Ok(shapes) if shapes.is_empty()) {
+                if !geometry::text_hidden(item)
+                    && matches!(geometry::text_box_shapes(item), Ok(shapes) if shapes.is_empty())
+                {
                     boxes.push(
                         "a board text box has fewer than three corners: it is left out".into(),
                     );

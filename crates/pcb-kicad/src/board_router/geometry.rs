@@ -309,17 +309,7 @@ fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
 /// KiCad's DRC skips. A knockout text is its plate, the box grown by the
 /// stroke.
 pub(super) fn footprint_text_box(item: &Expr) -> Result<Option<core::Shape>, String> {
-    let hidden = |node: &Expr| {
-        node.children().iter().any(|child| {
-            child.atom() == Some("hide")
-                || (child.head() == Some("hide")
-                    && !matches!(
-                        child.children().get(1).and_then(Expr::atom),
-                        Some("no" | "false")
-                    ))
-        })
-    };
-    if hidden(item) || item.child("effects").is_some_and(hidden) {
+    if text_hidden(item) {
         return Ok(None);
     }
     let text = item.children().get(2).and_then(Expr::atom).unwrap_or("");
@@ -576,6 +566,22 @@ pub(super) fn dimension_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> 
     Ok(shapes)
 }
 
+/// Whether a text or a text box is hidden: `hide`, `(hide yes)`, on the
+/// item or in its effects.
+pub(super) fn text_hidden(item: &Expr) -> bool {
+    let hidden = |node: &Expr| {
+        node.children().iter().any(|child| {
+            child.atom() == Some("hide")
+                || (child.head() == Some("hide")
+                    && !matches!(
+                        child.children().get(1).and_then(Expr::atom),
+                        Some("no" | "false")
+                    ))
+        })
+    };
+    hidden(item) || item.child("effects").is_some_and(hidden)
+}
+
 /// A text box (`gr_text_box`, a footprint's `fp_text_box`) on copper: its
 /// box, which holds its glyphs, filled, grown by half its stroke's width.
 /// KiCad 10.0.7's DRC measures from the outline grown so with or without
@@ -584,6 +590,13 @@ pub(super) fn dimension_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> 
 /// comes out in the footprint's frame (its corners are the footprint's
 /// coordinates, as a line's are).
 pub(crate) fn text_box_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    // A hidden text box (an `fp_text_box` as a footprint's hidden text)
+    // draws nothing. Its corners are the box's: KiCad reads a text box's
+    // `angle` as its text's only (the parser does not rotate the box), so
+    // a box of `start` and `end` with an angle keeps those corners.
+    if text_hidden(item) {
+        return Ok(Vec::new());
+    }
     let corners = if item.child("pts").is_some() {
         outline::pts_points(item)?
     } else {

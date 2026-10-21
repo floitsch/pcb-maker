@@ -7,11 +7,7 @@ use super::*;
 
 /// The net names `root` and the forms in it name (with a stack, not
 /// recursion: a tree built in code is not bound by the parser's nesting).
-pub(crate) fn collect_named_nets(
-    root: &Expr,
-    names: &NetNames,
-    named_nets: &mut BTreeSet<String>,
-) {
+pub(crate) fn collect_named_nets(root: &Expr, names: &NetNames, named_nets: &mut BTreeSet<String>) {
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
         if node.head() == Some("net")

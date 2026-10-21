@@ -2697,6 +2697,64 @@ mod lowering_gap_tests {
     }
 
     #[test]
+    fn a_blind_via_is_copper_on_its_own_layers_and_a_hidden_text_box_is_none() {
+        // A blind via F.Cu to In1.Cu, a buried one In1.Cu to In2.Cu, a
+        // through via; a footprint's hidden text box on F.Cu and a shown
+        // one; a board text box of start and end turned 90 degrees keeps
+        // its corners (KiCad turns its text only).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 40) (layer "Edge.Cuts"))
+              (via blind (at 5 5) (size 0.6) (drill 0.3) (layers "F.Cu" "In1.Cu") (net "A"))
+              (via buried (at 10 5) (size 0.6) (drill 0.3) (layers "In2.Cu" "In1.Cu") (net "A"))
+              (via (at 15 5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "A"))
+              (gr_text_box "T" (start 20 20) (end 30 22) (angle 90) (layer "F.Cu") (effects (font (size 1 1))))
+              (footprint "t" (at 20 10) (property "Reference" "T1")
+                (fp_text_box "hidden" (start -1 -1) (end 1 1) (layer "F.Cu") (hide yes) (effects (font (size 1 1))))
+                (fp_text_box "shown" (start 4 -1) (end 6 1) (layer "F.Cu") (effects (font (size 1 1))))
+                (pad "1" smd rect (at 10 0) (size 1 1) (layers "F.Cu") (net "A")))
+              (footprint "t" (at 35 35) (property "Reference" "T2")
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let via_layers: Vec<core::LayerMask> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "existing via")
+            .map(|obstacle| obstacle.layers)
+            .collect();
+        assert_eq!(via_layers, [0b0011, 0b0110, 0b1111]);
+        let boxes: Vec<pcb_router::geometry::Aabb> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle.label.contains("text box")
+                    && matches!(obstacle.shape, core::Shape::Polygon { .. })
+            })
+            .map(|obstacle| obstacle.shape.aabb())
+            .collect();
+        assert_eq!(boxes.len(), 2, "the shown footprint box and the board's");
+        assert!(
+            boxes
+                .iter()
+                .any(|bounds| (bounds.minimum[0] - 24.0).abs() < 1.0e-9
+                    && (bounds.maximum[0] - 26.0).abs() < 1.0e-9)
+        );
+        assert!(
+            boxes
+                .iter()
+                .any(|bounds| (bounds.minimum[0] - 20.0).abs() < 1.0e-9
+                    && (bounds.maximum[0] - 30.0).abs() < 1.0e-9
+                    && (bounds.maximum[1] - 22.0).abs() < 1.0e-9)
+        );
+    }
+
+    #[test]
     fn a_cached_copper_text_is_a_box_per_line_and_a_footprint_graphics_net_no_net() {
         // TomKeddie's SAO sign: KiCad draws a TrueType copper text from the
         // installed font, its glyphs up to 0.92 mm off the cached ones;
