@@ -156,10 +156,14 @@ def unconnected(row):
     return native.get("unconnected")
 
 
-def load(out):
-    """Per task name, per side: the score report (and the probe's)."""
+def load(out, probes=None):
+    """Per task name, per side: the score report (and the probe's, from
+    `out` or from `probes`)."""
     scores = {}
-    for path in sorted(Path(out).glob("*.json")):
+    paths = sorted(Path(out).glob("*.json"))
+    if probes:
+        paths += sorted(Path(probes).glob("*.probe*.json"))
+    for path in paths:
         parts = path.name[:-len(".json")].split(".")
         if len(parts) < 2:
             continue
@@ -194,7 +198,7 @@ STATISTICS = {
 
 
 def analyse(arguments):
-    scores = load(arguments.out)
+    scores = load(arguments.out, arguments.probes)
     layout = {row["name"]: row for row in json.loads((ROOT / LAYOUT_RESULTS).read_text())}
     designer = {row["name"]: row for row in json.loads((ROOT / DESIGNER_RESULTS).read_text())}
     finals = {"ours": layout, "designer": designer}
@@ -418,6 +422,7 @@ def main():
     analyse_parser = sub.add_parser("analyse")
     analyse_parser.add_argument("out")
     analyse_parser.add_argument("--write")
+    analyse_parser.add_argument("--probes", help="a run directory with --probe reports to add")
     finals_run_parser = sub.add_parser("finals-run", help="score the historical cohort's placements")
     finals_run_parser.add_argument("out")
     finals_run_parser.add_argument("--binary", required=True)

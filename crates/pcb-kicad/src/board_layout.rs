@@ -852,6 +852,7 @@ pub fn layout_kicad_board(
         && config.swappable.is_empty();
     if config.congestion_score != "none"
         && config.congestion_score != "rudy"
+        && config.congestion_score != "global"
         && congestion_model.is_none()
     {
         return Err(crate::verdict::input_error(format!(
