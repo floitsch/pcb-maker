@@ -151,6 +151,14 @@ fn closed_arc(start: [f64; 2], end: [f64; 2]) -> bool {
 }
 
 pub(super) fn arc_points(start: [f64; 2], mid: [f64; 2], end: [f64; 2]) -> Vec<[f64; 2]> {
+    // An arc ending where it starts is a whole circle to KiCad, `mid`
+    // across from `start` (cnlohr's tadpoleswadge: MK1's ring pad, a custom
+    // pad's `(gr_arc (start 0 0) (mid 2.25 0) (end 0 0))`, shorted a track
+    // the two-point "arc" missed).
+    if distance_squared(start, end) < 1.0e-12 && distance_squared(start, mid) > 1.0e-12 {
+        let center = [(start[0] + mid[0]) / 2.0, (start[1] + mid[1]) / 2.0];
+        return circle_points(center, distance_squared(center, start).sqrt());
+    }
     // Circle through three points.
     let d = 2.0
         * (start[0] * (mid[1] - end[1])
@@ -889,5 +897,16 @@ mod tests {
         assert!((area - expected).abs() < 0.03, "{area} vs {expected}");
         assert_eq!(loops.cutouts.len(), 1);
         assert!((polygon_area(&loops.cutouts[0]) - std::f64::consts::PI).abs() < 0.05);
+    }
+
+    #[test]
+    fn an_arc_ending_where_it_starts_is_a_whole_circle() {
+        // MK1's ring pad in cnlohr's tadpoleswadge.
+        let points = arc_points([0.0, 0.0], [2.25, 0.0], [0.0, 0.0]);
+        assert!(points.len() > 8);
+        for point in points {
+            let off = distance_squared(point, [1.125, 0.0]).sqrt() - 1.125;
+            assert!(off.abs() <= ARC_TOLERANCE + 1.0e-9, "{point:?}");
+        }
     }
 }

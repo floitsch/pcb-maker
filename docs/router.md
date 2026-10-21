@@ -335,9 +335,59 @@ with a `chamfer_ratio` of 0 is sharp, not rounded (`roundrect_pad.rs`;
 AQEYE's solder jumpers: tracks 0.126 mm from the sharp inner corners
 under 0.2, checked with kicad-cli).
 
-Not lowered yet: dimensions on a copper layer (copper to KiCad:
-shorting_items and clearance against "Dimension ... on F.Cu" on two
-intake boards), footprint text boxes and footprint graphics of a net.
+### Dimensions, text boxes, cached copper texts and padstacks (2026-10-22)
+
+Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
+`board_router/tests.rs`, lowering_gap_tests, use the same boards):
+
+- **Dimensions** on a copper layer are copper of no net
+  (`dimension_shapes`): an aligned or orthogonal dimension's two
+  extension lines (from the extension offset to the extension height past
+  the crossbar; an orthogonal one's second line runs from its point to
+  the crossbar's end), the crossbar, the arrows (27.5 degrees, the arrow
+  length; pointing out, or in on tails with `(arrow_direction inward)`)
+  and the text's stroke-font box. KiCad measures from the lines' centres,
+  not their drawn thickness: tracks 0.19, 0.15, 0.10, 0.064 and 0.05 mm
+  from the crossbar, an extension line's start, an orthogonal second
+  extension and an arrow, as zero-width lines predict; the lowering uses
+  zero-width capsules. A leader, centre or radial mark is a line between
+  its points; KiCad 5's stored lines (`feature1` ... `arrow2b`) are read
+  as they are. shrimp-18's GameBit ("Dimension '10' on F.Cu": three
+  shorting_items), robotique-udes' BioGenius (B.Cu).
+- **Text boxes** (`gr_text_box`, a footprint's `fp_text_box`, in its
+  frame) on copper are their box, filled, grown by half the stroke: KiCad
+  measures from the outline grown so, `(border yes)` or not, and from the
+  glyphs inside (a track 0.05 mm past the stroke of either). On a mask
+  layer the box is an opening. The intake has no text box on copper or
+  mask (all 80 are on silk, fab or user layers).
+- **A cached (TrueType) text on copper** is drawn by KiCad from the font
+  installed, not from the file's render cache (TomKeddie's six-line SAO
+  sign in Cantarell bold, 5.8 mm: KiCad's plotted glyphs up to 0.92 mm
+  outside the cached ones, median 0.14; tracks 0.22 mm from the cache were
+  0.02 from KiCad's). Each line of the cache is also copper as a box, in
+  the text's frame, grown by a tenth of the text's height
+  (`cached_text_line_boxes`); the gaps between lines stay open. The
+  stroke-font box the mask openings use would cover a centred six-line
+  text 1.7 times as wide as it is. 42 such texts on 22 intake boards.
+- **Padstacks** (KiCad 9's `(padstack (mode front_inner_back) (layer
+  "Inner" ...) (layer "B.Cu" ...))`, `(mode custom)` per copper layer): the
+  pad's other shapes are copper of its net on their layers beside it
+  (`padstack_variants`), and the back's mask aperture is the back
+  copper's. adrianmarple's Raspberry Pi header (1.2 mm on F.Cu, 1.778 on
+  B.Cu) and dennisss's lens mounts (3 and 4 mm): B.Cu tracks shorted and
+  bridged to the larger back copper.
+- **A plated hole that lists no copper layer** (`(layers "*.Mask")`, a
+  DevKitC's mounting pins) is copper on every layer, as KiCad shorts it on
+  F.Cu, an inner layer and B.Cu; a pad listing some copper layers is
+  copper only on those.
+- **An arc ending where it starts** is a whole circle with `mid` across
+  from `start` (`outline::arc_points`: cnlohr's ring pad, a custom pad's
+  arc primitive; jetson's two small rings on In4.Cu).
+- **Footprint graphics of a net** stay copper of no net: KiCad 10.0.7
+  connects nothing to them and keeps every net's copper, their own net's
+  and their own pad included, at the clearance (an antenna polygon of net
+  A: clearance findings at 0 mm against its pad and an A track, the pad
+  unconnected), which is what the lowering did (Default's clearance).
 
 ### Solder mask bridges (2026-10-15)
 
@@ -368,6 +418,27 @@ of before (OpenESC 4in1-mini: the exact rule took its warnings 29 to 2 and
 cost 9 unconnected). Not modelled: via-to-via mask spacing (no corpus
 board has untented vias with a web or an expansion), pads placed under
 another part's opening (placement's), zone fill under openings.
+
+A pad whose layers open the mask on a side it has no copper on (c-lydia's
+U3: `(layers "F.Mask" "B.Cu" "F.Paste")`) bridges other nets' copper under
+that opening to itself ("Front solder mask aperture ... Track on F.Cu ||
+Pad on B.Cu"): the aperture is lowered on that side too, of the pad's net,
+whatever the copper clearance (2026-10-22).
+
+Openings the designer drew along their own tracks (AntonSievering's
+0.54 mm F.Mask strips along RF lines, a pad at one end, over the GND pour;
+bostang's strips from U1's pins; eigenhari's B.Mask segments) expose the
+pour's fill once the tracks are stripped: KiCad bridges the pad, the pour
+and whatever is routed under them. Taking such an opening for no net's
+where it reaches farther than the pour's clearance from its pads (the
+pour shows) made AntonSievering 7 to 11 findings and eigenhari's PQ_PL2 6
+to 9 (the pads' own stubs leave under the strips), so the opening stays
+the pad's net's; only the designer's track along the whole strip avoids
+the bridge. The same holds for an opening over pads of several nets
+(Sisu's J_LCD1 rectangle, ringshout's J2): a track leaving a pad inside it
+bridges. The strict rule subtracts the designer's own pairs (opening and
+pad, opening and zone) but not the opening and our track; see
+docs/changelog.md, "Committed on 2026-10-22 (lowering gaps 2)".
 
 ### Project rules (2026-10-21)
 

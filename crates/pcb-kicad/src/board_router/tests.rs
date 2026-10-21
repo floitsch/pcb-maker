@@ -2223,4 +2223,212 @@ mod lowering_gap_tests {
         assert!((finding.required - 0.2).abs() < 1.0e-9);
         assert!((finding.actual - 0.15).abs() < 1.0e-9);
     }
+
+    /// The violation of a track of `name` against the obstacle `label`:
+    /// (required, actual).
+    fn against(
+        board: &core::Board,
+        name: &str,
+        start: [f64; 2],
+        end: [f64; 2],
+        label: &str,
+    ) -> Option<(f64, f64)> {
+        track(board, name, start, end)
+            .into_iter()
+            .filter(|violation| violation.other == label)
+            .map(|violation| (violation.required, violation.actual))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    #[test]
+    fn dimensions_and_text_boxes_on_copper_are_copper_of_no_net() {
+        // KiCad 10.0.7 on the same board (kicad-cli, Default 0.2 mm): an
+        // aligned and an orthogonal dimension measured from their lines'
+        // centres (zero width) and the text's glyphs; a text box from its
+        // outline grown by half its stroke, border or not, and its glyphs.
+        let pcb = parse(
+            r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 60 40) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+              (dimension (type aligned) (layer "F.Cu")
+                (pts (xy 10 10) (xy 30 10)) (height 5)
+                (gr_text "20.0000 mm" (at 20 13 0) (layer "F.Cu") (effects (font (size 1 1) (thickness 0.15))))
+                (format (prefix "") (suffix "") (units 3) (units_format 1) (precision 4))
+                (style (thickness 0.2) (arrow_length 1.27) (text_position_mode 2) (arrow_direction outward) (extension_height 0.58642) (extension_offset 0.5) (keep_text_aligned yes)))
+              (dimension (type orthogonal) (layer "F.Cu")
+                (pts (xy 40 30) (xy 50 25)) (height -3) (orientation 0)
+                (gr_text "10.0000 mm" (at 45 35 0) (layer "F.Cu") (effects (font (size 1 1) (thickness 0.15))))
+                (format (prefix "") (suffix "") (units 3) (units_format 1) (precision 4))
+                (style (thickness 0.2) (arrow_length 1.27) (text_position_mode 2) (arrow_direction outward) (extension_height 0.58642) (extension_offset 0.5) (keep_text_aligned yes)))
+              (gr_text_box "Hi" (start 10 20) (end 20 24) (margins 0.5 0.5 0.5 0.5) (layer "F.Cu")
+                (effects (font (size 1 1) (thickness 0.15)) (justify left top)) (border no) (stroke (width 0.2) (type solid)))
+              (footprint "t" (layer "F.Cu") (at 2 38) (property "Reference" "J1")
+                (fp_text_box "Yo" (start 30 -10) (end 36 -7) (margins 0.5 0.5 0.5 0.5) (layer "F.Cu")
+                  (effects (font (size 1 1) (thickness 0.15)) (justify left top)) (border yes) (stroke (width 0.2) (type solid)))
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "A")))
+              (footprint "t" (layer "F.Cu") (at 58 38) (property "Reference" "J2")
+                (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let dimension = |start, end| against(&board, "A", start, end, "copper dimension");
+        let close = |found: Option<(f64, f64)>, actual: f64| {
+            let (required, measured) = found.expect("a finding");
+            assert!((required - 0.2).abs() < 1.0e-9);
+            assert!(
+                (measured - actual).abs() < 1.0e-3,
+                "{measured} against {actual}"
+            );
+        };
+        // KiCad's actual distances: the crossbar 0.19, an extension line's
+        // start (its offset) 0.15, the extension line 0.05, an arrow
+        // 0.0636; the orthogonal one's second extension 0.10, its first
+        // 0.05.
+        close(dimension([14.0, 15.29], [17.0, 15.29]), 0.19);
+        close(dimension([9.0, 10.25], [11.0, 10.25]), 0.15);
+        close(dimension([9.85, 11.0], [9.85, 13.0]), 0.05);
+        close(dimension([28.5, 15.75], [29.3, 15.75]), 0.0636);
+        close(dimension([50.2, 25.6], [50.2, 26.2]), 0.10);
+        close(dimension([39.85, 28.0], [39.85, 29.0]), 0.05);
+        // Its text: KiCad's glyphs 0.0798 away; the box is nearer.
+        let (_, text) = dimension([18.0, 12.2], [22.0, 12.2]).unwrap();
+        assert!(text <= 0.0798);
+        // Beside the lines, as KiCad: no finding 0.21 from the crossbar.
+        assert!(dimension([14.0, 15.31], [17.0, 15.31]).is_none());
+        // The text box: 0.05 past its stroke, also without a border.
+        close(
+            against(&board, "A", [12.0, 24.25], [18.0, 24.25], "copper text box"),
+            0.05,
+        );
+        // The footprint's text box, in the footprint's frame: at (32, 28).
+        assert!(
+            against(
+                &board,
+                "A",
+                [33.0, 28.25],
+                [37.0, 28.25],
+                "J1 copper text box"
+            )
+            .is_some()
+        );
+        assert!(
+            against(
+                &board,
+                "A",
+                [33.0, 27.5],
+                [37.0, 27.5],
+                "J1 copper text box"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn a_padstacks_back_copper_a_bare_side_opening_and_a_plated_hole_without_layers() {
+        // adrianmarple's Raspberry Pi header: 1.2 mm on F.Cu, 1.778 on
+        // B.Cu (KiCad 9's front_inner_back); KiCad bridged and shorted
+        // B.Cu tracks 0.4 mm from the drill. c-lydia's U3: copper on B.Cu,
+        // its opening on F.Mask: an F.Cu track under it bridged.
+        let pcb = parse(
+            r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user) (39 "F.Mask" user) (38 "B.Mask" user))
+              (gr_rect (start 0 0) (end 40 40) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+              (footprint "h" (at 10 10) (property "Reference" "A1")
+                (pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 1) (layers "*.Cu" "*.Mask") (net "P")
+                  (padstack (mode front_inner_back) (layer "Inner" (shape circle) (size 1.778 1.778)) (layer "B.Cu" (shape circle) (size 1.778 1.778)))))
+              (footprint "h" (at 30 10) (property "Reference" "A2")
+                (pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 1) (layers "*.Cu" "*.Mask") (net "P")))
+              (footprint "u" (at 20 30) (property "Reference" "U3")
+                (pad "7" smd roundrect (at 0 0) (size 1.9 0.4) (layers "F.Mask" "B.Cu" "F.Paste") (roundrect_rratio 0.25) (net "Q")))
+              (footprint "u" (at 30 30) (property "Reference" "U4")
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu" "B.Mask") (net "Q")))
+              (footprint "m" (at 20 20) (property "Reference" "U1")
+                (pad "" thru_hole oval (at 0 0) (size 1.2 2) (drill 0.8) (layers "*.Mask")))
+              (footprint "c" (at 5 35) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        // aaronds's DevKitC pins: a plated hole listing only *.Mask is
+        // copper on every layer (KiCad shorted tracks on F.Cu, In2.Cu and
+        // B.Cu to one).
+        let pin = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "U1." && obstacle.kind == core::ObstacleKind::Copper)
+            .expect("the pin's copper");
+        assert_eq!(pin.layers, 0b11);
+        let p = board.nets.iter().position(|net| net.name == "P").unwrap() as core::NetId;
+        let back = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "A1.1 padstack")
+            .expect("the back's copper");
+        assert_eq!(back.layers, 0b10, "B.Cu only (no inner layers here)");
+        assert_eq!(back.net, Some(p));
+        assert!((back.shape.aabb().maximum[0] - 10.889).abs() < 1.0e-9);
+        assert!(
+            !board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.label == "A2.1 padstack"),
+            "a pad without a padstack is one shape"
+        );
+        // U3's pad opens F.Mask over F.Cu, where it has no copper: an
+        // aperture of its net there.
+        let q = board.nets.iter().position(|net| net.name == "Q").unwrap() as core::NetId;
+        let aperture = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "U3.7 mask aperture")
+            .expect("the front's aperture");
+        assert_eq!((aperture.layers, aperture.net), (0b01, Some(q)));
+    }
+
+    #[test]
+    fn a_cached_copper_text_is_a_box_per_line_and_a_footprint_graphics_net_no_net() {
+        // TomKeddie's SAO sign: KiCad draws a TrueType copper text from the
+        // installed font, its glyphs up to 0.92 mm off the cached ones;
+        // each cached line is copper as a box, the lines' gaps stay open.
+        // A footprint's polygon of net A is copper of no net to KiCad
+        // 10.0.7 (clearance findings against its own pad and A's track).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 40) (layer "Edge.Cuts"))
+              (gr_text "ab\ncd" (at 10 10 0) (layer "F.Cu") (effects (font (face "X") (size 1 1) (thickness 0.1)))
+                (render_cache "ab\ncd" 0
+                  (polygon (pts (xy 8 9) (xy 9 9) (xy 9 10) (xy 8 10)))
+                  (polygon (pts (xy 11 9) (xy 12 9) (xy 12 10) (xy 11 10)))
+                  (polygon (pts (xy 8 11.6) (xy 12 11.6) (xy 12 12.6) (xy 8 12.6)))))
+              (footprint "ant" (at 30 30) (property "Reference" "AE1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))
+                (fp_poly (pts (xy 0 -0.25) (xy 5 -0.25) (xy 5 0.25) (xy 0 0.25)) (stroke (width 0) (type solid)) (fill yes) (layer "F.Cu") (net "A")))
+              (footprint "c" (at 5 35) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.1)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let text = |start, end| against(&board, "A", start, end, "copper gr_text");
+        // Between the glyphs of the first line: inside its box.
+        assert!(text([10.0, 8.0], [10.0, 10.0]).is_some());
+        // Between the lines (boxes to 10.1 and from 11.5): clear.
+        assert!(text([5.0, 10.8], [15.0, 10.8]).is_none());
+        let polygon = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "AE1 copper fp_poly")
+            .unwrap();
+        assert_eq!(polygon.net, None);
+    }
 }

@@ -208,6 +208,90 @@ pub(super) fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Strin
     Ok(shapes)
 }
 
+/// A TrueType text on copper as KiCad 10.0.7 draws it: from the font
+/// installed, not from the file's cache, whose glyphs it only roughly
+/// follows (TomKeddie's six-line "SAOs are the property of ..." in
+/// Cantarell bold, 5.8 mm: KiCad's glyphs up to 0.92 mm outside the cached
+/// ones, median 0.14, tracks 0.22 mm from the cache 0.02 from KiCad's).
+/// Each line of the cache is a box, in the text's frame, grown by a tenth
+/// of the text's height; the lines' gaps stay open. Nothing for a stroke
+/// text (its box is `copper_graphic_shapes`'s).
+pub(super) fn cached_text_line_boxes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    let Some(cache) = item.child("render_cache") else {
+        return Ok(Vec::new());
+    };
+    let at = form_at(item)?;
+    let height = item
+        .child("effects")
+        .and_then(|effects| effects.child("font"))
+        .and_then(|font| form_xy(font, "size").ok())
+        .map_or(1.0, |size| size[0]);
+    // Each glyph polygon's extent in the text's frame (its baseline along
+    // x).
+    let mut extents: Vec<[f64; 4]> = cache
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("polygon"))
+        .map(|polygon| {
+            let points = rule_area_like_points(polygon)?;
+            Ok(points.iter().fold(
+                [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ],
+                |bounds, point| {
+                    let local = rotate_vector([point[0] - at[0], point[1] - at[1]], at[2]);
+                    [
+                        bounds[0].min(local[0]),
+                        bounds[1].min(local[1]),
+                        bounds[2].max(local[0]),
+                        bounds[3].max(local[1]),
+                    ]
+                },
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    extents.sort_by(|a, b| a[1].total_cmp(&b[1]));
+    // Glyphs whose heights overlap are one line.
+    let mut lines: Vec<[f64; 4]> = Vec::new();
+    for extent in extents {
+        match lines.last_mut() {
+            Some(line) if extent[1] < line[3] => {
+                *line = [
+                    line[0].min(extent[0]),
+                    line[1],
+                    line[2].max(extent[2]),
+                    line[3].max(extent[3]),
+                ];
+            }
+            _ => lines.push(extent),
+        }
+    }
+    let margin = 0.1 * height;
+    Ok(lines
+        .into_iter()
+        .map(|[low_x, low_y, high_x, high_y]| {
+            let corners = [
+                [low_x - margin, low_y - margin],
+                [high_x + margin, low_y - margin],
+                [high_x + margin, high_y + margin],
+                [low_x - margin, high_y + margin],
+            ];
+            core::Shape::Polygon {
+                points: corners
+                    .iter()
+                    .map(|corner| {
+                        let board = rotate_vector(*corner, -at[2]);
+                        [at[0] + board[0], at[1] + board[1]]
+                    })
+                    .collect(),
+            }
+        })
+        .collect())
+}
+
 /// The box KiCad's stroke font fills with a text, from its anchor, size,
 /// thickness and justification.
 fn stroke_text_box(item: &Expr) -> Result<core::Shape, String> {
@@ -358,6 +442,171 @@ fn stroke_text_box_of(item: &Expr, text: &str) -> Result<core::Shape, String> {
         half,
         -at[2],
     ))
+}
+
+/// A dimension's copper as KiCad 10 draws it (PCB_DIM_ALIGNED and
+/// PCB_DIM_ORTHOGONAL's updateGeometry): two extension lines from the
+/// measured points (from the extension offset to the crossbar and the
+/// extension height past it), the crossbar at the height, the arrows at
+/// its ends (27.5 degrees each side, the arrow length long; pointing out,
+/// or with `(arrow_direction inward)` in and on tails past the ends), and
+/// the text's stroke-font box where the file put it. KiCad 10.0.7's DRC
+/// measures from the lines' centres, not their drawn thickness (kicad-cli
+/// on a board made for it: tracks 0.19, 0.15, 0.10, 0.064 and 0.05 mm from
+/// the crossbar, an extension line's start, the second extension of an
+/// orthogonal dimension and an arrow, as zero-width lines predict). KiCad cuts the crossbar under a text in line with it; the
+/// whole bar is kept here. A leader, centre or radial mark: a line between
+/// its points and its text. KiCad counts a dimension on a copper layer as
+/// copper of no net ("Dimension '10' on F.Cu": shrimp-18's GameBit,
+/// shorting_items and clearance).
+pub(super) fn dimension_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    let points = outline::pts_points(item)?;
+    let style = item.child("style");
+    let style_f64 = |head: &str| style.and_then(|style| form_f64(style, head, 1).ok());
+    let radius = 0.0;
+    let mut shapes = Vec::new();
+    let mut line = |start: [f64; 2], end: [f64; 2]| {
+        shapes.push(core::Shape::Capsule { start, end, radius });
+    };
+    let unit = |vector: [f64; 2]| {
+        let length = (vector[0] * vector[0] + vector[1] * vector[1]).sqrt();
+        if length > 0.0 {
+            [vector[0] / length, vector[1] / length]
+        } else {
+            [0.0, 0.0]
+        }
+    };
+    let along = |point: [f64; 2], direction: [f64; 2], length: f64| {
+        [
+            point[0] + direction[0] * length,
+            point[1] + direction[1] * length,
+        ]
+    };
+    let kind = form_atom(item, "type", 1).unwrap_or("aligned");
+    if let [start, end, ..] = points[..] {
+        let height = form_f64(item, "height", 1).unwrap_or(0.0);
+        let offset = style_f64("extension_offset").unwrap_or(0.0);
+        let overshoot = style_f64("extension_height").unwrap_or(0.0);
+        let crossbar = match kind {
+            "aligned" | "orthogonal" => {
+                let horizontal = form_atom(item, "orientation", 1) != Some("1");
+                // The extension lines' directions: perpendicular to the
+                // measurement towards the crossbar.
+                let (first, crossbar) = if kind == "aligned" {
+                    let normal = unit([start[1] - end[1], end[0] - start[0]]);
+                    let shift = [normal[0] * height, normal[1] * height];
+                    (
+                        [shift, shift],
+                        [
+                            [start[0] + shift[0], start[1] + shift[1]],
+                            [end[0] + shift[0], end[1] + shift[1]],
+                        ],
+                    )
+                } else if horizontal {
+                    let bar = start[1] + height;
+                    (
+                        [[0.0, height], [0.0, bar - end[1]]],
+                        [[start[0], bar], [end[0], bar]],
+                    )
+                } else {
+                    let bar = start[0] + height;
+                    (
+                        [[height, 0.0], [bar - end[0], 0.0]],
+                        [[bar, start[1]], [bar, end[1]]],
+                    )
+                };
+                for (point, extension) in [(start, first[0]), (end, first[1])] {
+                    let direction = unit(extension);
+                    let length = (extension[0] * extension[0] + extension[1] * extension[1]).sqrt();
+                    let from = along(point, direction, offset);
+                    line(from, along(from, direction, length - offset + overshoot));
+                }
+                Some(crossbar)
+            }
+            _ => {
+                line(start, end);
+                None
+            }
+        };
+        if let Some([bar_start, bar_end]) = crossbar {
+            line(bar_start, bar_end);
+            let arrow = style_f64("arrow_length").unwrap_or(1.27);
+            let inward = style
+                .and_then(|style| form_atom(style, "arrow_direction", 1))
+                .is_some_and(|direction| direction == "inward");
+            let direction = unit([bar_end[0] - bar_start[0], bar_end[1] - bar_start[1]]);
+            let (sin, cos) = 27.5_f64.to_radians().sin_cos();
+            let turn = |vector: [f64; 2], sin: f64| {
+                [
+                    vector[0] * cos - vector[1] * sin,
+                    vector[0] * sin + vector[1] * cos,
+                ]
+            };
+            let sign = if inward { -1.0 } else { 1.0 };
+            for (tip, toward) in [
+                (bar_start, direction),
+                (bar_end, [-direction[0], -direction[1]]),
+            ] {
+                let toward = [toward[0] * sign, toward[1] * sign];
+                for side in [sin, -sin] {
+                    line(tip, along(tip, turn(toward, side), arrow));
+                }
+                if inward {
+                    line(tip, along(tip, toward, arrow));
+                }
+            }
+        }
+    }
+    // KiCad 5 wrote the lines themselves.
+    for part in [
+        "feature1", "feature2", "crossbar", "arrow1a", "arrow1b", "arrow2a", "arrow2b",
+    ] {
+        if let Some(form) = item.child(part)
+            && let [start, end, ..] = outline::pts_points(form)?[..]
+        {
+            line(start, end);
+        }
+    }
+    if let Some(text) = item.child("gr_text") {
+        let value = text.children().get(1).and_then(Expr::atom).unwrap_or("");
+        if !value.is_empty() {
+            shapes.push(stroke_text_box_of(text, value)?);
+        }
+    }
+    Ok(shapes)
+}
+
+/// A text box (`gr_text_box`, a footprint's `fp_text_box`) on copper: its
+/// box, which holds its glyphs, filled, grown by half its stroke's width.
+/// KiCad 10.0.7's DRC measures from the outline grown so with or without
+/// `(border yes)` (kicad-cli: a track 0.05 mm past the stroke of either)
+/// and from the glyphs inside; the filled box holds both. A footprint's
+/// comes out in the footprint's frame (its corners are the footprint's
+/// coordinates, as a line's are).
+pub(super) fn text_box_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    let corners = if item.child("pts").is_some() {
+        outline::pts_points(item)?
+    } else {
+        let (a, b) = (form_xy(item, "start")?, form_xy(item, "end")?);
+        vec![a, [b[0], a[1]], b, [a[0], b[1]]]
+    };
+    if corners.len() < 3 {
+        return Ok(Vec::new());
+    }
+    let width = item
+        .child("stroke")
+        .and_then(|stroke| form_f64(stroke, "width", 1).ok())
+        .unwrap_or(0.0);
+    let mut shapes = Vec::new();
+    if width > 0.0 {
+        shapes.extend((0..corners.len()).map(|index| core::Shape::Capsule {
+            start: corners[index],
+            end: corners[(index + 1) % corners.len()],
+            radius: width / 2.0,
+        }));
+    }
+    shapes.push(core::Shape::Polygon { points: corners });
+    Ok(shapes)
 }
 
 /// Whether the board tents its vias on the front and on the back, as KiCad

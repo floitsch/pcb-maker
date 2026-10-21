@@ -11,6 +11,196 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (lowering gaps 2)
+
+The finding types the previous lowering round left ("Lowering gaps in the
+intake's findings" below): solder mask bridges, dimensions and texts on
+copper, footprint graphics of a net and SeanBP's numbered nets. Each
+checked with kicad-cli 10.0.7 on a board made for it; the changes are in
+the lowering (`board_router/lower.rs`, `geometry.rs`) and `outline.rs`.
+docs/router.md, "Dimensions, text boxes, cached copper texts and
+padstacks" and "Solder mask bridges".
+
+Binaries: x1345 is main before (3223282, the connectivity agreement);
+x1350 and x1351 steps (x1351 without plated holes of no listed layer),
+x1352 the commit's code.
+
+**The measurement.** From the intake's KiCad reports (the 2026-10-18
+quick run, an older binary): the boards whose result has more findings of
+a type than the designer's board, the router-output types left out
+(track_dangling, track_not_centered_on_via, unconnected_items,
+starved_thermal): 184 boards. The intake's own count over them (its
+binary, before the project rules and the first lowering round):
+track_width 7120 on 89 boards, clearance 1362 on 41, hole_to_hole 123 on
+8, copper_edge_clearance 100 on 17, solder_mask_bridge 78 on 15,
+drill_out_of_range 51 on 1, shorting_items 32 on 13, length_out_of_range
+30 on 4, hole_clearance 29 on 9, annular_width 22 on 1,
+malformed_courtyard 13 on 4, creepage 3 on 3, skew_out_of_range 1. With them the intake boards that have a
+dimension on copper (40), a padstack (16) or a cached text on copper (22):
+252 boards, routed again from the intake's stripped boards and settings
+(route mode, 30 s of work, one thread, `PCB_WORK_RATE=3.15e6,150e6`),
+KiCad's DRC with zones refilled, against the intake's DRC of the
+designer's board (scratchpad, not a tier). Excess findings by type (sum
+over boards of ours less the designer's, where more), x1345 against
+x1352:
+
+| type | x1345 findings / boards | x1352 findings / boards |
+| --- | --- | --- |
+| solder_mask_bridge | 89 / 18 | 56 / 8 |
+| shorting_items | 36 / 11 | 0 / 0 |
+| clearance | 32 / 10 | 2 / 2 |
+| length_out_of_range | 30 / 4 | 30 / 4 |
+| track_width | 24 / 1 | 24 / 1 |
+| hole_to_hole | 7 / 1 | 7 / 1 |
+| hole_clearance | 6 / 4 | 3 / 1 |
+| creepage | 3 / 3 | 3 / 3 |
+| skew_out_of_range | 1 / 1 | 1 / 1 |
+
+KiCad's unconnected items over the 252: 980 to 973. 223 rows identical,
+29 changed, each with an item of these gaps but VortacDesign's panel (cut
+by the wall clock's deadline in both runs, as FoCTow's) and megaduck
+(cut at x1352 only: the machine's load was 60 to 70 during that run): padstacks (dennisss's seven
+camera boards: excess 53 to 0, unconnected 133 to 125; adrianmarple 10 to
+0), dimensions on copper (shrimp-18 3 to 0, robotique-udes 2 to 0,
+liquid-rocketry 18 to 0 with a cached text, and eight boards whose
+dimensions moved routes only: megaduck, PCBench BalthazarPSU3, Soraxem,
+kapibaratomo, koron, sbeddes, ub1qbm), cached copper texts (TomKeddie 3 to
+0, FoCTow 1 to 0, Pips801, eutectic6337, mothenjoyer69 routes only), the
+bare-side aperture (c-lydia 2 to 0), a whole-circle arc (cnlohr 3 to
+0) and plated holes listing no copper layer (aaronds's two ESP32 DevKitC
+boards, clearance 6 and 2 to 0; shoonie's two c10 keyboards,
+solder_mask_bridge 3 fewer each). Four rows have more unconnected items (dennisss ar0234_r1 2 to 5,
+mira220 29 to 30, megaduck 64 to 65, PCBench 163 to 167): more copper to
+route around in 30 s. FoCTow's route needs 150 to 180 s of wall clock
+under load (the scratch harness's timeout was raised from 200 to 400 s
+for it).
+
+**What changed.**
+
+- **Dimensions on copper** are copper of no net (`dimension_shapes`):
+  KiCad 10.0.7 measures from the lines' centres (zero width: tracks at
+  0.19, 0.15, 0.10, 0.064 and 0.05 mm from the crossbar, an extension
+  line's start, an orthogonal second extension and an arrow, exactly as
+  computed) and from the text's glyphs. Aligned and orthogonal geometry
+  as PCB_DIM_ALIGNED and PCB_DIM_ORTHOGONAL build it; KiCad 5's stored
+  lines read as they are; leader, centre and radial a line between their
+  points.
+- **Text boxes** (`gr_text_box`, `fp_text_box`) on copper: the box filled,
+  grown by half its stroke (KiCad measures from that outline, border or
+  not); on a mask layer an opening. None in the intake is on copper or
+  mask; checked on a made board.
+- **Cached (TrueType) copper texts**: KiCad draws them from the installed
+  font (TomKeddie's sign: plotted glyphs up to 0.92 mm outside the cache);
+  each cached line is also a box grown by a tenth of the text height
+  (`cached_text_line_boxes`), the gaps between lines open.
+- **Padstacks** (KiCad 9's front_inner_back and custom): the inner and
+  back shapes are copper of the pad's net on their layers
+  (`padstack_variants`); the back's mask aperture follows the back shape.
+- **A pad's mask opening on a side without its copper** (c-lydia's U3:
+  `(layers "F.Mask" "B.Cu" "F.Paste")`) is an aperture of its net there.
+- **A plated hole that lists no copper layer** (`(layers "*.Mask")`) is
+  copper on every layer: kicad-cli shorted tracks on F.Cu, an inner layer
+  and B.Cu to such a pad of no net; a pad listing some copper layers has
+  copper only there. It was a mask-only opening (aaronds's DevKitC pins:
+  tracks 0.005 mm from them).
+- **An arc ending where it starts** is a whole circle (`arc_points`; MK1's
+  ring pad in cnlohr's tadpoleswadge, a custom pad primitive; jetson's
+  two In4.Cu rings).
+
+**Decided, not changed.**
+
+- **Footprint graphics of a net** (item 4 of the list): KiCad 10.0.7
+  treats them as copper of no net. kicad-cli on an antenna footprint whose
+  polygon is on net A, KiCad 9 `(net 1)` and KiCad 10 `(net "A")` alike:
+  clearance findings at 0 mm against its own pad and an A track, the pad
+  unconnected although the track touches the polygon. The lowering
+  already kept them as copper of no net at Default's clearance; a comment
+  says why. The intake's four boards with such graphics (the TI antennas
+  of two student boards, keytartouch's 24 touch pads, a minibadge
+  holder) have these findings on the designer's board too.
+- **SeanBP's numbered nets** (item 5): the connectivity agreement (main,
+  x1345) made digit names routable and reads `(net N)` as a code; the same
+  fix was here and was dropped in the rebase. SeanBP's Edge-Card-CAEN
+  ("the board has no routable connections" in the intake): x1345 routes
+  69/70, KiCad 1 unconnected, no error. Its 70 nets each join a test
+  point on F.Cu and one on B.Cu at one place, both "REF**.1": the
+  pads-of-one-number merge took them for one terminal until x1345's
+  shared-layer condition.
+- **Solder mask bridges over pours** (item 1): openings the designer drew
+  along their own tracks (AntonSievering's F.Mask strips along RF lines
+  over the GND pour, bostang's strips from U1's pins, eigenhari's B.Mask
+  segments) show the pour once the tracks are stripped, and a pad inside
+  bridges whatever is routed there. Treating such an opening as no net's
+  where it reaches farther than the pour's clearance from its pads (tried
+  as x1350's predecessor on 19 boards) took AntonSievering 7 to 11 and
+  eigenhari's PQ_PL2 6 to 9 (56/59 routed, was 59/59) and fixed two
+  single findings: not kept. These, and the openings over pads of
+  several nets (Sisu's J_LCD1, ringshout's J2: a track leaving a pad
+  inside bridges), are the designer's board: the strict rule subtracts
+  the stripped designer board's own pairs (opening and pad, opening and
+  zone) but not the opening and our track. A strict rule that subtracts
+  every bridge of an opening that already bridges in the baseline would
+  remove them (Sisu's 15 strict solder_mask_bridge in the fingerprint
+  rows are of this kind); a harness change, not made.
+
+**What remains** of the 252 at x1352: solder_mask_bridge 56 on 8 boards
+(the openings above: bostang 33, AntonSievering 7, eigenhari's PQ_PL2 7
+and ringshout 1; shoonie's c8 5 and c8v3 1, B.Mask graphics and NPTH
+pads beside the switch pads; McbeEringi's two boards 1
+each, a B.Mask text and an F.Mask polygon over the pour),
+length_out_of_range and skew_out_of_range (length-tuning rules, 5
+boards), track_width 24 on one board, hole_to_hole 7 on one, creepage 3
+on three (pad pairs the router cannot change), clearance 2 (KiCad's QA
+board issue11814 in two copies: 0.1875 against its PadToTrack rule),
+hole_clearance 3 on jrsteensen's OpenHornet (a custom rule's 2.65 mm
+from an NPTH hole "for GND copper"). Lathe-Mariel's In4.Cu short against
+a PTH pad (intake) is not reproduced at x1345.
+
+**Rules boards** (rules-tasks.json, 8 x 1, `--no-lock`), x1345 against
+x1351 and x1352: all 20 rows identical (passes 18, strict 18, unconnected
+4, vias 494). ChengminLi's flyback is CUT by the deadline in all three
+runs (the machine's load at 45 to 60 while the sweep and these runs
+shared it; 35/38 each time).
+
+**Expansion tier** (8 x 1 for the reference, 10 x 1 and 8 x 1 here,
+`--no-lock`), build/expansion-x1345 against x1351: all 46 rows identical,
+no row cut; against x1352: 43 identical, three cut at a load of 60 to 70
+(OpenDeck, brickpico, Wonkle) and run again alone: identical.
+
+**Short tier** (4 x 2 for the reference, 5 x 2 and 6 x 2 here,
+`--no-lock`), build/short-x1345 against x1351 and x1352: all 12 rows
+identical, no row cut.
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode, 2 x 4,
+budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`),
+build/fp-conn-x1345 against build/fp-lower2-x1351 and -x1352 (the same
+fingerprints): Castor, k30 and Sisu every fingerprint and board
+identical; jetson's kept board (md5) and row identical, the fingerprints
+of one attempt's clean-up changed: its two whole-circle arcs on In4.Cu
+(radius 0.1 mm, `(start)` equal to `(end)`) are rings now, not points.
+Castor's two dimensions are on Dwgs.User; none of the four has a
+padstack, a cached copper text or a plated hole without copper layers.
+
+Unit tests: board_router lowering_gap_tests (dimensions and text boxes
+against kicad-cli's distances, a padstack's back copper and a bare-side
+aperture, cached copper text lines and a footprint graphic of a net),
+outline (a whole-circle arc), the plated hole without copper layers. `bash scripts/check.sh` and the clippy gate
+pass.
+
+**Rebased on 642e28c** (the pour model, x1366) as x1367: rules boards
+x1366 against x1367 identical on all 20 rows (ChengminLi's flyback the
+same row, cut by the deadline at x1367 only); against x1352 nuclone (48/48
+to 18/18 connections) and issue25101 (length) moved with the pour
+package, as x1366 shows. Short tier build/short-x1365 against x1367: all
+12 rows identical, none cut. Fingerprints x1366 against x1367: Castor,
+k30 and Sisu identical; jetson's board identical, the one clean-up's
+fingerprints changed by its rings as above.
+
+Logs: build/rules-lower2-x1345, -x1351, -x1352, -x1366, -x1367;
+build/short-lower2-x1367; build/fp-lower2-x1366, -x1367;
+build/expansion-lower2-x1351, -x1352, -x1352-recut; build/short-lower2-x1351,
+-x1352; build/fp-lower2-x1351, -x1352.
+
 ## Committed on 2026-10-22 (pour model after connectivity)
 
 The connectivity agreement (below) made the router's "complete" what
