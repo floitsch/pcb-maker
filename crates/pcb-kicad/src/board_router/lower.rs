@@ -1849,10 +1849,16 @@ pub(crate) fn exposed_pad(pads: &[PadBox]) -> Vec<usize> {
     for (index, pad) in pads.iter().enumerate().filter(|(_, pad)| pad.smd) {
         let group = root(&mut parent, index);
         let bounds = groups.entry(group).or_insert(pad.bounds);
-        for axis in 0..2 {
-            bounds[0][axis] = bounds[0][axis].min(pad.bounds[0][axis]);
-            bounds[1][axis] = bounds[1][axis].max(pad.bounds[1][axis]);
-        }
+        *bounds = [
+            [
+                bounds[0][0].min(pad.bounds[0][0]),
+                bounds[0][1].min(pad.bounds[0][1]),
+            ],
+            [
+                bounds[1][0].max(pad.bounds[1][0]),
+                bounds[1][1].max(pad.bounds[1][1]),
+            ],
+        ];
     }
     let area =
         |bounds: &[[f64; 2]; 2]| (bounds[1][0] - bounds[0][0]) * (bounds[1][1] - bounds[0][1]);
