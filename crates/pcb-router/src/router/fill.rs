@@ -76,8 +76,18 @@ enum Item {
         clearance: f64,
     },
     /// An edge of the pour's outline, of a region it leaves out, or of the
-    /// board: a brush centre keeps `margin` from it.
-    Edge { a: Point, b: Point, margin: f64 },
+    /// board: a brush centre keeps `margin` from it, and `zone` more from
+    /// the edge of another net's zone of a higher priority (its fill's
+    /// clearance, `Board::excluded_clearance`), except at a track end of
+    /// the net, whose copper keeps that zone's fill away itself
+    /// (robotique's D3.1: its track ends on the edge of +24V_safe's zone,
+    /// in GND's fill).
+    Edge {
+        a: Point,
+        b: Point,
+        margin: f64,
+        zone: f64,
+    },
     /// A pad of the net with a thermal relief: a centre keeps `reach`.
     Ring { pad: usize, reach: f64 },
 }
@@ -102,6 +112,8 @@ pub(super) struct FillProbe<'a> {
     /// centre may come (`EPSILON`, `TRACK_END_TOLERANCE` inside
     /// `for_track_end`; the board's edges and the reliefs keep `EPSILON`).
     tolerance: std::cell::Cell<f64>,
+    /// Within `for_track_end`: other nets' zones keep no clearance margin.
+    track_end: std::cell::Cell<bool>,
     /// The probe's work: items put in the index and items its queries
     /// looked at, added to the router's pour work by `charge`.
     ops: std::cell::Cell<u64>,
@@ -147,6 +159,7 @@ impl<'a> FillProbe<'a> {
             index: OnceCell::new(),
             holes: std::cell::RefCell::new(FastMap::default()),
             tolerance: std::cell::Cell::new(EPSILON),
+            track_end: std::cell::Cell::new(false),
             ops: std::cell::Cell::new(0),
             queries: std::cell::Cell::new(0),
             vertices: std::cell::Cell::new(0),
@@ -173,8 +186,10 @@ impl<'a> FillProbe<'a> {
     /// the clearance to other nets' copper rather than `EPSILON`.
     pub(super) fn for_track_end<T>(&self, f: impl FnOnce() -> T) -> T {
         let before = self.tolerance.replace(TRACK_END_TOLERANCE);
+        let end_before = self.track_end.replace(true);
         let result = f();
         self.tolerance.set(before);
+        self.track_end.set(end_before);
         result
     }
 
@@ -592,12 +607,22 @@ impl<'a> FillProbe<'a> {
                 let half = self.half(layer);
                 half_most = half_most.max(half);
                 for plane in self.filled_planes(layer) {
-                    for polygon in std::iter::once(&plane.polygon).chain(plane.excluded.iter()) {
+                    for (polygon, clearance) in std::iter::once((&plane.polygon, 0.0)).chain(
+                        plane
+                            .excluded
+                            .iter()
+                            .map(|polygon| (polygon, board.excluded_clearance(plane, polygon))),
+                    ) {
                         for (a, b) in polygon_edges(polygon) {
                             insert(
                                 layer,
                                 segment_box(a, b),
-                                Item::Edge { a, b, margin: half },
+                                Item::Edge {
+                                    a,
+                                    b,
+                                    margin: half,
+                                    zone: clearance,
+                                },
                                 &mut buckets,
                             );
                         }
@@ -611,6 +636,7 @@ impl<'a> FillProbe<'a> {
                             a,
                             b,
                             margin: board.edge_clearance + half,
+                            zone: 0.0,
                         },
                         &mut buckets,
                     );
@@ -735,9 +761,10 @@ impl<'a> FillProbe<'a> {
                             distance(point, *at)
                                 < radius + clearance.max(brush.clearance) + half - tolerance
                         }
-                        Item::Edge { a, b, margin } => {
+                        Item::Edge { a, b, margin, zone } => {
                             edges.push((*a, *b));
-                            point_segment_distance(point, *a, *b) < *margin - EPSILON
+                            let zone = if self.track_end.get() { 0.0 } else { *zone };
+                            point_segment_distance(point, *a, *b) < *margin + zone - EPSILON
                         }
                         Item::Ring { pad, reach } => {
                             except.is_some_and(|except| !except.contains(pad))
@@ -823,9 +850,10 @@ impl<'a> FillProbe<'a> {
                             radius,
                             clearance,
                         } => distance(point, *at) - radius - clearance.max(brush.clearance) - half,
-                        Item::Edge { a, b, margin } => {
+                        Item::Edge { a, b, margin, zone } => {
                             edges.push((*a, *b));
-                            point_segment_distance(point, *a, *b) - margin
+                            let zone = if self.track_end.get() { 0.0 } else { *zone };
+                            point_segment_distance(point, *a, *b) - margin - zone
                         }
                         Item::Ring { pad, reach } => {
                             if except.contains(pad) {

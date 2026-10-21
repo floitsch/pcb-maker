@@ -187,11 +187,40 @@ impl Router {
         // Per record, whether its pad lies inside its terminal's pad.
         let mut record_inner: Vec<bool> = Vec::new();
         for (terminal, pad_index, pad_anchor, layers_of_nodes, inner) in spoke_pads {
-            if isolated(terminal) || solid_pad(terminal) {
+            // The lowering gives zone connections per pad label, and the
+            // largest pad of a label is its terminal: a solid connection
+            // there is that pad's (an exposed pad set to solid), while the
+            // thermal vias merged into it inherit the zone's thermal
+            // relief, which KiCad's DRC checks (ray4477's U1.33 and
+            // OpenAir's U5.17 vias on the far layers: no model row).
+            if isolated(terminal)
+                || (solid_pad(terminal) && pad_index == description.terminals[terminal].pad)
+            {
                 continue;
             }
             for layer in layers_of_nodes {
-                if pours.label[layer].is_empty() || solid[layer] {
+                // Solid where the zones the pad lies in are: a small solid
+                // zone of the net elsewhere on the layer leaves the large
+                // thermal one's pads thermal (Apex's GND on F.Cu, a solid
+                // zone of priority 3 beside the board's: C1.2, C2.2 and
+                // C6.2 had no records).
+                let containing: Vec<bool> = self
+                    .board
+                    .planes
+                    .iter()
+                    .filter(|plane| {
+                        plane.net == net
+                            && plane.layer == layer
+                            && crate::geometry::point_in_polygon(pad_anchor, &plane.polygon)
+                    })
+                    .map(|plane| plane.solid)
+                    .collect();
+                let solid_here = if containing.is_empty() {
+                    solid[layer]
+                } else {
+                    containing.iter().all(|solid| *solid)
+                };
+                if pours.label[layer].is_empty() || solid_here {
                     continue;
                 }
                 let planes = || {
@@ -216,7 +245,8 @@ impl Router {
                 );
                 let width = bridge.min(minor);
                 // No spoke narrower than the minimum width.
-                if width + 1.0e-9 >= minimum {
+                let drawn = width + 1.0e-9 >= minimum;
+                if drawn {
                     for (index, (direction, edge, tip)) in geometry.into_iter().enumerate() {
                         spokes.push(Spoke {
                             record: records.len(),
@@ -244,6 +274,7 @@ impl Router {
                     tracks: 0,
                     seam_short: 0,
                     seam_zone: None,
+                    drawn,
                 });
                 record_inner.push(inner.contains(&layer));
             }
@@ -1654,6 +1685,22 @@ impl Router {
             return record.seam_short;
         }
         2usize.saturating_sub(counted).max(record.seam_short)
+    }
+
+    /// Whether the model finds a pad on a layer with no spoke at all (none
+    /// counted, none into an island, no other pad's across its ring) and
+    /// no track of its own into the fill: KiCad's DRC sees no thermal
+    /// connection there unless it finds a spoke the model does not
+    /// (`Config::spokeless_tracks`).
+    pub(super) fn spokeless(record: &SpokeRecord) -> bool {
+        record.drawn
+            && record.crossings == 0
+            && record.tracks == 0
+            && record.seam_short == 0
+            && record
+                .outcomes
+                .iter()
+                .all(|outcome| matches!(outcome, SpokeOutcome::NoFill | SpokeOutcome::Blocked))
     }
 
     /// Whether `point` lies in the part of zone `zone` (an index into the

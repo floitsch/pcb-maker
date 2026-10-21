@@ -257,6 +257,30 @@ impl Board {
         (1u32 << self.layer_count) - 1
     }
 
+    /// How far the fill of `plane` keeps from its excluded region
+    /// `polygon` (one of `plane.excluded`): another net's zone of a higher
+    /// priority on the layer is filled first, up to its outline, and this
+    /// zone keeps the larger of the two zones' clearances from that fill
+    /// (KiCad's zone filler knocks other nets' fills out with their
+    /// clearance; USSTRocketry's /Vin under GND's zone of priority 3, whose
+    /// fill ends half a millimetre short of GND's outline). A keepout's
+    /// region is cut exactly: 0.
+    pub fn excluded_clearance(&self, plane: &Plane, polygon: &[Point]) -> f64 {
+        self.planes
+            .iter()
+            .filter(|other| {
+                other.net != plane.net
+                    && other.layer == plane.layer
+                    && other.polygon.as_slice() == polygon
+            })
+            .map(|other| {
+                self.classes[plane.class]
+                    .clearance
+                    .max(self.classes[other.class].clearance)
+            })
+            .fold(0.0, f64::max)
+    }
+
     /// Clearance between copper of `class` and `obstacle`, as KiCad resolves
     /// it: the larger of the two objects' clearances, where the obstacle's is
     /// its override if it has one, else its net class's (and its local

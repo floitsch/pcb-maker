@@ -488,6 +488,7 @@ impl Router {
                             tracks: 0,
                             seam_short: 0,
                             seam_zone: None,
+                            drawn: true,
                         });
                     }
                     if good < 2 {

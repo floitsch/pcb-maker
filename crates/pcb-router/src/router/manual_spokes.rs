@@ -68,16 +68,46 @@ impl Router {
             let mut report = Vec::new();
             self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
             let description = &self.board.nets[net as usize];
-            let inner = |record: &SpokeRecord| {
-                let host = &self.board.obstacles[description.terminals[record.terminal].pad];
-                record.pad != description.terminals[record.terminal].pad
-                    && host.layers & (1 << record.layer) != 0
-                    && host.shape.contains(record.anchor)
+            // The pad of its number it lies in on the record's layer: its
+            // terminal's, or another pad merged into that terminal (an
+            // exposed pad's copper on the far side: ray4477's U1.33 vias in
+            // the 2.5 mm pad on B.Cu, the 3.6 mm terminal on F.Cu).
+            let container = |record: &SpokeRecord| -> Option<usize> {
+                let terminal_pad = description.terminals[record.terminal].pad;
+                if record.pad == terminal_pad {
+                    return None;
+                }
+                let holds = |pad: usize| {
+                    let obstacle = &self.board.obstacles[pad];
+                    obstacle.layers & (1 << record.layer) != 0
+                        && obstacle.shape.contains(record.anchor)
+                };
+                if holds(terminal_pad) {
+                    return Some(terminal_pad);
+                }
+                self.board
+                    .merged_pads
+                    .iter()
+                    .filter(|other| {
+                        other.net == net
+                            && other.host == record.terminal
+                            && other.pad != record.pad
+                            && holds(other.pad)
+                    })
+                    .map(|other| other.pad)
+                    .max_by(|a, b| {
+                        let area = |pad: usize| {
+                            let bounds = self.board.obstacles[pad].shape.aabb();
+                            (bounds.maximum[0] - bounds.minimum[0])
+                                * (bounds.maximum[1] - bounds.minimum[1])
+                        };
+                        area(*a).total_cmp(&area(*b))
+                    })
             };
-            let Some(record) = report.iter().find(|record| {
-                inner(record)
-                    && Self::spokes_short(record) > 0
-                    && !tried.contains(&(record.pad, record.layer))
+            let Some((record, host)) = report.iter().find_map(|record| {
+                (Self::spokes_short(record) > 0 && !tried.contains(&(record.pad, record.layer)))
+                    .then(|| container(record).map(|host| (record, host)))
+                    .flatten()
             }) else {
                 break;
             };
@@ -88,7 +118,7 @@ impl Router {
                 record.pad,
                 Self::spokes_short(record),
             );
-            let host = &self.board.obstacles[description.terminals[record.terminal].pad];
+            let host = &self.board.obstacles[host];
             let width = self.board.classes[description.class].trace_width;
             let gap = self
                 .board
@@ -219,17 +249,24 @@ impl Router {
                 let own = |record: &SpokeRecord| {
                     record.pad == self.board.nets[net as usize].terminals[record.terminal].pad
                 };
+                let times = |record: &SpokeRecord| {
+                    tried
+                        .get(&(record.terminal, record.layer))
+                        .copied()
+                        .unwrap_or(0)
+                };
                 let Some(record) = report.iter().find(|record| {
                     own(record)
-                        && Self::spokes_short(record) > 0
-                        && tried
-                            .get(&(record.terminal, record.layer))
-                            .copied()
-                            .unwrap_or(0)
-                            < 2
+                        && ((Self::spokes_short(record) > 0 && times(record) < 2)
+                            || (self.config.spokeless_tracks
+                                && Self::spokeless(record)
+                                && times(record) == 0))
                 }) else {
                     break;
                 };
+                // A spokeless pad gets one track into kept fill, nothing
+                // else (`Config::spokeless_tracks`).
+                let spokeless = Self::spokes_short(record) == 0;
                 *tried.entry((record.terminal, record.layer)).or_default() += 1;
                 let layer = record.layer;
                 // Short in one zone where zones meet: the
@@ -287,8 +324,21 @@ impl Router {
                 let trace = self.map_index(class, layer);
                 // The shortest straight track into a kept piece, and into
                 // one of the pad's islands.
-                let mut best: Option<Vec<Node>> = None;
+                // Every straight track into kept fill, the shortest first
+                // when they are tried.
+                let mut candidates: Vec<Vec<Node>> = Vec::new();
                 let mut best_island: Option<Vec<Node>> = None;
+                // The net's own copper: a track that meets it on the way is
+                // cut there into segments, and KiCad's DRC tests the
+                // segment from the pad, which then ends at the junction
+                // (1999AZZAR's U2.19: a manual spoke along its exit track,
+                // whose first segment ended in the relief).
+                let own_nodes: HashSet<(u8, u32)> = state
+                    .branches
+                    .iter()
+                    .flat_map(|branch| branch.nodes.iter())
+                    .map(|node| (node.layer, node.cell))
+                    .collect();
                 // The track ends in fill, not on a node the net's own
                 // copper made free (Castor's C10.2: a step onto its own
                 // track, which KiCad's DRC does not count).
@@ -335,6 +385,7 @@ impl Router {
                                 || !statics.edge_allowed(layer, previous, direction, net)
                                 || !free(trace, cell)
                                 || !diagonal_ok
+                                || own_nodes.contains(&(layer as u8, cell as u32))
                             {
                                 break;
                             }
@@ -350,9 +401,7 @@ impl Router {
                                 })
                                 && probe.fill_at(layer, self.grid.center_of(cell))
                             {
-                                if best.as_ref().is_none_or(|best| path.len() < best.len()) {
-                                    best = Some(path.clone());
-                                }
+                                candidates.push(path.clone());
                                 break;
                             }
                             // Into an island: one of its pieces, or the
@@ -387,21 +436,52 @@ impl Router {
                         }
                     }
                 }
-                let label = &self.board.nets[net as usize].terminals[record.terminal].label;
-                if let Some(nodes) = best {
-                    if self.config.verbose {
-                        eprintln!(
-                            "manual spoke: {label} on layer {layer}, {} nodes",
-                            nodes.len()
-                        );
-                    }
+                let label = self.board.nets[net as usize].terminals[record.terminal]
+                    .label
+                    .clone();
+                // A track is kept when the model then counts it (KiCad's
+                // DRC tests the segment as emitted, from the pad into the
+                // fill), the shortest of the first four that it counts.
+                candidates.sort_by_key(|path| path.len());
+                let (pad, terminal) = (record.pad, record.terminal);
+                let before_short = Self::spokes_short(record);
+                let before_tracks = record.tracks;
+                let mut counted = false;
+                for nodes in candidates.into_iter().take(4) {
+                    let length = nodes.len();
                     self.nets[net as usize].branches.push(Branch {
                         nodes,
-                        start_terminal: record.terminal as u16,
+                        start_terminal: terminal as u16,
                         end_terminal: PLANE_TERMINAL,
                     });
                     self.stamp(net);
+                    let mut after = Vec::new();
+                    self.analyze_pours_reporting(net, &|_| false, Some(&mut after));
+                    counted = after
+                        .iter()
+                        .find(|record| record.pad == pad && record.layer == layer)
+                        .is_some_and(|record| {
+                            if spokeless {
+                                record.tracks > before_tracks
+                            } else {
+                                Self::spokes_short(record) < before_short
+                            }
+                        });
+                    if counted {
+                        if self.config.verbose {
+                            eprintln!("manual spoke: {label} on layer {layer}, {length} nodes");
+                        }
+                        break;
+                    }
+                    self.nets[net as usize].branches.pop();
+                    self.stamp(net);
+                }
+                if counted {
                     added += 1;
+                    continue;
+                }
+                if spokeless {
+                    tried.insert((record.terminal, record.layer), 2);
                     continue;
                 }
                 // No track reaches kept fill: a via from an island to the
@@ -532,11 +612,12 @@ impl Router {
                 .iter()
                 .filter(|merged| merged.net == net && merged.layers & (1 << layer) != 0)
             {
-                if description
-                    .terminals
-                    .get(merged.host)
-                    .is_some_and(|host| thermal(&host.label))
-                {
+                // A solid connection of the label is the terminal's own
+                // (the largest pad); the pads merged into it keep the
+                // zone's thermal relief (`kicad_spokes`).
+                if description.terminals.get(merged.host).is_some_and(|host| {
+                    self.board.isolated_pads.binary_search(&host.label).is_err()
+                }) {
                     pads.push((merged.pad, reach));
                 }
             }

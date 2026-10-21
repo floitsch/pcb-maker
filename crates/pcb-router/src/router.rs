@@ -176,6 +176,9 @@ pub struct SpokeRecord {
     /// and that zone (an index into the board's planes).
     pub seam_short: usize,
     pub seam_zone: Option<usize>,
+    /// Whether KiCad draws the pad's spokes at all (they are no narrower
+    /// than the zone's minimum width).
+    pub drawn: bool,
 }
 
 #[derive(Clone, Debug, Default)]

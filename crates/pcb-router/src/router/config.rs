@@ -87,6 +87,23 @@ pub struct Config {
     /// tracks rungs, whose inner planes the signals cut into islands around
     /// through-hole pads.
     pub island_stubs: bool,
+    /// A pad the spoke model finds with no spoke at all into a pour it
+    /// lies in, and no track of its own into the fill, gets one straight
+    /// track into kept fill all the same (`add_manual_spokes`): the model
+    /// is least sure where it sees none (the spoke ends lie in the
+    /// narrowest places), KiCad's DRC counts the track only while the pad
+    /// is short, and a pad KiCad also gives no spoke is no finding with or
+    /// without it. The expansion intake: 22 of 85 new starved thermals on
+    /// 40 boards were pads the model saw without a spoke and KiCad with
+    /// one (`PCB_ROUTER_NO_SPOKELESS_TRACKS` turns it off).
+    pub spokeless_tracks: bool,
+    /// After the clean-up, a pad the spoke model finds starved whose
+    /// failed spokes other nets' copper cuts (in the spoke's strip, or
+    /// where its end's fill would be) has those nets routed again around
+    /// the strips, kept when every net involved stays complete and the
+    /// pour nets' starved spokes go down (`free_lost_spokes`;
+    /// `PCB_ROUTER_NO_LOST_SPOKES` turns it off).
+    pub lost_spoke_repair: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -225,6 +242,8 @@ impl Default for Config {
             kicad_spokes: true,
             manual_spokes: true,
             island_stubs: std::env::var_os("PCB_ROUTER_NO_ISLAND_STUBS").is_none(),
+            spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
+            lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,

@@ -44,7 +44,8 @@ The code (`crates/pcb-router/src`): `router.rs` holds the shared state
 (`Router`, `NetState`, `Scratch`, the lattice nodes and branches, the
 work constants) and the small helpers; `router/` has one file per part of
 `impl Router`, in the order of a run: `build` (the lowering into maps),
-`escapes`, `guards` (thermal guards), `prepare` (a net's search state),
+`escapes`, `guards` (thermal guards and the spoke repairs
+`free_thermal_spokes`, `free_lost_spokes`), `prepare` (a net's search state),
 `stamping` (occupancy, rip-up, conflicts), `route_net`, `planner` (tile
 corridors), `search` (the lattice A*), `update`, `batching`, `global`,
 `driver` (the phases, budgets and clocks), `fixed`, `negotiate`,
@@ -531,6 +532,81 @@ own on that layer into the island (`island_stubs`): the island then holds
 two items and the DRC counts its spokes. The stub changes no connection
 (the island hung on the pad already); it is what KiCad's rule asks for.
 k30's tracks rung: 14 starved thermals to 1; mackerel-30's: 19 to 3.
+
+### Starved thermals at scale (2026-10-21)
+
+In the 5 834-board expansion intake starved_thermal was the second
+largest finding type beyond the designer's board (120 boards, 103
+blocked by it alone). A census of those 103 routed boards
+(`experiments/pour-fidelity/census.py` on the intake's routes) found the
+model short of KiCad there in a way the 44-board census was not: of 252
+starved pad rows it predicted 69, missed 145 and had no row for 38. The
+stripped (empty) boards, censused the same way, split the findings: on
+about half the pads KiCad counts fewer than two spokes before any track
+is routed (the designer's own tracks gave the second), on the rest the
+signals took a spoke. What changed (route mode on the 40 boards of the
+103 with a usable licence, 8 x 1 at the intake's 30 s, x1232 against
+x1241: 69 new starved findings to 36, 1 board passing to 19, no other new
+error, unconnected 4 to 2, vias 1542 to 1532):
+
+- A zone's solid connection is the terminal pad's (`kicad_spokes`). The
+  lowering gives zone connections per pad label, and the largest pad of a
+  label is the terminal: an exposed pad set to solid made its thermal vias
+  solid too, and they had no records (ray4477's U1.33, OpenAir's U5.17 and
+  U6.17, starved in KiCad with one spoke each). The pads merged into the
+  terminal keep the zone's relief and ring; inner spokes reach them inside
+  any pad of their number on the layer (on B.Cu the 2.5 mm pad that is not
+  the terminal). A pad is solid where the zones it lies in are: a small
+  solid zone of the net elsewhere on the layer no longer makes every pad
+  of the layer solid (Apex's GND on F.Cu: C1.2, C2.2 and C6.2 had no rows).
+- Another net's zone of a higher priority keeps its clearance
+  (`Board::excluded_clearance`): its fill reaches its outline, and this
+  zone's brush centres keep the larger of the two zones' clearances and
+  half the minimum width from it in the fill probe (the spoke ends, the
+  track ends, manual spokes); a keepout's region is cut exactly, as before.
+  At a track end of the net the margin is waived (the track keeps the
+  other fill away itself: robotique's D3.1). USSTRocketry's LM2576.1
+  (/Vin under GND's zone of priority 3) and smkent's LED1.1 had a spoke and
+  a manual spoke the model counted into fill KiCad does not have. The pour
+  masks, which the routing's pour connectivity reads, keep the old margin:
+  with it OpenFC (short tier) lost two connections in its first route and
+  robotique's ladder moved to the tracks rung.
+- A manual spoke is kept only when the model then counts it, the shortest
+  of the first four straight tracks into kept fill, and none passes the
+  net's own copper on its way: `materialize` cuts the track at the
+  junction and KiCad's DRC tests the segment from the pad, which then ended
+  in the relief (1999AZZAR's U2.19: two manual spokes, neither counted).
+- A pad the model sees without any spoke (none counted, none into an
+  island, none of another pad's across its ring, no track into the fill)
+  is no finding to the model; 22 of the 85 new findings on the 40 boards
+  were such pads with one spoke in KiCad (USB-C shield and B1/B12 pads,
+  buttons). It gets one
+  straight track into kept fill (`spokeless_tracks`, on;
+  `PCB_ROUTER_NO_SPOKELESS_TRACKS`), which KiCad's DRC counts only while
+  the pad is short. Not for pads whose spokes KiCad does not draw at all
+  (narrower than the minimum width).
+- Spokes the signals cut are given back (`free_lost_spokes`, after
+  `free_thermal_spokes`; `PCB_ROUTER_NO_LOST_SPOKES`): for each pad the
+  model finds starved, the strips of its failed spokes from the pad's edge
+  to the spoke's end plus the fill's clearance; every complete signal net
+  with copper within the clearance and half the minimum width of one is
+  routed again with the strips closed to it (the thermal guard at 10 000),
+  and kept when it is complete and the pour nets' starved spokes go down
+  (74th's ESP32-H2 C1.2: two spokes on the empty board, one after a loop
+  of signals around it). `free_thermal_spokes` keeps a move only on the
+  same condition now (it moved every net crossing a starved corridor of
+  the pad's box: Squantor's 10x10 alubox went from 38 vias to 96 when its
+  budget was left; with the condition 48).
+
+Left: KiCad spokes the model misses in tight spots (spoke ends against a
+track or a neighbour's relief the model finds a few hundredths of a
+millimetre too close, spokes of adjacent pads meeting), thermal vias on a
+layer where no pad of their number holds them (ray4477's U1.33 on In1.Cu:
+merged pads have no lattice nodes for a manual spoke), island-only pads
+(tag-designs' U5.6, U5.7) and per-label isolated connections in the
+lowering (74th's J3.S1: its SMD pads set to no connection make its
+through-hole pads isolated too; a per-pad list from pcb-kicad's lowering
+would fix it).
 
 ### KiCad's connection width (necks)
 

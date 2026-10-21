@@ -3102,3 +3102,274 @@ fn a_pads_spokes_make_the_pieces_they_land_in_one_outline() {
         "{joined:?}"
     );
 }
+
+#[test]
+fn a_solid_pads_merged_vias_keep_their_thermal_spokes() {
+    // The lowering gives zone connections per label: "P.1" is solid
+    // because its terminal (the larger pad on the back, an exposed pad)
+    // is. The through-hole pad merged into it inherits the zone's thermal
+    // relief, and KiCad's DRC counts its spokes (ray4477's U1.33 vias,
+    // OpenAir's U5.17): it keeps its records and its ring, the terminal's
+    // own pad has none.
+    let mut obstacles = vec![
+        copper(rect([5.0, 5.0], [0.8, 0.4]), 0, "P.1"),
+        copper(
+            Shape::Circle {
+                center: [5.0, 5.0],
+                radius: 0.4,
+            },
+            0,
+            "P.1",
+        ),
+        copper(
+            Shape::Circle {
+                center: [2.0, 8.0],
+                radius: 0.4,
+            },
+            0,
+            "P.2",
+        ),
+    ];
+    obstacles[0].layers = 0b10;
+    obstacles[1].layers = 0b11;
+    obstacles[2].layers = 0b11;
+    let mut board = board(
+        2,
+        obstacles,
+        vec![Net {
+            name: "P".into(),
+            class: 0,
+            terminals: vec![
+                Terminal {
+                    anchor: [5.0, 5.0],
+                    layers: 0b10,
+                    pad: 0,
+                    contact: None,
+                    label: "P.1".into(),
+                },
+                Terminal {
+                    anchor: [2.0, 8.0],
+                    layers: 0b11,
+                    pad: 2,
+                    contact: None,
+                    label: "P.2".into(),
+                },
+            ],
+        }],
+        vec![plane(0, 0, Some((0.3, 0.4))), plane(0, 1, Some((0.3, 0.4)))],
+        vec!["P.1".into(), "P.2".into()],
+    );
+    board.merged_pads.push(crate::board::MergedPad {
+        net: 0,
+        host: 0,
+        pad: 1,
+        anchor: [5.0, 5.0],
+        layers: 0b11,
+    });
+    let router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let (report, _, _) = spoke_report(&router, 0);
+    let layers_of = |pad: usize| -> Vec<usize> {
+        report
+            .iter()
+            .filter(|record| record.pad == pad)
+            .map(|record| record.layer)
+            .collect()
+    };
+    assert_eq!(layers_of(1), vec![0, 1]);
+    assert!(layers_of(0).is_empty());
+    let rings = router.thermal_ring_pads(0);
+    assert!(rings[0].iter().any(|(pad, _)| *pad == 1));
+}
+
+/// `one_spoke_board` with Q's zone of a higher priority above P.1: P's
+/// pour leaves Q's outline out (`Plane::excluded`), and Q's polygon is
+/// that of a plane of Q on the layer.
+fn zone_above_board(keepout: bool) -> Board {
+    let mut board = one_spoke_board();
+    // Q.2 above P.1 goes: the +y spoke would land but for the zone.
+    board.obstacles[3].shape = rect([9.0, 9.0], [0.25, 0.25]);
+    board.nets[1].terminals[1].anchor = [9.0, 9.0];
+    let region = vec![[3.0, 6.0], [7.0, 6.0], [7.0, 7.0], [3.0, 7.0]];
+    board.planes[0].excluded.push(region.clone());
+    if !keepout {
+        let mut above = plane(1, 0, None);
+        above.polygon = region;
+        board.planes.push(above);
+    }
+    board
+}
+
+#[test]
+fn another_nets_zone_of_a_higher_priority_keeps_its_clearance() {
+    // Q's zone above P.1 fills up to its outline at y = 6, and P's fill
+    // keeps the clearance (0.2) and half its minimum width from that
+    // fill (USSTRocketry's /Vin under GND's zone of priority 3). P.1's
+    // +y spoke ends at 5.725, 0.275 from the outline: no fill there. A
+    // keepout's region is cut exactly: the spoke lands, as before. A
+    // track of P ending 0.2 from the outline still ends in fill (its
+    // own copper keeps Q's fill away: robotique's D3.1).
+    let outcome = |keepout: bool| {
+        let board = zone_above_board(keepout);
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let record = spoke_report(&router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0)
+            .unwrap();
+        record.outcomes[2]
+    };
+    assert_eq!(outcome(false), SpokeOutcome::NoFill);
+    assert!(matches!(outcome(true), SpokeOutcome::Good(_)));
+
+    let board = zone_above_board(false);
+    let mut router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let grid = router.grid().clone();
+    let node = |at: [f64; 2]| Node {
+        layer: 0,
+        cell: grid.nearest_node(at).unwrap() as u32,
+    };
+    router.nets[0].branches = vec![Branch {
+        nodes: (0..=8)
+            .map(|step| node([5.0, 5.0 + 0.1 * step as f64]))
+            .collect(),
+        start_terminal: 0,
+        end_terminal: PLANE_TERMINAL,
+    }];
+    let record = spoke_report(&router, 0)
+        .0
+        .into_iter()
+        .find(|record| record.terminal == 0)
+        .unwrap();
+    assert_eq!(record.tracks, 1);
+}
+
+/// `one_spoke_board` with a fourth pad of Q left of P.1: none of P.1's
+/// spokes lands, and the diagonals past Q's corners reach the fill.
+fn spokeless_board() -> Board {
+    let mut board = one_spoke_board();
+    board
+        .obstacles
+        .push(copper(rect([4.0, 5.0], [0.25, 0.25]), 1, "Q.4"));
+    board.nets[1].terminals.push(terminal(5, [4.0, 5.0], "Q.4"));
+    board
+}
+
+#[test]
+fn a_pad_without_a_spoke_in_the_model_gets_a_track_into_the_fill() {
+    // The model finds P.1 with no spoke at all: no thermal connection,
+    // no starved thermal. KiCad found one on 22 such pads of 85 new
+    // findings at scale, so the pad gets one straight track into kept
+    // fill, which KiCad's DRC counts only while the pad is short.
+    let board = spokeless_board();
+    let config = |spokeless_tracks: bool| Config {
+        pitches: vec![0.1],
+        spokeless_tracks,
+        ..Config::default()
+    };
+    let mut router = Router::new(&board, &config(true));
+    let record = |router: &Router| {
+        spoke_report(router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0)
+            .unwrap()
+    };
+    let before = record(&router);
+    assert!(Router::spokeless(&before));
+    assert_eq!(Router::spokes_short(&before), 0);
+    assert_eq!(router.add_manual_spokes(), 1);
+    let branch = router.nets[0].branches[0].clone();
+    assert_eq!(branch.start_terminal, 0);
+    assert!(router.branch_is_legal(0, &branch));
+    assert_eq!(record(&router).tracks, 1);
+    // Once: the pad has its track.
+    assert_eq!(router.add_manual_spokes(), 0);
+    let mut router = Router::new(&board, &config(false));
+    assert_eq!(router.add_manual_spokes(), 0);
+}
+
+#[test]
+fn a_net_crossing_a_starved_pads_spoke_is_routed_around_it() {
+    // P.1 has two spokes, -x and -y (Q.1 and Q.2 take +x and +y); R runs
+    // straight across its -y spoke, which no longer lands: one spoke,
+    // starved. R is routed again around the spoke's strip, and P.1 has
+    // its two spokes back (74th's ESP32-H2 C1.2).
+    let mut board = one_spoke_board();
+    board.obstacles[4].shape = rect([9.0, 1.0], [0.25, 0.25]);
+    board.nets[1].terminals[2].anchor = [9.0, 1.0];
+    board
+        .obstacles
+        .push(copper(rect([2.5, 4.4], [0.2, 0.2]), 2, "R.1"));
+    board
+        .obstacles
+        .push(copper(rect([7.5, 4.4], [0.2, 0.2]), 2, "R.2"));
+    board.nets.push(Net {
+        name: "R".into(),
+        class: 0,
+        terminals: vec![
+            terminal(5, [2.5, 4.4], "R.1"),
+            terminal(6, [7.5, 4.4], "R.2"),
+        ],
+    });
+    let mut router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let grid = router.grid().clone();
+    let node = |at: [f64; 2]| Node {
+        layer: 0,
+        cell: grid.nearest_node(at).unwrap() as u32,
+    };
+    let short = |router: &Router| {
+        spoke_report(router, 0)
+            .0
+            .iter()
+            .find(|record| record.terminal == 0)
+            .map(Router::spokes_short)
+            .unwrap()
+    };
+    assert_eq!(short(&router), 0);
+    let state = &mut router.nets[2];
+    state.branches = vec![Branch {
+        nodes: (0..=50)
+            .map(|step| node([2.5 + 0.1 * step as f64, 4.4]))
+            .collect(),
+        start_terminal: 0,
+        end_terminal: 1,
+    }];
+    state.connected.fill(true);
+    state.complete = true;
+    router.stamp(2);
+    assert_eq!(short(&router), 1);
+    assert_eq!(router.free_lost_spokes(), 1);
+    assert!(router.nets[2].complete);
+    assert_eq!(short(&router), 0);
+    let mut off = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    off.lost_spoke_repair = false;
+    let mut router = Router::new(&board, &off);
+    assert_eq!(router.free_lost_spokes(), 0);
+}

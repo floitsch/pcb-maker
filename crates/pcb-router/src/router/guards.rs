@@ -254,6 +254,19 @@ impl Router {
             .cleanup_seconds
             .min(self.negotiation_seconds.max(60.0));
         let mut skipped = 0;
+        // With the spoke model a move is kept only when the pour nets'
+        // starved spokes go down: a corridor the model still finds the
+        // pad two spokes beside is no starved thermal, and the detour at
+        // the guard's cost was not free (Squantor's 10x10 alubox: 14 nets
+        // moved, 38 vias to 100, for four pads the spoke repairs fix).
+        let pour_nets: Vec<NetId> = if self.config.kicad_spokes {
+            (0..self.nets.len() as NetId)
+                .filter(|net| !self.nets[*net as usize].plane.is_empty())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut short = self.pour_spokes_short(&pour_nets);
         for net in offenders {
             if self.spent(&clock, budget) {
                 skipped += 1;
@@ -263,11 +276,25 @@ impl Router {
             if !state.routable || !state.complete || !state.plane.is_empty() {
                 continue;
             }
+            if !pour_nets.is_empty() && short == 0 {
+                break;
+            }
             let before = crossings(self, net);
             let saved = state.branches.clone();
             self.rip_up(net);
             self.route_net_seq(net, 0.0, true, 1.0);
-            if self.nets[net as usize].complete && crossings(self, net) < before {
+            let better = self.nets[net as usize].complete
+                && crossings(self, net) < before
+                && (pour_nets.is_empty() || {
+                    self.stamp(net);
+                    let after = self.pour_spokes_short(&pour_nets);
+                    let fewer = after < short;
+                    if fewer {
+                        short = after;
+                    }
+                    fewer
+                });
+            if better {
                 moved += 1;
             } else {
                 let state = &mut self.nets[net as usize];
@@ -282,6 +309,218 @@ impl Router {
         if self.config.verbose {
             eprintln!(
                 "thermal spokes: {moved} nets moved out of starved pads' spoke corridors ({skipped} left by the budget)"
+            );
+        }
+        moved
+    }
+
+    /// Starved spokes of the pour nets as the spoke model counts them
+    /// (`spokes_short` summed over the pads of every net with a pour).
+    fn pour_spokes_short(&self, nets: &[NetId]) -> usize {
+        nets.iter()
+            .map(|net| {
+                let mut report = Vec::new();
+                self.analyze_pours_reporting(*net, &|_| false, Some(&mut report));
+                report.iter().map(Self::spokes_short).sum::<usize>()
+            })
+            .sum()
+    }
+
+    /// Pads the spoke model (`kicad_spokes`) finds starved where other
+    /// nets' copper cuts a spoke: in the spoke's strip, or within the
+    /// fill's clearance of where it would land (74th's ESP32-H2 C1.2, two
+    /// spokes on the empty board and one after the signals ran a loop
+    /// around it; KiCad's DRC counted the one). The nets with copper there
+    /// are routed again with the strips nearly closed to them (the thermal
+    /// guard), each kept when it is complete and the pour nets' starved
+    /// spokes go down; otherwise it is put back. Unlike
+    /// `free_thermal_spokes`, whose corridors run along the pad's box
+    /// whatever KiCad draws, the strips are the spokes that fail in the
+    /// model. Returns the nets moved.
+    pub(super) fn free_lost_spokes(&mut self) -> usize {
+        if !self.config.kicad_spokes || !self.config.lost_spoke_repair {
+            return 0;
+        }
+        let pour_nets: Vec<NetId> = (0..self.nets.len() as NetId)
+            .filter(|net| {
+                !self.nets[*net as usize].plane.is_empty()
+                    && self
+                        .board
+                        .planes
+                        .iter()
+                        .any(|plane| plane.net == *net && plane.thermal_gap > 0.0)
+            })
+            .collect();
+        if pour_nets.is_empty() {
+            return 0;
+        }
+        // Per failed spoke: its layer, its net, the strip's axis and how
+        // near other copper may come to it.
+        let mut strips: Vec<(
+            usize,
+            NetId,
+            crate::geometry::Point,
+            crate::geometry::Point,
+            f64,
+        )> = Vec::new();
+        for &net in &pour_nets {
+            let mut report = Vec::new();
+            self.analyze_pours_reporting(net, &|_| false, Some(&mut report));
+            let state = &self.nets[net as usize];
+            for record in report
+                .iter()
+                .filter(|record| Self::spokes_short(record) > 0)
+            {
+                let layer = record.layer;
+                let planes = || {
+                    self.board
+                        .planes
+                        .iter()
+                        .filter(move |plane| plane.net == net && plane.layer == layer)
+                };
+                let gap = planes()
+                    .map(|plane| plane.thermal_gap)
+                    .fold(0.0f64, f64::max);
+                let bridge = planes()
+                    .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                    .fold(0.0f64, f64::max);
+                let brush = self.board.classes[state.plane_class[layer]];
+                let (_, anchor, geometry, minor) =
+                    self.spoke_geometry(record.pad, record.anchor, gap + brush.trace_width / 2.0);
+                let width = bridge.min(minor);
+                if width + 1.0e-9 < brush.trace_width {
+                    continue;
+                }
+                for (index, (direction, edge, tip)) in geometry.into_iter().enumerate() {
+                    if !matches!(
+                        record.outcomes[index],
+                        SpokeOutcome::NoFill | SpokeOutcome::Blocked
+                    ) {
+                        continue;
+                    }
+                    let at = |along: f64| {
+                        [
+                            anchor[0] + direction[0] * along,
+                            anchor[1] + direction[1] * along,
+                        ]
+                    };
+                    strips.push((
+                        layer,
+                        net,
+                        at(edge),
+                        at(tip + brush.clearance),
+                        width / 2.0 + brush.clearance + brush.trace_width / 2.0,
+                    ));
+                }
+            }
+        }
+        if strips.is_empty() {
+            return 0;
+        }
+        // The other nets with copper on a strip (a via on every layer).
+        let mut offenders: Vec<NetId> = Vec::new();
+        for (other, state) in self.nets.iter().enumerate() {
+            let other = other as NetId;
+            if !state.routable || !state.complete || !state.plane.is_empty() {
+                continue;
+            }
+            let half = self.board.classes[self.board.nets[other as usize].class].trace_width / 2.0;
+            let via = self.board.classes[self.board.nets[other as usize].class].via_diameter / 2.0;
+            let cuts = state.branches.iter().any(|branch| {
+                branch.nodes.iter().enumerate().any(|(index, node)| {
+                    let is_via = branch
+                        .nodes
+                        .get(index + 1)
+                        .is_some_and(|next| next.cell == node.cell && next.layer != node.layer)
+                        || (index > 0
+                            && branch.nodes[index - 1].cell == node.cell
+                            && branch.nodes[index - 1].layer != node.layer);
+                    let center = self.grid.center_of(node.cell as usize);
+                    strips.iter().any(|(layer, net, a, b, reach)| {
+                        *net != other
+                            && (is_via || node.layer as usize == *layer)
+                            && crate::geometry::point_segment_distance(center, *a, *b)
+                                < reach + if is_via { via } else { half }
+                    })
+                })
+            });
+            if cuts {
+                offenders.push(other);
+            }
+        }
+        if offenders.is_empty() {
+            return 0;
+        }
+        // The strips closed to every net but their own.
+        let saved_guard = self.guard.clone();
+        for (layer, net, a, b, reach) in &strips {
+            if self.guard[*layer].is_empty() {
+                self.guard[*layer] = vec![0; self.grid.cells()];
+            }
+            let bounds = crate::geometry::Aabb {
+                minimum: [a[0].min(b[0]), a[1].min(b[1])],
+                maximum: [a[0].max(b[0]), a[1].max(b[1])],
+            }
+            .inflated(*reach);
+            let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) else {
+                continue;
+            };
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let center = self.grid.center(x, y);
+                    if crate::geometry::point_segment_distance(center, *a, *b) < *reach {
+                        self.guard[*layer][self.grid.index(x, y)] = crate::grid::owner(*net);
+                    }
+                }
+            }
+        }
+        self.build_hot();
+        let guard_cost = self.config.thermal_guard_cost;
+        self.config.thermal_guard_cost = 1.0e4;
+        self.cleanup = true;
+        let clock = self.clock();
+        let budget = self
+            .config
+            .cleanup_seconds
+            .min(self.negotiation_seconds.max(60.0));
+        let mut short = self.pour_spokes_short(&pour_nets);
+        let mut moved = 0;
+        let mut skipped = 0;
+        for net in offenders {
+            if short == 0 {
+                break;
+            }
+            if self.spent(&clock, budget) {
+                skipped += 1;
+                continue;
+            }
+            let saved = self.nets[net as usize].branches.clone();
+            self.rip_up(net);
+            self.route_net_seq(net, 0.0, true, 1.0);
+            self.stamp(net);
+            let after = if self.nets[net as usize].complete {
+                self.pour_spokes_short(&pour_nets)
+            } else {
+                usize::MAX
+            };
+            if after < short {
+                short = after;
+                moved += 1;
+            } else {
+                let state = &mut self.nets[net as usize];
+                state.branches = saved;
+                state.connected.fill(true);
+                state.complete = true;
+                self.stamp(net);
+            }
+        }
+        self.cleanup = false;
+        self.config.thermal_guard_cost = guard_cost;
+        self.guard = saved_guard;
+        self.build_hot();
+        if self.config.verbose {
+            eprintln!(
+                "lost spokes: {moved} nets moved off starved pads' spokes ({skipped} left by the budget, {short} spokes short)"
             );
         }
         moved

@@ -11,6 +11,124 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (starved thermals at scale)
+
+starved_thermal was the second largest finding type the router adds
+beyond the designer's board in the 5 834-board intake: 120 boards, 103
+blocked by it alone (benchmarks/expansion/data/analysis/drc_failure_boards.csv).
+Snapshots x1240 (first candidate) and x1241 (this commit, on 0d13e80).
+Working files, scripts and logs: `build/thermal-scale` (`tools/`:
+`static_census.py`, `rows2.py`, `findings.py`, `table.py`, `cmp.py`,
+`mktasks.py`; `starved-tasks.json`).
+
+**Census.** `census.py` on the intake's routed boards of all 103 (the
+x1185 model on their final copper, KiCad's side refilled): 252 starved pad
+rows, 69 predicted, 145 missed, 38 with no model row, 9 false alarms;
+very unlike the 44-board census (162 / 7 / 2 / 26). The same census on
+the stripped boards (no tracks) split the findings into pads KiCad gives
+fewer than two spokes before anything is routed (the designer's own
+tracks gave the second) and pads the signals took a spoke from. Per new
+finding (by pad and layer, the designer's own findings at the same pad
+left out), route mode on the 40 of the 103 with a usable licence, x1185:
+
+| Cause | Findings | Empty board < 2 spokes | Fix |
+| --- | ---: | ---: | --- |
+| model sees no spoke at all (no finding to it), KiCad one | 22 | 13 | spokeless pads get a track |
+| predicted, not repaired: the signals took the spoke (a pocket around the pad, a track across the strip) | 12 | 0 | `free_lost_spokes` |
+| predicted, not repaired: manual spoke cut at a junction of the net's own track, or none straight | 7 | 7 | manual spokes verified, no own copper on the way |
+| model optimistic: another net's zone of a higher priority (USSTRocketry, smkent), meeting spokes, ends against tracks | 14 | 7 | zone clearance in the fill probe (part) |
+| model counts a track KiCad does not (segment cut at a junction, end in a margin) | 8 | 3 | as above (part) |
+| no model row: an exposed pad set to solid made its thermal vias solid | 5 | 5 | solid applies to the terminal's pad |
+| no model row: a small solid zone of the net made the layer solid | 2 | 0 | solid per containing zone |
+| no model row: per-label isolated connection (74th's J3.S1) | 2 | 0 | lowering (not done, below) |
+| census could not match the finding to a pad (pads of one number in several zones) | 13 | | |
+
+85 findings (x1185; x1232 identical but for rows the wall guard cut).
+After, on x1241's routes: 44, of them 11 predicted and not repaired, 11
+model-zero (tag-designs' island-only U5.6/U5.7, robotique's buttons),
+8 optimistic, 5 track miscounts, 2 J3.S1, 7 unmatched. The census on
+the intake's routes with x1241's model: 99 predicted, 151 missed, 2 no
+row, 18 false alarms (the newly modelled vias inside solid exposed pads on
+the near side, OpenAir's U6.17 F.Cu: KiCad gives them four spokes, the
+model one; a false alarm only costs a repair attempt).
+
+**Changes** (crates/pcb-router; docs/router.md, "Starved thermals at
+scale"):
+
+1. `kicad_spokes`: a label's solid connection is its terminal pad's; pads
+   merged into it keep thermal records and rings (`thermal_ring_pads`),
+   and `add_inner_spokes` reaches them inside any pad of their terminal on
+   the layer. A pad is solid where the zones containing it are, not where
+   any zone of the net on the layer is.
+2. `Board::excluded_clearance`, `FillProbe`: an excluded region that is
+   another net's zone keeps the zones' clearance plus half the minimum
+   width (waived at the net's track ends). Tried in the pour masks too and
+   left out there: OpenFC (short tier, layout) lost two connections in its
+   first route, robotique's ladder moved to the tracks rung.
+3. `add_manual_spokes_of`: candidates sorted by length, each kept only
+   when the model then counts it (the first four tried), none passing a
+   node of the net's own copper.
+4. `Config::spokeless_tracks` (on; `PCB_ROUTER_NO_SPOKELESS_TRACKS`):
+   one track into kept fill for a pad the model sees without a spoke
+   (`Router::spokeless`, `SpokeRecord::drawn`).
+5. `free_lost_spokes` (`Config::lost_spoke_repair`, on;
+   `PCB_ROUTER_NO_LOST_SPOKES`) after `free_thermal_spokes`; and
+   `free_thermal_spokes` keeps a move only when the pour nets' starved
+   spokes go down (Squantor's alubox: 96 vias at x1232 when its budget
+   was left, 48).
+
+Unit tests, one per cause:
+`a_solid_pads_merged_vias_keep_their_thermal_spokes`,
+`another_nets_zone_of_a_higher_priority_keeps_its_clearance`,
+`a_pad_without_a_spoke_in_the_model_gets_a_track_into_the_fill`,
+`a_net_crossing_a_starved_pads_spoke_is_routed_around_it`.
+
+**Gates.**
+
+- Census, 44 boards (fill3 KiCad cache): 162 / 7 / 26 / 2 for x1241 as
+  for x1184, every verdict line the same (`build/thermal-scale/census/c44-x1241.txt`).
+- Route mode, the 40 licensed boards of the 103 (`starved-tasks.json`,
+  expansion task format, fetched by run.py, 8 x 1, 30 s), x1232 against
+  x1241: new starved findings 69 to 36, boards with one 39 to 19, passing
+  1 to 19, other new errors 0 to 0, KiCad unconnected 4 to 2 (Apex 3 to 1
+  and OpenAir 1 to 0, mdiph 0 to 1), vias 1542 to 1532, length 47742 to
+  47343 mm, work 958.6 to 985.4 s. The first 20 boards: starved 19 to 8,
+  passing 1 to 12, unconnected 0 to 1 (mdiph), vias 692 to 653.
+  Worse rows: embeddedos 3 to 4 and tag-designs fc8db 1 to 2 (a pad the
+  model sees without a spoke and no straight track reaches, on a changed
+  route); unchanged: ray4477's vias on In1.Cu (no pad holds them there).
+- Expansion tier (8 x 1) x1241 against `build/expansion-x1211.log`:
+  every one of the 31 rows neither run cut has KiCad's findings and
+  routed count unchanged; 21 of them changed copper (manual and spokeless
+  tracks, moved nets): vias 1141 to 1139, length 36424 to 36267 mm, work
+  1366.1 to 1369.6 s. Passes 14 and 14; 15 rows cut (13 before; load
+  about 23), their unconnected 456 to 508 is theirs.
+- Short tier (tasks v6, 6 x 4 under the lock) x1241 against
+  `build/short-x1170.log`: 12 same, none better or worse; unconnected 19
+  and 19, new errors 2 and 2, passes 7 and 7, first-route open terminals
+  26 and 26, vias 1134 to 1125, length 21228 to 21142 mm, work 2501 to
+  2517 s, none cut. Four rows identical (USB_Cable_Tester, eternal-keypad,
+  urchin, Blue_Line); MIDAS the same copper with 2.4 s more work (the
+  spoke analyses); the other seven changed copper by the repairs, summed
+  over each layout's routes: nets moved off lost spokes on 0xCB (4),
+  USB_Keypad (5), WLED_Matrix (17), reCamera (20) and spell_tome (14);
+  manual spokes kept after the check on CRImier (5 lines to 9), WLED (48
+  to 31), reCamera (53 to 181); OpenFC's `free_thermal_spokes` kept 5
+  moves where it made 49 (159 vias to 146). The candidate x1240 (the zone
+  clearance in the pour masks too) lost OpenFC (82/82 to 80/82, its first
+  route 1 open terminal to 2); x1241 leaves the masks alone.
+
+**Not done (pcb-kicad's lowering, board_router/).** The lowering lists
+zone connections per pad label (`solid_pads`, `isolated_pads`); a label
+whose SMD pads have `zone_connect 0` and whose through-hole pads inherit
+the zone's (74th's J3.S1, a USB-C shield) makes all its pads isolated, so
+the model has no row for the thermal ones. The fix: record the
+connection per pad, as obstacle indices beside the labels (for example
+`Board::isolated_pad_obstacles` / `solid_pad_obstacles`, filled where
+`isolated_pads.push(label)` is now, from the pad's own `zone_connect`
+else its footprint's), and let `kicad_spokes`, `thermal_ring_pads` and
+`prepare_net` test the obstacle (the router side is a few lines).
+
 ## Committed on 2026-10-21 (harness validity)
 
 An independent review found the benchmark harness reproducible but weak on
@@ -111,6 +229,7 @@ x1225 predates the ladder's work bound (4in1 used 2427 s of work against
 the 1500 s budget), so the full tier should run on a binary with it.
 Both comparisons are across binaries (x1170 layout, x1225 route): for
 a decision, run the layout and the designer tier on one binary.
+
 
 ## Committed on 2026-10-21 (verdict integrity)
 
@@ -450,6 +569,7 @@ limit the smaller of setting and environment), cgroup paths of both
 versions, the maps from a real router's memory report, and the bound's
 rules (the bound, the probes' share, the negotiation, the rung shares,
 the step's share and its time). `bash scripts/check.sh` passes.
+
 
 ## Committed on 2026-10-16 (quality: pcb-kicad)
 

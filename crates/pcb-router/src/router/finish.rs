@@ -96,6 +96,7 @@ impl Router {
         let mark = self.phase_mark();
         if self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0 {
             self.free_thermal_spokes();
+            self.free_lost_spokes();
         }
         self.phase_charge(4, mark);
         self.profile.thermal_spokes += spokes_started.elapsed().as_secs_f64();
