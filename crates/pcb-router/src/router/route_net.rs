@@ -6,6 +6,10 @@
 
 use super::*;
 
+/// `route_net`'s absorb: takes a group of terminals and retained branches
+/// (by its root) into a tree.
+type Absorb<'a> = dyn Fn(&mut Scratch, &mut NetState, &mut Vec<Node>, &mut Vec<bool>, usize) + 'a;
+
 impl Router {
     /// Debug: with `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm), prints the lattice
     /// of that region per layer: `#` static block, `x` the nets' own
@@ -457,11 +461,122 @@ impl Router {
                 },
             });
         }
-        let complete = in_tree.iter().all(|inside| *inside);
+        let apart = self.route_apart(
+            scratch,
+            net,
+            net_state,
+            &component,
+            &mut in_tree,
+            present,
+            hard,
+            &absorb,
+        );
+        let complete = !apart && in_tree.iter().all(|inside| *inside);
         net_state.complete = complete;
         if !hard && !complete {
             net_state.blocked = true;
         }
+    }
+
+    /// `Config::apart_trees`: the terminals no path reaches from the net's
+    /// tree (`NetState::unreachable`), joined among themselves in trees of
+    /// their own, each grown from the first such terminal left by searches
+    /// from that tree alone (the main tree's region is not searched
+    /// again). Their terminals stay unconnected by the net's count. Returns
+    /// whether any terminal was taken into such a tree.
+    #[allow(clippy::too_many_arguments)]
+    fn route_apart(
+        &self,
+        scratch: &mut Scratch,
+        net: NetId,
+        net_state: &mut NetState,
+        component: &[usize],
+        in_tree: &mut Vec<bool>,
+        present: f32,
+        hard: bool,
+        absorb: &Absorb<'_>,
+    ) -> bool {
+        let terminal_count = self.board.nets[net as usize].terminals.len();
+        if !self.config.apart_trees || net_state.unreachable.len() != terminal_count {
+            return false;
+        }
+        // The groups (of terminals and retained branches) that hold an
+        // unreachable terminal.
+        let mut apart_group = vec![false; component.len()];
+        for (terminal, unreachable) in net_state.unreachable.iter().enumerate() {
+            if *unreachable && !in_tree[terminal] {
+                apart_group[component[terminal]] = true;
+            }
+        }
+        let full = (0, 0, self.grid.nx - 1, self.grid.ny - 1);
+        let mut apart: Vec<usize> = Vec::new();
+        while let Some(root) = (0..terminal_count).find(|terminal| {
+            !in_tree[*terminal]
+                && apart_group[component[*terminal]]
+                && !net_state.terminal_nodes[*terminal].is_empty()
+        }) {
+            scratch.tree.clear();
+            let mut tree: Vec<Node> = Vec::new();
+            let before: Vec<bool> = in_tree.clone();
+            absorb(scratch, net_state, &mut tree, in_tree, component[root]);
+            loop {
+                let mut targets: Vec<(Node, u16)> = Vec::new();
+                for element in 0..component.len() {
+                    if in_tree[element] || !apart_group[component[element]] {
+                        continue;
+                    }
+                    if element < terminal_count {
+                        for node in &net_state.terminal_nodes[element] {
+                            targets.push((*node, element as u16));
+                        }
+                    }
+                }
+                if targets.is_empty() {
+                    break;
+                }
+                let Some(path) = self.search(
+                    scratch, net, net_state, &tree, &targets, None, false, present, hard, full,
+                ) else {
+                    break;
+                };
+                let first = self.state(path[0]);
+                let last = self.state(*path.last().unwrap());
+                let start_terminal = scratch
+                    .tree
+                    .get(&(first as u32))
+                    .copied()
+                    .unwrap_or(NO_TERMINAL);
+                let reached = scratch.targets[&(last as u32)] as usize;
+                for node in &path[1..] {
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        scratch.tree.entry(self.state(*node) as u32)
+                    {
+                        entry.insert(NO_TERMINAL);
+                        tree.push(*node);
+                    }
+                }
+                absorb(scratch, net_state, &mut tree, in_tree, component[reached]);
+                net_state.branches.push(Branch {
+                    nodes: path,
+                    start_terminal,
+                    end_terminal: reached as u16,
+                });
+            }
+            apart.extend(
+                (0..terminal_count).filter(|terminal| in_tree[*terminal] && !before[*terminal]),
+            );
+        }
+        for terminal in &apart {
+            net_state.connected[*terminal] = false;
+        }
+        if !apart.is_empty() && std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+            eprintln!(
+                "route_net {}: {} terminals no path reaches from the tree joined apart",
+                self.board.nets[net as usize].name,
+                apart.len()
+            );
+        }
+        !apart.is_empty()
     }
 
     /// Routing for a net with copper pours: every group of terminals and

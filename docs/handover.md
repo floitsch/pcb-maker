@@ -187,14 +187,20 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
    margins smaller than their own noise (hackrf, 4in1-mini).
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
-   fell to 0-5 since the spoke model). `solid_starved_thermals` (opt-in: a
-   starved pad gets a solid zone connection) would pass them; Florian has
-   not decided whether it should be the default.
+   fell to 0-5 since the spoke model). Since 2026-10-21
+   `solid_starved_thermals` is on by default (a starved pad, or one whose
+   spokes reach only an island, gets a solid zone connection, kept when
+   KiCad finds the board better): mackerel-30 and Castor pass; k30-SBC's
+   solid pads cost an unconnected neighbour and are undone (docs/changelog.md,
+   "net ties, same-number pads, starved thermals"). Left: pads where solid
+   does not help.
 6. **Our open count against KiCad's.** The router counts connections per
    net, KiCad per missing pair; and the pour model's optimism adds. The
    pass rule trusts KiCad; the router's own count is for steering only.
-7. jiran-ble-lite's GND (no pour, 2 layers, 20 of 40 pads unreached); d20's
-   keepout pads; the 0xCB pcb-panel's zone refill, which kicad-cli does not
+7. d20's keepout pads (jiran-ble-lite's GND, 20 of 40 pads unreached: a
+   split keyboard's two halves joined by a frame no track crosses; since
+   2026-10-21 the other half's pads are joined among themselves, KiCad 20
+   to 1 unconnected, the designer's 1); the 0xCB pcb-panel's zone refill, which kicad-cli does not
    finish in 900 s (`PCB_KICAD_TIMEOUT`).
 8. **The agent flow's gaps** (the 2026-10-15 walkthrough; done: the fast
    no, room as numbers, what is kept, starter constraints for key
@@ -332,6 +338,7 @@ User-facing (`pcb-maker --help` lists them):
 Switches and experiment hooks (change the result):
 
 - `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
+- `PCB_ROUTER_NO_APART_TREES`: turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
 - `PCB_ROUTER_SEED`: `N`: perturbs the net order and seeds the history with noise, so that one board routes many ways.
 - `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).

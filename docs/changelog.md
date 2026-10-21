@@ -11,6 +11,187 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (net ties, same-number pads, starved thermals)
+
+The three cheap fixes of the v18 gap analysis (docs/benchmarks.md,
+"Layout sweep v18"): net ties, pads of one number, and the starved-thermal
+default. Branch net-ties; snapshots x1430 (net ties), x1431 (and the
+solid default), x1432 (and joined unreachable pads), x1433 (and island
+pads solid), x1434 (and the solid board kept only when better; the
+measured binary), x1435 (rebased on the probe and fence packages), x1436
+(and the layout's solid step on its kept board only; the commit, rebased
+since on the fab-release package, whose route mode keeps a board's own
+tracks: the tiers strip first). The before-binary of the other
+pairs is x1385 (main 043c247, its fingerprints those of x1381); the
+after-binary x1434 has neither the probe-overhead nor the fence package
+(both landed while these ran), so its pairs isolate this package; x1436
+is measured against main's short-tier reference (x1403).
+
+**Net ties** (KiCad 7's `(net_tie_pad_groups "1, 2")`; on a board before
+version 20220817 a footprint whose keywords start with "net tie", all its
+pads). The brief's model (a tie's pads are one terminal of every net in
+the group, connections through the tie satisfied) is not KiCad's: kicad-cli
+10.0.7 on a NetTie-2_SMD_Pad0.5mm between nets A and B with a pad of each
+elsewhere: a track of A to the tie's pad 1 alone leaves pad 2 and B's pad
+unconnected; tracks of A and B to their own pads find nothing; a track of
+A over the bridge onto pad 2 is a short. A tie joins no nets for the
+connectivity; each pad is an item of its own net. What left neotron-pico's
+24, ghoul's 6 and protoesp's NT pads open was the bridge: the footprint's
+copper polygon, lowered as copper of no net, overlaps both pads, so every
+tie pad was dead (`diagnostics.dead_pads`: "near NT901 copper fp_poly").
+KiCad lets the tie's own nets touch the bridge anywhere (an A track ending
+on its middle: clearance against pad 2 only, none against the polygon) and
+keeps other nets clear of it (without `net_tie_pad_groups`: clearance and
+shorting_items against the polygon from both tracks and pads). A lattice
+node has one owner, so the lowering keeps the bridge as copper of no net
+less a disc around each tie pad's centre of its net's clearance, half its
+track width and 0.1 mm (`carve_net_tie`, cells of 0.02 mm; a graphic no
+disc touches stays exact). The legacy rule, by kicad-cli on the same board
+at versions 20211014 to 20220817: a tie by `(tags "net tie")` and "net tie
+short" before 20220817, not at it, not by "Net Tie", "foo net tie" or a
+description (ghoul is a KiCad 6 board with tags only). The router's
+connection list and the verifier needed nothing: the nets were always
+routed apart, as KiCad counts them. Routed with x1434, the tie board of
+the test: 2/2, KiCad 0 unconnected, no finding (x1385: 0/2, both pads
+unconnected).
+
+**Pads of one number** (jiran-ble-lite, interchange-pcb-right,
+capybully). interchange's and capybully's open items in v18 and the
+designer tier were stacked F.Cu and B.Cu pads of one number on x1315: one
+terminal then, two since the connectivity agreement (x1345). On x1385
+both route complete with KiCad 0 unconnected (capybully passes strict,
+interchange fails strict on its pads over the edge only). jiran's are not
+pads of one number: its file holds a split keyboard's two halves, joined
+by a frame whose tabs carry mouse-bite holes no track crosses, and both
+halves' pads are GND. The net's tree grew on one half; the other half's
+20 GND pads (J4's four S1 shield pads among them, each a terminal of its
+own) were left out as unreachable, and apart from each other too: KiCad 20
+unconnected, the designer's own board 1 (the halves' GND). Now the
+terminals a board-wide search proved unreachable are joined among
+themselves after the tree (`Config::apart_trees`,
+`PCB_ROUTER_NO_APART_TREES`; `route_apart` in route_net.rs, a tree from the
+first such terminal grown by searches from it alone): jiran 20 to 1 on its
+v18 placement. They stay unconnected by the router's count and the net
+partial (KiCad finds one item between the trees, not one per pad).
+
+**Starved thermals.** The census (`experiments/pour-fidelity/census.py`,
+the 32 boards of the 44 still on disk and the 42 of route-t8, 218 starved
+pad rows) on x1385: predicted 165, missed 49, false alarms 29, no model row
+4, row for row x1363's (nothing in the pour model changed since). The
+switch does not depend on the model: it acts on KiCad's findings after the
+ladder. On the v18 placements (x1385) two of the four boards no longer fail
+on starved thermals (rosco and coco2 pass strict: the spoke end test, the
+via reliefs and the transitive merge of the pour package); mackerel-30-proto
+(4 strict) and k30-SBC (3) do. mackerel's four were "spokes connected to
+isolated island" findings, which the solid step skipped (`spokes` none);
+solid, the pad joins the island and the finding goes (kicad-cli on its
+route: R14.1, U2.42, U2.43, U11.61, four to none, nothing else). k30's four
+solid took the starved findings away and left J1.39, between J1.14 (made
+solid) and J1.15 on a 0.635 mm card connector, unconnected twice (KiCad 0
+to 2): a solid pad changes the fill. So the step now keeps the solid board
+only when KiCad finds no more unconnected items and fewer findings
+(`solid_kept`), else restores the board and its reports. In a layout the
+step ran inside each `route_kicad_board` of the ladder and the
+continuation, and the layout compares those by (open, starved, vias):
+eternal-keypad's continuation with its starved thermals gone (and a short
+of a GND track with a ProMicro hole the comparison does not weigh) beat
+the board kept before (short tier x1434: per-type pass to shorting_items
+1). The layout now turns the step off for its attempts and runs it once on
+the board it keeps (`solidify_starved_thermals`, x1436).
+
+Decision: **`solid_starved_thermals` is on unless false.** It flips
+mackerel-30-proto (v18 placement) and Castor (the fingerprint route) to
+strict passes, takes k30's fingerprint route from 4 strict starved
+thermals to 1, and costs nothing on the tiers (below); where it would
+cost, the board is restored. Its costs: one KiCad check on a board with
+starved pads left (charged as work), and the designer's thermal reliefs on
+those pads (a soldering choice; false keeps them). k30-SBC's v18 route keeps
+its 3 strict starved thermals (solid not kept).
+
+**Route mode on the v18 placements** (tasks v7, the task budgets: 1200 s
+of work, 3 x 2 and 2 x 2 at --min-free-gb 14; x1385 against x1434; jiran,
+ghoul, protoesp, mackerel, coco2, capybully and interchange from x1433,
+which differs from x1434 only where the solid board is not kept: k30 run
+again on x1434, ghoul too, its x1433 row):
+
+| board | x1385 | x1434 | cause |
+| --- | --- | --- | --- |
+| neotron-pico | 176/190, KiCad 24 | 190/190, KiCad 0, strict pass | net ties (NT901-NT912) |
+| ghoul | 142/148, KiCad 6, clearance 1 | 148/148, KiCad 0, clearance 1, strict +starved 1 | net ties (NT1-NT3, KiCad 6 tags); 5 starved pads solid, 1 left |
+| protoesp | 67/104, KiCad 58 | 75/104, KiCad 56 | net ties (NT items 12 to 5; the rest is placement) |
+| jiran-ble-lite | 104/105, KiCad 20 | 104/105, KiCad 1 | unreachable pads joined |
+| mackerel-30-proto | 217/217, starved 2 (strict 4) | 217/217, strict pass | island pads solid |
+| rosco | 148/148, strict pass | the same row | - |
+| coco2 | 173/173, strict pass | the same row | - |
+| k30-SBC | 173/173, pass, strict starved 3 | the same row | solid not kept (KiCad 0 to 2) |
+| capybully | 32/32, strict pass | the same row | - |
+| interchange-pcb-right | 83/83, KiCad 0, strict copper_edge_clearance 8 | the same row | - |
+
+**On the designer's placement** (the designer tier's boards,
+build/designer-x1315/<task>/placed, route-kicad-board alone at the tier's
+1500 s of work, `--reference none`, outside the lock under the
+coordinator's rule for single routes; build/ties-designer-single):
+neotron-pico 176/190, KiCad 24 to 190/190, KiCad 0 and no finding
+(complete); ghoul 142/148, KiCad 6 to 148/148, KiCad 0 (hole_clearance 40
+both, the designer's; 1 starved pad solid). As the v18 analysis expected,
+both designer routes are complete now. protoesp and jiran were not run
+there (the lock's queue; their v18 rows above).
+
+**Fingerprints** (route mode from the v16 layouts, quarter budget,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`, build/fp-ties-x1434
+against build/fp-ties-x1385, 1 x 4 for memory; x1385's are x1381's): every
+fingerprint identical on Castor, k30-SBC, jetson and Sisu (none has a net
+tie, none a group of unreachable pads); the boards of jetson and Sisu
+identical; Castor's and k30's differ only by the solid step: Castor 4
+starved pads solid, a strict pass (was strict starved_thermal 4); k30 4
+solid, 1 starved left (strict 4 to 1).
+
+**Expansion tier** (46 boards, 8 x 1, x1434 against
+build/expansion-charge-x1381.log; no row cut or killed): 41 rows identical
+(the solid step does not run: the tier skips KiCad's check in the router);
+passes 16 to 17 (strict 16 to 17), unconnected 846 to 864, new errors 2 to
+2, vias 4006 to 3966. Changed rows: FUEL4EP 58/60, KiCad 2 (both NT1's
+pads) to 60/60, a pass; brown-studios pdlc 21/33, KiCad 12 to 22/33, 11
+(NT1's pads joined); brown-studios minuet 252.1 to 252.0 mm (its tie);
+mincrmatt12 MSign 162/188, KiCad 75 to 145/188, 96: its four tie items
+(NT1, NT2: VSEN to GND and 5V_REG) joined, the rest the 30 s budget on a
+board that does not fit it (its probes 163 to 172 nets unfinished from the
+changed lowering; its row has moved between 15 and 75 unconnected over the
+last packages);
+CASE-Association Julkort 32.9 to 33.0 s of work, the same board (two
+nets' unreachable pads joined apart in an attempt the ladder did not keep;
+with `PCB_ROUTER_NO_APART_TREES` 32.9 s, x1381's row).
+
+**The connectivity list** (connectivity-tasks.json, 65 boards, 30 s, 8 x 1,
+`census.py --run build/conn-ties-x1434`): verdict agrees with KiCad on 65
+of 65, complete by our count with KiCad unconnected items on 0 boards
+(build/conn-x1365: 1, BioGenius, fixed since by the lowering gaps 2
+package), KiCad's unconnected items 9 (x1365 11), no row killed. The tier
+skips KiCad's check in the router, so the solid step does not run there.
+
+**Short tier** (tasks v7, 3 x 2, `--no-lock` under the coordinator's
+memory rule). x1434 against build/short-charge-x1381.log: 11 rows
+identical (MIDAS's too), eternal-keypad per-type pass to shorting_items 1
+(the solid step inside the layout's attempts, above). x1436 (rebased, the layout's
+step on its kept board) against build/short-fence-x1403.log (main's
+reference): 10 rows identical; framework_mobo_lefthalf strict
+starved_thermal 1 to a strict pass (1 pad solid, 3.6 s of work for the
+check); eternal-keypad per-type starved_thermal 1 (strict 4) to a
+per-type pass (10 pads solid: its ProMicro through-hole pads; strict now
+only the designer's capped hole_clearance). Passes 6 to 7, strict 5 to 6,
+unconnected 20 both, vias and length identical.
+
+Unit tests: pcb-kicad's `a_net_ties_pads_are_reached_by_their_own_nets`
+(the lowering's terminals and bridge, and a route of the tie board, with
+the kicad-cli findings above), `a_kicad_6_footprint_tagged_net_tie_is_a_tie`,
+`starved_pads_stay_solid_only_when_kicad_finds_the_board_better`;
+pcb-router's `terminals_no_path_reaches_are_joined_among_themselves`.
+
+**Gates**: `bash scripts/check.sh` and the clippy gate pass. Other
+packages' code touched: route_net.rs (`route_apart`, the router's core
+search, owned by no package), board_layout.rs (the layout's solid step,
+two config fields and one call), agent_cli.rs (the help's default).
+
 ## Committed on 2026-10-21 (fab release, pre-routed nets, agent skill)
 
 Three agent-facing features from the Hacker News evaluation (commenters

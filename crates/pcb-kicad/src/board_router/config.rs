@@ -328,9 +328,13 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub solder_mask_bridge_severity: Option<String>,
     /// Pads KiCad finds short of thermal spokes (where only one fits, as on
-    /// fine-pitch pins) get a solid zone connection in the result, and the
-    /// board is verified again. Off by default: thermal reliefs are there
-    /// for soldering, so this is the designer's (or the agent's) call.
+    /// fine-pitch pins, or whose spokes reach only an isolated island of
+    /// fill) get a solid zone connection in the result, and the board is
+    /// verified again (one more KiCad check, charged as work). On
+    /// unless false (since 2026-10-21: four boards of the v18 sweep failed
+    /// on starved thermals alone, which this passes; docs/changelog.md).
+    /// False keeps the designer's thermal reliefs where KiCad finds them
+    /// starved: reliefs are there for soldering.
     #[serde(default)]
     pub solid_starved_thermals: Option<bool>,
     /// Allow vias inside SMD pads (default false): a board whose vias

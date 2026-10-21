@@ -820,7 +820,7 @@ fn next_actions(
     }
     if facts.starved_thermals > 0 && new_findings.contains_key("starved_thermal") {
         actions.push(format!(
-            "{} pads are short of thermal spokes (diagnostics.starved_thermals has advice for each); \"solid_starved_thermals\": true in the router config connects them solid",
+            "{} pads are short of thermal spokes (diagnostics.starved_thermals has advice for each); \"solid_starved_thermals\" (on unless false in the router config) connects them solid",
             facts.starved_thermals
         ));
     }

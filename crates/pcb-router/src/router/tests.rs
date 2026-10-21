@@ -395,6 +395,116 @@ fn walled_in_pad() -> Router {
     Router::new(&board, &config)
 }
 
+/// One net on one layer with two pads either side of a wall across the
+/// whole board (jiran-ble-lite's halves, which only a frame no track
+/// crosses joins).
+fn halves(apart_trees: bool) -> Router {
+    let class = RuleClass {
+        trace_width: 0.25,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+    };
+    let pads = [[3.0, 10.0], [8.0, 4.0], [22.0, 10.0], [27.0, 16.0]];
+    let mut obstacles: Vec<Obstacle> = pads
+        .iter()
+        .enumerate()
+        .map(|(index, at)| {
+            copper(
+                Shape::Circle {
+                    center: *at,
+                    radius: 0.3,
+                },
+                0,
+                &format!("G.{index}"),
+            )
+        })
+        .collect();
+    obstacles.push(Obstacle {
+        shape: Shape::rectangle([15.0, 10.0], [0.5, 11.0], 0.0),
+        layers: 1,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "wall".into(),
+    });
+    let terminals = pads
+        .iter()
+        .enumerate()
+        .map(|(index, at)| Terminal {
+            anchor: *at,
+            layers: 1,
+            pad: index,
+            contact: None,
+            label: format!("G.{index}"),
+        })
+        .collect();
+    let board = Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.25,
+        obstacles,
+        nets: vec![Net {
+            name: "G".into(),
+            class: 0,
+            terminals,
+        }],
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+    };
+    let config = Config {
+        pitches: vec![0.1],
+        apart_trees,
+        ..Config::default()
+    };
+    Router::new(&board, &config)
+}
+
+#[test]
+fn terminals_no_path_reaches_are_joined_among_themselves() {
+    // The left pair is the net's tree; the right pair no path reaches from
+    // it. Joined apart, the right pads get a branch of their own, KiCad's
+    // one unconnected item between the two trees instead of two; the
+    // net's count still calls them unconnected and the net incomplete.
+    let right_branch = |router: &Router| {
+        router.nets[0]
+            .branches
+            .iter()
+            .any(|branch| branch.start_terminal >= 2 || branch.end_terminal >= 2)
+    };
+    let mut router = halves(true);
+    router.route_net_seq(0, 1.0, false, 1.0);
+    router.stamp(0);
+    assert_eq!(router.nets[0].unreachable, vec![false, false, true, true]);
+    assert_eq!(router.nets[0].connected, vec![true, true, false, false]);
+    assert!(!router.nets[0].complete);
+    assert!(right_branch(&router));
+    // So does the hard repair after the negotiation.
+    router.rip_up(0);
+    router.resolve_remaining(&[0]);
+    assert_eq!(router.nets[0].connected, vec![true, true, false, false]);
+    assert!(right_branch(&router));
+    // Without, the right pads stay apart from each other too.
+    let mut router = halves(false);
+    router.route_net_seq(0, 1.0, false, 1.0);
+    router.stamp(0);
+    assert_eq!(router.nets[0].connected, vec![true, true, false, false]);
+    assert!(!right_branch(&router));
+}
+
 #[test]
 fn a_walled_in_pad_does_not_stop_the_rest_of_its_net() {
     let mut router = walled_in_pad();

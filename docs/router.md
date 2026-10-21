@@ -169,6 +169,23 @@ the 0.05 mm rung and left the narrow-signal step 52 s of work instead of
 to 41 (its tracks rung, 634 to 132 open, became the best and its narrow
 attempt ripped +3V3E up whole: 3 of 43 pads).
 
+**Unreachable pads join each other** (2026-10-21, `Config::apart_trees`,
+`PCB_ROUTER_NO_APART_TREES`). The pads left out stayed apart from each
+other too: jiran-ble-lite is a split keyboard's two halves in one file,
+joined only by a frame whose mouse-bite holes no track crosses, and both
+halves' pads are GND. The tree grew on the left half and the right half's
+20 GND pads were each an unconnected item (KiCad 20; the designer's own
+board has 1, the two halves' GND). Now, after the net's tree is done,
+the terminals marked unreachable are joined among themselves: a tree of
+their own from the first of them, by board-wide searches from that tree
+alone (the main tree's region is not searched again), then the next one
+left (`route_apart`). Their terminals stay unconnected by the net's
+count, and the net stays partial: the router's open count is the same,
+KiCad's falls to the one item between the trees (jiran on its v18
+placement 20 to 1; on the designer's below). A walled-in pad alone costs
+one search of its wall. Fingerprints of Castor, k30-SBC, jetson and Sisu
+are unchanged (no such group there).
+
 ### KiCad's connectivity (2026-10-21)
 
 In the 5 834-board intake, 192 boards (119 with nothing but unconnected
@@ -246,6 +263,29 @@ holds:
   pad to the via's piece through it and called the board complete;
   IotThermalCamera's Tgnd: a diagonal neck of the lattice past a via
   joined two pieces the relief keeps apart.
+
+- **A net tie joins no nets** (2026-10-21). KiCad 7's
+  `(net_tie_pad_groups "1, 2")` (and, on a board before version
+  20220817, a footprint whose keywords start with "net tie": all its
+  pads) lets the footprint's copper short the group's pads; KiCad's
+  connectivity still counts each pad as an item of its own net
+  (kicad-cli 10.0.7 on a NetTie-2_SMD_Pad0.5mm between nets A and B: a
+  track of A to pad 1 alone leaves pad 2 and B's other pad unconnected;
+  tracks of A and B to their pads, over the bridge, find nothing). So the
+  pads stay ordinary terminals and the tie's nets are routed as before,
+  each to its own pad. What changed is the bridge: copper of no net that
+  overlapped both pads, which made every tie pad dead (neotron-pico's
+  NT901 to NT912, all 24 of its open connections on both placements;
+  ghoul's 6, protoesp's 10 to 13). KiCad lets the tie's own nets touch
+  the bridge anywhere (an A track ending on its middle: clearance against
+  pad 2 only) and keeps every other net clear of it. A lattice node has
+  one owner, so the lowering keeps the bridge as copper of no net less a
+  disc around each tie pad's centre of the pad's net's clearance, half
+  its track width and 0.1 mm (`carve_net_tie`, cells of 0.02 mm): the
+  pad's net ends its track there, other nets keep clear of the rest and
+  of the pads. The cost is a sliver of bridge other nets could come
+  within the clearance of (beside a tiny tie's middle, 0.12 mm on
+  ghoul's 0.2 mm pads at most).
 
 What still disagrees on the 65 boards with a licence (one): a dimension
 drawn on a copper layer, which KiCad's fill keeps clear of and the
@@ -1019,6 +1059,23 @@ merged pads have no lattice nodes for a manual spoke), island-only pads
 lowering (74th's J3.S1: its SMD pads set to no connection make its
 through-hole pads isolated too; a per-pad list from pcb-kicad's lowering
 would fix it).
+
+**Starved pads solid by default** (2026-10-21). `solid_starved_thermals`
+was opt-in; it is on unless false now. After the ladder, the pads KiCad's
+DRC finds starved get `(zone_connect 2)` and the board is checked again
+(one more KiCad check, charged as work); the pads whose spokes reach only
+an isolated island of fill too (no spoke count in the finding: before
+they were skipped, though solid joins the pad to the piece and the
+finding goes: mackerel-30-proto's four, KiCad 10.0.7). The solid board is
+kept only when KiCad finds no more unconnected items and fewer findings
+than before (`solid_kept`): on k30-SBC's v18 route the four solid pads
+took the starved thermals away and left J1.39, between J1.14 (solid) and
+J1.15 on a 0.635 mm card connector, unconnected twice; the board of before
+is restored. What it changes: mackerel-30-proto, Castor (fingerprint
+route) and the boards in docs/changelog.md, "net ties, same-number pads,
+starved thermals". What it costs: a KiCad check where starved pads are
+left, and the designer's thermal relief on those pads (a soldering
+choice; false keeps it).
 
 ### KiCad's connection width (necks)
 

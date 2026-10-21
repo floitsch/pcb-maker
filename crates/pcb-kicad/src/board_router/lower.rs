@@ -330,6 +330,7 @@ fn lower_board(
 ) -> Result<Lowered, String> {
     note_jumper_nets(pcb);
     crate::note_net_names(pcb);
+    let board_version = form_atom(pcb, "version", 1).and_then(|version| version.parse().ok());
     // KiCad 9 and before name the net of a track, via or graphic by code.
     let net_codes = crate::net_codes(pcb);
     let loops = outline::board_loops(pcb)?;
@@ -490,6 +491,11 @@ fn lower_board(
                         pour_keepouts.push(keepout);
                     }
                 }
+                // A net tie's pads (`net_tie_pad_groups`): its copper
+                // graphics join pads of several nets, which KiCad allows.
+                let tie_groups = net_tie_groups(item, board_version);
+                let mut tie_copper: Vec<(core::Shape, core::LayerMask, String)> = Vec::new();
+                let mut tie_pads: Vec<([f64; 2], core::LayerMask, core::NetId)> = Vec::new();
                 // Copper drawn inside the footprint (a logo, a net tie's
                 // bridge) belongs to no net.
                 for graphic in item.children().iter().filter(|child| {
@@ -549,8 +555,16 @@ fn lower_board(
                     // A track, clearance findings at 0 mm and the pad
                     // unconnected).
                     for shape in copper_graphic_shapes(graphic)? {
+                        let shape = place_shape(shape, footprint_at);
+                        let label =
+                            format!("{reference} copper {}", graphic.head().unwrap_or("graphic"));
+                        // A net tie's copper waits for its pads (below).
+                        if !tie_groups.is_empty() {
+                            tie_copper.push((shape, copper, label));
+                            continue;
+                        }
                         obstacles.push(core::Obstacle {
-                            shape: place_shape(shape, footprint_at),
+                            shape,
                             layers: copper,
                             kind: core::ObstacleKind::Copper,
                             net: None,
@@ -558,10 +572,7 @@ fn lower_board(
                             clearance_override: None,
                             blocks_tracks: true,
                             blocks_vias: true,
-                            label: format!(
-                                "{reference} copper {}",
-                                graphic.head().unwrap_or("graphic")
-                            ),
+                            label,
                         });
                     }
                 }
@@ -766,6 +777,13 @@ fn lower_board(
                     }
                     let pad_obstacle = obstacles.len();
                     let number = pad_name.trim_matches('"');
+                    if let Some(net) = net
+                        && tie_groups
+                            .iter()
+                            .any(|group| group.iter().any(|member| member == number))
+                    {
+                        tie_pads.push((lowered.center, pad_layers, net));
+                    }
                     if let Some(group) = pad_groups
                         .iter()
                         .position(|group| group.iter().any(|member| member == number))
@@ -1017,6 +1035,47 @@ fn lower_board(
                         if pad.smd && Some(index) != exposed {
                             no_via_pads.extend(&pad.copper);
                         }
+                    }
+                }
+                // A net tie's copper: KiCad 10.0.7 lets the tie's own nets
+                // touch it (kicad-cli: tracks of A and B ending on the tie's
+                // pads over its bridge, and an A track ending on the bridge's
+                // middle, find no clearance or short against it; only the
+                // other pad's clearance holds) and keeps every other net
+                // clear of it (the same footprint without
+                // `net_tie_pad_groups`: clearance and shorting_items against
+                // the polygon). One owner per lattice node cannot say "A or
+                // B", so the bridge is copper of no net less what lies
+                // within a track's reach of a tie pad's centre: a track of
+                // the pad's net ends there (neotron-pico's NT901 to NT912,
+                // every pad dead behind its own bridge before). Other nets
+                // keep clear of the rest and of the pads.
+                for (shape, copper, label) in tie_copper {
+                    let carves: Vec<([f64; 2], f64)> = tie_pads
+                        .iter()
+                        .filter(|(_, pad_layers, _)| pad_layers & copper != 0)
+                        .map(|(center, _, net)| {
+                            let class = &classes[nets[*net as usize].class];
+                            (
+                                *center,
+                                class.clearance.max(no_net_clearance)
+                                    + class.trace_width / 2.0
+                                    + NET_TIE_MARGIN,
+                            )
+                        })
+                        .collect();
+                    if let Some(shape) = carve_net_tie(shape, &carves) {
+                        obstacles.push(core::Obstacle {
+                            shape,
+                            layers: copper,
+                            kind: core::ObstacleKind::Copper,
+                            net: None,
+                            clearance: no_net_clearance,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label,
+                        });
                     }
                 }
             }
@@ -1702,6 +1761,121 @@ fn exposed_pad(pads: &[FootprintPad]) -> Option<usize> {
         low < pad.center[axis] && pad.center[axis] < high
     });
     inside.then_some(largest)
+}
+
+/// How far beyond a track's reach a net tie's copper is cut back from its
+/// pads' centres: room for the lattice node that ends the track (half the
+/// coarsest pitch and more).
+const NET_TIE_MARGIN: f64 = 0.1;
+
+/// The pad numbers a footprint's net tie joins, by group: KiCad 7's
+/// `(net_tie_pad_groups "1, 2" ...)`, or for a board before version
+/// 20220817 a footprint whose keywords start with "net tie", all its pads
+/// in one group (KiCad 10.0.7 loads ghoul's KiCad 6 NetTie-2_SMD_Pad0.2mm
+/// so; kicad-cli: a tie by `(tags "net tie")` at 20220815 and before, by
+/// "net tie short" too, not by "Net Tie", "foo net tie" or a description,
+/// and not at 20220817 and after).
+fn net_tie_groups(footprint: &Expr, board_version: Option<u64>) -> Vec<Vec<String>> {
+    if let Some(groups) = footprint.child("net_tie_pad_groups") {
+        return groups
+            .children()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .map(|group| {
+                group
+                    .trim_matches('"')
+                    .split(',')
+                    .map(|number| number.trim().to_string())
+                    .filter(|number| !number.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .filter(|group| group.len() > 1)
+            .collect();
+    }
+    let legacy = board_version.is_some_and(|version| version < 20220817)
+        && form_atom(footprint, "tags", 1)
+            .is_some_and(|tags| tags.trim_matches('"').starts_with("net tie"));
+    if !legacy {
+        return Vec::new();
+    }
+    let mut numbers: Vec<String> = Vec::new();
+    for pad in footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("pad"))
+    {
+        let number = pad
+            .children()
+            .get(1)
+            .and_then(Expr::atom)
+            .unwrap_or("")
+            .trim_matches('"');
+        if !number.is_empty() && !numbers.iter().any(|known| known == number) {
+            numbers.push(number.to_string());
+        }
+    }
+    if numbers.len() > 1 {
+        vec![numbers]
+    } else {
+        Vec::new()
+    }
+}
+
+/// A net tie's copper graphic less the discs (centre, radius) its pads'
+/// nets need to end their tracks: the graphic itself when no disc touches
+/// it, else its cells (of 0.02 mm, coarser for a large graphic) whose
+/// whole square lies inside no disc, as rectangles per row; None when
+/// nothing is left.
+fn carve_net_tie(shape: core::Shape, carves: &[([f64; 2], f64)]) -> Option<core::Shape> {
+    let bounds = shape.aabb();
+    let width = bounds.maximum[0] - bounds.minimum[0];
+    let height = bounds.maximum[1] - bounds.minimum[1];
+    let mut step = 0.02_f64;
+    while (width / step).ceil() * (height / step).ceil() > 250_000.0 {
+        step *= 2.0;
+    }
+    let columns = ((width / step).ceil() as usize).max(1);
+    let rows = ((height / step).ceil() as usize).max(1);
+    let half_diagonal = step * std::f64::consts::FRAC_1_SQRT_2;
+    let mut carved = false;
+    let mut parts: Vec<core::Shape> = Vec::new();
+    for row in 0..rows {
+        let y = bounds.minimum[1] + (row as f64 + 0.5) * step;
+        let mut run: Option<usize> = None;
+        for column in 0..=columns {
+            let kept = column < columns && {
+                let x = bounds.minimum[0] + (column as f64 + 0.5) * step;
+                let inside = shape.contains([x, y]);
+                let free = carves.iter().all(|(center, radius)| {
+                    (x - center[0]).hypot(y - center[1]) >= radius + half_diagonal
+                });
+                carved |= inside && !free;
+                inside && free
+            };
+            match (kept, run) {
+                (true, None) => run = Some(column),
+                (false, Some(start)) => {
+                    let x0 = bounds.minimum[0] + start as f64 * step;
+                    let x1 = bounds.minimum[0] + column as f64 * step;
+                    let (y0, y1) = (y - step / 2.0, y + step / 2.0);
+                    parts.push(core::Shape::Polygon {
+                        points: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                    });
+                    run = None;
+                }
+                _ => {}
+            }
+        }
+    }
+    if !carved {
+        return Some(shape);
+    }
+    match parts.len() {
+        0 => None,
+        1 => parts.pop(),
+        _ => Some(core::Shape::Union { parts }),
+    }
 }
 
 /// KiCad's frame for a pad's thermal spokes (`core::PadSpokes`): its shape

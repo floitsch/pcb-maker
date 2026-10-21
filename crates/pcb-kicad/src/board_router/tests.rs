@@ -2601,3 +2601,178 @@ mod lowering_gap_tests {
         assert_eq!(polygon.net, None);
     }
 }
+
+mod terminal_tests {
+    use super::*;
+
+    fn rules() -> KiCadBoardRouterConfig {
+        KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.25,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        }
+    }
+
+    /// A net tie between nets A and B (KiCad's NetTie-2_SMD_Pad0.5mm, the
+    /// footprint of neotron-pico's NT901 to NT912) and a pad of each net.
+    fn net_tie_board(version: u32, tie: &str) -> String {
+        format!(
+            r#"(kicad_pcb (version {version})
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+          (net 0 "") (net 1 "A") (net 2 "B")
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "NetTie:NetTie-2_SMD_Pad0.5mm" (layer "F.Cu") (at 10 5)
+            (property "Reference" "NT1") {tie}
+            (fp_poly (pts (xy -0.5 -0.25) (xy 0.5 -0.25) (xy 0.5 0.25) (xy -0.5 0.25))
+              (stroke (width 0) (type solid)) (fill solid) (layer "F.Cu"))
+            (pad "1" smd circle (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd circle (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "B")))
+          (footprint "R" (layer "F.Cu") (at 3 5) (property "Reference" "R1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+          (footprint "R" (layer "F.Cu") (at 17 5) (property "Reference" "R2")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "B"))))"#
+        )
+    }
+
+    fn tie_copper(board: &core::Board) -> Vec<&core::Obstacle> {
+        board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "NT1 copper fp_poly")
+            .collect()
+    }
+
+    #[test]
+    fn a_net_ties_pads_are_reached_by_their_own_nets() {
+        // kicad-cli 10.0.7 on this board with tracks R1-NT1.1 (A) and
+        // R2-NT1.2 (B) ending on the pads' centres, over the bridge: no
+        // unconnected item, no finding. Only A's track: NT1.2 and R2
+        // unconnected (a tie joins no nets for KiCad's connectivity: each
+        // pad is an item of its own net). An A track ending on the
+        // bridge's middle: clearance against NT1.2 only. Without
+        // net_tie_pad_groups: clearance and shorting_items against the
+        // polygon, from both tracks and both pads.
+        let config = rules();
+        let tied = lower(
+            &parse(&net_tie_board(20240108, r#"(net_tie_pad_groups "1, 2")"#)).unwrap(),
+            &config,
+            false,
+        )
+        .unwrap()
+        .board;
+        // The tie joins no nets: A and B keep their two terminals each.
+        for name in ["A", "B"] {
+            let net = tied.nets.iter().find(|net| net.name == name).unwrap();
+            assert_eq!(net.terminals.len(), 2, "{name}");
+        }
+        // Its bridge is copper of no net, cut back where the pads' nets end
+        // their tracks: 0.2 clearance, half of 0.25 and the margin from
+        // each pad's centre.
+        let reach = 0.2 + 0.125 + 0.1;
+        for obstacle in tie_copper(&tied) {
+            assert_eq!(obstacle.net, None);
+            for center in [[9.5, 5.0], [10.5, 5.0]] {
+                assert!(obstacle.shape.distance_to_point(center) >= reach - 1.0e-9);
+            }
+        }
+        // What is left (the middle) still keeps other nets clear.
+        assert!(
+            tie_copper(&tied)
+                .iter()
+                .any(|obstacle| obstacle.shape.contains([10.0, 5.0]))
+        );
+        let mut quiet = core_config(&config);
+        quiet.verbose = false;
+        let (result, _) = route_measured(&tied, &quiet);
+        for (index, net) in tied.nets.iter().enumerate() {
+            assert!(
+                matches!(result.status[index], core::NetStatus::Routed),
+                "{}: {:?}",
+                net.name,
+                result.status[index]
+            );
+        }
+        // Without the tie the polygon is copper of no net on both pads, as
+        // before: whole, and the pads are dead behind it.
+        let untied = lower(
+            &parse(&net_tie_board(20240108, "")).unwrap(),
+            &config,
+            false,
+        )
+        .unwrap()
+        .board;
+        let copper = tie_copper(&untied);
+        assert_eq!(copper.len(), 1);
+        assert!(copper[0].shape.contains([9.6, 5.0]));
+        let (result, _) = route_measured(&untied, &quiet);
+        assert!(
+            result
+                .status
+                .iter()
+                .all(|status| !matches!(status, core::NetStatus::Routed))
+        );
+    }
+
+    #[test]
+    fn a_kicad_6_footprint_tagged_net_tie_is_a_tie() {
+        // kicad-cli 10.0.7: `(tags "net tie")` without net_tie_pad_groups
+        // makes a tie of all its pads on a board before version 20220817
+        // (no finding with both tracks), not at 20220817 or after
+        // (shorting_items and clearance against the polygon); "net tie
+        // short" too, "Net Tie" and "foo net tie" not.
+        let config = rules();
+        let cut = |version: u32, tags: &str| {
+            let board = lower(
+                &parse(&net_tie_board(version, &format!("(tags {tags:?})"))).unwrap(),
+                &config,
+                false,
+            )
+            .unwrap()
+            .board;
+            !tie_copper(&board)
+                .iter()
+                .any(|obstacle| obstacle.shape.contains([9.6, 5.0]))
+        };
+        assert!(cut(20211014, "net tie"));
+        assert!(cut(20220815, "net tie short"));
+        assert!(!cut(20220817, "net tie"));
+        assert!(!cut(20211014, "Net Tie"));
+        assert!(!cut(20211014, "foo net tie"));
+    }
+}
+
+mod solid_starved_tests {
+    use super::super::route::solid_kept;
+    use crate::verification::VerificationReport;
+
+    fn report(unconnected: usize, findings: usize) -> VerificationReport {
+        VerificationReport {
+            board_id: "b".into(),
+            complete: false,
+            erc_violations: 0,
+            drc_design_violations: findings,
+            schematic_parity_issues: 0,
+            selected_net_unconnected_items: unconnected,
+            intentional_no_connect_groups: 0,
+            library_metadata_warnings: 0,
+            erc_library_warnings: Default::default(),
+        }
+    }
+
+    #[test]
+    fn starved_pads_stay_solid_only_when_kicad_finds_the_board_better() {
+        // kicad-cli 10.0.7 on the v18 routes (x1433): mackerel-30-proto's
+        // four island-starved pads solid, 134 findings to 130 and no
+        // unconnected item either way: kept. k30-SBC's four starved pads
+        // solid: 114 findings to 110, but J1.39 beside J1.14 unconnected
+        // twice: not kept.
+        assert!(solid_kept(Some(&report(0, 134)), &report(0, 130)));
+        assert!(!solid_kept(Some(&report(0, 114)), &report(2, 110)));
+        assert!(!solid_kept(Some(&report(0, 10)), &report(0, 10)));
+        assert!(solid_kept(None, &report(3, 10)));
+    }
+}

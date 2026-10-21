@@ -1313,7 +1313,7 @@ usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-co
                        automatic_planes (default true), exclusive_planes (default: tried both ways),
                        net_classes (default: the project's), ladder_budget_seconds (default 1200 s
                        of work), deadline_seconds (default none: the work alone ends the run),
-                       solid_starved_thermals (default false), via_in_pad (default false: no
+                       solid_starved_thermals (default true), via_in_pad (default false: no
                        via in an SMD pad but an exposed pad; true for filled and capped vias),
                        existing_tracks (default keep; strip as --strip).
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at

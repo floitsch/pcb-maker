@@ -143,6 +143,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).",
     ),
     (
+        "PCB_ROUTER_NO_APART_TREES",
+        Kind::Switch,
+        "turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).",
+    ),
+    (
         "PCB_ROUTER_NO_LOST_SPOKES",
         Kind::Switch,
         "turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).",

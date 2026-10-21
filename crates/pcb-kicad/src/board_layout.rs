@@ -1834,6 +1834,9 @@ pub fn layout_kicad_board(
         // kept, at most the two best by the router's count, the board kept
         // among them (`CheckGate`).
         fallback_config.kicad_check_top = Some(KICAD_CHECK_TOP);
+        // The starved pads go solid once, on the board the layout keeps
+        // (below): its attempts are compared as KiCad found them.
+        fallback_config.solid_starved_thermals = Some(false);
         fallback_config.kicad_kept = Some((
             (
                 crate::board_router::router_open(&routed),
@@ -1912,6 +1915,7 @@ pub fn layout_kicad_board(
                 continuation_config.ladder_budget_seconds = Some(left.min(1200.0));
                 continuation_config.deadline_work = Some(left.max(0.0));
                 continuation_config.kicad_check_top = Some(KICAD_CHECK_TOP);
+                continuation_config.solid_starved_thermals = Some(false);
                 continuation_config.kicad_kept = Some((
                     (
                         crate::board_router::router_open(&routed),
@@ -1956,6 +1960,24 @@ pub fn layout_kicad_board(
         // 1100 s more of wall clock).
         routed.work_seconds = after_work;
     }
+    // The starved pads of the board kept, solid (`solid_starved_thermals`,
+    // on unless false; kept only when KiCad finds the board better). Once,
+    // here: on an attempt it made the layout prefer eternal-keypad's
+    // continuation (its starved thermals gone, a short the attempts'
+    // comparison does not weigh) to the board it kept before.
+    let mut solidified = false;
+    if router_config.solid_starved_thermals != Some(false)
+        && routed.native.is_some()
+        && stop.allows(LayoutStep::NeckRepair)
+    {
+        let checks = crate::board_router::solidify_starved_thermals(
+            &mut routed,
+            &output_directory.join("result"),
+            board_id,
+        )?;
+        solidified = checks > 0;
+        routed.work_seconds += checks_charged.add(checks);
+    }
     // KiCad's connection_width necks on the board kept (a no-op when the
     // route mode ladder above has repaired it already). It improves the
     // board: past the deadline it is skipped.
@@ -1971,10 +1993,11 @@ pub fn layout_kicad_board(
         // Its checks count as work (after every decision: only the tally).
         routed.work_seconds += checks_charged.add(checks);
     }
-    if routed
-        .neck_repair
-        .as_ref()
-        .is_some_and(|repair| repair.kept)
+    if solidified
+        || routed
+            .neck_repair
+            .as_ref()
+            .is_some_and(|repair| repair.kept)
     {
         let report_path = output_directory.join("result").join("board-router.json");
         fs::write(

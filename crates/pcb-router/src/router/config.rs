@@ -108,6 +108,16 @@ pub struct Config {
     /// 40 boards were pads the model saw without a spoke and KiCad with
     /// one (`PCB_ROUTER_NO_SPOKELESS_TRACKS` turns it off).
     pub spokeless_tracks: bool,
+    /// Terminals of a net that no path reaches from its tree (a board-wide
+    /// search failed, `NetState::unreachable`) are joined among themselves
+    /// where they reach each other: a tree of their own, which the net's
+    /// count still calls unconnected (KiCad finds one unconnected item
+    /// between the trees, not one per terminal). jiran-ble-lite's two
+    /// halves share one GND and are joined only through a frame no track
+    /// crosses: the right half's 20 GND pads stayed apart, also from each
+    /// other (KiCad 20 unconnected items, the designer's own board 1).
+    /// `PCB_ROUTER_NO_APART_TREES` turns it off.
+    pub apart_trees: bool,
     /// After the clean-up, a pad the spoke model finds starved whose
     /// failed spokes other nets' copper cuts (in the spoke's strip, or
     /// where its end's fill would be) has those nets routed again around
@@ -281,6 +291,7 @@ impl Default for Config {
             manual_spokes: true,
             island_stubs: std::env::var_os("PCB_ROUTER_ISLAND_STUBS").is_some(),
             spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
+            apart_trees: std::env::var_os("PCB_ROUTER_NO_APART_TREES").is_none(),
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
