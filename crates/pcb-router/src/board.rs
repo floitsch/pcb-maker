@@ -196,6 +196,11 @@ pub struct MergedPad {
     pub pad: usize,
     pub anchor: Point,
     pub layers: LayerMask,
+    /// The host's own pad on the layers its padstack names (a KiCad 9
+    /// padstack's inner or back shape): the terminal's copper there, not
+    /// another pad of its number (its zone connection is the terminal's,
+    /// its tracks end on the terminal, its nodes are the terminal's).
+    pub padstack: bool,
 }
 
 /// The frame of a pad's thermal spokes as KiCad builds them (zone_filler.cpp,

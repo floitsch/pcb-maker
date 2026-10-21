@@ -2158,6 +2158,7 @@ fn a_pad_merged_into_its_terminal_is_checked_on_its_own_layers() {
         pad: 1,
         anchor: [5.0, 5.0],
         layers: 0b11,
+        padstack: false,
     });
     // Inside the larger pad too.
     let router = Router::new(
@@ -2254,6 +2255,7 @@ fn thermal_vias_inside_an_exposed_pad_have_their_own_rings_in_a_hatched_zone() {
             pad,
             anchor,
             layers: 1,
+            padstack: false,
         });
     }
     let good = |record: &SpokeRecord| {
@@ -2352,6 +2354,7 @@ fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
             pad,
             anchor,
             layers: 1,
+            padstack: false,
         });
     }
     let router = Router::new(
@@ -2470,6 +2473,7 @@ fn the_tracks_rung_reads_a_hatched_zone_as_hatched() {
             pad,
             anchor,
             layers: 1,
+            padstack: false,
         });
     }
     let good = |record: &SpokeRecord| {
@@ -2621,6 +2625,7 @@ fn a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring() {
             pad,
             anchor,
             layers: 1,
+            padstack: false,
         });
     }
     let mut router = Router::new(
@@ -2716,6 +2721,7 @@ fn the_exposed_pads_spoke_through_a_thermal_vias_ring_counts_twice() {
             pad,
             anchor,
             layers: 1,
+            padstack: false,
         });
     }
     let router = Router::new(
@@ -3297,6 +3303,7 @@ fn a_solid_pads_merged_vias_keep_their_thermal_spokes() {
         pad: 1,
         anchor: [5.0, 5.0],
         layers: 0b11,
+        padstack: false,
     });
     let router = Router::new(
         &board,
@@ -3645,6 +3652,62 @@ fn a_pad_without_zone_connection_is_kept_out_of_the_fill() {
     assert_eq!(label([5.0, 5.0]), 0);
     assert_eq!(label([5.8, 5.0]), 0);
     assert_ne!(label([5.9, 5.0]), 0);
+}
+
+#[test]
+fn a_hatched_zone_keeps_an_unconnected_pads_own_larger_clearance() {
+    // P.1 (no zone connection) has a local clearance of 0.5 mm over the
+    // zone's 0.2: KiCad 10.0.7's hatched fill keeps the larger
+    // (buildCopperItemClearances), its solid fill the zone's alone
+    // (knockoutThermalReliefs). Half the minimum width 0.125 beyond.
+    let reach = |hatch: Option<crate::board::Hatch>| {
+        let mut obstacles = vec![
+            copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+            copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.2"),
+        ];
+        obstacles[0].clearance_override = Some(0.5);
+        let mut board = board(
+            1,
+            obstacles,
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [2.0, 2.0], "P.2"),
+                ],
+            }],
+            vec![Plane {
+                hatch,
+                ..plane(0, 0, Some((0.3, 0.4)))
+            }],
+            Vec::new(),
+        );
+        board.isolated_pads = vec!["P.1".into()];
+        board.isolated_pad_obstacles = vec![0];
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        router.isolated_knockouts(0)[0].clone()
+    };
+    let close = |found: Vec<(usize, f64)>, expected: f64| {
+        found.len() == 1 && found[0].0 == 0 && (found[0].1 - expected).abs() < 1.0e-9
+    };
+    assert!(close(reach(None), 0.325));
+    let hatch = crate::board::Hatch {
+        thickness: 0.3,
+        gap: 0.5,
+        orientation: 0.0,
+        smoothing_level: 0,
+        smoothing_value: 0.0,
+        min_hole_area: 0.3,
+        via_reliefs: false,
+    };
+    assert!(close(reach(Some(hatch)), 0.625));
 }
 
 #[test]

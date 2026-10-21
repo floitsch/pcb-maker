@@ -380,6 +380,9 @@ fn lower_board(
         std::collections::HashMap::new();
     let mut footprint_ordinal = 0usize;
     let mut isolated_pad_obstacles: Vec<usize> = Vec::new();
+    // A padstack pad's copper on the layers its stack names, by the pad's
+    // own obstacle: merged into the pad's terminal (`MergedPad::padstack`).
+    let mut padstack_copper: Vec<(usize, usize)> = Vec::new();
     // SMD pads no via may overlap (`core::Board::no_via_pads`): every SMD
     // pad's copper but an exposed pad's, unless the board's vias are
     // filled and capped (`via_in_pad`).
@@ -836,9 +839,31 @@ fn lower_board(
                     {
                         pad_spokes.insert(pad_obstacle, frame);
                     }
+                    // A KiCad 9 padstack draws the pad in another shape or
+                    // size on its inner or back layers (adrianmarple's
+                    // Raspberry Pi header: 1.2 mm on F.Cu, 1.778 on B.Cu;
+                    // dennisss's lens mounts: 4 mm and 3): the pad's own
+                    // shape is copper only on the layers the stack does not
+                    // name (F.Cu always), each named layer has its entry's
+                    // shape, a copper obstacle of the pad's net merged into
+                    // the pad's terminal (`MergedPad::padstack`). A smaller
+                    // back shape under the front one left phantom copper:
+                    // a B.Cu track ending there was "connected" to the
+                    // model and not to KiCad. (A pad whose every layer the
+                    // stack names keeps its own shape on all of them.)
+                    let variants: Vec<(core::LayerMask, Expr)> = padstack_variants(pad, &layers)
+                        .into_iter()
+                        .map(|(mask, variant)| (mask & pad_layers, variant))
+                        .filter(|(mask, _)| *mask != 0)
+                        .collect();
+                    let named = variants.iter().fold(0, |union, (mask, _)| union | mask);
+                    let own_layers = match pad_layers & !named {
+                        0 => pad_layers,
+                        own => own,
+                    };
                     obstacles.push(core::Obstacle {
                         shape: shape(&lowered.geometry),
-                        layers: pad_layers,
+                        layers: own_layers,
                         kind: core::ObstacleKind::Copper,
                         net,
                         clearance,
@@ -858,23 +883,33 @@ fn lower_board(
                         },
                     });
                     footprint_copper.push(vec![pad_obstacle]);
-                    // A KiCad 9 padstack draws the pad in another shape or
-                    // size on its inner or back layers (adrianmarple's
-                    // Raspberry Pi header: 1.2 mm on F.Cu, 1.778 on B.Cu;
-                    // dennisss's lens mounts: 3 mm and 4): that copper too,
-                    // of the pad's net, beside the pad.
                     let mut back_geometry = None;
-                    for (mask, variant) in padstack_variants(pad, &layers) {
-                        let mask = mask & pad_layers;
-                        if mask == 0 {
-                            continue;
-                        }
+                    for (mask, variant) in variants {
                         let geometry = lower_pad(&variant, footprint_at)?.geometry;
                         if mask & (1 << (layers.len() - 1)) != 0 {
                             back_geometry = Some(geometry.clone());
                         }
+                        let variant_obstacle = obstacles.len();
                         if let Some(own) = footprint_copper.last_mut() {
-                            own.push(obstacles.len());
+                            own.push(variant_obstacle);
+                        }
+                        if own_layers != pad_layers {
+                            // The pad's copper on those layers: its zone
+                            // connection, its spokes' frame in its own
+                            // size, its terminal's.
+                            match zone_connect {
+                                Some("0") => isolated_pad_obstacles.push(variant_obstacle),
+                                Some("2") => solid_pad_obstacles.push(variant_obstacle),
+                                _ => {}
+                            }
+                            if variant.children().get(3).and_then(Expr::atom) != Some("custom")
+                                && let Ok(frame) = pad_spokes_frame(&variant, lowered.center)
+                            {
+                                pad_spokes.insert(variant_obstacle, frame);
+                            }
+                            if net.is_some() {
+                                padstack_copper.push((pad_obstacle, variant_obstacle));
+                            }
                         }
                         obstacles.push(core::Obstacle {
                             shape: shape(&geometry),
@@ -1424,6 +1459,7 @@ fn lower_board(
                     pad: terminal.pad,
                     anchor: terminal.anchor,
                     layers: obstacles[terminal.pad].layers,
+                    padstack: false,
                 });
             }
         }
@@ -1432,6 +1468,34 @@ fn lower_board(
             index += 1;
             keep[index - 1]
         });
+    }
+    // A padstack pad's copper on the layers its stack names joins its
+    // pad's terminal (the terminal the pad was merged into, if it was).
+    for (own, variant) in padstack_copper {
+        let Some(net) = obstacles[own].net else {
+            continue;
+        };
+        let terminals = &nets[net as usize].terminals;
+        let host = terminals
+            .iter()
+            .position(|terminal| terminal.pad == own)
+            .map(|host| (host, terminals[host].anchor))
+            .or_else(|| {
+                merged_pads
+                    .iter()
+                    .find(|merged| merged.net == net && merged.pad == own)
+                    .map(|merged| (merged.host, merged.anchor))
+            });
+        if let Some((host, anchor)) = host {
+            merged_pads.push(core::MergedPad {
+                net,
+                host,
+                pad: variant,
+                anchor,
+                layers: obstacles[variant].layers,
+                padstack: true,
+            });
+        }
     }
     // Copper graphics belong to their net (other nets keep clear) or, without
     // one, to none.

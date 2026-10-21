@@ -2626,6 +2626,77 @@ mod lowering_gap_tests {
     }
 
     #[test]
+    fn a_padstacks_front_shape_is_copper_only_where_the_stack_names_no_other() {
+        // dennisss's lens mounts: 4 mm on F.Cu over 3 mm on B.Cu. The
+        // front shape is F.Cu's alone; B.Cu has the 3 mm one, merged into
+        // the pad's terminal. A B.Cu track ending 1.8 mm from the centre
+        // (in the front's circle, off the back's) does not reach the pad;
+        // on F.Cu it does, and on B.Cu at 1.4 mm.
+        let pcb = parse(
+            r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 40) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+              (footprint "h" (at 10 10) (property "Reference" "A1")
+                (pad "1" thru_hole circle (at 0 0) (size 4 4) (drill 1) (layers "*.Cu" "*.Mask") (net "P")
+                  (padstack (mode front_inner_back) (layer "Inner" (shape circle) (size 3 3)) (layer "B.Cu" (shape circle) (size 3 3)))))
+              (footprint "h" (at 30 10) (property "Reference" "A2")
+                (pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 0.8) (layers "*.Cu" "*.Mask") (net "P"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let find = |label: &str| {
+            board
+                .obstacles
+                .iter()
+                .position(|obstacle| {
+                    obstacle.label == label && obstacle.kind == core::ObstacleKind::Copper
+                })
+                .unwrap()
+        };
+        let (front, back) = (find("A1.1"), find("A1.1 padstack"));
+        assert_eq!(
+            board.obstacles[front].layers, 0b01,
+            "the front shape on F.Cu only"
+        );
+        assert!((board.obstacles[front].shape.aabb().maximum[0] - 12.0).abs() < 1.0e-9);
+        assert_eq!(board.obstacles[back].layers, 0b10);
+        assert!((board.obstacles[back].shape.aabb().maximum[0] - 11.5).abs() < 1.0e-9);
+        let p = board.nets.iter().position(|net| net.name == "P").unwrap();
+        let host = board.nets[p]
+            .terminals
+            .iter()
+            .position(|terminal| terminal.pad == front)
+            .unwrap();
+        assert_eq!(board.nets[p].terminals[host].layers, 0b11);
+        assert!(board.merged_pads.iter().any(|merged| merged.padstack
+            && merged.pad == back
+            && merged.host == host
+            && merged.layers == 0b10));
+        let joined = |layer: usize, end: f64| {
+            let route = core::NetRoute {
+                segments: vec![core::Segment {
+                    layer,
+                    start: [30.0, 10.0],
+                    end: [end, 10.0],
+                    width: 0.2,
+                }],
+                vias: Vec::new(),
+            };
+            let components =
+                pcb_router::verify::copper_components(&board, p as core::NetId, &route);
+            components
+                .iter()
+                .all(|component| *component == components[0])
+        };
+        assert!(!joined(1, 11.8), "phantom front copper on B.Cu");
+        assert!(joined(0, 11.8));
+        assert!(joined(1, 11.4));
+    }
+
+    #[test]
     fn a_cached_copper_text_is_a_box_per_line_and_a_footprint_graphics_net_no_net() {
         // TomKeddie's SAO sign: KiCad draws a TrueType copper text from the
         // installed font, its glyphs up to 0.92 mm off the cached ones;

@@ -277,15 +277,25 @@ impl Router {
             let mut ends = [NO_TERMINAL, NO_TERMINAL];
             if let crate::geometry::Shape::Capsule { start, end, radius } = &obstacle.shape {
                 for (slot, point) in [*start, *end].into_iter().enumerate() {
-                    if let Some(terminal) =
-                        self.board.nets[net as usize]
-                            .terminals
-                            .iter()
-                            .position(|terminal| {
-                                let pad = &self.board.obstacles[terminal.pad];
-                                pad.layers & obstacle.layers != 0
-                                    && pad.shape.distance_to_point(point) <= *radius + 1.0e-6
-                            })
+                    let on = |pad: usize| {
+                        let pad = &self.board.obstacles[pad];
+                        pad.layers & obstacle.layers != 0
+                            && pad.shape.distance_to_point(point) <= *radius + 1.0e-6
+                    };
+                    // A padstack's other shapes are their terminal's pad.
+                    if let Some(terminal) = self.board.nets[net as usize]
+                        .terminals
+                        .iter()
+                        .position(|terminal| on(terminal.pad))
+                        .or_else(|| {
+                            self.board
+                                .merged_pads
+                                .iter()
+                                .find(|merged| {
+                                    merged.padstack && merged.net == net && on(merged.pad)
+                                })
+                                .map(|merged| merged.host)
+                        })
                     {
                         ends[slot] = terminal as u16;
                     }

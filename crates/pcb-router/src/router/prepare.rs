@@ -16,33 +16,46 @@ impl Router {
         let mut escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)> =
             HashMap::new();
         let mut counts = [0u64; 2];
-        for terminal in &description.terminals {
+        // A padstack pad's copper on the layers its stack names
+        // (`MergedPad::padstack`): there the terminal is that shape.
+        let stacks: Vec<&crate::board::MergedPad> = self
+            .board
+            .merged_pads
+            .iter()
+            .filter(|merged| merged.padstack && merged.net == net)
+            .collect();
+        for (index, terminal) in description.terminals.iter().enumerate() {
             let pad = &self.board.obstacles[terminal.pad];
-            let contact = terminal.contact.as_ref().unwrap_or(&pad.shape);
+            let own = terminal.contact.as_ref().unwrap_or(&pad.shape);
             let mut nodes = Vec::new();
-            if let Some((x0, y0, x1, y1)) = self.grid.node_range(contact.aabb()) {
-                let tested = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64
-                    * u64::from(
-                        (terminal.layers & ((1u64 << self.board.layer_count) - 1) as u32)
-                            .count_ones(),
-                    );
+            for layer in 0..self.board.layer_count {
+                if terminal.layers & (1 << layer) == 0 {
+                    continue;
+                }
+                let contact = match stacks.iter().find(|merged| {
+                    merged.host == index
+                        && merged.layers & (1 << layer) != 0
+                        && pad.layers & (1 << layer) == 0
+                }) {
+                    Some(merged) => &self.board.obstacles[merged.pad].shape,
+                    None => own,
+                };
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(contact.aabb()) else {
+                    continue;
+                };
+                let tested = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
                 counts[0] += tested;
                 counts[1] += tested * 5 * crate::grid::shape_corners(contact);
-                for layer in 0..self.board.layer_count {
-                    if terminal.layers & (1 << layer) == 0 {
-                        continue;
-                    }
-                    for y in y0..=y1 {
-                        for x in x0..=x1 {
-                            let cell = self.grid.index(x, y);
-                            if statics.trace_allowed(layer, cell, net)
-                                && well_inside(contact, self.grid.center(x, y))
-                            {
-                                nodes.push(Node {
-                                    layer: layer as u8,
-                                    cell: cell as u32,
-                                });
-                            }
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let cell = self.grid.index(x, y);
+                        if statics.trace_allowed(layer, cell, net)
+                            && well_inside(contact, self.grid.center(x, y))
+                        {
+                            nodes.push(Node {
+                                layer: layer as u8,
+                                cell: cell as u32,
+                            });
                         }
                     }
                 }

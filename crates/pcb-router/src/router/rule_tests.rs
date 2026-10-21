@@ -463,6 +463,48 @@ fn an_exposed_pads_own_vias_do_not_depend_on_the_order_of_the_pads() {
 }
 
 #[test]
+fn a_padstack_terminal_is_reached_inside_each_layers_own_shape() {
+    // A's pad at (1, 5) is 0.2 mm in radius on the front and 0.1 on the
+    // back (a padstack's back shape, merged into the terminal): its back
+    // nodes lie within the back's 0.1 mm, its front ones in the front's.
+    let mut board = two_nets(2);
+    board.obstacles[0].layers = 0b01;
+    board.nets[0].terminals[0].layers = 0b11;
+    let back = board.obstacles.len();
+    board
+        .obstacles
+        .push(pad([1.0, 5.0], 0.1, 0b10, Some(0), "A.1 padstack"));
+    board.merged_pads.push(crate::board::MergedPad {
+        net: 0,
+        host: 0,
+        pad: back,
+        anchor: [1.0, 5.0],
+        layers: 0b10,
+        padstack: true,
+    });
+    let router = Router::new(&board, &config(None));
+    let state = router.prepare_net(0);
+    let farthest = |layer: u8| {
+        state.terminal_nodes[0]
+            .iter()
+            .filter(|node| node.layer == layer)
+            .map(|node| {
+                crate::geometry::distance([1.0, 5.0], router.grid.center_of(node.cell as usize))
+            })
+            .fold(0.0, f64::max)
+    };
+    assert!(
+        farthest(0) > 0.1 + 1.0e-6,
+        "front nodes in the 0.2 mm shape"
+    );
+    assert!(
+        state.terminal_nodes[0].iter().any(|node| node.layer == 1),
+        "the back is reached"
+    );
+    assert!(farthest(1) <= 0.1, "back nodes in the 0.1 mm shape");
+}
+
+#[test]
 fn a_pad_of_a_pour_net_gets_its_via_beside_the_pad() {
     // A's pads on the front, its pour on the back of the whole board: the
     // pads reach it by vias, which stay out of the listed pads.

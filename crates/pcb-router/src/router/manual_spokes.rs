@@ -681,10 +681,15 @@ impl Router {
                 .filter(|merged| merged.net == net && merged.layers & (1 << layer) != 0)
             {
                 // A solid connection of the label is the terminal's own
-                // (the largest pad); the pads merged into it keep the
-                // zone's thermal relief (`kicad_spokes`).
+                // (the largest pad, its padstack's shapes too); the pads
+                // merged into it keep the zone's thermal relief
+                // (`kicad_spokes`).
                 if description.terminals.get(merged.host).is_some_and(|host| {
-                    self.board.isolated_pads.binary_search(&host.label).is_err()
+                    if merged.padstack {
+                        thermal(&host.label)
+                    } else {
+                        self.board.isolated_pads.binary_search(&host.label).is_err()
+                    }
                 }) {
                     pads.push((merged.pad, reach));
                 }
@@ -697,7 +702,8 @@ impl Router {
     /// brush may not take inside a thermal ring (`thermal_ring_pads`).
     /// Per layer, the pads of `net` set to no zone connection (by pad,
     /// `Board::isolated_pad_obstacles`) where the net pours, each with what
-    /// KiCad's filler keeps from it: the zone's clearance and half the
+    /// KiCad's filler keeps from it: the zone's clearance (in a hatched
+    /// zone the pad's own clearance where that is larger) and half the
     /// minimum width (the brush's centre stays that far from the pad, as
     /// from another net's). The fill does not touch such a pad; only a
     /// track from it into the fill joins it (1999AZZAR's J2.RN read as on
@@ -724,11 +730,26 @@ impl Router {
             else {
                 continue;
             };
-            let reach = clearance + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+            let half = self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+            // A hatched zone knocks such a pad out at the clearance between
+            // the two (KiCad 10.0.7's buildCopperItemClearances: the larger
+            // of the zone's and the pad's own, its or its footprint's local
+            // clearance); a solid zone at its own clearance only
+            // (knockoutThermalReliefs: the zone's local clearance or a
+            // physical_clearance rule, not the pad's).
+            let hatched = self
+                .board
+                .planes
+                .iter()
+                .any(|plane| plane.net == net && plane.layer == layer && plane.hatch.is_some());
             for &pad in &self.board.isolated_pad_obstacles {
                 let obstacle = &self.board.obstacles[pad];
                 if obstacle.net == Some(net) && obstacle.layers & (1 << layer) != 0 {
-                    pads.push((pad, reach));
+                    let clearance = match obstacle.clearance_override {
+                        Some(own) if hatched => clearance.max(own),
+                        _ => clearance,
+                    };
+                    pads.push((pad, clearance + half));
                 }
             }
         }

@@ -157,9 +157,23 @@ impl Router {
         // the DRC counts what crosses their rings, the pad's own spokes).
         // Per pad, whether it lies inside its terminal's pad on the layer.
         let mut spoke_pads: Vec<SpokePad> = Vec::new();
+        // A padstack pad is its terminal's pad on the layers its own shape
+        // has, the stack's shape (`MergedPad::padstack`) on the others.
+        let stacked = |terminal: usize, layer: usize| {
+            self.board.merged_pads.iter().any(|merged| {
+                merged.padstack
+                    && merged.net == net
+                    && merged.host == terminal
+                    && merged.layers & (1 << layer) != 0
+            })
+        };
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
-            let layers_of_nodes: std::collections::BTreeSet<usize> =
-                nodes.iter().map(|node| node.layer as usize).collect();
+            let own = self.board.obstacles[description.terminals[terminal].pad].layers;
+            let layers_of_nodes: std::collections::BTreeSet<usize> = nodes
+                .iter()
+                .map(|node| node.layer as usize)
+                .filter(|layer| own & (1 << layer) != 0 || !stacked(terminal, *layer))
+                .collect();
             spoke_pads.push((
                 terminal,
                 description.terminals[terminal].pad,
@@ -194,7 +208,13 @@ impl Router {
             // relief, which KiCad's DRC checks (ray4477's U1.33 and
             // OpenAir's U5.17 vias on the far layers: no model row).
             if isolated(terminal)
-                || (solid_pad(terminal) && pad_index == description.terminals[terminal].pad)
+                || (solid_pad(terminal)
+                    && (pad_index == description.terminals[terminal].pad
+                        || self
+                            .board
+                            .merged_pads
+                            .iter()
+                            .any(|merged| merged.padstack && merged.pad == pad_index)))
             {
                 continue;
             }
