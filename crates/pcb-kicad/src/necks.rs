@@ -1316,4 +1316,36 @@ mod tests {
         };
         assert!(!drilled.track_fits([-0.2, 0.0], [0.2, 0.0], 0.127));
     }
+
+    #[test]
+    fn a_repair_the_work_left_does_not_pay_for_does_not_run() {
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-necks-bound-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("drc.json"),
+            serde_json::json!({"violations": [{
+                "type": "connection_width", "severity": "error",
+                "description": "Connection width too small (board minimum 0.2000 mm; actual 0.1000 mm) (B.Cu)",
+                "items": [{"description": "Zone [GND] on B.Cu"}]
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig::default();
+        let repair = repair_connection_width(&directory, "b", &config, Some(NECK_MIN_CHECKS - 1))
+            .unwrap()
+            .unwrap();
+        assert_eq!((repair.before, repair.after, repair.kept), (1, 1, false));
+        assert_eq!(repair.kicad_fills, 0);
+        assert!(
+            repair
+                .note
+                .unwrap()
+                .starts_with("not run: the work left pays for 2 KiCad checks")
+        );
+        // Nothing written: a later call with work left still repairs.
+        assert!(!directory.join("necks.json").exists());
+        fs::remove_dir_all(&directory).unwrap();
+    }
 }

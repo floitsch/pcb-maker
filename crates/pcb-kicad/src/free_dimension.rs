@@ -2296,6 +2296,14 @@ mod tests {
                 .any(|reason| reason.contains("rule area \"rule\"")),
             "{reasons:?}"
         );
+        // A reference board is moved all the same (its findings must go
+        // where the input's items go).
+        let moved = plan.moved_board(27.0).unwrap();
+        let pcb = parse(&moved).unwrap();
+        assert_eq!(
+            form_xy(pcb.child("gr_rect").unwrap(), "end").unwrap(),
+            [150.0, 127.0]
+        );
         // U1 is not fixed: it is placed again.
         assert!(plan.variant(29.0).is_ok());
         // Carried by the edge onto a fixed part that stays.
