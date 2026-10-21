@@ -813,6 +813,14 @@ At 300 s (`--budget-scale 10`, three B4 boards, Zulassungskarte,
 nervous-ecg and 3117_AUSIGN, 3 jobs x 1 thread): 3/3 pass, `clean_medium`,
 work seconds 164.8, 102.5 and 129.6, the intake's deep run's to the tenth.
 
+**x1261, 2026-10-21** (the ladder's work bound and memory limits,
+docs/changelog.md): the ladder's work stays within the budget and 5 %
+(9-34.2 s, median 31.3; x1231: median 52.7, up to 254 s), no row is cut
+(13 on x1231), the run takes 136 s of wall and 1553 s of CPU (337 and
+4902): 15/46 pass. Boards that used to overrun stop at the budget; nine
+end with more open connections (93 in all), four with fewer. The rows no
+longer depend on the load.
+
 ## Route mode (`--route-from`)
 
 For router experiments: `--route-from <earlier output directory>` routes

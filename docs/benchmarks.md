@@ -1286,7 +1286,10 @@ Median routing time of the clean boards 3.4 s (p90 34.5 s). Caveats: 59 %
 of the designer boards have DRC findings of their own; 6.9 % of boards use
 inferred rules; 75 % are 2-layer; resource limits (199, a 3 GiB cap the
 ladder's memory sizing cannot see) and wall cuts (279, overrun work beyond
-the ladder budget) are harness and sizing effects, not routing failures.
+the ladder budget) are harness and sizing effects, not routing failures
+(since 2026-10-21 the ladder sizes its routers by the process's limits and
+keeps its work within its budget: docs/changelog.md, "ladder memory and
+work bound").
 
 What blocks boards at scale, ranked by boards a single new finding type
 blocks: KiCad disagreeing with the router's "complete" (119: stacked

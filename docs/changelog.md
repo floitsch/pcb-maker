@@ -54,6 +54,192 @@ searches of real boards. Details, tables and how to run it:
   device heap with a much lower dependent-read latency; and paged node
   storage. The README lists what a production backend would need besides.
 
+## Committed on 2026-10-21 (ladder memory and work bound)
+
+Two defects of the route-mode ladder that the 5 834-board intake exposed
+(docs/benchmarks.md, "Expansion intake"): it sized its routers side by
+side from /proc/meminfo alone, so a harness's cap went unseen (456 runs
+killed at 3 GiB), and `ladder_budget_seconds` did not bound its work (279
+runs cut by the 90 s wall guard on overrun work). Binaries x1260 (the
+two fixes), x1261 (with the narrow-signal step's share, the commit).
+Code in board_router/memory.rs, budget.rs, route.rs, attempt.rs;
+docs/router.md, "Memory limits" and "The work bound in route mode".
+
+**Memory limits.** The ladder reads the process's limits as it starts and
+runs as many routers side by side (rung probes, rungs, seeds) as fit the
+tightest: RLIMIT_AS (against the virtual size), the cgroup's memory.max
+(v2, every level up to the root; v1's memory.limit_in_bytes), an
+explicit limit (`PCB_MAKER_MEMORY_MB` or the new router setting
+`memory_mb`, the smaller, against the resident size), and half of
+MemAvailable as before. A router's peak is estimated from its lattice
+maps (each attempt now reads its router's `memory: N MB in maps` and
+reports it as `maps_mb`): 1.7 x maps + 460 MB resident, 2.0 x maps + 550
+MB of address space, times 1.25. Before, a rung counted the process's
+peak after the first attempt plus 2200 MB for a KiCad check that no
+longer runs inside a rung, and a probe 1.5 times what building the first
+router added to the resident size.
+
+The ratio, measured with one router at a time (pours connect, no finer
+pitch, no seeds), one thread, x1225: peak RSS over maps 1.05 (DevMubarak1
+pidgin_translator, 244 MB of maps), 1.33 (sam17-power-v2, 739), 1.28 (nz,
+298), 1.68 (WK-3, 763), 1.61 (PRODIGY-MOTHERBOARD, 580) on five intake
+resource_limit boards; 2.54 (Castor, 264), 2.49 (k30-SBC, 319), 3.22
+(jetson, 302) on the v16 placements. VmPeak over maps 1.41-1.98 and
+3.19-3.80. The ratio falls with the maps (a router holds 200-600 MB
+beside them: the board parsed and lowered, its pours; jetson's process
+holds 285 MB before any router), so the estimate is a line through all
+eight, not one ratio (which would size a 1 GB-maps router three times
+too large). Decisions that change what the ladder attempts go by the
+limit itself, a fixed number: no finer pitch whose one router does not
+fit a limit of the process's own, no rung probes where two routers (the
+leader stays while the next probe runs) do not. The log names the limits
+(`memory limits: the address space limit (RLIMIT_AS) 3072 MB, 3033 MB
+free; ...`) and every side-by-side count with the router's estimate and
+the limit that held it; board-router.json has `memory_limits`.
+
+The judge: ten resource_limit boards of the intake
+(resource_and_cut_boards.csv), stripped as the intake did, routed at its settings (route mode, 30 s,
+`seeds` 1, `skip_native_verification`, `deadline_seconds` 90, one
+thread) under `prlimit --as=3221225472`, 3 at a time
+(scratch driver: polls VmHWM and VmPeak, wait4's maxrss):
+
+| board | x1225 RSS / VmPeak MB | x1225 | x1261 RSS / VmPeak MB | x1261 |
+|---|---|---|---|---|
+| embeddedalpha IMU_V100 | 2643 / 3037 | killed (allocation failure) | 1190 / 1549 | 7/19, 34 open |
+| DevMubarak1 pidgin_translator | 2570 / 3034 | 6/7, 1 open | 763 / 960 | 6/7, 1 open |
+| sssamuelll sam17-power-v2 | 2473 / 3068 | killed | 969 / 1268 | 31/33, 2 open |
+| knewter kvm-carrier-fanout | 2802 / 3066 | killed | 1091 / 1191 | 0/51, 193 open |
+| DownUnderCTF sirkit | 2724 / 3072 | killed | 1001 / 1192 | complete 104/104 |
+| sundevilmotorsports CANSniffer | 2295 / 2626 | 11/57, 145 open | 1058 / 1331 | 11/57, 145 open |
+| zOnlyKroks WK-3 | 2618 / 3062 | killed | 1317 / 1567 | complete 165/165 |
+| ENACRobotique useless_box_2025 | 2794 / 3064 | killed | 720 / 894 | 0/9, 191 open |
+| mark69163 PRODIGY-MOTHERBOARD | 2750 / 3072 | killed | 944 / 1268 | 162/257, 476 open |
+| sikaxn nz | 2608 / 3072 | 29/65, 101 open, wall cut (64 s of work) | 825 / 999 | 28/65, 87 open |
+
+Before, seven die and the three that finish come within 450 MB of the
+cap (VmPeak 2626 to 3072 MB; DevMubarak1 ran its 0.05 mm rungs, 975 MB
+of maps each, two side by side); after, all ten finish at 894-1567 MB of
+address space, two of them complete. Four boards (sirkit, PRODIGY,
+kvm-carrier, WK-3) run their rungs one after the other instead of
+probing them (two routers do not fit 3 GiB), three skip a finer pitch
+whose router does not fit (nz and useless_box at 0.05 mm, kvm-carrier at
+0.075), each logged. The intake's own cap was a resident-size kill at 3
+GiB (and RLIMIT_AS at 12 GiB): with
+`PCB_MAKER_MEMORY_MB=3072` and no address-space limit the ten peak at
+800-1393 MB resident. knewter's and ENACRobotique's boards route nothing
+in either binary (no negotiation: their nets cannot be lowered to
+anything the router reaches).
+
+**The work bound.** In route mode (no layout `deadline_work`) the
+ladder's whole work stays within `ladder_budget_seconds` and 5 %
+(`LADDER_WORK_TOLERANCE`): every router has a work deadline (the first
+attempt all that is left, the rungs of a pitch after it an even share of
+what is left when they start, seeds a share each, the steps what is left);
+negotiations at most half of what is left (the 60 s floor gave a 30 s
+budget's rungs 60 s each); probes together at most half the budget
+(3.75 s each on 30 s with four rungs, were 75 s); a finer pitch only if
+its projected work fits; nothing starts with less than a twentieth of
+the budget left. Where the narrow-signal step applies, the first
+attempt's work is kept for it once that attempt leaves connections open
+(x1261: x1260 left facade60's step no work, 20 open; with the share 7).
+The layout's ladder is unchanged (every new rule is off with a work
+deadline).
+
+Expansion tier, 30 s, 8 jobs x 1 thread under the lock, x1231 (the
+reference log) against x1261:
+
+| | x1231 | x1261 |
+|---|---|---|
+| pass | 14/46 | 15/46 |
+| rows cut by the wall guard | 13 | 0 |
+| ladder work: median / mean / max | 52.7 / 65.4 / 253.8 s | 31.3 / 27.7 / 34.2 s |
+| work, CPU, wall of the run | 3007 s, 4902 s, 337 s | 1276 s, 1553 s, 136 s |
+| router's open connections (sum) | 216 | 293 |
+| KiCad unconnected (sum) | 508 | 808 |
+| outcomes | clean_slow 11, clean_medium 1, cut 9, at_budget 21, early 4 | clean_slow 4, clean_medium 9, at_budget 18, early 15 |
+
+The ladder's work never exceeds 34.2 s (tuxkeychain; Wonkle 34.0: what
+routers do past their deadlines, below). Every outcome change:
+
+- Complete in both (12), now in less work and wall: bms (87 to 33 s of
+  work), nixie_board, TokayEdge, ZSWatch (112 to 32), flexypin,
+  magnetorquer, ICE40HX1K, musicbrain, mini48, yuiop29re, brickpico,
+  Multi_saturation (10.5 s in both, identical): all pass; seven move from
+  clean_slow to clean_medium (the class is wall time) and the four that
+  were cut are not.
+- Better: MakerTiles Screen 2 open to complete (its narrow-signal step,
+  14 s), epdInky 13 to 3, Miniboard 5 to 2, nervous-ecg 2 to 1.
+- Same open count (21): EMG_DAQ, Julkort, FUEL4EP, LC_PAMV4b and
+  Barklind (both still pass), RS485M (its narrow-signal step, 0.6 s, now
+  has its share: x1260 left it 2 open), BloopBox, noise, minuet, pdlc,
+  rbo12864h, nrf24_remote, snaphat, dreamV1_0, 3117_AUSIGN,
+  Zulassungskarte, CompassTag, atmega32u4, wanbeiyu, and the two that
+  were cut (backplane, node_v6). Nine of them (and nervous-ecg and
+  Miniboard above) move from incomplete_at_budget to incomplete_early:
+  the class means less than 95 % of the budget in work, and they stop at
+  18-28 s because the next attempt does not fit what is left (wanbeiyu:
+  "skipping pitch [0.075]: projected 35 s exceeds the 13 s left").
+- Worse, all boards that used to overrun (their work then in brackets):
+  rpi_cm5_dronecarrier 3 to 8 open (129 s, cut), OpenRX-Mono 12 to 13
+  (74 s), tuxkeychain 11 to 13 (201 s, cut), driver_cplex_rp2040 3 to 20
+  (254 s, cut; KiCad 7 to 170 unconnected: its probes at 3.75 s rank
+  the tracks rung first, at 75 s the connected pours), MSign 4 to 11 (138
+  s, cut), OpenDeck 1 to 11 (46 s, cut), facade60 3 to 7 (58 s: its
+  narrow-signal step had 19 s then, 9 s now), anthracite 1 to 2 (86 s,
+  cut), Wonkle 90 to 136 (61 s, cut). In all 93 more open connections
+  (router's count) and 317 more KiCad unconnected items, 263 of them
+  driver_cplex's and Wonkle's.
+
+At 300 s (`--budget-scale 10`, x1261, the nine boards that got worse
+and node_v6, 8 jobs x 1 thread under the lock; work 289-329 s), against
+x1231's 30 s rows with their overrun:
+
+| board | x1231 (30 s, its work) | x1261 30 s | x1261 300 s | intake 300 s |
+|---|---|---|---|---|
+| rpi_cm5_dronecarrier | 3 open (129 s, cut) | 8 | 1 | 1 |
+| OpenRX-Mono | 12 (74 s) | 13 | 12 | 12 |
+| node_v6 | 21 (221 s, cut) | 21 | 20 | 21 |
+| tuxkeychain | 11 (201 s, cut) | 13 | 8 | 10 |
+| driver_cplex_rp2040 | 3 (254 s, cut) | 20 | 3 | 2 |
+| MSign | 4 (138 s, cut) | 11 | 6 | 6 |
+| OpenDeck | 1 (46 s, cut) | 11 | 1 | 1 |
+| facade60 | 3 (58 s) | 7 | 5 | 5 |
+| anthracite | 1 (86 s, cut) | 2 | 1 | 1 |
+| Wonkle | 90 (61 s, cut) | 136 | complete, pass | complete |
+
+The 300 s run recovers eight of the ten to x1231's count or better
+(Wonkle complete, tuxkeychain 8, rpi_cm5 1); MSign and facade60 stay two
+above it, at the intake's own 300 s result. Their x1231 rows had the
+work the budget did not allow (MSign 138 s before the wall guard cut
+it, facade60 a narrow-signal step of 19 s).
+
+**The tolerance, measured.** The ladder plans within the budget and 5 %;
+what a router does past its work deadline comes on top (a fresh router's
+first negotiation iteration, the phases that finish a negotiation the
+deadline stopped): at 30 s the ladder's work ends at 9-34.2 s
+(tuxkeychain: four probes' first iterations and the continuation's
+finish, 2.7 s past the bound), at 300 s at 289-329 s (MSign: its
+narrow-signal step took 82 s with 72 left). So a budget B means at most
+about 1.15 B of work on these boards, and the wall guard (3 B, at least
+90 s) fires only where the machine runs the work at less than about 40 %
+of the calibrated rate.
+
+Short tier under the lock (6 jobs x 4 threads, x1261 against
+build/short-x1170.log): every row identical apart from timing and the
+tasks file's spelling, except MIDAS-MK1.1's work seconds (285.1 to 287.5,
+also in x1223, x1240 and x1250: the MIDAS-MK1 commit); against
+short-x1223 and short-x1250 every row identical, and all 12 result boards
+byte-identical to x1230's and x1250's (against x1223's only the footprint
+graphics' order, 3d28004's writer). CPU 3354 to 2930 s, 940 to 320 s of
+wall, 0 cut.
+
+Unit tests (board_router/tests.rs): the limit resolution (machine only;
+the address space against the virtual size; every limit with the
+tightest deciding, the cgroup level with the least free, the explicit
+limit the smaller of setting and environment), cgroup paths of both
+versions, the maps from a real router's memory report, and the bound's
+rules (the bound, the probes' share, the negotiation, the rung shares,
+the step's share and its time). `bash scripts/check.sh` passes.
 
 ## Committed on 2026-10-16 (quality: pcb-kicad)
 

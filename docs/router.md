@@ -176,11 +176,19 @@ rung with the fewest unfinished nets (conflicted or incomplete) is resumed
 with `Router::resume` for a third of what is left, then finished and
 polished. A probe that finishes everything stops the probing, and only the
 leading router stays in memory. The probes run side by side (as many as
-fit half the memory available, judged by the first router's size), with
+fit the memory, judged by the first router's maps: "Memory limits" below), with
 the outcome of probing one after the other: a probe's budget is work, the
 fewest unfinished nets lead, a tie goes to the earlier rung, and only the
 probes up to a rung that finishes everything count. The layout's placement
-race probes its placements the same way. Finer pitches follow as before when
+race probes its placements the same way. In route mode the probes
+together take at most half of the ladder's budget (`PROBE_SHARE`: each
+`probe_seconds` or half the budget over the rungs, 3.75 s on a 30 s
+budget with four rungs; the intake's 4-layer boards probed 4 x 75 s on
+30 s), and the continuation stops where the ladder's work bound ends ("The
+work bound in route mode" below). Under a limit of the process's own that
+two routers of the first one's size do not fit (the leader stays in
+memory while the next probe runs), there are no probes: the rungs run one
+after the other in the regular ladder. Finer pitches follow as before when
 connections stay open.
 
 ### Hole clearance
@@ -259,6 +267,60 @@ mode (x155 -> x160, 2 threads): CyberKeeb2040 6916 -> 3395 MB, Qfwfq 3330
 -> 1414, identical boards. Threads hardly speed the search (k30-SBC: 34.2, 32.4, 31.3 s on 1,
 2, 4 threads) and each holds a scratch: run boards side by side with few
 threads each (`RAYON_NUM_THREADS`, the runners' `--threads`).
+
+### Memory limits (2026-10-21)
+
+How many routers the ladder runs side by side (the rung probes, the rungs
+after its first attempt, the seeds) follows the tightest of the process's
+limits (`MemoryLimits` in board_router/memory.rs): its address space
+(RLIMIT_AS, against its virtual size), its cgroup's memory.max (cgroup
+v2, every level up to the root; v1's memory.limit_in_bytes; against the
+memory in use less the reclaimable inactive_file), an explicit limit
+(`PCB_MAKER_MEMORY_MB` or the router setting `memory_mb`, the smaller,
+against the resident size) and half of MemAvailable (shared with the rest
+of the machine). Until then only MemAvailable counted (and a router was
+the process's peak after the first attempt, plus 2200 MB a rung for a
+KiCad check that no longer runs inside a rung), so a harness's cap went
+unseen: 456 runs of the 5 834-board intake died at a 3 GiB cap, their peak
+2.4 to 5.2 times the router's maps with two to four routers at once.
+
+A router's peak is estimated from its lattice maps (the router's
+`memory: N MB in maps`, read from `Router::memory_report` as each
+attempt builds it; `maps_mb` in board-router.json): 1.7 times the maps
+and 460 MB beside them resident, 2.0 times and 550 MB of address space,
+times a margin of 1.25 (`router_peak_mb`). Measured with one router at a
+time and one thread (the whole process's peak, x1225, 2026-10-21):
+
+| board | maps MB | peak RSS | RSS / maps | VmPeak | VM / maps |
+|---|---|---|---|---|---|
+| DevMubarak1 pidgin_translator (2 layers) | 244 | 255 | 1.05 | 343 | 1.41 |
+| sssamuelll sam17-power-v2 (2) | 739 | 981 | 1.33 | 1273 | 1.72 |
+| sikaxn nz (6) | 298 | 380 | 1.28 | 587 | 1.97 |
+| zOnlyKroks WK-3 (4) | 763 | 1280 | 1.68 | 1509 | 1.98 |
+| mark69163 PRODIGY-MOTHERBOARD (4) | 580 | 929 | 1.61 | 1137 | 1.96 |
+| Castor (v16 placement) | 264 | 669 | 2.54 | 879 | 3.33 |
+| k30-SBC (v16) | 319 | 792 | 2.49 | 1018 | 3.19 |
+| jetson (v16) | 302 | 969 | 3.22 | 1149 | 3.80 |
+
+The ratio falls with the maps' size: what a router holds beside its maps
+(the board parsed and lowered, its pours, the router's records; 290 MB of
+jetson's before any router) weighs most on the small ones, so a line
+(slope and offset) fits all eight where one ratio would size the large
+boards three times too big. The routers that run at once are as many as
+fit what is free under each limit (MemAvailable: half of it); at least
+one. The decisions that change what the ladder attempts go by the limit
+itself, a fixed number, not by what is free: a finer pitch is not tried
+when one router of it (its maps grow with the square of the pitch ratio)
+does not fit a limit of the process's own, and the probes do not run when
+two do not (besides the old rule against 0.4 of MemTotal). Without such
+a limit nothing changes but how many run at once, which never changes a
+result. The ladder logs the limits as it starts (`memory limits: ...`)
+and every side-by-side count with its reason (`ladder: 1 of 3 rungs side
+by side (about 2090 MB a router (561 MB of maps), 2428 MB usable under the
+address space limit (RLIMIT_AS))`); board-router.json has them as
+`memory_limits`. The layout's placement race sizes its probes from
+`memory_mb`, which is MemAvailable or less under a limit of the
+process's own.
 
 ## Two-level search
 
@@ -574,8 +636,9 @@ at the project's narrowest predefined width (its width menu, when that is
 narrower than a class; poured nets, grounds and rails keep their class
 width), and with the board's minimum clearance when the project rates
 clearance findings as warnings; or, with no narrower width, only the
-minimum clearance. In route mode the step has the ladder's budget plus a
-half. In the layout's ladder the work end is the ladder's budget, so the
+minimum clearance. In route mode the step has what is left of the
+ladder's work bound (below; until 2026-10-21 the ladder's budget plus a
+half). In the layout's ladder the work end is the ladder's budget, so the
 rungs used to leave the step nothing (the A13 module: 126 open to 17 by
 the step in one run, not run in the next). There, when the step applies,
 the ladder keeps work back for it once its first attempt has run
@@ -627,6 +690,37 @@ were measured and lost (docs/changelog.md, "after the narrow attempt");
 `PCB_LAYOUT_NARROW_CONTINUATION` (stop, tracks, seeds, ladder) and
 `PCB_LAYOUT_NARROW_CONTINUATION_FLOOR` choose them for experiments, and
 `skipped` says when the attempt did not run.
+
+**The work bound in route mode** (2026-10-21). Without a layout's work
+deadline (`deadline_work`), the ladder's whole work stays within
+`ladder_budget_seconds` and 5 % (`ladder_work_bound`,
+`LADDER_WORK_TOLERANCE` in board_router/budget.rs): the rung probes, the
+probed rung's continuation, the rungs, the finer pitches, the seeds and
+the narrow-signal and minimum-clearance steps, each router's resolve,
+clean-up, via reduction and stitching included. Every router the ladder
+starts has a work deadline (router `deadline_work`): the ladder's first
+attempt all that is left under the bound; the rungs of a pitch after it an
+even share of what is left when the first of them starts (`rung_share`,
+decided before they run, so the rungs side by side stay within the bound
+together and are still judged in order); seeds side by side a share each;
+a step what is left. A negotiation gets at most half of what is left
+(`bounded_negotiation`: the floor of 60 s gave a 30 s budget's rungs 60 s
+each), the probes together half of the budget (`PROBE_SHARE`), a finer
+pitch starts only if its projected work fits what is left, and nothing
+starts with less than a twentieth of the budget left
+(`bound_allows_attempt`). Where the narrow-signal step applies, the
+first attempt's work (at most what is left) is kept for it once that
+attempt leaves connections open (`route_step_reserve`), released when a
+board completes; the step runs if half of it is still there. Beyond the
+bound goes only what a router does past its deadline (a fresh router's
+first negotiation iteration, the phases that finish a negotiation the
+deadline stopped): on the expansion tier at 30 s (x1261) the ladder's
+work was 9-34.2 s, median 31.3, against a median of 52.7 and up to 254 s
+before, and no row was cut by the wall guard (13 before); at 300 s
+289-329 s. A budget B means at most about 1.15 B of work. Until then a 30 s budget meant 60 s of
+negotiation a rung and 75 s a probe, the narrow-signal step had the
+budget plus a half, and only the regular ladder's next rung checked the
+budget. The layout's ladder (its deadline_work path) is unchanged.
 
 **KiCad's checks in the ladder** (2026-10-15). Every attempt routes
 without KiCad's check (10 to 50 s of kicad-cli on a big or hatched board;
@@ -728,7 +822,8 @@ that a run is deterministic on a machine too busy for its budget.
 
 Memory decides only how many routers run side by side (the placement
 race's probes, the probe ladder's rungs, the regular rungs, the seeds),
-never which count: they are judged in order as if one ran after the other,
+never which count (a limit of the process's own, a fixed number, decides
+whether the probes and a finer pitch run at all: "Memory limits" above): they are judged in order as if one ran after the other,
 a probe the work left would not have started counting for nothing (the
 probe ladder checked the work left only between waves, so under the
 layout's `deadline_work` the number of rungs judged followed the memory
