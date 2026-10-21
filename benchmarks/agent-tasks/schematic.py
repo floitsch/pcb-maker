@@ -21,11 +21,14 @@ import posixpath
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.append(str(HERE.parent))
+import harness_common  # noqa: E402
 STORE = ROOT / "benchmarks/real/external/github-sch"
 SHAPES = ("gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly", "gr_curve")
 
@@ -119,8 +122,10 @@ def edge_cuts(text):
 
 def run(command, timeout=600, env=None):
     try:
-        process = subprocess.run([str(part) for part in command], capture_output=True, text=True, timeout=timeout,
-                                 env=env)
+        # A process group of its own: a timeout kills the binary's
+        # kicad-cli with it.
+        process = harness_common.run_group([str(part) for part in command], capture_output=True, text=True,
+                                           timeout=timeout, env=env)
         return process.returncode, process.stdout, process.stderr
     except subprocess.TimeoutExpired:
         return "timeout", "", ""

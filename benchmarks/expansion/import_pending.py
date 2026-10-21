@@ -13,44 +13,26 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 GIB = 1024 ** 3
 STOP = False
+sys.path.append(str(HERE.parent))
+import harness_common  # noqa: E402
 
 
-def digest(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 ** 2), b''):
-            h.update(chunk)
-    return h.hexdigest()
+digest = harness_common.file_sha256
+read_json = harness_common.read_json
 
 
 def atomic_json(path, value):
-    path = Path(path)
-    with tempfile.NamedTemporaryFile(mode='w', dir=path.parent, prefix=path.name + '.', delete=False) as stream:
-        temporary = Path(stream.name)
-        json.dump(value, stream, indent=2)
-        stream.write('\n')
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(path)
-
-
-def read_json(path):
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+    harness_common.atomic_json(path, value, indent=2, newline=True)
 
 
 def journal(path):
@@ -99,8 +81,7 @@ def sources(data):
 
 
 def safe_name(source_id):
-    readable = re.sub(r'[^A-Za-z0-9_.-]+', '_', source_id)[:90]
-    return readable + '__' + hashlib.sha256(source_id.encode()).hexdigest()[:12]
+    return harness_common.safe_name(source_id, limit=90)
 
 
 def signature(source_hash, converter_hash, kicad_version):
@@ -108,13 +89,8 @@ def signature(source_hash, converter_hash, kicad_version):
 
 
 def available_memory():
-    try:
-        for line in Path('/proc/meminfo').read_text().splitlines():
-            if line.startswith('MemAvailable:'):
-                return int(line.split()[1]) * 1024
-    except OSError:
-        pass
-    return 0  # Fail closed when available memory cannot be determined.
+    # Fail closed when available memory cannot be determined.
+    return harness_common.memory_available_bytes() or 0
 
 
 def eligible(row, outcome, source_hash, converter_hash, version):

@@ -25,37 +25,18 @@ import time
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "github"))
 from licences import spdx_training_eligible  # noqa: E402
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+import harness_common  # noqa: E402
+from harness_common import COSMETIC, read_json  # noqa: E402, F401
 
 ROOT = Path(__file__).resolve().parents[2]
 GIB = 1024 ** 3
-COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|missing_courtyard|isolated_copper|nonmirrored_text)")
 STOP = threading.Event()
-
-
-def digest(path):
-    h = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            h.update(chunk)
-    return h.hexdigest()
+digest = harness_common.file_sha256
 
 
 def atomic_json(path, value):
-    path = Path(path)
-    temporary = path.with_name(path.name + '.tmp')
-    with temporary.open('w') as stream:
-        json.dump(value, stream, sort_keys=True, indent=2)
-        stream.write('\n')
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
-
-
-def read_json(path):
-    try:
-        return json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return None
+    harness_common.atomic_json(path, value, indent=2, sort_keys=True, newline=True)
 
 
 def read_boards(manifest):
@@ -163,9 +144,8 @@ def run_process(command, log, timeout, max_rss_gib=3, env=None, cwd=None):
 def drc_summary(report):
     if not isinstance(report, dict) or 'violations' not in report or 'unconnected_items' not in report:
         return None
-    errors = Counter(v.get('type', 'unknown') for v in report['violations']
-                     if v.get('severity', 'error') == 'error' and not v.get('excluded')
-                     and not COSMETIC.match(v.get('type', '')))
+    # A violation without a severity counts as an error here.
+    errors = harness_common.error_counts(report, missing_severity='error')
     return {'unconnected': len(report['unconnected_items']), 'errors': dict(errors),
             'clean': not errors and not report['unconnected_items']}
 
@@ -327,10 +307,8 @@ def evaluate(board, fingerprint, args, binary, config, native_semaphore):
 
 
 def memory_available():
-    for line in Path('/proc/meminfo').read_text().splitlines():
-        if line.startswith('MemAvailable:'):
-            return int(line.split()[1]) * 1024
-    return 0
+    # 0 (every gate closed) when /proc/meminfo cannot be read.
+    return harness_common.memory_available_bytes() or 0
 
 
 def pid_alive(pid):

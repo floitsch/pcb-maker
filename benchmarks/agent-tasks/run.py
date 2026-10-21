@@ -70,8 +70,12 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+sys.path.append(str(HERE.parent))
 from compare import (by_name, constraints_digest, normalised, normalised_line, objectives,  # noqa: E402
                      objectives_line, result_directory, rows_of, task_digest)
+import compare  # noqa: E402
+import harness_common  # noqa: E402
+from harness_common import COSMETIC, counts_as_error, error_counts, file_sha256  # noqa: E402, F401
 import quality  # noqa: E402
 import schematic  # noqa: E402
 ROOT = HERE.parents[1]
@@ -106,7 +110,10 @@ WALL_STRETCH_MAX = 4.0
 # loads; `measured` lets each binary measure its machine at its start
 # (docs/router.md, "Determinism and the wall clock").
 REFERENCE_WORK_RATE = "3.15e6,150e6"
-COSMETIC = re.compile(r"^(silk_|text_|lib_footprint|footprint_type_mismatch|missing_courtyard|isolated_copper|nonmirrored_text)")
+# What a copy of a designer's project leaves out (the layout's source, the
+# designer tier's placement, the designer's DRC with an old binary).
+COPY_IGNORE = shutil.ignore_patterns(".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip",
+                                     "fp-info-cache")
 
 
 def block_end(text, start):
@@ -243,7 +250,7 @@ def counting_findings(drc):
     cosmetic): (type, [(uuid, (x, y), description)]) each."""
     findings = []
     for violation in drc.get("violations", []):
-        if violation.get("severity") != "error" or violation.get("excluded") or COSMETIC.match(violation["type"]):
+        if not counts_as_error(violation):
             continue
         items = []
         for item in violation.get("items", []):
@@ -406,11 +413,11 @@ class StrictBaseline:
                 if sidecar.is_file():
                     shutil.copyfile(sidecar, project / sidecar.name)
             board = project / original.name
-            subprocess.run([str(self.binary), "strip-kicad-tracks", str(original), str(board)],
-                           capture_output=True, check=True, timeout=600)
+            harness_common.run_group(strip_command(self.binary, original, board),
+                                     capture_output=True, check=True, timeout=600)
             report = self.work / "baseline-drc.json"
-            subprocess.run([str(self.binary), "drc-kicad-board", str(project), self.board_id, str(report)],
-                           capture_output=True, timeout=900)
+            harness_common.run_group([str(self.binary), "drc-kicad-board", str(project), self.board_id,
+                                      str(report)], capture_output=True, timeout=900)
             self.result = counting_findings(json.loads(report.read_text()))
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.error = str(error)[:200]
@@ -467,9 +474,8 @@ def strict_row(row, strict, unexpected=()):
     if strict.get("baseline_error"):
         row["strict_baseline_error"] = strict["baseline_error"]
     row["clean_without_subtraction"] = strict["clean"]
-    copper = row.get("native")
-    row["pass_strict"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0
-                              and not strict["new"])
+    # The pass rule's own function (compare.py's), on the fields just set.
+    row["pass_strict"] = bool(not unexpected and compare.passes_strict(row))
 
 
 def pin_work_rate(given, environ):
@@ -520,10 +526,7 @@ def native(result_directory, allowed=None):
     if not report.exists():
         return None
     drc = json.loads(report.read_text())
-    errors = {}
-    for violation in drc.get("violations", []):
-        if violation.get("severity") == "error" and not violation.get("excluded") and not COSMETIC.match(violation["type"]):
-            errors[violation["type"]] = errors.get(violation["type"], 0) + 1
+    errors = error_counts(drc)
     for kind, count in (allowed or {}).items():
         if kind in errors:
             errors[kind] -= count
@@ -542,7 +545,7 @@ def has_drc_command(binary):
     key = str(binary)
     if key not in _DRC_COMMAND:
         try:
-            listed = subprocess.run([key, "--help"], capture_output=True, text=True, timeout=60).stdout
+            listed = harness_common.run_group([key, "--help"], capture_output=True, text=True, timeout=60).stdout
         except (OSError, subprocess.TimeoutExpired):
             listed = ""
         _DRC_COMMAND[key] = "drc-kicad-board" in listed
@@ -561,22 +564,20 @@ def designer_findings(directory, board_id, work, binary=None):
         reference.mkdir(parents=True, exist_ok=True)
         command, cwd = [str(binary), "drc-kicad-board", str(directory), board_id, str(report)], None
     else:
-        shutil.copytree(directory, reference, ignore=shutil.ignore_patterns(
-            ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+        shutil.copytree(directory, reference, ignore=COPY_IGNORE)
         command = ["kicad-cli", "pcb", "drc", "--refill-zones", "--severity-error", "--format", "json",
                    "-o", "drc.json", f"{board_id}.kicad_pcb"]
         cwd = reference
     try:
-        subprocess.run(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
+        # A process group of its own: a timeout kills kicad-cli with it.
+        harness_common.run_group(command, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 timeout=600)
     except (OSError, subprocess.TimeoutExpired):
         return {}
     if not report.exists():
         return {}
-    counts = {}
     violations = json.loads(report.read_text()).get("violations", [])
-    for violation in violations:
-        if violation.get("severity") == "error" and not violation.get("excluded") and not COSMETIC.match(violation["type"]):
-            counts[violation["type"]] = counts.get(violation["type"], 0) + 1
+    counts = error_counts({"violations": violations})
     # The strict rule's openings that the designer shipped bridged
     # (StrictBaseline.designer): the solder mask bridges alone, small.
     bridges = [violation for violation in violations if violation.get("type") == "solder_mask_bridge"]
@@ -746,15 +747,10 @@ def run_measured(command, timeout=None, env=None, on_start=None):
     return code, output, round(usage.ru_maxrss / 1024), round(own), round(usage.ru_utime + usage.ru_stime, 1)
 
 
-def meminfo_gb(field="MemAvailable:"):
-    try:
-        with open("/proc/meminfo") as meminfo:
-            for line in meminfo:
-                if line.startswith(field):
-                    return int(line.split()[1]) / (1024 * 1024)
-    except OSError:
-        pass
-    return None
+def meminfo_gb():
+    """MemAvailable in GB (harness_common's reading), None when unknown."""
+    available = harness_common.memory_available_bytes()
+    return None if available is None else available / (1024 ** 3)
 
 
 def resident_mb(pid):
@@ -911,15 +907,13 @@ def run_admitted(task, arguments, token):
     if work.exists():
         shutil.rmtree(work)
     source = work / "source"
-    shutil.copytree(directory, source, ignore=shutil.ignore_patterns(
-        ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+    shutil.copytree(directory, source, ignore=COPY_IGNORE)
     board = source / f"{task['board_id']}.kicad_pcb"
     designer_started = time.monotonic()
     allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
     baseline = StrictBaseline(directory, task["board_id"], work, arguments.binary, bool(task.get("designer_budget")))
-    subprocess.run([str(arguments.binary), "strip-kicad-tracks", str(board), str(board)],
-                   capture_output=True, check=True)
+    harness_common.run_group(strip_command(arguments.binary, board, board), capture_output=True, check=True)
     # Constraints are optional: without them the layout gets an empty set.
     constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text()) \
         if task.get("constraints") else {}
@@ -1050,7 +1044,7 @@ def layout_result(row, task, work, code, output, allowed, designer_seconds, drc_
     # (Florian, 2026-10-07): KiCad joins a pad through a pour's fill that
     # the router, routing pours as tracks, does not credit (MokyaLora's
     # one open pad, 261/262 with KiCad at 0 unconnected).
-    row["pass"] = bool(not unexpected and copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    row["pass"] = compare.passes(row)
     strict_row(row, strict_native(drc_directory or work / "layout/result", baseline), unexpected)
     return row
 
@@ -1273,13 +1267,21 @@ def route_admitted(task, arguments, token):
     return route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
 
 
-def route_result(row, task, work, code, output, allowed, designer_seconds, baseline=None):
-    """The row of a route that ended (not by the harness's timeout):
-    `work`/route's report, KiCad's findings in `work`/route/drc.json less
-    the designer's (`allowed`), and the pass rule (a layout's)."""
-    row["exit"] = code
+def router_report(work):
+    """`work`/route/board-router.json, None where there is none."""
     report = work / "route/board-router.json"
-    if not report.exists():
+    return json.loads(report.read_text()) if report.exists() else None
+
+
+def route_result(row, task, work, code, output, allowed, designer_seconds, baseline=None, result=None):
+    """The row of a route that ended (not by the harness's timeout):
+    `work`/route's report (`result`, router_report's, read here when not
+    given), KiCad's findings in `work`/route/drc.json less the designer's
+    (`allowed`), and the pass rule (a layout's)."""
+    row["exit"] = code
+    if result is None:
+        result = router_report(work)
+    if result is None:
         verdict_file = work / "route/verdict.json"
         verdict = json.loads(verdict_file.read_text()) if verdict_file.exists() else None
         verdict_extras(row, verdict)
@@ -1290,7 +1292,6 @@ def route_result(row, task, work, code, output, allowed, designer_seconds, basel
             row["error"] = output.strip().splitlines()[-1][:300] if output.strip() else "no output"
         row["pass"] = False
         return row
-    result = json.loads(report.read_text())
     if result.get("verdict"):
         row["verdict"] = result["verdict"].get("status")
     verdict_extras(row, result.get("verdict"))
@@ -1308,7 +1309,7 @@ def route_result(row, task, work, code, output, allowed, designer_seconds, basel
     )
     if result.get("work_seconds") is not None:
         row["work_seconds"] = round(result["work_seconds"], 1)
-    row["pass"] = bool(copper is not None and copper["unconnected"] == 0 and not copper["errors"])
+    row["pass"] = compare.passes(row)
     strict_row(row, strict_native(work / "route", baseline))
     return row
 
@@ -1341,10 +1342,9 @@ def designer_admitted(task, arguments, token):
         row["budget_scale"] = arguments.budget_scale
     prepared = work / "placed"
     # The designer's project as the layout tier copies it.
-    shutil.copytree(directory, prepared, ignore=shutil.ignore_patterns(
-        ".history", "*-backups", "Gerbers", "packages3D", "*.pdf", "*.zip", "fp-info-cache"))
+    shutil.copytree(directory, prepared, ignore=COPY_IGNORE)
     board = prepared / f"{board_id}.kicad_pcb"
-    strip = subprocess.run(strip_command(arguments.binary, board, board), capture_output=True, text=True)
+    strip = harness_common.run_group(strip_command(arguments.binary, board, board), capture_output=True, text=True)
     if strip.returncode != 0:
         row.update(error=f"strip-kicad-tracks: {(strip.stderr or strip.stdout).strip()[-200:]}", **{"pass": False})
         return row
@@ -1374,10 +1374,9 @@ def designer_admitted(task, arguments, token):
     if code == "timeout":
         row.update(error=f"timed out after {timeout} s", cut=["timeout"], **{"pass": False})
         return row
-    route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
-    report = work / "route/board-router.json"
-    if report.exists():
-        result = json.loads(report.read_text())
+    result = router_report(work)
+    route_result(row, task, work, code, output, allowed, designer_seconds, baseline, result)
+    if result is not None:
         row["open"] = result["routable_connections"] - result["routed_connections"]
     return row
 
@@ -1420,29 +1419,27 @@ def strip_command(binary, original, stripped):
     return [str(binary), "strip-kicad-tracks", str(original), str(stripped)]
 
 
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def expansion_module(name):
+    """benchmarks/expansion/<name>.py, loaded once (harvest.py's GitHub
+    fetch, triage.py's outcome classes): that directory is not a package."""
+    with _EXPANSION_LOCK:
+        if name not in _EXPANSION:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(f"expansion_{name}", ROOT / f"benchmarks/expansion/{name}.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _EXPANSION[name] = module
+    return _EXPANSION[name]
+
+
+_EXPANSION = {}
+_EXPANSION_LOCK = threading.Lock()
 
 
 def github_raw(repository, commit, path, maximum):
     """A file of `repository` at `commit` (None when it is not there), with
     the harvest's own fetch (benchmarks/expansion/harvest.py, GitHub.raw)."""
-    with _HARVEST_LOCK:
-        if "module" not in _HARVEST:
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("expansion_harvest", ROOT / "benchmarks/expansion/harvest.py")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            _HARVEST["module"] = module
-    return _HARVEST["module"].GitHub().raw(repository, commit, path, maximum)
-
-
-_HARVEST = {}
-_HARVEST_LOCK = threading.Lock()
+    return expansion_module("harvest").GitHub().raw(repository, commit, path, maximum)
 
 
 def ensure_source(task, directory, harvest_boards=None, raw=github_raw):
@@ -1496,26 +1493,14 @@ def ensure_source(task, directory, harvest_boards=None, raw=github_raw):
 
 
 def intake_outcome(result, kicad, budget, simple_seconds=INTAKE_SIMPLE_SECONDS):
-    """The intake's outcome class of a route (triage.py's classify): its
-    report `result`, KiCad's findings on the result (`kicad`, run.py's
-    native() without the designer's findings) and the ladder's budget."""
-    complete = (result.get("unconnected_terminals", 1) == 0
-                and result.get("routed_connections") == result.get("routable_connections"))
-    internal = result.get("internal_violations") or []
-    seconds = result.get("routing_seconds", 0)
-    if complete and not internal:
-        if kicad is None:
-            return "verification_unknown"
-        if kicad["errors"] or kicad["unconnected"]:
-            return "native_drc_failure"
-        if seconds <= simple_seconds:
-            return "clean_fast"
-        return "clean_medium" if seconds <= budget else "clean_slow"
-    if result.get("cut"):
-        return "cut_wall_clock"
-    if result.get("work_seconds", 0) >= .95 * budget or seconds >= .95 * budget:
-        return "incomplete_at_budget"
-    return "internal_drc_failure" if internal else "incomplete_early"
+    """The intake's outcome class of a route: triage.py's classify itself,
+    on its report `result`, KiCad's findings on the result (`kicad`,
+    run.py's native() without the designer's findings, None when KiCad did
+    not check it) and the ladder's budget."""
+    row = {"route_process": {}, "route": result,
+           "native_result": {} if kicad is None else
+           {"summary": {"clean": not kicad["errors"] and not kicad["unconnected"]}}}
+    return expansion_module("triage").classify(row, simple_seconds, budget)
 
 
 def route_task_config(task, budget_scale):
@@ -1574,7 +1559,8 @@ def route_task_admitted(task, arguments, token):
         if sidecar.is_file():
             shutil.copyfile(sidecar, prepared / sidecar.name)
     board = prepared / original.name
-    strip = subprocess.run(strip_command(arguments.binary, original, board), capture_output=True, text=True)
+    strip = harness_common.run_group(strip_command(arguments.binary, original, board), capture_output=True,
+                                     text=True)
     if strip.returncode != 0:
         row.update(error=f"strip-kicad-tracks: {(strip.stderr or strip.stdout).strip()[-200:]}",
                    outcome="source_issue", **{"pass": False})
@@ -1616,10 +1602,9 @@ def route_task_admitted(task, arguments, token):
         row.update(drc_seconds=round(time.monotonic() - drc_started, 1), peak_rss_mb=max(peak_mb, drc_peak),
                    cpu_seconds=round(cpu_seconds + drc_cpu, 1))
     row["load"] = [round(load_before, 1), round(os.getloadavg()[0], 1)]
-    route_result(row, task, work, code, output, allowed, designer_seconds, baseline)
-    report = work / "route/board-router.json"
-    if report.exists():
-        result = json.loads(report.read_text())
+    result = router_report(work)
+    route_result(row, task, work, code, output, allowed, designer_seconds, baseline, result)
+    if result is not None:
         row["routing_seconds"] = round(result.get("routing_seconds", 0), 1)
         row["open"] = result["routable_connections"] - result["routed_connections"]
         row["outcome"] = intake_outcome(result, native(work / "route"), budget)

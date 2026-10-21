@@ -239,17 +239,19 @@ def errors(row):
 
 
 def passes(row):
-    """The pass rule of the runner (KiCad's connectivity, no copper error,
-    no unexpected constraint miss), applied again: rows written before the
-    rule changed carry the old flag."""
+    """The pass rule (KiCad's connectivity, no copper error beyond the
+    designer's, no unexpected constraint miss): run.py sets each row's
+    `pass` with it, and compare.py applies it again, since rows written
+    before the rule changed carry the old flag."""
     if row is None or row.get("error") or row.get("native") is None:
         return False
     return unconnected(row) == 0 and not errors(row) and not row.get("unexpected_misses")
 
 
 def passes_strict(row):
-    """The strict rule's pass (run.py's `pass_strict`, recomputed as
-    `passes`): None for a row written before the rule."""
+    """The strict rule's pass (run.py sets each row's `pass_strict` with
+    it, compare.py applies it again as `passes`): None for a row written
+    before the rule."""
     if row is None or "new_findings_strict" not in row and "pass_strict" not in row:
         return None
     if row.get("error") or row.get("native") is None or "new_findings_strict" not in row:

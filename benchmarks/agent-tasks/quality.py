@@ -18,21 +18,22 @@ measures compare.py normalises by), with the board's SHA-256 so that a
 number is only used for the same board."""
 
 import argparse
-import hashlib
 import json
 import statistics
-import subprocess
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+sys.path.append(str(HERE.parent))
+from harness_common import file_sha256, run_group  # noqa: E402
 DESIGNER_NUMBERS = HERE / "designer-numbers.json"
 DEFAULT_TASKS = HERE / "tasks/v7/tasks.json"
 
 
 def score(binary, directory, board_id):
-    process = subprocess.run([str(binary), "score-kicad-board", str(directory), board_id],
-                             capture_output=True, text=True)
+    process = run_group([str(binary), "score-kicad-board", str(directory), board_id],
+                        capture_output=True, text=True)
     if process.returncode != 0:
         return None
     try:
@@ -109,14 +110,6 @@ def measures(report):
         except (KeyError, TypeError, ValueError):
             values[key] = None
     return values
-
-
-def file_sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def task_directory(task):

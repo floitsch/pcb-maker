@@ -41,6 +41,8 @@ USABLE_LICENSES = {"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC",
 # (CERN-OHL-S and -W, GPL, CC-BY-SA) are benchmarks, never training data.
 sys.path.append(str(Path(__file__).resolve().parents[1] / "github"))
 from licences import spdx_training_eligible  # noqa: E402
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+import harness_common  # noqa: E402
 
 TOPICS = ["kicad", "kicad-project", "pcb-design", "open-hardware", "oshw",
           "fpga-board", "hardware", "eagle-pcb", "altium-designer"]
@@ -59,13 +61,7 @@ def nn_license_eligible(spdx):
 
 
 def atomic_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w") as stream:
-        json.dump(value, stream, indent=1)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(path)
+    harness_common.atomic_json(path, value, indent=1, make_parents=True)
 
 
 def identity(repository, path):
@@ -73,8 +69,7 @@ def identity(repository, path):
 
 
 def safe_name(source_id):
-    readable = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_id)[:100]
-    return readable + "__" + hashlib.sha256(source_id.encode()).hexdigest()[:12]
+    return harness_common.safe_name(source_id, limit=100)
 
 
 def features(text):

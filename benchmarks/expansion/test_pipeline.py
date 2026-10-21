@@ -1,6 +1,7 @@
 # Copyright (C) 2026 Toit contributors.
 """Regression checks for advancing/resuming the unattended collection."""
 
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -8,8 +9,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import run as pipeline
 import samples
+
+# This directory's run.py by its path: benchmarks/agent-tasks has a run.py
+# too, and a pytest run over both directories imports whichever came first
+# under the name `run`.
+_SPEC = importlib.util.spec_from_file_location("expansion_run", Path(__file__).resolve().parent / "run.py")
+pipeline = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(pipeline)
 
 
 class PipelineTests(unittest.TestCase):
