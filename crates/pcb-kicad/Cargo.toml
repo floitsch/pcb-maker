@@ -7,10 +7,6 @@ description = "Deterministic KiCad project materialization for pcb-maker experim
 publish = false
 
 [dependencies]
-layout-trace-model = { path = "../layout-trace-model" }
-pcb-core = { path = "../pcb-core" }
-pcb-engine = { path = "../pcb-engine" }
-pcb-grid-router = { path = "../pcb-grid-router" }
 pcb-congestion = { path = "../pcb-congestion" }
 pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }

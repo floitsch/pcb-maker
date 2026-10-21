@@ -21,15 +21,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5dfbc6d8d2675589ccbe4d0fd61df2419075625f8c1a62325e718e2b0049f9"
 
 [[package]]
-name = "approx"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,15 +383,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "layout-trace-model"
-version = "0.1.0"
-dependencies = [
- "approx",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -612,34 +594,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcb-core"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "pcb-engine"
-version = "0.1.0"
-dependencies = [
- "pcb-core",
- "serde",
-]
-
-[[package]]
-name = "pcb-grid-router"
-version = "0.1.0"
-
-[[package]]
 name = "pcb-kicad"
 version = "0.1.0"
 dependencies = [
- "layout-trace-model",
  "libc",
  "pcb-congestion",
- "pcb-core",
- "pcb-engine",
- "pcb-grid-router",
  "pcb-placer",
  "pcb-router",
  "pcb-topo",

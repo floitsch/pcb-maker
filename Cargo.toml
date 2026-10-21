@@ -8,10 +8,6 @@ description = "GPU-first experiments in coupled PCB placement and routing"
 [workspace]
 members = [
     ".",
-    "crates/layout-trace-model",
-    "crates/pcb-core",
-    "crates/pcb-engine",
-    "crates/pcb-grid-router",
     "crates/pcb-kicad",
     "crates/pcb-placer",
     "crates/pcb-router",

@@ -17,18 +17,11 @@ comparison on the same boards ([github](github/README.md)) and PCBench
 | `corpus` | the KiCad-demo corpus runner (route and layout) |
 | [`real`](real/README.md) | frozen real-board sources; `real/external` (not in git) holds the harvested boards |
 | `tscircuit` | the tscircuit autorouter on DSN exports, for comparison |
-| `imported` | four layout-trace JSON fixtures that the tests of `pcb-kicad`'s semantic template and of `layout-trace-model` include; they go with those modules |
 
 The September 2026 research ladders (the declaration-to-KiCad ESP32
 ladders, the exact-routing rungs and mechanism controls in `small`,
-`smoke`, `analysis-lab`, `competitive`, `esp32-pad-gaps` and the rest of
-`imported`) were removed with the research stack on 2026-10-20; they are in
-git history up to commit be4b012 (see
-[docs/changelog.md](../docs/changelog.md)).
-
-Check the imported fixtures' bytes with:
-
-```sh
-cd benchmarks
-sha256sum -c manifest.sha256
-```
+`smoke`, `analysis-lab`, `competitive`, `esp32-pad-gaps` and `imported`)
+were removed with the research stack on 2026-10-20 (git history up to
+commit be4b012); the last four `imported` layout-trace fixtures went with
+`pcb-kicad`'s semantic template on 2026-10-21 (history up to 0d13e80). See
+[docs/changelog.md](../docs/changelog.md).
