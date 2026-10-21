@@ -237,7 +237,14 @@ holds:
   (`solid_fill_reaches`; a piece within 0.8 mm counted before). A pad set
   to no zone connection is cut out of the fill at the zone's clearance
   and half the minimum width (`isolated_knockouts`), as another net's
-  pad, so only a track from it into the fill joins it. The pour masks
+  pad, so only a track from it into the fill joins it; in a hatched zone
+  at the pad's own clearance (its or its footprint's local clearance)
+  where that is larger (2026-10-21: KiCad 10.0.7's
+  buildCopperItemClearances takes the clearance between zone and pad; a
+  solid zone's knockoutThermalReliefs takes the zone's own clearance or a
+  `physical_clearance` rule, not the pad's). A thermal relief is the
+  thermal gap alone in both (THERMAL_RELIEF_GAP_CONSTRAINT), whatever
+  the pad's clearance. The pour masks
   keep a node only where the brush (half the zone's minimum width) fits
   inside the zone's outline and clear of the regions other zones take,
   at the clearance the fill probe keeps from them
@@ -365,7 +372,21 @@ SMD pad's area, its centre strictly inside the box of the centres of at
 least three other pads. The pins enclose it, a via is the designer's way
 out (KiCad's own footprints carry thermal vias there) and a large pad
 keeps its solder. A tab beside a row of pins (SOT-223, D-PAK, SOT-89)
-is not exposed: a track reaches it from outside.
+is not exposed: a track reaches it from outside. SMD pads of one number
+that touch or lie within 0.5 mm of each other are one pad to the test,
+of their boxes' box (`exposed_pad`, shared with score-kicad-board's
+count; 2026-10-21): an exposed pad drawn on both sides (Sisu's U2.11,
+MSign's U1.21, LC_PAMV4b's U3.25, ZSWatch's IC401.33: an F.Cu and a B.Cu
+copy at one place, thermal vias between) was its own copy's "other pad
+of its size", both copies were listed and the pad's pour-net vias had to
+go beside a pad its pins enclose; a pad split into pieces is one too.
+Two same-number pads apart (a connector's shield tabs) stay two.
+
+The via-owner map does not depend on the pads' order: a node an earlier
+pin of the net left to the net (`beside`) stays the net's where the
+exposed pad holds a whole via (with the pins before the pad, KiCad's
+usual order, the pad's arm found the node blocked and gave it to no
+net, losing legal via sites along the pad's edge).
 
 `via_in_pad: true` in the router config restores the rule of before for
 boards whose vias are filled and capped. score-kicad-board's "vias in
@@ -446,7 +467,10 @@ Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
   frame) on copper are their box, filled, grown by half the stroke: KiCad
   measures from the outline grown so, `(border yes)` or not, and from the
   glyphs inside (a track 0.05 mm past the stroke of either). On a mask
-  layer the box is an opening. The intake has no text box on copper or
+  layer the box is an opening. A hidden one is nothing. A box of `start`
+  and `end` keeps those corners whatever its `angle`: KiCad's parser
+  turns the text, not the box (a box turned off the axes is written as
+  `pts`). The intake has no text box on copper or
   mask (all 80 are on silk, fab or user layers).
 - **A cached (TrueType) text on copper** is drawn by KiCad from the font
   installed, not from the file's render cache (TomKeddie's six-line SAO
@@ -459,11 +483,26 @@ Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
   text 1.7 times as wide as it is. 42 such texts on 22 intake boards.
 - **Padstacks** (KiCad 9's `(padstack (mode front_inner_back) (layer
   "Inner" ...) (layer "B.Cu" ...))`, `(mode custom)` per copper layer): the
-  pad's other shapes are copper of its net on their layers beside it
+  pad's other shapes are copper of its net on their layers
   (`padstack_variants`), and the back's mask aperture is the back
   copper's. adrianmarple's Raspberry Pi header (1.2 mm on F.Cu, 1.778 on
-  B.Cu) and dennisss's lens mounts (3 and 4 mm): B.Cu tracks shorted and
-  bridged to the larger back copper.
+  B.Cu) and dennisss's lens mounts (4 mm on F.Cu, 3 on B.Cu): B.Cu
+  tracks shorted and bridged to the larger back copper. Since 2026-10-21
+  the pad's own shape is copper only on F.Cu and the layers the stack
+  does not name (it was on every layer: under a smaller back shape the
+  model had copper KiCad has not, and `copper_components` called a B.Cu
+  track that ended there connected). Each named layer's shape is merged
+  into the pad's terminal (`MergedPad::padstack`): the terminal's nodes
+  on that layer lie in that shape, a track ending on it ends on the
+  terminal, its zone connection, thermal relief and spokes are the
+  pad's, its spokes' frame its own size. A pad whose every layer the
+  stack names keeps its own shape everywhere.
+- **Blind, buried and micro vias** on the board (a blind via's layers
+  "F.Cu" and "In1.Cu") are copper on the layers from their first to their
+  last (`via_layers`), a through via on every layer; they were copper on
+  every layer, so a track on another layer over one was kept off it and
+  `copper_components` could join through it. The router's own vias are
+  through vias.
 - **A plated hole that lists no copper layer** (`(layers "*.Mask")`, a
   DevKitC's mounting pins) is copper on every layer, as KiCad shorts it on
   F.Cu, an inner layer and B.Cu; a pad listing some copper layers is
@@ -569,7 +608,25 @@ KiCad 10.0.7's DRC reads it:
 
   KiCad applies the last matching rule (`EvalRules`); the router keeps,
   for each value, the largest of every rule that can match: never less
-  than KiCad asks. For clearance, hole clearance, edge clearance and hole
+  than KiCad asks. Every lowered value is a floor: a custom rule never
+  lowers a clearance below the net class's (`apply_custom`, and
+  `Resolved::new` takes the larger of a pair rule and the classes), and
+  two rules on one pair give the larger, not the later. KiCad's custom
+  rules replace the implicit net-class rule even when smaller (a JLCPCB
+  template's 0.127 mm "Min. Spacing" after a 0.2 mm class). The reason:
+  the condition is three-valued and the router lays items whose final
+  neighbours it does not know, so it keeps what every rule that can match
+  asks, and a smaller value is honoured only where it is surely the last
+  rule for every item pair it covers, which the lowering cannot prove for
+  the class rule it would undercut. The router therefore never makes a
+  KiCad clearance error from a rule, but it can refuse a board the
+  designer made routable by lowering a pair's clearance (the rule is
+  reported `applied` with the classes kept). Copper graphics and the
+  pour's fill take no pair rule either (`rules::obstacle_kind` gives a
+  graphic no item kind, the fill brush keeps its class): KiCad applies a
+  net-conditioned rule to every copper item of the net. A fourth item
+  kind (a graphic or a fill, matched only by rules without a type
+  condition) would carry them; the table of kinds is 3 x 3 today. For clearance, hole clearance, edge clearance and hole
   to hole, a rule does not count where a later rule with a minimum of the
   same constraint surely matches (JLCPCB's template ends with "Min.
   Spacing" 0.127 mm on everything, after "Pad to Track" 0.2 mm: KiCad
