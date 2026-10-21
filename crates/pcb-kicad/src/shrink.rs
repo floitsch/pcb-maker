@@ -73,9 +73,9 @@ pub fn shrink_kicad_board(
                     .filter(|child| child.head() == Some("pad"))
                 {
                     let bounds = lower_pad(pad, at)?.geometry.aabb();
-                    for axis in 0..2 {
-                        reach[axis][0] = reach[axis][0].min(bounds.minimum[axis]);
-                        reach[axis][1] = reach[axis][1].max(bounds.maximum[axis]);
+                    for (axis, reach) in reach.iter_mut().enumerate() {
+                        reach[0] = reach[0].min(bounds.minimum[axis]);
+                        reach[1] = reach[1].max(bounds.maximum[axis]);
                     }
                 }
                 let mut position = scale([at[0], at[1]]);

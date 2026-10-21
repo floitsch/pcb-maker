@@ -311,11 +311,11 @@ mod tests {
             matches!(parts[1], ObstacleGeometry::Circle { center: [-0.75, 0.25], radius } if (radius - 0.25).abs() < 1e-9)
         );
         assert!(
-            geometry_contains(&parts, [-0.95, -0.45]) == false,
+            !geometry_contains(&parts, [-0.95, -0.45]),
             "the chamfer cuts the corner"
         );
         assert!(
-            geometry_contains(&parts, [0.97, 0.47]) == false,
+            !geometry_contains(&parts, [0.97, 0.47]),
             "a rounded corner is round"
         );
         assert!(

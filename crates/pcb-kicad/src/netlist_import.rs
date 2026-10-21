@@ -536,6 +536,9 @@ pub fn import_kicad_netlist(
 /// this one (a library that lacks the footprint stays as it is).
 const FROM_BOARD_LIBRARY: &str = "from_board";
 
+/// A pin's net name, pin function and pin type.
+type PinNet = (String, Option<String>, Option<String>);
+
 /// `import_kicad_netlist` with `--footprints-from <board>`: footprints no
 /// library has are taken from that board, and the board's version is
 /// preferred where it has the symbol's footprint (`board_footprints.rs`).
@@ -701,8 +704,7 @@ pub fn import_kicad_netlist_from(
     }
 
     // Nets by (reference, pin): name, pin function and type.
-    let mut pins: BTreeMap<(String, String), (String, Option<String>, Option<String>)> =
-        BTreeMap::new();
+    let mut pins: BTreeMap<(String, String), PinNet> = BTreeMap::new();
     let mut nets = 0;
     if let Some(section) = netlist.child("nets") {
         for net in section
@@ -1106,35 +1108,31 @@ pub fn import_kicad_netlist_from(
         // connects: KiCad gives each such pad its own net (`_1`, `_2`).
         let mut repeats: BTreeMap<String, usize> = BTreeMap::new();
         for item in items.iter_mut() {
-            match item.head() {
-                Some("pad") => {
-                    let number = item
-                        .children()
-                        .get(1)
-                        .and_then(Expr::atom)
-                        .unwrap_or("")
-                        .to_string();
-                    if let Some((net, function, kind)) =
-                        pins.get(&(reference.clone(), number.clone()))
-                        && let Expr::List(parts) = item
-                    {
-                        let seen = repeats.entry(number).or_insert(0);
-                        let net = if *seen > 0 && net.starts_with("unconnected-") {
-                            format!("{net}_{seen}")
-                        } else {
-                            net.clone()
-                        };
-                        *seen += 1;
-                        parts.push(parse(&format!("(net {})", requote(&net)))?);
-                        if let Some(function) = function {
-                            parts.push(parse(&format!("(pinfunction {})", requote(function)))?);
-                        }
-                        if let Some(kind) = kind {
-                            parts.push(parse(&format!("(pintype {})", requote(kind)))?);
-                        }
+            if let Some("pad") = item.head() {
+                let number = item
+                    .children()
+                    .get(1)
+                    .and_then(Expr::atom)
+                    .unwrap_or("")
+                    .to_string();
+                if let Some((net, function, kind)) = pins.get(&(reference.clone(), number.clone()))
+                    && let Expr::List(parts) = item
+                {
+                    let seen = repeats.entry(number).or_insert(0);
+                    let net = if *seen > 0 && net.starts_with("unconnected-") {
+                        format!("{net}_{seen}")
+                    } else {
+                        net.clone()
+                    };
+                    *seen += 1;
+                    parts.push(parse(&format!("(net {})", requote(&net)))?);
+                    if let Some(function) = function {
+                        parts.push(parse(&format!("(pinfunction {})", requote(function)))?);
+                    }
+                    if let Some(kind) = kind {
+                        parts.push(parse(&format!("(pintype {})", requote(kind)))?);
                     }
                 }
-                _ => {}
             }
         }
         // Symbol pins the footprint has no pad for (a library that changed).
@@ -1869,7 +1867,7 @@ fn own_pad_gaps(
     // "Clearance violation (netclass 'Default' clearance 0.2800 mm; actual 0.2496 mm)"
     let number_after = |text: &str, key: &str| -> Option<f64> {
         let rest = &text[text.find(key)? + key.len()..];
-        rest.trim_start().split_whitespace().next()?.parse().ok()
+        rest.split_whitespace().next()?.parse().ok()
     };
     let mut gaps: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     for violation in drc["violations"].as_array().into_iter().flatten() {

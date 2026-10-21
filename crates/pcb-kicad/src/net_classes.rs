@@ -59,7 +59,10 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
             class.via_diameter_mm,
             class.via_drill_mm,
         ] {
-            if value.is_some_and(|value| !(value > 0.0)) {
+            // partial_cmp: NaN is not positive either.
+            if value
+                .is_some_and(|value| value.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
+            {
                 return Err(format!("net class {}: sizes must be positive", class.name));
             }
         }

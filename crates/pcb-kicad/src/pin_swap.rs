@@ -171,6 +171,19 @@ struct NetTerminals {
 /// A pad field (minimum, maximum) that ratsnest lines should go around.
 type Body = ([f64; 2], [f64; 2]);
 
+/// A pin's net before and after a swap.
+type NetChange = (Option<String>, Option<String>);
+
+/// The pin changes and the estimates before and after, with the group and
+/// unit counts, as `choose` returns them.
+type Choice = (
+    HashMap<PinKey, NetChange>,
+    KiCadPinSwapEstimate,
+    KiCadPinSwapEstimate,
+    usize,
+    usize,
+);
+
 struct Problem {
     groups: Vec<Group>,
     /// Pads per pin (several when a pad name repeats).
@@ -1339,7 +1352,7 @@ fn no_connect_expr(at: [f64; 2]) -> Expr {
 /// its new net. Returns the number of pins changed.
 fn apply_to_schematic(
     schematic: &mut Expr,
-    changes: &HashMap<PinKey, (Option<String>, Option<String>)>,
+    changes: &HashMap<PinKey, NetChange>,
 ) -> Result<usize, String> {
     let pins = schematic_pins(schematic)?;
     let items = schematic.children();
@@ -1380,7 +1393,7 @@ fn apply_to_schematic(
     let mut remove: BTreeSet<usize> = BTreeSet::new();
     let mut add: Vec<Expr> = Vec::new();
     let mut changed = 0;
-    let mut ordered: Vec<(&PinKey, &(Option<String>, Option<String>))> = changes.iter().collect();
+    let mut ordered: Vec<(&PinKey, &NetChange)> = changes.iter().collect();
     ordered.sort_by(|a, b| a.0.cmp(b.0));
     for (key, (before, after)) in ordered {
         let pin = pins
@@ -1542,16 +1555,7 @@ fn choose(
     pcb: &Expr,
     spec: &KiCadPinSwapSpec,
     config: &KiCadPinSwapConfig,
-) -> Result<
-    (
-        HashMap<PinKey, (Option<String>, Option<String>)>,
-        KiCadPinSwapEstimate,
-        KiCadPinSwapEstimate,
-        usize,
-        usize,
-    ),
-    String,
-> {
+) -> Result<Choice, String> {
     let pads = board_pads(pcb)?;
     let problem = build_problem(spec, &pads, config)?;
     let before = State::new(&problem, config).estimate();

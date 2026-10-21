@@ -199,7 +199,9 @@ pub fn score_congestion_sample(
     let bytes = fs::read(sample_json.with_extension("bin")).map_err(|error| error.to_string())?;
     let count: usize = shape.iter().product();
     let data: Vec<f32> = bytes[offset..offset + 4 * count]
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     let model = pcb_congestion::CongestionModel::load(model_path)?;

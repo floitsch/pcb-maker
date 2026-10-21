@@ -173,13 +173,12 @@ pub(super) fn validate_report(
         }
         // Older KiCad reports omit this metadata. When present, it must agree
         // with our --severity-all invocation rather than hide a finding class.
-        if let Some(severities) = &metadata.included_severities {
-            if !["error", "warning", "exclusion"]
+        if let Some(severities) = &metadata.included_severities
+            && !["error", "warning", "exclusion"]
                 .iter()
                 .all(|kind| severities.contains(kind))
-            {
-                return Err("report does not include every requested severity".into());
-            }
+        {
+            return Err("report does not include every requested severity".into());
         }
         match kind {
             ReportKind::Erc => {
@@ -313,24 +312,24 @@ fn run_report_command_cached(
         }
         ReportKind::Erc => None,
     };
-    if let Some(cache) = &cache {
-        if let Some(bytes) = cache.lookup() {
-            let valid = serde_json::from_slice::<Value>(&bytes)
-                .map_err(|error| error.to_string())
-                .and_then(|report| validate_report(&report, kind, input));
-            match valid {
-                Ok(()) => {
-                    crate::drc_cache::write_atomically(output, &bytes).map_err(|error| {
-                        format!(
-                            "failed to publish native report {}: {error}",
-                            output.display()
-                        )
-                    })?;
-                    cache.count_hit();
-                    return Ok(());
-                }
-                Err(_) => cache.discard(),
+    if let Some(cache) = &cache
+        && let Some(bytes) = cache.lookup()
+    {
+        let valid = serde_json::from_slice::<Value>(&bytes)
+            .map_err(|error| error.to_string())
+            .and_then(|report| validate_report(&report, kind, input));
+        match valid {
+            Ok(()) => {
+                crate::drc_cache::write_atomically(output, &bytes).map_err(|error| {
+                    format!(
+                        "failed to publish native report {}: {error}",
+                        output.display()
+                    )
+                })?;
+                cache.count_hit();
+                return Ok(());
             }
+            Err(_) => cache.discard(),
         }
     }
     let parent = output
@@ -681,7 +680,7 @@ mod tests {
             valid
         );
         let after = crate::drc_cache::drc_cache_counts();
-        assert!(after.calls >= counts.calls + 2 && after.hits >= counts.hits + 1);
+        assert!(after.calls >= counts.calls + 2 && after.hits > counts.hits);
         // One byte more in the board, or other arguments: a miss and a new entry.
         fs::write(&board, "(kicad_pcb (version 20240108)) \n").unwrap();
         run(&project.join("drc.json"));

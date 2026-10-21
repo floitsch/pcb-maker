@@ -265,7 +265,7 @@ pub(crate) fn place_labels(pcb: &mut Expr) -> Result<KiCadLabelReport, String> {
             }
             let mut points: Vec<[f64; 2]> = outline::outline_points(child)?
                 .into_iter()
-                .map(|point| place(point))
+                .map(&place)
                 .collect();
             if child.child("center").is_some() {
                 points.push(place(form_xy(child, "center")?));
