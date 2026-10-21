@@ -2034,6 +2034,40 @@ mod work_bound_tests {
         assert!(!bound_allows_attempt(1.4, 30.0));
         assert!(!bound_allows_attempt(0.0, 30.0));
     }
+
+    #[test]
+    fn a_share_becomes_search_work_by_the_routers_search_share() {
+        // Before any search, or with nothing beside it: the share as is.
+        assert_eq!(search_fraction(0.0, 0.0), 1.0);
+        assert_eq!(search_fraction(10.0, 10.0), 1.0);
+        assert_eq!(search_fraction(10.0, 9.0), 1.0);
+        // brickpico: 32.4 s of search, 15.7 s of pour work, 0.9 s of
+        // lattices.
+        assert!((search_fraction(32.4, 49.0) - 32.4 / 49.0).abs() < 1.0e-12);
+        // Never below a quarter (Vortac's probes: 15 s of search beside
+        // 50 s of pour work and lattices).
+        assert_eq!(search_fraction(15.0, 65.0), MIN_SEARCH_FRACTION);
+    }
+
+    #[test]
+    fn a_lowering_is_priced_by_the_board_files_expressions() {
+        let pcb = crate::kicad_sexpr::parse(
+            "(kicad_pcb (version 20240108) (net 0 \"\") (net 1 \"GND\"))",
+        )
+        .unwrap();
+        // Every list and every atom once: the root and its head, the
+        // version's list and two atoms, each net's list and three atoms.
+        assert_eq!(expression_count(&pcb), 13);
+        let work = lowering_work(&pcb);
+        assert!(
+            (work
+                - 13.0 * LOWERING_EXPRESSION_NANOS / 1.0e9
+                    * pcb_router::router::reference_time_scale())
+            .abs()
+                < 1.0e-15
+        );
+        assert_eq!(lowering_work_of(0), 0.0);
+    }
 }
 
 mod lowering_gap_tests {

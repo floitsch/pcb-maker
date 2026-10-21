@@ -425,6 +425,12 @@ pub struct StaticMaps {
     /// `trace` without the solder mask openings, where it differs: what a
     /// pour's fill may cover.
     fill_trace: Option<FillTrace>,
+    /// What building the maps took, counted: nodes tested against an
+    /// obstacle and the shape vertices those tests went through.
+    pub tests: u64,
+    pub vertex_tests: u64,
+    /// The step-against-shape tests of nodes near an obstacle's edge.
+    pub tight_tests: u64,
 }
 
 /// The cells where `trace` differs from what a pour's fill may cover (the
@@ -525,6 +531,12 @@ impl StaticMaps {
         let via_radius = rules.via_diameter / 2.0;
         let step = grid.pitch * std::f64::consts::SQRT_2;
 
+        // What the build does, counted (`tests`, `vertex_tests`): the
+        // outline's crossings per row, its edges' neighbourhoods, every
+        // node tested against an obstacle and the edges each test measures.
+        let outline_edges = polygon_edges(&board.outline).count() as u64;
+        let (mut tests, mut vertex_tests) = (cells as u64, grid.ny as u64 * outline_edges);
+        let mut tight_tests = 0u64;
         let mut inside = vec![false; cells];
         for y in 0..grid.ny {
             let line = grid.origin[1] + y as f64 * grid.pitch;
@@ -566,6 +578,9 @@ impl StaticMaps {
             let Some((x0, y0, x1, y1)) = grid.node_range(bounds) else {
                 continue;
             };
+            let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+            tests += nodes;
+            vertex_tests += nodes;
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
@@ -716,16 +731,25 @@ impl StaticMaps {
                         .flatten()
                         .reduce(|a, b| (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3)))
                         .map(|range| {
-                            PolygonField::new(
+                            let field = PolygonField::new(
                                 grid,
                                 points,
                                 range,
                                 via_reach.max(trace_reach + margin),
-                            )
+                            );
+                            tests += field.distances.len() as u64;
+                            vertex_tests += field.measured;
+                            field
                         })
                 }
                 _ => None,
             };
+            let corners = if field.is_some() {
+                0
+            } else {
+                shape_corners(&obstacle.shape)
+            };
+            let mut tight = 0u64;
             let distance_at = |x: usize, y: usize, center: Point| match &field {
                 Some(field) => field.distance(x, y),
                 None => obstacle.shape.distance_to_point(center),
@@ -745,6 +769,9 @@ impl StaticMaps {
                 // is exempt, as in KiCad (tracks end on the drill), and
                 // keeps the pad copper's rule.
                 let own_hole = obstacle.net.filter(|_| obstacle.kind == ObstacleKind::Hole);
+                let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+                tests += nodes;
+                vertex_tests += nodes * corners;
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = grid.center(x, y);
@@ -792,6 +819,9 @@ impl StaticMaps {
                     None => (trace_reach, margin),
                     Some(per_layer) => (per_layer[layer], step * step / (8.0 * per_layer[layer])),
                 };
+                let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+                tests += nodes;
+                vertex_tests += nodes * corners;
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let index = grid.index(x, y);
@@ -810,6 +840,7 @@ impl StaticMaps {
                                 claim(&mut trace[layer][index], obstacle.net);
                             }
                         } else if distance < trace_reach + margin {
+                            tight += 1;
                             mark_tight_edges(
                                 grid,
                                 &obstacle.shape,
@@ -823,6 +854,8 @@ impl StaticMaps {
                     }
                 }
             }
+            // A tight node measures its eight steps against the shape.
+            tight_tests += tight * 8 * shape_corners(&obstacle.shape);
         }
         // Unchanged cells need no record (an opening that claimed nothing).
         if let Some(fill) = &mut fill_trace {
@@ -859,6 +892,9 @@ impl StaticMaps {
             via_owner,
             free_layers,
             fill_trace,
+            tests,
+            vertex_tests,
+            tight_tests,
         }
     }
 
@@ -911,6 +947,16 @@ impl StaticMaps {
 /// `PolygonField`.
 const FIELD_CORNERS: usize = 16;
 
+/// The edges a distance test of `shape` goes through (1 for a circle or a
+/// capsule): what one node's test against it costs, counted.
+pub(crate) fn shape_corners(shape: &Shape) -> u64 {
+    match shape {
+        Shape::Polygon { points } => points.len() as u64,
+        Shape::Union { parts } => parts.iter().map(shape_corners).sum(),
+        _ => 1,
+    }
+}
+
 /// The distances from the nodes of an inclusive node range to a filled
 /// polygon, equal to `Shape::distance_to_point` bit for bit wherever that is
 /// below `cap` (the same edge distances, the same crossing test as
@@ -923,6 +969,8 @@ struct PolygonField {
     y0: usize,
     width: usize,
     distances: Vec<f64>,
+    /// The edge distances and crossings it computed (the build's count).
+    measured: u64,
 }
 
 impl PolygonField {
@@ -930,6 +978,7 @@ impl PolygonField {
         let (x0, y0, x1, y1) = range;
         let width = x1 - x0 + 1;
         let mut distances = vec![f64::INFINITY; width * (y1 - y0 + 1)];
+        let mut measured = ((y1 - y0 + 1) * points.len()) as u64;
         for (a, b) in polygon_edges(points) {
             // One node more than the cap: a node just inside it by rounding
             // is measured too.
@@ -942,6 +991,7 @@ impl PolygonField {
                 continue;
             };
             let (ex0, ey0, ex1, ey1) = (ex0.max(x0), ey0.max(y0), ex1.min(x1), ey1.min(y1));
+            measured += ((ex1 + 1).saturating_sub(ex0) * (ey1 + 1).saturating_sub(ey0)) as u64;
             for y in ey0..=ey1 {
                 for x in ex0..=ex1 {
                     let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
@@ -981,6 +1031,7 @@ impl PolygonField {
             y0,
             width,
             distances,
+            measured,
         }
     }
 

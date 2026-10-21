@@ -62,6 +62,10 @@ pub(super) static BUILD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic:
 
 pub(super) static BUILD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The builds' modelled work in nanoseconds (`BuildCounts::work_seconds`).
+pub(super) static BUILD_WORK_NANOS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Routers built (`Router::new`: lattice, obstacles, pours) in this
 /// process and their seconds, summed over threads.
 pub fn build_totals() -> (u64, f64) {
@@ -97,6 +101,8 @@ pub struct ProcessAccounting {
     /// Routers built (lattices, obstacles, pours) and their seconds.
     pub builds: u64,
     pub build_seconds: f64,
+    /// Their work as modelled (`RoutingResult::build_work`).
+    pub build_work_seconds: f64,
     /// The preparation before the negotiation (escapes, skeletons, plane
     /// stubs, the global plan), in seconds.
     pub prepare_seconds: f64,
@@ -112,6 +118,7 @@ pub fn process_accounting() -> ProcessAccounting {
     ProcessAccounting {
         builds,
         build_seconds,
+        build_work_seconds: BUILD_WORK_NANOS.load(Relaxed) as f64 / 1.0e9,
         prepare_seconds: PROCESS_PREPARE.load(Relaxed) as f64 / 1.0e9,
         phases: PHASES
             .iter()

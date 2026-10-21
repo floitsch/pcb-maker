@@ -486,6 +486,10 @@ pub struct KiCadRunFacts {
     pub work_seconds: Option<f64>,
     /// The part of `work_seconds` that is KiCad's checks (a layout's).
     pub kicad_check_work_seconds: Option<f64>,
+    /// Route mode: the parts of `work_seconds` that are pour analyses and
+    /// fill probes, and lattice builds and lowerings (the rest is search).
+    pub pour_work_seconds: Option<f64>,
+    pub lattice_work_seconds: Option<f64>,
     pub wall_seconds: f64,
     pub outputs: BTreeMap<String, String>,
     pub skipped: Vec<String>,
@@ -522,6 +526,8 @@ impl KiCadRunFacts {
             cut: Vec::new(),
             work_seconds: None,
             kicad_check_work_seconds: None,
+            pour_work_seconds: None,
+            lattice_work_seconds: None,
             wall_seconds: 0.0,
             outputs: BTreeMap::new(),
             skipped: Vec::new(),
@@ -610,6 +616,17 @@ pub struct KiCadVerdict {
     /// DRC cache answered it or not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kicad_check_work_seconds: Option<f64>,
+    /// Route mode: the part of `work_seconds` that is the pour analyses
+    /// and fill probes (every phase's: the negotiation's pour refresh, the
+    /// finishing phases' pour checks, the manual spokes), modelled from
+    /// their counts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pour_work_seconds: Option<f64>,
+    /// Route mode: the part of `work_seconds` that is building the
+    /// routers' lattices and lowering the board, modelled from their
+    /// counts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lattice_work_seconds: Option<f64>,
     pub wall_seconds: f64,
     /// `work_seconds` over `wall_seconds`: about 1 where the work rates
     /// fit the machine (they are measured at the start unless pinned),
@@ -984,6 +1001,8 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         cut: facts.cut.clone(),
         work_seconds: facts.work_seconds,
         kicad_check_work_seconds: facts.kicad_check_work_seconds,
+        pour_work_seconds: facts.pour_work_seconds,
+        lattice_work_seconds: facts.lattice_work_seconds,
         wall_seconds: facts.wall_seconds,
         work_wall_ratio: work_wall_ratio(facts.work_seconds, facts.wall_seconds),
         work_rate: rate.expansions_per_second,

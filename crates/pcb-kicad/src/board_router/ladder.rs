@@ -38,6 +38,17 @@ pub(crate) struct ResumeLimits {
     pub negotiation: f64,
 }
 
+/// What a router did, as route mode's ladder charges it: its search
+/// expansions, and the work of its pour analyses and fill probes and of
+/// its build (seconds of an idle machine: pcb-router's `Router::pour_work`
+/// and `Router::build_work`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct RouterWork {
+    pub expansions: u64,
+    pub pour: f64,
+    pub build: f64,
+}
+
 /// What the ladder routes and checks with. route.rs's `KiCadRunner` routes
 /// the board; the tests' runner returns scripted results.
 pub(crate) trait LadderRunner: Sync {
@@ -64,13 +75,15 @@ pub(crate) trait LadderRunner: Sync {
     fn maps_mb(&self, probe: &Self::Probe) -> Option<f64>;
     /// Negotiates `work` seconds of work; the nets left unfinished.
     fn probe(&self, probe: &mut Self::Probe, work: f64, mode: usize) -> usize;
-    /// The router's search expansions so far.
-    fn expansions(&self, probe: &Self::Probe) -> u64;
+    /// What the router did so far, as the ladder charges it.
+    fn work(&self, probe: &Self::Probe) -> RouterWork;
+    /// The work of lowering `board` (`lower::lowering_work`).
+    fn lowering_work(&self, board: &Self::Board) -> f64;
     /// The router logs as `attempt` says (a probe beside others was quiet).
     fn speak(&self, probe: &mut Self::Probe, attempt: &KiCadBoardRouterConfig);
     /// Goes on from where the probe stopped, within `limits`; the routing
-    /// and the router's expansions in all. The router is gone after it.
-    fn resume(&self, probe: Self::Probe, limits: ResumeLimits) -> (Self::Routed, u64);
+    /// and the router's work in all. The router is gone after it.
+    fn resume(&self, probe: Self::Probe, limits: ResumeLimits) -> (Self::Routed, RouterWork);
     /// Writes a continued router's routing as the project in `directory`.
     fn write(
         &self,
@@ -244,6 +257,19 @@ fn work_of(expansions: u64) -> f64 {
     expansions as f64 / core::router::expansions_per_second()
 }
 
+/// An attempt's work beyond its search as the ladder counts it
+/// (`Ladder::extra_charge`): all of it (`charges_all`), its manual spokes
+/// (`charges_spokes`), or none.
+fn beyond_search(result: &KiCadBoardRouterResult, charges_all: bool, charges_spokes: bool) -> f64 {
+    if charges_all {
+        result.pour_work_seconds + result.build_work_seconds + result.lowering_work_seconds
+    } else if charges_spokes {
+        result.manual_spokes_work_seconds
+    } else {
+        0.0
+    }
+}
+
 /// Whether the ladder goes on after a rung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flow {
@@ -322,6 +348,17 @@ pub(crate) struct Ladder<'a> {
     /// ladder's work beside its search (`result_work`; not under
     /// `PCB_LADDER_UNCHARGED_SPOKES`, the count before 2026-10-22).
     charges_spokes: bool,
+    /// Route mode: whether all of an attempt's work counts (`result_work`:
+    /// its search, every pour analysis and fill probe, its lattice's build
+    /// and its board's lowering; not under `PCB_LADDER_UNCHARGED_POUR`,
+    /// the count before, search and manual spokes).
+    charges_all: bool,
+    /// Route mode, all work charged: whether a share of the bound becomes
+    /// a router's limits in search work by the routers' share of search so
+    /// far (`search_fraction`; not under `PCB_LADDER_SEARCH_SHARES`).
+    converts_shares: bool,
+    /// The ladder's work by kind (`work` is their sum).
+    pub(crate) charged: KiCadWorkCharges,
     /// Route mode: the work of the ladder's first attempt up to the end of
     /// its first negotiation iteration (0: none yet), which a fresh router
     /// does whatever its work deadline: no step starts with less left
@@ -466,6 +503,14 @@ impl<'a> Ladder<'a> {
             first_negotiation: 0.0,
             charges_spokes: work_bound.is_some()
                 && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none(),
+            charges_all: work_bound.is_some()
+                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none()
+                && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none(),
+            converts_shares: work_bound.is_some()
+                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none()
+                && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none()
+                && std::env::var_os("PCB_LADDER_SEARCH_SHARES").is_none(),
+            charged: KiCadWorkCharges::default(),
             first_iteration: 0.0,
             // No attempt starts with less than the last one's work left
             // before the run's nominal end (an attempt checks the deadline
@@ -616,31 +661,100 @@ impl<'a> Ladder<'a> {
     }
 
     /// An attempt's work as the ladder counts it: its search expansions
-    /// and, in route mode, its manual spokes (pour analyses and fill
-    /// probes after the negotiation, which no work deadline ends: Vortac's
-    /// panel spent 30 s of them in every attempt beside 5 s of search, and
-    /// the wall guard cut every run).
+    /// and, in route mode, the rest of what it did (`extra_charge`).
     fn result_work(&self, result: &KiCadBoardRouterResult) -> f64 {
-        work_of(result.expansions) + self.spoke_charge(result)
+        work_of(result.expansions) + self.extra_charge(result)
     }
 
-    /// The part of `result_work` beyond the search.
-    fn spoke_charge(&self, result: &KiCadBoardRouterResult) -> f64 {
-        if self.charges_spokes {
-            result.manual_spokes_work_seconds
+    /// The part of `result_work` beyond the search: in route mode every
+    /// pour analysis and fill probe of the attempt (its negotiation's pour
+    /// refresh, the finishing phases' pour checks, the manual spokes), its
+    /// lattice's build and its board's lowering, each modelled from what
+    /// it counted (`charges_all`, since 2026-10-22: brickpico's via
+    /// reduction did 8.5 s of pour work beside 25 s of search, ChengminLi
+    /// built 15 lattices in 40 thread seconds); under
+    /// `PCB_LADDER_UNCHARGED_POUR` its manual spokes alone (pour analyses
+    /// and fill probes after the negotiation, which no work deadline
+    /// ends: Vortac's panel spent 30 s of them in every attempt beside 5 s
+    /// of search, and the wall guard cut every run).
+    fn extra_charge(&self, result: &KiCadBoardRouterResult) -> f64 {
+        beyond_search(result, self.charges_all, self.charges_spokes)
+    }
+
+    /// Counts work of each kind in the ladder's (`charged`, `work`).
+    fn charge(&mut self, search: f64, pour: f64, build: f64, lowering: f64) {
+        self.charged.search_seconds += search;
+        self.charged.pour_seconds += pour;
+        self.charged.lattice_seconds += build;
+        self.charged.lowering_seconds += lowering;
+        self.work += search + pour + build + lowering;
+    }
+
+    /// Counts an attempt's work `times` (seeds side by side count as
+    /// that many attempts).
+    fn charge_result(&mut self, result: &KiCadBoardRouterResult, times: f64) {
+        let search = work_of(result.expansions) * times;
+        if self.charges_all {
+            self.charge(
+                search,
+                result.pour_work_seconds * times,
+                result.build_work_seconds * times,
+                result.lowering_work_seconds * times,
+            );
         } else {
-            0.0
+            self.charge(search, self.extra_charge(result) * times, 0.0, 0.0);
+        }
+    }
+
+    /// Route mode, all work charged: the share of the routers' work so far
+    /// that was search (`search_fraction`), 1 otherwise.
+    fn search_share(&self) -> f64 {
+        if self.converts_shares {
+            let charged = &self.charged;
+            search_fraction(
+                charged.search_seconds,
+                charged.search_seconds + charged.pour_seconds + charged.lattice_seconds,
+            )
+        } else {
+            1.0
+        }
+    }
+
+    /// A share of the ladder's work (`charged`, seconds of all the work
+    /// charged) as a router's limit in its search work: the router stops
+    /// on its search alone, and its pour analyses and build come on top
+    /// in the proportion they had so far. Unchanged before the first
+    /// search, in a layout's ladder and under `PCB_LADDER_SEARCH_SHARES`.
+    fn router_work(&self, charged: f64) -> f64 {
+        charged * self.search_share()
+    }
+
+    /// Logs a router's limits as the ladder gave them (`router_work`).
+    fn note_shares(&self, what: &str, deadline: Option<f64>, negotiation: Option<f64>) {
+        if self.converts_shares {
+            eprintln!(
+                "ladder: {what}: work deadline {}, negotiation {} (search work, {:.3} of the routers' work so far)",
+                deadline.map_or("none".to_string(), |deadline| format!("{deadline:.2} s")),
+                negotiation.map_or("its own".to_string(), |seconds| format!("{seconds:.2} s")),
+                self.search_share()
+            );
         }
     }
 
     /// Route mode: notes the ladder's first attempt's first negotiation
-    /// iteration (`first_iteration`).
+    /// iteration (`first_iteration`): its search and, with all work
+    /// charged, its lattice's build and its board's lowering before it.
     fn note_first_iteration(&mut self, result: &KiCadBoardRouterResult) {
         if self.work_bound.is_some()
             && self.first_iteration == 0.0
             && std::env::var_os("PCB_LADDER_NO_FIRST_ITERATION_GATE").is_none()
         {
-            self.first_iteration = work_of(result.first_iteration_expansions);
+            self.first_iteration = work_of(result.first_iteration_expansions)
+                + if self.charges_all {
+                    result.build_work_seconds + result.lowering_work_seconds
+                } else {
+                    0.0
+                };
         }
     }
 
@@ -651,7 +765,9 @@ impl<'a> Ladder<'a> {
 
     /// Counts `checks` KiCad checks as work.
     pub(crate) fn charge_checks(&mut self, checks: usize) {
-        self.work += self.checks_charged.add(checks);
+        let work = self.checks_charged.add(checks);
+        self.charged.kicad_check_seconds += work;
+        self.work += work;
     }
 
     /// An attempt's configuration as it routes: without KiCad's check,
@@ -888,6 +1004,9 @@ impl<'a> Ladder<'a> {
         for mode in 0..self.modes.len() {
             let attempt = self.rung_config(mode);
             let board = runner.lower(&attempt, self.modes[mode].0)?;
+            if self.charges_all {
+                self.charge(0.0, 0.0, 0.0, runner.lowering_work(&board));
+            }
             let (layers, connections) = runner.size(&board);
             if mode == 0 && (layers < 4 || connections < 120) {
                 break;
@@ -1049,7 +1168,12 @@ impl<'a> Ladder<'a> {
                 else {
                     continue;
                 };
-                self.work += work_of(runner.expansions(&router));
+                let probed = runner.work(&router);
+                if self.charges_all {
+                    self.charge(work_of(probed.expansions), probed.pour, probed.build, 0.0);
+                } else {
+                    self.charge(work_of(probed.expansions), 0.0, 0.0, 0.0);
+                }
                 eprintln!(
                     "probe {}: {unfinished} nets unfinished after {:.0} s{}",
                     self.probe_name(mode),
@@ -1125,11 +1249,12 @@ impl<'a> Ladder<'a> {
         let remaining = self
             .bound_left()
             .unwrap_or_else(|| (self.ladder_budget - self.spent(self.work)).max(60.0));
-        let probed = runner.expansions(&router);
+        let probe_work = runner.work(&router);
+        let probed = probe_work.expansions;
         // The router's own probe is in its work already.
         let run_work = (
             self.ladder_budget,
-            self.ladder_budget - self.spent(self.work) + work_of(probed),
+            self.router_work(self.ladder_budget - self.spent(self.work)) + work_of(probed),
         );
         // It stops where the run's work ends, not where the wall clock does
         // (the deadline stays as the guard against load).
@@ -1137,10 +1262,11 @@ impl<'a> Ladder<'a> {
             Some(work_of(probed) + (self.work_left() - self.check_charge).max(0.0))
         } else {
             // Route mode: it stops where the ladder's bound ends.
-            self.bound_left().map(|left| work_of(probed) + left)
+            self.bound_left()
+                .map(|left| work_of(probed) + self.router_work(left))
         };
         let resumed = if self.work_bound.is_some() {
-            bounded_negotiation(remaining / 3.0, remaining)
+            self.router_work(bounded_negotiation(remaining / 3.0, remaining))
         } else {
             (remaining / 3.0).clamp(60.0, 900.0)
         };
@@ -1148,6 +1274,7 @@ impl<'a> Ladder<'a> {
             "the continuation of the probed rung {}",
             self.rung_name(mode)
         );
+        self.note_shares(&name, deadline_work, Some(resumed));
         let panics = self.panic_due("continuation");
         let outcome = isolate(|| {
             if panics {
@@ -1162,10 +1289,20 @@ impl<'a> Ladder<'a> {
                 },
             )
         });
-        let Some((routed, router_expansions)) = self.survived(&name, outcome) else {
+        let Some((routed, resumed_work)) = self.survived(&name, outcome) else {
             return Ok(());
         };
-        self.work += work_of(router_expansions - probed);
+        let router_expansions = resumed_work.expansions;
+        if self.charges_all {
+            self.charge(
+                work_of(router_expansions - probed),
+                resumed_work.pour - probe_work.pour,
+                0.0,
+                0.0,
+            );
+        } else {
+            self.charge(work_of(router_expansions - probed), 0.0, 0.0, 0.0);
+        }
         if output_directory.exists() {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
         }
@@ -1184,8 +1321,13 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let mut result = written?;
-        let spokes = self.spoke_charge(&result);
-        self.work += spokes;
+        // The probe's work and its own are counted: with all work charged,
+        // its pour analyses (the manual spokes' among them) too; else its
+        // manual spokes.
+        if !self.charges_all {
+            let spokes = self.extra_charge(&result);
+            self.charge(0.0, spokes, 0.0, 0.0);
+        }
         self.note_first_iteration(&result);
         result.pours = self.pours_name(connect, skeleton).into();
         result.maps_mb = maps_mb.unwrap_or(0.0);
@@ -1212,14 +1354,13 @@ impl<'a> Ladder<'a> {
             result.vias,
             self.started.elapsed().as_secs_f64()
         );
-        self.slowest = Some((self.result_work(&result), result.grid_pitch_mm));
-        self.last_attempt_work = work_of(router_expansions) + spokes;
+        // The whole router's work, its probe's included (its board's
+        // lowering came with the probes).
+        let attempt_work = self.result_work(&result);
+        self.slowest = Some((attempt_work, result.grid_pitch_mm));
+        self.last_attempt_work = attempt_work;
         self.last_attempt_pitch = result.grid_pitch_mm;
-        self.keep_reserves(
-            opens,
-            work_of(router_expansions) + spokes,
-            probe_seconds + resumed,
-        );
+        self.keep_reserves(opens, attempt_work, probe_seconds + resumed);
         self.probe_complete = opens.0 == 0;
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
@@ -1394,7 +1535,7 @@ impl<'a> Ladder<'a> {
         // would not have reached counting for nothing.
         let negotiation = config.negotiation_seconds.is_none().then(|| {
             if let Some(left) = self.rung_left() {
-                bounded_negotiation(left / modes.len() as f64 / 3.0, left)
+                self.router_work(bounded_negotiation(left / modes.len() as f64 / 3.0, left))
             } else {
                 let remaining = (ladder_budget - self.spent(self.work)).max(0.0);
                 (remaining / modes.len() as f64 / 3.0).clamp(60.0, 900.0)
@@ -1408,7 +1549,7 @@ impl<'a> Ladder<'a> {
             negotiation,
             route_deadline: None,
             share_fixed: false,
-            left: (ladder_budget - self.spent(self.work)).max(0.0),
+            left: self.router_work((ladder_budget - self.spent(self.work)).max(0.0)),
             work_left: self.work_left().max(0.0),
         };
         // A probed rung continued with what it had is not run again; the
@@ -1479,16 +1620,21 @@ impl<'a> Ladder<'a> {
             }
             if self.work_bound.is_some() {
                 if self.best.is_none() {
-                    plan.route_deadline = self.bound_left();
+                    plan.route_deadline = self.bound_left().map(|left| self.router_work(left));
                 } else if !plan.share_fixed {
                     plan.share_fixed = true;
-                    plan.route_deadline = self
-                        .rung_left()
-                        .map(|left| rung_share(left, candidates.len() - position));
+                    plan.route_deadline = self.rung_left().map(|left| {
+                        self.router_work(rung_share(left, candidates.len() - position))
+                    });
                 }
             }
             let attempt = self.rung_attempt(mode, pitch, &plan);
             if ran[mode].is_none() {
+                self.note_shares(
+                    &format!("the rung {}", self.rung_name(mode)),
+                    attempt.router_deadline_work,
+                    attempt.negotiation_seconds,
+                );
                 // The first rung of a pitch without a board yet runs alone
                 // (it often completes the board); after it, the rest run
                 // side by side, each a router of this pitch and a KiCad
@@ -1534,7 +1680,7 @@ impl<'a> Ladder<'a> {
             // pitches; a seed retry does not change it.
             // In work, as the ladder's budget.
             let attempt_seconds = self.result_work(&result);
-            self.work += attempt_seconds;
+            self.charge_result(&result, 1.0);
             self.note_first_iteration(&result);
             // Open connections often depend on the order: route the same
             // attempt a few perturbed ways and keep the better board.
@@ -1775,7 +1921,7 @@ impl<'a> Ladder<'a> {
                 retry,
             ));
         } else if let Some(left) = self.rung_left() {
-            seeded.router_deadline_work = Some(rung_share(left, retry));
+            seeded.router_deadline_work = Some(self.router_work(rung_share(left, retry)));
         }
         let retry_directory = output_directory.with_extension("seeds");
         if retry_directory.exists() {
@@ -1797,7 +1943,7 @@ impl<'a> Ladder<'a> {
                 other.pours = result.pours.clone();
                 // The seeds run side by side: about `retry` times
                 // one's work.
-                self.work += self.result_work(&other) * retry as f64;
+                self.charge_result(&other, retry as f64);
                 let quality = self.quality();
                 self.judge_isolated(runner, &seeds_name, &mut other, &retry_directory, quality)?
                     .map(|judged| (other, judged))
@@ -1939,7 +2085,7 @@ impl<'a> Ladder<'a> {
                     retry,
                 ));
             } else if let Some(left) = self.rung_left() {
-                seeded.router_deadline_work = Some(rung_share(left, retry));
+                seeded.router_deadline_work = Some(self.router_work(rung_share(left, retry)));
             }
             next_seed += retry as u64;
             if scratch.exists() {
@@ -1966,7 +2112,7 @@ impl<'a> Ladder<'a> {
             };
             let mut other = other?;
             other.pours = best_pours;
-            self.work += self.result_work(&other) * retry as f64;
+            self.charge_result(&other, retry as f64);
             let Some(other_judged) =
                 self.judge_isolated(runner, &name, &mut other, &scratch, quality)?
             else {
@@ -2046,9 +2192,12 @@ impl<'a> Ladder<'a> {
         } else if let Some(left) = self.bound_left() {
             // Route mode: within what is left of the ladder's bound, its
             // negotiation at most half of that.
-            step.negotiation_seconds =
-                Some(step.negotiation_seconds.unwrap_or(900.0).min(0.5 * left));
-            step.router_deadline_work = Some(left);
+            step.negotiation_seconds = Some(
+                step.negotiation_seconds
+                    .unwrap_or(900.0)
+                    .min(self.router_work(0.5 * left)),
+            );
+            step.router_deadline_work = Some(self.router_work(left));
         }
     }
 
@@ -2135,6 +2284,11 @@ impl<'a> Ladder<'a> {
             let mut narrowed = attempt;
             narrowed.use_narrow_signals = Some(true);
             self.step_budget(&kept, &mut narrowed);
+            self.note_shares(
+                "the narrow-signal step",
+                narrowed.router_deadline_work,
+                narrowed.negotiation_seconds,
+            );
             // A project that takes clearance findings as warnings gets its
             // minimum clearance in the same attempt (the A13 module's
             // designer drew 0.1016 tracks 0.149 from balls in classes of
@@ -2150,6 +2304,7 @@ impl<'a> Ladder<'a> {
                 }
                 narrow_step_relaxed = true;
             }
+            let (charges_all, charges_spokes) = (self.charges_all, self.charges_spokes);
             let line = format!(
                 "attempt with signals at {narrow} mm{}",
                 config
@@ -2169,7 +2324,8 @@ impl<'a> Ladder<'a> {
                         opens.1,
                         result.vias,
                         result.routing_seconds,
-                        work_of(result.expansions) + result.manual_spokes_work_seconds
+                        work_of(result.expansions)
+                            + beyond_search(result, charges_all, charges_spokes)
                     )
                 },
                 true,
@@ -2252,7 +2408,7 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let mut result = routed?;
-        self.work += self.result_work(&result);
+        self.charge_result(&result, 1.0);
         result.pours = self
             .best
             .as_ref()

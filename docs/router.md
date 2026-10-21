@@ -1176,6 +1176,12 @@ did 17.6 s in its one iteration (45 s of work for a bound of 32 s); the
 step is then skipped, with why. `PCB_LADDER_UNCHARGED_SPOKES` and
 `PCB_LADDER_NO_FIRST_ITERATION_GATE` restore the count and the start rule
 before (for attributing rows). The layout's ladder counts neither.
+Since the same day route mode's ladder counts all of an attempt's work
+(every pour analysis and fill probe, its lattice's build, its board's
+lowering; "All the work charged" below) and gives each router its share
+in search work by the routers' proportion of search so far; the first
+iteration that a step needs room for includes the first attempt's
+lattice and lowering.
 
 **The ladder in code, and its faults** (2026-10-21). The ladder is
 `Ladder` in board_router/ladder.rs, its steps in order (`Ladder::run`):
@@ -1356,9 +1362,11 @@ clean-up's last line says how much of its budget it used and how much of
 that was pour analyses. Not counted: the negotiation's stamping and
 conflict bookkeeping (its limit is search expansions; at one thread its
 wall time runs 10-40 % ahead of search and pour work), the pour analyses
-in the ladder's and the layout's work tallies and in `deadline_work`
-(those still count search expansions; route mode's ladder counts the
-manual spokes' since 2026-10-22, "The work bound in route mode").
+in the layout's work tallies and in `deadline_work` (those still count
+search expansions). Route mode's ladder counts the manual spokes' since
+2026-10-22 ("The work bound in route mode") and every pour analysis,
+lattice build and lowering since the same day ("All the work charged"
+below).
 
 **The manual spokes** (2026-10-22). `add_manual_spokes` runs after
 every finish: per starved pad a full pour analysis, then one per
@@ -1384,7 +1392,82 @@ rate and the guards' stretch (below), then thread seconds (routers side
 by side add up) of the lattices built, the lowerings, the routers'
 preparation, each phase with the search and pour work it counted, and
 kicad-cli's runs. What the phases' wall clock has beyond their work is
-what the budgets do not see.
+what the budgets do not see. Since "All the work charged" the line
+starts with the ladder's work by kind (search, pour, lattices,
+lowerings, KiCad's checks; `wall_accounting.charged`) and gives the
+lattices' and lowerings' modelled work beside their thread seconds.
+
+**All the work charged** (2026-10-22). Route mode's ladder counted an
+attempt's search expansions and its manual spokes; the rest of what a
+router does cost wall clock and no work: the negotiation's pour refresh
+and the finishing phases' pour checks (on the expansion tier 0 to 15 s
+a board beside a budget of 30, brickpico 15.3 s), the lattice builds
+(ChengminLi's 16 classes: 15 builds, 24 to 40 thread seconds), the
+stamping of the static maps, the lowerings. Now an attempt's work is
+all of it, each priced from what it counted, the same on every machine
+and at every load (a measured duration would make the ladder's
+decisions follow the load):
+
+| charge | where it happens | unit (reference nanoseconds) | calibration |
+|---|---|---|---|
+| search | every phase's searches | `expansions_per_second` (3.15e6 a second) | 2026-10-16, unchanged |
+| pour analyses and fill probes | the negotiation's pour refresh, `unfinished` (the probes' ranking), resolve, clean-up, via reduction, thermal spokes, stitching, manual spokes (`RoutingResult::pour_work`, `Router::pour_work`) | `POUR_NODE_NANOS` 23 per node inside the pour, `POUR_STAMP_NANOS` 6 per stamp, `PROBE_ITEM_NANOS` 9, `PROBE_QUERY_NANOS` 850, `PROBE_VERTEX_NANOS` 9 | 2026-10-15, unchanged (0.89 to 1.12 of the analyses' wall clock per board) |
+| lattice builds | `Router::new`: the static maps of every class (the outline, every obstacle's nodes, the tight steps), the nets' terminals and pour masks, the occupancy and search records (`BuildCounts`, `RoutingResult::build_work`) | `BUILD_MAP_NANOS` 22 per node of every class's maps (cells x layers x classes), `BUILD_TEST_NANOS` 11 per node tested, `BUILD_EDGE_NANOS` 2.75 per shape edge measured, `BUILD_STEP_NANOS` 22 per edge a tight node's eight steps measure | 2026-10-22, below |
+| lowerings | `lower`, per attempt and per rung probe's board | `LOWERING_EXPRESSION_NANOS` 26 per expression of the board file | 2026-10-22, below |
+| KiCad's checks | layouts only | `CHECK_SECONDS` 3.6 s and the hatch and outline terms | 2026-10-15 and 2026-10-22, unchanged |
+
+All are seconds of the reference at one thread, scaled to the process's
+rate as the pour model is (`reference_time_scale`). The build's
+constants were fitted on 83 distinct builds of the expansion tier's
+boards and the named boards (route mode at 4 s, one thread,
+`PCB_ROUTER_BUILD_TRACE`, the fastest of each build's repeats scaled by
+the machine's measured share at load 20 to 30): the model is 1.0 of the
+sum, 0.6 to 1.6 per board (10 % to 90 %), and two builds of one board
+in one process differ by 1.34 times (median, at most 2) at that load,
+so the spread is mostly the load's. A first model that counted only
+the obstacles' nodes and the polygons' corners came out 0.28 to 2.8 a
+board (the outline, the tight steps, the pour masks and the fields of
+large polygons were missing).
+ChengminLi's builds alone at one thread are 0.74 of the model's (1.99 s
+for 1.48 s at 0.1 mm, 3.67 for 2.61 at 0.075 mm); three side by side
+at load 16 to 30 took 2.7 times the model, as its search did (the
+lattices of 16 classes are memory bound). On the expansion tier the
+lattices' model is 0.87 of their thread seconds times the measured
+share, the search's and pour model's 1.28. A lowering is 0.5 to 22 ms
+(the median 19 and 26 ns an expression in two runs), under 0.1 % of
+any budget, and charged for completeness.
+
+The ladder charges each kind (`Ladder::charge`, `charged`): an
+attempt's result carries its router's pour and build work and its
+lowering (`pour_work_seconds`, `build_work_seconds`,
+`lowering_work_seconds` in its report); a probe counts its search, its
+pour work and its lattice (`LadderRunner::work`), the rungs' lowerings
+for the probes count when they happen, the probed rung's continuation
+its own search and pour work beyond its probe's. The routers stop as
+before on their search alone (`deadline_work`, the negotiation's
+limit): a router given the same share searches byte for byte as before.
+What changes is the share: the ladder turns a share of what is left
+under its bound into a router's limits in search work by the share of
+search in the routers' work so far (`search_fraction`, at least a
+quarter, 1 before any search; the lowerings apart): the continuation's
+deadline and negotiation, the rungs' deadlines and negotiation and
+their `run_work`, the seeds' deadlines, the steps' deadline and
+negotiation (`router_work`). The ladder's first attempt, or its rung
+probes, have no proportion to go by: they go beyond the bound by their
+own pour work and lattices (the five rows of the expansion tier above
+36 s of work: musicbrain 42.6 s, a first attempt of 34 s of search and
+8.4 s of pour work), and VortacDesign's probes alone are 54 s of work
+on a budget of 30 (34.6 s of it the three connect probes' pour
+refresh), so its continuation gets nothing and the board goes from 125
+to 202 open. The verdict has `pour_work_seconds` and
+`lattice_work_seconds` (with the lowerings) beside `work_seconds`.
+
+`PCB_LADDER_UNCHARGED_POUR` restores the count before (search and manual
+spokes, search shares), `PCB_LADDER_SEARCH_SHARES` charges all but
+gives the routers their shares as search work; `PCB_ROUTER_BUILD_TRACE`
+prints every build's and lowering's counts, modelled work and wall
+clock (for recalibrating). A layout's ladder and its work tallies are
+unchanged: they count search expansions and KiCad's checks.
 
 **The search's calibration** (2026-10-16). `EXPANSIONS_PER_SECOND` is
 the reference's rate: search expansions per second of a router's phases

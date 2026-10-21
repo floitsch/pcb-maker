@@ -86,6 +86,10 @@ impl Router {
     pub fn new(board: &Board, config: &Config) -> Self {
         let started = std::time::Instant::now();
         let router = Self::build(board, config);
+        BUILD_WORK_NANOS.fetch_add(
+            (router.build_work * 1.0e9) as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         BUILD_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         BUILD_NANOS.fetch_add(
             started.elapsed().as_nanos() as u64,
@@ -125,6 +129,7 @@ impl Router {
                 )
             })
             .collect();
+        let statics_built = built.elapsed().as_secs_f64();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
         let step = grid.pitch * std::f64::consts::SQRT_2;
         let variants = class_rules
@@ -303,6 +308,7 @@ impl Router {
             in_via_reduction: false,
             island_stubs: 0,
             manual_spokes_work: 0.0,
+            build_work: 0.0,
             first_iteration_expansions: 0,
             frame_hook: None,
             search_seconds: 0.0,
@@ -327,13 +333,43 @@ impl Router {
                 }
             }
         }
+        let nets_started = built.elapsed().as_secs_f64();
         router.nets = (0..board.nets.len())
             .map(|net| router.prepare_net(net as NetId))
             .collect();
+        let nets_built = built.elapsed().as_secs_f64();
         router.guard = router.thermal_guards();
         router.mark_covered();
         router.mark_via_cells();
         router.build_hot();
+        let counts = router.build_counts();
+        router.build_work = counts.work_seconds();
+        if std::env::var_os("PCB_ROUTER_BUILD_TRACE").is_some() {
+            // For calibrating `BUILD_*_NANOS`: the counts beside the wall
+            // clock, and where it went.
+            let total = built.elapsed().as_secs_f64();
+            let statics_tests: u64 = router.statics.iter().map(|maps| maps.tests).sum();
+            let statics_edges: u64 = router.statics.iter().map(|maps| maps.vertex_tests).sum();
+            eprintln!(
+                "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {}",
+                counts.map_nodes,
+                counts.tests,
+                counts.edges,
+                counts.step_edges,
+                cells * layers * router.searched.iter().filter(|searched| **searched).count(),
+                counts.work_nanos(),
+                total * 1.0e9,
+                statics_built * 1.0e9,
+                (nets_started - statics_built) * 1.0e9,
+                (nets_built - nets_started) * 1.0e9,
+                (total - nets_built) * 1.0e9,
+                board.classes.len(),
+                router.searched.iter().filter(|searched| **searched).count(),
+                board.obstacles.len(),
+                board.nets.len(),
+                board.planes.len(),
+            );
+        }
         if config.verbose {
             eprintln!(
                 "{} (built in {:.1}s)",
@@ -342,6 +378,28 @@ impl Router {
             );
         }
         router
+    }
+
+    /// What building this router took, counted (`BuildCounts`).
+    pub(super) fn build_counts(&self) -> BuildCounts {
+        let layers = self.board.layer_count as u64;
+        let prepared = |index: usize| -> u64 {
+            self.nets
+                .iter()
+                .map(|state| state.prepare_counts[index])
+                .sum()
+        };
+        BuildCounts {
+            map_nodes: self.grid.cells() as u64 * layers * self.statics.len() as u64,
+            tests: self.statics.iter().map(|maps| maps.tests).sum::<u64>() + prepared(0),
+            edges: self
+                .statics
+                .iter()
+                .map(|maps| maps.vertex_tests)
+                .sum::<u64>()
+                + prepared(1),
+            step_edges: self.statics.iter().map(|maps| maps.tight_tests).sum(),
+        }
     }
 
     /// What the router's lattice maps hold, in megabytes per part, and in
@@ -566,5 +624,41 @@ impl Router {
             let relative = (layer_share - least).max(0.0) / (1.0 - least).max(1.0e-3);
             self.layer_cut[layer] = 1.0 + (self.config.plane_cut_cost as f32 - 1.0) * relative;
         }
+    }
+}
+
+/// What building a router took, counted: the work `Router::new` charges
+/// (`RoutingResult::build_work`) at `BUILD_*_NANOS` each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BuildCounts {
+    /// Lattice nodes of every class's maps (cells times layers times
+    /// classes).
+    pub map_nodes: u64,
+    /// Nodes tested: against the outline and every obstacle in the
+    /// static maps, inside the nets' pads and pour boxes.
+    pub tests: u64,
+    /// The shape edges those tests measured (one for a circle or a
+    /// capsule, the corners of a polygon measured edge by edge, a pour's
+    /// corners for a node it may fill, the outline's per row).
+    pub edges: u64,
+    /// The edges the nodes near an obstacle measure their eight steps
+    /// against (`mark_tight_edges`: a segment against each edge).
+    pub step_edges: u64,
+}
+
+impl BuildCounts {
+    /// The build's work in nanoseconds of the reference machine.
+    pub fn work_nanos(&self) -> f64 {
+        self.map_nodes as f64 * BUILD_MAP_NANOS
+            + self.tests as f64 * BUILD_TEST_NANOS
+            + self.edges as f64 * BUILD_EDGE_NANOS
+            + self.step_edges as f64 * BUILD_STEP_NANOS
+    }
+
+    /// The build's work in seconds at this process's rate (the
+    /// reference's nanoseconds scaled as the pour model's are,
+    /// `reference_time_scale`).
+    pub fn work_seconds(&self) -> f64 {
+        self.work_nanos() / 1.0e9 * reference_time_scale()
     }
 }

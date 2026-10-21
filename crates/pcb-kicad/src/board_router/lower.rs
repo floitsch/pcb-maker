@@ -226,11 +226,51 @@ fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, Stri
 
 pub(crate) struct Lowered {
     pub board: core::Board,
+    /// The board file's expressions (`expression_count`): its lowering's
+    /// work is `lowering_work_of` them.
+    pub expressions: u64,
 }
 
 static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 static LOWER_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The lowerings' modelled work in nanoseconds (`lowering_work`).
+static LOWER_WORK_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A lowering's work in nanoseconds of the reference per expression of
+/// the board file (an atom or a list: `expression_count`): measured on
+/// the expansion tier's boards and the named boards, 162 lowerings at
+/// one thread in each of two runs, the median 26 and 19 ns (10 % to
+/// 90 %: 13 to 55 ns), 0.5 to 22 ms a lowering. Route mode's ladder
+/// charges it with the attempt that lowers (docs/router.md, "All the
+/// work charged").
+pub(crate) const LOWERING_EXPRESSION_NANOS: f64 = 26.0;
+
+/// The expressions (atoms and lists) of a parsed board file.
+pub(crate) fn expression_count(pcb: &Expr) -> u64 {
+    match pcb {
+        Expr::List(items) => 1 + items.iter().map(expression_count).sum::<u64>(),
+        _ => 1,
+    }
+}
+
+/// The work of one lowering of `pcb`, modelled, in seconds at this
+/// process's rate (the reference's nanoseconds scaled as the pour
+/// model's are).
+pub(crate) fn lowering_work(pcb: &Expr) -> f64 {
+    lowering_work_of(expression_count(pcb))
+}
+
+/// `lowering_work` of a board file of `expressions` expressions.
+pub(crate) fn lowering_work_of(expressions: u64) -> f64 {
+    expressions as f64 * LOWERING_EXPRESSION_NANOS / 1.0e9 * core::router::reference_time_scale()
+}
+
+/// The modelled work of every lowering of this process so far, seconds.
+pub(crate) fn lowering_work_total() -> f64 {
+    LOWER_WORK_NANOS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1.0e9
+}
 
 /// Calls of `lower` in this process and their seconds (summed over
 /// threads), for the board check's line.
@@ -252,9 +292,33 @@ pub(crate) fn lower(
     let lowered = lower_board(pcb, config, connect_pours);
     LOWER_CALLS.fetch_add(1, Relaxed);
     LOWER_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+    let expressions = expression_count(pcb);
+    LOWER_WORK_NANOS.fetch_add((lowering_work_of(expressions) * 1.0e9) as u64, Relaxed);
     // A board the router's maps cannot hold (its nets in 16 bits, its
     // layers in 32) is the input's fault, not a panic in the router.
-    let lowered = lowered?;
+    let mut lowered = lowered?;
+    lowered.expressions = expressions;
+    if std::env::var_os("PCB_ROUTER_BUILD_TRACE").is_some() {
+        let board = &lowered.board;
+        eprintln!(
+            "lowering trace: expressions {} obstacles {} nets {} terminals {} planes {} plane_vertices {} seconds {:.5}",
+            expressions,
+            board.obstacles.len(),
+            board.nets.len(),
+            board
+                .nets
+                .iter()
+                .map(|net| net.terminals.len())
+                .sum::<usize>(),
+            board.planes.len(),
+            board
+                .planes
+                .iter()
+                .map(|plane| plane.polygon.len())
+                .sum::<usize>(),
+            started.elapsed().as_secs_f64()
+        );
+    }
     core::grid::check_capacity(&lowered.board).map_err(crate::verdict::input_error)?;
     Ok(lowered)
 }
@@ -1524,6 +1588,7 @@ fn lower_board(
             pad_spokes,
             merged_pads,
         },
+        expressions: 0,
     })
 }
 

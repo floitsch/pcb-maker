@@ -311,6 +311,8 @@ impl Router {
             island_stubs: self.island_stubs,
             manual_spokes_work: self.manual_spokes_work,
             first_iteration_expansions: self.first_iteration_expansions,
+            pour_work: self.pour_work_seconds(),
+            build_work: self.build_work,
         }
     }
 

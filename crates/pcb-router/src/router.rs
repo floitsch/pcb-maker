@@ -53,6 +53,7 @@ mod update;
 mod vias;
 mod wall;
 
+pub use build::BuildCounts;
 pub use config::Config;
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
@@ -189,6 +190,26 @@ pub const POUR_STAMP_NANOS: u64 = 6;
 pub const PROBE_ITEM_NANOS: u64 = 9;
 pub const PROBE_QUERY_NANOS: u64 = 850;
 pub const PROBE_VERTEX_NANOS: u64 = 9;
+/// A router's build (`Router::new`: the static maps of every rule class,
+/// the nets' terminals and pour masks, the search records), in
+/// nanoseconds of an idle machine (`BuildCounts::work_nanos`): per lattice
+/// node of every map (a node of a layer, for every class: the maps'
+/// allocation, the outline fill, the tile counts, the search records),
+/// per node tested (against the outline and the obstacles in the static
+/// maps, inside the nets' pads and pour boxes), per shape edge those
+/// tests measure and per edge a node near an obstacle measures its eight
+/// steps against (a segment against a segment). Route mode's ladder
+/// charges it with each attempt (docs/router.md, "All the work
+/// charged"). Fitted 2026-10-22 on 83 distinct builds of the expansion
+/// tier's boards and the named boards (route mode at 4 s, one thread,
+/// the fastest of each build's repeats, scaled by the machine's measured
+/// share at load 20 to 30): the sum 1.0 of the measured, per board 0.6
+/// to 1.6 (10 % to 90 %); repeats of one build in one process differ by
+/// 1.34 times (median) and up to 2 under that load.
+pub const BUILD_MAP_NANOS: f64 = 22.0;
+pub const BUILD_TEST_NANOS: f64 = 11.0;
+pub const BUILD_EDGE_NANOS: f64 = 2.75;
+pub const BUILD_STEP_NANOS: f64 = 22.0;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -308,6 +329,9 @@ struct NetState {
     /// Node ranges (x0, y0, x1, y1) around the net's narrow pads where it
     /// routes at the neck width.
     neck_zones: Vec<(usize, usize, usize, usize)>,
+    /// What preparing the net took, counted (`BuildCounts`): nodes tested
+    /// and the shape edges measured (its terminals' nodes, its pour masks).
+    prepare_counts: [u64; 2],
 }
 
 #[derive(Clone)]
@@ -1015,6 +1039,9 @@ pub struct Router {
     island_stubs: usize,
     /// `RoutingResult::manual_spokes_work`.
     manual_spokes_work: f64,
+    /// `RoutingResult::build_work`: this router's build, modelled
+    /// (`BuildCounts::work_seconds`).
+    build_work: f64,
     /// `RoutingResult::first_iteration_expansions` (0 before it).
     first_iteration_expansions: u64,
     search_seconds: f64,

@@ -196,6 +196,26 @@ pub(crate) fn first_iteration_fits(left: f64, first_iteration: f64) -> bool {
     left >= first_iteration
 }
 
+/// Route mode, all work charged: the least share of an attempt's charged
+/// work its search is taken for when the ladder turns a share of its
+/// bound into a router's limits (`search_fraction`).
+pub(crate) const MIN_SEARCH_FRACTION: f64 = 0.25;
+
+/// Route mode, all work charged: the share of the routers' charged work
+/// (`router` seconds: search, pour analyses and fill probes, lattice
+/// builds) that was search (`search` seconds), by which a share of the
+/// ladder's bound becomes a router's limits in search work (a router's
+/// deadline and negotiation count its search alone; what it does beside
+/// comes on top in the same proportion as so far). 1 before any search,
+/// at least `MIN_SEARCH_FRACTION`.
+pub(crate) fn search_fraction(search: f64, router: f64) -> f64 {
+    if search <= 0.0 || router <= search {
+        1.0
+    } else {
+        (search / router).max(MIN_SEARCH_FRACTION)
+    }
+}
+
 /// Which attempts of a ladder KiCad checks. An attempt's quality is the
 /// router's open count (unconnected terminals and internal violations)
 /// plus KiCad's unconnected items, then KiCad's starved thermals, then

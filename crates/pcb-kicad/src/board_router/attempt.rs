@@ -90,7 +90,7 @@ pub(super) fn route_kicad_board_once(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Lowered { board } = lower(&pcb, config, connect_pours)?;
+    let Lowered { board, expressions } = lower(&pcb, config, connect_pours)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
@@ -157,6 +157,7 @@ pub(super) fn route_kicad_board_once(
         [lowering_seconds, routing_seconds],
     )?;
     written.maps_mb = maps_mb;
+    written.lowering_work_seconds = lowering_work_of(expressions);
     Ok(written)
 }
 

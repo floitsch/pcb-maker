@@ -155,6 +155,7 @@ pub fn route_kicad_board(
         resident_mb()
     );
     let runner = KiCadRunner {
+        lowering_work: lowering_work(&parsed),
         parsed: &parsed,
         layer_names: layer_table.names.clone(),
         source_directory,
@@ -273,7 +274,11 @@ pub fn route_kicad_board(
             ladder.work, ladder.ladder_budget
         );
     }
-    let accounting = KiCadWallAccounting::now(ladder.started.elapsed().as_secs_f64(), ladder.work);
+    let accounting = KiCadWallAccounting::now(
+        ladder.started.elapsed().as_secs_f64(),
+        ladder.work,
+        ladder.charged,
+    );
     eprintln!("{}", accounting.line());
     result.wall_accounting = Some(accounting);
     result.kicad_checks_charged = ladder.checks_charged.checks;
@@ -301,6 +306,8 @@ struct KiCadRunner<'a> {
     source_directory: &'a Path,
     board_id: &'a str,
     memory_mb: Option<f64>,
+    /// The work of one lowering of `parsed` (`lowering_work`).
+    lowering_work: f64,
 }
 
 impl LadderRunner for KiCadRunner<'_> {
@@ -371,8 +378,16 @@ impl LadderRunner for KiCadRunner<'_> {
         unfinished
     }
 
-    fn expansions(&self, router: &core::router::Router) -> u64 {
-        router.expansions()
+    fn work(&self, router: &core::router::Router) -> RouterWork {
+        RouterWork {
+            expansions: router.expansions(),
+            pour: router.pour_work(),
+            build: router.build_work(),
+        }
+    }
+
+    fn lowering_work(&self, _: &core::Board) -> f64 {
+        self.lowering_work
     }
 
     fn speak(&self, router: &mut core::router::Router, attempt: &KiCadBoardRouterConfig) {
@@ -383,13 +398,14 @@ impl LadderRunner for KiCadRunner<'_> {
         &self,
         mut router: core::router::Router,
         limits: ResumeLimits,
-    ) -> (core::RoutingResult, u64) {
+    ) -> (core::RoutingResult, RouterWork) {
         router.config_mut().run_work = Some(limits.run_work);
         if let Some(deadline) = limits.deadline_work {
             router.config_mut().deadline_work = Some(deadline);
         }
         let routed = router.resume(limits.negotiation);
-        (routed, router.expansions())
+        let work = self.work(&router);
+        (routed, work)
     }
 
     fn write(
@@ -744,6 +760,9 @@ pub(crate) fn finish_routed_board(
         island_stubs: result.island_stubs,
         manual_spokes_work_seconds: result.manual_spokes_work,
         first_iteration_expansions: result.first_iteration_expansions,
+        pour_work_seconds: result.pour_work,
+        build_work_seconds: result.build_work,
+        lowering_work_seconds: 0.0,
         wall_accounting: None,
     };
     let report_path = output_directory.join("board-router.json");

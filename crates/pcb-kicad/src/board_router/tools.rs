@@ -22,7 +22,7 @@ pub fn dump_kicad_pour_map(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Lowered { board } = lower(&pcb, config, true)?;
+    let Lowered { board, .. } = lower(&pcb, config, true)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let mut router = core::router::Router::new(&board, &core_config(config));
     router.adopt_existing_copper();
@@ -58,7 +58,7 @@ pub fn bench_kicad_search(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Lowered { board } = lower(&pcb, config, true)?;
+    let Lowered { board, .. } = lower(&pcb, config, true)?;
     let mut router_config = core_config(config);
     router_config.max_iterations = iterations;
     let mut router = core::router::Router::new(&board, &router_config);

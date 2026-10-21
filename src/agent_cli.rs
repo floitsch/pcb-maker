@@ -444,6 +444,11 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     }
     let mut facts = pcb_kicad::route_facts(command, &result, output).map_err(Failure::Internal)?;
     facts.work_seconds = Some(result.work_seconds);
+    if let Some(accounting) = &result.wall_accounting {
+        let charged = &accounting.charged;
+        facts.pour_work_seconds = Some(charged.pour_seconds);
+        facts.lattice_work_seconds = Some(charged.lattice_seconds + charged.lowering_seconds);
+    }
     facts.outputs = existing(&outputs);
     check_reference(
         &mut facts,

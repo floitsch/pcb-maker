@@ -116,6 +116,21 @@ pub struct KiCadBoardRouterResult {
     /// negotiation iteration (`RoutingResult::first_iteration_expansions`).
     #[serde(skip)]
     pub first_iteration_expansions: u64,
+    /// The work of the router's pour analyses and fill probes, in every
+    /// phase (pcb-router's `RoutingResult::pour_work`; the manual spokes'
+    /// among them), seconds of an idle machine: route mode's ladder
+    /// charges it beside the search.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub pour_work_seconds: f64,
+    /// The work of building the router's lattice, modelled
+    /// (`RoutingResult::build_work`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub build_work_seconds: f64,
+    /// The work of lowering the board for this attempt, modelled
+    /// (`lower::lowering_work`; none where the ladder charged it with the
+    /// rung probes).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub lowering_work_seconds: f64,
     /// Where the run's wall clock went (`KiCadWallAccounting`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wall_accounting: Option<KiCadWallAccounting>,
@@ -124,9 +139,10 @@ pub struct KiCadBoardRouterResult {
 /// Where a route's wall clock went, beside its work: the routers' phases
 /// summed over every router and thread of the process (routers side by
 /// side add up, so the thread seconds can exceed the wall clock), with
-/// the work each counted. The work the ladder charges is search
-/// expansions (and, in route mode, the manual spokes); the rest is wall
-/// clock the budgets do not see.
+/// the work each counted. Route mode's ladder charges every kind of it
+/// (`charged`; a layout's ladder the search expansions and KiCad's
+/// checks); what the phases' thread seconds have beyond their work is
+/// the load, or work no model counts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct KiCadWallAccounting {
     /// The ladder's wall clock and its work.
@@ -153,6 +169,30 @@ pub struct KiCadWallAccounting {
     /// thread seconds.
     pub kicad_runs: u64,
     pub kicad_seconds: f64,
+    /// The lattices' and the lowerings' work as modelled (thread
+    /// seconds of the reference: `RoutingResult::build_work`,
+    /// `lower::lowering_work`), beside their thread seconds above.
+    #[serde(default)]
+    pub lattice_work_seconds: f64,
+    #[serde(default)]
+    pub lowering_work_seconds: f64,
+    /// The ladder's work by kind (`work_seconds` is their sum).
+    #[serde(default)]
+    pub charged: KiCadWorkCharges,
+}
+
+/// The ladder's work by kind, in seconds of work (`Ladder::charge`): the
+/// search expansions, the pour analyses and fill probes, the lattice
+/// builds, the lowerings, KiCad's checks (a layout's). Route mode charges
+/// all of them since 2026-10-22 (under `PCB_LADDER_UNCHARGED_POUR` the
+/// search and, as pour work, the manual spokes).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KiCadWorkCharges {
+    pub search_seconds: f64,
+    pub pour_seconds: f64,
+    pub lattice_seconds: f64,
+    pub lowering_seconds: f64,
+    pub kicad_check_seconds: f64,
 }
 
 /// One phase of `KiCadWallAccounting`.
@@ -166,8 +206,8 @@ pub struct KiCadPhaseAccounting {
 
 impl KiCadWallAccounting {
     /// The process's accounting so far, for a ladder of `wall` seconds and
-    /// `work` seconds of work.
-    pub(crate) fn now(wall: f64, work: f64) -> Self {
+    /// `work` seconds of work of the kinds `charged`.
+    pub(crate) fn now(wall: f64, work: f64, charged: KiCadWorkCharges) -> Self {
         let routers = pcb_router::router::process_accounting();
         let (lowerings, lowering_seconds) = super::lower::lowering_totals();
         let (kicad_runs, kicad_seconds) = crate::native_report::kicad_totals();
@@ -197,6 +237,9 @@ impl KiCadWallAccounting {
                 .collect(),
             kicad_runs,
             kicad_seconds,
+            lattice_work_seconds: routers.build_work_seconds,
+            lowering_work_seconds: super::lower::lowering_work_total(),
+            charged,
         }
     }
 
@@ -216,16 +259,24 @@ impl KiCadWallAccounting {
                 )
             })
             .collect();
+        let charged = &self.charged;
         format!(
-            "wall accounting: {:.1} s of wall clock for {:.1} s of the ladder's work (the machine at {:.2} of the work rate, the wall guards stretched {:.2} times); thread seconds: {} lattices {:.1}, {} lowerings {:.1}, preparation {:.1}, {}; {} kicad-cli runs {:.1}",
+            "wall accounting: {:.1} s of wall clock for {:.1} s of the ladder's work (search {:.1}, pour {:.1}, lattices {:.1}, lowerings {:.2}, KiCad's checks {:.1}; the machine at {:.2} of the work rate, the wall guards stretched {:.2} times); thread seconds: {} lattices {:.1} (work {:.1}), {} lowerings {:.1} (work {:.2}), preparation {:.1}, {}; {} kicad-cli runs {:.1}",
             self.wall_seconds,
             self.work_seconds,
+            charged.search_seconds,
+            charged.pour_seconds,
+            charged.lattice_seconds,
+            charged.lowering_seconds,
+            charged.kicad_check_seconds,
             self.machine_share,
             self.wall_stretch,
             self.lattices,
             self.lattice_seconds,
+            self.lattice_work_seconds,
             self.lowerings,
             self.lowering_seconds,
+            self.lowering_work_seconds,
             self.prepare_seconds,
             phases.join(", "),
             self.kicad_runs,

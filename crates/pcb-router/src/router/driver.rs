@@ -269,6 +269,17 @@ impl Router {
         self.work_seconds()
     }
 
+    /// The work of this router's pour analyses and fill probes so far, in
+    /// seconds of an idle machine (`RoutingResult::pour_work`).
+    pub fn pour_work(&self) -> f64 {
+        self.pour_work_seconds()
+    }
+
+    /// The work of building this router, modelled (`RoutingResult::build_work`).
+    pub fn build_work(&self) -> f64 {
+        self.build_work
+    }
+
     /// Routable nets in conflict or not complete, plus the pads of pour
     /// nets that their pour does not reach yet (a pour net counts as
     /// complete while its pads touch the pour anywhere; whether the pieces
@@ -333,6 +344,8 @@ impl Router {
             island_stubs: self.island_stubs,
             manual_spokes_work: self.manual_spokes_work,
             first_iteration_expansions: self.first_iteration_expansions,
+            pour_work: self.pour_work_seconds(),
+            build_work: self.build_work,
         }
     }
 

@@ -15,11 +15,19 @@ impl Router {
         let mut terminal_reach = Vec::new();
         let mut escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)> =
             HashMap::new();
+        let mut counts = [0u64; 2];
         for terminal in &description.terminals {
             let pad = &self.board.obstacles[terminal.pad];
             let contact = terminal.contact.as_ref().unwrap_or(&pad.shape);
             let mut nodes = Vec::new();
             if let Some((x0, y0, x1, y1)) = self.grid.node_range(contact.aabb()) {
+                let tested = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64
+                    * u64::from(
+                        (terminal.layers & ((1u64 << self.board.layer_count) - 1) as u32)
+                            .count_ones(),
+                    );
+                counts[0] += tested;
+                counts[1] += tested * 5 * crate::grid::shape_corners(contact);
                 for layer in 0..self.board.layer_count {
                     if terminal.layers & (1 << layer) == 0 {
                         continue;
@@ -76,7 +84,9 @@ impl Router {
                 }
             }
         }
-        let (plane, plane_class) = self.pour_masks(net, true);
+        let (plane, plane_class, mask_counts) = self.pour_masks_counted(net, true);
+        counts[0] += mask_counts[0];
+        counts[1] += mask_counts[1];
         let on_plane: Vec<bool> = terminal_nodes
             .iter()
             .enumerate()
@@ -157,6 +167,7 @@ impl Router {
             terminal_reach,
             routable,
             neck_zones,
+            prepare_counts: counts,
             ..Default::default()
         }
     }
@@ -172,6 +183,18 @@ impl Router {
         net: NetId,
         connected_only: bool,
     ) -> (Vec<Vec<bool>>, Vec<usize>) {
+        let (plane, plane_class, _) = self.pour_masks_counted(net, connected_only);
+        (plane, plane_class)
+    }
+
+    /// `pour_masks`, with what it took counted (`BuildCounts`): the nodes
+    /// it tested and the polygon edges those tests went through.
+    pub(super) fn pour_masks_counted(
+        &self,
+        net: NetId,
+        connected_only: bool,
+    ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
+        let mut counts = [0u64; 2];
         let description = &self.board.nets[net as usize];
         let mut plane: Vec<Vec<bool>> = Vec::new();
         let mut plane_class = vec![description.class; self.board.layer_count];
@@ -206,11 +229,18 @@ impl Router {
             // each other's outlines.
             let half = self.board.classes[pour.class].trace_width / 2.0;
             let mut inside: Vec<(usize, bool)> = Vec::new();
+            let corners =
+                pour.polygon.len() + pour.excluded.iter().map(|other| other.len()).sum::<usize>();
+            counts[0] += ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let cell = self.grid.index(x, y);
                     let center = self.grid.center(x, y);
-                    if statics.fill_allowed(pour.layer, cell, net)
+                    let allowed = statics.fill_allowed(pour.layer, cell, net);
+                    if allowed {
+                        counts[1] += corners as u64;
+                    }
+                    if allowed
                         && crate::geometry::point_in_polygon(center, &pour.polygon)
                         && !pour
                             .excluded
@@ -242,6 +272,9 @@ impl Router {
                         let Some((ex0, ey0, ex1, ey1)) = self.grid.node_range(bounds) else {
                             continue;
                         };
+                        let nodes = ((ex1 - ex0 + 1) * (ey1 - ey0 + 1)) as u64;
+                        counts[0] += nodes;
+                        counts[1] += nodes;
                         for y in ey0..=ey1 {
                             for x in ex0..=ex1 {
                                 if crate::geometry::point_segment_distance(
@@ -256,6 +289,7 @@ impl Router {
                         }
                     }
                 }
+                counts[0] += inside.len() as u64;
                 for (cell, keep) in &mut inside {
                     *keep = !near_edge.contains(cell);
                 }
@@ -266,7 +300,7 @@ impl Router {
                 }
             }
         }
-        (plane, plane_class)
+        (plane, plane_class, counts)
     }
 
     /// The rule class `net` routes with at `cell`: its neck class inside

@@ -3772,3 +3772,59 @@ fn a_spoke_end_inside_a_clearance_is_dropped() {
         outcome(4.802)
     );
 }
+
+#[test]
+fn a_build_is_priced_by_its_counts() {
+    // The pricing: each count at its constant, in the reference's
+    // nanoseconds, scaled to the process's rate as the pour model is.
+    let counts = BuildCounts {
+        map_nodes: 1_000_000,
+        tests: 2_000_000,
+        edges: 3_000_000,
+        step_edges: 400_000,
+    };
+    let nanos = 1.0e6 * BUILD_MAP_NANOS
+        + 2.0e6 * BUILD_TEST_NANOS
+        + 3.0e6 * BUILD_EDGE_NANOS
+        + 4.0e5 * BUILD_STEP_NANOS;
+    assert!((counts.work_nanos() - nanos).abs() < 1.0e-6);
+    assert!((counts.work_seconds() - nanos / 1.0e9 * reference_time_scale()).abs() < 1.0e-12);
+    assert_eq!(BuildCounts::default().work_nanos(), 0.0);
+}
+
+#[test]
+fn a_build_counts_its_maps_tests_and_pour_masks() {
+    // The same board builds to the same counts and work every time (the
+    // ladder charges it as work: no wall clock in it); every class's map
+    // nodes count; a connected pour adds the nodes of its box and the
+    // edges of the nodes it may fill; the result carries the work.
+    let board = one_spoke_board();
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    let router = Router::new(&board, &config);
+    let counts = router.build_counts();
+    assert_eq!(counts, Router::new(&board, &config).build_counts());
+    let cells = router.grid().cells() as u64;
+    assert_eq!(
+        counts.map_nodes,
+        cells * board.layer_count as u64 * board.classes.len() as u64
+    );
+    assert!(counts.tests >= cells && counts.edges > 0);
+    assert!((router.build_work() - counts.work_seconds()).abs() < 1.0e-12);
+    assert!(router.build_work() > 0.0);
+    let mut unpoured = board.clone();
+    for pour in &mut unpoured.planes {
+        pour.connect = false;
+    }
+    let without = Router::new(&unpoured, &config).build_counts();
+    assert_eq!(without.map_nodes, counts.map_nodes);
+    assert!(without.tests < counts.tests && without.edges < counts.edges);
+    // The routing's result carries the build and every pour analysis.
+    let mut routed = Router::new(&board, &config);
+    let result = routed.run_in_place();
+    assert_eq!(result.build_work, routed.build_work());
+    assert_eq!(result.pour_work, routed.pour_work());
+    assert!(result.pour_work >= result.manual_spokes_work - 1.0e-12);
+}

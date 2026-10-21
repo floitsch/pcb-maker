@@ -11,6 +11,169 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (all pour work charged)
+
+Route mode's ladder counted an attempt's search expansions and, since
+the wall-guard work just below, its manual spokes; the negotiation's
+pour refresh, the finishing phases' pour checks, the lattice builds
+(with the stamping of the static maps) and the lowerings cost wall
+clock and no work, so a budget of 30 s of work bought 30 s of search
+and left 0 to 15 s of pour work a board (expansion tier; Vortac's
+panels 47 s) and 1 to 40 thread seconds of lattices on top. Now every
+kind is charged at a unit priced from what it counted, and the ladder's
+shares are shares of all of it. Branch charge-pour-work; snapshots
+x1380 (the measurement), x1381 (with the verdict's fields, the same
+routing), x1382 and x1383 (attribution experiments, not committed),
+x1384 (the commit: x1381 with the shares' log lines; the expansion
+tier's 46 rows repeat x1381's).
+
+**The pricing** (docs/router.md, "All the work charged"):
+
+| charge | unit (reference nanoseconds) | calibration |
+|---|---|---|
+| search | expansions at 3.15e6 a second | unchanged |
+| pour analyses and fill probes, every phase (the negotiation's pour refresh, the probes' ranking, resolve, clean-up, via reduction, thermal spokes, stitching, manual spokes) | 23 per node inside the pour, 6 per stamp, 9 per probe item, 850 per query, 9 per polygon vertex | unchanged (2026-10-15) |
+| lattice builds (`Router::new`: every class's static maps, the nets' terminals and pour masks, the search records) | 22 per map node (cells x layers x classes), 11 per node tested, 2.75 per shape edge measured, 22 per edge a tight node's eight steps measure (`BuildCounts`) | 83 distinct builds, model 1.0 of the sum, 0.6 to 1.6 a board (10 % to 90 %; repeats of one build differ 1.34 times at the load) |
+| lowerings | 26 per expression of the board file | 162 lowerings, median 19 and 26 ns in two runs; 0.5 to 22 ms each |
+
+The counts are the router's own (`StaticMaps::tests`, `vertex_tests`,
+`tight_tests`; `NetState::prepare_counts`; `Lowered::expressions`), so
+a build or a lowering costs the same work on every machine and at every
+load. A router stops as before on its search alone (its work deadline,
+its negotiation's limit): given the same share it searches byte for byte
+as before. The ladder charges each kind (`charged` in
+`wall_accounting`; the verdict's `pour_work_seconds` and
+`lattice_work_seconds`) and turns a share of what is left under its
+bound into a router's limits in search work by the share of search in
+the routers' work so far (`search_fraction`, at least a quarter; the
+continuation, the rungs, the seeds, the steps; a `ladder: <attempt>:
+work deadline ...` line says what each got). Its first attempt and its
+rung probes have no proportion to go by and go beyond the bound by
+their own pour work and lattices.
+
+**The named boards alone** (one thread, the reference's rates pinned,
+x1371 then x1380 back to back per board, load 12 to 30; "honest" is the
+work over the routers' thread seconds times the machine's measured
+share, which side-by-side routers and the load do not move as much as
+work over wall):
+
+| board | x1371: wall / work, work over wall, honest | x1380: wall / work (search, pour, lattices), work over wall, honest | board |
+|---|---|---|---|
+| VortacDesign | 39.2 / 31.8, 0.81, 0.51 | 35.5 / 68.0 (16.6, 47.5, 4.0), 1.92, 1.15 | 125 open, 65 vias to 202 open, 66 vias |
+| FoCTow | 45.2 / 31.8, 0.70, 0.51 | 43.3 / 68.0 (16.6, 47.5, 4.0), 1.57, 1.11 | as Vortac |
+| megaduck | 31.6 / 27.8, 0.88, 0.98 | 28.3 / 28.2 (27.5, 0.5, 0.3), 1.00, 1.08 | the same |
+| ChengminLi | 61.8 / 29.2, 0.47, 0.33 | 61.6 / 33.9 (14.2, 7.9, 11.7), 0.55, 0.40 | 4 open, 11 vias both |
+| brickpico | 53.9 / 32.4, 0.60, 0.55 | 34.0 / 28.2 (18.3, 9.4, 0.5), 0.83, 0.64 | complete both, 32 to 35 vias |
+| Wonkle | 46.2 / 34.2, 0.74, 0.81 | 41.2 / 37.3 (34.0, 2.3, 1.0), 0.90, 1.07 | the same |
+
+Where the wall clock went, x1371's `wall accounting:` (thread seconds):
+Vortac 9 lattices 4.0, negotiation 47.6 for 18.3 s of search and 34.6
+of pour work (the three connect probes' pour refresh), manual spokes
+12.1; ChengminLi 15 lattices 23.6, clean-up 35.0 for 23.2 + 3.1;
+brickpico via reduction 37.1 for 24.9 + 8.5. In x1380 Vortac's probes
+alone are 54 s of work (15 of search, 34.6 of pour, 4.0 of lattices):
+its continuation finds the bound reached, does no resolve and no
+clean-up, and leaves 202 open; brickpico's continuation stops at its
+share by the probes' proportion of search (via reduction 15.7 thread
+seconds for 11.1 + 4.5); ChengminLi's 0.1 mm seed retry (four seeds of
+the first attempt's charged work) no longer fits. ChengminLi is slow
+all through, not only its lattices: three rungs side by side at load
+16 to 30 ran its lattices at 2.7 times the model and its search at 2.7
+times too (16 classes, memory bound); alone at one thread a build is
+0.74 of the model (1.99 s for 1.48 at 0.1 mm).
+
+**Expansion tier** (16 x 1, `--no-lock`, load 16 to 31) x1381 against
+build/expansion-cuts-x1371: 27 rows the same board (work changed), 19
+changed, none cut. Passes 16 to 16 (ducktop2's bms lost, anthracite
+gained), KiCad unconnected 724 to 846, new errors 2 to 2, work 1272 to
+1296 s; the longest row's work 34.2 to 42.6 s (five rows above 36 s:
+first attempts whose pour work comes on top of a search deadline of
+the whole bound, musicbrain 34 s of search and 8.4 of pour). Work over
+wall on the uncut rows median 0.98 to 1.00, 10 % to 90 % 0.54-1.51 to
+0.61-1.57; on the boards with the most uncharged pour and lattice work
+before it rose (DIYSynth 0.39 to 0.62, brickpico 0.47 to 0.54,
+musicbrain 0.49 to 0.61, koron 0.62 to 0.69, marchmare 0.54 to 0.58)
+but the measure follows the load (x1384, the same rows at a higher
+load: median 0.82) and routers side by side (above 1). Over the tier
+the lattices' model is 0.87 of their thread seconds times the measured
+share, the search and pour models' 1.28.
+
+The loss is the lattices' charge, its unit right: attribution runs
+(x1382, `PCB_LADDER_CHARGE_ONLY`, not committed) charging only the
+lattices and lowerings gave 825 unconnected, only the pour work 750,
+all of it without the shares' conversion (`PCB_LADDER_SEARCH_SHARES`)
+832 (15 passes, 3 new errors); with `PCB_LADDER_UNCHARGED_POUR` x1381
+repeats x1371's 46 rows. Most of it is two probed four-layer boards:
+MSign 17 to 75 (lattices alone the same 75; its four probes' lattices,
+2.7 s, shortened the continuation's negotiation past a cliff: router
+count 24 to 351 open) and iorodeo's driver 109 to 159 (lattices alone
+144, pour alone 120). Netting each probe's lattice out of its share
+(x1383) did worse (870 unconnected, 14 passes) and is not kept. The
+changed rows by mechanism:
+- The probes' lattices and pour refresh charged, so the leader's
+  continuation has less (its deadline and negotiation by the probes'
+  share of search): AMLing2's dronecarrier 10 to 15, ducktop2 0 to 1
+  (pass lost), tuxkeychain 11 to 12, iorodeo 109 to 159, MSign 17 to 75,
+  backplane, magnetorquer, anthracite (149 to 159 vias, its 2 starved
+  thermals gone: passes), ICE40 (209 to 217 vias), ZSWatch (length).
+  Where that leaves a second, the narrow-signal
+  step runs on it and loses (iorodeo, ducktop2, tuxkeychain).
+- A first attempt charged more, so the rungs, seeds and steps after it
+  have less: RS485M (the 0.05 mm seed retry no longer fits; the step
+  then has more: 2 to 1 open, 2 starved thermals), pdlc (the step no
+  longer fits; the 0.075 mm tracks rung's 30 vias kept instead of the
+  step's 29), epdInky (the step's share 10.6 to 9.8 s of search: the
+  same counts, another board), facade60 (the step's share 9.0 to 7.5 s:
+  11 to 17), Miniboard (11.8 s kept for the step, so the rungs' shares
+  are smaller and the step's board has 9 open, was 7: 2 to 3), ausign
+  (the rungs after its probed continuation: 62 to 74 vias),
+  Zulassungskarte (the 0.075 mm pitch projected
+  past what is left: 1 to 2), flexypin (the 0.075 mm connect rung's
+  share: 2 open, so the tracks rung runs and wins with 39 vias instead
+  of 51), brickpico (its continuation's share: 32 to 35 vias).
+
+**Short tier** (6 x 2, `--no-lock`) x1381 against build/short-cuts-x1371:
+all 12 rows identical and the 12 result boards byte for byte (layouts
+are unchanged: their ladder and tallies still count search and KiCad's
+checks).
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode from v16,
+2 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) x1381 against build/fp-cuts-x1371:
+Castor's and k30's every fingerprint and board identical (one attempt
+each; work 152.0 to 159.6 and 291.4 to 297.0 s, pour 6.9 and 6.5 s,
+lattices 2.2 and 1.9 s charged). Sisu: the probes' and the
+continuation's fingerprints identical (the same share: the bound), its
+narrow-signal step's changed with its share (61.1 s kept before, 49.0
+now: the probes' lattices, 8.2 s, and pour work; 15 to 23 open by the
+router's count, not kept either time), the kept board identical. jetson:
+the continuation's negotiation identical (before resolve), its clean-up
+on changed with its share (its work deadline by the probes' share of
+search), 10791.4 to 10803.0 mm, 19 unconnected both; the narrow-signal
+step no longer runs (3.2 s left, its first iteration does not fit).
+
+**Not changed, and what is left uncounted.** A layout's ladder and its
+work (search expansions and KiCad's checks): the probes, the moves'
+routers and the resumes there still leave their pour work, lattices and
+lowerings uncounted. In route mode: the rung probes the order never
+reaches (side by side with a probe that finishes everything: brickpico's
+three), the stamping and conflict bookkeeping inside a phase (in the
+search's calibration), the pour masks the manual spokes build per pad.
+
+Unit tests: a_build_is_priced_by_its_counts, a_build_counts_its_maps_tests_and_pour_masks
+(pcb-router), a_share_becomes_search_work_by_the_routers_search_share,
+a_lowering_is_priced_by_the_board_files_expressions (work_bound_tests),
+route_mode_charges_all_the_work,
+route_mode_probes_charge_their_pour_work_and_lattices and the manual
+spokes' test with the conversion (ladder_tests). `bash scripts/check.sh`
+and the clippy gate pass. Docs: router.md ("All the work charged", the
+work bound in route mode, where the wall clock went), agents.md (the
+verdict's fields), config reference (`PCB_LADDER_UNCHARGED_POUR`,
+`PCB_LADDER_SEARCH_SHARES`, `PCB_ROUTER_BUILD_TRACE`).
+
+Logs: build/expansion-charge-x1381, -x1381-old, -x1381-searchshares,
+-x1382-pour, -x1382-build, -x1383, -x1384; build/short-charge-x1381;
+build/fp-charge-x1381.
 ## Committed on 2026-10-22 (strict rule: pre-bridged mask openings)
 
 The remaining solder mask bridges of lowering gaps 2 (56 on 8 intake

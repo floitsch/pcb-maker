@@ -47,6 +47,7 @@ struct Outcome {
 struct FakeProbe {
     mode: usize,
     expansions: u64,
+    pour: f64,
 }
 
 /// The scripted runner: a board of `layers` and `connections`, the probes'
@@ -65,6 +66,12 @@ struct Fake {
     /// first negotiation iteration (its report's).
     spokes: f64,
     first_iteration: f64,
+    /// Every routed attempt's pour work (a probe's: `probe_pour`), every
+    /// router's build and every lowering's work.
+    pour: f64,
+    probe_pour: f64,
+    build: f64,
+    lowering: f64,
 }
 
 impl Fake {
@@ -79,6 +86,10 @@ impl Fake {
             calls: Mutex::new(Vec::new()),
             spokes: 0.0,
             first_iteration: 0.0,
+            pour: 0.0,
+            probe_pour: 0.0,
+            build: 0.0,
+            lowering: 0.0,
         }
     }
 
@@ -153,6 +164,9 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         island_stubs: 0,
         manual_spokes_work_seconds: 0.0,
         first_iteration_expansions: 0,
+        pour_work_seconds: 0.0,
+        build_work_seconds: 0.0,
+        lowering_work_seconds: 0.0,
         wall_accounting: None,
     }
 }
@@ -180,6 +194,7 @@ impl LadderRunner for Fake {
         FakeProbe {
             mode: usize::MAX,
             expansions: 0,
+            pour: 0.0,
         }
     }
 
@@ -194,16 +209,25 @@ impl LadderRunner for Fake {
         }
         probe.mode = mode;
         probe.expansions = (work * core::router::expansions_per_second()).round() as u64;
+        probe.pour = self.probe_pour;
         self.probes[mode]
     }
 
-    fn expansions(&self, probe: &FakeProbe) -> u64 {
-        probe.expansions
+    fn work(&self, probe: &FakeProbe) -> RouterWork {
+        RouterWork {
+            expansions: probe.expansions,
+            pour: probe.pour,
+            build: self.build,
+        }
+    }
+
+    fn lowering_work(&self, _: &usize) -> f64 {
+        self.lowering
     }
 
     fn speak(&self, _: &mut FakeProbe, _: &KiCadBoardRouterConfig) {}
 
-    fn resume(&self, probe: FakeProbe, limits: ResumeLimits) -> (Outcome, u64) {
+    fn resume(&self, probe: FakeProbe, limits: ResumeLimits) -> (Outcome, RouterWork) {
         self.calls.lock().unwrap().push(Call::Resume {
             negotiation: limits.negotiation,
             deadline_work: limits.deadline_work,
@@ -215,7 +239,14 @@ impl LadderRunner for Fake {
                 .map_or(f64::INFINITY, |end| end - probed),
         );
         let expansions = probe.expansions + (work * core::router::expansions_per_second()) as u64;
-        (self.continued, expansions)
+        (
+            self.continued,
+            RouterWork {
+                expansions,
+                pour: probe.pour + self.pour,
+                build: self.build,
+            },
+        )
     }
 
     fn write(
@@ -227,7 +258,10 @@ impl LadderRunner for Fake {
         _: f64,
     ) -> Result<KiCadBoardRouterResult, String> {
         write_board(directory, "continued")?;
-        Ok(report(routed.open, routed.work, 0.1))
+        let mut result = report(routed.open, routed.work, 0.1);
+        result.pour_work_seconds = self.probe_pour + self.pour;
+        result.build_work_seconds = self.build;
+        Ok(result)
     }
 
     fn route(
@@ -255,6 +289,9 @@ impl LadderRunner for Fake {
         write_board(directory, routed.rung)?;
         let mut result = report(outcome.open, work, routed.pitch.unwrap_or(0.1));
         result.manual_spokes_work_seconds = self.spokes;
+        result.pour_work_seconds = self.pour + self.spokes;
+        result.build_work_seconds = self.build;
+        result.lowering_work_seconds = self.lowering;
         result.first_iteration_expansions =
             (self.first_iteration.min(work) * core::router::expansions_per_second()).round() as u64;
         Ok(result)
@@ -595,10 +632,127 @@ fn route_mode_counts_the_manual_spokes() {
     let routes = fake.routes();
     let bound = ladder_work_bound(100.0);
     assert_eq!(routes[0].deadline_work, Some(bound));
-    // The first attempt counted 10 s of search and 4 s of spokes.
+    // The first attempt counted 10 s of search and 4 s of spokes (pour
+    // work, all of it charged); the next rung's share of what is left is
+    // search work in the proportion of the first attempt's, 10 of 14.
     assert_eq!(routes[1].rung, "tracks");
-    assert!((routes[1].deadline_work.unwrap() - (bound - 14.0)).abs() < 1e-6);
+    assert!(
+        (routes[1].deadline_work.unwrap() - (bound - 14.0) * 10.0 / 14.0).abs() < 1e-6,
+        "{routes:?}"
+    );
     assert!(ladder.work <= bound + 1e-6, "{}", ladder.work);
+}
+
+/// Route mode: every kind of an attempt's work counts in the ladder's
+/// (its search, its pour analyses, its lattice's build, its board's
+/// lowering), and a share of what is left is a router's limit in search
+/// work by the share of search in the routers' work so far.
+#[test]
+fn route_mode_charges_all_the_work() {
+    let config = route_mode(100.0);
+    let out = output("charges");
+    let mut fake = Fake::new(|routed| {
+        Some(Outcome {
+            open: if routed.rung == "tracks" { 6 } else { 5 },
+            work: 10.0,
+        })
+    });
+    fake.pour = 3.0;
+    fake.build = 1.0;
+    fake.lowering = 0.5;
+    let mut ladder = ladder(&config, &out, 2);
+    ladder.run(&fake).unwrap();
+    let routes = fake.routes();
+    let bound = ladder_work_bound(100.0);
+    // The first attempt has all of the bound but the first rung's
+    // lowering for the probes (which a two-layer board does not get):
+    // nothing is known of its proportions yet.
+    assert_eq!(routes[0].deadline_work, Some(bound - 0.5));
+    // It counted 10 + 3 + 1 + 0.5 s; of its routers' 14 s (the lowerings
+    // apart) 10 were search.
+    assert_eq!(routes[1].rung, "tracks");
+    assert!(
+        (routes[1].deadline_work.unwrap() - (bound - 15.0) * 10.0 / 14.0).abs() < 1e-6,
+        "{routes:?}"
+    );
+    let charged = ladder.charged;
+    let attempts = routes.iter().map(|routed| routed.seeds as f64).sum::<f64>();
+    assert!(
+        (charged.pour_seconds - 3.0 * attempts).abs() < 1e-6,
+        "{charged:?}"
+    );
+    assert!(
+        (charged.lattice_seconds - attempts).abs() < 1e-6,
+        "{charged:?}"
+    );
+    assert!(
+        (charged.lowering_seconds - 0.5 * (attempts + 1.0)).abs() < 1e-6,
+        "{charged:?}"
+    );
+    assert_eq!(charged.kicad_check_seconds, 0.0);
+    let sum = charged.search_seconds
+        + charged.pour_seconds
+        + charged.lattice_seconds
+        + charged.lowering_seconds;
+    assert!(
+        (ladder.work - sum).abs() < 1e-6,
+        "{} {charged:?}",
+        ladder.work
+    );
+}
+
+/// Route mode: the probes count their pour analyses, their lattices and
+/// the rungs' lowerings, and the leader's continuation stops where the
+/// bound ends in search work by the probes' proportion.
+#[test]
+fn route_mode_probes_charge_their_pour_work_and_lattices() {
+    let config = with_narrow_step(route_mode(100.0));
+    let out = output("probe-charges");
+    let mut fake = Fake::new(|_| Some(Outcome { open: 5, work: 5.0 }));
+    fake.layers = 4;
+    fake.connections = 200;
+    fake.probes = vec![30, 10, 20, 40];
+    fake.probe_pour = 2.5;
+    fake.build = 0.5;
+    fake.lowering = 0.25;
+    fake.pour = 1.0;
+    fake.continued = Outcome {
+        open: 0,
+        work: 20.0,
+    };
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let calls = fake.calls();
+    let Call::Resume {
+        negotiation,
+        deadline_work,
+    } = calls[4].clone()
+    else {
+        panic!("the leader continues: {calls:?}");
+    };
+    // Four lowerings, four probes of 12.5 s of search, 2.5 s of pour work
+    // and a lattice of 0.5 s each: 1 + 50 + 10 + 2 = 63 s; of the
+    // routers' 62 s, 50 were search.
+    let left = 105.0 - 63.0;
+    let share = 50.0 / 62.0;
+    assert!(
+        (deadline_work.unwrap() - (12.5 + left * share)).abs() < 1e-6,
+        "{deadline_work:?}"
+    );
+    assert!(
+        (negotiation - 0.5 * left * share).abs() < 1e-6,
+        "{negotiation}"
+    );
+    // The continuation counts its own search and pour work (the probe's
+    // were counted with the probes, its lattice too).
+    let continued = (20.0f64).min(left * share);
+    assert!(
+        (ladder.work - (63.0 + continued + 1.0)).abs() < 1e-6,
+        "{} {:?}",
+        ladder.work,
+        ladder.charged
+    );
+    assert_eq!(kept(&ladder, &out), (0, "continued".into()));
 }
 
 /// Route mode: no step starts with less left under the bound than the

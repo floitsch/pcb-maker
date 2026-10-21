@@ -45,6 +45,16 @@ pub struct RoutingResult {
     /// The search expansions of this router's first negotiation
     /// iteration: what a fresh router does whatever its work deadline.
     pub first_iteration_expansions: u64,
+    /// The work of every pour analysis and fill probe of this router (its
+    /// negotiation's pour refresh, the finishing phases' pour checks, the
+    /// manual spokes'), in seconds of an idle machine: `manual_spokes_work`
+    /// is a part of it. Not in `expansions`: route mode's ladder charges
+    /// it beside them.
+    pub pour_work: f64,
+    /// The work of building this router (`Router::new`: its lattice's
+    /// static maps, the nets' terminals and pour masks), modelled from
+    /// its counts (`BuildCounts`), in seconds of an idle machine.
+    pub build_work: f64,
 }
 
 /// A machine-readable account of what stood in the way.

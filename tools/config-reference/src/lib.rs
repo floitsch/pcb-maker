@@ -168,6 +168,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-22; for attributing rows).",
     ),
     (
+        "PCB_LADDER_UNCHARGED_POUR",
+        Kind::Switch,
+        "route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-22, all pour work charged; for attributing rows).",
+    ),
+    (
+        "PCB_LADDER_SEARCH_SHARES",
+        Kind::Switch,
+        "route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).",
+    ),
+    (
         "PCB_LADDER_NO_FIRST_ITERATION_GATE",
         Kind::Switch,
         "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-22; for attributing rows).",
@@ -201,6 +211,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_POUR_TRACE",
         Kind::Diagnostic,
         "per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).",
+    ),
+    (
+        "PCB_ROUTER_BUILD_TRACE",
+        Kind::Diagnostic,
+        "per router build and per lowering their counts, modelled work and wall time (calibrating the build and lowering work constants).",
     ),
     (
         "PCB_ROUTER_POUR_DUMP",
