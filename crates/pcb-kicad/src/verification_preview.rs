@@ -182,24 +182,3 @@ fn annotations(board: &Path) -> Result<([f64; 4], serde_json::Value, String), St
         overlay,
     ))
 }
-
-/// A committed board carries the preview of the native candidate that produced
-/// it. Missing/failed previews clear any image belonging to an earlier board.
-pub(super) fn copy_to(source: &Path, destination: &Path) {
-    for name in ["preview.svg", "preview.json", "preview-labels.json"] {
-        let result = (|| {
-            let target = destination.join(name);
-            remove_if_present(&target)?;
-            if source.join(name).is_file() {
-                fs::copy(source.join(name), target).map_err(|error| error.to_string())?;
-            }
-            Ok::<(), String>(())
-        })();
-        if let Err(error) = result {
-            eprintln!(
-                "failed to copy {name} to {}: {error}",
-                destination.display()
-            );
-        }
-    }
-}

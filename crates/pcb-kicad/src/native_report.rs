@@ -53,17 +53,6 @@ pub fn erc_design_issues(report: &Value) -> Vec<&Value> {
         .collect()
 }
 
-/// Design findings from an already validated native DRC report. Metadata
-/// warnings remain available in the original report and verification counts.
-pub fn drc_design_issues(report: &Value) -> Vec<&Value> {
-    report["violations"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|finding| !is_library_metadata_warning(finding))
-        .collect()
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ReportKind {
     Erc,
