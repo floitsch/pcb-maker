@@ -123,6 +123,43 @@ impl PourMap {
         best.map(|(_, piece)| piece)
     }
 
+    /// The pieces within `reach` nodes of `cell` on `layer`, each with its
+    /// node nearest `cell` (in label order).
+    pub fn pieces_near(
+        &self,
+        grid: &Grid,
+        layer: usize,
+        cell: usize,
+        reach: usize,
+    ) -> Vec<(u32, usize)> {
+        let labels = &self.label[layer];
+        if labels.is_empty() {
+            return Vec::new();
+        }
+        let (x, y) = grid.xy(cell);
+        let mut best: Vec<(u32, usize, usize)> = Vec::new();
+        for ty in y.saturating_sub(reach)..=(y + reach).min(grid.ny - 1) {
+            for tx in x.saturating_sub(reach)..=(x + reach).min(grid.nx - 1) {
+                let index = ty * grid.nx + tx;
+                let piece = labels[index];
+                if piece == 0 {
+                    continue;
+                }
+                let distance =
+                    ((tx as i64 - x as i64).pow(2) + (ty as i64 - y as i64).pow(2)) as usize;
+                match best.iter_mut().find(|(other, _, _)| *other == piece) {
+                    Some(entry) if distance < entry.2 => *entry = (piece, index, distance),
+                    Some(_) => {}
+                    None => best.push((piece, index, distance)),
+                }
+            }
+        }
+        best.sort_unstable();
+        best.into_iter()
+            .map(|(piece, index, _)| (piece, index))
+            .collect()
+    }
+
     /// Whether every node within `reach` of `cell` is solid on `layer`.
     pub fn solid_around(&self, grid: &Grid, layer: usize, cell: usize, reach: usize) -> bool {
         let solid = &self.solid[layer];

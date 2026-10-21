@@ -628,6 +628,46 @@ impl Router {
 
     /// Clears the nodes of `free` (per layer, empty for none) that the
     /// brush may not take inside a thermal ring (`thermal_ring_pads`).
+    /// Per layer, the pads of `net` set to no zone connection (by pad,
+    /// `Board::isolated_pad_obstacles`) where the net pours, each with what
+    /// KiCad's filler keeps from it: the zone's clearance and half the
+    /// minimum width (the brush's centre stays that far from the pad, as
+    /// from another net's). The fill does not touch such a pad; only a
+    /// track from it into the fill joins it (1999AZZAR's J2.RN read as on
+    /// the pour, a branch of no length "connected" it, KiCad found it
+    /// unconnected).
+    pub(super) fn isolated_knockouts(&self, net: NetId) -> Vec<Vec<(usize, f64)>> {
+        let layers = self.board.layer_count;
+        let state = &self.nets[net as usize];
+        let mut result = vec![Vec::new(); layers];
+        if self.board.isolated_pad_obstacles.is_empty() {
+            return result;
+        }
+        for (layer, pads) in result.iter_mut().enumerate() {
+            if state.plane[layer].is_empty() {
+                continue;
+            }
+            let Some(clearance) = self
+                .board
+                .planes
+                .iter()
+                .filter(|plane| plane.net == net && plane.layer == layer)
+                .map(|plane| self.board.classes[plane.class].clearance)
+                .reduce(f64::max)
+            else {
+                continue;
+            };
+            let reach = clearance + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
+            for &pad in &self.board.isolated_pad_obstacles {
+                let obstacle = &self.board.obstacles[pad];
+                if obstacle.net == Some(net) && obstacle.layers & (1 << layer) != 0 {
+                    pads.push((pad, reach));
+                }
+            }
+        }
+        result
+    }
+
     pub(super) fn cut_thermal_rings(&self, rings: &[Vec<(usize, f64)>], free: &mut [Vec<bool>]) {
         for (layer, pads) in rings.iter().enumerate() {
             if free[layer].is_empty() {

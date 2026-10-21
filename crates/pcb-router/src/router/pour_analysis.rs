@@ -189,6 +189,7 @@ impl Router {
             .collect();
         let rings = self.thermal_ring_pads(net);
         self.cut_thermal_rings(&rings, &mut free);
+        self.cut_thermal_rings(&self.isolated_knockouts(net), &mut free);
         // The net's own tracks are copper of the net, and the fill joins
         // them anywhere, inside a pad's thermal ring too (a plane stub ends
         // in the ring: Castor's U7.3 read as stranded with "1 branch, 0
@@ -293,23 +294,52 @@ impl Router {
         // and connected by a track; a via put in the piece cures it). Such
         // a piece gets no connectivity from the pads it spokes to; the pads
         // get none from it.
+        //
+        // A solid connection joins the pad to the pieces whose fill reaches
+        // its copper (KiCad cuts no relief: the fill runs onto the pad),
+        // not to every piece near it: ORBIT's U2.14 (connect_pads yes,
+        // clearance 0.5 mm) read as joined to a piece 0.3 mm past its edge,
+        // beyond the clearance of the pads beside it, and its island of
+        // U2's ground pads as joined to the rest; KiCad's fill keeps them
+        // apart and reported them unconnected.
         let mut touched: Vec<usize> = Vec::new();
+        let probe = fill::FillProbe::new(self, net, &rings);
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             if isolated(terminal) {
                 continue;
             }
+            let pad = &self.board.obstacles[description.terminals[terminal].pad];
+            let anchor = description.terminals[terminal].anchor;
+            // Per layer and piece, its node nearest the pad.
+            let mut candidates: Vec<(usize, u32, usize, f64)> = Vec::new();
             for node in nodes
                 .iter()
                 .filter(|node| solid[node.layer as usize] || solid_pad(terminal))
             {
-                if let Some(piece) =
-                    pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
+                let layer = node.layer as usize;
+                for (piece, cell) in pours.pieces_near(&self.grid, layer, node.cell as usize, reach)
                 {
+                    let distance = pad.shape.distance_to_point(self.grid.center_of(cell));
+                    match candidates
+                        .iter_mut()
+                        .find(|(other_layer, other, _, _)| *other_layer == layer && *other == piece)
+                    {
+                        Some(entry) if distance < entry.3 => {
+                            *entry = (layer, piece, cell, distance)
+                        }
+                        Some(_) => {}
+                        None => candidates.push((layer, piece, cell, distance)),
+                    }
+                }
+            }
+            for (layer, piece, cell, distance) in candidates {
+                if self.solid_fill_reaches(&probe, layer, &pad.shape, anchor, cell, distance) {
                     union(&mut parent, terminal_base + terminal, piece as usize);
                     touched.push(piece as usize);
                 }
             }
         }
+        probe.charge();
         let keep = vec![true; state.branches.len()];
         let hosts = junction_hosts(&state.branches, &keep);
         for (index, branch) in state.branches.iter().enumerate() {
@@ -536,5 +566,61 @@ impl Router {
             leaders.first().copied().unwrap_or(0)
         };
         (pours, parent, largest, spoke_islands)
+    }
+
+    /// Whether the fill of the piece holding free node `cell` on `layer`
+    /// reaches a solidly connected pad (`shape`, its centre `anchor`;
+    /// `distance` from the node to its copper): the brush at the node
+    /// covers the pad's edge, or a straight run of fill (the probe's,
+    /// off the lattice) leads from the node to it. Within two pitches
+    /// beyond the brush the lattice cannot tell; farther, the fill does
+    /// not reach.
+    pub(super) fn solid_fill_reaches(
+        &self,
+        probe: &fill::FillProbe,
+        layer: usize,
+        shape: &crate::geometry::Shape,
+        anchor: crate::geometry::Point,
+        cell: usize,
+        distance: f64,
+    ) -> bool {
+        let half = probe.brush_half(layer);
+        if distance <= half + 1.0e-9 {
+            return true;
+        }
+        let pitch = self.grid.pitch;
+        if distance > half + 2.0 * pitch || shape.distance_to_point(anchor) > 0.0 {
+            return false;
+        }
+        let at = self.grid.center_of(cell);
+        let point = |t: f64| {
+            [
+                at[0] + (anchor[0] - at[0]) * t,
+                at[1] + (anchor[1] - at[1]) * t,
+            ]
+        };
+        // Where the run towards the pad's centre enters its copper.
+        let (mut outside, mut inside) = (0.0f64, 1.0f64);
+        for _ in 0..24 {
+            let middle = (outside + inside) / 2.0;
+            if shape.distance_to_point(point(middle)) > 0.0 {
+                outside = middle;
+            } else {
+                inside = middle;
+            }
+        }
+        let entry = point(inside);
+        let length = crate::geometry::distance(at, entry);
+        let steps = ((length / (pitch / 4.0)).ceil() as usize).max(1);
+        (0..=steps).all(|step| {
+            let t = step as f64 / steps as f64;
+            probe.fill_at(
+                layer,
+                [
+                    at[0] + (entry[0] - at[0]) * t,
+                    at[1] + (entry[1] - at[1]) * t,
+                ],
+            )
+        })
     }
 }

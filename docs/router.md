@@ -169,6 +169,65 @@ the 0.05 mm rung and left the narrow-signal step 52 s of work instead of
 to 41 (its tracks rung, 634 to 132 open, became the best and its narrow
 attempt ripped +3V3E up whole: 3 of 43 pads).
 
+### KiCad's connectivity (2026-10-22)
+
+In the 5 834-board intake, 192 boards (119 with nothing but unconnected
+items beyond the designer's findings) were complete by the router's count
+while KiCad's DRC, zones refilled, reported unconnected items: the
+router's model of what KiCad connects was wrong. The causes, the fixes
+and the census (`experiments/kicad-connectivity/census.py`) are in
+docs/changelog.md, "KiCad connectivity agreement". What the model now
+holds:
+
+- **Terminals are KiCad's items.** Pads of one number are one terminal
+  only where they overlap on a copper layer they share (an exposed pad's
+  thermal vias, a pad with holes in it). Pads of one number at one place
+  on different layers without a hole (an edge connector's or a USB-C
+  shell's top and bottom pads) are two items to KiCad, which wants them
+  joined by a via: two terminals. A net named by a number ("14", "0") is
+  a net like any other: a net form of one unquoted number ("(net 6)",
+  KiCad 9 and before) is a net code, resolved through the board's net
+  table (`net_codes`, `item_net`) for tracks, vias and graphics; the
+  lowering used to take every name of digits for a code and left such
+  nets unrouted. A copper graphic with a net that is only strokes (a line,
+  an arc, a circle's ring) is an item of KiCad's connectivity like a pad:
+  a terminal at the middle of its first piece, unless it lies on copper
+  of a terminal of its net already.
+- **The pour model connects only what KiCad's fill connects.** A solidly
+  connected pad (`connect_pads yes`, `zone_connect 2`) joins a fill piece
+  only where the fill reaches its copper: a free node of the piece within
+  the brush's half width of the pad, or a straight run of fill (the fill
+  probe, off the lattice) from a node within two pitches beyond it
+  (`solid_fill_reaches`; a piece within 0.8 mm counted before). A pad set
+  to no zone connection is cut out of the fill at the zone's clearance
+  and half the minimum width (`isolated_knockouts`), as another net's
+  pad, so only a track from it into the fill joins it. The pour masks
+  keep a node only where the brush (half the zone's minimum width) fits
+  inside the zone's outline and clear of the regions other zones take,
+  at the clearance the fill probe keeps from them
+  (`Board::excluded_clearance`): a column of nodes on the outline joined
+  pieces KiCad's fill keeps apart. Another net's zone of the same
+  priority is filled first when its uuid is the larger
+  (ZONE::HigherPriority). A spoke is no wider than the pad, a custom
+  pad's no wider than its anchor (KiCad caps it by the pad's size, which
+  is the anchor's): a custom pad with an anchor narrower than the zone's
+  minimum width gets no spoke and joins the pour only by a track.
+- **The emitted copper is checked** (`verify::copper_components`): a net
+  routed with tracks alone, its terminals joined by the copper of the
+  net that overlaps on a shared layer (pads, the pads merged into a
+  terminal, existing copper, graphics, the emitted tracks and vias; a
+  custom pad through its contact only), as KiCad's connectivity without
+  pours sees it. A terminal the copper leaves apart (a stub dropped for
+  clearance after the status was taken) makes the net partial: a route
+  complete by the router's count is one whose tracks KiCad finds
+  connected. A pour net's connections stay the pour model's (fill only
+  adds connections in KiCad, so the check cannot judge a pour net).
+
+What still disagrees on the 65 boards with a licence (two): a
+dimension drawn on a copper layer, which KiCad's fill keeps clear of and
+the lowering does not lower (robotique's BioGenius), and a KiCad QA board
+where a spoke joins two pads KiCad keeps apart (issue6284).
+
 ### The probe ladder (2026-10-03)
 
 On boards with four or more layers and 120 or more connections the KiCad

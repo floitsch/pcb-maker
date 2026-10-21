@@ -386,7 +386,16 @@ types (`silk_*`, `text_*`, library findings, `missing_courtyard`,
 `isolated_copper`) do not count. A layout or placement must also place
 every part and keep every constraint. Without KiCad's check
 (`PCB_SKIP_NATIVE`, `skip_native_verification`) a route is never
-`complete`: `router_complete_unverified` at best (exit 1). A check that ran
+`complete`: `router_complete_unverified` at best (exit 1). The router's
+count is built to agree with KiCad's connectivity (docs/router.md,
+"KiCad's connectivity": pads of one number on two sides are two
+terminals, nets named by numbers and net codes are resolved, copper
+graphics with a net are terminals, the pour model connects only what
+KiCad's refilled fill connects, and the emitted tracks are checked as
+KiCad joins them): on 65 intake boards that the router used to call
+complete while KiCad found unconnected items it agrees with KiCad on 63
+(2026-10-22). It still checks no other DRC rule, and the pour model is a
+model: run KiCad's check before using the board. A check that ran
 but whose report is missing or unreadable when the verdict reads it is an
 internal error (exit 4), never a verdict on the router's count. The old
 rule (errors beyond the reference's count of their type anywhere on the

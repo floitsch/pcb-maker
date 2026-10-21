@@ -1,0 +1,1569 @@
+{
+ "comment": "Route-mode tasks of the KiCad connectivity measurement (experiments/kicad-connectivity/tasks.py): the intake's boards complete by the router's count with KiCad unconnected items, the intake's settings, the designer's placement, 30 s of work.",
+ "tasks": [
+  {
+   "name": "1999AZZAR_pcb-skill_project_pcb_tht_opamp_eq_tht_opamp_eq",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/1999AZZAR_pcb-skill_project_pcb_tht_opamp_eq_tht_opamp_eq/source",
+   "board_id": "tht_opamp_eq",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "1999AZZAR/pcb-skill",
+    "commit": "aa581337b86d55f751df9ded2f3c0bb9d209baa5",
+    "path": "project/pcb/tht_opamp_eq/tht_opamp_eq.kicad_pcb",
+    "url": "https://github.com/1999AZZAR/pcb-skill/blob/aa581337b86d55f751df9ded2f3c0bb9d209baa5/project/pcb/tht_opamp_eq/tht_opamp_eq.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "1999AZZAR_pcb-skill_project_pcb_tht_opamp_eq_tht_opamp_eq.kicad_pcb__9ac6598dd885",
+    "files": {
+     "tht_opamp_eq.kicad_pcb": "6ef07a4ebca17608972da77809d8abd41267d3905a380db68c4e46e15c9ca0a3",
+     "tht_opamp_eq.kicad_pro": "8b5d3677d3e77cdc5a832476a10d25033e13f629f328dd41ca19d8368f1e9bda"
+    }
+   }
+  },
+  {
+   "name": "74th_74th-oshw-projects_MISC-grove_expander_MIAC-grove_expander",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/74th_74th-oshw-projects_MISC-grove_expander_MIAC-grove_expander/source",
+   "board_id": "MIAC-grove_expander",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "74th/74th-oshw-projects",
+    "commit": "413cda5899fe8a797e3c577e51146e1211b1fcb2",
+    "path": "MISC-grove_expander/MIAC-grove_expander.kicad_pcb",
+    "url": "https://github.com/74th/74th-oshw-projects/blob/413cda5899fe8a797e3c577e51146e1211b1fcb2/MISC-grove_expander/MIAC-grove_expander.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "74th_74th-oshw-projects_MISC-grove_expander_MIAC-grove_expander.kicad_pcb__277afdb3fdad",
+    "files": {
+     "MIAC-grove_expander.kicad_pcb": "d384257e4c664ad25ce97ca26361ca6d6768b37801da9ee315032d2fe8c91926",
+     "MIAC-grove_expander.kicad_pro": "37e277a9354ae6b159e3964484889ffdc9332ec44005a4b631dbb25fb25ac8be"
+    }
+   }
+  },
+  {
+   "name": "Aightech_CleverHand-hardware_pcb_hmi_interface_DRY_ELEC_6CH_THIN_DRY_ELEC_6CH_TH",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Aightech_CleverHand-hardware_pcb_hmi_interface_DRY_ELEC_6CH_THIN_DRY_ELEC_6CH_TH/source",
+   "board_id": "DRY_ELEC_6CH_THIN",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Aightech/CleverHand-hardware",
+    "commit": "b9b2e0711fb82fbb79c533691a182d22bc924fc1",
+    "path": "pcb/hmi/interface/DRY_ELEC_6CH_THIN/DRY_ELEC_6CH_THIN.kicad_pcb",
+    "url": "https://github.com/Aightech/CleverHand-hardware/blob/b9b2e0711fb82fbb79c533691a182d22bc924fc1/pcb/hmi/interface/DRY_ELEC_6CH_THIN/DRY_ELEC_6CH_THIN.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "Aightech_CleverHand-hardware_pcb_hmi_interface_DRY_ELEC_6CH_THIN_DRY_ELEC_6CH_THIN.kicad_pcb__1b9aa6da648a",
+    "files": {
+     "DRY_ELEC_6CH_THIN.kicad_pcb": "771972b4624ea215ace06f10cd58b1886ccef1ccd30e9dae7b683d519d2d6a02",
+     "DRY_ELEC_6CH_THIN.kicad_pro": "27be40a8929f24bb99ea749f01123c07bde6cf8cf6213e6e47f48dbada1e0cbb"
+    }
+   }
+  },
+  {
+   "name": "Apex-Ottawa-Team_hardware_Archive_RF_Module_RF_Module",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Apex-Ottawa-Team_hardware_Archive_RF_Module_RF_Module/source",
+   "board_id": "RF Module",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Apex-Ottawa-Team/hardware",
+    "commit": "f135b4c25ef13f66a1a15e7791b568a72b52f53d",
+    "path": "Archive/RF Module/RF Module.kicad_pcb",
+    "url": "https://github.com/Apex-Ottawa-Team/hardware/blob/f135b4c25ef13f66a1a15e7791b568a72b52f53d/Archive/RF%20Module/RF%20Module.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "Apex-Ottawa-Team_hardware_Archive_RF_Module_RF_Module.kicad_pcb__6490c7cf2729",
+    "files": {
+     "RF Module.kicad_pcb": "066a43e3a7e03e2147f6545547e65fb1537a04750328faf552fad9d1029fed7b",
+     "RF Module.kicad_pro": "2ddc320a0787c0a01bc792b17c73d3c88306fe50791cfc99e893dca1c0a987d1",
+     "RF Module.kicad_dru": "c64bba17d67f0c762d0ffec937a6d5866fc569f50ad191c0496833a6f4e76166"
+    }
+   }
+  },
+  {
+   "name": "Apoll011_avi-hw-mesh-node_Hardware_ORBIT",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Apoll011_avi-hw-mesh-node_Hardware_ORBIT/source",
+   "board_id": "ORBIT",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Apoll011/avi-hw-mesh-node",
+    "commit": "b5c49228e6d8b563c319fb3371303b98bdbcdb11",
+    "path": "Hardware/ORBIT.kicad_pcb",
+    "url": "https://github.com/Apoll011/avi-hw-mesh-node/blob/b5c49228e6d8b563c319fb3371303b98bdbcdb11/Hardware/ORBIT.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "Apoll011_avi-hw-mesh-node_Hardware_ORBIT.kicad_pcb__eea616abf13f",
+    "files": {
+     "ORBIT.kicad_pcb": "1f560b081efe36cb28b00c93494fa24f2ab875d3119d13c5e8faf60c06c49898",
+     "ORBIT.kicad_pro": "f03496948f89c3927eea64137f01fcac491d4277e0166812ebf2b9c9fe729490"
+    }
+   }
+  },
+  {
+   "name": "AzonInc_Doorman_pcb_slot_doorman_slot",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/AzonInc_Doorman_pcb_slot_doorman_slot/source",
+   "board_id": "doorman_slot",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "AzonInc/Doorman",
+    "commit": "fdec5c030e77bb8e0219d745cc0282139c96836c",
+    "path": "pcb_slot/doorman_slot.kicad_pcb",
+    "url": "https://github.com/AzonInc/Doorman/blob/fdec5c030e77bb8e0219d745cc0282139c96836c/pcb_slot/doorman_slot.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "AzonInc_Doorman_pcb_slot_doorman_slot.kicad_pcb__fefce7193344",
+    "files": {
+     "doorman_slot.kicad_pcb": "e4d5aa39024a8fce384c9071de33b52bce76dd0bf1f8ce7328c5e3c13fa9e122",
+     "doorman_slot.kicad_pro": "e86b421b4aeaf128885c19104d0dade03c26ba61bbe295adce9336b67814bf82"
+    }
+   }
+  },
+  {
+   "name": "BerkeleyHCI_PolymorphicBlocks_examples_BleJoystick_BleJoystick_btns",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/BerkeleyHCI_PolymorphicBlocks_examples_BleJoystick_BleJoystick_btns/source",
+   "board_id": "BleJoystick_btns",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "BerkeleyHCI/PolymorphicBlocks",
+    "commit": "588b73b0f52c265cc335d4a788ff0f0c1816e144",
+    "path": "examples/BleJoystick/BleJoystick_btns.kicad_pcb",
+    "url": "https://github.com/BerkeleyHCI/PolymorphicBlocks/blob/588b73b0f52c265cc335d4a788ff0f0c1816e144/examples/BleJoystick/BleJoystick_btns.kicad_pcb",
+    "license": "BSD-3-Clause",
+    "harvest_name": "BerkeleyHCI_PolymorphicBlocks_examples_BleJoystick_BleJoystick_btns.kicad_pcb__53ff992a0f5f",
+    "files": {
+     "BleJoystick_btns.kicad_pcb": "87f7766fefbd93a2ac3fcfc155d44cbb9137b67ba1665564fa262f1772d6bbb6",
+     "BleJoystick_btns.kicad_pro": "9ba698e2ac05b25a06ea0b762c0828c1fdb9d200576ba923c5c4aa9c145fb207"
+    }
+   }
+  },
+  {
+   "name": "BerkeleyHCI_PolymorphicBlocks_examples_IotThermalCamera_IotThermalCamera",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/BerkeleyHCI_PolymorphicBlocks_examples_IotThermalCamera_IotThermalCamera/source",
+   "board_id": "IotThermalCamera",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "BerkeleyHCI/PolymorphicBlocks",
+    "commit": "588b73b0f52c265cc335d4a788ff0f0c1816e144",
+    "path": "examples/IotThermalCamera/IotThermalCamera.kicad_pcb",
+    "url": "https://github.com/BerkeleyHCI/PolymorphicBlocks/blob/588b73b0f52c265cc335d4a788ff0f0c1816e144/examples/IotThermalCamera/IotThermalCamera.kicad_pcb",
+    "license": "BSD-3-Clause",
+    "harvest_name": "BerkeleyHCI_PolymorphicBlocks_examples_IotThermalCamera_IotThermalCamera.kicad_pcb__12fca0aa4313",
+    "files": {
+     "IotThermalCamera.kicad_pcb": "ebcad6b550a5e4c84b9dc940d858e0d02769f53feb47e38b890f7454d3623435",
+     "IotThermalCamera.kicad_pro": "43aa2386b4d3bab0b470298b4ef71213382aa91b0d8337e77bbd47c5d13ce527"
+    }
+   }
+  },
+  {
+   "name": "Cuprum77_BananaBoard_Passive",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Cuprum77_BananaBoard_Passive/source",
+   "board_id": "Passive",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Cuprum77/BananaBoard",
+    "commit": "40db3e0767e91dda96a6989e0d0159bfa1702bfa",
+    "path": "Passive.kicad_pcb",
+    "url": "https://github.com/Cuprum77/BananaBoard/blob/40db3e0767e91dda96a6989e0d0159bfa1702bfa/Passive.kicad_pcb",
+    "license": "CERN-OHL-S-2.0",
+    "harvest_name": "Cuprum77_BananaBoard_Passive.kicad_pcb__c5d5ba7431e5",
+    "files": {
+     "Passive.kicad_pcb": "65a60e2feeea9f310ba6c38eaebfe73cffa1f4591e3d24b43335661c638c6c5e",
+     "Passive.kicad_pro": "46708caf38c3fac75f7730f2dd0277d9cf3f9c22b3cf5e577f5daee4db95f268"
+    }
+   }
+  },
+  {
+   "name": "Franticware_usb-to-ps1-mouse-pro_kicad_old_rev_PCB_1_usb2ps1mouse",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Franticware_usb-to-ps1-mouse-pro_kicad_old_rev_PCB_1_usb2ps1mouse/source",
+   "board_id": "usb2ps1mouse",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Franticware/usb-to-ps1-mouse-pro",
+    "commit": "52dc55e40ff131f8ae9213c2c0ff6e7f68f99ae1",
+    "path": "kicad/old_rev/PCB_1/usb2ps1mouse.kicad_pcb",
+    "url": "https://github.com/Franticware/usb-to-ps1-mouse-pro/blob/52dc55e40ff131f8ae9213c2c0ff6e7f68f99ae1/kicad/old_rev/PCB_1/usb2ps1mouse.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "Franticware_usb-to-ps1-mouse-pro_kicad_old_rev_PCB_1_usb2ps1mouse.kicad_pcb__4e7c287a8071",
+    "files": {
+     "usb2ps1mouse.kicad_pcb": "0f628a411d94261f7eb59ec14d624728d53c24f30de524e41ab711068daf6278",
+     "usb2ps1mouse.kicad_pro": "dcd4d73a0c22e1b8a28803aad1385c010d6c3b623fc6d0e88b3f026461daa1fb"
+    }
+   }
+  },
+  {
+   "name": "Heorenmaru_Hardware_Stm32Board_Small_oneSide_Stm32Board",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Heorenmaru_Hardware_Stm32Board_Small_oneSide_Stm32Board/source",
+   "board_id": "Stm32Board",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Heorenmaru/Hardware",
+    "commit": "37ba16f684e633f2596dc9a25ca90abfdfcbb116",
+    "path": "Stm32Board_Small_oneSide/Stm32Board.kicad_pcb",
+    "url": "https://github.com/Heorenmaru/Hardware/blob/37ba16f684e633f2596dc9a25ca90abfdfcbb116/Stm32Board_Small_oneSide/Stm32Board.kicad_pcb",
+    "license": "CC-BY-SA-4.0",
+    "harvest_name": "Heorenmaru_Hardware_Stm32Board_Small_oneSide_Stm32Board.kicad_pcb__02a2bd4b5e8d",
+    "files": {
+     "Stm32Board.kicad_pcb": "79956c1f834a72ca3a7697949b152e976288d5e7d57ae6425d7f221342029e17",
+     "Stm32Board.kicad_pro": "82e7e6718f3b8886a9416155f409f9e79810fd6cd86cc3129375a8e6feece849"
+    }
+   }
+  },
+  {
+   "name": "Huaqiu-Electronics_kicad_qa_data_pcbnew_issue11814",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Huaqiu-Electronics_kicad_qa_data_pcbnew_issue11814/source",
+   "board_id": "issue11814",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Huaqiu-Electronics/kicad",
+    "commit": "651f84024fd6c5c9a0a9405322b38e94aeb3cb2c",
+    "path": "qa/data/pcbnew/issue11814.kicad_pcb",
+    "url": "https://github.com/Huaqiu-Electronics/kicad/blob/651f84024fd6c5c9a0a9405322b38e94aeb3cb2c/qa/data/pcbnew/issue11814.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "Huaqiu-Electronics_kicad_qa_data_pcbnew_issue11814.kicad_pcb__cda3188adf66",
+    "files": {
+     "issue11814.kicad_pcb": "808050f783ba5598689f9ad6babf8bd75a2d54059e7eb461f181222c25af597a",
+     "issue11814.kicad_pro": "350c58c1b807b9bdec98f0562f9a0c6588a5fc2eee21396ea554c35dc3a4a568",
+     "issue11814.kicad_dru": "c4144c301dc3ed3864df7ce7a15ba7476eca4ff328e25303285f484053b4cbed"
+    }
+   }
+  },
+  {
+   "name": "MAHESH-THILAK-K_ADDITIONAL-PROJECT_VoltForge_Nexus_OTHER_FILES_VoltForge_Nexus",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/MAHESH-THILAK-K_ADDITIONAL-PROJECT_VoltForge_Nexus_OTHER_FILES_VoltForge_Nexus/source",
+   "board_id": "VoltForge Nexus",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "MAHESH-THILAK-K/ADDITIONAL-PROJECT",
+    "commit": "4b270d5b88cc174368ad65db5543a703cc887d8a",
+    "path": "VoltForge Nexus/OTHER FILES/VoltForge Nexus.kicad_pcb",
+    "url": "https://github.com/MAHESH-THILAK-K/ADDITIONAL-PROJECT/blob/4b270d5b88cc174368ad65db5543a703cc887d8a/VoltForge%20Nexus/OTHER%20FILES/VoltForge%20Nexus.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "MAHESH-THILAK-K_ADDITIONAL-PROJECT_VoltForge_Nexus_OTHER_FILES_VoltForge_Nexus.kicad_pcb__dfc137144f0e",
+    "files": {
+     "VoltForge Nexus.kicad_pcb": "1a3d3f587d75edbfbd6284c9fe2760cc65c17b34e6527967a895971951311ba9",
+     "VoltForge Nexus.kicad_pro": "8536138a675b33a0018730d6705ce355c12f14d21808a1494e3bcdf8c82f54e5"
+    }
+   }
+  },
+  {
+   "name": "MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_musicbrain-adc8",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_musicbrain-adc8/source",
+   "board_id": "musicbrain-adc8",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "MarkWestbroek/MusicBrain",
+    "commit": "29aa9908bc15eecbc0dd6f8fe206d8dd3aedae38",
+    "path": "hardware/schematics/musicbrain-adc8/musicbrain-adc8.kicad_pcb",
+    "url": "https://github.com/MarkWestbroek/MusicBrain/blob/29aa9908bc15eecbc0dd6f8fe206d8dd3aedae38/hardware/schematics/musicbrain-adc8/musicbrain-adc8.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_musicbrain-adc8.kicad_pcb__580054a2d20f",
+    "files": {
+     "musicbrain-adc8.kicad_pcb": "cb5336ecd64ff269eac42c6449c0856a838b1c78415ba243b8022785568b0c17",
+     "musicbrain-adc8.kicad_pro": "3b4dc4a6d566a16d74091963ac4ce4a002b6a082d8b6eee7cbd3f272eacb11de"
+    }
+   }
+  },
+  {
+   "name": "MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_rel-v0.2_musicbrain",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_rel-v0.2_musicbrain/source",
+   "board_id": "musicbrain-adc8",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "MarkWestbroek/MusicBrain",
+    "commit": "29aa9908bc15eecbc0dd6f8fe206d8dd3aedae38",
+    "path": "hardware/schematics/musicbrain-adc8/rel-v0.2/musicbrain-adc8.kicad_pcb",
+    "url": "https://github.com/MarkWestbroek/MusicBrain/blob/29aa9908bc15eecbc0dd6f8fe206d8dd3aedae38/hardware/schematics/musicbrain-adc8/rel-v0.2/musicbrain-adc8.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_rel-v0.2_musicbrain-adc8.kicad_pcb__b9a8c7a75b6a",
+    "files": {
+     "musicbrain-adc8.kicad_pcb": "444ae2fd0665c7a768b200aa2f1bb9d44c06601de731774a41453f09ecb79781",
+     "musicbrain-adc8.kicad_pro": "3b4dc4a6d566a16d74091963ac4ce4a002b6a082d8b6eee7cbd3f272eacb11de"
+    }
+   }
+  },
+  {
+   "name": "OpenAir-Lab_capstone-project_Hardware_KiCAD_rf-amplifier-modulino_rf-amplifier-m",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/OpenAir-Lab_capstone-project_Hardware_KiCAD_rf-amplifier-modulino_rf-amplifier-m/source",
+   "board_id": "rf-amplifier-modulino",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "OpenAir-Lab/capstone-project",
+    "commit": "b82636ab67956379d3a71f0bb6d72e8430be7fdf",
+    "path": "Hardware/KiCAD/rf-amplifier-modulino/rf-amplifier-modulino.kicad_pcb",
+    "url": "https://github.com/OpenAir-Lab/capstone-project/blob/b82636ab67956379d3a71f0bb6d72e8430be7fdf/Hardware/KiCAD/rf-amplifier-modulino/rf-amplifier-modulino.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "OpenAir-Lab_capstone-project_Hardware_KiCAD_rf-amplifier-modulino_rf-amplifier-modulino.kicad_pcb__603c79d298ad",
+    "files": {
+     "rf-amplifier-modulino.kicad_pcb": "45b39c572886c6df04a55d047c6cdf372cbb83e7c2e7b7314fe3f7a5a08dcbc3",
+     "rf-amplifier-modulino.kicad_pro": "12711d958923a2bfec36772f25858d59a84f53a782a0f9cbb2ded2dcaf201151"
+    }
+   }
+  },
+  {
+   "name": "PantsForBirds_adsbee_kicad_prototyping_panel_proto_lna_board_panel_proto_lna_boa",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/PantsForBirds_adsbee_kicad_prototyping_panel_proto_lna_board_panel_proto_lna_boa/source",
+   "board_id": "panel_proto_lna_board",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "PantsForBirds/adsbee",
+    "commit": "fa6dc30447ee6e686bb62f65224b2001212131e0",
+    "path": "kicad/prototyping/panel_proto_lna_board/panel_proto_lna_board.kicad_pcb",
+    "url": "https://github.com/PantsForBirds/adsbee/blob/fa6dc30447ee6e686bb62f65224b2001212131e0/kicad/prototyping/panel_proto_lna_board/panel_proto_lna_board.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "PantsForBirds_adsbee_kicad_prototyping_panel_proto_lna_board_panel_proto_lna_board.kicad_pcb__08fc29e70606",
+    "files": {
+     "panel_proto_lna_board.kicad_pcb": "ba6da4a0536e44f0cd5783a6882a28c79537048cce34a7429b82e2973e99505e",
+     "panel_proto_lna_board.kicad_pro": "e90c4e10e6f73c75b7e24fd5a68704a5b04eb1dbc3802dd45991ddee511dbfa8",
+     "panel_proto_lna_board.kicad_dru": "5dfec405bcfb519159861fe43c3e95f13913630479b56c0a73bea14bd0e848d7"
+    }
+   }
+  },
+  {
+   "name": "PantsForBirds_adsbee_kicad_prototyping_panel_saw_eval_board_panel_saw_eval_board",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/PantsForBirds_adsbee_kicad_prototyping_panel_saw_eval_board_panel_saw_eval_board/source",
+   "board_id": "panel_saw_eval_board",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "PantsForBirds/adsbee",
+    "commit": "fa6dc30447ee6e686bb62f65224b2001212131e0",
+    "path": "kicad/prototyping/panel_saw_eval_board/panel_saw_eval_board.kicad_pcb",
+    "url": "https://github.com/PantsForBirds/adsbee/blob/fa6dc30447ee6e686bb62f65224b2001212131e0/kicad/prototyping/panel_saw_eval_board/panel_saw_eval_board.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "PantsForBirds_adsbee_kicad_prototyping_panel_saw_eval_board_panel_saw_eval_board.kicad_pcb__f71f639c0fbc",
+    "files": {
+     "panel_saw_eval_board.kicad_pcb": "d479203aa8fc9e25d88518b8881cc0199f22bc295223bbf3446e37d619a4e451",
+     "panel_saw_eval_board.kicad_pro": "2a4718111b67235f9833899a77d6372e5bdb309d507c9ea224d07a001ee29f0e",
+     "panel_saw_eval_board.kicad_dru": "5dfec405bcfb519159861fe43c3e95f13913630479b56c0a73bea14bd0e848d7"
+    }
+   }
+  },
+  {
+   "name": "Qeteshpony_ESPFanController_pcb_ESPFanController",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Qeteshpony_ESPFanController_pcb_ESPFanController/source",
+   "board_id": "ESPFanController",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Qeteshpony/ESPFanController",
+    "commit": "78cd0e99160001fed2ef3eddcb27badc424ccddf",
+    "path": "pcb/ESPFanController.kicad_pcb",
+    "url": "https://github.com/Qeteshpony/ESPFanController/blob/78cd0e99160001fed2ef3eddcb27badc424ccddf/pcb/ESPFanController.kicad_pcb",
+    "license": "BSD-2-Clause",
+    "harvest_name": "Qeteshpony_ESPFanController_pcb_ESPFanController.kicad_pcb__42dc60b21125",
+    "files": {
+     "ESPFanController.kicad_pcb": "b25750833ec76a80fc1b6adbcc24a6cd79a4f5cf45cb8168417117f2d4ae5bd1",
+     "ESPFanController.kicad_pro": "ffd8417d8467dc4a6c431dba3946cb9c7aa3421a707fdc00e350a2d605d8c6f3"
+    }
+   }
+  },
+  {
+   "name": "Soraxem_trance_devboard_pcb_devboard",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Soraxem_trance_devboard_pcb_devboard/source",
+   "board_id": "devboard",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Soraxem/trance",
+    "commit": "da5b1a9214e9774ac824099e67f578c55bb23940",
+    "path": "devboard/pcb/devboard.kicad_pcb",
+    "url": "https://github.com/Soraxem/trance/blob/da5b1a9214e9774ac824099e67f578c55bb23940/devboard/pcb/devboard.kicad_pcb",
+    "license": "CERN-OHL-P-2.0",
+    "harvest_name": "Soraxem_trance_devboard_pcb_devboard.kicad_pcb__33563f1f5c49",
+    "files": {
+     "devboard.kicad_pcb": "e685361f105b829d94c96af9109cca145f4c216324385e5e17dff79b14a29c6b",
+     "devboard.kicad_pro": "bb5292e6383f0238cd36453efbe9baf541f0569944d4bc3e71aadfa13abb1a7a"
+    }
+   }
+  },
+  {
+   "name": "Soraxem_trance_usb-dmx_pcb_usb-dmx",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Soraxem_trance_usb-dmx_pcb_usb-dmx/source",
+   "board_id": "usb-dmx",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Soraxem/trance",
+    "commit": "da5b1a9214e9774ac824099e67f578c55bb23940",
+    "path": "usb-dmx/pcb/usb-dmx.kicad_pcb",
+    "url": "https://github.com/Soraxem/trance/blob/da5b1a9214e9774ac824099e67f578c55bb23940/usb-dmx/pcb/usb-dmx.kicad_pcb",
+    "license": "CERN-OHL-P-2.0",
+    "harvest_name": "Soraxem_trance_usb-dmx_pcb_usb-dmx.kicad_pcb__3acf7784e130",
+    "files": {
+     "usb-dmx.kicad_pcb": "e508b4de54732be5437ded7935a10d205f6da273f2bec1b6758314ccfe09222f",
+     "usb-dmx.kicad_pro": "07e0a6be7fc6c47dd881b2157fe3959dcccb7480ca5640625e74d14921b62751"
+    }
+   }
+  },
+  {
+   "name": "Squantor_various_PCB_electronics_DIM_SN6505_PushPullConv_DIM_SN6505_PushPullConv",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Squantor_various_PCB_electronics_DIM_SN6505_PushPullConv_DIM_SN6505_PushPullConv/source",
+   "board_id": "DIM_SN6505_PushPullConv",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Squantor/various_PCB",
+    "commit": "314269cab70d1cc2453a3bf14a6bb6bbf409af32",
+    "path": "electronics/DIM_SN6505_PushPullConv/DIM_SN6505_PushPullConv.kicad_pcb",
+    "url": "https://github.com/Squantor/various_PCB/blob/314269cab70d1cc2453a3bf14a6bb6bbf409af32/electronics/DIM_SN6505_PushPullConv/DIM_SN6505_PushPullConv.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "Squantor_various_PCB_electronics_DIM_SN6505_PushPullConv_DIM_SN6505_PushPullConv.kicad_pcb__86ec2dc9ce9d",
+    "files": {
+     "DIM_SN6505_PushPullConv.kicad_pcb": "1be705aae33b7b075b63db95e9ba87db90a3895578e97998bc5d52906e6cfdd8",
+     "DIM_SN6505_PushPullConv.kicad_pro": "9f2aa89951a2903f0010bda540647c2a99a83d01c65083b06d551ca5e4ab4cae"
+    }
+   }
+  },
+  {
+   "name": "Squantor_various_PCB_electronics_DIM_powergate_SOIC-8_DIM_powergate_SOIC-8-tiled",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/Squantor_various_PCB_electronics_DIM_powergate_SOIC-8_DIM_powergate_SOIC-8-tiled/source",
+   "board_id": "DIM_powergate_SOIC-8-tiled",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "Squantor/various_PCB",
+    "commit": "314269cab70d1cc2453a3bf14a6bb6bbf409af32",
+    "path": "electronics/DIM_powergate_SOIC-8/DIM_powergate_SOIC-8-tiled.kicad_pcb",
+    "url": "https://github.com/Squantor/various_PCB/blob/314269cab70d1cc2453a3bf14a6bb6bbf409af32/electronics/DIM_powergate_SOIC-8/DIM_powergate_SOIC-8-tiled.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "Squantor_various_PCB_electronics_DIM_powergate_SOIC-8_DIM_powergate_SOIC-8-tiled.kicad_pcb__f451381d6443",
+    "files": {
+     "DIM_powergate_SOIC-8-tiled.kicad_pcb": "142e38a4812ebc2df4c0c29e0a318e78a52931d1ecd4a53dbfbe5043612073a3",
+     "DIM_powergate_SOIC-8-tiled.kicad_pro": "11205bdef1dce0a15f676cf4809d62ec9c7342f712e8084be8fd75f724d28106"
+    }
+   }
+  },
+  {
+   "name": "atopile_packages_packages_rj45-connectors_layouts_usage_usage",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/atopile_packages_packages_rj45-connectors_layouts_usage_usage/source",
+   "board_id": "usage",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "atopile/packages",
+    "commit": "38e6b64baece2ec1dcaffbfa1715763b06d3e597",
+    "path": "packages/rj45-connectors/layouts/usage/usage.kicad_pcb",
+    "url": "https://github.com/atopile/packages/blob/38e6b64baece2ec1dcaffbfa1715763b06d3e597/packages/rj45-connectors/layouts/usage/usage.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "atopile_packages_packages_rj45-connectors_layouts_usage_usage.kicad_pcb__beb0708e9fef",
+    "files": {
+     "usage.kicad_pcb": "fab99d72dc07700c515a0facbcd6c81e950c6b1bf5ae782a2998b4c81d0fdf11",
+     "usage.kicad_pro": "3cd2ea8df97e191cc47ddfa9b722def2151c615a0cd7138f7507a1f00a1a792e"
+    }
+   }
+  },
+  {
+   "name": "atopile_packages_packages_saleae-header_layouts_usage_usage",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/atopile_packages_packages_saleae-header_layouts_usage_usage/source",
+   "board_id": "usage",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "atopile/packages",
+    "commit": "38e6b64baece2ec1dcaffbfa1715763b06d3e597",
+    "path": "packages/saleae-header/layouts/usage/usage.kicad_pcb",
+    "url": "https://github.com/atopile/packages/blob/38e6b64baece2ec1dcaffbfa1715763b06d3e597/packages/saleae-header/layouts/usage/usage.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "atopile_packages_packages_saleae-header_layouts_usage_usage.kicad_pcb__114c5c3fd21c",
+    "files": {
+     "usage.kicad_pcb": "481df23e3e42ffc528cbe63da519e3c3c8334c88a3901eb8ecaea83c10d3377d",
+     "usage.kicad_pro": "3cd2ea8df97e191cc47ddfa9b722def2151c615a0cd7138f7507a1f00a1a792e"
+    }
+   }
+  },
+  {
+   "name": "azerimaker_olmBoard-RP605x_hardware_olmBoard-RP605x-v1_olmBoard-RP605x-v1",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/azerimaker_olmBoard-RP605x_hardware_olmBoard-RP605x-v1_olmBoard-RP605x-v1/source",
+   "board_id": "olmBoard-RP605x-v1",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "azerimaker/olmBoard-RP605x",
+    "commit": "37245dccdadf663711074f00798fed6fd6512b02",
+    "path": "hardware/olmBoard-RP605x-v1/olmBoard-RP605x-v1.kicad_pcb",
+    "url": "https://github.com/azerimaker/olmBoard-RP605x/blob/37245dccdadf663711074f00798fed6fd6512b02/hardware/olmBoard-RP605x-v1/olmBoard-RP605x-v1.kicad_pcb",
+    "license": "CERN-OHL-S-2.0",
+    "harvest_name": "azerimaker_olmBoard-RP605x_hardware_olmBoard-RP605x-v1_olmBoard-RP605x-v1.kicad_pcb__bbb64394c230",
+    "files": {
+     "olmBoard-RP605x-v1.kicad_pcb": "e25c58fa6349679e8977f13bf443c5c00e42f229402d0931b29c6c5b207e799e",
+     "olmBoard-RP605x-v1.kicad_pro": "b7b1bf35250fb368c912710c78c6a8b89662b81bb7d7c3c82f37c251f24ff53f"
+    }
+   }
+  },
+  {
+   "name": "baxter-barlow_kicad-assistant_qa_data_pcbnew_issue11814",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/baxter-barlow_kicad-assistant_qa_data_pcbnew_issue11814/source",
+   "board_id": "issue11814",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "baxter-barlow/kicad-assistant",
+    "commit": "2096dd9280321b62ca02fa503007d28a9bf304a8",
+    "path": "qa/data/pcbnew/issue11814.kicad_pcb",
+    "url": "https://github.com/baxter-barlow/kicad-assistant/blob/2096dd9280321b62ca02fa503007d28a9bf304a8/qa/data/pcbnew/issue11814.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "baxter-barlow_kicad-assistant_qa_data_pcbnew_issue11814.kicad_pcb__1257d5a2babf",
+    "files": {
+     "issue11814.kicad_pcb": "5a513df9658bffbe5cec8c92198984edb3547ba3db1d2b29b079c71e72a65d30",
+     "issue11814.kicad_pro": "413b6ea6e25cc146af5ddb730543dd8765dd9d7ffe1bbf9aa1337d7624bfd993",
+     "issue11814.kicad_dru": "c4144c301dc3ed3864df7ce7a15ba7476eca4ff328e25303285f484053b4cbed"
+    }
+   }
+  },
+  {
+   "name": "baxter-barlow_kicad-assistant_qa_data_pcbnew_issue6284",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/baxter-barlow_kicad-assistant_qa_data_pcbnew_issue6284/source",
+   "board_id": "issue6284",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "baxter-barlow/kicad-assistant",
+    "commit": "2096dd9280321b62ca02fa503007d28a9bf304a8",
+    "path": "qa/data/pcbnew/issue6284.kicad_pcb",
+    "url": "https://github.com/baxter-barlow/kicad-assistant/blob/2096dd9280321b62ca02fa503007d28a9bf304a8/qa/data/pcbnew/issue6284.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "baxter-barlow_kicad-assistant_qa_data_pcbnew_issue6284.kicad_pcb__28b6d0718aaf",
+    "files": {
+     "issue6284.kicad_pcb": "231bf2b1cf835429cc4a5ffd7136832244528c4fcfd5765f484708052a6161eb"
+    }
+   }
+  },
+  {
+   "name": "bluepylons_USB-C-3-way-splitter_V5_USB-C-3-way-splitter-V5",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/bluepylons_USB-C-3-way-splitter_V5_USB-C-3-way-splitter-V5/source",
+   "board_id": "USB-C-3-way-splitter-V5",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "bluepylons/USB-C-3-way-splitter",
+    "commit": "2cb18bef6b4e7406581b83d828d6bc4c42bfad92",
+    "path": "V5/USB-C-3-way-splitter-V5.kicad_pcb",
+    "url": "https://github.com/bluepylons/USB-C-3-way-splitter/blob/2cb18bef6b4e7406581b83d828d6bc4c42bfad92/V5/USB-C-3-way-splitter-V5.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "bluepylons_USB-C-3-way-splitter_V5_USB-C-3-way-splitter-V5.kicad_pcb__5b4c1f2861b8",
+    "files": {
+     "USB-C-3-way-splitter-V5.kicad_pcb": "78c5465bbd165a21b194426ff22387f8395592b8fa56f33f447e5876f3746afd",
+     "USB-C-3-way-splitter-V5.kicad_pro": "bcf856c6b28abc18059ca404edb901e146032ebce61f40b8d0c76d57dcefa937"
+    }
+   }
+  },
+  {
+   "name": "bluepylons_USB-C-3-way-splitter_V5__autosave-USB-C-3-way-splitter-V5",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/bluepylons_USB-C-3-way-splitter_V5__autosave-USB-C-3-way-splitter-V5/source",
+   "board_id": "_autosave-USB-C-3-way-splitter-V5",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "bluepylons/USB-C-3-way-splitter",
+    "commit": "2cb18bef6b4e7406581b83d828d6bc4c42bfad92",
+    "path": "V5/_autosave-USB-C-3-way-splitter-V5.kicad_pcb",
+    "url": "https://github.com/bluepylons/USB-C-3-way-splitter/blob/2cb18bef6b4e7406581b83d828d6bc4c42bfad92/V5/_autosave-USB-C-3-way-splitter-V5.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "bluepylons_USB-C-3-way-splitter_V5__autosave-USB-C-3-way-splitter-V5.kicad_pcb__de015703f0cb",
+    "files": {
+     "_autosave-USB-C-3-way-splitter-V5.kicad_pcb": "158ac0394621bac0e91c4a1ae6e8f99963fc6d3f00b665901686ed6e059aa7d1"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_media_camera_boards_camera_vb5943_r1_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_media_camera_boards_camera_vb5943_r1_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/media/camera/boards/camera_vb5943/r1/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/media/camera/boards/camera_vb5943/r1/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_media_camera_boards_camera_vb5943_r1_board-latest.kicad_pcb__bd4b8843534b",
+    "files": {
+     "board-latest.kicad_pcb": "0b7bbadb8c138eeff2880735d73dc9df939f4ff2a23398ef82dc8f292809418c",
+     "board-latest.kicad_pro": "03787b480a987283394d727c8c29396b6b048d6f8a76e23be4798205f6000c14"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r10_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r10_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r10/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r10/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r10_board-latest.kicad_pcb__389a0ef63ded",
+    "files": {
+     "board-latest.kicad_pcb": "8d4707a523d3a9be753ad733afd4a351b0660d8bb6729aa32dc5c16a8b7685a8",
+     "board-latest.kicad_pro": "c007888eeb1e411a221af65678be3b1f1b6f427f424af8cbebfe2c4d3ed7d3a0"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r1_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r1_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r1/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r1/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r1_board-latest.kicad_pcb__e561358748fb",
+    "files": {
+     "board-latest.kicad_pcb": "67a7b92636dc39ab7ec6ed9e86f5f483ba713d3d8850af49d3bf26a337d7b0d2",
+     "board-latest.kicad_pro": "822f4bb17d10416755f0e3fc1faf5eeab91931e7f7f6af4e11b7b9b25258e2bd"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r2_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r2_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r2/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r2/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r2_board-latest.kicad_pcb__f1e23a7cf672",
+    "files": {
+     "board-latest.kicad_pcb": "defe248ea461841c227adab36d5031927bade51ac96e01caea2f3e8eb9120cd4",
+     "board-latest.kicad_pro": "6ef5ab6072517600b0a2f1c69241929e7f4ca32096a0d76c00a650762b2f4e9c"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r3_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r3_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r3/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r3/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r3_board-latest.kicad_pcb__c9b677f86e0b",
+    "files": {
+     "board-latest.kicad_pcb": "c20aaea1b97888da5cb413a0d1059a1db485d798419b3f8849104929ad51f8e0",
+     "board-latest.kicad_pro": "2fd6befca990a4fe477ecb9500d354f432258b4967c8b7bb52faaaefac1da3fb"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r6_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r6_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r6/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r6/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r6_board-latest.kicad_pcb__18e274ba3475",
+    "files": {
+     "board-latest.kicad_pcb": "a79fe352b10800a4f440fdc9bf6c6af830168b564c298381343785e7d8f133a6",
+     "board-latest.kicad_pro": "87cafc2196e7469f3f4bb4cac67338425836e1d8a3bfa48173dc5bdeb26aa3c3"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r7_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r7_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r7/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r7/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r7_board-latest.kicad_pcb__b5e3aebbffb5",
+    "files": {
+     "board-latest.kicad_pcb": "9a14f97d4056f556c1d5f463e6b8b639e67cefb0e538ffacd7d4919090eb71e5",
+     "board-latest.kicad_pro": "87cafc2196e7469f3f4bb4cac67338425836e1d8a3bfa48173dc5bdeb26aa3c3"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r8_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r8_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r8/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r8/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r8_board-latest.kicad_pcb__5ba69227cc4b",
+    "files": {
+     "board-latest.kicad_pcb": "292838641037fd5de8309a3e1ae8adf64fcb5675e17887931c64048b3099dabb",
+     "board-latest.kicad_pro": "c007888eeb1e411a221af65678be3b1f1b6f427f424af8cbebfe2c4d3ed7d3a0"
+    }
+   }
+  },
+  {
+   "name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r9_board-latest",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dennisss_dacha_pkg_vision_mocap_boards_compute_r9_board-latest/source",
+   "board_id": "board-latest",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dennisss/dacha",
+    "commit": "ffd0a6c6969caf7a70504e3c33e36c0217136f1e",
+    "path": "pkg/vision/mocap/boards/compute/r9/board-latest.kicad_pcb",
+    "url": "https://github.com/dennisss/dacha/blob/ffd0a6c6969caf7a70504e3c33e36c0217136f1e/pkg/vision/mocap/boards/compute/r9/board-latest.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dennisss_dacha_pkg_vision_mocap_boards_compute_r9_board-latest.kicad_pcb__28553f5c5ffc",
+    "files": {
+     "board-latest.kicad_pcb": "c7fee1e9d1d94fbdb9c5653fea9fa23715cbff12b7a662e9b66dc0691243fbef",
+     "board-latest.kicad_pro": "c007888eeb1e411a221af65678be3b1f1b6f427f424af8cbebfe2c4d3ed7d3a0"
+    }
+   }
+  },
+  {
+   "name": "dragonlock2_kicadboards_projects_BSWelder_BSWelder",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/dragonlock2_kicadboards_projects_BSWelder_BSWelder/source",
+   "board_id": "BSWelder",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "dragonlock2/kicadboards",
+    "commit": "b5e0c47cbbded775139f8cae0b2cd23ed2e35467",
+    "path": "projects/BSWelder/BSWelder.kicad_pcb",
+    "url": "https://github.com/dragonlock2/kicadboards/blob/b5e0c47cbbded775139f8cae0b2cd23ed2e35467/projects/BSWelder/BSWelder.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "dragonlock2_kicadboards_projects_BSWelder_BSWelder.kicad_pcb__291106f469f1",
+    "files": {
+     "BSWelder.kicad_pcb": "6ef82c6d0623c79e0ed8db52a09f5a2fe02f89ff85ec07b9c96f28748c208985",
+     "BSWelder.kicad_pro": "1d434d01c5d382cd9b3440f3f24b7f61e3841c39008402ddf51cfdb24c3b73b9"
+    }
+   }
+  },
+  {
+   "name": "embeddedos-org_eCAD-Hardware-Products_boards_cad_m5stack_m5_cad_KiCad_Projects_M",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/embeddedos-org_eCAD-Hardware-Products_boards_cad_m5stack_m5_cad_KiCad_Projects_M/source",
+   "board_id": "Module_ExtPort_For_Core2",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "embeddedos-org/eCAD-Hardware-Products",
+    "commit": "0e543f053ef95a91999240781ddd651768790ced",
+    "path": "boards/cad/m5stack/m5/cad/KiCad/Projects/Module_ExtPort_For_Core2/Module_ExtPort_For_Core2.kicad_pcb",
+    "url": "https://github.com/embeddedos-org/eCAD-Hardware-Products/blob/0e543f053ef95a91999240781ddd651768790ced/boards/cad/m5stack/m5/cad/KiCad/Projects/Module_ExtPort_For_Core2/Module_ExtPort_For_Core2.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "embeddedos-org_eCAD-Hardware-Products_boards_cad_m5stack_m5_cad_KiCad_Projects_Module_ExtPort_For_Co__0510b6d39404",
+    "files": {
+     "Module_ExtPort_For_Core2.kicad_pcb": "0d7f5cb8b465d0b2fc19916761551807bee89be520b3d18c2da020d658020a69",
+     "Module_ExtPort_For_Core2.kicad_pro": "7b11f34053ad5cdccfec83cc8f4fc7bf827b14d0020811518958e31ab5cd5b37"
+    }
+   }
+  },
+  {
+   "name": "enzocoralc_Tiny20_tiny20_choc_tiny20",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/enzocoralc_Tiny20_tiny20_choc_tiny20/source",
+   "board_id": "tiny20",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "enzocoralc/Tiny20",
+    "commit": "95e7ea9c51201944daad9ef58bb01bd473f69378",
+    "path": "tiny20/choc/tiny20.kicad_pcb",
+    "url": "https://github.com/enzocoralc/Tiny20/blob/95e7ea9c51201944daad9ef58bb01bd473f69378/tiny20/choc/tiny20.kicad_pcb",
+    "license": "AGPL-3.0",
+    "harvest_name": "enzocoralc_Tiny20_tiny20_choc_tiny20.kicad_pcb__7d737e7a2076",
+    "files": {
+     "tiny20.kicad_pcb": "0a96512bc07444d013c4537f9a57749e4fbc371cc5f3733da1dc57cb49ddf702",
+     "tiny20.kicad_pro": "61f707a7f7d0713b5ce4d5c2f45e159a703a35786ed3d2e397bfaa37a1b161a2"
+    }
+   }
+  },
+  {
+   "name": "enzocoralc_Tiny20_tiny20_xiao_tiny20_xiao",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/enzocoralc_Tiny20_tiny20_xiao_tiny20_xiao/source",
+   "board_id": "tiny20_xiao",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "enzocoralc/Tiny20",
+    "commit": "95e7ea9c51201944daad9ef58bb01bd473f69378",
+    "path": "tiny20/xiao/tiny20_xiao.kicad_pcb",
+    "url": "https://github.com/enzocoralc/Tiny20/blob/95e7ea9c51201944daad9ef58bb01bd473f69378/tiny20/xiao/tiny20_xiao.kicad_pcb",
+    "license": "AGPL-3.0",
+    "harvest_name": "enzocoralc_Tiny20_tiny20_xiao_tiny20_xiao.kicad_pcb__29cc36cca0e5",
+    "files": {
+     "tiny20_xiao.kicad_pcb": "51b6d84929f7413e9243bcb75be0668150635d62bdc77a75fe3e121f16823a6a",
+     "tiny20_xiao.kicad_pro": "8964025eb0ebb739f8ab2b32254eeb4a5517d06a7564f3e7c73509bece6fea44"
+    }
+   }
+  },
+  {
+   "name": "freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_Oak_raw",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_Oak_raw/source",
+   "board_id": "raw",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "freerouting/freerouting",
+    "commit": "5aa1b24dc8e5af7f950c551c1e53de9077a84cd5",
+    "path": "scripts/benchmark/fixtures/PCBench/kitspace_Oak/raw.kicad_pcb",
+    "url": "https://github.com/freerouting/freerouting/blob/5aa1b24dc8e5af7f950c551c1e53de9077a84cd5/scripts/benchmark/fixtures/PCBench/kitspace_Oak/raw.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_Oak_raw.kicad_pcb__7c5ea99011e7",
+    "files": {
+     "raw.kicad_pcb": "d99b737b394489ca69690a948433339d6e7b385a3dea18b648b127e52796d8ec"
+    }
+   }
+  },
+  {
+   "name": "freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_bobbycar_raw",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_bobbycar_raw/source",
+   "board_id": "raw",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "freerouting/freerouting",
+    "commit": "5aa1b24dc8e5af7f950c551c1e53de9077a84cd5",
+    "path": "scripts/benchmark/fixtures/PCBench/kitspace_bobbycar/raw.kicad_pcb",
+    "url": "https://github.com/freerouting/freerouting/blob/5aa1b24dc8e5af7f950c551c1e53de9077a84cd5/scripts/benchmark/fixtures/PCBench/kitspace_bobbycar/raw.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitspace_bobbycar_raw.kicad_pcb__1ffc65f63558",
+    "files": {
+     "raw.kicad_pcb": "61f0e0c6aa8a18c12e239d212f70315241a87e84741d68aa06bd6456858564c8"
+    }
+   }
+  },
+  {
+   "name": "jo5huajohn_BNO085-PCB_BNO085",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/jo5huajohn_BNO085-PCB_BNO085/source",
+   "board_id": "BNO085",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "jo5huajohn/BNO085-PCB",
+    "commit": "8d5925fcc2fb9e4bb119df33bf060cf431bc87c9",
+    "path": "BNO085.kicad_pcb",
+    "url": "https://github.com/jo5huajohn/BNO085-PCB/blob/8d5925fcc2fb9e4bb119df33bf060cf431bc87c9/BNO085.kicad_pcb",
+    "license": "CC0-1.0",
+    "harvest_name": "jo5huajohn_BNO085-PCB_BNO085.kicad_pcb__b897ec19ae4f",
+    "files": {
+     "BNO085.kicad_pcb": "03a3050a0e095aa70a053b502d4b86fb2a7a368259f5c5bc44400f48a413f785",
+     "BNO085.kicad_pro": "4eb8de32ca1a59d3c89ca450e4ced00fee714c987245ac9ffeef2c13ea8c1a5f"
+    }
+   }
+  },
+  {
+   "name": "justbuchanan_oasis_pcb_fabricated-boards_ledboard-v0.3_kicad_ledboard",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/justbuchanan_oasis_pcb_fabricated-boards_ledboard-v0.3_kicad_ledboard/source",
+   "board_id": "ledboard",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "justbuchanan/oasis",
+    "commit": "3462f162f80e11c78705218441af37639d87bfdc",
+    "path": "pcb/fabricated-boards/ledboard-v0.3/kicad/ledboard.kicad_pcb",
+    "url": "https://github.com/justbuchanan/oasis/blob/3462f162f80e11c78705218441af37639d87bfdc/pcb/fabricated-boards/ledboard-v0.3/kicad/ledboard.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "justbuchanan_oasis_pcb_fabricated-boards_ledboard-v0.3_kicad_ledboard.kicad_pcb__4e383319dfca",
+    "files": {
+     "ledboard.kicad_pcb": "5898819c93b004d1089659d99029388d77b38892ba33a87b59739469f4faf49c",
+     "ledboard.kicad_pro": "e167cd915f96f95dadbc96710f85caf801f1b1e7582a3792353f6bbf300e73d7",
+     "ledboard.kicad_dru": "c128deaa2d8046124a50e4e507de96d21969918a635148cc901410575a59dfe9"
+    }
+   }
+  },
+  {
+   "name": "justbuchanan_oasis_pcb_ledboard_ledboard",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/justbuchanan_oasis_pcb_ledboard_ledboard/source",
+   "board_id": "ledboard",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "justbuchanan/oasis",
+    "commit": "3462f162f80e11c78705218441af37639d87bfdc",
+    "path": "pcb/ledboard/ledboard.kicad_pcb",
+    "url": "https://github.com/justbuchanan/oasis/blob/3462f162f80e11c78705218441af37639d87bfdc/pcb/ledboard/ledboard.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "justbuchanan_oasis_pcb_ledboard_ledboard.kicad_pcb__07e40f6b963a",
+    "files": {
+     "ledboard.kicad_pcb": "363af99c9c81fbaec5b0d1c5e018fe33240b8bf2c68d39391b7e7528130a94fe",
+     "ledboard.kicad_pro": "d370cac66dd2c4ccf7ab5836c90270f669e62467537265a65f55fd739f616eea",
+     "ledboard.kicad_dru": "c128deaa2d8046124a50e4e507de96d21969918a635148cc901410575a59dfe9"
+    }
+   }
+  },
+  {
+   "name": "mikesmitty_power-manifold_hardware_controller_controller",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/mikesmitty_power-manifold_hardware_controller_controller/source",
+   "board_id": "controller",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "mikesmitty/power-manifold",
+    "commit": "5faa98dacf42d9983c79c3682509f5e06cb5b0d1",
+    "path": "hardware/controller/controller.kicad_pcb",
+    "url": "https://github.com/mikesmitty/power-manifold/blob/5faa98dacf42d9983c79c3682509f5e06cb5b0d1/hardware/controller/controller.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "mikesmitty_power-manifold_hardware_controller_controller.kicad_pcb__3064e68833b2",
+    "files": {
+     "controller.kicad_pcb": "b7fda981a9bb466655ac25aa2710a8133ed31fe44740812655cc8e4d964e2976",
+     "controller.kicad_pro": "715e897e4df616ea11608f68ea1069421906e73263e50b2d246b67a111bbfde8"
+    }
+   }
+  },
+  {
+   "name": "mothenjoyer69_pcb-design-files_usb-uart-eqmod_usb-uart-eqmod_usb-uart-eqmod",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/mothenjoyer69_pcb-design-files_usb-uart-eqmod_usb-uart-eqmod_usb-uart-eqmod/source",
+   "board_id": "usb-uart-eqmod",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "mothenjoyer69/pcb-design-files",
+    "commit": "00572f995357c07162c4ec47df643a5cf368f9e3",
+    "path": "usb-uart-eqmod/usb-uart-eqmod/usb-uart-eqmod.kicad_pcb",
+    "url": "https://github.com/mothenjoyer69/pcb-design-files/blob/00572f995357c07162c4ec47df643a5cf368f9e3/usb-uart-eqmod/usb-uart-eqmod/usb-uart-eqmod.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "mothenjoyer69_pcb-design-files_usb-uart-eqmod_usb-uart-eqmod_usb-uart-eqmod.kicad_pcb__5223e958b463",
+    "files": {
+     "usb-uart-eqmod.kicad_pcb": "e1a09f7390e6a7d270c754d1375465781e507539d56d3001cbf789f249f50eb0",
+     "usb-uart-eqmod.kicad_pro": "d3b4880e5a28341de7eab2e38349a2eab168977a0d7a709473afdd06aa8506cd"
+    }
+   }
+  },
+  {
+   "name": "robotique-udes_PCB_exo_ACE_2023_PCB_BioGenius",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/robotique-udes_PCB_exo_ACE_2023_PCB_BioGenius/source",
+   "board_id": "PCB_BioGenius",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "robotique-udes/PCB",
+    "commit": "3c3bd66071576704bc7fbe3b4c2c6c74020e14fd",
+    "path": "exo/ACE 2023/PCB_BioGenius.kicad_pcb",
+    "url": "https://github.com/robotique-udes/PCB/blob/3c3bd66071576704bc7fbe3b4c2c6c74020e14fd/exo/ACE%202023/PCB_BioGenius.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "robotique-udes_PCB_exo_ACE_2023_PCB_BioGenius.kicad_pcb__c57f473326fd",
+    "files": {
+     "PCB_BioGenius.kicad_pcb": "c371d57244287c98b4652a64537380f14c7aa4857c08441f1dc413df029d51be",
+     "PCB_BioGenius.kicad_pro": "18927958e3f7f59a0cf9a39828c25b94fb6857b11e9b9d6198a0875f817c6eea"
+    }
+   }
+  },
+  {
+   "name": "ryanhaus_rowan-baja-daq_accelerometer-board_pcb_accelerometer-board",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/ryanhaus_rowan-baja-daq_accelerometer-board_pcb_accelerometer-board/source",
+   "board_id": "accelerometer-board",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "ryanhaus/rowan-baja-daq",
+    "commit": "71fbbdc8cb68bd8ddeb584c0d2c9a22f1dd51d3d",
+    "path": "accelerometer-board/pcb/accelerometer-board.kicad_pcb",
+    "url": "https://github.com/ryanhaus/rowan-baja-daq/blob/71fbbdc8cb68bd8ddeb584c0d2c9a22f1dd51d3d/accelerometer-board/pcb/accelerometer-board.kicad_pcb",
+    "license": "GPL-3.0",
+    "harvest_name": "ryanhaus_rowan-baja-daq_accelerometer-board_pcb_accelerometer-board.kicad_pcb__61e33a1fd141",
+    "files": {
+     "accelerometer-board.kicad_pcb": "1c987912df4143aa6e49fa0832df24ade19fc3027cb6bdc82c933bb571354fdc",
+     "accelerometer-board.kicad_pro": "a73e0bdff7595b7612d51e9cfbd504586c150354752aa6c1314557be77415a9b"
+    }
+   }
+  },
+  {
+   "name": "samienr_kryptonite_kryptonite",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/samienr_kryptonite_kryptonite/source",
+   "board_id": "kryptonite",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "samienr/kryptonite",
+    "commit": "55e7251ef971c7e6fe4d99244c213a547d402bab",
+    "path": "kryptonite.kicad_pcb",
+    "url": "https://github.com/samienr/kryptonite/blob/55e7251ef971c7e6fe4d99244c213a547d402bab/kryptonite.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "samienr_kryptonite_kryptonite.kicad_pcb__e245bd1166b8",
+    "files": {
+     "kryptonite.kicad_pcb": "3216fb9cfc6f6274c72d2de68403cfe30af543eeb3d3ca0a983ab104bc3b1ca8",
+     "kryptonite.kicad_pro": "ce7ea00e147c4fa31a41a0af3396ab7a11e8651ea193bf93287c01050464ce6a",
+     "kryptonite.kicad_dru": "1592429ccbee6881e5cd86ba4a93caf20697abfd3ea721a834347ba7bfa1e186"
+    }
+   }
+  },
+  {
+   "name": "smkent_pcb_pcb-archived_jigs_dip-adapters_dip-adapters",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/smkent_pcb_pcb-archived_jigs_dip-adapters_dip-adapters/source",
+   "board_id": "dip-adapters",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "smkent/pcb",
+    "commit": "6cab466a73cdbfd0aa05449146948c3da97524f6",
+    "path": "pcb-archived/jigs/dip-adapters/dip-adapters.kicad_pcb",
+    "url": "https://github.com/smkent/pcb/blob/6cab466a73cdbfd0aa05449146948c3da97524f6/pcb-archived/jigs/dip-adapters/dip-adapters.kicad_pcb",
+    "license": "CC-BY-SA-4.0",
+    "harvest_name": "smkent_pcb_pcb-archived_jigs_dip-adapters_dip-adapters.kicad_pcb__e4cf1a2f2f54",
+    "files": {
+     "dip-adapters.kicad_pcb": "9a0371ea704f73cd79b45c6f11bd2d85813f32716f2855a096964eab5124d9d9",
+     "dip-adapters.kicad_pro": "619a9824133cf2d1ad599777874d9ccaa397b895374c84e9a2e9215d386d61e3"
+    }
+   }
+  },
+  {
+   "name": "smkent_pcb_pcb-archived_power_eta-buck_eta-buck",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/smkent_pcb_pcb-archived_power_eta-buck_eta-buck/source",
+   "board_id": "eta-buck",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "smkent/pcb",
+    "commit": "6cab466a73cdbfd0aa05449146948c3da97524f6",
+    "path": "pcb-archived/power/eta-buck/eta-buck.kicad_pcb",
+    "url": "https://github.com/smkent/pcb/blob/6cab466a73cdbfd0aa05449146948c3da97524f6/pcb-archived/power/eta-buck/eta-buck.kicad_pcb",
+    "license": "CC-BY-SA-4.0",
+    "harvest_name": "smkent_pcb_pcb-archived_power_eta-buck_eta-buck.kicad_pcb__1161d3174682",
+    "files": {
+     "eta-buck.kicad_pcb": "13870279b02b07b47815b08f658de2de9d27bfe44775e793d535fab86db87302",
+     "eta-buck.kicad_pro": "6d04268b02293bf4d296829e78afc9ea707a48f13c7b28164b772ec03dd255ab"
+    }
+   }
+  },
+  {
+   "name": "smkent_pcb_pcb-archived_stackable2_esp-cwww_esp-cwww",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/smkent_pcb_pcb-archived_stackable2_esp-cwww_esp-cwww/source",
+   "board_id": "esp-cwww",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "smkent/pcb",
+    "commit": "6cab466a73cdbfd0aa05449146948c3da97524f6",
+    "path": "pcb-archived/stackable2/esp-cwww/esp-cwww.kicad_pcb",
+    "url": "https://github.com/smkent/pcb/blob/6cab466a73cdbfd0aa05449146948c3da97524f6/pcb-archived/stackable2/esp-cwww/esp-cwww.kicad_pcb",
+    "license": "CC-BY-SA-4.0",
+    "harvest_name": "smkent_pcb_pcb-archived_stackable2_esp-cwww_esp-cwww.kicad_pcb__2bd5439a0c2b",
+    "files": {
+     "esp-cwww.kicad_pcb": "f91680b1741e79ae24db895bd90d2e3a453ec3f1998fb6afaeb4d03646940faf",
+     "esp-cwww.kicad_pro": "67f19463d0af56123e47ee3ed6b6d83250496d8f8e87fa897c8dee0e273bd52b"
+    }
+   }
+  },
+  {
+   "name": "smkent_pcb_pcb_power_microbuck_microbuck",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/smkent_pcb_pcb_power_microbuck_microbuck/source",
+   "board_id": "microbuck",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "smkent/pcb",
+    "commit": "6cab466a73cdbfd0aa05449146948c3da97524f6",
+    "path": "pcb/power/microbuck/microbuck.kicad_pcb",
+    "url": "https://github.com/smkent/pcb/blob/6cab466a73cdbfd0aa05449146948c3da97524f6/pcb/power/microbuck/microbuck.kicad_pcb",
+    "license": "CC-BY-SA-4.0",
+    "harvest_name": "smkent_pcb_pcb_power_microbuck_microbuck.kicad_pcb__c98d06d31cbe",
+    "files": {
+     "microbuck.kicad_pcb": "6aa5155fd034354e68ddcb82a0dca641ac2d5dc503138e65f928b883765a9568",
+     "microbuck.kicad_pro": "bd87e9b3b3c8a53b6a3b6535414d87f31bfe5e7c597e23f298ab26a66c4d91d0"
+    }
+   }
+  },
+  {
+   "name": "sommerper_framework16-keyboard-v1_kicad_framework16v1_framework16v1",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/sommerper_framework16-keyboard-v1_kicad_framework16v1_framework16v1/source",
+   "board_id": "framework16v1",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "sommerper/framework16-keyboard-v1",
+    "commit": "0367c605819d629a1eedcd6792cfe532f3803712",
+    "path": "kicad/framework16v1/framework16v1.kicad_pcb",
+    "url": "https://github.com/sommerper/framework16-keyboard-v1/blob/0367c605819d629a1eedcd6792cfe532f3803712/kicad/framework16v1/framework16v1.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "sommerper_framework16-keyboard-v1_kicad_framework16v1_framework16v1.kicad_pcb__86f78febb77c",
+    "files": {
+     "framework16v1.kicad_pcb": "f8f42ab168035896af99c58a9f65a40f8894fbd2db19bc613d49cda76284040e",
+     "framework16v1.kicad_pro": "41594506ffdccb28172cd134a86819ba120f3aef18a6a9d46909ecd0114bf30e"
+    }
+   }
+  },
+  {
+   "name": "swayerloren_KICAD_ENGINE_32_OPEN_KICAD_SAMPLE_INTAKE_normalized_samples_esp_rs_e",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/swayerloren_KICAD_ENGINE_32_OPEN_KICAD_SAMPLE_INTAKE_normalized_samples_esp_rs_e/source",
+   "board_id": "esp-rust-board",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "swayerloren/KICAD_ENGINE",
+    "commit": "a88d246404ffa9afce61185779d6a499885cf4cc",
+    "path": "32_OPEN_KICAD_SAMPLE_INTAKE/normalized_samples/esp_rs_esp_rust_board/hardware/esp-rust-board/esp-rust-board.kicad_pcb",
+    "url": "https://github.com/swayerloren/KICAD_ENGINE/blob/a88d246404ffa9afce61185779d6a499885cf4cc/32_OPEN_KICAD_SAMPLE_INTAKE/normalized_samples/esp_rs_esp_rust_board/hardware/esp-rust-board/esp-rust-board.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "swayerloren_KICAD_ENGINE_32_OPEN_KICAD_SAMPLE_INTAKE_normalized_samples_esp_rs_esp_rust_board_hardwa__a48957bbf7ba",
+    "files": {
+     "esp-rust-board.kicad_pcb": "4907cec7fec31beada1d9c60d53e4ab0068f80ca7261857166e60b330553594c",
+     "esp-rust-board.kicad_pro": "3e4ff2b6f86d6d22c282729334b796a24d52d120d03472a25bbf6255f073d65b"
+    }
+   }
+  },
+  {
+   "name": "tdunning_low-pass_low-pass-2-sides_low-pass",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/tdunning_low-pass_low-pass-2-sides_low-pass/source",
+   "board_id": "low-pass",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "tdunning/low-pass",
+    "commit": "d4707e96074e023bd40b44c2711e1d834e776285",
+    "path": "low-pass-2-sides/low-pass.kicad_pcb",
+    "url": "https://github.com/tdunning/low-pass/blob/d4707e96074e023bd40b44c2711e1d834e776285/low-pass-2-sides/low-pass.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "tdunning_low-pass_low-pass-2-sides_low-pass.kicad_pcb__115268180612",
+    "files": {
+     "low-pass.kicad_pcb": "3450e882aafd152777b84a61fe12211d60c6d2294c542d1edb389dde320c3556",
+     "low-pass.kicad_pro": "476da1ddaac9815cef501769a3989fa921797baa0e85aa3a2f2fc5b96ccc46fe"
+    }
+   }
+  },
+  {
+   "name": "tdunning_low-pass_low-pass_low-pass",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/tdunning_low-pass_low-pass_low-pass/source",
+   "board_id": "low-pass",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "tdunning/low-pass",
+    "commit": "d4707e96074e023bd40b44c2711e1d834e776285",
+    "path": "low-pass/low-pass.kicad_pcb",
+    "url": "https://github.com/tdunning/low-pass/blob/d4707e96074e023bd40b44c2711e1d834e776285/low-pass/low-pass.kicad_pcb",
+    "license": "MIT",
+    "harvest_name": "tdunning_low-pass_low-pass_low-pass.kicad_pcb__cd68b0d7e6e7",
+    "files": {
+     "low-pass.kicad_pcb": "fb794f13e3efcf7a61a73cd6268467eeeaf967769ebcb49d0d9ae8e9145c9052",
+     "low-pass.kicad_pro": "476da1ddaac9815cef501769a3989fa921797baa0e85aa3a2f2fc5b96ccc46fe"
+    }
+   }
+  },
+  {
+   "name": "urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_3V3_CHESS_PIECE",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_3V3_CHESS_PIECE/source",
+   "board_id": "CHESS PIECES DETECTION",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "urichess/chessboard",
+    "commit": "ae8a804a0c4dd0fb6c483de06f282daa4783f010",
+    "path": "kicad/projects/others/CHESS PIECES DETECTION 3V3/CHESS PIECES DETECTION.kicad_pcb",
+    "url": "https://github.com/urichess/chessboard/blob/ae8a804a0c4dd0fb6c483de06f282daa4783f010/kicad/projects/others/CHESS%20PIECES%20DETECTION%203V3/CHESS%20PIECES%20DETECTION.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_3V3_CHESS_PIECES_DETECTION.kicad_pc__822c78738d7c",
+    "files": {
+     "CHESS PIECES DETECTION.kicad_pcb": "230b6a0f1534239a04e4dfdc5f196ac4b4e5489ed95ec7bedc7fb7784f34eb5c",
+     "CHESS PIECES DETECTION.kicad_pro": "a6d31762e5984a72ad3a91b7da239529ae2f7e3e9dac5a0f78b74c03ee18a653"
+    }
+   }
+  },
+  {
+   "name": "urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_CHESS_PIECES_DE",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_CHESS_PIECES_DE/source",
+   "board_id": "CHESS PIECES DETECTION",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "urichess/chessboard",
+    "commit": "ae8a804a0c4dd0fb6c483de06f282daa4783f010",
+    "path": "kicad/projects/others/CHESS PIECES DETECTION/CHESS PIECES DETECTION.kicad_pcb",
+    "url": "https://github.com/urichess/chessboard/blob/ae8a804a0c4dd0fb6c483de06f282daa4783f010/kicad/projects/others/CHESS%20PIECES%20DETECTION/CHESS%20PIECES%20DETECTION.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION_CHESS_PIECES_DETECTION.kicad_pcb__55fa1f3a680e",
+    "files": {
+     "CHESS PIECES DETECTION.kicad_pcb": "24050088a6da6b823941c1915acd2078d0dcf69947ce5381d2f2c4cda5857f08",
+     "CHESS PIECES DETECTION.kicad_pro": "b4dee3c4615a541914ec5cea160be7ad7aec68564181840c512f4ed48efd6fd7"
+    }
+   }
+  },
+  {
+   "name": "urichess_chessboard_kicad_projects_others_READER_READER",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/urichess_chessboard_kicad_projects_others_READER_READER/source",
+   "board_id": "READER",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "urichess/chessboard",
+    "commit": "ae8a804a0c4dd0fb6c483de06f282daa4783f010",
+    "path": "kicad/projects/others/READER/READER.kicad_pcb",
+    "url": "https://github.com/urichess/chessboard/blob/ae8a804a0c4dd0fb6c483de06f282daa4783f010/kicad/projects/others/READER/READER.kicad_pcb",
+    "license": "Apache-2.0",
+    "harvest_name": "urichess_chessboard_kicad_projects_others_READER_READER.kicad_pcb__e15cc5dd3bd6",
+    "files": {
+     "READER.kicad_pcb": "e44cb48e9e27ceb2a428df9aa5f28bca916a1976183ba0493b3606c271727842",
+     "READER.kicad_pro": "f1ddfe217be61e3d66f5b04fde72e6f27a88b1132a0fb7bef15ba2d418fadd56"
+    }
+   }
+  },
+  {
+   "name": "zOnlyKroks_pcb-consortium_Misc_7-seg-clock_7-seg-clock",
+   "mode": "route",
+   "directory": "build/connectivity-tasks/zOnlyKroks_pcb-consortium_Misc_7-seg-clock_7-seg-clock/source",
+   "board_id": "7-seg-clock",
+   "designer_budget": true,
+   "budget_seconds": 30,
+   "router": {
+    "seeds": 1,
+    "skip_native_verification": true
+   },
+   "source": {
+    "repository": "zOnlyKroks/pcb-consortium",
+    "commit": "438a9108e9218ac6ba438dbd5448f64e29d35162",
+    "path": "Misc/7-seg-clock/7-seg-clock.kicad_pcb",
+    "url": "https://github.com/zOnlyKroks/pcb-consortium/blob/438a9108e9218ac6ba438dbd5448f64e29d35162/Misc/7-seg-clock/7-seg-clock.kicad_pcb",
+    "license": "CC0-1.0",
+    "harvest_name": "zOnlyKroks_pcb-consortium_Misc_7-seg-clock_7-seg-clock.kicad_pcb__4ef3e91a7aaa",
+    "files": {
+     "7-seg-clock.kicad_pcb": "c5891f011845306103bbb495e48f2e54ccaf16290b39f5c88ede118548e4df97",
+     "7-seg-clock.kicad_pro": "a1e29c2a66a566facf6037e23557778e9b09c441cb62376799396f67870bbe7b"
+    }
+   }
+  }
+ ]
+}

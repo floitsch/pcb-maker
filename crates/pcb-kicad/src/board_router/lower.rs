@@ -167,12 +167,12 @@ fn note_jumper_nets(pcb: &Expr) {
     });
 }
 
-/// Whether a net (by its raw name, sheet path included) is routed. Bare
-/// numbers are placeholders for single pins; `/1` is a labelled net; an
-/// `unconnected-(...)` net is a single pin unless two pads share it.
+/// Whether a net (by its raw name, sheet path included) is routed. A net
+/// named by a number is a net like any other (`net_name_from_form` tells
+/// a code from a name); an `unconnected-(...)` net is a single pin unless
+/// two pads share it.
 pub(crate) fn routable_net(raw: &str) -> bool {
     !raw.is_empty()
-        && !raw.bytes().all(|byte| byte.is_ascii_digit())
         && (!raw
             .rsplit('/')
             .next()
@@ -266,6 +266,8 @@ fn lower_board(
 ) -> Result<Lowered, String> {
     note_jumper_nets(pcb);
     crate::note_net_names(pcb);
+    // KiCad 9 and before name the net of a track, via or graphic by code.
+    let net_codes = crate::net_codes(pcb);
     let loops = outline::board_loops(pcb)?;
     let layers = LayerTable::from_pcb(pcb)?;
     let mut classes: Vec<core::RuleClass> = Vec::new();
@@ -823,7 +825,7 @@ fn lower_board(
                 else {
                     continue;
                 };
-                let net = node_net(item)
+                let net = item_net(item, &net_codes)
                     .filter(|raw| routable_net(raw))
                     .map(normalize_net)
                     .map(|name| net_id(name, &mut nets, &mut classes))
@@ -845,7 +847,7 @@ fn lower_board(
                 });
             }
             Some("via") => {
-                let net = node_net(item)
+                let net = item_net(item, &net_codes)
                     .filter(|raw| routable_net(raw))
                     .map(normalize_net)
                     .map(|name| net_id(name, &mut nets, &mut classes))
@@ -913,7 +915,7 @@ fn lower_board(
                 let shapes = copper_graphic_shapes(item)?;
                 let kind = item.head().unwrap_or("graphic").to_string();
                 if copper != 0 {
-                    let net = node_net(item)
+                    let net = item_net(item, &net_codes)
                         .filter(|raw| routable_net(raw))
                         .map(|raw| normalize_net(raw).to_string());
                     let clearance = node_net(item)
@@ -958,10 +960,16 @@ fn lower_board(
             _ => {}
         }
     }
-    // Pads of one number that overlap are one pad to KiCad (a solder pad
-    // with holes in it, an exposed pad's thermal vias): the largest is the
-    // terminal, the others just its copper. OpenRX's panel hangs half of
-    // each wire pad's holes over the edge, unreachable as terminals.
+    // Pads of one number that overlap on a copper layer they share are one
+    // pad to KiCad (a solder pad with holes in it, an exposed pad's thermal
+    // vias): the largest is the terminal, the others just its copper.
+    // OpenRX's panel hangs half of each wire pad's holes over the edge,
+    // unreachable as terminals. Pads of one number at one place on
+    // different layers without a hole (an edge connector's or a USB-C
+    // shell's top and bottom pads) are two items to KiCad's connectivity,
+    // which wants them joined by copper: two terminals (Knox Key's P1.A1:
+    // a track on B.Cu reached the bottom pad, KiCad found the top one
+    // unconnected).
     let mut merged_pads: Vec<core::MergedPad> = Vec::new();
     for (net_id, net) in nets.iter_mut().enumerate() {
         let area = |terminal: &core::Terminal| {
@@ -983,6 +991,9 @@ fn lower_board(
             for &small in &order[position + 1..] {
                 if keep[small]
                     && net.terminals[small].label == net.terminals[large].label
+                    && obstacles[net.terminals[large].pad].layers
+                        & obstacles[net.terminals[small].pad].layers
+                        != 0
                     && obstacles[net.terminals[large].pad]
                         .shape
                         .contains(net.terminals[small].anchor)
@@ -1047,6 +1058,34 @@ fn lower_board(
                     anchor: center,
                     layers: copper,
                     pad: obstacles.len() + fill,
+                    contact: None,
+                    label: format!("{kind} {}", index + 1),
+                });
+            }
+        } else if let (Some(id), [], Some(core::Shape::Capsule { start, end, .. })) =
+            (net, fills.as_slice(), shapes.first())
+        {
+            // A stroke with a net (a line, an arc, a circle's ring) is an
+            // item of KiCad's connectivity like a pad, which wants it joined
+            // to the net (BleJoystick's arcs, the chessboards' rings, all
+            // `(net N)` by code): a terminal at the middle of its first
+            // piece, unless it lies on copper of a terminal of its net
+            // already (a line drawn from a pad: one item with it).
+            let touches = nets[id as usize].terminals.iter().any(|terminal| {
+                let other = &obstacles[terminal.pad];
+                other.layers & copper != 0
+                    && shapes.iter().any(|shape| match shape {
+                        core::Shape::Capsule { start, end, radius } => {
+                            other.shape.distance_to_segment(*start, *end) <= *radius
+                        }
+                        _ => false,
+                    })
+            });
+            if !touches {
+                nets[id as usize].terminals.push(core::Terminal {
+                    anchor: [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0],
+                    layers: copper,
+                    pad: obstacles.len(),
                     contact: None,
                     label: format!("{kind} {}", index + 1),
                 });
@@ -1194,12 +1233,15 @@ fn lower_board(
                 class,
                 layer,
                 polygon: pour.polygon.clone(),
+                // Another net's zone of a higher priority, of an equal one
+                // the larger uuid (KiCad's ZONE::HigherPriority: USB-C
+                // 3-way splitter's +5V and GND, both of priority 1).
                 excluded: pours
                     .iter()
                     .filter(|other| {
                         other.net != pour.net
                             && other.layers & (1 << layer) != 0
-                            && other.priority > pour.priority
+                            && (other.priority, &other.uuid) > (pour.priority, &pour.uuid)
                     })
                     .map(|other| other.polygon.clone())
                     .chain(

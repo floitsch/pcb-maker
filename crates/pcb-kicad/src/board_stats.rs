@@ -135,7 +135,6 @@ pub fn inspect_kicad_routable_connections(
     {
         if let Some(name) = net_name_from_form(net).map(normalize_net)
             && !name.is_empty()
-            && !name.bytes().all(|byte| byte.is_ascii_digit())
             && !name.starts_with("unconnected-(")
             && seen.insert(name.to_string())
         {
@@ -154,11 +153,10 @@ pub fn inspect_kicad_routable_connections(
             .iter()
             .filter(|item| item.head() == Some("pad"))
         {
-            let Some(connection) = node_net(pad).map(normalize_net).filter(|name| {
-                !name.is_empty()
-                    && !name.bytes().all(|byte| byte.is_ascii_digit())
-                    && !name.starts_with("unconnected-(")
-            }) else {
+            let Some(connection) = node_net(pad)
+                .map(normalize_net)
+                .filter(|name| !name.is_empty() && !name.starts_with("unconnected-("))
+            else {
                 continue;
             };
             if seen.insert(connection.to_string()) {

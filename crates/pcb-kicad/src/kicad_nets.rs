@@ -9,7 +9,6 @@ pub(crate) fn collect_named_nets(root: &Expr, named_nets: &mut BTreeSet<String>)
     if root.head() == Some("net")
         && let Some(name) = net_name_from_form(root)
         && !name.is_empty()
-        && name.parse::<u32>().is_err()
     {
         named_nets.insert(normalize_net(name).to_string());
     }
@@ -187,14 +186,85 @@ pub(crate) fn net_name_from_form(node: &Expr) -> Option<&str> {
     let fields = node.children();
     match fields.len() {
         3.. => fields.get(2)?.atom(),
-        2 => fields.get(1)?.atom(),
+        // `(net 5)` is a net code (KiCad 9 and before: segments, vias,
+        // zones), not a name; KiCad 10 quotes the name (`(net "5")`), and
+        // a net may be named by a number (Soraxem's usb-dmx: nets "14"
+        // and "0", whose pads KiCad wants connected like any other).
+        2 => match &fields[1] {
+            Expr::Atom(raw) if net_code(raw) => None,
+            field => field.atom(),
+        },
         _ => None,
     }
+}
+
+/// The board's net table, code to name (KiCad 9 and before; a KiCad 10
+/// board has none).
+pub(crate) fn net_codes(pcb: &Expr) -> BTreeMap<String, String> {
+    pcb.children()
+        .iter()
+        .filter(|item| item.head() == Some("net") && item.children().len() >= 3)
+        .filter_map(|item| {
+            Some((
+                item.children()[1].atom()?.to_string(),
+                item.children()[2].atom()?.to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// The net an item names, by name or (KiCad 9 and before: segments, vias,
+/// graphics, `(net 2)`) by its code in `codes` (`net_codes`).
+pub(crate) fn item_net<'a>(node: &'a Expr, codes: &'a BTreeMap<String, String>) -> Option<&'a str> {
+    node_net(node).or_else(|| {
+        let fields = node.child("net")?.children();
+        match fields {
+            [_, Expr::Atom(raw)] if net_code(raw) => codes.get(raw.as_str()).map(String::as_str),
+            _ => None,
+        }
+    })
+}
+
+/// Whether a net form's single field is a net code: an unquoted number.
+fn net_code(raw: &str) -> bool {
+    !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_net_form_names_a_net_unless_it_is_a_code() {
+        let name = |text: &str| net_name_from_form(&parse(text).unwrap()).map(str::to_string);
+        assert_eq!(name(r#"(net 6 "14")"#).as_deref(), Some("14"));
+        assert_eq!(name(r#"(net "14")"#).as_deref(), Some("14"));
+        assert_eq!(name(r#"(net "GND")"#).as_deref(), Some("GND"));
+        assert_eq!(name("(net 6)"), None);
+        assert_eq!(name("(net 0)"), None);
+    }
+
+    #[test]
+    fn an_item_names_its_net_by_code_in_an_older_board() {
+        // justbuchanan's ledboard (KiCad 8): copper arcs of Net-(D1-K) as
+        // `(gr_arc ... (net 2))`.
+        let pcb = parse(
+            r#"(kicad_pcb (net 0 "") (net 2 "Net-(D1-K)") (net 3 "5")
+              (gr_arc (start 0 0) (mid 1 1) (end 2 0) (layer "F.Cu") (net 2))
+              (segment (start 0 0) (end 1 0) (net "5"))
+              (via (at 0 0) (net 3))
+              (segment (start 0 0) (end 1 0) (net 7)))"#,
+        )
+        .unwrap();
+        let codes = net_codes(&pcb);
+        let nets: Vec<Option<&str>> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head().is_some_and(|head| head != "net"))
+            .map(|item| item_net(item, &codes))
+            .collect();
+        assert_eq!(nets, vec![Some("Net-(D1-K)"), Some("5"), Some("5"), None]);
+    }
 
     #[test]
     fn copper_application_uses_exact_pad_net_spelling() {

@@ -243,6 +243,20 @@ impl Router {
                     pad_anchor,
                     gap + fill::KICAD_MAX_ERROR + probe.spoke_half_width(layer),
                 );
+                // KiCad caps a spoke's width by the pad's size, a custom
+                // pad's by its anchor's (Cuprum77's paw pads: a 0.1 mm
+                // anchor in large primitives, no spoke, the pad unconnected
+                // where the model joined it to the pour).
+                let minor = match &description.terminals[terminal].contact {
+                    Some(contact) if pad_index == description.terminals[terminal].pad => {
+                        let bounds = contact.aabb();
+                        minor.min(
+                            (bounds.maximum[0] - bounds.minimum[0])
+                                .min(bounds.maximum[1] - bounds.minimum[1]),
+                        )
+                    }
+                    _ => minor,
+                };
                 let width = bridge.min(minor);
                 // No spoke narrower than the minimum width.
                 let drawn = width + 1.0e-9 >= minimum;

@@ -200,6 +200,11 @@ impl<'a> FillProbe<'a> {
         shape.distance_to_point(point)
     }
 
+    /// Half the pour's minimum width on `layer`: the brush's radius.
+    pub(super) fn brush_half(&self, layer: usize) -> f64 {
+        self.half(layer)
+    }
+
     fn half(&self, layer: usize) -> f64 {
         self.router.board.classes[self.router.nets[self.net as usize].plane_class[layer]]
             .trace_width

@@ -11,6 +11,280 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (KiCad connectivity agreement)
+
+In the expansion intake (be4b012, 5 834 boards) 192 boards were complete
+by the router's count (every connection routed, no unconnected
+terminal) while KiCad's DRC with zones refilled, which loaded every one
+of them, reported unconnected items; on 119 of them that was the only
+new finding (docs/benchmarks.md, "Expansion intake"). The router's
+"complete" and `router_complete_unverified` were statements about a
+model of KiCad's connectivity that was wrong in five ways. Branch
+kicad-connectivity; snapshots x1340 to x1344 on ffa49a5, x1345 (the
+commit, rebased on the lowering gaps, 837b5f6). On the rebased binary
+every measurement below repeats row for row: the 65 (x1333 against
+x1345: the x1322 and x1344 rows), the expansion tier against
+build/expansion-x1332 (the same 24 changed rows; tuxkeychain is the
+lowering gaps' 35/42 in both), the short tier against build/short-x1332
+(x1344's rows) and the fingerprints against build/fp-lower-x1332
+(x1344's).
+
+**The census** (`experiments/kicad-connectivity/census.py`; nothing in the
+boards is executed): the intake's rows (the last per board) with the
+router complete and KiCad's unconnected items, each item classified from
+the routed board (items by uuid, net codes resolved) and KiCad's report;
+`--run <dir>` does the same for a route-mode run of run.py.
+`experiments/kicad-connectivity/tasks.py` writes
+`benchmarks/agent-tasks/connectivity-tasks.json`: the 65 of the 192 whose
+repository has a licence run.py fetches (the other 127 are NOASSERTION).
+By the cause of the first unconnected item (boards; items of that cause
+on those boards):
+
+| cause | boards (65 with a licence) | items |
+| --- | ---: | ---: |
+| pour, a zone among the items: the refilled fill does not reach what the pour model connected | 58 (20) | 105 |
+| pour, two items of a pour net, no zone among them | 57 (19) | 191 |
+| copper graphic with a net (a line, an arc, a circle, a filled rectangle) | 30 (8) | 99 |
+| pads of one number stacked on two sides | 28 (10) | 570 |
+| net named by a number | 13 (5) | 176 |
+| track ending on a pad without copper on its layer | 2 (1) | 4 |
+| other | 4 (2) | 70 |
+
+**What was wrong, and the fixes**, in order of boards:
+
+- *The pour model connected what KiCad's fill does not.* A solidly
+  connected pad (`connect_pads yes`, `zone_connect 2`) joined every fill
+  piece within 0.8 mm of its nodes (ORBIT's U2.14: a piece 0.3 mm past
+  its edge, beyond the clearance of the pads beside it, joined U2's
+  island of ground pads to the rest). Now a piece joins it only where its
+  fill reaches the pad's copper: a free node within the brush's half
+  width, or a straight run of fill (the fill probe, off the lattice) from
+  a node at most two pitches beyond (`solid_fill_reaches`,
+  `PourMap::pieces_near`). A pad set to no zone connection (`zone_connect
+  0`) sat in the fill like any pad of the net (1999AZZAR's J2.RN: a
+  branch of no length "connected" it); it is cut out at the zone's
+  clearance and half the minimum width (`isolated_knockouts`), so only a
+  track into the fill joins it. The pour masks held nodes up to the
+  zone's outline and up to other zones' regions; KiCad's brush keeps half
+  the minimum width inside the outline and the larger clearance from a
+  higher zone of another net (as the fill probe already did): a column of
+  nodes on the outline joined pieces KiCad keeps apart
+  (mothenjoyer69's GND_B). And of two zones of other nets with one
+  priority KiCad fills the one with the larger uuid first
+  (ZONE::HigherPriority; the USB-C 3-way splitter's +5V and GND, both
+  priority 1): the lowering cut neither (`Pour::uuid`). KiCad caps a
+  spoke's width by the pad's size, a custom pad's by its anchor's: a
+  custom pad whose anchor is narrower than the zone's minimum width gets
+  no spoke (Cuprum77's paw pads, a 0.1 mm anchor in large primitives,
+  checked on a small board with kicad-cli: unconnected with a 0.1 mm
+  anchor, connected with 1 mm); the model drew them as wide as the
+  primitives' box.
+- *Pads of one number on two sides were one terminal.* The lowering
+  merged pads of one number that overlap (an exposed pad's thermal vias)
+  without asking for a shared layer, so a USB-C receptacle's or an edge
+  connector's top and bottom pads at one place were one terminal: a
+  track on B.Cu stood for both, KiCad wanted them joined (Knox Key's
+  P1.A1). They are merged now only when they overlap on a layer both
+  have (KiCad: a pad of one number apart, or on two sides without a
+  hole, is an item of its own; `duplicate_pad_numbers_are_jumpers` and
+  `jumper_pad_groups` do join pads, which the lowering does not model:
+  the router routes them, more than KiCad needs).
+- *Copper graphics with a net.* KiCad 8 and 9 name a graphic's net by
+  code (`(gr_arc ... (net 2))`); the lowering read "2", took it for no
+  net and the graphic for an obstacle of none; KiCad wanted it joined to
+  Net-(D1-K) (justbuchanan's ledboard). Net codes are resolved through
+  the board's net table (`net_codes`, `item_net`, also for old tracks and
+  vias), a filled graphic with a net was a terminal already, and a
+  stroke-only one is now too: at the middle of its first piece, unless it
+  lies on a terminal's copper of its net (BleJoystick's arcs, the
+  chessboards' rings).
+- *Nets named by numbers.* `routable_net` left out every name of digits
+  as "a placeholder for a single pin"; Soraxem's usb-dmx names nets "14"
+  and "0", and the router called the board complete without them. A net
+  form of one unquoted number is a code, every other number a name
+  (`net_name_from_form`); board_stats counts such nets too.
+- *The emitted copper is checked.* The finish drops stubs that come too
+  close to other nets' copper after the statuses are taken, so a net
+  could be "routed" with a pad left apart. `verify::copper_components`
+  joins a net's copper (pads, merged pads, existing copper, graphics,
+  the emitted tracks and vias) where it overlaps on a shared layer, as
+  KiCad's connectivity without pours does (a custom pad through its
+  anchor only); a net routed by tracks alone whose copper leaves a
+  terminal apart is partial (`copper check:` under verbose or
+  `PCB_ROUTER_DEBUG`). Switched off, the expansion tier's changed rows
+  and jetson's fingerprints stay as they are: it caught nothing there;
+  it is the guard that keeps the router's "complete" a statement about
+  the copper it writes.
+
+Unit tests, one per cause: pcb-kicad's
+`stacked_pads_of_one_number_on_two_sides_are_two_terminals`,
+`a_net_named_by_a_number_is_routed`, `a_net_form_names_a_net_unless_it_is_a_code`,
+`an_item_names_its_net_by_code_in_an_older_board`,
+`a_stroke_with_a_net_is_a_terminal`,
+`of_two_zones_of_one_priority_the_larger_uuid_is_filled_first`;
+pcb-router's `a_solid_pad_joins_only_the_fill_that_reaches_it`,
+`a_pad_without_zone_connection_is_kept_out_of_the_fill`,
+`the_fill_keeps_its_brush_inside_the_zone_outline`,
+`the_copper_check_joins_what_overlaps_on_a_shared_layer`,
+`a_custom_pad_spoke_is_no_wider_than_its_anchor`.
+
+**Route mode on the 65** (connectivity-tasks.json, the intake's settings,
+30 s, 8 x 1, `--no-lock`; `census.py --run`):
+
+| | x1322 (main) | x1340 | x1341 | x1343 | x1344 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| our verdict agrees with KiCad | 15 | 32 | 52 | 62 | 63 |
+| complete by our count, KiCad unconnected | 50 | 33 | 13 | 3 | 2 |
+| KiCad's unconnected items | 346 | 77 | 29 | 15 | 12 |
+| passes (designer-relative, strict) | 14 (14) | 28 (26) | 46 (45) | 55 (52) | 56 (53) |
+
+x1340: stacked pads and numeric names; x1341: the solid reach, the
+isolated pads' knockout, net codes and stroke graphics; x1343: the
+brush in the outline and clear of other zones, the uuid order and the
+copper check; x1344: the custom pads' spokes. By cause (first item,
+boards that disagreed at x1322, then at x1344): stacked pads 13 (10, and
+3 whose first item was a zone's two sides) to 0; pour 23 to 2 (12 fixed
+by the solid reach and the knockout, 8 by the brush and the zones'
+order, 1 by the custom pads' spokes); copper graphics 8 to 0;
+numeric names 5 to 0; other 1 to 0. No board went the other way (our
+count incomplete while KiCad finds it connected): the one board our
+count calls incomplete, mikesmitty's controller (5 open), KiCad finds 8
+unconnected, as at x1322. Per board (our count, KiCad's unconnected
+items; (x) marks a disagreement):
+
+| board | x1322 | x1344 | x1322 cause |
+| --- | --- | --- | --- |
+| 1999AZZAR_pcb-skill_project_pcb_tht_opamp_eq_tht_opamp_eq | complete, 2 (x) | complete, 0 | pour net |
+| 74th_74th-oshw-projects_MISC-grove_expander_MIAC-grove_expander | complete, 0 | complete, 0 | - |
+| Aightech_CleverHand-hardware_pcb_hmi_interface_DRY_ELEC_6CH_THIN | complete, 1 (x) | complete, 0 | pour zone |
+| Apex-Ottawa-Team_hardware_Archive_RF_Module_RF_Module | complete, 1 (x) | complete, 0 | pour net |
+| Apoll011_avi-hw-mesh-node_Hardware_ORBIT | complete, 1 (x) | complete, 0 | pour zone |
+| atopile_packages_packages_rj45-connectors_layouts_usage_usage | complete, 18 (x) | complete, 0 | numeric net name |
+| atopile_packages_packages_saleae-header_layouts_usage_usage | complete, 4 (x) | complete, 0 | numeric net name |
+| azerimaker_olmBoard-RP605x_hardware_olmBoard-RP605x-v1_olmBoard- | complete, 2 (x) | complete, 0 | pour zone |
+| AzonInc_Doorman_pcb_slot_doorman_slot | complete, 1 (x) | complete, 0 | pour net |
+| baxter-barlow_kicad-assistant_qa_data_pcbnew_issue11814 | complete, 2 (x) | complete, 0 | same number stacked |
+| baxter-barlow_kicad-assistant_qa_data_pcbnew_issue6284 | complete, 2 (x) | complete, 2 (x) | pour zone |
+| BerkeleyHCI_PolymorphicBlocks_examples_BleJoystick_BleJoystick_b | complete, 11 (x) | complete, 0 | copper graphic |
+| BerkeleyHCI_PolymorphicBlocks_examples_IotThermalCamera_IotTherm | complete, 1 (x) | complete, 0 | pour zone |
+| bluepylons_USB-C-3-way-splitter_V5__autosave-USB-C-3-way-splitte | complete, 1 (x) | complete, 0 | pour zone |
+| bluepylons_USB-C-3-way-splitter_V5_USB-C-3-way-splitter-V5 | complete, 1 (x) | complete, 0 | pour zone |
+| Cuprum77_BananaBoard_Passive | complete, 3 (x) | complete, 0 | pour net |
+| dennisss_dacha_pkg_media_camera_boards_camera_vb5943_r1_board-la | complete, 1 (x) | complete, 0 | pour net |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r10_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r1_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r2_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r3_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r6_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r7_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r8_board-latest | complete, 0 | complete, 0 | - |
+| dennisss_dacha_pkg_vision_mocap_boards_compute_r9_board-latest | complete, 0 | complete, 0 | - |
+| dragonlock2_kicadboards_projects_BSWelder_BSWelder | complete, 1 (x) | complete, 0 | pour zone |
+| embeddedos-org_eCAD-Hardware-Products_boards_cad_m5stack_m5_cad_ | complete, 27 (x) | complete, 0 | same number stacked |
+| enzocoralc_Tiny20_tiny20_choc_tiny20 | complete, 1 (x) | complete, 0 | same number stacked |
+| enzocoralc_Tiny20_tiny20_xiao_tiny20_xiao | complete, 2 (x) | complete, 0 | same number stacked |
+| Franticware_usb-to-ps1-mouse-pro_kicad_old_rev_PCB_1_usb2ps1mous | complete, 1 (x) | complete, 0 | copper graphic |
+| freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitsp | complete, 0 | complete, 0 | - |
+| freerouting_freerouting_scripts_benchmark_fixtures_PCBench_kitsp | complete, 2 (x) | complete, 0 | same number stacked |
+| Heorenmaru_Hardware_Stm32Board_Small_oneSide_Stm32Board | complete, 1 (x) | complete, 0 | pour zone |
+| Huaqiu-Electronics_kicad_qa_data_pcbnew_issue11814 | complete, 2 (x) | complete, 0 | same number stacked |
+| jo5huajohn_BNO085-PCB_BNO085 | complete, 1 (x) | complete, 0 | pour net |
+| justbuchanan_oasis_pcb_fabricated-boards_ledboard-v0.3_kicad_led | complete, 5 (x) | complete, 0 | copper graphic |
+| justbuchanan_oasis_pcb_ledboard_ledboard | complete, 5 (x) | complete, 0 | copper graphic |
+| MAHESH-THILAK-K_ADDITIONAL-PROJECT_VoltForge_Nexus_OTHER_FILES_V | complete, 1 (x) | complete, 0 | other |
+| MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_mus | complete, 3 (x) | complete, 0 | pour net |
+| MarkWestbroek_MusicBrain_hardware_schematics_musicbrain-adc8_rel | complete, 1 (x) | complete, 0 | pour net |
+| mikesmitty_power-manifold_hardware_controller_controller | open 5, 8 | open 5, 8 | other |
+| mothenjoyer69_pcb-design-files_usb-uart-eqmod_usb-uart-eqmod_usb | complete, 1 (x) | complete, 0 | pour zone |
+| OpenAir-Lab_capstone-project_Hardware_KiCAD_rf-amplifier-modulin | complete, 0 | complete, 0 | - |
+| PantsForBirds_adsbee_kicad_prototyping_panel_proto_lna_board_pan | complete, 48 (x) | complete, 0 | same number stacked |
+| PantsForBirds_adsbee_kicad_prototyping_panel_saw_eval_board_pane | complete, 48 (x) | complete, 0 | same number stacked |
+| Qeteshpony_ESPFanController_pcb_ESPFanController | complete, 2 (x) | complete, 0 | copper graphic |
+| robotique-udes_PCB_exo_ACE_2023_PCB_BioGenius | complete, 2 (x) | complete, 2 (x) | pour net |
+| ryanhaus_rowan-baja-daq_accelerometer-board_pcb_accelerometer-bo | complete, 0 | complete, 0 | - |
+| samienr_kryptonite_kryptonite | complete, 2 (x) | complete, 0 | same number stacked |
+| smkent_pcb_pcb-archived_jigs_dip-adapters_dip-adapters | complete, 20 (x) | complete, 0 | numeric net name |
+| smkent_pcb_pcb-archived_power_eta-buck_eta-buck | complete, 1 (x) | complete, 0 | pour zone |
+| smkent_pcb_pcb-archived_stackable2_esp-cwww_esp-cwww | complete, 1 (x) | complete, 0 | pour zone |
+| smkent_pcb_pcb_power_microbuck_microbuck | complete, 2 (x) | complete, 0 | pour zone |
+| sommerper_framework16-keyboard-v1_kicad_framework16v1_framework1 | complete, 68 (x) | complete, 0 | same number stacked |
+| Soraxem_trance_devboard_pcb_devboard | complete, 11 (x) | complete, 0 | numeric net name |
+| Soraxem_trance_usb-dmx_pcb_usb-dmx | complete, 10 (x) | complete, 0 | numeric net name |
+| Squantor_various_PCB_electronics_DIM_powergate_SOIC-8_DIM_powerg | complete, 0 | complete, 0 | - |
+| Squantor_various_PCB_electronics_DIM_SN6505_PushPullConv_DIM_SN6 | complete, 1 (x) | complete, 0 | pour zone |
+| swayerloren_KICAD_ENGINE_32_OPEN_KICAD_SAMPLE_INTAKE_normalized_ | complete, 1 (x) | complete, 0 | pour net |
+| tdunning_low-pass_low-pass-2-sides_low-pass | complete, 2 (x) | complete, 0 | pour zone |
+| tdunning_low-pass_low-pass_low-pass | complete, 2 (x) | complete, 0 | pour zone |
+| urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION | complete, 4 (x) | complete, 0 | copper graphic |
+| urichess_chessboard_kicad_projects_others_CHESS_PIECES_DETECTION | complete, 4 (x) | complete, 0 | copper graphic |
+| urichess_chessboard_kicad_projects_others_READER_READER | complete, 3 (x) | complete, 0 | copper graphic |
+| zOnlyKroks_pcb-consortium_Misc_7-seg-clock_7-seg-clock | complete, 0 | complete, 0 | - |
+
+The two that still disagree: robotique's BioGenius (a dimension drawn
+on B.Cu, which KiCad's fill keeps clear of and the lowering does not
+lower: a band across the board our pour fills; the no-net copper of the
+lowering-gaps package) and KiCad's own QA board issue6284 (a spoke joins
+U102.4 and U102.6, which KiCad keeps apart). The 127 boards without a
+licence were not routed again (run.py does not fetch them); by cause
+they are the same mix as the 65 (table above).
+
+**Expansion tier** (46 boards, 8 x 1, `--no-lock`; build/expansion-x1343
+against build/expansion-x1322; build/expansion-x1344 is x1343's row for
+row): 22 rows identical; passes 14 to 15
+(strict 14 to 15), unconnected 787 to 758, new errors 18 to 20 (strict
+15 to 16), vias 4022 to 4032; compare.py: better 7, same 37, worse 2.
+Every changed row comes from one of the changes, found with a binary
+whose changes could be switched off one at a time (build/xtog-*, not
+committed) and from the boards' features:
+
+- the new terminals: pads of one number on two sides on VTC-WISDOM's
+  node (14 pads; 35 to 33 unconnected, 69 to 98 vias), ZSWatch (10; its
+  starved thermal gone: a pass), ducktop2's bms (2), Wonkle (2),
+  stellarcorp's magnetorquer (8; 86/86, a pass, to 84/86: the ladder kept
+  its connect rung, I2C3.SDA and Net-(U8-LX1) open, KiCad 2 unconnected,
+  so honest), mincrmatt12's MSign (2, with the brush below: 177/188 and
+  15 unconnected to 165/188 and 60), TokayEdge (8; vias), LC_PAMV4b (2;
+  a pass to one starved thermal, 51/52 either way) and pdlc (2); filled
+  graphics named by code now terminals on bread-modular's noise (vias,
+  length), minuet's light (22/23 to 23/23, a pass), pdlc (16/33 to
+  21/33, 21 to 12 unconnected) and CleverHand's EMG_DAQ (21/22 to 22/22,
+  a pass);
+- the pour masks' brush (in the outline, clear of other zones): iorodeo's
+  driver (170 to 109 unconnected), RS485M (2 to 1 unconnected, two
+  starved thermals), Zulassungskarte (2 to 1), and in vias, length or
+  work only Nervous-ECG, PCBMints, brickpico, OpenRX-Mono, AMLing2,
+  FUEL4EP, anthracite, mikesmitty's backplane and nrf24_remote.
+
+**Short tier** (tasks v7, 4 x 2, `--no-lock` while the designer tier held
+the lock; build/short-x1344 against build/short-x1322, no row cut): 3 rows
+identical (USB_Keypad, MIDAS, CharlieBoard), passes 7 to 7 (strict 7 to
+6), unconnected 19 to 18, vias 1125 to 1116, work 2517 to 3080 s.
+compare.py: better 1 (WLED_Matrix 101/104 to 100/104, 6 to 5
+unconnected), same 11. The 9 changed rows, with both brush bands
+switched off (build/stog-NOBANDS): back to x1322's on reCamera (vias,
+length, first-route open 5 to 7), 0xCB-1337 (a starved thermal: no
+longer a strict pass), USB_Cable_Tester (128 to 95 vias),
+spell_tome_bottom (work 30.1 to 30.0 s) and framework_mobo_lefthalf
+(vias, length); still x1344's on eternal-keypad (200 pads of one number
+on two sides, its reversible switch footprints: 65 to 66 vias, a starved
+thermal) and urchin (136 such pads: 42 to 65 vias); WLED_Matrix (two
+filled rectangles named by code, now terminals) and OpenFC (12 custom
+pads and solid zones: the custom pads' spokes and the solid reach, which
+the switches do not cover) neither.
+
+**Fingerprints** (route mode from the v16 layouts, quarter budget, 2 x 4,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`, build/fp-conn-x1343
+against build/fp-lower-x1322; build/fp-conn-x1344 has x1343's
+fingerprints on all four): Castor and k30-SBC identical at every
+phase; jetson identical up to the clean-up of its tracks attempt, which
+the pour masks' brush changes (with both bands switched off every
+fingerprint is x1322's), the board identical (324/340, 620 vias, 10791.4
+mm, KiCad 19 unconnected); Sisu changes from the start: U2's pad 11 (GND)
+on F.Cu and again on B.Cu at one place is two terminals now (183/192 to
+182/192, KiCad 13 unconnected both, solder_mask_bridge 15 to 14).
+
+**Gates**: `bash scripts/check.sh` and the clippy gate pass.
+
 ## Committed on 2026-10-22 (lowering gaps)
 
 The two rules agents named KiCad findings the router could not see: the

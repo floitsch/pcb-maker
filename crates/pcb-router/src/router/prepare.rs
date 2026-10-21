@@ -197,6 +197,15 @@ impl Router {
             ) else {
                 continue;
             };
+            // KiCad's fill keeps its brush, half the minimum width, inside
+            // the zone's outline: a node closer to the outline holds no
+            // brush centre, and a strip of them along the edge joined
+            // pieces KiCad's fill keeps apart (mothenjoyer69's GND_B: a
+            // column of nodes 0.1 mm inside the outline, a 0.22 mm brush).
+            // Per zone, so that zones of the net that overlap fill across
+            // each other's outlines.
+            let half = self.board.classes[pour.class].trace_width / 2.0;
+            let mut inside: Vec<(usize, bool)> = Vec::new();
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let cell = self.grid.index(x, y);
@@ -208,8 +217,52 @@ impl Router {
                             .iter()
                             .any(|other| crate::geometry::point_in_polygon(center, other))
                     {
-                        plane[pour.layer][cell] = true;
+                        inside.push((cell, true));
                     }
+                }
+            }
+            // So with the regions other zones take (`excluded`), kept at
+            // their clearance as the fill probe keeps them
+            // (`Board::excluded_clearance`).
+            if half > 0.0 {
+                let mut near_edge: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                let outlines = std::iter::once((&pour.polygon, half)).chain(
+                    pour.excluded
+                        .iter()
+                        .map(|other| (other, half + self.board.excluded_clearance(pour, other))),
+                );
+                for (polygon, reach) in outlines {
+                    for (a, b) in crate::geometry::polygon_edges(polygon) {
+                        let bounds = crate::geometry::Aabb {
+                            minimum: [a[0].min(b[0]), a[1].min(b[1])],
+                            maximum: [a[0].max(b[0]), a[1].max(b[1])],
+                        }
+                        .inflated(reach);
+                        let Some((ex0, ey0, ex1, ey1)) = self.grid.node_range(bounds) else {
+                            continue;
+                        };
+                        for y in ey0..=ey1 {
+                            for x in ex0..=ex1 {
+                                if crate::geometry::point_segment_distance(
+                                    self.grid.center(x, y),
+                                    a,
+                                    b,
+                                ) < reach - 1.0e-6
+                                {
+                                    near_edge.insert(self.grid.index(x, y));
+                                }
+                            }
+                        }
+                    }
+                }
+                for (cell, keep) in &mut inside {
+                    *keep = !near_edge.contains(cell);
+                }
+            }
+            for (cell, keep) in inside {
+                if keep {
+                    plane[pour.layer][cell] = true;
                 }
             }
         }

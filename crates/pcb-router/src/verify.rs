@@ -433,3 +433,144 @@ pub fn verify_with_rules(
     }
     violations
 }
+
+/// The distance between two filled shapes (zero where they overlap).
+pub fn shape_distance(a: &Shape, b: &Shape) -> f64 {
+    match (a, b) {
+        (Shape::Circle { center, radius }, other) | (other, Shape::Circle { center, radius }) => {
+            (other.distance_to_point(*center) - radius).max(0.0)
+        }
+        (Shape::Capsule { start, end, radius }, other)
+        | (other, Shape::Capsule { start, end, radius }) => {
+            (other.distance_to_segment(*start, *end) - radius).max(0.0)
+        }
+        (Shape::Union { parts }, other) | (other, Shape::Union { parts }) => parts
+            .iter()
+            .map(|part| shape_distance(part, other))
+            .fold(f64::INFINITY, f64::min),
+        (Shape::Polygon { points: first }, Shape::Polygon { points: second }) => {
+            if first
+                .first()
+                .is_some_and(|point| point_in_polygon(*point, second))
+                || second
+                    .first()
+                    .is_some_and(|point| point_in_polygon(*point, first))
+            {
+                return 0.0;
+            }
+            polygon_edges(first)
+                .flat_map(|(a, b)| {
+                    polygon_edges(second).map(move |(c, d)| segment_segment_distance(a, b, c, d))
+                })
+                .fold(f64::INFINITY, f64::min)
+        }
+    }
+}
+
+/// KiCad's connectivity of `net` without its pours: which of its terminals
+/// the copper of the net joins, the emitted `route` (tracks and vias) and
+/// the board's copper of the net (pads, the pads merged into a terminal,
+/// existing tracks, graphics), items joined where their copper overlaps on
+/// a layer they share. A terminal with a contact (a custom pad) is joined
+/// through it only. Returns per terminal a component number (equal numbers
+/// are joined). Without pours this is what KiCad's DRC counts; fill only
+/// adds connections, so terminals it joins are joined in KiCad too.
+pub fn copper_components(board: &Board, net: NetId, route: &NetRoute) -> Vec<usize> {
+    let description = &board.nets[net as usize];
+    // Elements: the terminals (their contact or pad), the net's other
+    // copper obstacles, the segments, the vias.
+    let mut shapes: Vec<(Shape, u64)> = Vec::new();
+    let mut element_of_obstacle: HashMap<usize, usize> = HashMap::new();
+    for terminal in &description.terminals {
+        let pad = &board.obstacles[terminal.pad];
+        let shape = terminal
+            .contact
+            .clone()
+            .unwrap_or_else(|| pad.shape.clone());
+        element_of_obstacle.insert(terminal.pad, shapes.len());
+        shapes.push((shape, pad.layers as u64));
+    }
+    let terminal_count = shapes.len();
+    let mut joins: Vec<(usize, usize)> = Vec::new();
+    for merged in board.merged_pads.iter().filter(|merged| merged.net == net) {
+        let element = shapes.len();
+        let pad = &board.obstacles[merged.pad];
+        shapes.push((pad.shape.clone(), pad.layers as u64));
+        element_of_obstacle.insert(merged.pad, element);
+        if merged.host < terminal_count {
+            joins.push((element, merged.host));
+        }
+    }
+    for (index, obstacle) in board.obstacles.iter().enumerate() {
+        if obstacle.net == Some(net)
+            && obstacle.kind == ObstacleKind::Copper
+            && !element_of_obstacle.contains_key(&index)
+            // Another terminal's custom pad joins through its contact only.
+            && !description
+                .terminals
+                .iter()
+                .any(|terminal| terminal.pad == index)
+        {
+            shapes.push((obstacle.shape.clone(), obstacle.layers as u64));
+        }
+    }
+    for segment in &route.segments {
+        shapes.push((
+            Shape::Capsule {
+                start: segment.start,
+                end: segment.end,
+                radius: segment.width / 2.0,
+            },
+            1u64 << segment.layer,
+        ));
+    }
+    for via in &route.vias {
+        shapes.push((
+            Shape::Circle {
+                center: via.at,
+                radius: via.diameter / 2.0,
+            },
+            u64::MAX,
+        ));
+    }
+    let mut parent: Vec<usize> = (0..shapes.len()).collect();
+    fn root(parent: &mut [usize], mut item: usize) -> usize {
+        while parent[item] != item {
+            parent[item] = parent[parent[item]];
+            item = parent[item];
+        }
+        item
+    }
+    let join = |parent: &mut Vec<usize>, a: usize, b: usize| {
+        let (a, b) = (root(parent, a), root(parent, b));
+        if a != b {
+            parent[a.max(b)] = a.min(b);
+        }
+    };
+    for (a, b) in joins {
+        join(&mut parent, a, b);
+    }
+    // Pairs by a sweep over the boxes' x ranges.
+    let boxes: Vec<Aabb> = shapes.iter().map(|(shape, _)| shape.aabb()).collect();
+    let mut order: Vec<usize> = (0..shapes.len()).collect();
+    order.sort_by(|a, b| boxes[*a].minimum[0].total_cmp(&boxes[*b].minimum[0]));
+    for (position, &a) in order.iter().enumerate() {
+        for &b in &order[position + 1..] {
+            if boxes[b].minimum[0] > boxes[a].maximum[0] + TOLERANCE {
+                break;
+            }
+            if shapes[a].1 & shapes[b].1 == 0
+                || !boxes[a].inflated(TOLERANCE).intersects(boxes[b])
+                || root(&mut parent, a) == root(&mut parent, b)
+            {
+                continue;
+            }
+            if shape_distance(&shapes[a].0, &shapes[b].0) <= TOLERANCE {
+                join(&mut parent, a, b);
+            }
+        }
+    }
+    (0..terminal_count)
+        .map(|terminal| root(&mut parent, terminal))
+        .collect()
+}

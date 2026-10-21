@@ -155,6 +155,44 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn of_two_zones_of_one_priority_the_larger_uuid_is_filled_first() {
+        // USB-C 3-way splitter: +5V and GND both of priority 1 overlap on
+        // F.Cu. KiCad orders them by uuid (ZONE::HigherPriority): the
+        // larger one's fill stays, the other is cut around it; the pour
+        // model filled GND across +5V's zone.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 20) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "+5V")))
+              (footprint "b" (at 15 15) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "+5V")))
+              (zone (net "GND") (layers "F.Cu") (uuid "0f000000-0000-0000-0000-000000000000") (priority 1)
+                (polygon (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 0 20))))
+              (zone (net "+5V") (layers "F.Cu") (uuid "a0000000-0000-0000-0000-000000000000") (priority 1)
+                (polygon (pts (xy 10 0) (xy 20 0) (xy 20 10) (xy 10 10)))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let plane = |name: &str| {
+            board
+                .planes
+                .iter()
+                .find(|plane| board.nets[plane.net as usize].name == name)
+                .unwrap()
+        };
+        assert_eq!(plane("GND").excluded.len(), 1);
+        assert!(plane("+5V").excluded.is_empty());
+    }
+
+    #[test]
     fn rule_areas_that_keep_fills_out_are_left_out_of_the_pours_on_their_layers() {
         // Sisu: rule areas that allow tracks and vias but no zone fill; the
         // pour model filled them where KiCad leaves them empty.
@@ -951,6 +989,142 @@ mod pour_request_tests {
             board.obstacles[net.terminals[0].pad].kind,
             core::ObstacleKind::Copper
         );
+    }
+
+    #[test]
+    fn a_net_named_by_a_number_is_routed() {
+        // Soraxem's usb-dmx: nets named "14" and "0" (KiCad 9's net table,
+        // codes 6 and 14). The lowering took a name of digits for a net
+        // code, left both nets out and called the board complete; KiCad
+        // found their pads unconnected. An unquoted number in a net form
+        // of one field is a code (an old track's `(net 6)`), named by the
+        // board's net table.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (net 0 "")
+          (net 6 "14")
+          (net 14 "0")
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "a" (at 5 5) (property "Reference" "D1")
+            (pad "3" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 6 "14"))
+            (pad "4" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 14 "0")))
+          (footprint "b" (at 15 5) (property "Reference" "U3")
+            (pad "18" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 6 "14"))
+            (pad "19" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 14 "0")))
+          (segment (start 1 1) (end 2 1) (width 0.2) (layer "B.Cu") (net 6)))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        for name in ["14", "0"] {
+            let net = board.nets.iter().find(|net| net.name == name).unwrap();
+            assert_eq!(net.terminals.len(), 2, "{name}");
+        }
+        // The old track's (net 6) is net "14" by its code.
+        let track = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "existing track")
+            .unwrap();
+        let fourteen = board.nets.iter().position(|net| net.name == "14").unwrap();
+        assert_eq!(track.net, Some(fourteen as core::NetId));
+    }
+
+    #[test]
+    fn a_stroke_with_a_net_is_a_terminal() {
+        // justbuchanan's ledboard (KiCad 8): copper arcs on Net-(D1-K),
+        // named by code. KiCad's connectivity wants them joined to the
+        // net's pads; the lowering read no net and left them out. A line
+        // drawn from a pad is one item with it.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (net 0 "")
+          (net 2 "Net-(D1-K)")
+          (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+          (footprint "a" (at 5 5) (property "Reference" "D1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "Net-(D1-K)")))
+          (footprint "b" (at 35 5) (property "Reference" "R1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "Net-(D1-K)")))
+          (gr_arc (start 10 15) (mid 20 12) (end 30 15) (stroke (width 1) (type solid)) (layer "F.Cu") (net 2))
+          (gr_line (start 35 5) (end 35 9) (stroke (width 0.3) (type solid)) (layer "F.Cu") (net 2)))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let id = board
+            .nets
+            .iter()
+            .position(|net| net.name == "Net-(D1-K)")
+            .unwrap();
+        let net = &board.nets[id];
+        let labels: Vec<&str> = net
+            .terminals
+            .iter()
+            .map(|terminal| terminal.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["D1.1", "R1.1", "gr_arc 1"]);
+        let arc = &net.terminals[2];
+        assert!(board.obstacles[arc.pad].shape.contains(arc.anchor));
+        assert_eq!(board.obstacles[arc.pad].net, Some(id as core::NetId));
+    }
+
+    #[test]
+    fn stacked_pads_of_one_number_on_two_sides_are_two_terminals() {
+        // Knox Key's USB-C P1: pad A1 on F.Cu and again on B.Cu at the
+        // same place, no hole. KiCad's connectivity wants the two joined
+        // by copper (a via); one terminal let a track on B.Cu stand for
+        // both. Pads of one number that overlap on a shared layer stay one.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "usb" (at 5 5) (property "Reference" "P1")
+            (pad "A1" smd roundrect (at 0 0) (size 0.7 0.7) (layers "B.Cu" "B.Mask") (roundrect_rratio 0.16) (net "GND"))
+            (pad "A1" smd roundrect (at 0 0) (size 0.7 0.7) (layers "F.Cu" "F.Mask") (roundrect_rratio 0.16) (net "GND"))
+            (pad "A2" smd rect (at 2 0) (size 1.2 1.2) (layers "F.Cu" "F.Mask") (net "GND"))
+            (pad "A2" smd rect (at 2.3 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (net "GND")))
+          (footprint "b" (at 15 5) (property "Reference" "TP2")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let net = board.nets.iter().find(|net| net.name == "GND").unwrap();
+        let labels: Vec<&str> = net
+            .terminals
+            .iter()
+            .map(|terminal| terminal.label.as_str())
+            .collect();
+        // Both A1 pads, one A2 (the small one inside the large), TP2.1.
+        assert_eq!(labels, vec!["P1.A1", "P1.A1", "P1.A2", "TP2.1"]);
+        assert_ne!(net.terminals[0].layers, net.terminals[1].layers);
+        assert_eq!(board.merged_pads.len(), 1);
     }
 
     #[test]

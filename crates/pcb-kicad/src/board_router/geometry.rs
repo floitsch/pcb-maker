@@ -519,6 +519,9 @@ pub(crate) struct Pour {
     pub(crate) net: String,
     pub(crate) layers: core::LayerMask,
     pub(super) priority: i64,
+    /// The zone's uuid: KiCad orders zones of equal priority by it
+    /// (`ZONE::HigherPriority`).
+    pub(super) uuid: String,
     pub(super) clearance: f64,
     pub(super) min_thickness: f64,
     pub(super) thermal_reach: f64,
@@ -557,6 +560,10 @@ pub(crate) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
             priority: form_atom(zone, "priority", 1)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
+            uuid: form_atom(zone, "uuid", 1)
+                .or_else(|| form_atom(zone, "tstamp", 1))
+                .unwrap_or("")
+                .to_ascii_lowercase(),
             clearance: zone
                 .child("connect_pads")
                 .and_then(|form| form_f64(form, "clearance", 1).ok())

@@ -197,7 +197,7 @@ impl Router {
             }
         }
         let emit_started = std::time::Instant::now();
-        let status = self.statuses();
+        let mut status = self.statuses();
         let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) = (0..self.board.nets.len()
             as NetId)
             .map(|net| self.materialize(net))
@@ -239,6 +239,38 @@ impl Router {
                         *stub -= 1;
                     }
                 }
+            }
+        }
+        // The emitted copper must join what the status says. A net routed
+        // with tracks alone is checked as KiCad's connectivity sees it
+        // (`verify::copper_components`: copper of the net overlapping on a
+        // shared layer): a terminal its copper leaves apart (a stub
+        // dropped above) makes it partial, so that a complete route by the
+        // router's count is one KiCad finds connected. A pour net's
+        // connections are the pour model's.
+        for net in 0..self.board.nets.len() {
+            if !matches!(status[net], NetStatus::Routed) || !self.nets[net].plane.is_empty() {
+                continue;
+            }
+            let components =
+                crate::verify::copper_components(&self.board, net as NetId, &routes[net]);
+            let mut sizes: HashMap<usize, usize> = HashMap::new();
+            for component in &components {
+                *sizes.entry(*component).or_default() += 1;
+            }
+            let largest = sizes.values().copied().max().unwrap_or(0);
+            let apart = components.len() - largest;
+            if apart > 0 {
+                if self.config.verbose || std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
+                    eprintln!(
+                        "copper check: {} leaves {apart} of {} terminals apart",
+                        self.board.nets[net].name,
+                        components.len()
+                    );
+                }
+                status[net] = NetStatus::Partial {
+                    unconnected_terminals: apart,
+                };
             }
         }
         let mut congestion = vec![0.0f32; self.grid.cells()];

@@ -3384,3 +3384,233 @@ fn a_net_crossing_a_starved_pads_spoke_is_routed_around_it() {
     let mut router = Router::new(&board, &off);
     assert_eq!(router.free_lost_spokes(), 0);
 }
+
+#[test]
+fn the_copper_check_joins_what_overlaps_on_a_shared_layer() {
+    // P.1 and P.2 on the front, P.3 on the back. A front track joins P.1
+    // and P.2; a back track from P.2 reaches P.3 only through the via at
+    // P.2 (a front pad does not join a back track by itself).
+    let mut back = copper(rect([8.0, 5.0], [0.3, 0.3]), 0, "P.3");
+    back.layers = 2;
+    let obstacles = vec![
+        copper(rect([2.0, 5.0], [0.3, 0.3]), 0, "P.1"),
+        copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.2"),
+        back,
+    ];
+    let mut terminals = vec![
+        terminal(0, [2.0, 5.0], "P.1"),
+        terminal(1, [5.0, 5.0], "P.2"),
+        terminal(2, [8.0, 5.0], "P.3"),
+    ];
+    terminals[2].layers = 2;
+    let nets = vec![Net {
+        name: "P".into(),
+        class: 0,
+        terminals,
+    }];
+    let board = board(2, obstacles, nets, Vec::new(), Vec::new());
+    let segment = |layer: usize, start: [f64; 2], end: [f64; 2]| crate::board::Segment {
+        layer,
+        start,
+        end,
+        width: 0.25,
+    };
+    let mut route = crate::board::NetRoute {
+        segments: vec![
+            segment(0, [2.0, 5.0], [5.0, 5.0]),
+            segment(1, [5.0, 5.0], [8.0, 5.0]),
+        ],
+        vias: Vec::new(),
+    };
+    let components = crate::verify::copper_components(&board, 0, &route);
+    assert_eq!(components[0], components[1]);
+    assert_ne!(components[1], components[2]);
+    route.vias.push(crate::board::Via {
+        at: [5.0, 5.0],
+        diameter: 0.6,
+        drill: 0.3,
+    });
+    let components = crate::verify::copper_components(&board, 0, &route);
+    assert_eq!(components[0], components[2]);
+    // A track short of the pad by more than nothing joins nothing.
+    route.segments[0].end = [4.5, 5.0];
+    let components = crate::verify::copper_components(&board, 0, &route);
+    assert_ne!(components[0], components[1]);
+}
+
+#[test]
+fn a_solid_pad_joins_only_the_fill_that_reaches_it() {
+    // A bar of Q across the whole pour splits it 0.3 mm below P.1, a
+    // solidly connected pad: its fill never reaches P.1 (Q's clearance and
+    // the brush keep it 0.6 mm off), so P.1 and P.2 below are apart.
+    // ORBIT's U2.14 read as joined to a piece 0.3 mm past its edge.
+    let obstacles = vec![
+        copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
+        copper(rect([5.0, 8.0], [0.3, 0.3]), 0, "P.2"),
+        copper(rect([5.0, 5.65], [5.5, 0.05]), 1, "Q.1"),
+    ];
+    let mut solid = plane(0, 0, Some((0.3, 0.4)));
+    solid.solid = true;
+    let board = board(
+        1,
+        obstacles,
+        vec![
+            Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [5.0, 8.0], "P.2"),
+                ],
+            },
+            Net {
+                name: "Q".into(),
+                class: 0,
+                terminals: vec![terminal(2, [5.0, 5.65], "Q.1")],
+            },
+        ],
+        vec![solid],
+        Vec::new(),
+    );
+    let router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let (pours, mut parent, _) = router.analyze_pours(0);
+    let base = pours.pieces + 1;
+    assert_ne!(find(&mut parent, base), find(&mut parent, base + 1));
+}
+
+#[test]
+fn a_pad_without_zone_connection_is_kept_out_of_the_fill() {
+    // P.1 is set to no zone connection: KiCad's fill keeps the zone's
+    // clearance from it as from another net's pad, so no fill node lies
+    // on it or within the clearance and half the minimum width of it
+    // (1999AZZAR's J2.RN: the pour model filled over the pad and a
+    // branch of no length "connected" it).
+    let obstacles = vec![
+        copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+        copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.2"),
+    ];
+    let mut board = board(
+        1,
+        obstacles,
+        vec![Net {
+            name: "P".into(),
+            class: 0,
+            terminals: vec![
+                terminal(0, [5.0, 5.0], "P.1"),
+                terminal(1, [2.0, 2.0], "P.2"),
+            ],
+        }],
+        vec![plane(0, 0, Some((0.3, 0.4)))],
+        Vec::new(),
+    );
+    board.isolated_pads = vec!["P.1".into()];
+    board.isolated_pad_obstacles = vec![0];
+    let router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let (pours, _, _) = router.analyze_pours(0);
+    let label = |point: [f64; 2]| pours.label[0][router.grid.nearest_node(point).unwrap()];
+    // Clearance 0.2 and half of 0.25: 0.325 from the pad.
+    assert_eq!(label([5.0, 5.0]), 0);
+    assert_eq!(label([5.8, 5.0]), 0);
+    assert_ne!(label([5.9, 5.0]), 0);
+}
+
+#[test]
+fn the_fill_keeps_its_brush_inside_the_zone_outline() {
+    // KiCad's fill holds no brush centre closer than half the minimum
+    // width (0.125 mm) to the zone's outline; the pour mask held nodes on
+    // the outline itself (mothenjoyer69's GND_B: a column of them 0.1 mm
+    // inside joined pieces KiCad keeps apart).
+    let board = board(
+        1,
+        vec![
+            copper(rect([5.0, 5.0], [0.3, 0.3]), 0, "P.1"),
+            copper(rect([2.0, 5.0], [0.3, 0.3]), 0, "P.2"),
+        ],
+        vec![Net {
+            name: "P".into(),
+            class: 0,
+            terminals: vec![
+                terminal(0, [5.0, 5.0], "P.1"),
+                terminal(1, [2.0, 5.0], "P.2"),
+            ],
+        }],
+        vec![Plane {
+            polygon: vec![[1.0, 1.0], [9.0, 1.0], [9.0, 9.0], [1.0, 9.0]],
+            ..plane(0, 0, Some((0.3, 0.4)))
+        }],
+        Vec::new(),
+    );
+    let router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let (mask, _) = router.pour_masks(0, false);
+    let inside = |point: [f64; 2]| mask[0][router.grid.nearest_node(point).unwrap()];
+    assert!(!inside([1.1, 5.0]));
+    assert!(inside([1.2, 5.0]));
+    assert!(!inside([5.0, 8.9]));
+    assert!(inside([5.0, 8.8]));
+}
+
+#[test]
+fn a_custom_pad_spoke_is_no_wider_than_its_anchor() {
+    // KiCad caps a spoke's width by the pad's size, a custom pad's by its
+    // anchor's: with a 0.1 mm anchor no spoke reaches the minimum width
+    // and the pad stays apart from the pour (Cuprum77's paw pads); with a
+    // 1 mm anchor its spokes join it to the pour and to P.2.
+    let joined = |anchor_radius: f64| {
+        let anchor = Shape::Circle {
+            center: [3.0, 5.0],
+            radius: anchor_radius,
+        };
+        let obstacles = vec![
+            copper(
+                Shape::Union {
+                    parts: vec![anchor.clone(), rect([3.0, 5.0], [1.0, 1.0])],
+                },
+                0,
+                "P.1",
+            ),
+            copper(rect([7.0, 5.0], [0.5, 0.5]), 0, "P.2"),
+        ];
+        let mut custom = terminal(0, [3.0, 5.0], "P.1");
+        custom.contact = Some(anchor);
+        let board = board(
+            1,
+            obstacles,
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![custom, terminal(1, [7.0, 5.0], "P.2")],
+            }],
+            vec![plane(0, 0, Some((0.3, 0.4)))],
+            Vec::new(),
+        );
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let (_, mut parent, base) = spoke_report(&router, 0);
+        find(&mut parent, base) == find(&mut parent, base + 1)
+    };
+    assert!(!joined(0.05));
+    assert!(joined(0.5));
+}

@@ -1294,7 +1294,9 @@ work bound").
 What blocks boards at scale, ranked by boards a single new finding type
 blocks: KiCad disagreeing with the router's "complete" (119: stacked
 same-number F/B pads, tracks ending at a pad on the other side, pour to pad
-after refill), starved thermals (103), track_width (82, almost all inferred
+after refill; 192 boards complete by the router's count with KiCad
+unconnected items in all, classified and fixed on 2026-10-22: docs/changelog.md,
+"KiCad connectivity agreement"), starved thermals (103), track_width (82, almost all inferred
 rules against KiCad's 0.2 mm default), clearance from `.kicad_dru` and
 netclass rules (16), copper edge clearance (15), mask bridges (8). 1 297 of
 the 1 725 "DRC failures" fail only on the designer's own findings. Of the
