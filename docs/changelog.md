@@ -11,6 +11,58 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (global route, phase 1)
+
+A coarse global router as a routability measure (the v18 section's
+recommendation and the 2026-10-21 review's direction call), validated
+against final results; [global-route.md](global-route.md) has the model
+and the tables. Snapshots x1440-x1442 (x1440 and x1441 had the race
+score unreachable: the layout rejected it, then skipped the pre-ranking
+for it).
+
+**Built.** `crates/pcb-global` (new crate, in check.sh and the clippy
+gate): tiles of 1.5 mm over the lowered `pcb_router::Board`; per layer
+and tile boundary the tracks of the reference class that fit between the
+pads, keepouts, holes and fixed copper (sampled every 0.05 mm on the
+boundary, a pad the boundary cuts passing its own net), via sites per
+tile, pour ownership per layer and tile; nets as trees along their
+spanning tree (pour nets: each pad to its pour), A* in a window,
+PathFinder negotiation (present price from 0.5 growing 1.8 a round,
+history 1 on overflow, 16 rounds, the least overflow kept), vias at the
+router's cost, the router's preferred directions and plane cut cost.
+Output: overflow per boundary and layer, the score (total, largest and
+soft overflow, ACE, overflowed, unrouted and detoured nets) and per-net
+corridors. `pcb-maker global-route-kicad-board` (the layout's lowering;
+RUDY and, with `--probe`, the race's probe beside it; `--corridors`),
+`congestion_score: "global"` in layout.json (the race's pre-ranking by
+the global route's usage above half the capacity; opt-in), run.py
+`--layout` (layout settings for every board), `PCB_GLOBAL_DEBUG`.
+Time: median 0.26 s a placement over 218, katia 2.6 s, Batch_1 3.2 s, the
+laptop motherboard 0.24 s.
+
+**Validated** (`experiments/global-route/validate.py`). Our v18
+placement against the designer's on every board (209 placements with a
+final result, 43 boards whose finals differ): the soft overflow at 0.5
+orders 0.791 of the pairs as their finals (RUDY 0.523, the global
+route's wirelength 0.663; PROBE_LINE), right on 12 of the 18 boards that
+pass the strict rule on one placement only (8 of the 11 decided by open
+connections; 7 differ only in starved thermals and other findings).
+Robust: 0.70-0.79 at tiles of 1.0, 1.5 and 2.0 mm, with 0.7 of the
+capacity, or measured on three lines. The placer's seeds of one board
+(the historical cohort of 82 final layouts where the probe's 0.55 and
+RUDY's 0.30 were measured): within-board Spearman 0.327, pair accuracy
+0.642, about RUDY (0.300, 0.630), below one probe (0.526, 0.735), and
+unstable across the variants (0.0 to 0.33). Reading: it tells a
+structurally less routable placement from a routable one, not one seed
+from another; the phase-1 rule holds on its paired clause only.
+
+PROTOTYPE_LINE
+
+**Unchanged by default.** Short tier (6 x 2, `--no-lock`) x1441 against
+build/short-charge-x1381: 12 rows and the 12 result boards identical.
+Fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from v16, 2 x 4,
+budget scale 0.25) x1441 against build/fp-fence-x1385: every fingerprint
+and every board identical.
 ## Committed on 2026-10-21 (agent contract review fixes)
 
 The sure findings H1-H3 and M1-M4 of

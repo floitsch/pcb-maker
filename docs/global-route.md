@@ -1,6 +1,6 @@
 # The global route (`pcb-global`)
 
-Status (2026-10-22): **phase 1, a routability measure.** Built (a crate,
+Status (2026-10-21): **phase 1, a routability measure.** Built (a crate,
 a command, an opt-in race score) and validated against final results on
 two sets of placements. It tells our placements from the designers'
 reliably where RUDY cannot, but it does not rank the placer's own seeds
