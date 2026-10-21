@@ -236,6 +236,85 @@ cost 9 unconnected). Not modelled: via-to-via mask spacing (no corpus
 board has untented vias with a web or an expansion), pads placed under
 another part's opening (placement's), zone fill under openings.
 
+### Project rules (2026-10-21)
+
+`project_rules.rs` resolves the router's rules from the project, as
+KiCad 10.0.7's DRC reads it:
+
+- **Board setup.** A minimum the project does not state takes KiCad's
+  default (board_design_settings.cpp, confirmed by the intake's DRC
+  reports): `min_track_width` 0.2 (the neck-down width then is 0.2, not
+  the 0.127 of a project whose minimum is 0), `min_via_diameter` 0.5,
+  `min_through_hole_diameter` 0.3, `min_via_annular_width` 0.1, edge
+  clearance 0.5, hole clearance and hole to hole 0.25.
+  `rules.kicad_defaults` in `board-router.json` lists the ones taken.
+- **Net classes.** A pattern matches as a wildcard or as an anchored
+  regular expression (KiCad's `EDA_COMBINED_MATCHER`: `.*(_TAP|V_POE).*`
+  is the latter, `+3V3` only the former). A net takes every class
+  assigned to it (explicitly, by a KiCad 6/7 class's net list, by every
+  pattern it matches), and each value from the first of them by
+  `priority` that has one, else from `Default` (KiCad 8's composite
+  classes; a class without a width is Default's width, not 0.2). A pair
+  of nets keeps the larger of the two clearances, as in KiCad.
+- **Custom rules** (`<project>.kicad_dru`, `project_rules/dru.rs`). The
+  file is parsed (comments, units mm/mil/in/um, escapes) and each
+  condition evaluated, three-valued, for what the router lays: tracks and
+  vias against tracks, vias and pads (SMD, plated, NPTH), on each copper
+  layer the rule's `(layer ...)` names, both ways round (KiCad's
+  conditions are commutative). Evaluable: `Type`, `NetClass` (a
+  constituent's or the composite's name, case-insensitive, wildcards),
+  `NetName`, `Net` (also `A.Net == B.Net`), `Layer`, `Pad_Type`,
+  `Via_Type`, `isPlated()`, `hasNetclass()`, `hasExactNetclass()`,
+  `existsOnLayer()`, the blind/buried/micro via tests (false: through
+  vias only). Anything else (areas, courtyards, references, sizes,
+  component classes, diff pairs) is unknown; a rule whose result depends
+  on it is not lowered. Nets are grouped by what the condition can tell
+  apart, so a rule costs the number of groups squared, not of nets.
+
+  KiCad applies the last matching rule (`EvalRules`); the router keeps,
+  for each value, the largest of every rule that can match: never less
+  than KiCad asks. Lowered: `clearance` per net (a rule on one set of nets
+  against every net raises that set; against every pair, every net),
+  `track_width` min, max and opt per net (a rule on every net also floors
+  the neck-down and narrow-signal widths), `via_diameter`, `hole_size`
+  (vias) and `annular_width` per net, and `edge_clearance`,
+  `hole_clearance` and `hole_to_hole` for the board (the router has one
+  value each). A rule between two sets of nets (primary against
+  secondary) is not lowered: one clearance a net would keep it from
+  every net, the set's own nets too (ChengminLi's flyback: 2.5 mm between
+  the sides left 11 connections open where the designer's placement keeps
+  the sides apart); nor a rule that matches pads or vias against tracks
+  but no two tracks (JLCPCB's and PCBWay's "Pad to Track"): it would hold
+  between tracks too (AMLing2's drone carrier, 0.2 mm over classes of
+  0.127: 10 open connections to 35, where KiCad had found none of it);
+  nor a rule whose project severity (or its own
+  `(severity ...)`) is below an error (hole_to_hole is a warning by
+  KiCad's default, also under its KiCad 8 name `hole_near_hole`). Every
+  constraint of every rule is in `board-router.json`'s
+  `rules.custom_rules` with a status: `applied`, `approximated` (kept
+  more widely: every layer, every item type), `no_effect` (the classes
+  and board setup keep at least as much, or nothing routed matches),
+  `not_routing` (silk, text, courtyards, pad holes, zone connections,
+  assertions), `skipped` (severity, or a layer the board lacks) or
+  `unmodelled` (creepage, length, skew, diff pairs, physical clearances,
+  disallows other than blind, buried and micro vias, pair rules, pad to
+  track rules, rules on what is unknown). `rules.unmodelled` lists the last one line each; the
+  verdict's next_actions name them when a route is incomplete, and
+  `drc-kicad-board` prints them on a `next:` line when KiCad finds
+  errors.
+
+  What the lowering cannot do yet, for the router (crates/pcb-router)
+  and the lowering (board_router/lower.rs): a clearance per pair of nets
+  (rules between two sets), per item type (pad to track only: a floor on
+  the pad obstacles' `clearance`, where lower.rs now starts it at 0, would
+  keep it exactly) and per layer; a width floor per net for neck-downs and the narrow-signal step
+  (the floor is the board's); the edge clearance from NPTH holes and
+  from Margin graphics (KiCad's copper_edge_clearance names "NPTH pad of
+  J1" and "Segment on Margin"; the router keeps the hole clearance from
+  NPTH holes and ignores Margin); hole to hole between a via and a pad
+  hole of its own net (Squantor's nuclone: VSS via 0.464 from a VSS pad
+  hole at 0.5).
+
 ### Memory (2026-10-03)
 
 A thread's search scratch is the largest part of a big board's footprint
@@ -1101,8 +1180,10 @@ followed them).
 - Only pours covering at least 10 % of the board are connected through;
   smaller zones are treated as routing. Arcs in existing copper are refused.
 - 45° lattice output, no any-angle/arc post-processing yet.
-- Rules come from the `.kicad_pro` (net classes, patterns, minimums); custom
-  DRC rules and per-layer rules are not read.
+- Rules come from the `.kicad_pro` (net classes, patterns, minimums) and
+  the `.kicad_dru` ("Project rules" above); clearances are per net, not
+  per net pair, item type or layer, and rules on areas, creepage and
+  lengths are reported, not kept.
 - Nets with disjoint search windows are routed in parallel; on large boards
   with long nets almost nothing is disjoint and the router is effectively
   single threaded. Jacobi-style parallel routing of overlapping nets (each

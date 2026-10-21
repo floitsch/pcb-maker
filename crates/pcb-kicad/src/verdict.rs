@@ -493,6 +493,9 @@ pub struct KiCadRunFacts {
     pub room: Option<crate::placement_room::KiCadRoom>,
     /// What the run repaired for KiCad's DRC (a route's or a layout's).
     pub repairs: Option<KiCadRepairs>,
+    /// The project's routing rules the router does not keep
+    /// (`KiCadProjectRulesReport::unmodelled`).
+    pub unmodelled_rules: Vec<String>,
 }
 
 impl KiCadRunFacts {
@@ -520,6 +523,7 @@ impl KiCadRunFacts {
             routes: true,
             room: None,
             repairs: None,
+            unmodelled_rules: Vec::new(),
         }
     }
 
@@ -826,6 +830,9 @@ fn next_actions(
             )
         });
     }
+    if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
+        actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
+    }
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
     }
@@ -833,6 +840,14 @@ fn next_actions(
         actions.extend(facts.skipped.iter().cloned());
     }
     actions
+}
+
+/// The next action for a project with rules the router does not keep.
+fn unmodelled_rules_action(rules: &[String]) -> String {
+    format!(
+        "the project has rules the router does not keep, which KiCad checks: their findings are for the designer to resolve by hand or by moving parts: {}",
+        rules.join("; ")
+    )
 }
 
 /// The next action an outline suggestion makes: the size to try, and why.
@@ -1042,6 +1057,7 @@ pub fn route_facts(
     facts.hot_spots = result.diagnostics.hot_spots.len();
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
+    facts.unmodelled_rules = result.rules.project.unmodelled.clone();
     Ok(facts)
 }
 

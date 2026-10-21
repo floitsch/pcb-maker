@@ -120,6 +120,9 @@ pub struct KiCadRulesSummary {
     pub narrowest_track_mm: f64,
     /// The neck-down width out of small pads.
     pub neck_width_mm: f64,
+    /// KiCad's defaults taken and the custom rules read, kept or skipped.
+    #[serde(flatten)]
+    pub project: crate::project_rules::KiCadProjectRulesReport,
 }
 
 impl KiCadRulesSummary {
@@ -138,6 +141,7 @@ impl KiCadRulesSummary {
                 0.0
             },
             neck_width_mm: board.neck_width,
+            project: config.project_rules.clone().unwrap_or_default(),
         }
     }
 }

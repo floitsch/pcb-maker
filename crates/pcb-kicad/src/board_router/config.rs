@@ -341,6 +341,10 @@ pub struct KiCadBoardRouterConfig {
     pub pin_swaps: Option<PathBuf>,
     #[serde(default)]
     pub pin_swap: KiCadPinSwapConfig,
+    /// What the project's rules gave the router beyond its classes
+    /// (`project_rules`; reported in `rules`, not read from a file).
+    #[serde(skip)]
+    pub project_rules: Option<crate::project_rules::KiCadProjectRulesReport>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]

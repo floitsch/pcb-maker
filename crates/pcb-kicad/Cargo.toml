@@ -12,6 +12,8 @@ pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }
 pcb-topo = { path = "../pcb-topo" }
 rayon = "1"
+# Net class patterns are regular expressions as well as wildcards.
+regex-lite = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 # Candidate coordinates must parse identically in standalone library consumers
 # and the main executable, without relying on workspace feature unification.

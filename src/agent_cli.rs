@@ -889,7 +889,24 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         cache.hits,
         path_text(report)
     );
-    Ok(if tally.errors.is_empty() && tally.unconnected == 0 {
+    // The project's rules the router does not keep: KiCad checks them, so
+    // their findings are for the designer (board-router.json's rules has
+    // every rule read).
+    let failed = !tally.errors.is_empty() || tally.unconnected > 0;
+    if failed
+        && let Ok(config) = pcb_kicad::resolve_project_rules(
+            &Path::new(source).join(format!("{board_id}.kicad_pro")),
+            &Path::new(source).join(format!("{board_id}.kicad_pcb")),
+        )
+        && let Some(project) = config.project_rules
+        && !project.unmodelled.is_empty()
+    {
+        println!(
+            "next: the project has rules the router does not keep, which KiCad checks: {}",
+            project.unmodelled.join("; ")
+        );
+    }
+    Ok(if !failed {
         KiCadRunStatus::Complete
     } else {
         KiCadRunStatus::Incomplete
@@ -1166,7 +1183,9 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
     (
         "drc-kicad-board",
         "runs KiCad's DRC on a board (cached) and writes its JSON report",
-        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not) and no\nunconnected item, 1 when it does; one line on stdout counts them.",
+        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not) and no\nunconnected item, 1 when it does; one line on stdout counts them, and when it does and the
+project has rules the router does not keep (creepage, lengths, rules on areas), a line
+\"next: ...\" names them.",
     ),
     (
         "strip-kicad-tracks",

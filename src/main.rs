@@ -718,6 +718,7 @@ fn board_router_config(
                 if config.relaxed_clearance_mm.is_none() {
                     config.relaxed_clearance_mm = project.relaxed_clearance_mm;
                 }
+                config.project_rules = project.project_rules;
             }
             // The board setup's minimum connection width holds for a file's
             // own rules too.

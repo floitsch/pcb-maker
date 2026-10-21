@@ -11,6 +11,177 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (project rules at scale)
+
+The intake (docs/benchmarks.md, "Expansion intake") showed the router
+ignoring rules KiCad enforces: track_width on 89 boards (84 on inferred
+rules: KiCad's 0.2 mm minimum where the project states none, against our
+0.127 neck), clearance from `.kicad_dru` rules (1 014 findings) and from
+net classes (465, all `HIGH_V` on dennisss's dacha boards), edge
+clearance from the board setup (203) and custom rules (40), hole to hole.
+`project_rules.rs` now reads the project as KiCad 10.0.7's DRC does and
+`project_rules/dru.rs` reads the custom rules (docs/router.md, "Project
+rules").
+
+Binaries: x1274 is main at b306347, x1275 this work on it, x1276 the
+commit (rebased on the research removal, 0dff44e). Snapshots x1270-x1273
+are the steps on the way (x1270 and x1271 on 0d13e80).
+
+**Census** (`experiments/project-rules/census.py` over the 5 834 intake
+boards; `census_of_custom_rules`, an ignored test, runs the lowering over
+the 316 with a `.kicad_dru`). Projects: 390 boards have no `.kicad_pro`,
+30 one without design rules, 33 one without `min_track_width` (all take
+KiCad's 0.2); 842 boards have a pattern that is not a plain wildcard, 133
+(399 patterns) a real regular expression (`.*(_TAP|V_POE|POE_RAW).*`);
+105 a class without a clearance or width (KiCad 8, Default's). Custom
+rules: 316 files, 76 with no rule, 4 040 rules on 240 boards.
+Constraints by boards: clearance 193, hole_clearance 142, track_width
+140, hole_size 137 (+96 with a max), annular_width 126, edge_clearance
+125, hole_to_hole 98, silk 97, text 92, via_diameter 84,
+physical_hole_clearance 21, courtyard 10, diff_pair_gap 8, creepage 6,
+disallow 5+, length 3, skew 2. Condition atoms by boards: `Type` 128,
+`isPlated()` 97, `A.Net != B.Net` 97, `Fabrication_Property` 91,
+`Pad_Type` 70, `Layer` 49+15, `NetClass` 36, `Hole_Size_X` 24,
+`memberOfFootprint()` 15, `hasNetclass()` 12, `NetName` 10, `Reference`
+9, `insideArea()` 8 (1 371 uses), courtyards 6+6, `inDiffPair()` 4;
+`(layer outer)` 96, `inner` 92, a named layer 114. Most files are fab
+templates (JLCPCB, PCBWay).
+
+What the lowering made of them (rules / boards): clearance applied 4/3,
+approximated 3/2, no effect 387/156 (looser than the classes), skipped
+106/62 (severity, or an inner layer on two layers), unmodelled 95/44
+(pair rules, pad-to-track rules, areas);
+track_width applied 4/4, approximated 12/7, no effect 185/139,
+unmodelled 1 370/7 (one generated file of `insideArea` necks);
+edge_clearance applied or approximated 20/20, no effect 85/84;
+hole_clearance approximated 168/78 (JLCPCB's 0.33 PTH to track over the
+0.25 setup), no effect 111/80; hole_to_hole approximated 105/51 (0.5
+between nets; most projects keep KiCad 8's `hole_near_hole: error`),
+skipped 103/40 (warning); hole_size, via_diameter and annular_width
+nearly all no effect (the classes' vias are larger). Reported only:
+creepage 8/6, diff_pair_gap 163/8, length 30/5, skew 7/5,
+physical_clearance 6/3, physical_hole_clearance 40/21, disallow 22/7
+(tracks or vias in areas), rules on areas, courtyards, references or
+component classes. Silk, text, courtyard, thermal and assertion rules
+are `not_routing`.
+
+**What changed.**
+
+- Board setup minimums the project does not state take KiCad's defaults
+  (min_track_width 0.2, via diameter 0.5, through hole 0.3, annular ring
+  0.1; edge 0.5 and holes 0.25 as before), so the neck-down is 0.2
+  there. `rules.kicad_defaults` lists them.
+- Net class patterns match as a wildcard or an anchored regular
+  expression (regex-lite, a new dependency of pcb-kicad); a net takes
+  every class it matches, each value from the first by priority that has
+  it, else Default's; a class's missing value is Default's (was KiCad's
+  built-in 0.2/0.6/0.3).
+- `.kicad_dru` rules lower to per-net clearances, widths (min, max, opt)
+  and vias and to the board's edge, hole and hole-to-hole clearances,
+  the largest of every rule that can match (KiCad takes the last match;
+  the largest is never less). Pair rules between two sets of nets,
+  clearances from pads or vias to tracks that match no two tracks,
+  rules on what the router cannot evaluate and creepage, length, skew,
+  diff pair, physical clearance and disallow rules are reported, not
+  kept. Every rule read and what became of it is in `board-router.json`'s
+  `rules` (`custom_rules_file`, `custom_rules[]` with rule, constraint,
+  status, detail; `unmodelled[]`); the route and layout verdicts' next
+  actions name the unmodelled rules when the result is incomplete, and
+  `drc-kicad-board` prints them on a `next:` line when KiCad finds errors.
+- Plumbing outside the rules: `KiCadBoardRouterConfig::project_rules`
+  (a skipped field, board_router/config.rs), `KiCadRulesSummary` flattens
+  it (board_router/result.rs, one field and one line in `of`), main.rs's
+  file merge copies it, `KiCadRunFacts::unmodelled_rules`.
+
+Two over-approximations were measured and dropped. x1270 lowered a rule
+between two sets of nets by raising one set against every net:
+ChengminLi's flyback (2.5 mm primary to secondary) went from 1 finding
+to 19 unconnected, kisurf's issue24211 (8 mm feedback to switch node)
+from 11 findings to 8 unconnected (route mode, 30 s, against x1225).
+x1273 still raised every net for JLCPCB's "Pad to Track" (0.2 mm,
+`A.Type == 'Pad' && B.Type == 'Track'`): AMLing2's drone carrier went
+from 10 to 35 unconnected and tuxkeychain from 23 to 41 (expansion tier
+against x1261); routed with that rule removed from the file, AMLing2
+had 10 unconnected and no error. Both kinds are reported now; a pad
+clearance floor in the lowering would keep the second exactly.
+
+**Route mode on 20 intake boards** (`benchmarks/agent-tasks/rules-tasks.json`,
+from `experiments/project-rules/tasks.py`: boards of
+drc_failure_boards.csv whose only new findings are clearance,
+track_width, copper_edge_clearance or hole_to_hole, with a licence;
+the expansion tier's machinery, 30 s, `--jobs 8 --threads 1`, no row
+cut). x1274 is main at b306347 (identical to x1244 on the expansion
+tier), x1275 this branch rebased on it. New findings (KiCad's errors
+beyond the designer's; the strict column matches them by place):
+
+| board | rule behind the findings | x1274 new / strict | unconn | vias | x1275 new / strict | unconn | vias | pass |
+| --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+| dacha compute r4 | regex class pattern (HIGH_V) | clearance 35 / 37 | 0 | 66 | 0 / 0 | 0 | 73 | no -> yes |
+| dacha compute r5 | regex class pattern (HIGH_V) | clearance 35 / 37 | 0 | 68 | 0 / 0 | 0 | 62 | no -> yes |
+| flatmaxxing valid_board | KiCad's 0.2 minimum | track_width 125 | 0 | 5 | 0 | 0 | 5 | no -> yes |
+| kicad issue25101 | KiCad's 0.2 minimum | track_width 199 | 0 | 20 | 0 | 0 | 20 | no -> yes |
+| EEGFrontier | KiCad's 0.2 minimum | track_width 166 | 0 | 21 | 0 | 0 | 20 | no -> yes |
+| emonWiFi | .kicad_dru edge 0.3 | edge 10 | 0 | 5 | 0 | 0 | 10 | no -> yes |
+| kisurf issue24211 | .kicad_dru on component classes, pair rule | clearance 11 / 17 | 0 | 2 | same | 0 | 2 | unmodelled, named |
+| ChengminLi flyback | .kicad_dru on courtyards | clearance 1 | 0 | 10 | same | 0 | 10 | unmodelled, named |
+| AQEYE, name-card, meshsat | net class (KiCad's fast path) | clearance 2, 2, 6 | 0, 0, 2 | | same | | | geometry |
+| michpro, buganini, facade60 main | board setup edge | edge 1, 4, 3 | 0 | | same | | | Margin graphic, NPTH pads |
+| nuclone (Squantor) | board setup hole to hole 0.5 | hole_to_hole 2 | 0 | 21 | same | 0 | 21 | same-net via to pad hole |
+| 10VBlocker, HP303B, sonde, pic_programmer, TFRPM01 | (passing both) | 0 | 0 | | 0 | 0 | | yes, identical |
+
+5/20 pass to 11/20 (strict 5 to 11), new errors 602 to 32 (strict 612
+to 38), unconnected 2 to 2 (meshsat's both times), vias 489 to 494. The
+rows left are not rules the router reads wrongly: kisurf's and
+ChengminLi's rules are unmodelled and named; AQEYE, name-card and
+meshsat are net class clearances KiCad finds closer than the router's
+check (KiCad's fast path names no rule); the edge findings pair tracks
+with "Segment on Margin" or "NPTH pad of J1" (KiCad keeps the edge
+clearance from Margin graphics and NPTH pads, the router does not:
+lowering, for the ladder agent); nuclone's is a via 0.464 mm from a pad
+hole of its own net (hole to hole holds within a net in KiCad).
+
+**Expansion tier** (x1275 against build/expansion-x1244.log, 8 x 1, no
+row cut): 14/46 pass both (strict 14 both), unconnected 807 to 787, new
+errors 291 to 20 (strict 17), vias 4038 to 4022. Five rows changed, all
+on projects whose rules changed; the 41 others are identical (routed,
+vias, length, KiCad's findings, work):
+
+| board | what changed in its rules | x1244 | x1275 |
+| --- | --- | --- | --- |
+| tuxkeychain | Power class without clearance takes Default's 0.1 (was 0.2); .kicad_dru trace spacing 0.127 on every net, hole clearance 0.33; "Pad to Track" 0.2 unmodelled | 29/42, 23 unconnected, clearance 43 | 37/42, 5 unconnected, clearance 15 (9 from the unmodelled rule) |
+| anthracite-bottom | GNDPWR matches both power and GND: GND's 0.2 by priority (was power's 0.5) | 137/139, 2 unconnected, starved_thermal 1 | 139/139, 0 unconnected, starved_thermal 4 |
+| power-manifold backplane | .kicad_dru track width 0.15 floors the neck (was 0.127) | track_width 199 | 0 |
+| AMLing2 drone carrier | .kicad_dru via to via 0.5 between nets | hole_to_hole 8 | 0 (10 unconnected both) |
+| FUEL4EP CO2 | .kicad_dru PTH to track 0.33, NPTH 0.254, edge 0.3 | hole_clearance 38, starved_thermal 1 | 0 |
+
+`experiments/project-rules/changes.py` predicts these from the files
+alone (tuxkeychain, anthracite and the .kicad_dru boards).
+
+**Short tier** (x1275 against x1274, 6 x 4, tasks v6): all 12 rows
+identical (routed, vias, length, KiCad's findings, work); no short-tier
+project has a .kicad_dru rule, a regular-expression pattern, a class
+without a value or a minimum left to KiCad's default. Against
+build/short-x1170.log the rows differ only as x1274's do (main's
+thermals: vias 1134 to 1125, unconnected 19 both, 7 passes both).
+
+Unit tests (project_rules and project_rules::dru): a file with comments,
+units and escapes; a class clearance (case-insensitive); a rule on every
+pair; a rule between two classes (unmodelled) and a class against every
+other (applied); net names with wildcards and net identity; item types
+and layers (pad to track unmodelled, track to track kept, an inner layer
+on two layers skipped); conditions on courtyards, creepage and lengths
+reported; widths, vias, holes, edge and hole-to-hole (with KiCad's
+warning default and `hole_near_hole`); rules the classes keep; not
+routing rules; three-valued, commutative evaluation; KiCad's defaults
+for a project without minimums; regular-expression patterns and
+composite classes; a project end to end (report, statuses, unmodelled).
+`bash scripts/check.sh` and the clippy gate pass.
+
+Logs: build/rules-x1225.log, -x1270, -x1271, -x1292, -x1273, -x1274,
+-x1275, -x1276 (the commit: all 20 rows as x1275); build/expansion-x1271, -x1273,
+-x1274, -x1275; build/short-x1274,
+-x1275.
+
 ## Committed on 2026-10-21 (runtime calibration)
 
 The review's finding: work budgets were seconds of one machine.
