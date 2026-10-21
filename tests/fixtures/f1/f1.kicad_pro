@@ -1,0 +1,57 @@
+{
+  "board": {
+    "design_settings": {
+      "rules": {
+        "max_error": 0.005,
+        "min_clearance": 0.0,
+        "min_connection": 0.0,
+        "min_copper_edge_clearance": 0.3,
+        "min_hole_clearance": 0.25,
+        "min_hole_to_hole": 0.25,
+        "min_resolved_spokes": 2,
+        "min_through_hole_diameter": 0.3,
+        "min_track_width": 0.15,
+        "min_via_annular_width": 0.1,
+        "min_via_diameter": 0.5,
+        "solder_mask_to_copper_clearance": 0.0
+      }
+    }
+  },
+  "meta": {
+    "filename": "f1.kicad_pro",
+    "version": 3
+  },
+  "net_settings": {
+    "classes": [
+      {
+        "clearance": 0.2,
+        "name": "Default",
+        "priority": 2147483647,
+        "track_width": 0.2,
+        "via_diameter": 0.6,
+        "via_drill": 0.3
+      },
+      {
+        "clearance": 0.2,
+        "name": "Power",
+        "priority": 0,
+        "track_width": 0.35,
+        "via_diameter": 0.7,
+        "via_drill": 0.35
+      }
+    ],
+    "meta": {
+      "version": 5
+    },
+    "netclass_patterns": [
+      {
+        "netclass": "Power",
+        "pattern": "+5V"
+      },
+      {
+        "netclass": "Power",
+        "pattern": "\\+3V[0-9]"
+      }
+    ]
+  }
+}

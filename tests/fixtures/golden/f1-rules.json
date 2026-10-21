@@ -1,0 +1,25 @@
+{
+  "custom_rules": [
+    {
+      "constraint": "clearance",
+      "detail": "a later rule takes every pair it matches (KiCad applies the last matching rule)",
+      "rule": "Pad to Track clearance",
+      "status": "no_effect"
+    },
+    {
+      "constraint": "clearance",
+      "detail": "clearance 0.127 mm on 8 of 10 nets: the net classes keep at least as much",
+      "rule": "Min. Spacing",
+      "status": "no_effect"
+    },
+    {
+      "constraint": "clearance",
+      "detail": "clearance 0.4 mm as a pair rule: between sets of nets, 2 nets (track to track, track to via, track to pad, via to track, via to via, via to pad; every layer)",
+      "rule": "PA to PB",
+      "status": "applied"
+    }
+  ],
+  "custom_rules_file": "f1.kicad_dru",
+  "narrowest_track_mm": 0.2,
+  "neck_width_mm": 0.15
+}

@@ -1174,58 +1174,6 @@ mod tests {
         fs::remove_dir_all(&directory).unwrap();
     }
 
-    /// The lowering over the intake's boards with custom rules
-    /// (`PCB_RULES_CENSUS=<root>/benchmarks/expansion/data/manifest.json
-    /// cargo test --release -p pcb-kicad census_of_custom_rules --
-    /// --ignored --nocapture`): per constraint, how many rules and boards
-    /// end in each status.
-    #[test]
-    #[ignore]
-    fn census_of_custom_rules() {
-        let Some(manifest) = std::env::var_os("PCB_RULES_CENSUS") else {
-            return;
-        };
-        let manifest = Path::new(&manifest);
-        let root = manifest.ancestors().nth(4).unwrap();
-        let boards: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
-        let mut counts = BTreeMap::<(String, String), (usize, BTreeSet<String>)>::new();
-        let mut failed = 0;
-        let mut with_rules = 0;
-        for board in boards["boards"].as_array().unwrap() {
-            let Some(rules) = board["custom_rules_path"].as_str() else {
-                continue;
-            };
-            with_rules += 1;
-            let pcb = root.join(board["board_path"].as_str().unwrap());
-            let project = root.join(rules).with_extension("kicad_pro");
-            let name = board["name"].as_str().unwrap().to_string();
-            match resolve_project_rules(&project, &pcb) {
-                Ok(config) => {
-                    let report = config.project_rules.unwrap();
-                    if let Some(error) = &report.custom_rules_error {
-                        println!("{name}: {error}");
-                    }
-                    for rule in report.custom_rules {
-                        let entry = counts.entry((rule.constraint, rule.status)).or_default();
-                        entry.0 += 1;
-                        entry.1.insert(name.clone());
-                    }
-                }
-                Err(error) => {
-                    failed += 1;
-                    println!("{name}: {error}");
-                }
-            }
-        }
-        println!("{with_rules} boards with a .kicad_dru, {failed} not resolved");
-        println!("| constraint | status | rules | boards |");
-        println!("| --- | --- | ---: | ---: |");
-        for ((constraint, status), (rules, boards)) in counts {
-            println!("| {constraint} | {status} | {rules} | {} |", boards.len());
-        }
-    }
-
     /// A project with mask, edge and hole rules, a minimum connection at
     /// error severity and a custom rule, and its board with an outline.
     fn rich_project(tag: &str) -> (PathBuf, PathBuf, PathBuf) {

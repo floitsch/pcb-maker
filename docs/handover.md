@@ -291,9 +291,18 @@ the coordinator.
 
 **Before a commit:** `bash scripts/check.sh` runs the test set and builds
 the release binary last (a cargo test of the library crates alone leaves
-`target/release/pcb-maker` stale). Measured on 2026-10-16 in a fresh
-worktree at a load of 20-27 on the 5950X: about five minutes in all, half
-of it compiling.
+`target/release/pcb-maker` stale): the tests of every crate of the
+workspace and the root binary's unit tests, the CLI tests, the fixture
+tests, the Python tests, workspace clippy (`--all-targets`, warnings as
+errors) and the slow tests that depend on the load (the agent
+walkthrough, the placer's placement.rs). `bash scripts/check.sh --fast`
+is the gate CI runs on every push: the same without the walkthrough and
+placement.rs, about 30 s of tests once built. `--full` (the default)
+runs on CI every night with KiCad 10 installed. Without kicad-cli the
+KiCad tests skip and the script says so first; with it, run the script
+under the machine's KiCad lock. Measured on 2026-10-16 in a fresh
+worktree at a load of 20-27 on the 5950X: about five minutes in all,
+half of it compiling.
 
 | Step | Time |
 | --- | --- |
@@ -301,6 +310,32 @@ of it compiling.
 | `cargo test --release -p pcb-maker --test cli_exit_codes --test agent_walkthrough --test native_verification` (needs kicad-cli) | 125 s: a minute building the root package, 64 s for agent_walkthrough's three layouts, a second for the others |
 | `python3 -m pytest -q benchmarks/agent-tasks` | 1 s |
 | `cargo build --release` | seconds after the tests, which built the binary already |
+
+**The fixture boards** (`tests/fixtures`; review 2026-10-21's proposed
+fixture tests). F1 is a 30 x 25 mm two-layer board of 13 parts in KiCad
+10's format, written by hand to hold what the tiers found the router and
+the lowering getting wrong: a QFN with an exposed pad and thermal vias,
+a SOT-223, an LED with 0.7 mm pads, a GND test pad alone on F.Cu, a net
+tie, a stacked front and back pad of one number, a jumper group, a pad
+with zone_connect none, a Margin rectangle, an unplated slot, a plated
+hole listing only `*.Mask`, a text box and a dimension on copper, a
+padstack, a net named "14", GND and +5V zones of equal priority, a
+hatched zone, net classes (one by a regular expression) and a
+JLCPCB-style .kicad_dru with a pair rule. F2
+(`tests/fixtures/f2/layout.json`) lays F1 out with a free bottom edge.
+`tests/fixtures.rs` routes and lays them out through the binary (no via
+in an SMD pad and no hop within hole_to_hole, the rules end to end,
+golden fingerprints at 1 and 4 threads, KiCad's connectivity and pours
+on the routed board, the free dimension's clean path with a fake
+kicad-cli, a plane pour and a keepout over a fixed part);
+crates/pcb-kicad/src/tests/fixtures.rs checks the static maps' cache
+key, the lowering against a golden table and the order test without its
+race. Every route pins `PCB_WORK_RATE`, the memory and the wall guard.
+The golden files are `tests/fixtures/golden`; a behaviour change shows
+as a golden diff, and `PCB_UPDATE_GOLDEN=1 cargo test --release -p
+pcb-maker --test fixtures` (and `-p pcb-kicad fixture_tests`) rewrites
+them, to commit with the change. The KiCad goldens (`f1-drc.txt`,
+`f1-routed-connectivity.txt`) need kicad-cli 10.0.7 to rewrite.
 
 Then `bash scripts/snapshot.sh <n>` for a binary to benchmark, the short
 tier for iterating, the quick tier once as the merge gate.

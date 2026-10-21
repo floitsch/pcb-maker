@@ -844,7 +844,12 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
         let path = root.join(format!("{name}.json"));
         fs::write(&path, config.to_string()).unwrap();
         let out = root.join(name);
+        // The rates pinned and the wall guard off: two probes side by side
+        // under load were cut by the wall clock (exit 3 for 1).
         let mut command = binary();
+        command
+            .env("PCB_WORK_RATE", "3.15e6,150e6")
+            .env("PCB_ROUTER_NO_WALL_GUARD", "1");
         for (key, value) in extra {
             command.env(key, value);
         }

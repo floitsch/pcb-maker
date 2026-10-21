@@ -1,0 +1,14 @@
+(version 1)
+# JLCPCB's order: the pad-to-track rule, then the board-wide minimum,
+# which KiCad applies last (the last matching rule wins).
+(rule "Pad to Track clearance"
+	(constraint clearance (min 0.2mm))
+	(condition "A.isPlated() && B.Type == 'track'"))
+
+(rule "Min. Spacing"
+	(constraint clearance (min 0.127mm)))
+
+# The pair of PA and PB keeps a wider gap.
+(rule "PA to PB"
+	(constraint clearance (min 0.4mm))
+	(condition "A.Net == 'PA' && B.Net == 'PB'"))

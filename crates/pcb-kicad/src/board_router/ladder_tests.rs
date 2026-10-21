@@ -54,6 +54,9 @@ struct FakeProbe {
     counts_all: bool,
 }
 
+/// A scripted attempt's outcome by what it routes (None: it panics).
+type Script = Box<dyn Fn(&Routed) -> Option<Outcome> + Sync>;
+
 /// The scripted runner: a board of `layers` and `connections`, the probes'
 /// unfinished nets by rung, the continued probe's outcome and every other
 /// attempt's (None: the attempt panics, as a router bug would).
@@ -64,7 +67,7 @@ struct Fake {
     /// A probe whose router panics (the runner's own, not the test hook).
     panicking_probe: Option<usize>,
     continued: Outcome,
-    route: Box<dyn Fn(&Routed) -> Option<Outcome> + Sync>,
+    route: Script,
     calls: Mutex<Vec<Call>>,
     /// Every routed attempt's manual spokes' work and the work of its
     /// first negotiation iteration (its report's).
@@ -1029,8 +1032,7 @@ fn every_attempt_failing_leaves_no_board() {
 fn a_panic_in_the_seeds_keeps_the_rungs_board() {
     let config = route_mode(100.0);
     let out = output("seeds");
-    let fake =
-        Fake::new(|routed| Some(Outcome { open: 4, work: 5.0 }).filter(|_| routed.seeds == 1));
+    let fake = Fake::new(|routed| (routed.seeds == 1).then_some(Outcome { open: 4, work: 5.0 }));
     let mut ladder = ladder(&config, &out, 2);
     ladder.run(&fake).unwrap();
     assert!(!ladder.failed.is_empty());

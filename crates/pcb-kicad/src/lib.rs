@@ -164,3 +164,10 @@ pub use footprint_links::{
     KiCadFootprintLinkNormalizationReport, KiCadFootprintLinkUpdate,
     KiCadSchematicLinkNormalization, normalize_kicad_footprint_links,
 };
+
+// The fixture tests on tests/fixtures/f1 that need the crate's insides
+// (under tests/, as test sources: tools/config-reference's index of
+// environment variables leaves out their PCB_UPDATE_GOLDEN).
+#[cfg(test)]
+#[path = "tests/fixtures.rs"]
+mod fixture_tests;

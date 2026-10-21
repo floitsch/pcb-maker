@@ -1,0 +1,13 @@
+[package]
+name = "rules-census"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Per constraint of the intake's .kicad_dru files, how many rules and boards end in each status"
+publish = false
+
+[workspace]
+
+[dependencies]
+pcb-kicad = { path = "../../../crates/pcb-kicad" }
+serde_json = "1.0"

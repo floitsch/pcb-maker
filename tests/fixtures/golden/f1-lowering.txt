@@ -1,0 +1,80 @@
+layers 2 classes 4 nets 10 obstacles 81 planes 3
+edge_clearance 0.3050 hole_clearance 0.2500 hole_to_hole 0.2500 neck_width 0.1500
+class 0: width 0.3500 clearance 0.2000 via 0.7000/0.3500
+class 1: width 0.2000 clearance 0.2000 via 0.6000/0.3000
+class 2: width 0.2500 clearance 0.3000 via 0.6000/0.3000
+class 3: width 0.2500 clearance 0.3000 via 0.7000/0.3500
+
+obstacles by kind
+Copper     8  copper dimension
+Copper     5  copper text box
+Copper     1  footprint copper fp_poly
+Copper    49  pad
+Copper     1  pad padstack
+Hole       1  pad hole
+Hole      12  pad plated hole
+Keepout    4  board margin (gr_rect)
+
+obstacles other than pads
+Hole H1. hole [11] net - clearance 0.3000 tracks true vias true box (26.400 11.400)-(27.600 13.600)
+Hole H2. plated hole [11] net - clearance 0.0000 tracks true vias true box (10.500 22.500)-(11.500 23.500)
+Hole J1.1 plated hole [11] net +5V clearance 0.0000 tracks true vias true box (2.000 4.500)-(3.000 5.500)
+Hole J1.2 plated hole [11] net GND clearance 0.0000 tracks true vias true box (2.000 7.040)-(3.000 8.040)
+Hole J1.3 plated hole [11] net 14 clearance 0.0000 tracks true vias true box (2.000 9.580)-(3.000 10.580)
+Hole J1.4 plated hole [11] net DOUT clearance 0.0000 tracks true vias true box (2.000 12.120)-(3.000 13.120)
+Hole J1.5 plated hole [11] net PA clearance 0.0000 tracks true vias true box (2.000 14.660)-(3.000 15.660)
+Hole J1.6 plated hole [11] net PB clearance 0.0000 tracks true vias true box (2.000 17.200)-(3.000 18.200)
+Copper NT1 copper fp_poly [1.] net - clearance 0.2000 tracks true vias true box (15.500 18.875)-(16.500 19.125)
+Copper TP1.1 padstack [.1] net +5V clearance 0.0000 tracks true vias true box (13.100 21.600)-(14.900 23.400)
+Hole TP1.1 plated hole [11] net +5V clearance 0.0000 tracks true vias true box (13.600 22.100)-(14.400 22.900)
+Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (19.400 11.400)-(19.700 11.700)
+Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (19.400 12.300)-(19.700 12.600)
+Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (20.300 11.400)-(20.600 11.700)
+Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (20.300 12.300)-(20.600 12.600)
+Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (28.550 1.950)-(29.650 2.050)
+Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (29.550 1.950)-(29.650 7.050)
+Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (28.550 6.950)-(29.650 7.050)
+Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (28.550 1.950)-(28.650 7.050)
+Copper copper text box [1.] net - clearance 0.2000 tracks true vias true box (13.450 0.750)-(17.550 0.850)
+Copper copper text box [1.] net - clearance 0.2000 tracks true vias true box (17.450 0.750)-(17.550 2.450)
+Copper copper text box [1.] net - clearance 0.2000 tracks true vias true box (13.450 2.350)-(17.550 2.450)
+Copper copper text box [1.] net - clearance 0.2000 tracks true vias true box (13.450 0.750)-(13.550 2.450)
+Copper copper text box [1.] net - clearance 0.2000 tracks true vias true box (13.500 0.800)-(17.500 2.400)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (19.500 20.300)-(19.500 21.700)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (24.500 20.300)-(24.500 21.700)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (19.500 20.800)-(24.500 20.800)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (19.500 20.800)-(20.210 21.169)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (19.500 20.431)-(20.210 20.800)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (23.790 20.431)-(24.500 20.800)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (23.790 20.800)-(24.500 21.169)
+Copper copper dimension [1.] net - clearance 0.2000 tracks true vias true box (19.066 19.502)-(24.934 20.298)
+
+terminals
++3V3 (class 0): C1.1[1.] U1.1[1.] U2.2[1.] U2.2[1.]
+GND (class 1): C1.2[1.] D1.3[1.] J1.2[11] NT1.1[1.] R1.2[1.] TP2.1[1.] U1.2[1.] U1.17[1.] U2.1[1.]
++5V (class 0): D1.1[1.] J1.1[11] R1.1[1.] TP1.1[11] U2.3[1.]
+DOUT (class 1): D1.2[1.] J1.4[11]
+DIN (class 1): D1.4[1.] U1.4[1.]
+14 (class 1): J1.3[11] JP1.1[1.] U1.5[1.]
+PA (class 1): J1.5[11] U1.10[1.]
+PB (class 1): J1.6[11] U1.12[1.]
+SIG (class 1): J2.1[.1] J2.1[1.] U1.8[1.]
+AGND (class 1): NT1.2[1.] U1.9[1.]
+
+merged pads
+U1.17 into U1.17 of GND
+U1.17 into U1.17 of GND
+U1.17 into U1.17 of GND
+U1.17 into U1.17 of GND
+JP1.2 into JP1.1 of 14
+
+pads closed to vias
+C1.1 C1.2 D1.1 D1.2 D1.3 D1.4 J2.1 J2.1 JP1.1 JP1.2 NT1.1 NT1.2 R1.1 R1.2 TP2.1 U1.1 U1.2 U1.3 U1.4 U1.5 U1.6 U1.7 U1.8 U1.9 U1.10 U1.11 U1.12 U1.13 U1.14 U1.15 U1.16 U2.1 U2.2 U2.2 U2.3
+
+planes
+GND layer 1 class 2 corners 4 excluded 1 above 0 hatch false
++5V layer 1 class 3 corners 4 excluded 0 above 0 hatch false
+GND layer 0 class 2 corners 4 excluded 0 above 0 hatch true
+
+solid pads []
+isolated pads ["R1.2"]

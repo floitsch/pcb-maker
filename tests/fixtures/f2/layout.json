@@ -1,0 +1,5 @@
+{"total_seconds": 60,
+ "moves": 0,
+ "placer": {"fixed": ["J1", "H1", "U1", "D1"]},
+ "free_dimension": {"edge": "bottom", "sizes": [18, 20, 22, 24], "band_mm": 7,
+                    "probe_seconds": 6, "parallel": 2}}

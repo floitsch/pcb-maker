@@ -91,15 +91,14 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
     // memory).
     let kicad =
         status == KiCadRunStatus::UsageError && message.contains(pcb_kicad::KICAD_REQUIREMENT);
-    if !directory.exists() {
-        if (status == KiCadRunStatus::UsageError
+    if !directory.exists()
+        && ((status == KiCadRunStatus::UsageError
             && room.is_none()
             && !kicad
             && pcb_kicad::noted_input_actions().is_empty())
-            || fs::create_dir_all(directory).is_err()
-        {
-            return;
-        }
+            || fs::create_dir_all(directory).is_err())
+    {
+        return;
     }
     let mut verdict = pcb_kicad::error_verdict(
         &target.command,
