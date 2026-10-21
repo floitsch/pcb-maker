@@ -959,3 +959,333 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A board of three nets of two pads each: /A pre-routed on F.Cu, /B
+/// pre-routed through two vias and B.Cu, /C open.
+const PREROUTED: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 30 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 3 5)
+    (property "Reference" "J1" (at -2 0) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+    (pad "2" smd rect (at 0 5) (size 1 1) (layers "F.Cu") (net "/B"))
+    (pad "3" smd rect (at 0 10) (size 1 1) (layers "F.Cu") (net "/C")))
+  (footprint "test" (layer "F.Cu") (at 27 5)
+    (property "Reference" "J2" (at 2 0) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+    (pad "2" smd rect (at 0 5) (size 1 1) (layers "F.Cu") (net "/B"))
+    (pad "3" smd rect (at 0 10) (size 1 1) (layers "F.Cu") (net "/C")))
+  (segment (start 3 5) (end 27 5) (width 0.25) (layer "F.Cu") (net "/A"))
+  (segment (start 3 10) (end 10 10) (width 0.25) (layer "F.Cu") (net "/B"))
+  (via (at 10 10) (size 0.7) (drill 0.35) (layers "F.Cu" "B.Cu") (net "/B"))
+  (segment (start 10 10) (end 20 10) (width 0.25) (layer "B.Cu") (net "/B"))
+  (via (at 20 10) (size 0.7) (drill 0.35) (layers "F.Cu" "B.Cu") (net "/B"))
+  (segment (start 20 10) (end 27 10) (width 0.25) (layer "F.Cu") (net "/B")))
+"#;
+
+/// The board's top-level tracks and vias, whitespace normalised.
+fn copper_items(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut items = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    let mut quoted = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'"' => quoted = !quoted,
+            b'(' if !quoted => {
+                depth += 1;
+                if depth == 2 {
+                    start = index;
+                }
+            }
+            b')' if !quoted => {
+                if depth == 2 {
+                    let item = text[start..=index]
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .replace("( ", "(")
+                        .replace(" )", ")");
+                    if item.starts_with("(segment") || item.starts_with("(via") {
+                        items.push(item);
+                    }
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    items
+}
+
+#[test]
+fn route_keeps_the_boards_own_tracks_and_routes_what_is_open() {
+    let root = scratch("prerouted");
+    let project = root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("t.kicad_pcb"), PREROUTED).unwrap();
+    let route = |out: &Path, strip: bool| {
+        let mut command = binary();
+        command.env("PCB_SKIP_NATIVE", "1").args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ]);
+        if strip {
+            command.arg("--strip");
+        }
+        command.output().unwrap()
+    };
+    let kept = copper_items(PREROUTED);
+    assert_eq!(kept.len(), 6);
+    // By default the board's own tracks and vias stay as they are, and
+    // only /C is routed.
+    let out = root.join("keep");
+    let output = route(&out, false);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let judged = verdict(&out.join("board-router.json"));
+    assert_eq!(judged["status"], "router_complete_unverified");
+    assert_eq!(judged["open_connections"], 0);
+    let routed = copper_items(&fs::read_to_string(out.join("t.kicad_pcb")).unwrap());
+    for item in &kept {
+        assert!(routed.contains(item), "{item} is gone: {routed:#?}");
+    }
+    let added: Vec<&String> = routed.iter().filter(|item| !kept.contains(item)).collect();
+    assert!(!added.is_empty());
+    assert!(
+        added.iter().all(|item| item.contains("(net \"/C\")")),
+        "{added:#?}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
+    let copper = &report["kept_copper"];
+    assert_eq!(copper["segments"], 4);
+    assert_eq!(copper["vias"], 2);
+    assert_eq!(copper["connections_made"], 2);
+    assert_eq!(copper["nets_complete"], serde_json::json!(["A", "B"]));
+    assert_eq!(report["routable_connections"], 1);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("kept: the board's 4 track segments"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    // --strip routes from nothing: the board's own items are gone and
+    // every net is the router's.
+    let out = root.join("strip");
+    let output = route(&out, true);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    assert_eq!(
+        verdict(&out.join("board-router.json"))["open_connections"],
+        0
+    );
+    let routed = copper_items(&fs::read_to_string(out.join("t.kicad_pcb")).unwrap());
+    assert!(
+        routed.iter().all(|item| !kept.contains(item)),
+        "{routed:#?}"
+    );
+    for net in ["/A", "/B", "/C"] {
+        assert!(
+            routed
+                .iter()
+                .any(|item| item.contains(&format!("(net \"{net}\")"))),
+            "{net}"
+        );
+    }
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
+    assert!(report.get("kept_copper").is_none());
+    assert_eq!(report["routable_connections"], 3);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_fab_release_is_gated_by_kicads_drc() {
+    let root = scratch("fab");
+    let project = root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("t.kicad_pcb"), PREROUTED).unwrap();
+    let fab = |out: &Path, extra: &[&str]| {
+        binary()
+            .args([
+                "fab-kicad-board",
+                &project.display().to_string(),
+                "t",
+                &out.display().to_string(),
+            ])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    // Usage errors before anything runs.
+    let output = fab(&root.join("bad"), &["--profile", "oshpark"]);
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert!(stderr(&output).contains("unknown --profile"));
+    assert_eq!(code(&fab(&project, &[])), 2);
+    if !Command::new("kicad-cli")
+        .arg("version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("skipping the release: kicad-cli is unavailable");
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
+    // /C is open: refused, nothing exported, the finding named.
+    let out = root.join("refused");
+    let output = fab(&out, &[]);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let verdict: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(verdict["status"], "incomplete");
+    assert_eq!(verdict["kicad_unconnected_items"], 1);
+    assert_eq!(verdict["fab_release"]["released"], false);
+    assert!(
+        verdict["next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action.as_str().unwrap().contains("[/C]")),
+        "{verdict}"
+    );
+    assert!(!out.join("gerbers").exists());
+    assert!(out.join("fab-manifest.json").is_file());
+    // --allow-findings releases anyway, and says so.
+    let out = root.join("allowed");
+    let output = fab(
+        &out,
+        &["--allow-findings", "--profile", "jlcpcb", "--no-step"],
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let verdict: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(verdict["status"], "complete");
+    assert_eq!(verdict["fab_release"]["findings_allowed"], true);
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("fab-manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["released"], true);
+    assert_eq!(manifest["drc"]["unconnected_items"], 1);
+    assert_eq!(manifest["zip"], "t-gerbers.zip");
+    let kinds: Vec<&str> = manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["kind"].as_str().unwrap())
+        .collect();
+    for kind in [
+        "gerber",
+        "drill",
+        "drill_map",
+        "placement",
+        "bom",
+        "netlist",
+        "zip",
+    ] {
+        assert!(kinds.contains(&kind), "{kind}: {kinds:?}");
+    }
+    for file in manifest["files"].as_array().unwrap() {
+        let path = out.join(file["path"].as_str().unwrap());
+        assert_eq!(
+            fs::metadata(&path).unwrap().len(),
+            file["bytes"].as_u64().unwrap(),
+            "{}",
+            path.display()
+        );
+    }
+    let cpl = fs::read_to_string(out.join("assembly/t-cpl-jlcpcb.csv")).unwrap();
+    assert!(
+        cpl.starts_with("Designator,Mid X,Mid Y,Layer,Rotation\n"),
+        "{cpl}"
+    );
+    assert_eq!(cpl.lines().count(), 3, "{cpl}");
+    assert_eq!(manifest["skipped"].as_array().unwrap().len(), 2);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The agent skill (skills/pcb-maker/SKILL.md) cannot go stale: every
+/// command it names is one of the binary's agent commands and in
+/// docs/agents.md, every agent command is in it, and its exit code table
+/// is `--help`'s.
+#[test]
+fn the_agent_skill_matches_the_command_table_and_the_exit_codes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let skill = fs::read_to_string(root.join("skills/pcb-maker/SKILL.md")).unwrap();
+    let guide = fs::read_to_string(root.join("docs/agents.md")).unwrap();
+    // Frontmatter: name and description, as the agent CLIs read it.
+    let front = skill
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .map(|(front, _)| front)
+        .expect("frontmatter");
+    assert!(front.lines().any(|line| line == "name: pcb-maker"));
+    assert!(
+        front
+            .lines()
+            .any(|line| line.starts_with("description: ") && line.len() > 80)
+    );
+    let help = binary().arg("--help").output().unwrap();
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    let commands: Vec<String> = help
+        .split("Commands for agents")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect();
+    assert!(commands.len() >= 13, "{commands:?}");
+    // Command names: words of the form <verb>-kicad-<noun>.
+    let named: std::collections::BTreeSet<String> = skill
+        .split(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+        .filter(|word| word.contains("-kicad-"))
+        .map(str::to_string)
+        .collect();
+    for name in &named {
+        assert!(
+            commands.contains(name),
+            "the skill names {name}, which is no agent command"
+        );
+        assert!(
+            guide.contains(name.as_str()),
+            "the skill names {name}, which docs/agents.md does not"
+        );
+    }
+    for command in &commands {
+        assert!(named.contains(command), "the skill leaves out {command}");
+    }
+    // The exit code table: each code with its status, as --help says.
+    for (exit, status, helped) in [
+        (0, "`complete`", "complete"),
+        (1, "`incomplete`", "incomplete"),
+        (2, "`usage_error`", "usage or input error"),
+        (3, "`cut`", "incomplete and cut short"),
+        (4, "`internal_error`", "internal error"),
+    ] {
+        let row = skill
+            .lines()
+            .find(|line| line.starts_with(&format!("| {exit} | ")))
+            .unwrap_or_else(|| panic!("no row for exit {exit}"));
+        assert!(row.contains(status), "{row}");
+        assert!(
+            help.lines()
+                .any(|line| line.starts_with(&format!("  {exit}  {helped}"))),
+            "--help has no exit {exit} {helped}"
+        );
+        assert!(
+            guide.contains(&format!("| {exit} | {status} |")),
+            "docs/agents.md has no exit {exit} {status}"
+        );
+    }
+    assert!(
+        !skill
+            .lines()
+            .any(|line| line.starts_with("| 5 ") || line.starts_with("| 6 "))
+    );
+}

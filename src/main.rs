@@ -149,7 +149,7 @@ fn print_help() {
         println!("  {name:<24} {line}");
     }
     println!(
-        "\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, export-kicad-fab"
+        "\nA typical run: import-kicad-netlist, edit constraints.json, layout-kicad-board, fab-kicad-board"
     );
     println!(
         "(docs/agents.md). Rules come from the project's .kicad_pro; kicad-cli (KiCad 10) must be"

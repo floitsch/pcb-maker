@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 83 | 71 | 12 | 83 | 21 |
+| [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 22 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 4 | 4 | 0 | 4 | 3 |
@@ -119,6 +119,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `solder_mask_bridge_severity` | `Option<String>` | unset | - | The project's severity of solder_mask_bridge findings (`error`, `warning`, `ignore`; KiCad's default is an error). Below an error the designer accepted bridges, and the router keeps its looser mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected). |
 | `solid_starved_thermals` | `Option<bool>` | unset | - | Pads KiCad finds short of thermal spokes (where only one fits, as on fine-pitch pins) get a solid zone connection in the result, and the board is verified again. Off by default: thermal reliefs are there for soldering, so this is the designer's (or the agent's) call. |
 | `via_in_pad` | `Option<bool>` | unset | router.md | Allow vias inside SMD pads (default false): a board whose vias are filled and capped (via-in-pad plating) may put them there. Off, every via keeps its annular ring out of every SMD pad but an exposed pad (a QFN's thermal pad, which holds thermal vias as designers place them): another net's vias keep their clearance beyond the pad's copper, the pad's own net's may touch it from outside. Open vias in a reflowed pad take its solder down the hole (score-kicad-board's "vias in pads" counts them). Through-hole pads hold no via either way. |
+| `existing_tracks` | `KiCadExistingTracks` | `"keep"` | router.md | What route-kicad-board does with the board's own tracks and vias (`keep`, the default, or `strip`). Kept, they stay exactly as they are and other nets keep clear of them; pads they join count as connected, so the router routes only what they leave open and never rips one up (a designer's or an agent's pre-routed nets). `strip` (the command's `--strip`) removes them first: the board is routed from nothing. Copper zones stay either way. A layout strips them always (its placement moves the parts). |
 | `skip_native_verification` | `bool` | `false` | - | Skip the final native KiCad verification (for timing the router). |
 | `engine` | `Option<String>` | unset | - | The routing engine: `lattice` (default, negotiated congestion on a lattice) or `topological` (TopoR-style: triangulation, crossings, layer assignment, any-angle tracks with arcs; pour nets as tracks). |
 | `topological_rounds` | `Option<usize>` | unset | - | Rip-up rounds of the topological engine (default 30). |

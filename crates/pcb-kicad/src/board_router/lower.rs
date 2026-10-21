@@ -1067,8 +1067,42 @@ fn lower_board(
                     label: "existing via".into(),
                 });
             }
+            // An arc track: its chords, grown by the flattening's
+            // tolerance so they hold the true arc (as copper graphics'
+            // arcs are), fixed copper of its net like a segment.
             Some("arc") => {
-                return Err("the board router does not yet lower existing arc tracks".into());
+                let Some(layer) = form_atom(item, "layer", 1).and_then(|name| layers.index(name))
+                else {
+                    continue;
+                };
+                let net = item_net(item, &net_codes)
+                    .filter(|raw| routable_net(raw))
+                    .map(normalize_net)
+                    .map(|name| net_id(name, &mut nets, &mut classes))
+                    .transpose()?;
+                let radius = form_f64(item, "width", 1)? / 2.0 + outline::ARC_TOLERANCE;
+                let points = outline::arc_points(
+                    form_xy(item, "start")?,
+                    form_xy(item, "mid")?,
+                    form_xy(item, "end")?,
+                );
+                for pair in points.windows(2) {
+                    obstacles.push(core::Obstacle {
+                        shape: core::Shape::Capsule {
+                            start: pair[0],
+                            end: pair[1],
+                            radius,
+                        },
+                        layers: 1 << layer,
+                        kind: core::ObstacleKind::Copper,
+                        net,
+                        clearance: 0.0,
+                        clearance_override: None,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: "existing track".into(),
+                    });
+                }
             }
             // Board graphics: copper on the copper layers they name (KiCad
             // 9 draws them on several layers at once, with a net: Sisu's

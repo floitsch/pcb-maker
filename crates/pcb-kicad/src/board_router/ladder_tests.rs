@@ -173,6 +173,7 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         build_work_seconds: 0.0,
         lowering_work_seconds: 0.0,
         wall_accounting: None,
+        kept_copper: None,
     }
 }
 

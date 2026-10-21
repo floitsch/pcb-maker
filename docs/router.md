@@ -1780,9 +1780,14 @@ followed them).
 - Through vias only: inner layers are routed (and take the automatic
   planes on four or more layers), but there are no blind, buried or
   micro vias.
-- Existing tracks are obstacles; they are not yet adopted as tree components.
+- Existing tracks and vias (route mode keeps them, `existing_tracks`) are
+  fixed copper of their net; the pads a piece of them joins are merged
+  into one terminal (`board_router/kept.rs`), so the connection counts as
+  made, but new routes join the group at its first pad, not along a kept
+  track (docs/agents.md, "Pre-routed nets").
 - Only pours covering at least 10 % of the board are connected through;
-  smaller zones are treated as routing. Arcs in existing copper are refused.
+  smaller zones are treated as routing. Existing arc tracks are lowered as
+  their chords, grown by the flattening tolerance (refused before 2026-10-21).
 - 45° lattice output, no any-angle/arc post-processing yet.
 - Rules come from the `.kicad_pro` (net classes, patterns, minimums) and
   the `.kicad_dru` ("Project rules" above); clearances are per net and,

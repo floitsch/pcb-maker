@@ -344,6 +344,16 @@ pub struct KiCadBoardRouterConfig {
     /// hold no via either way.
     #[serde(default)]
     pub via_in_pad: Option<bool>,
+    /// What route-kicad-board does with the board's own tracks and vias
+    /// (`keep`, the default, or `strip`). Kept, they stay exactly as they
+    /// are and other nets keep clear of them; pads they join count as
+    /// connected, so the router routes only what they leave open and
+    /// never rips one up (a designer's or an agent's pre-routed nets).
+    /// `strip` (the command's `--strip`) removes them first: the board is
+    /// routed from nothing. Copper zones stay either way. A layout strips
+    /// them always (its placement moves the parts).
+    #[serde(default)]
+    pub existing_tracks: KiCadExistingTracks,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
@@ -403,6 +413,19 @@ pub enum KiCadPourMode {
     Connect,
     /// Pour nets are routed like any other net; the pour merely fills.
     Tracks,
+}
+
+/// What route mode does with a board's own tracks and vias
+/// (`existing_tracks`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadExistingTracks {
+    /// Kept as they are: their connections count as made, and the router
+    /// routes only what is open around them.
+    #[default]
+    Keep,
+    /// Removed before routing: the board is routed from nothing.
+    Strip,
 }
 
 /// Tuning of the topological engine; every field defaults to

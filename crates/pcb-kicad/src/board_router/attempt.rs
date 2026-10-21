@@ -6,17 +6,22 @@ use super::*;
 use pcb_router as core;
 
 /// Writes a routing result as copper into `pcb` and reports per net.
+/// `keep_existing`: the board's own tracks and vias stay as they are
+/// (route mode, `kept`); otherwise they are replaced.
 pub(crate) fn emit_routes(
     pcb: &mut Expr,
     board: &core::Board,
     result: &core::RoutingResult,
     layer_names: &[String],
+    keep_existing: bool,
 ) -> Result<Vec<KiCadBoardRouterNet>, String> {
     let copper_net_names = unambiguous_pad_net_names(pcb)?;
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
-    items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+    if !keep_existing {
+        items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+    }
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
@@ -90,7 +95,12 @@ pub(super) fn route_kicad_board_once(
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Lowered { board, expressions } = lower(&pcb, config, connect_pours)?;
+    let Lowered {
+        mut board,
+        expressions,
+    } = lower(&pcb, config, connect_pours)?;
+    // The board's own tracks and vias: what they join is connected.
+    let kept = keep_existing_copper(&mut board);
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
@@ -131,7 +141,7 @@ pub(super) fn route_kicad_board_once(
             let frame_layers = layer_names.clone();
             router.set_frame_hook(std::sync::Arc::new(move |iteration, snapshot| {
                 let mut frame = frame_pcb.clone();
-                let written = emit_routes(&mut frame, &frame_board, snapshot, &frame_layers)
+                let written = emit_routes(&mut frame, &frame_board, snapshot, &frame_layers, true)
                     .and_then(|_| {
                         let path = directory.join(format!("frame-{iteration:04}.kicad_pcb"));
                         fs::write(&path, format!("{}\n", encode(&frame)))
@@ -158,6 +168,9 @@ pub(super) fn route_kicad_board_once(
     )?;
     written.maps_mb = maps_mb;
     written.lowering_work_seconds = lowering_work_of(expressions);
+    if !kept.nets.is_empty() {
+        written.kept_copper = Some(kept);
+    }
     Ok(written)
 }
 
@@ -270,7 +283,7 @@ pub(super) fn write_attempt(
         result.routes = routes;
         routing_seconds += tightening.elapsed().as_secs_f64();
     }
-    let nets = emit_routes(&mut pcb, board, &result, layer_names)?;
+    let nets = emit_routes(&mut pcb, board, &result, layer_names, true)?;
     finish_routed_board(
         &pcb,
         board,

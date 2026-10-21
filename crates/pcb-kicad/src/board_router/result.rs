@@ -53,6 +53,11 @@ pub struct KiCadBoardRouterResult {
     pub congestion: Vec<f32>,
     #[serde(skip)]
     pub grid_origin: [f64; 2],
+    /// Route mode: the board's own tracks and vias, kept, and the
+    /// connections they made (`existing_tracks`); absent on a board
+    /// without them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_copper: Option<super::KiCadKeptCopper>,
     /// The pin assignment chosen before routing, if pins were swappable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_swaps: Option<KiCadPinSwapResult>,

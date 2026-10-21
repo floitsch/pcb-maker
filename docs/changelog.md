@@ -11,6 +11,116 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (fab release, pre-routed nets, agent skill)
+
+Three agent-facing features from the Hacker News evaluation (commenters
+asked for a DRC-gated headless fab release, for pinning key traces by
+hand and autorouting the rest, and for agent skill files).
+
+**fab-kicad-board** (`crates/pcb-kicad/src/fab_release.rs`,
+`src/agent_cli.rs`): `fab-kicad-board <dir> <id> <out> [--allow-findings]
+[--layers ...] [--profile kicad|jlcpcb] [--no-step]`. KiCad's DRC as
+drc-kicad-board runs it (the DRC cache, zones refilled, the library-free
+configuration) and, with a schematic, the ERC (counted, never blocking).
+Copper errors or unconnected items refuse the release: exit 1, nothing
+exported, the first findings in `next_actions`; cosmetic findings do not
+block, `--allow-findings` overrides. Released (exit 0), through kicad-cli:
+Gerbers of the layers the board uses (every copper layer, both masks,
+Edge.Cuts, the pastes and silkscreens something lies on), Excellon drill
+files (PTH and NPTH, mm) with Gerber maps, `<id>-gerbers.zip` (written by
+a small stored-zip writer: the same files give the same zip byte for
+byte), the position file (CSV, both sides, KiCad's rotations, DNP out),
+the BOM (kicad-cli's `sch export bom` grouped by value, footprint and the
+symbols' LCSC field when there is a schematic, else the board's
+footprints), IPC-D-356 and the schematic's netlist, the STEP model (a
+failure goes to `skipped`), and `fab-manifest.json` (every file with kind,
+bytes and sha256; the DRC and ERC counts; KiCad's version; layers;
+`without_lcsc`). `verdict.json` follows the verdict contract and adds
+`fab_release`. `--profile jlcpcb`: every layer of JLCPCB's KiCad guide and
+`assembly/<id>-bom-jlcpcb.csv` (Comment, Designator, Footprint, JLCPCB
+Part #; designators listed, no ranges) and `assembly/<id>-cpl-jlcpcb.csv`
+(Designator, Mid X, Mid Y, Layer, Rotation). JLCPCB's Gerber names are
+KiCad's Protel extensions, so the profile renames nothing; their rotation
+offsets per package are not applied (documented). The board BOM of
+export-kicad-fab became `fab_export::board_bom`, shared.
+
+Measured (x1450, kicad-cli 10.0.7): the walkthrough's keyboard (urchin
+from its schematic, laid out at `"total_seconds": 30`, `--profile
+jlcpcb`): released in 8 s, 24 files, `main-gerbers.zip` 14 files (693
+kB), STEP 500 kB, DRC 0 errors, 0 unconnected, 82 cosmetic; ERC 42 errors
+(the schematic's own); 80 parts without an LCSC number. Short tier
+results (x1403's layouts): spell_tome_bottom released in 5 s (19
+files; no B.Paste, nothing lies on it; 49 cosmetic findings); Blue Line (`--profile jlcpcb`) released in
+4 s (21 files, 206 cosmetic); USB Keypad refused (exit 1: clearance 58,
+connection_width 1, hole_clearance 5, hole_to_hole 12, 2 unconnected).
+
+**Pre-routed nets** (`crates/pcb-kicad/src/board_router/kept.rs`). Found
+before the change: route mode lowered the board's own segments and vias as
+obstacles of their nets (other nets kept clear of them), did not count
+their connectivity (every connection was routed anew), and `emit_routes`
+then deleted every segment, arc and via of the input: the result had only
+the router's copper, other nets having avoided copper that was no longer
+there; existing arc tracks were refused ("the board router does not yet
+lower existing arc tracks", an internal error). Now route-kicad-board
+keeps them by default (router config `existing_tracks`: `keep`, or
+`strip` and the command's `--strip`, which removes them before anything
+reads the board): the lowering's existing tracks and vias stay fixed
+copper of their nets; the pads a piece of them joins (copper of the net
+overlapping on a shared layer, custom pads through their contact, as
+`verify::copper_components` joins items) are merged into one terminal
+(`MergedPad`, as pads of one number that overlap are), so the connection
+counts as made and the router routes only what is open; a piece on no pad
+is a terminal of its own unless its net has a pour. The router never owns
+kept copper, so nothing rips it up; `emit_routes(keep_existing)` writes it
+back (layouts still replace). Arc tracks are lowered as chords grown by
+the flattening tolerance (a fix in the lowering's handling of existing
+tracks; no board of the tiers has them after their strip).
+`board-router.json` reports `kept_copper` (segments, arcs, vias, nets,
+connections_made, nets_complete, floating); absent without kept copper,
+so reports of track-free boards are unchanged. Limits (docs/agents.md):
+new routes join a kept group at its first pad, not along a kept track; a
+pour net's kept track ending in the pour does not mark its pad connected.
+
+Measured on spell_tome_bottom (the designer's board stripped as run.py
+strips it, then the designer's 3V3 and SDA tracks put back: 33 segments, 2
+vias; `ladder_budget_seconds` 400, x1450): kept, 11 connections made, both
+nets complete with their tracks alone, the other 16 nets routed (146
+items), KiCad complete, exit 0, 21 s; 3V3's 28 and SDA's 7 items in the
+result are the input's token for token (uuids included; the writer
+re-indents the whole file, tabs to spaces). With `--strip`: 18 nets
+routed, 0 of the 35 input items left, 3V3 45 items and SDA 9, 16 vias and
+601 mm against 12 vias and 447 mm kept, also complete.
+
+**Agent skill** (`skills/pcb-maker/SKILL.md`): frontmatter (name,
+description) and the instructions: workflow, commands, the verdict fields
+and exit codes, what to do on exit 1, constraints.json and layout.json
+keys, the free dimension, pre-routed nets, the fab release. README, "For
+agents", says how to install it. `tests/cli_exit_codes.rs` keeps it from
+going stale: every `*-kicad-*` command it names is in `--help`'s command
+table and in docs/agents.md, every agent command is in it, and its exit
+table matches `--help` and docs/agents.md.
+
+Tests: unit (kept copper: merging, a loose track, a net complete with its
+tracks, the router leaving it alone, a board without tracks unchanged,
+arcs; the zip and its CRC, read back by Python's zipfile; JLCPCB's
+placement columns; the layers a release plots) and CLI (route keeps two
+pre-routed nets and routes the third, `--strip` routes all three; the fab
+release refused, allowed with `--allow-findings`, every manifest file's
+size; usage errors; the skill against the command table).
+
+No behaviour change without kept copper: the short tier (3 x 2) x1450
+against x1403 is identical, 12 rows and the 12 result boards byte for
+byte (20 unconnected, 6 passes, work 2961 s). Fingerprints (route mode
+at a quarter of the budget, 2 x 4, the v16 placements): against
+build/fp-fence-x1402 Castor and k30 give the same boards, jetson (10804.2
+to 10784.0 mm) and Sisu (23 to 24 unconnected) differ, but x1402 predates
+the probe-overhead commit (bbdb205: it lacks `PCB_LADDER_NO_STEP_COST_GATE`);
+against main's own snapshot x1404 (ded766d), run beside it
+(build/fp-base-x1404), all four rows and all four result boards are
+identical (jetson 324/340, 20 unconnected; Sisu 184/192, 24; k30 and
+Castor complete). Snapshots
+x1450-x1451.
+
 ## Committed on 2026-10-21 (fence report: router side)
 
 The router-side findings of a report from an agent that laid out a real

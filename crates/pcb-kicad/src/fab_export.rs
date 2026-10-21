@@ -164,6 +164,48 @@ pub fn export_kicad_fab(
     let cpl_path = output.join(format!("{board_id}-cpl.csv"));
     fs::write(&cpl_path, cpl).map_err(|error| error.to_string())?;
 
+    let BoardBom {
+        csv: bom,
+        lines,
+        without_lcsc,
+    } = board_bom(&pcb);
+    let bom_path = output.join(format!("{board_id}-bom.csv"));
+    fs::write(&bom_path, bom).map_err(|error| error.to_string())?;
+
+    let cost = crate::quality::score_kicad_board(directory, board_id)?.cost;
+    let report = KiCadFabExport {
+        board_id: board_id.into(),
+        gerbers_zip,
+        bom: bom_path,
+        cpl: cpl_path,
+        bom_lines: lines,
+        placements,
+        without_lcsc,
+        cost,
+    };
+    fs::write(
+        output.join("fab-export.json"),
+        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(report)
+}
+
+/// A bill of materials from a board's footprints (`board_bom`).
+pub(crate) struct BoardBom {
+    /// JLCPCB's columns: Comment, Designator, Footprint, JLCPCB Part #.
+    pub csv: String,
+    /// Lines (distinct value, footprint and part number).
+    pub lines: usize,
+    /// Parts without an LCSC part number.
+    pub without_lcsc: Vec<String>,
+}
+
+/// The bill of materials of `pcb`'s footprints: one line per value,
+/// footprint and LCSC part number (a footprint property `LCSC`, `LCSC
+/// Part`, `JLCPCB Part #`, ...), parts excluded from the BOM, board-only,
+/// DNP or without pads left out.
+pub(crate) fn board_bom(pcb: &Expr) -> BoardBom {
     // Bill of materials from the board's footprints: one line per value and
     // footprint, with the LCSC part number when a footprint carries one.
     let mut lines: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
@@ -248,24 +290,9 @@ pub fn export_kicad_fab(
             field(&lcsc)
         ));
     }
-    let bom_path = output.join(format!("{board_id}-bom.csv"));
-    fs::write(&bom_path, bom).map_err(|error| error.to_string())?;
-
-    let cost = crate::quality::score_kicad_board(directory, board_id)?.cost;
-    let report = KiCadFabExport {
-        board_id: board_id.into(),
-        gerbers_zip,
-        bom: bom_path,
-        cpl: cpl_path,
-        bom_lines: lines.len(),
-        placements,
+    BoardBom {
+        csv: bom,
+        lines: lines.len(),
         without_lcsc,
-        cost,
-    };
-    fs::write(
-        output.join("fab-export.json"),
-        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(report)
+    }
 }

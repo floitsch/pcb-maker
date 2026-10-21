@@ -61,8 +61,8 @@ mod verdict;
 pub use verdict::{
     DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference,
     KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, error_verdict, input_error, is_cosmetic,
-    is_input_error, judge, kicad_drc_report, read_drc_tally, reference_findings, room_action,
-    route_facts, split_findings, tally_drc, wall_cuts,
+    is_input_error, judge, kicad_drc_report, load_drc_tally, read_drc_tally, reference_findings,
+    room_action, route_facts, split_findings, tally_drc, wall_cuts,
 };
 mod work_rate;
 pub use work_rate::{
@@ -81,6 +81,11 @@ mod labels;
 pub use labels::KiCadLabelReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
+mod fab_release;
+pub use fab_release::{
+    KiCadFabDrc, KiCadFabErc, KiCadFabFile, KiCadFabOptions, KiCadFabProfile, KiCadFabRelease,
+    fab_kicad_board,
+};
 mod board_footprints;
 mod key_matrix;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
@@ -110,8 +115,8 @@ pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
-    KiCadPourMode, bench_kicad_search, dump_kicad_pour_map, route_kicad_board,
-    write_kicad_board_without_tracks,
+    KiCadExistingTracks, KiCadKeptCopper, KiCadPourMode, bench_kicad_search, dump_kicad_pour_map,
+    route_kicad_board, write_kicad_board_without_tracks,
 };
 pub use project_rules::resolve_project_rules;
 

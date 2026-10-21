@@ -1700,7 +1700,7 @@ pub fn layout_kicad_board(
             copper_texts.stuck.len()
         );
     }
-    let nets = emit_routes(&mut pcb, &board, &result, &layer_names)?;
+    let nets = emit_routes(&mut pcb, &board, &result, &layer_names, false)?;
     let result_directory = output_directory.join("result");
     let mut routed = finish_routed_board(
         &pcb,

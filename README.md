@@ -86,7 +86,7 @@ cargo build --release          # target/release/pcb-maker
 ```sh
 pcb-maker import-kicad-netlist myproject/myboard.kicad_sch board myboard
 pcb-maker layout-kicad-board board myboard layout auto board/layout.json
-pcb-maker export-kicad-fab layout/result myboard fab
+pcb-maker fab-kicad-board layout/result myboard release
 ```
 
 1. `import-kicad-netlist` makes the board KiCad's "Update PCB from
@@ -97,8 +97,12 @@ pcb-maker export-kicad-fab layout/result myboard fab
    `constraints.json` before the next step.
 2. `layout-kicad-board` places and routes the board and has KiCad check
    it: `layout/result` is the finished project.
-3. `export-kicad-fab` writes Gerbers, drill files, a BOM and a placement
-   file in JLCPCB's format, and the estimated price at six fabs.
+3. `fab-kicad-board` runs KiCad's DRC and ERC and, only when no copper
+   error and no unconnected item remains, writes the Gerbers and drill
+   files (zipped), the placement file, the BOM, netlists, the STEP model
+   and `fab-manifest.json` with a sha256 per file (`--profile jlcpcb` for
+   JLCPCB's BOM and placement columns). `export-kicad-fab` writes the fab
+   files without the gate, with the estimated price at six fabs.
 
 ### Route a board
 
@@ -108,8 +112,9 @@ pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto
 
 `<board-id>` is the file stem (`myboard` for `myboard.kicad_pcb`), `auto`
 takes track widths, clearances, via sizes and net classes from the project's
-`.kicad_pro`. Existing tracks and vias are replaced; copper zones stay and
-are used: pads are connected to their pour, islands are stitched, and if
+`.kicad_pro`. The board's own tracks and vias are kept (route the critical
+nets by hand, the router routes what they leave open; `--strip` routes from
+nothing); copper zones stay and are used: pads are connected to their pour, islands are stitched, and if
 that leaves something open the pour nets are routed as tracks instead.
 `<out-dir>` must not exist yet; it receives a copy of the project with the
 routed board, KiCad's ERC and DRC reports, and `board-router.json` with
@@ -171,14 +176,29 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 A ground plane is one line of router config, used in place of `auto`:
 `{"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]}`.
 
-`export-kicad-fab` then writes the Gerbers, drill files, BOM and
-placement file a fab takes, with the estimated price at common fabs.
+`fab-kicad-board` then checks the board with KiCad's DRC and writes the
+Gerbers, drill files, BOM and placement file a fab takes.
 
 The result reports every constraint as kept or missed, by how much. When
 parts find no place, the error says why: how full each side is, or which
 constraint holds the part. When connections stay open, `board-router.json` says which pads are unreachable
 and where nets fought for room. See [docs/agents.md](docs/agents.md) and
 [docs/constraints.md](docs/constraints.md).
+
+### For agents
+
+[docs/agents.md](docs/agents.md) is the guide for coding agents: the
+commands, the verdict every run writes, exit codes and a cookbook from
+what people say to constraints. Its short form is a skill file for agent
+CLIs that read them (Claude Code and others with the same `SKILL.md`
+format): copy `skills/pcb-maker` into your skills directory,
+
+```sh
+mkdir -p ~/.claude/skills && cp -r skills/pcb-maker ~/.claude/skills/   # every project
+mkdir -p .claude/skills && cp -r <pcb-maker>/skills/pcb-maker .claude/skills/   # one project
+```
+
+and the agent picks it up when a task is about a KiCad board.
 
 ### Placement only
 
@@ -259,6 +279,7 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `benchmarks/agent-tasks` | layout tasks as an agent poses them: stacked parts, constraints, a finished board |
 | `crates/pcb-congestion` | congestion features (RUDY) the placement race ranks its candidates by |
 | `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the changelog](docs/changelog.md) |
+| `skills/pcb-maker` | the agent skill (`SKILL.md`): the short form of docs/agents.md for agent CLIs; tests/cli_exit_codes.rs checks it against the command table and the exit codes |
 | `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `check_links.py` |
 | `tools/config-reference` | generates [the configuration reference](docs/config-reference.md) (every settings key with its type, default and doc comment) and the hand-over's environment index from the code |
 
@@ -268,7 +289,7 @@ board router can call. `pcb-kicad`'s modules: the KiCad file layer
 `copper_geometry`, `outline`, `roundrect_pad`), the adapters to the placer
 and the router (`board_placer/`, `board_router/`, `board_layout`), KiCad's
 checks (`verification`, `native_report`, `drc_cache`, `verdict`) and the
-agent commands' tools; `lib.rs` lists them. The research stack of August
+agent commands' tools (`fab_release` is `fab-kicad-board`'s); `lib.rs` lists them. The research stack of August
 and September 2026 is in git history: the crates `layout-trace-routing`,
 `pcb-routing`, `pcb-coordinator`, `pcb-placement`, `pcb-validate`,
 `pcb-viewer`, `pcb-benchmark`, `pcb-pipeline` and their commands up to

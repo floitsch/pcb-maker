@@ -372,7 +372,7 @@ fn missed_constraints(constraints: &[pcb_kicad::KiCadConstraintStatus]) -> Vec<S
         .collect()
 }
 
-const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none]";
+const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none] [--strip]";
 const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [layout-config.json] [--reference <project-dir>|none]";
 /// place-kicad-board's default work budget: the layout's placement share
 /// of its default budget.
@@ -383,15 +383,24 @@ const PLACE_USAGE: &str =
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "route-kicad-board";
+    // --strip: the board's own tracks and vias go first (default: kept).
+    let strip = arguments.iter().any(|argument| argument == "--strip");
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--strip")
+        .collect();
     let (positional, values) = split_flags(arguments, &["--reference"], ROUTE_USAGE)?;
     positional_count(&positional, 3..=4, ROUTE_USAGE)?;
     let (source, board_id, output) = (&positional[0], &positional[1], &positional[2]);
     check_project(source, board_id)?;
     check_fresh_output(output)?;
     let reference = reference_option(&values, Some(source), board_id)?;
-    let config =
+    let mut config =
         crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
             .map_err(Failure::Usage)?;
+    if strip {
+        config.existing_tracks = pcb_kicad::KiCadExistingTracks::Strip;
+    }
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
@@ -439,6 +448,17 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             .map(|native| native.complete)
             .unwrap_or(false),
     );
+    if let Some(kept) = &result.kept_copper {
+        println!(
+            "kept: the board's {} track segments, {} arcs and {} vias on {} nets, {} connections they made, {} nets complete with them alone",
+            kept.segments,
+            kept.arcs,
+            kept.vias,
+            kept.nets.len(),
+            kept.connections_made,
+            kept.nets_complete.len()
+        );
+    }
     // Test hook: KiCad's report gone before the verdict reads it
     // (tests/cli_exit_codes.rs).
     if std::env::var_os("PCB_MAKER_TEST_DROP_DRC").is_some() {
@@ -950,6 +970,198 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     })
 }
 
+const FAB_USAGE: &str = "usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step]";
+
+/// A DRC-gated fab release (`pcb_kicad::fab_kicad_board`): complete when
+/// the fab files were written, incomplete (nothing exported) when KiCad's
+/// DRC finds copper errors or unconnected items and `--allow-findings` is
+/// not given.
+fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
+    let command = "fab-kicad-board";
+    let switch = |name: &str| arguments.iter().any(|argument| argument == name);
+    let (allow_findings, no_step) = (switch("--allow-findings"), switch("--no-step"));
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--allow-findings" && argument != "--no-step")
+        .collect();
+    let (positional, values) = split_flags(arguments, &["--layers", "--profile"], FAB_USAGE)?;
+    positional_count(&positional, 3..=3, FAB_USAGE)?;
+    let (source, board_id, output) = (&positional[0], &positional[1], &positional[2]);
+    check_project(source, board_id)?;
+    check_fresh_output(output)?;
+    let profile = match values.get("--profile").map(String::as_str) {
+        None | Some("kicad") => pcb_kicad::KiCadFabProfile::Kicad,
+        Some("jlcpcb") => pcb_kicad::KiCadFabProfile::Jlcpcb,
+        Some(other) => {
+            return Err(Failure::Usage(format!(
+                "unknown --profile {other}: kicad or jlcpcb; {FAB_USAGE}"
+            )));
+        }
+    };
+    let layers = match values.get("--layers") {
+        None => None,
+        Some(list) => {
+            let layers: Vec<String> = list
+                .split(',')
+                .map(str::trim)
+                .filter(|layer| !layer.is_empty())
+                .map(str::to_string)
+                .collect();
+            if layers.is_empty() {
+                return Err(Failure::Usage(format!(
+                    "--layers needs layer names; {FAB_USAGE}"
+                )));
+            }
+            Some(layers)
+        }
+    };
+    let options = pcb_kicad::KiCadFabOptions {
+        allow_findings,
+        layers,
+        profile,
+        no_step,
+    };
+    let output = Path::new(output);
+    let outputs = BTreeMap::from([
+        ("project".to_string(), path_text(Path::new(source))),
+        (
+            "board".to_string(),
+            path_text(&Path::new(source).join(format!("{board_id}.kicad_pcb"))),
+        ),
+        ("drc".to_string(), path_text(&output.join("drc.json"))),
+        ("erc".to_string(), path_text(&output.join("erc.json"))),
+        (
+            "report".to_string(),
+            path_text(&output.join("fab-manifest.json")),
+        ),
+        (
+            "zip".to_string(),
+            path_text(&output.join(format!("{board_id}-gerbers.zip"))),
+        ),
+        (
+            "verdict".to_string(),
+            path_text(&output.join("verdict.json")),
+        ),
+    ]);
+    set_target(command, output.join("fab-manifest.json"), outputs.clone());
+    fs::create_dir_all(output).map_err(|error| {
+        Failure::Internal(format!("failed to create {}: {error}", output.display()))
+    })?;
+    let started = Instant::now();
+    let manifest = pcb_kicad::fab_kicad_board(Path::new(source), board_id, output, &options)
+        .map_err(classify)?;
+    let tally = pcb_kicad::load_drc_tally(&output.join("drc.json")).map_err(Failure::Internal)?;
+    let mut facts = KiCadRunFacts::new(command);
+    facts.native = Some(tally);
+    facts.outputs = existing(&outputs);
+    facts.wall_seconds = started.elapsed().as_secs_f64();
+    let mut verdict = pcb_kicad::judge(&facts);
+    let drc = &manifest.drc;
+    let errors: usize = drc.errors.values().sum();
+    let counts = format!(
+        "KiCad's DRC: {errors} errors{}, {} unconnected items, {} warnings, {} cosmetic",
+        if drc.errors.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                drc.errors
+                    .iter()
+                    .map(|(kind, count)| format!("{kind} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+        drc.unconnected_items,
+        drc.warnings,
+        drc.cosmetic
+    );
+    let status = if manifest.released {
+        KiCadRunStatus::Complete
+    } else {
+        KiCadRunStatus::Incomplete
+    };
+    verdict.status = status;
+    verdict.exit_code = status.exit_code();
+    verdict.next_actions.clear();
+    if manifest.released {
+        verdict.reason = format!(
+            "released{}: {} files, {}; {counts}",
+            if drc.findings_allowed {
+                " with findings (--allow-findings)"
+            } else {
+                ""
+            },
+            manifest.files.len(),
+            manifest.zip.as_deref().unwrap_or("no zip")
+        );
+        if drc.findings_allowed {
+            verdict.next_actions.push(format!(
+                "the release went ahead with KiCad's findings (--allow-findings): {counts}; make sure the fab accepts them"
+            ));
+            verdict
+                .next_actions
+                .extend(manifest.findings.iter().cloned());
+        }
+        if !manifest.without_lcsc.is_empty() {
+            let shown = manifest.without_lcsc.len().min(10);
+            verdict.next_actions.push(format!(
+                "{} parts have no LCSC part number, which JLCPCB's assembly needs (an LCSC field on the symbol, then Update PCB from Schematic): {}{} (fab-manifest.json's without_lcsc lists them)",
+                manifest.without_lcsc.len(),
+                manifest.without_lcsc[..shown].join(", "),
+                if shown < manifest.without_lcsc.len() { ", ..." } else { "" }
+            ));
+        }
+        verdict.next_actions.push(
+            "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers".into(),
+        );
+    } else {
+        verdict.reason = format!("refused: {counts}; nothing was exported");
+        verdict.next_actions.push(
+            "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
+                .into(),
+        );
+        verdict
+            .next_actions
+            .extend(manifest.findings.iter().cloned());
+    }
+    for skipped in &manifest.skipped {
+        println!("skipped: {skipped}");
+    }
+    if let Some(erc) = &manifest.erc {
+        println!(
+            "erc: {} errors, {} warnings (counted, not blocking)",
+            erc.errors, erc.warnings
+        );
+    }
+    let report = output.join("fab-manifest.json");
+    write_verdict(output, None, &verdict).map_err(Failure::Internal)?;
+    // The release in the verdict too: what an agent reads first.
+    let path = output.join("verdict.json");
+    let mut value: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .ok_or_else(|| Failure::Internal(format!("failed to read {}", path.display())))?;
+    value["fab_release"] = serde_json::json!({
+        "released": manifest.released,
+        "findings_allowed": drc.findings_allowed,
+        "profile": manifest.profile,
+        "kicad_version": manifest.kicad_version,
+        "files": manifest.files.len(),
+        "zip": manifest.zip,
+        "manifest": path_text(&report),
+        "skipped": manifest.skipped,
+    });
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&value)
+            .map_err(|error| Failure::Internal(error.to_string()))?,
+    )
+    .map_err(|error| Failure::Internal(format!("failed to write {}: {error}", path.display())))?;
+    announce(&verdict, &path);
+    Ok(status)
+}
+
 /// The commands that only read a project and write files: the arguments
 /// are checked here (exit 2), the work is the command's own (an error
 /// there exits 4).
@@ -1039,6 +1251,7 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
         "layout-kicad-board" => layout(arguments),
         "place-kicad-board" => place(arguments),
         "drc-kicad-board" => drc(arguments),
+        "fab-kicad-board" => fab(arguments),
         "describe-kicad-board"
         | "score-kicad-board"
         | "export-kicad-fab"
@@ -1088,7 +1301,7 @@ same as verdict.status and verdict.exit_code):
 const ROUTE_HELP: &str = "\
 Routes a placed KiCad board: every net, with the project's rules, then KiCad's ERC and DRC.
 
-usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none]
+usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none] [--strip]
 
   <project-dir>        the KiCad project directory holding <board-id>.kicad_pcb (and .kicad_pro).
   <board-id>           the board's file stem: myboard for myboard.kicad_pcb.
@@ -1101,13 +1314,19 @@ usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-co
                        net_classes (default: the project's), ladder_budget_seconds (default 1200 s
                        of work), deadline_seconds (default none: the work alone ends the run),
                        solid_starved_thermals (default false), via_in_pad (default false: no
-                       via in an SMD pad but an exposed pad; true for filled and capped vias).
+                       via in an SMD pad but an exposed pad; true for filled and capped vias),
+                       existing_tracks (default keep; strip as --strip).
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
                        the same place), not as the route's; default <project-dir> (the input as
                        given); none counts every error. Checked only when the result has errors
                        (one more KiCad DRC).
+  --strip              remove the board's own tracks and vias first and route from nothing;
+                       default: kept (router config existing_tracks: keep or strip).
 
-Existing tracks and vias are replaced; copper zones stay and are used. <out-dir> receives the project
+The board's own tracks and vias are kept as they are (pre-routed nets): pads they join count as
+connected, other nets keep clear of them, and the router routes only what is open, never ripping
+one up (board-router.json's kept_copper counts them). Copper zones stay and are used.
+<out-dir> receives the project
 with the routed board, KiCad's erc.json and drc.json, and board-router.json: per-net results,
 diagnostics (dead_pads, hot_spots, starved_thermals), cut, work_seconds, skipped, and verdict
 (status, exit_code, reason, kicad_checked, open_connections, kicad_unconnected_items,
@@ -1176,9 +1395,41 @@ Environment: PCB_PLACER_WORK_SECONDS sets the placement's work budget in seconds
 <out-dir> receives the placed board, placement.html and board-placer.json: every constraint kept or
 missed, unplaced, illegal, hints, utilization, and verdict.";
 
+const FAB_HELP: &str = "\
+Releases a board to a fab, gated by KiCad's DRC: exports only when no copper error and no
+unconnected item remains.
+
+usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step]
+
+  <project-dir>     the KiCad project directory holding <board-id>.kicad_pcb (and .kicad_sch for the
+                    ERC, the BOM and the schematic netlist).
+  <board-id>        the board's file stem.
+  <out-dir>         where the release goes; must not exist yet.
+  --allow-findings  export even with copper errors or unconnected items (the verdict lists them).
+  --layers L1,...   the Gerber layers; default: every copper layer, both masks, Edge.Cuts, and the
+                    pastes and silkscreens something lies on.
+  --profile P       kicad (default: kicad-cli's own files) or jlcpcb (every layer of JLCPCB's KiCad
+                    guide, plus assembly/<id>-bom-jlcpcb.csv in Comment,Designator,Footprint,
+                    JLCPCB Part # and assembly/<id>-cpl-jlcpcb.csv in Designator,Mid X,Mid Y,Layer,
+                    Rotation).
+  --no-step         skip the 3D model.
+
+The DRC is drc-kicad-board's (cached, zones refilled, without the global libraries); warnings,
+excluded and cosmetic findings (silkscreen, text, library) do not block. The ERC (with a schematic)
+is counted, never blocking. Released, <out-dir> holds gerbers/ (Gerbers, Excellon drill files PTH
+and NPTH, their Gerber maps), <board-id>-gerbers.zip (what the fab's upload takes), assembly/
+(<board-id>-pos.csv: kicad-cli's position file, both sides, mm, KiCad's rotations, DNP parts out;
+<board-id>-bom.csv: kicad-cli's BOM of the schematic grouped by value, footprint and the symbols'
+LCSC field, else the board's footprints), netlist/ (<board-id>.d356, IPC-D-356 for the fab's
+electrical test; <board-id>.net from the schematic), <board-id>.step (when kicad-cli exports it;
+else listed in skipped), drc.json, erc.json and fab-manifest.json (every file with its sha256,
+the DRC and ERC counts, KiCad's version, layers, skipped, without_lcsc). verdict.json carries the
+verdict and fab_release. Exits 0 released, 1 refused (nothing exported; next_actions list the
+findings), 2 usage or input errors, 4 internal errors (kicad-cli failed).";
+
 /// The commands for agents: name, one line, and the detailed help (when
 /// there is more to say than the usage line).
-pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
+pub const AGENT_COMMANDS: [(&str, &str, &str); 13] = [
     (
         "import-kicad-netlist",
         "makes a board from a schematic or netlist, with constraints.json and layout.json",
@@ -1223,6 +1474,11 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 12] = [
         "export-kicad-fab",
         "writes Gerbers, drill files, BOM and placement files, and the price at common fabs",
         "usage: pcb-maker export-kicad-fab <project-dir> <board-id> <out-dir>\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <out-dir>      where the fab files go; created if missing.\n\nPrints fab-export.json's content on stdout.",
+    ),
+    (
+        "fab-kicad-board",
+        "a DRC-gated fab release: Gerbers, drill, placement, BOM, netlists, STEP, manifest and zip",
+        FAB_HELP,
     ),
     (
         "drc-kicad-board",

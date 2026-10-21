@@ -62,15 +62,20 @@ pub fn route_kicad_board(
     // Requested pours and net classes go into a copy of the project that the
     // attempts use.
     let poured_directory = output_directory.with_extension("poured");
-    let planned = {
+    let (planned, strip) = {
         let board = source_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        planned_pours(
-            &crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?,
-            config,
+        let pcb =
+            crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?;
+        // `strip`: the board's own tracks and vias go before anything
+        // reads the board (by default they are kept, `kept`).
+        let strip =
+            config.existing_tracks == KiCadExistingTracks::Strip && count_tracks(&pcb) != [0, 0, 0];
+        (
+            planned_pours(&pcb, config).map_err(crate::verdict::input_error)?,
+            strip,
         )
-        .map_err(crate::verdict::input_error)?
     };
     if config.add_pours.is_empty() && !planned.is_empty() {
         eprintln!(
@@ -82,7 +87,7 @@ pub fn route_kicad_board(
                 .join("; ")
         );
     }
-    let prepared = !planned.is_empty() || !config.net_classes.is_empty();
+    let prepared = !planned.is_empty() || !config.net_classes.is_empty() || strip;
     let source_directory = if !prepared {
         source_directory
     } else {
@@ -94,6 +99,12 @@ pub fn route_kicad_board(
         let text = fs::read_to_string(&board)
             .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
         let mut pcb = crate::canonical_order::parse_board(&text)?;
+        if strip {
+            eprintln!(
+                "existing tracks: {} track segments, arcs and vias removed (strip)",
+                strip_tracks(&mut pcb)
+            );
+        }
         add_pour_zones(&mut pcb, &planned).map_err(crate::verdict::input_error)?;
         fs::write(&board, format!("{}\n", encode(&pcb)))
             .map_err(|error| format!("failed to write {}: {error}", board.display()))?;
@@ -154,7 +165,15 @@ pub fn route_kicad_board(
         memory_at_start.describe(),
         resident_mb()
     );
+    let kept_tracks = count_tracks(&parsed);
+    if kept_tracks != [0, 0, 0] {
+        eprintln!(
+            "existing tracks: {} segments, {} arcs and {} vias kept; the router routes what they leave open (--strip routes from nothing)",
+            kept_tracks[0], kept_tracks[1], kept_tracks[2]
+        );
+    }
     let runner = KiCadRunner {
+        kept: std::sync::OnceLock::new(),
         lowering_work: lowering_work(&parsed),
         parsed: &parsed,
         layer_names: layer_table.names.clone(),
@@ -184,6 +203,17 @@ pub fn route_kicad_board(
         });
     };
     result.pin_swaps = pin_swaps;
+    // The connections the board's own copper made, from whichever
+    // lowering ran (an attempt's own or the ladder's).
+    let kept = result
+        .kept_copper
+        .take()
+        .or_else(|| runner.kept.get().cloned());
+    if kept_tracks != [0, 0, 0] {
+        let mut kept = kept.unwrap_or_default();
+        [kept.segments, kept.arcs, kept.vias] = kept_tracks;
+        result.kept_copper = Some(kept);
+    }
     if prepared {
         fs::remove_dir_all(&poured_directory).map_err(|error| error.to_string())?;
     }
@@ -302,6 +332,9 @@ pub fn route_kicad_board(
 /// `source_directory`.
 struct KiCadRunner<'a> {
     parsed: &'a Expr,
+    /// What the first lowering kept of the board's own copper
+    /// (`keep_existing_copper`).
+    kept: std::sync::OnceLock<KiCadKeptCopper>,
     layer_names: Vec<String>,
     source_directory: &'a Path,
     board_id: &'a str,
@@ -321,7 +354,11 @@ impl LadderRunner for KiCadRunner<'_> {
         attempt: &KiCadBoardRouterConfig,
         connect: bool,
     ) -> Result<core::Board, String> {
-        Ok(lower(self.parsed, attempt, connect)?.board)
+        let mut board = lower(self.parsed, attempt, connect)?.board;
+        // The board's own tracks and vias: what they join is connected.
+        let kept = keep_existing_copper(&mut board);
+        let _ = self.kept.set(kept);
+        Ok(board)
     }
 
     fn size(&self, board: &core::Board) -> (usize, usize) {
@@ -782,6 +819,7 @@ pub(crate) fn finish_routed_board(
         build_work_seconds: result.build_work,
         lowering_work_seconds: 0.0,
         wall_accounting: None,
+        kept_copper: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

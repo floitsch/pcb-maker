@@ -12,6 +12,7 @@ mod attempt;
 mod budget;
 mod config;
 mod geometry;
+mod kept;
 mod ladder;
 mod lower;
 mod memory;
@@ -22,5 +23,6 @@ mod route;
 mod tests;
 mod tools;
 
+pub(crate) use self::kept::{count_tracks, keep_existing_copper, strip_tracks};
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
-pub use self::{config::*, pour_plan::*, result::*, route::*, tools::*};
+pub use self::{config::*, kept::KiCadKeptCopper, pour_plan::*, result::*, route::*, tools::*};

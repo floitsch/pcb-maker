@@ -5,6 +5,11 @@ You have a KiCad schematic, or a board with footprints and nets from
 parts, routes the board, tells you precisely what it achieved, and writes
 what a fab needs to make and assemble it.
 
+An agent CLI that reads skill files (Claude Code and others) can load the
+short version of this guide: [skills/pcb-maker/SKILL.md](../skills/pcb-maker/SKILL.md)
+(install: README.md, "For agents"). A test keeps it in step with the
+command table and the exit codes.
+
 ## 0. From a schematic
 
 ```sh
@@ -239,6 +244,9 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "100 x 60 mm with 3 mm round corners" | `"outline": {"width": 100, "height": 60, "corner_radius": 3}` |
 | "It must fit the enclosure: an L, the right part 30 mm lower" | `"outline": {"polygon": [[0, 0], [115, 0], [115, 30], [230, 30], [230, 125], [0, 125]]}`; `"edge": "top"` for a part in the right part puts it against the step |
 | "A window for the display, nothing in it" | `"outline": {"width": 80, "height": 50, "cutouts": [{"x": [20, 60], "y": [10, 35]}]}` (relative to the outline's corner; a `polygon` works too) |
+| "I routed the USB pair and the crystal by hand, route the rest" | route the traces in KiCad (or through its API), save, then `route-kicad-board <dir> <id> <out> auto`: the board's own tracks and vias are kept and only what they leave open is routed ([below](#pre-routed-nets-keep-what-is-routed)) |
+| "Throw away the old tracks" | `route-kicad-board ... --strip` |
+| "Send it to JLCPCB" | `fab-kicad-board <out>/result <id> <release> --profile jlcpcb` ([5](#5-order-it)) |
 | "The sensor board breaks off the main board" | `"outline": {"pieces": [{"width": 60, "height": 40}, {"width": 15, "height": 40, "x": 65}]}`; parts wired to a fixed part on a piece stay on it |
 
 Router side (the file passed in place of `auto`):
@@ -261,6 +269,8 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   vias) from the project's `.kicad_pro`.
 - **Only routing?** When the placement is already final, use
   `pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto`.
+  The board's own tracks and vias stay (pre-routed nets, below);
+  `--strip` routes from nothing.
 - **A designer's board as the reference.** When the board comes from a
   finished design, `--reference <its-project-dir>` makes its own DRC
   errors pre-existing (see 4).
@@ -301,6 +311,8 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     a net wins. The classes go into the result's `.kicad_pro` ahead of the
     project's own, so KiCad and its DRC use the same rules. Without them,
     net classes come from the project.
+  - `existing_tracks` (default `keep`): route mode's handling of the
+    board's own tracks and vias; `strip` is `--strip`.
 - **Router options in layout mode.** The same file goes in the router
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
@@ -375,11 +387,55 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     `3.15e6,150e6`, which the benchmark tiers use), or the router
     settings `work_rate` and `placer_work_rate`.
 
+### Pre-routed nets: keep what is routed
+
+Route the traces that matter by hand (a differential pair, a crystal, a
+switching loop; in KiCad or through its API), save the board, and route
+the rest:
+
+```sh
+pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> auto
+```
+
+- The board's own track segments, arcs and vias are **kept as they are**:
+  the same items at the same coordinates, widths, layers and nets in the
+  result. The router never owns them, so it never rips one up or reroutes
+  it; other nets keep their clearance from them.
+- **Their connectivity counts.** Pads a piece of kept copper joins (copper
+  of the net overlapping on a layer both have, as KiCad's connectivity
+  joins it) are one terminal of the net: that connection is made. A net
+  they join whole has nothing left to route; a net they join in part is
+  routed from the joined group to the rest. A piece on no pad of its net
+  is a terminal of its own (KiCad wants it joined), unless the net has a
+  pour, whose fill joins it (a stitching via).
+- `board-router.json` reports `kept_copper`: `segments`, `arcs`, `vias`,
+  `nets`, `connections_made`, `nets_complete` and `floating` (pieces on no
+  pad); stdout has a line `kept: ...`. `routable_connections` and the
+  nets' `terminals` count what was left to route.
+- The router's new tracks join a kept group at one pad of it (the
+  group's first in the board's order), not along a kept track or at its
+  other pads: a route may come out longer than one a designer would draw
+  to the nearest point of the group. A kept track of a pour net that ends in the pour (not on a pad)
+  does not tell the router its pad is connected: the router connects that
+  pad again (correct, one more track). KiCad's DRC still judges the whole
+  board, kept copper included: a kept track too close to something is a
+  finding like any other (`--reference` defaults to the input, so the
+  input's own findings are pre-existing).
+- `--strip` (router config `"existing_tracks": "strip"`) removes the
+  board's tracks, arcs and vias first: the board is routed from nothing.
+  Copper zones stay either way. `layout-kicad-board` always strips (it
+  moves the parts).
+
+Before 2026-10-21 route mode lowered the board's tracks and vias as
+obstacles of their nets, routed every connection anew and then deleted
+them from the result: other nets avoided copper that was not in the
+board they got, and arcs were refused.
+
 ## 4. Read the verdict: exit code and `<out-dir>/verdict.json`
 
-Every run of `route-kicad-board`, `layout-kicad-board` and
-`place-kicad-board` ends with an exit code and a verdict that say the
-same. `pcb-maker --help` and `pcb-maker <command> --help` list them too.
+Every run of `route-kicad-board`, `layout-kicad-board`,
+`place-kicad-board` and `fab-kicad-board` ends with an exit code and a
+verdict that say the same. `pcb-maker --help` and `pcb-maker <command> --help` list them too.
 
 | Exit | `verdict.status` | Meaning | What to do |
 | --- | --- | --- | --- |
@@ -543,7 +599,8 @@ type in `erc_library_warnings`.
 
 The other commands exit 0 when done, 1 when their result is incomplete
 (`repair-kicad-silkscreen` with findings left, `import-kicad-netlist` with
-footprints missing), 2 on usage or input errors and 4 on internal errors.
+footprints missing, `fab-kicad-board` refused by the DRC), 2 on usage or
+input errors and 4 on internal errors.
 
 ### The layout's report: `<out-dir>/board-layout.json`
 
@@ -597,10 +654,64 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
 ## 5. Order it
 
 ```sh
+pcb-maker fab-kicad-board <out-dir>/result <board-id> <release-dir> [--profile jlcpcb]
+```
+
+is a fab release gated by KiCad's DRC:
+- **The checks.** KiCad's DRC as `drc-kicad-board` runs it (the DRC cache,
+  zones refilled, the library-free KiCad configuration) and, with a
+  schematic beside the board, its ERC (counted in the manifest, never
+  blocking). While copper errors or unconnected items remain, the release
+  is **refused**: exit 1, nothing exported, `verdict.json` with the counts
+  in `reason` and the first findings in `next_actions` (`clearance: Track
+  [GND] on F.Cu at (12.30, 4.10); Pad 2 [VBUS] of J1 ...`). Warnings,
+  excluded and cosmetic findings (silkscreen, text, library) do not block.
+  `--allow-findings` releases anyway and lists the findings it allowed.
+- **The files**, all through kicad-cli: `gerbers/` (every copper layer,
+  both masks, `Edge.Cuts`, and the pastes and silkscreens something lies
+  on; `--layers F.Cu,B.Cu,...` to choose; silkscreen clipped by the mask;
+  zones refilled), the Excellon drill files (PTH and NPTH apart, mm,
+  absolute origin) and their Gerber maps; `<board-id>-gerbers.zip` of
+  that folder, which is what the fab's upload takes (written without
+  compression and with a fixed date, so the same files give the same
+  zip); `assembly/<board-id>-pos.csv` (kicad-cli's position file: both
+  sides, mm, KiCad's rotations, DNP parts left out);
+  `assembly/<board-id>-bom.csv` (kicad-cli's BOM of the schematic grouped
+  by value, footprint and the symbols' LCSC field when they have one, or
+  without a schematic the board's footprints in JLCPCB's columns);
+  `netlist/<board-id>.d356` (IPC-D-356, the fab's electrical test) and,
+  with a schematic, `netlist/<board-id>.net`; `<board-id>.step` (the 3D
+  model with the parts' models KiCad finds; a failure is listed in
+  `skipped`, `--no-step` skips it).
+- **`fab-manifest.json`**: `released`, `profile`, `kicad_version`, `drc`
+  (errors by type, unconnected items, warnings, cosmetic, `clean`,
+  `findings_allowed`), `erc` (errors, warnings, library warnings),
+  `layers`, `bom_source`, `lcsc_field`, `without_lcsc` (parts without an
+  LCSC part number), `zip`, `skipped`, `findings`, and `files`: every file
+  with its `kind`, `bytes` and `sha256`. `verdict.json` adds
+  `fab_release` (released, findings allowed, files, zip, manifest).
+- **`--profile jlcpcb`**: the layers of JLCPCB's KiCad guide (both pastes
+  and silkscreens always), and beside kicad-cli's files
+  `assembly/<board-id>-bom-jlcpcb.csv` (`Comment,Designator,Footprint,JLCPCB
+  Part #`, every designator listed) and
+  `assembly/<board-id>-cpl-jlcpcb.csv` (`Designator,Mid X,Mid Y,Layer,Rotation`).
+  KiCad's Gerber names (Protel extensions) are the ones JLCPCB's guide
+  uses. JLCPCB's rotation offsets per package are not applied: check
+  polarised parts in their placement preview.
+
+Exit 0 released, 1 refused, 2 usage or input errors (an output directory
+that exists, a layer the board does not define, an unknown profile), 4 a
+kicad-cli export that failed. On the walkthrough's keyboard (urchin, 80
+parts, laid out at `"total_seconds": 30`) the release takes 8 s: 24
+files, ERC 42 errors (the schematic's own, not blocking).
+
+The older
+
+```sh
 pcb-maker export-kicad-fab <out-dir>/result <board-id> <fab-dir>
 ```
 
-writes what a fab takes: `<board-id>-gerbers.zip` (copper, mask, paste,
+writes the fab files without the DRC gate: `<board-id>-gerbers.zip` (copper, mask, paste,
 silkscreen, outline, drill files; zones filled as KiCad fills them),
 `<board-id>-bom.csv` and `<board-id>-cpl.csv` in JLCPCB's assembly format,
 and `fab-export.json` with the estimated price at common fabs. BOM lines
@@ -653,6 +764,22 @@ puts the same report into `board-layout.json` as `quality`. It covers:
   thresholds the board crosses ([cost.md](cost.md)).
 
 Score the designer's board and yours side by side.
+
+## Other commands
+
+- `pcb-maker swap-kicad-pins <project-dir> <board-id> <out-dir> <pin-swaps.json> [config.json]`
+  reassigns interchangeable pins to shorten the ratsnest, board and
+  schematic together, without routing ([pin-swap.md](pin-swap.md)); the
+  layout does the same with `swappable` or `pin_swaps`.
+- `pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>`
+  removes tracks, vias and small zones (copper pours stay): a designer's
+  board as the benchmarks hand it to the router.
+- `pcb-maker strip-kicad-copper <source.kicad_pcb> <output.kicad_pcb> [report.json]`
+  removes tracks, vias, copper zones and copper graphics: the bare
+  placement.
+
+`pcb-maker <command> --help` gives every command's arguments and
+defaults.
 
 ## Quality you can expect
 
