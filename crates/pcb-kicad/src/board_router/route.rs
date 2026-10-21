@@ -181,6 +181,18 @@ pub fn route_kicad_board(
         board_id,
         memory_mb: config.memory_mb,
     };
+    // The ladder publishes each best attempt into a staging directory
+    // beside the output, which becomes the output only when the run is done
+    // (the report written last, then one rename): a run killed meanwhile
+    // (the OOM killer, a signal) leaves no board-router.json in the output,
+    // so that its best attempt so far cannot pass for a result (review
+    // 2026-10-21, H1: three such rows had `exit: -9` and a result).
+    let final_directory = output_directory;
+    let staging = output_directory.with_extension("partial");
+    if staging.exists() {
+        fs::remove_dir_all(&staging).map_err(|error| error.to_string())?;
+    }
+    let output_directory = staging.as_path();
     let mut ladder = Ladder::new(
         config,
         output_directory,
@@ -261,11 +273,23 @@ pub fn route_kicad_board(
         result.skipped = std::mem::take(&mut ladder.skipped);
     }
     let report_path = output_directory.join("board-router.json");
-    fs::write(
+    crate::write_atomically(
         &report_path,
-        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
+        serde_json::to_string_pretty(&result)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
+    )?;
+    // The finished project takes the output's place in one rename.
+    if final_directory.exists() {
+        fs::remove_dir_all(final_directory).map_err(|error| error.to_string())?;
+    }
+    fs::rename(output_directory, final_directory).map_err(|error| {
+        format!(
+            "failed to move {} to {}: {error}",
+            output_directory.display(),
+            final_directory.display()
+        )
+    })?;
     Ok(result)
 }
 

@@ -195,7 +195,45 @@ measurement). The discipline:
   under it). The count is the row's `strict_mask_openings` (in neither
   `new_findings_strict` nor `preexisting_strict`); compare.py sums it in
   the objectives and says in capitals when two runs were judged under
-  different rules. The binary's own verdict (verdict.rs) keeps rule 1.
+  different rules. Since rule 3 (2026-10-22, the review's H2) a
+  **finding of one item** has no distances to keep: it is the designer's
+  only where its item lies within 0.05 mm of theirs, and never where
+  KiCad gives the item no place (a zone it reports at (0, 0), as for a
+  `connection_width` on a pour, unless the finding has a position of its
+  own). Until then the uuid alone matched: one `connection_width` of ours
+  on USB_Keypad's GND pour was subtracted against the designer's 45 on
+  that pour, all at (0, 0). The binary's own verdict (verdict.rs) keeps
+  rule 1 with rule 3's one-item matching (not rule 2's openings).
+  `rejudge.py <log>[:<dir>] [<log>[:<dir>] ...]` judges a stored run again
+  under the current rules from what it left (the result's `drc.json`,
+  `baseline-drc.json`, the designer's bridges; a spliced row from the log
+  it came from), without routing; `--output` writes the judged rows and
+  their summary.
+- **A killed run is no result** (2026-10-22, the review's H1): a binary
+  that exits with none of its verdict's codes (0 to 4: a signal such as
+  the OOM killer's -9, a shell's 128 + n) gets a row with `error`
+  ("killed by signal 9 (SIGKILL)"), `killed` and `cut: ["killed"]`,
+  nothing it left is judged and no drc-kicad-board runs on it. Until then
+  route mode published each best attempt into its output as it went, and
+  three killed routes (fr2-route-x1367's bumwings_v001_core and ghoul,
+  fr2-route-x1371-r2's katia) were judged as results; compare.py flags
+  such rows of older logs by their exit code (KILLED, a failure, out of
+  better / same / worse). Since x1500 route mode routes into
+  `<output>.partial` and renames it when done, the report last.
+- **Every board's tree ends with it**: run.py starts each binary in a
+  process group of its own; a timeout kills the group (kicad-cli with
+  it), whatever a binary leaves running is killed when it ends, and the
+  memory gate admits the next board only once the tree is gone. The
+  harness's own short calls (strip, DRC, scores, the schematic tier's
+  steps) do the same on their timeouts.
+- **Rows say what made them**: `binary` and `binary_sha256` on every row
+  and in summary.json, `strict_rule` on every row (also the rows without
+  a result), `spliced_from` on a spliced row. compare.py names each run's
+  strict rules ("strict: before rule 2; after rules 1 (105 rows), 3 (4
+  rows)") and marks a strict count over several rules MIXED RULES; rows
+  without a result count as strict failures (v18: 42 of 109, not of
+  103). The timeout's stretch allowance is `PCB_WALL_STRETCH_MAX` as the
+  binary reads it (default 4).
 - **Placement or routing?** The designer tier (`--tier designer`, section
   below) routes every board on the designer's own placement;
   `compare.py --gap <layout log> <designer log>` splits the layout's open
@@ -1006,10 +1044,18 @@ writes a log (and results.json) where the tier's other boards' rows are
 copied from the given log (a run.py log or output directory; the last row
 of a board wins) and marked `spliced: true`. The pass line and the
 objectives line count the whole tier and say how many rows are spliced;
-`compare.py` marks spliced rows SPL and prints their count. Use it to
+`compare.py` marks spliced rows SPL and prints their count (rows given to
+`compare.py --splice` too). Use it to
 rerun the boards a change can touch, or the rows a run lost to a cut,
 without a full tier. A spliced row is the old binary's: say so when the
-result is quoted.
+result is quoted. Since 2026-10-22 a spliced row names its log
+(`spliced_from`, the original one where the row was spliced there
+already and says so) and its binary (`binary`, `binary_sha256`, where
+its run recorded them); summary.json lists the `parts` (per log: rows,
+jobs, threads, wall), takes the measured rates over every row
+(`this_run_rates` beside: this run's own), and says `strict_rules` when
+the rows were judged under several rules (the pass line then says A MIX
+OF RULES: `rejudge.py` judges the spliced rows again under one).
 
 ```sh
 flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/quick-x791-two --tier quick \

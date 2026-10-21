@@ -223,6 +223,12 @@ pub struct KiCadBoardLayoutResult {
     pub first_unconnected_terminals: usize,
     pub first_vias: usize,
     pub first_length_mm: f64,
+    /// The work the final ladder (or the narrow-signal attempt standing in
+    /// for it) had: `total_seconds` less the work so far and the seed
+    /// pool's excess; `None` where it did not run. A route of the
+    /// designer's placement at this budget gets the routing work this
+    /// layout's last router got (review 2026-10-21, H3).
+    pub final_ladder_budget_seconds: Option<f64>,
     pub moves: Vec<KiCadBoardLayoutMove>,
     /// Reference labels moved off pads and other silkscreen.
     pub labels: crate::labels::KiCadLabelReport,
@@ -1812,6 +1818,9 @@ pub fn layout_kicad_board(
     } else {
         None
     };
+    let final_ladder_budget_seconds = fallback_config
+        .as_ref()
+        .map(|_| (work_deadline - work - pool_excess).max(0.0));
     if let Some(fallback_config) = fallback_config {
         let fallback_directory = output_directory.join("result-ladder");
         // The placement file already carries the final poses.
@@ -2037,6 +2046,7 @@ pub fn layout_kicad_board(
         first_unconnected_terminals: first.0,
         first_vias: first.1,
         first_length_mm: first.2,
+        final_ladder_budget_seconds,
         moves,
         outline_sizing,
         placement_race: race,

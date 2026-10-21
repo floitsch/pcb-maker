@@ -297,6 +297,20 @@ class OneItemFindings(unittest.TestCase):
         self.assertTrue(run.same_place(finding("starved_thermal", ("q7", (10.0, 10.04))), pad))
         self.assertFalse(run.same_place(finding("starved_thermal", ("p1", None)), pad))
 
+    def test_a_moved_items_own_finding_word_for_word_goes_with_it(self):
+        # mackerel-10-v1's annular rings (v18): the designer's pads, moved
+        # by the layout, with KiCad's measurement unchanged.
+        def ring(at, actual="0.1000"):
+            return {"type": "annular_width", "severity": "error",
+                    "description": f"Annular width (board setup constraints min 0.1270 mm; actual {actual} mm)",
+                    "items": [{"description": "PTH pad 1 [GND] of J1", "uuid": "p1", "pos": {"x": at, "y": 5.0}}]}
+        designer = run.counting_findings({"violations": [ring(10.0)]})[0]
+        self.assertTrue(run.same_place(run.counting_findings({"violations": [ring(40.0)]})[0], designer))
+        self.assertFalse(run.same_place(run.counting_findings({"violations": [ring(40.0, "0.0500")]})[0], designer))
+        # Never for a zone: its findings are the pour's, wherever.
+        ours = run.counting_findings({"violations": [zone_neck(0.1)]})[0]
+        self.assertFalse(run.same_place(ours, run.counting_findings({"violations": [zone_neck(0.1)]})[0]))
+
     def test_two_items_keep_the_rule_of_before(self):
         designer = finding("hole_to_hole", ("h1", (85.0, 13.8)), ("h2", (85.0, 13.2)))
         self.assertTrue(run.same_place(finding("hole_to_hole", ("h2", (20.0, 5.0)), ("h1", (20.6, 5.0))), designer))

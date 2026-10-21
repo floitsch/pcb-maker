@@ -333,7 +333,7 @@ fn temporary_next_to(path: &Path) -> PathBuf {
 
 /// Writes `bytes` to `path` so that readers see the old file or the whole
 /// new one: a temporary file in the same directory, renamed into place.
-pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = temporary_next_to(path);
     let written = fs::write(&temporary, bytes)
         .map_err(|error| format!("failed to write {}: {error}", temporary.display()))

@@ -236,9 +236,11 @@ SAME_PLACE_MM = 0.05
 # ones. 1: the designer's findings at the same place (2026-10-19). 2: also
 # solder mask bridges of a designer's opening that bridges on the
 # designer's board already (2026-10-21, `strict_mask_openings`). 3: a
-# finding with one item is at the same place only where its item is, within
-# SAME_PLACE_MM: the same uuid alone no longer does, and a zone item KiCad
-# places at (0, 0) has no place (2026-10-22, review 2026-10-21 H2).
+# finding with one item is at the same place where its item is, within
+# SAME_PLACE_MM, or where it is the same item (not a zone) with the same
+# finding word for word; the same uuid alone no longer does, and a zone
+# item KiCad places at (0, 0) has no place (2026-10-22, review 2026-10-21
+# H2).
 STRICT_RULE = 3
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
@@ -253,7 +255,8 @@ PAD_ITEM = re.compile(r"^(?:N?PTH )?[Pp]ad\b")
 
 def counting_findings(drc):
     """The findings of a DRC report that count (errors, not excluded, not
-    cosmetic): (type, [(uuid, (x, y), description)]) each."""
+    cosmetic): (type, [(uuid, (x, y), description, the finding's
+    description)]) each."""
     findings = []
     for violation in drc.get("violations", []):
         if not counts_as_error(violation):
@@ -268,16 +271,25 @@ def counting_findings(drc):
             # has one (KiCad 10's has none).
             if zone_origin((None, at, description)) and violation.get("pos"):
                 at = (violation["pos"]["x"], violation["pos"]["y"])
-            items.append((item.get("uuid"), at, description))
+            items.append((item.get("uuid"), at, description, violation.get("description") or ""))
         findings.append((violation["type"], items))
     return findings
+
+
+def zone_item(item):
+    """Whether a finding's item is a zone (KiCad's description)."""
+    return (item[2] if len(item) > 2 else "").startswith("Zone")
 
 
 def zone_origin(item):
     """Whether a finding's item is a zone KiCad places at (0, 0): a place
     that says nothing about where the problem is."""
-    description = item[2] if len(item) > 2 else ""
-    return description.startswith("Zone") and item[1] is not None and tuple(item[1]) == (0.0, 0.0)
+    return zone_item(item) and item[1] is not None and tuple(item[1]) == (0.0, 0.0)
+
+
+def finding_text(item):
+    """The description of the finding an item is of (counting_findings)."""
+    return item[3] if len(item) > 3 else ""
 
 
 def located(item):
@@ -332,16 +344,24 @@ def same_place(ours, theirs):
     and either the same items (uuids) moved together (the distances between
     them kept: a part's own finding goes with the part), or items at the
     same positions (verdict.rs, same_place). A finding of one item has no
-    distances to keep: it is at the same place only where its item is
-    within SAME_PLACE_MM of theirs, and never where either item has no
-    place (`located`: a connection_width on a pour names the zone at
-    (0, 0), and the designer's 45 on USB_Keypad's GND pour answered for
-    any of ours on it until rule 3)."""
+    distances to keep: it is at the same place where its item is within
+    SAME_PLACE_MM of theirs (`located`: never a zone KiCad places at
+    (0, 0), as for a connection_width on a pour: the designer's 45 on
+    USB_Keypad's GND pour answered for any of ours there until rule 3), or
+    where it is the same item, not a zone, with the same finding word for
+    word, KiCad's measured values included (a pad's annular ring, a
+    footprint's courtyard: a property of the item, which moved with its
+    part)."""
     if ours[0] != theirs[0] or not ours[1] or len(ours[1]) != len(theirs[1]):
         return False
     if len(ours[1]) == 1:
-        mine, reference = located(ours[1][0]), located(theirs[1][0])
-        return mine is not None and reference is not None and _distance(mine, reference) <= SAME_PLACE_MM
+        mine, reference = ours[1][0], theirs[1][0]
+        here, there = located(mine), located(reference)
+        if here is not None and there is not None and _distance(here, there) <= SAME_PLACE_MM:
+            return True
+        text = finding_text(mine)
+        return (mine[0] is not None and mine[0] == reference[0] and not zone_item(mine) and bool(text)
+                and text == finding_text(reference))
     mine = [item[0] for item in ours[1]]
     reference = [item[0] for item in theirs[1]]
     if None not in mine and None not in reference and sorted(mine) == sorted(reference):

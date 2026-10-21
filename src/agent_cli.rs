@@ -126,12 +126,15 @@ fn write_verdict(
     // KiCad DRC runs this process asked for and how many the cache answered.
     value["drc_cache"] =
         serde_json::to_value(pcb_kicad::drc_cache_counts()).map_err(|error| error.to_string())?;
+    // Both files are written whole or not at all (a temporary file renamed
+    // into place): a run killed meanwhile leaves no half report.
     let path = directory.join("verdict.json");
-    fs::write(
+    pcb_kicad::write_atomically(
         &path,
-        serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        serde_json::to_string_pretty(&value)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
+    )?;
     let Some(report) = report else {
         return Ok(());
     };
@@ -144,11 +147,12 @@ fn write_verdict(
         content["repairs"] = repairs.clone();
     }
     content["verdict"] = value;
-    fs::write(
+    pcb_kicad::write_atomically(
         report,
-        serde_json::to_string_pretty(&content).map_err(|error| error.to_string())?,
+        serde_json::to_string_pretty(&content)
+            .map_err(|error| error.to_string())?
+            .as_bytes(),
     )
-    .map_err(|error| format!("failed to write {}: {error}", report.display()))
 }
 
 /// Prints the verdict: its line and next actions on stdout, and for a

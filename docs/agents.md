@@ -473,8 +473,13 @@ verdict that say the same. `pcb-maker --help` and `pcb-maker <command> --help` l
 | 4 | `internal_error` | An internal error or a panic; also a KiCad check that ran but left no readable report (`drc.json`) for the verdict to rest on. | Report it with the input. |
 
 A process killed by a signal (a harness's timeout, out of memory) has no
-verdict; its exit status is the signal's (128 + n in a shell). Errors
-and incomplete results print one line on stderr.
+verdict; its exit status is the signal's (128 + n in a shell). Its output
+directory holds no report either: route mode routes into
+`<output>.partial` and renames it to the output when it is done, the
+report written last, and the verdict and the report are each written
+whole (a temporary file renamed into place), so a killed run's best
+attempt so far cannot pass for a result. Errors and incomplete results
+print one line on stderr.
 
 **The pass rule**: KiCad's own DRC on the result decides, not the router's
 count. A result is complete when KiCad reports no unconnected item and no
@@ -484,7 +489,14 @@ the same type and either the same items (every item's uuid, the same set)
 still the same distances apart (a part's own finding, such as two holes of
 one footprint too close, goes with the part wherever it is placed), or
 items at the same positions within 0.05 mm (a fixed part's, an outline's);
-each reference finding answers for one finding of the result. A type the
+each reference finding answers for one finding of the result. A finding
+of one item has no distances to keep: it is the reference's only where
+its item lies within 0.05 mm of the reference's, and never where KiCad
+gives the item no place (a zone it reports at (0, 0), as for a
+`connection_width` on a pour, unless the finding has a position of its
+own): the same uuid alone no longer matches (since 2026-10-22; until then
+a narrow neck of ours on a pour matched any of the designer's on that
+pour). A type the
 reference has 199 times or more (KiCad's report stops at a cap: 199 and
 499 are the counts seen, so such a count is a floor) is listed in
 `preexisting_unknown` and none of its findings is subtracted. Warnings, excluded findings and cosmetic

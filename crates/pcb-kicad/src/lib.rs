@@ -29,7 +29,7 @@ pub use necks::{NeckRepair, repair_kicad_necks};
 mod check_work;
 mod drc_cache;
 mod kicad_config;
-pub use drc_cache::{DrcCacheCounts, drc_cache_counts};
+pub use drc_cache::{DrcCacheCounts, drc_cache_counts, write_atomically};
 mod electrical_terminals;
 #[cfg(test)]
 mod geometry_queries;

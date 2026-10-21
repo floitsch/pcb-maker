@@ -96,6 +96,49 @@ pub const SAME_PLACE_MM: f64 = 0.05;
 pub struct DrcItem {
     pub uuid: Option<String>,
     pub at: Option<[f64; 2]>,
+    /// A zone (KiCad's item description).
+    pub zone: bool,
+    /// A zone KiCad places at (0, 0) whatever the problem's place (a
+    /// `connection_width` on a pour), where the finding gives no position
+    /// of its own: `at` says nothing about where the problem is.
+    pub unlocated: bool,
+}
+
+impl DrcItem {
+    /// Where the item is, `None` where KiCad does not say.
+    pub fn located(&self) -> Option<[f64; 2]> {
+        if self.unlocated { None } else { self.at }
+    }
+}
+
+/// A DRC item from KiCad's report: a zone at (0, 0) takes the finding's
+/// own position where the report gives one (KiCad 10's gives none), else
+/// it is `unlocated` (run.py's counting_findings and zone_origin).
+fn drc_item(item: &Value, finding: &Value) -> DrcItem {
+    let position = |value: &Value| {
+        value["x"]
+            .as_f64()
+            .zip(value["y"].as_f64())
+            .map(|(x, y)| [x, y])
+    };
+    let mut at = position(&item["pos"]);
+    let zone = item["description"]
+        .as_str()
+        .is_some_and(|description| description.starts_with("Zone"));
+    let zone_origin = zone && at == Some([0.0, 0.0]);
+    let mut unlocated = false;
+    if zone_origin {
+        match position(&finding["pos"]) {
+            Some(own) => at = Some(own),
+            None => unlocated = true,
+        }
+    }
+    DrcItem {
+        uuid: item["uuid"].as_str().map(str::to_string),
+        at,
+        zone,
+        unlocated,
+    }
 }
 
 /// One finding that counts (error severity, not excluded, not cosmetic),
@@ -165,13 +208,7 @@ pub fn tally_drc(report: &Value) -> DrcTally {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|item| DrcItem {
-                        uuid: item["uuid"].as_str().map(str::to_string),
-                        at: item["pos"]["x"]
-                            .as_f64()
-                            .zip(item["pos"]["y"].as_f64())
-                            .map(|(x, y)| [x, y]),
-                    })
+                    .map(|item| drc_item(item, finding))
                     .collect(),
             });
         } else {
@@ -331,10 +368,30 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// the same type and either the same items (every uuid on both sides, the
 /// same set) moved together (the distances between them kept, so a part's
 /// own finding goes with the part), or items at the same positions, each
-/// within `SAME_PLACE_MM`.
+/// within `SAME_PLACE_MM`. A finding of one item has no distances to keep:
+/// it is at the same place where its item is within `SAME_PLACE_MM` of
+/// theirs (`DrcItem::located`: never a zone KiCad places at (0, 0), as for
+/// a `connection_width` on a pour, where any of ours matched any of the
+/// designer's on that pour by its uuid; review 2026-10-21, H2), or where it
+/// is the same item, not a zone, with the same description word for word,
+/// KiCad's measured values included (a pad's annular ring, a footprint's
+/// courtyard: a property of the item, which moved with its part).
+/// run.py's strict rule 3.
 pub fn same_place(ours: &DrcFinding, theirs: &DrcFinding) -> bool {
     if ours.kind != theirs.kind || ours.items.is_empty() || ours.items.len() != theirs.items.len() {
         return false;
+    }
+    if let ([mine], [reference]) = (ours.items.as_slice(), theirs.items.as_slice()) {
+        if let (Some(a), Some(b)) = (mine.located(), reference.located())
+            && distance(a, b) <= SAME_PLACE_MM
+        {
+            return true;
+        }
+        return !mine.zone
+            && mine.uuid.is_some()
+            && mine.uuid == reference.uuid
+            && !ours.description.is_empty()
+            && ours.description == theirs.description;
     }
     let uuids = |finding: &DrcFinding| -> Option<Vec<String>> {
         let mut uuids: Vec<String> = finding
@@ -1453,11 +1510,16 @@ mod tests {
     fn findings_match_by_items_moved_together_or_by_position() {
         let at = |kind: &str, items: &[(Option<&str>, f64, f64)]| DrcFinding {
             kind: kind.into(),
+            description: String::new(),
+            nets: Vec::new(),
+            item_descriptions: Vec::new(),
             items: items
                 .iter()
                 .map(|(uuid, x, y)| DrcItem {
                     uuid: uuid.map(str::to_string),
                     at: Some([*x, *y]),
+                    zone: false,
+                    unlocated: false,
                 })
                 .collect(),
             ..DrcFinding::default()
@@ -1499,6 +1561,57 @@ mod tests {
         let split = split_findings_strict(&[designer.clone(), designer.clone()], &[designer]);
         assert_eq!(split.new, map(&[("hole_to_hole", 1)]));
         assert_eq!(split.preexisting, map(&[("hole_to_hole", 1)]));
+    }
+
+    /// KiCad's connection_width on a pour: the zone item at (0, 0).
+    fn zone_neck(actual: f64, own: Option<(f64, f64)>) -> serde_json::Value {
+        let mut finding = json!({"type": "connection_width", "severity": "error",
+            "description": format!("Copper connection too narrow (board setup constraints minimum connection width 0.1270 mm; actual {actual:.4} mm) (F.Cu)"),
+            "items": [{"description": "Zone [GND] on F.Cu and B.Cu, priority 0",
+                       "uuid": "8951654c-dd26-460d-9f97-f89e9425e93d", "pos": {"x": 0.0, "y": 0.0}}]});
+        if let Some((x, y)) = own {
+            finding["pos"] = json!({"x": x, "y": y});
+        }
+        finding
+    }
+
+    #[test]
+    fn a_one_item_finding_is_the_designers_only_where_its_item_is() {
+        // USB_Keypad (designer-x1315b): our one connection_width on the GND
+        // pour, the stripped designer board 45 on the same zone, all at
+        // (0, 0): the uuid alone matched them until 2026-10-22.
+        let ours = tally_drc(&report(vec![zone_neck(0.1098, None)])).findings;
+        let designer: Vec<serde_json::Value> = (0..45)
+            .map(|index| zone_neck(0.05 + f64::from(index) / 1000.0, None))
+            .collect();
+        let theirs = tally_drc(&report(designer)).findings;
+        assert!(ours[0].items[0].unlocated);
+        let split = split_findings_strict(&ours, &theirs);
+        assert_eq!(split.new, map(&[("connection_width", 1)]));
+        assert!(split.preexisting.is_empty());
+        // A finding with a position of its own is placed there.
+        let placed = |x: f64| tally_drc(&report(vec![zone_neck(0.1, Some((x, 30.0)))])).findings;
+        assert!(same_place(&placed(20.0)[0], &placed(20.03)[0]));
+        assert!(!same_place(&placed(20.0)[0], &placed(25.0)[0]));
+        // A pad's one-item finding: by its place, not by its uuid.
+        let pad = |uuid: &str, x: f64| {
+            tally_drc(&report(vec![finding(
+                "starved_thermal",
+                &[(uuid, x, 10.0)],
+            )]))
+            .findings
+        };
+        assert!(same_place(&pad("p1", 10.02)[0], &pad("p1", 10.0)[0]));
+        assert!(same_place(&pad("q7", 10.04)[0], &pad("p1", 10.0)[0]));
+        // The same pad elsewhere with the same finding word for word (a
+        // pad's own annular ring, moved with its part): the designer's.
+        assert!(same_place(&pad("p1", 30.0)[0], &pad("p1", 10.0)[0]));
+        let mut other = pad("p1", 30.0);
+        other[0].description = "starved_thermal (actual 1)".into();
+        assert!(!same_place(&other[0], &pad("p1", 10.0)[0]));
+        // Never a zone: the 45 above have other words, the same would not do.
+        let same_words = tally_drc(&report(vec![zone_neck(0.1098, None)])).findings;
+        assert!(!same_place(&ours[0], &same_words[0]));
     }
 
     #[test]
