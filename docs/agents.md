@@ -246,6 +246,8 @@ Router side (the file passed in place of `auto`):
 | They say | Write |
 | --- | --- |
 | "Ground plane on the bottom" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]` |
+| "In1 is a solid ground plane, no traces on it" | `"add_pours": [{"net": "GND", "layers": ["In1.Cu"], "plane": true}]` |
+| "Our fab fills and caps vias, vias in pads are fine" | `"via_in_pad": true` |
 | "Power traces 0.8 mm wide" | `"net_classes": [{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.8}]` |
 
 ## 3. Run
@@ -271,7 +273,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   - `add_pours`: planes to add before routing, such as
     `[{"net": "GND", "layers": ["B.Cu"]}]`. Each covers the board outline;
     pads connect to it, and islands are stitched with vias. A layer where
-    that net already has a zone is skipped.
+    that net already has a zone is skipped. With `"plane": true` no track
+    of any net goes on those layers, only vias through them: a rule area
+    keeping tracks off each layer is written beside the zone (also where
+    the zone exists), so every rung of the ladder and KiCad's DRC keep
+    the plane whole. This replaces drawing the rule area by hand (a
+    per-layer net restriction in KiCad's sense does not exist; the rule
+    area is how KiCad says it).
+  - `via_in_pad` (default false): no via inside an SMD pad, but an exposed
+    (thermal) pad; a pad's own net's vias sit beside it. A via in a
+    reflowed pad takes its solder; set it true only for filled and capped
+    vias. score-kicad-board's "vias in pads" counts them.
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a
@@ -539,7 +551,7 @@ footprints missing), 2 on usage or input errors and 4 on internal errors.
 | --- | --- |
 | `routed.routed_connections` / `routable_connections` | Connections made / needed. |
 | `routed.unconnected_terminals` | Pads the router could not reach. |
-| `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (`repair-kicad-silkscreen` fixes most of them), so `complete` is often false on a board that passes: `verdict` decides. |
+| `routed.native` | KiCad's raw counts: `complete`, `drc_design_violations`, `selected_net_unconnected_items`, `schematic_parity_issues`. They count every finding of any severity, silkscreen warnings included (`repair-kicad-silkscreen` fixes most of them; it takes any outline, a `gr_rect` too, and keeps silkscreen within the bounding box of one that is not a rectangle, noted in `proposal.notes`), so `complete` is often false on a board that passes: `verdict` decides. |
 | `routed.vias`, `routed.length_mm` | Cost of the routing. |
 | `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. The ones the placer keeps by construction are listed too: `back` and `front` (a part on its side), `rotation` and `opening_outwards` (a part at an allowed angle). |
 | `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
@@ -622,7 +634,12 @@ pcb-maker score-kicad-board <project-dir> <board-id>
 reports objective measures ([quality.md](quality.md)); `layout-kicad-board`
 puts the same report into `board-layout.json` as `quality`. It covers:
 - decoupling capacitor distance to every IC supply pin, and each
-  capacitor's distance to its nearest supply pin;
+  capacitor's distance to its nearest supply pin. Decoupling capacitors
+  are those of at most 1 uF between a rail and ground; a regulator's
+  pins (an IC of at most eight pads on two rails or more, an LDO's input
+  and output) count its rails' bulk capacitors too, whatever their
+  value (`worst` named an LDO's output `null` beside its 10 uF output
+  capacitor);
 - crystal path lengths; switching inductors (a regulator's) near
   crystals, antenna modules and analog parts (op-amps, ADCs, codecs,
   references);

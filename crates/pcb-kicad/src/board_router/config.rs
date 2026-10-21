@@ -231,14 +231,18 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub refine_pitches_mm: Option<Vec<f64>>,
     /// A finer lattice is only tried when the routing time projected from
-    /// the previous attempt stays below this (default 240 s). Other ways
-    /// of connecting the pours are tried whatever the time while
-    /// connections are open.
+    /// the previous attempt stays below this. Default: 240 s, a fifth of
+    /// `ladder_budget_seconds` where that is more, and in a layout 0.4 of
+    /// the work left before its end where that is more (a layout of 3000 s
+    /// tries the finer lattice an attempt of up to about 900 s needs).
+    /// Other ways of connecting the pours are tried whatever the time
+    /// while connections are open.
     #[serde(default)]
     pub refine_budget_seconds: Option<f64>,
     /// No further attempt of any kind starts after the ladder has run this
-    /// long (default 1200 s): ColdFire from its schematic spent 50 min in
-    /// three pour rungs with their seed retries.
+    /// long (default 1200 s; in a layout the work left before its end,
+    /// at most this where it is given): ColdFire from its schematic spent
+    /// 50 min in three pour rungs with their seed retries.
     #[serde(default)]
     pub ladder_budget_seconds: Option<f64>,
     /// With a work deadline (the layout's ladder) and a project whose
@@ -329,6 +333,17 @@ pub struct KiCadBoardRouterConfig {
     /// for soldering, so this is the designer's (or the agent's) call.
     #[serde(default)]
     pub solid_starved_thermals: Option<bool>,
+    /// Allow vias inside SMD pads (default false): a board whose vias
+    /// are filled and capped (via-in-pad plating) may put them there. Off,
+    /// every via keeps its annular ring out of every SMD pad but an
+    /// exposed pad (a QFN's thermal pad, which holds thermal vias as
+    /// designers place them): another net's vias keep their clearance
+    /// beyond the pad's copper, the pad's own net's may touch it from
+    /// outside. Open vias in a reflowed pad take its solder down the hole
+    /// (score-kicad-board's "vias in pads" counts them). Through-hole pads
+    /// hold no via either way.
+    #[serde(default)]
+    pub via_in_pad: Option<bool>,
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,

@@ -46,33 +46,76 @@ def point_segment(p,a,b):
 def point_rect(p,b): return math.hypot(max(b[0]-p[0],0,p[0]-b[2]),max(b[1]-p[1],0,p[1]-b[3]))
 
 
-def rectangular_outline_bounds(board):
-    """Recognize exact side coverage in native integer units; never edit edges."""
-    edges=[s for s in board.GetDrawings() if s.GetLayer()==pcbnew.Edge_Cuts]
-    assert len(edges)>=4 and all(s.GetShape()==pcbnew.SHAPE_T_SEGMENT for s in edges),'Rectangular board required'
-    segments=[((s.GetStart().x,s.GetStart().y),(s.GetEnd().x,s.GetEnd().y)) for s in edges]
-    points=[p for segment in segments for p in segment]
+def outline_bounds_of(pieces):
+    """The board's box from its Edge.Cuts pieces, in native integer units,
+    and a note when the outline is not that box exactly. A piece is
+    ('segment',a,b), ('rect',a,b), ('poly',[points]), ('arc',start,end,box)
+    or ('circle',box), a box (x0,y0,x1,y1). A rectangle drawn as gr_rect, a
+    polygon or segments tiling its sides exactly (zero-length segments and
+    arcs left out) is the board; anything else (curves, cutouts, slanted
+    sides) is clipped to its bounding box, which the note says. Never edits
+    edges."""
+    segments=[];boxes=[];curved=0
+    for piece in pieces:
+        kind=piece[0]
+        if kind=='segment':
+            if piece[1]!=piece[2]:segments.append((piece[1],piece[2]))
+        elif kind=='rect':
+            (ax,ay),(bx,by)=piece[1],piece[2]
+            corners=[(ax,ay),(bx,ay),(bx,by),(ax,by)]
+            segments.extend((corners[i],corners[(i+1)%4]) for i in range(4))
+        elif kind=='poly':
+            points=piece[1]
+            segments.extend((points[i],points[(i+1)%len(points)]) for i in range(len(points)) if points[i]!=points[(i+1)%len(points)])
+        elif kind=='arc':
+            if piece[1]==piece[2] and piece[3][0]==piece[3][2] and piece[3][1]==piece[3][3]:continue
+            boxes.append(piece[3]);curved+=1
+        else:
+            boxes.append(piece[-1]);curved+=1
+    points=[p for segment in segments for p in segment]+[c for b in boxes for c in ((b[0],b[1]),(b[2],b[3]))]
+    assert points,'Board outline required'
     x0,y0=min(p[0] for p in points),min(p[1] for p in points)
     x1,y1=max(p[0] for p in points),max(p[1] for p in points)
     assert x0<x1 and y0<y1,'Degenerate board outline'
+    note=None
+    if curved:note=f'{curved} curved outline pieces'
     sides=[[],[],[],[]]
     for a,b in segments:
-        assert a!=b,'Zero-length board edge'
+        if note:break
         if a[1]==b[1] and a[1] in (y0,y1):
             sides[0 if a[1]==y0 else 1].append(tuple(sorted((a[0],b[0]))))
         elif a[0]==b[0] and a[0] in (x0,x1):
             sides[2 if a[0]==x0 else 3].append(tuple(sorted((a[1],b[1]))))
         else:
-            raise AssertionError('Nonrectangular board edge')
-    # Each side must be tiled exactly once. Integer equality rejects even a
-    # one-unit gap/overlap; no tolerance can turn a nearly closed contour legal.
+            note='an outline piece off the bounding box (a slanted side, a notch or a cutout)'
+    # Each side tiled exactly once: integer equality, no tolerance.
     for intervals,(start,end) in zip(sides,[(x0,x1),(x0,x1),(y0,y1),(y0,y1)]):
+        if note:break
         cursor=start
         for lo,hi in sorted(intervals):
-            assert lo==cursor,'Gap or overlap in board edge'
+            if lo!=cursor:note='a gap or an overlap in a side of the outline';break
             cursor=hi
-        assert cursor==end,'Incomplete board edge'
-    return x0/1e6,y0/1e6,x1/1e6,y1/1e6
+        if not note and cursor!=end:note='a side of the outline is incomplete'
+    if note:note=f'the outline is not a rectangle ({note}): silkscreen is kept within its bounding box, not the outline itself'
+    return (x0/1e6,y0/1e6,x1/1e6,y1/1e6),note
+
+
+def rectangular_outline_bounds(board):
+    """`outline_bounds_of` the board's Edge.Cuts drawings."""
+    pieces=[]
+    for s in board.GetDrawings():
+        if s.GetLayer()!=pcbnew.Edge_Cuts:continue
+        b=s.GetBoundingBox();box=(b.GetX(),b.GetY(),b.GetX()+b.GetWidth(),b.GetY()+b.GetHeight())
+        point=lambda p:(p.x,p.y)
+        shape=s.GetShape() if hasattr(s,'GetShape') else None
+        if shape==pcbnew.SHAPE_T_SEGMENT:pieces.append(('segment',point(s.GetStart()),point(s.GetEnd())))
+        elif shape==pcbnew.SHAPE_T_RECT:pieces.append(('rect',point(s.GetStart()),point(s.GetEnd())))
+        elif shape==pcbnew.SHAPE_T_POLY:
+            outline=s.GetPolyShape().Outline(0)
+            pieces.append(('poly',[point(outline.CPoint(i)) for i in range(outline.PointCount())]))
+        elif shape==pcbnew.SHAPE_T_ARC:pieces.append(('arc',point(s.GetStart()),point(s.GetEnd()),box))
+        else:pieces.append(('other',box))
+    return outline_bounds_of(pieces)
 
 
 def line_interval(a,b,bounds):
@@ -232,7 +275,9 @@ def repair(source,output,evidence_path):
         project=source.with_suffix('.kicad_pro')
         if project.exists():shutil.copy2(project,temporary.with_suffix('.kicad_pro'))
         board=pcbnew.LoadBoard(str(temporary))
-        bounds=rectangular_outline_bounds(board)
+        bounds,outline_note=rectangular_outline_bounds(board)
+        report['outline']='rectangle' if outline_note is None else 'bounding box'
+        if outline_note:report['notes']=[outline_note];print(outline_note,file=sys.stderr)
         shapes=[];fields=[];pads=[];fixed_text=[];bodies=[]
         for fp in board.GetFootprints():
             ref=str(fp.GetReference())

@@ -293,4 +293,90 @@ mod tests {
         let hidden = parse(&encode(&source).replace("(effects", "(hide yes) (effects")).unwrap();
         assert_ne!(labels(&source), labels(&hidden));
     }
+
+    /// `outline_bounds_of` of silkscreen.py on `pieces` (a Python
+    /// expression), run with a stand-in for pcbnew: its box and its note.
+    fn outline_bounds(pieces: &str) -> (Vec<f64>, Option<String>) {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-silk-outline-{}-{}",
+            std::process::id(),
+            pieces.len()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("pcbnew.py"),
+            "class SwigPyIterator:\n    next = None\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("silkscreen.py"),
+            include_str!("silkscreen.py"),
+        )
+        .unwrap();
+        let output = Command::new("python3")
+            .arg("-c")
+            .arg(format!(
+                "import sys, json; sys.path.insert(0, sys.argv[1]); import silkscreen; \
+                 print(json.dumps(silkscreen.outline_bounds_of({pieces})))"
+            ))
+            .arg(&directory)
+            .output()
+            .unwrap();
+        fs::remove_dir_all(&directory).ok();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        (
+            value[0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap())
+                .collect(),
+            value[1].as_str().map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn the_outline_is_a_rect_a_polygon_or_tiling_segments_else_its_box_with_a_note() {
+        let mm = 1_000_000;
+        let board = vec![0.0, 0.0, 76.2, 34.0];
+        // The fence's gr_rect.
+        assert_eq!(
+            outline_bounds(&format!(
+                "[('rect', (0, 0), ({}, {}))]",
+                762 * mm / 10,
+                34 * mm
+            )),
+            (board.clone(), None)
+        );
+        // Four segments and a zero-length one, a polygon, a zero-length arc.
+        let (x, y) = (762 * mm / 10, 34 * mm);
+        assert_eq!(
+            outline_bounds(&format!(
+                "[('segment', (0, 0), ({x}, 0)), ('segment', ({x}, 0), ({x}, {y})), ('segment', ({x}, {y}), (0, {y})), ('segment', (0, {y}), (0, 0)), ('segment', (5, 5), (5, 5)), ('arc', (7, 7), (7, 7), (7, 7, 7, 7))]"
+            )),
+            (board.clone(), None)
+        );
+        assert_eq!(
+            outline_bounds(&format!(
+                "[('poly', [(0, 0), ({x}, 0), ({x}, {y}), (0, {y})])]"
+            )),
+            (board.clone(), None)
+        );
+        // Rounded corners, a notch: the box, and a note.
+        let (bounds, note) = outline_bounds(&format!(
+            "[('segment', (1000000, 0), ({x}, 0)), ('segment', ({x}, 0), ({x}, {y})), ('segment', ({x}, {y}), (0, {y})), ('segment', (0, {y}), (0, 1000000)), ('arc', (0, 1000000), (1000000, 0), (0, 0, 1000000, 1000000))]"
+        ));
+        assert_eq!(bounds, board);
+        assert!(note.unwrap().contains("not a rectangle"));
+        let (bounds, note) = outline_bounds(&format!(
+            "[('poly', [(0, 0), ({x}, 0), ({x}, {y}), (2000000, {y}), (0, 2000000)])]"
+        ));
+        assert_eq!(bounds, board);
+        assert!(note.unwrap().contains("bounding box"));
+    }
 }

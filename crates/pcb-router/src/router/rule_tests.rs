@@ -83,6 +83,7 @@ fn two_nets(layer_count: usize) -> Board {
         isolated_pad_obstacles: Vec::new(),
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
     }
 }
 
@@ -386,4 +387,142 @@ fn the_stub_check_holds_the_rules_beyond_the_classes() {
         drill: 0.3,
     });
     assert!(crate::verify::verify_with_rules(&split, &routes, Some(&class_rules)).is_empty());
+}
+
+/// A 1.4 mm square SMD pad of A at (5, 3) on the front.
+fn square_pad(board: &mut Board) -> usize {
+    let index = board.obstacles.len();
+    board.obstacles.push(Obstacle {
+        shape: Shape::Polygon {
+            points: vec![[4.3, 2.3], [5.7, 2.3], [5.7, 3.7], [4.3, 3.7]],
+        },
+        ..pad([5.0, 3.0], 0.7, 1, Some(0), "U1.EP")
+    });
+    index
+}
+
+#[test]
+fn a_via_keeps_its_ring_out_of_a_listed_smd_pad_even_of_its_own_net() {
+    let mut board = two_nets(2);
+    let index = square_pad(&mut board);
+    // Via 0.6 mm, clearance 0.2: the ring is 0.3 from the centre.
+    let allowed = |board: &Board, x: f64| {
+        let router = Router::new(board, &config(None));
+        let node = router.grid.nearest_node([x, 3.0]).unwrap();
+        assert!((router.grid.center_of(node)[0] - x).abs() < 1.0e-6);
+        let statics = &router.statics[router.board.nets[0].class];
+        (statics.via_allowed(node, 0), statics.via_allowed(node, 1))
+    };
+    // Not listed (the rule of before): A's vias inside the pad where they
+    // fit wholly, B's nowhere near; just outside the pad A keeps the
+    // clearance as from any copper.
+    assert_eq!(allowed(&board, 5.0), (true, false));
+    assert_eq!(allowed(&board, 6.0), (false, false));
+    // Listed: no via inside, A's from where its ring stays outside (0.3
+    // from the edge at 5.7, a node on: 6.1), B's at its clearance beyond
+    // (6.2 and more, a node on: 6.3).
+    board.no_via_pads = vec![index];
+    assert_eq!(allowed(&board, 5.0), (false, false));
+    assert_eq!(allowed(&board, 5.9), (false, false));
+    assert_eq!(allowed(&board, 6.1), (true, false));
+    assert_eq!(allowed(&board, 6.3), (true, true));
+}
+
+#[test]
+fn a_pad_of_a_pour_net_gets_its_via_beside_the_pad() {
+    // A's pads on the front, its pour on the back of the whole board: the
+    // pads reach it by vias, which stay out of the listed pads.
+    let mut board = two_nets(2);
+    let index = square_pad(&mut board);
+    board.nets[0]
+        .terminals
+        .push(terminal(index, [5.0, 3.0], 1, "U1.EP"));
+    board.no_via_pads = vec![0, 1, index];
+    board.planes.push(crate::board::Plane {
+        net: 0,
+        class: 0,
+        layer: 1,
+        polygon: board.outline.clone(),
+        excluded: Vec::new(),
+        above: Vec::new(),
+        connect: true,
+        thermal_reach: 0.0,
+        thermal_gap: 0.0,
+        exclusive: false,
+        solid: true,
+        hatch: None,
+    });
+    let result = route(&board, &config(None));
+    assert_eq!(result.status[0], NetStatus::Routed);
+    let vias = &result.routes[0].vias;
+    assert!(!vias.is_empty());
+    for via in vias {
+        for &pad in &board.no_via_pads {
+            let distance = board.obstacles[pad].shape.distance_to_point(via.at);
+            assert!(
+                distance >= via.diameter / 2.0 - 1.0e-6,
+                "a via at {:?} {distance:.3} mm from {}",
+                via.at,
+                board.obstacles[pad].label
+            );
+        }
+    }
+}
+
+#[test]
+fn a_through_hole_pad_holds_no_via_of_its_own_net() {
+    let mut board = two_nets(2);
+    let copper = board.obstacles.len();
+    board
+        .obstacles
+        .push(pad([5.0, 3.0], 0.8, 0b11, Some(0), "J1.1"));
+    board.obstacles.push(Obstacle {
+        kind: ObstacleKind::Hole,
+        ..pad([5.0, 3.0], 0.5, 0b11, Some(0), "J1.1 plated hole")
+    });
+    board.nets[0]
+        .terminals
+        .push(terminal(copper, [5.0, 3.0], 0b11, "J1.1"));
+    let router = Router::new(&board, &config(None));
+    let node = router.grid.nearest_node([5.0, 3.0]).unwrap();
+    assert!(!router.statics[router.board.nets[0].class].via_allowed(node, 0));
+}
+
+#[test]
+fn a_path_hopping_over_a_wall_keeps_its_two_vias_the_hole_spacing_apart() {
+    // A's pads on the back (layer 1), a wall across the whole board on
+    // the back that keeps tracks out, not vias: A goes through the front
+    // for a short hop. Its two vias keep the drill plus hole to hole
+    // (0.3 + 0.25) apart, as KiCad's hole_to_hole holds for one net too.
+    let mut board = two_nets(2);
+    board.obstacles.truncate(4);
+    board.nets.truncate(1);
+    for index in 0..2 {
+        board.obstacles[index].layers = 0b10;
+        board.nets[0].terminals[index].layers = 0b10;
+    }
+    board.obstacles.drain(2..);
+    board.obstacles.push(Obstacle {
+        shape: Shape::Polygon {
+            points: vec![[4.95, -1.0], [5.05, -1.0], [5.05, 11.0], [4.95, 11.0]],
+        },
+        layers: 0b10,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: false,
+        label: "wall".into(),
+    });
+    let result = route(&board, &config(None));
+    assert_eq!(result.status[0], NetStatus::Routed);
+    let vias = &result.routes[0].vias;
+    assert!(vias.len() >= 2, "{vias:?}");
+    for (index, a) in vias.iter().enumerate() {
+        for b in &vias[index + 1..] {
+            let apart = crate::geometry::distance(a.at, b.at);
+            assert!(apart >= 0.55 - 1.0e-6, "vias {apart:.3} mm apart: {vias:?}");
+        }
+    }
 }

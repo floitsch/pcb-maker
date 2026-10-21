@@ -363,6 +363,10 @@ fn lower_board(
         std::collections::HashMap::new();
     let mut footprint_ordinal = 0usize;
     let mut isolated_pad_obstacles: Vec<usize> = Vec::new();
+    // SMD pads no via may overlap (`core::Board::no_via_pads`): every SMD
+    // pad's copper but an exposed pad's, unless the board's vias are
+    // filled and capped (`via_in_pad`).
+    let mut no_via_pads: Vec<usize> = Vec::new();
     let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
         std::collections::HashMap::new();
     // With `use_narrow_signals`, signal nets (not poured, not named as a
@@ -629,6 +633,9 @@ fn lower_board(
                             .collect()
                     })
                     .collect();
+                // The footprint's pads with copper: centre, and for an SMD
+                // pad its copper's obstacles and area (`exposed_pad`).
+                let mut footprint_pads: Vec<FootprintPad> = Vec::new();
                 for pad in item
                     .children()
                     .iter()
@@ -794,6 +801,17 @@ fn lower_board(
                         blocks_vias: true,
                         label: label.clone(),
                     });
+                    let smd = matches!(pad_type, "smd" | "connect");
+                    footprint_pads.push(FootprintPad {
+                        center: lowered.center,
+                        smd,
+                        area: {
+                            let bounds = obstacles[pad_obstacle].shape.aabb();
+                            (bounds.maximum[0] - bounds.minimum[0])
+                                * (bounds.maximum[1] - bounds.minimum[1])
+                        },
+                        copper: vec![pad_obstacle],
+                    });
                     // A KiCad 9 padstack draws the pad in another shape or
                     // size on its inner or back layers (adrianmarple's
                     // Raspberry Pi header: 1.2 mm on F.Cu, 1.778 on B.Cu;
@@ -808,6 +826,9 @@ fn lower_board(
                         let geometry = lower_pad(&variant, footprint_at)?.geometry;
                         if mask & (1 << (layers.len() - 1)) != 0 {
                             back_geometry = Some(geometry.clone());
+                        }
+                        if let Some(own) = footprint_pads.last_mut() {
+                            own.copper.push(obstacles.len());
                         }
                         obstacles.push(core::Obstacle {
                             shape: shape(&geometry),
@@ -988,6 +1009,14 @@ fn lower_board(
                             contact,
                             label,
                         });
+                    }
+                }
+                if config.via_in_pad != Some(true) {
+                    let exposed = exposed_pad(&footprint_pads);
+                    for (index, pad) in footprint_pads.iter().enumerate() {
+                        if pad.smd && Some(index) != exposed {
+                            no_via_pads.extend(&pad.copper);
+                        }
                     }
                 }
             }
@@ -1587,9 +1616,58 @@ fn lower_board(
             isolated_pad_obstacles,
             pad_spokes,
             merged_pads,
+            no_via_pads: {
+                no_via_pads.sort_unstable();
+                no_via_pads
+            },
         },
         expressions: 0,
     })
+}
+
+/// A footprint's pad with copper, for `exposed_pad`.
+struct FootprintPad {
+    center: [f64; 2],
+    smd: bool,
+    /// Of its copper's box.
+    area: f64,
+    /// Its copper's obstacles (the pad, a padstack's other shapes).
+    copper: Vec<usize>,
+}
+
+/// The footprint's exposed pad (a QFN's, a DFN's, an SOIC's thermal pad),
+/// if it has one: the largest SMD pad, at least twice any other SMD pad's
+/// area, its centre strictly inside the box of the centres of at least
+/// three other pads. A via there is the designer's way out of a pad the
+/// pins enclose (thermal vias, as KiCad's own footprints have them, and a
+/// large pad keeps its solder); a tab beside a row of pins (SOT-223,
+/// D-PAK) is not one: a track reaches it from outside.
+fn exposed_pad(pads: &[FootprintPad]) -> Option<usize> {
+    if pads.len() < 4 {
+        return None;
+    }
+    let (largest, pad) = pads
+        .iter()
+        .enumerate()
+        .filter(|(_, pad)| pad.smd)
+        .max_by(|a, b| a.1.area.total_cmp(&b.1.area))?;
+    let others = || {
+        pads.iter()
+            .enumerate()
+            .filter(move |(index, _)| *index != largest)
+            .map(|(_, other)| other)
+    };
+    if others().any(|other| other.smd && 2.0 * other.area > pad.area) {
+        return None;
+    }
+    let inside = (0..2).all(|axis| {
+        let (low, high) = others()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), other| {
+                (low.min(other.center[axis]), high.max(other.center[axis]))
+            });
+        low < pad.center[axis] && pad.center[axis] < high
+    });
+    inside.then_some(largest)
 }
 
 /// KiCad's frame for a pad's thermal spokes (`core::PadSpokes`): its shape

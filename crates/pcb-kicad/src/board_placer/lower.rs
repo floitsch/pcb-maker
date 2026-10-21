@@ -95,7 +95,11 @@ fn rule_area_obstacle(
     let Some(keepout) = item.child("keepout") else {
         return Ok(None);
     };
-    let bodies = form_atom(keepout, "footprints", 1) == Some("not_allowed");
+    // A constraint keepout keeps bodies out whatever its rule area allows:
+    // one meeting a fixed part's courtyard allows footprints so that KiCad
+    // does not report that part (`apply_keepouts`).
+    let bodies = form_atom(keepout, "footprints", 1) == Some("not_allowed")
+        || form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME));
     let pads = form_atom(keepout, "pads", 1) == Some("not_allowed");
     if !bodies && !pads {
         return Ok(None);

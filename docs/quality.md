@@ -44,7 +44,7 @@ carries enough to infer most roles: pads have `pinfunction` and `pintype`
 | --- | --- | --- |
 | Ground | net names `GND`, `AGND`, `VSS`, `0V`; the largest zone's net | chassis vs signal ground |
 | Rail | `pintype` power_in/power_out; names VCC, VDD, 3V3, 5V, VBUS, VIN, VBAT | |
-| Decoupling cap | a capacitor with one pad on a rail and one on ground; ≤1 µF high-frequency, ≥4.7 µF bulk; assigned to the nearest power pin on its rail | a cap shared on purpose |
+| Decoupling cap | a capacitor with one pad on a rail and one on ground; ≤1 µF high-frequency, ≥4.7 µF bulk; assigned to the nearest power pin on its rail. A regulator's pins (an IC of at most eight pads on two rails or more) count its rails' bulk capacitors too (an LDO's input and output capacitors) | a cap shared on purpose |
 | Switcher | net joining an inductor to an IC pin named SW, LX, PH; its input cap; the FB net | unusual topologies |
 | Fast net | crystal nets; names CLK, SCK, XTAL, USB D±/DP/DM, SDIO, QSPI; `_P`/`_N` pairs; net classes | edge rates |
 | Analog | pins AIN, ADC, VREF, IN±, MIC; op-amps, codecs, audio jacks | sections of an audio board |
@@ -114,6 +114,12 @@ and crystals at their pins:
 | Vias in pads | 0 | | 0 | 110/110 |
 | Vias (sum) | 569 | 295 | 375 | 99/110 |
 | Copper (sum) | 33.4 m | 26.6 m | 27.5 m | 92/110 |
+
+Vias in pads counts a via whose drill reaches into an SMD pad's copper
+box (pads under 2 mm, paste-only apertures and a part's exposed pad left
+out; until 2026-10-21 the drill's box against the pad's, which counted
+vias beside a pad's corner). Since 2026-10-21 the router keeps vias out
+of SMD pads unless `via_in_pad` (docs/router.md, "Vias in pads").
 
 Better decoupling and crystals cost some vias and copper, still well under
 the designers'. Silkscreen: layout mode now moves reference labels and

@@ -621,28 +621,31 @@ impl StaticMaps {
                 && board.fill_clearance(&rules, obstacle)
                     < board.copper_clearance(&rules, obstacle) - 1.0e-9
         };
-        let ordered: Vec<&crate::board::Obstacle> = board
+        let ordered: Vec<(usize, &crate::board::Obstacle)> = board
             .obstacles
             .iter()
-            .filter(|obstacle| !mask_opening(obstacle) && !overridden(obstacle))
+            .enumerate()
+            .filter(|(_, obstacle)| !mask_opening(obstacle) && !overridden(obstacle))
             .chain(
                 board
                     .obstacles
                     .iter()
-                    .filter(|obstacle| overridden(obstacle)),
+                    .enumerate()
+                    .filter(|(_, obstacle)| overridden(obstacle)),
             )
             .chain(
                 board
                     .obstacles
                     .iter()
-                    .filter(|obstacle| mask_opening(obstacle)),
+                    .enumerate()
+                    .filter(|(_, obstacle)| mask_opening(obstacle)),
             )
             .collect();
         let first_apart = ordered
             .iter()
-            .position(|obstacle| mask_opening(obstacle) || overridden(obstacle));
+            .position(|(_, obstacle)| mask_opening(obstacle) || overridden(obstacle));
         let mut fill_trace: Option<FillTrace> = None;
-        for (position, obstacle) in ordered.into_iter().enumerate() {
+        for (position, (obstacle_index, obstacle)) in ordered.into_iter().enumerate() {
             if Some(position) == first_apart {
                 fill_trace = Some(FillTrace::new(board.layer_count, cells));
             }
@@ -757,10 +760,18 @@ impl StaticMaps {
             if obstacle.blocks_vias
                 && let Some((x0, y0, x1, y1)) = grid.node_range(bounds.inflated(via_reach))
             {
-                // A surface pad of a net may hold that net's own vias where
-                // the whole via lies inside its copper.
+                // A pad no via may overlap (`Board::no_via_pads`: an SMD
+                // pad) holds no via of its own net either, but that net's
+                // vias may touch it from outside: beside it they need no
+                // clearance from their own pad.
+                let no_via = board.no_via_pads.binary_search(&obstacle_index).is_ok();
+                let beside = obstacle.net.filter(|_| no_via);
+                // Another surface pad of a net may hold that net's own vias
+                // where the whole via lies inside its copper.
                 let own_vias = obstacle.net.filter(|_| {
-                    obstacle.kind == ObstacleKind::Copper && obstacle.layers.count_ones() == 1
+                    !no_via
+                        && obstacle.kind == ObstacleKind::Copper
+                        && obstacle.layers.count_ones() == 1
                 });
                 // A routed pad's plated hole keeps other nets' vias at the
                 // hole clearance from the drill (KiCad measures a via's
@@ -796,7 +807,16 @@ impl StaticMaps {
                                     {
                                         owner16(net)
                                     }
-                                    _ => 0,
+                                    _ => match beside {
+                                        Some(net)
+                                            if (!via_blocked[index]
+                                                || via_owner[index] == owner16(net))
+                                                && distance >= via_radius + SAFETY =>
+                                        {
+                                            owner16(net)
+                                        }
+                                        _ => 0,
+                                    },
                                 };
                             }
                             via_blocked[index] = true;
@@ -1092,6 +1112,7 @@ mod tests {
             isolated_pad_obstacles: Vec::new(),
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
+            no_via_pads: Vec::new(),
         }
     }
 

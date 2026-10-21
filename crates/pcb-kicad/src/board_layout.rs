@@ -1817,10 +1817,14 @@ pub fn layout_kicad_board(
             .map_err(|error| format!("failed to write {}: {error}", placed_board.display()))?;
         let mut fallback_config = fallback_config;
         let left = (config.total_seconds - work).max(120.0);
+        // The work left, or less where the router config says so: until
+        // 2026-10-21 at most route mode's default of 1200 s, so a layout
+        // of 3000 s (the fence's two layers) ended its ladder with half
+        // its budget unused.
         fallback_config.ladder_budget_seconds = Some(
             fallback_config
                 .ladder_budget_seconds
-                .unwrap_or(1200.0)
+                .unwrap_or(left)
                 .min(left),
         );
         // The ladder decides whether another attempt fits in work, up to

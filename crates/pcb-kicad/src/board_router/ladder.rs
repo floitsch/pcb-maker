@@ -455,7 +455,9 @@ impl<'a> Ladder<'a> {
             has_pours,
             pour_nets,
             copper_layers,
-            budget: config.refine_budget_seconds.unwrap_or(240.0),
+            budget: config
+                .refine_budget_seconds
+                .unwrap_or_else(|| default_refine_budget(ladder_budget, config.deadline_work)),
             ladder_budget,
             started: std::time::Instant::now(),
             // Without a deadline (route mode) the wall clock guards the work
@@ -1493,8 +1495,9 @@ impl<'a> Ladder<'a> {
                     pitch
                 );
                 self.skipped.push(format!(
-                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds refine_budget_seconds ({budget:.0} s)",
-                    pitch[0]
+                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds refine_budget_seconds ({budget:.0} s); \"refine_budget_seconds\": {:.0} or more in the router config tries it",
+                    pitch[0],
+                    projected.ceil()
                 ));
                 return true;
             }
@@ -1511,7 +1514,7 @@ impl<'a> Ladder<'a> {
                     pitch
                 );
                 self.skipped.push(format!(
-                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds the {left:.0} s left of the ladder's work bound (ladder_budget_seconds)",
+                    "the finer lattice ({} mm) was not tried: projected {projected:.0} s of routing exceeds the {left:.0} s left of the ladder's work bound; a larger ladder_budget_seconds in the router config tries it",
                     pitch[0]
                 ));
                 return true;

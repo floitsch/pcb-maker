@@ -90,7 +90,7 @@ pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_
 mod placement_constraints;
 mod placement_room;
 pub use placement_constraints::{
-    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints,
+    KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
     read_placement_constraints,
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};

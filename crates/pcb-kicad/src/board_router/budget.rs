@@ -26,6 +26,22 @@ pub(crate) fn narrow_step_applies(config: &KiCadBoardRouterConfig) -> bool {
     narrow || relaxed
 }
 
+/// `refine_budget_seconds` unless the config sets it: 240 s, or more where
+/// the run has more: a fifth of the ladder's budget (route mode; its 1200
+/// s by default give the 240 s of before) and, in a layout's ladder, 0.4
+/// of the work left before the layout's end, the share the narrow-signal
+/// step's reserve may take (the fence's two layers at 3000 s of work: the
+/// ladder started with 2241 s left and never tried the 0.075 mm lattice,
+/// projected at 367 s against 240).
+pub(crate) fn default_refine_budget(ladder_budget: f64, deadline_work: Option<f64>) -> f64 {
+    REFINE_BUDGET_FLOOR
+        .max(0.2 * ladder_budget)
+        .max(0.4 * deadline_work.unwrap_or(0.0))
+}
+
+/// The default refinement budget's floor (`default_refine_budget`).
+pub(crate) const REFINE_BUDGET_FLOOR: f64 = 240.0;
+
 /// The least work kept for the narrow-signal step when the reserve is a
 /// floor: the step's own minimum (`narrow_step_minimum`, 180 s) and its
 /// clean-up at its negotiation's floor (60 s). TelemetryOnboard (v16)

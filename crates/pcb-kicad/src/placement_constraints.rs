@@ -1183,11 +1183,250 @@ fn apply_shaped_outline(
 /// not there on purpose (unlike parts inside a designer's rule area).
 pub(super) const KEEPOUT_NAME: &str = "constraint keepout";
 
-/// Replaces the board's constraint keepouts by the given ones.
+/// The parts the placer leaves where the input has them: the `fixed`
+/// references and `fixed_patterns`, locked footprints and footprints
+/// without a net, unless `free` names them (the placer's defaults but the
+/// edge's, which depend on the outline).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HeldParts<'a> {
+    pub fixed: &'a [String],
+    pub fixed_patterns: &'a [String],
+    pub free: &'a [String],
+}
+
+impl<'a> HeldParts<'a> {
+    pub(crate) fn of(config: &'a KiCadBoardPlacerConfig) -> Self {
+        Self {
+            fixed: &config.fixed,
+            fixed_patterns: &config.fixed_patterns,
+            free: &config.free,
+        }
+    }
+
+    fn holds(&self, reference: &str, footprint: &Expr) -> bool {
+        if self.fixed.iter().any(|name| name == reference)
+            || self
+                .fixed_patterns
+                .iter()
+                .any(|pattern| glob_matches(pattern, reference))
+        {
+            return true;
+        }
+        let locked = footprint.child("locked").is_some()
+            || footprint
+                .children()
+                .iter()
+                .any(|child| child.atom() == Some("locked"));
+        let netless = !footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+            .any(|pad| pad.child("net").is_some());
+        (locked || netless) && !self.free.iter().any(|name| name == reference)
+    }
+}
+
+/// A keepout's box on the board ([x0, y0, x1, y1]) for an outline whose
+/// top-left corner is `corner`.
+fn keepout_box(
+    keepout: &KiCadKeepoutConstraint,
+    number: usize,
+    corner: [f64; 2],
+) -> Result<[f64; 4], String> {
+    let offset = match keepout.origin.as_deref() {
+        None | Some("board") => corner,
+        Some("absolute") => [0.0, 0.0],
+        Some(other) => {
+            return Err(format!(
+                "unknown keepout origin {other:?} (board or absolute)"
+            ));
+        }
+    };
+    let (x0, x1) = (
+        offset[0] + keepout.x[0].min(keepout.x[1]),
+        offset[0] + keepout.x[0].max(keepout.x[1]),
+    );
+    let (y0, y1) = (
+        offset[1] + keepout.y[0].min(keepout.y[1]),
+        offset[1] + keepout.y[0].max(keepout.y[1]),
+    );
+    if !(x1 > x0 && y1 > y0) {
+        return Err(format!("keepout {} is empty", number + 1));
+    }
+    Ok([x0, y0, x1, y1])
+}
+
+/// The box of a footprint's courtyard on the board, and its side (0 front,
+/// 1 back); `None` without one.
+fn courtyard_box(footprint: &Expr) -> Result<Option<([f64; 4], usize)>, String> {
+    let at = form_at(footprint)?;
+    let mut bounds = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    let mut side = None;
+    for child in footprint.children() {
+        let Some(layer) = form_atom(child, "layer", 1).filter(|layer| layer.ends_with(".CrtYd"))
+        else {
+            continue;
+        };
+        let mut points = match child.head() {
+            Some("fp_rect") => {
+                let (start, end) = (form_xy(child, "start")?, form_xy(child, "end")?);
+                vec![start, end, [start[0], end[1]], [end[0], start[1]]]
+            }
+            Some("fp_circle") => {
+                let center = form_xy(child, "center")?;
+                let end = form_xy(child, "end")?;
+                let radius = distance_squared(center, end).sqrt();
+                outline::circle_points(center, radius)
+            }
+            Some("fp_line" | "fp_arc") => outline::outline_points(child)?,
+            Some("fp_poly") => outline::pts_points(child)?,
+            _ => continue,
+        };
+        side = Some(usize::from(layer.starts_with("B.")));
+        for point in points.drain(..) {
+            let offset = rotate_vector(point, -at[2]);
+            let board = [at[0] + offset[0], at[1] + offset[1]];
+            bounds = [
+                bounds[0].min(board[0]),
+                bounds[1].min(board[1]),
+                bounds[2].max(board[0]),
+                bounds[3].max(board[1]),
+            ];
+        }
+    }
+    Ok(side.map(|side| (bounds, side)))
+}
+
+/// Per keepout, the held parts (`HeldParts`) whose courtyard meets its
+/// box on its side: the input put them there on purpose.
+pub(crate) fn held_parts_in_keepouts(
+    pcb: &Expr,
+    keepouts: &[KiCadKeepoutConstraint],
+    held: HeldParts,
+) -> Result<Vec<Vec<String>>, String> {
+    if keepouts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let corner = outline_corner(pcb)?;
+    let boxes: Vec<[f64; 4]> = keepouts
+        .iter()
+        .enumerate()
+        .map(|(number, keepout)| keepout_box(keepout, number, corner))
+        .collect::<Result<_, _>>()?;
+    let mut inside = vec![Vec::new(); keepouts.len()];
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        if !held.holds(&reference, footprint) {
+            continue;
+        }
+        let Some((courtyard, side)) = courtyard_box(footprint)? else {
+            continue;
+        };
+        for (number, keepout) in keepouts.iter().enumerate() {
+            let on_side = match keepout.side.as_deref() {
+                Some("front") => side == 0,
+                Some("back") => side == 1,
+                _ => true,
+            };
+            let area = boxes[number];
+            if on_side
+                && courtyard[0] < area[2]
+                && area[0] < courtyard[2]
+                && courtyard[1] < area[3]
+                && area[1] < courtyard[3]
+            {
+                inside[number].push(reference.clone());
+            }
+        }
+    }
+    // In reference order, whatever the board file's order.
+    for parts in &mut inside {
+        parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+    }
+    Ok(inside)
+}
+
+/// The warning for keepout `number` (from 0) whose box meets the held
+/// parts `parts`: its rule area allows footprints.
+pub(crate) fn held_parts_warning(
+    keepout: &KiCadKeepoutConstraint,
+    number: usize,
+    parts: &[String],
+) -> String {
+    format!(
+        "keepout {} (x {}..{}, y {}..{}) meets the courtyards of parts the placer keeps where they are ({}): its rule area is written with footprints allowed, so KiCad does not report them; the placer still keeps movable parts out{}; shrink the box off them to have KiCad check it too",
+        number + 1,
+        keepout.x[0],
+        keepout.x[1],
+        keepout.y[0],
+        keepout.y[1],
+        parts.join(", "),
+        if keepout.copper {
+            ", and tracks, vias and pours stay out of it"
+        } else {
+            ""
+        }
+    )
+}
+
+/// The warnings `held_parts_in_keepouts` gives for a placement's
+/// constraints on the project's board, before it runs (none with an
+/// outline constraint, which moves the corner the boxes are measured
+/// from: the placement warns then).
+pub fn keepout_warnings(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<Vec<String>, String> {
+    let resolved = resolve_constraints(config, source_directory)?;
+    let Some(KiCadConstraintsSource::Inline(constraints)) = &resolved.constraints else {
+        return Ok(Vec::new());
+    };
+    if constraints.keepout.is_empty() || constraints.outline.is_some() {
+        return Ok(Vec::new());
+    }
+    let path = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let pcb = parse(&text)?;
+    let held = held_parts_in_keepouts(&pcb, &constraints.keepout, HeldParts::of(&resolved))?;
+    Ok(held
+        .iter()
+        .enumerate()
+        .filter(|(_, parts)| !parts.is_empty())
+        .map(|(number, parts)| held_parts_warning(&constraints.keepout[number], number, parts))
+        .collect())
+}
+
+fn outline_corner(pcb: &Expr) -> Result<[f64; 2], String> {
+    Ok(outline::board_loops(pcb)?
+        .outline
+        .iter()
+        .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
+            [corner[0].min(point[0]), corner[1].min(point[1])]
+        }))
+}
+
+/// Replaces the board's constraint keepouts by the given ones, and returns
+/// a warning per keepout that meets a part the placer keeps where the
+/// input has it (`held_parts_in_keepouts`). Such a keepout's rule area
+/// allows footprints: KiCad would report the part the input put there on
+/// purpose, and the placer keeps movable parts out of it by its name
+/// (`KEEPOUT_NAME`) whatever it allows.
 pub(super) fn apply_keepouts(
     pcb: &mut Expr,
     keepouts: &[KiCadKeepoutConstraint],
-) -> Result<(), String> {
+    held: HeldParts,
+) -> Result<Vec<String>, String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
@@ -1196,36 +1435,14 @@ pub(super) fn apply_keepouts(
             && form_atom(item, "name", 1).is_some_and(|name| name.starts_with(KEEPOUT_NAME)))
     });
     if keepouts.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let corner = outline::board_loops(pcb)?
-        .outline
-        .iter()
-        .fold([f64::INFINITY, f64::INFINITY], |corner, point| {
-            [corner[0].min(point[0]), corner[1].min(point[1])]
-        });
+    let corner = outline_corner(pcb)?;
+    let inside = held_parts_in_keepouts(pcb, keepouts, held)?;
+    let mut warnings = Vec::new();
     let mut zones = Vec::new();
     for (number, keepout) in keepouts.iter().enumerate() {
-        let offset = match keepout.origin.as_deref() {
-            None | Some("board") => corner,
-            Some("absolute") => [0.0, 0.0],
-            Some(other) => {
-                return Err(format!(
-                    "unknown keepout origin {other:?} (board or absolute)"
-                ));
-            }
-        };
-        let (x0, x1) = (
-            offset[0] + keepout.x[0].min(keepout.x[1]),
-            offset[0] + keepout.x[0].max(keepout.x[1]),
-        );
-        let (y0, y1) = (
-            offset[1] + keepout.y[0].min(keepout.y[1]),
-            offset[1] + keepout.y[0].max(keepout.y[1]),
-        );
-        if !(x1 > x0 && y1 > y0) {
-            return Err(format!("keepout {} is empty", number + 1));
-        }
+        let [x0, y0, x1, y1] = keepout_box(keepout, number, corner)?;
         let layers = match (keepout.side.as_deref(), keepout.copper) {
             (Some("front"), _) => "\"F.Cu\"",
             (Some("back"), _) => "\"B.Cu\"",
@@ -1242,6 +1459,12 @@ pub(super) fn apply_keepouts(
         } else {
             "allowed"
         };
+        let footprints = if inside[number].is_empty() {
+            "not_allowed"
+        } else {
+            warnings.push(held_parts_warning(keepout, number, &inside[number]));
+            "allowed"
+        };
         let mut hash = 0xcbf2_9ce4_8422_2325u64;
         for byte in format!("{KEEPOUT_NAME} {number} {x0} {y0} {x1} {y1}").bytes() {
             hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
@@ -1249,7 +1472,7 @@ pub(super) fn apply_keepouts(
         zones.push(parse(&format!(
             "(zone (layers {layers}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (name \"{KEEPOUT_NAME} {}\") \
              (hatch edge 0.5) (connect_pads (clearance 0)) (min_thickness 0.25) \
-             (keepout (tracks {copper}) (vias {copper}) (pads allowed) (copperpour {copper}) (footprints not_allowed)) \
+             (keepout (tracks {copper}) (vias {copper}) (pads allowed) (copperpour {copper}) (footprints {footprints})) \
              (fill (thermal_gap 0.5) (thermal_bridge_width 0.5)) \
              (polygon (pts (xy {x0} {y0}) (xy {x1} {y0}) (xy {x1} {y1}) (xy {x0} {y1}))))",
             hash >> 32,
@@ -1264,7 +1487,7 @@ pub(super) fn apply_keepouts(
         unreachable!();
     };
     items.extend(zones);
-    Ok(())
+    Ok(warnings)
 }
 
 /// Flips the footprints `back` and `front` name onto that side.
@@ -3295,9 +3518,15 @@ mod tests {
                 .cloned()
                 .collect()
         };
+        let held = HeldParts {
+            fixed: &[],
+            fixed_patterns: &[],
+            free: &[],
+        };
         apply_keepouts(
             &mut pcb,
             &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [2, 4], "copper": true}, {"x": [1, 2], "y": [1, 2], "side": "back"}]}"#),
+            held,
         )
         .unwrap();
         let written = zones(&pcb);
@@ -3322,10 +3551,11 @@ mod tests {
         apply_keepouts(
             &mut pcb,
             &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [0, 5]}]}"#),
+            held,
         )
         .unwrap();
         assert_eq!(zones(&pcb).len(), 1);
-        apply_keepouts(&mut pcb, &[]).unwrap();
+        apply_keepouts(&mut pcb, &[], held).unwrap();
         assert!(zones(&pcb).is_empty());
         for bad in [
             r#"{"version": 1, "keepout": [{"x": [0, 0], "y": [0, 5]}]}"#,
@@ -3333,9 +3563,94 @@ mod tests {
             r#"{"version": 1, "keepout": [{"x": [0, 1], "y": [0, 5], "origin": "center"}]}"#,
         ] {
             assert!(
-                apply_keepouts(&mut pcb, &keepouts(bad)).is_err(),
+                apply_keepouts(&mut pcb, &keepouts(bad), held).is_err(),
                 "{bad} was accepted"
             );
         }
+    }
+
+    #[test]
+    fn a_keepout_over_a_fixed_part_allows_footprints_and_warns() {
+        // J2 (fixed) reaches 1 mm into the first box; R1 (movable) lies in
+        // the second; H1 (no net) is in the third, on the back only.
+        let board = r#"(kicad_pcb (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
+            (footprint "conn" (layer "F.Cu") (at 20 25 90) (property "Reference" "J2")
+              (fp_rect (start -1 -3) (end 1 3) (layer "F.CrtYd"))
+              (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A")))
+            (footprint "r" (layer "F.Cu") (at 40 40) (property "Reference" "R1")
+              (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+              (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "A")))
+            (footprint "hole" (layer "B.Cu") (at 30 50) (property "Reference" "H1")
+              (fp_circle (center 0 0) (end 2 0) (layer "B.CrtYd"))
+              (pad "" np_thru_hole circle (at 0 0) (size 3 3) (drill 3) (layers "*.Cu"))))"#;
+        let keepouts: Vec<KiCadKeepoutConstraint> =
+            serde_json::from_str::<KiCadPlacementConstraints>(
+                r#"{"version": 1, "keepout": [
+                {"x": [12, 20], "y": [0, 4]},
+                {"x": [25, 35], "y": [15, 25], "copper": true},
+                {"x": [15, 25], "y": [25, 35], "side": "back"}]}"#,
+            )
+            .unwrap()
+            .keepout;
+        let fixed = ["J2".to_string()];
+        let held = HeldParts {
+            fixed: &fixed,
+            fixed_patterns: &[],
+            free: &[],
+        };
+        let mut pcb = parse(board).unwrap();
+        // J2 at (20, 25) turned a quarter: its courtyard is x 17..23, y
+        // 24..26 on the board; the first box (from the corner (10, 20)) x
+        // 22..30, y 20..24 only touches it. H1 (no net: held) lies in the
+        // third, R1 (movable) in the second.
+        let inside = held_parts_in_keepouts(&pcb, &keepouts, held).unwrap();
+        assert_eq!(
+            inside,
+            [Vec::<String>::new(), Vec::new(), vec!["H1".to_string()]]
+        );
+        let warnings = apply_keepouts(&mut pcb, &keepouts, held).unwrap();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].starts_with("keepout 3 ") && warnings[0].contains("(H1)"),
+            "{}",
+            warnings[0]
+        );
+        let zones: Vec<String> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("zone"))
+            .map(|zone| encode(zone).to_string())
+            .collect();
+        assert!(zones[0].contains("(footprints not_allowed)"));
+        assert!(
+            zones[1].contains("(footprints not_allowed)")
+                && zones[1].contains("(tracks not_allowed)")
+        );
+        assert!(zones[2].contains("(footprints allowed)"), "{}", zones[2]);
+        // A box reaching into the fixed J2's courtyard: footprints allowed;
+        // copper stays out.
+        let over: Vec<KiCadKeepoutConstraint> = serde_json::from_str::<KiCadPlacementConstraints>(
+            r#"{"version": 1, "keepout": [{"x": [12, 20], "y": [0, 4.5], "copper": true}]}"#,
+        )
+        .unwrap()
+        .keepout;
+        let warnings = apply_keepouts(&mut pcb, &over, held).unwrap();
+        assert!(
+            warnings[0].contains("(J2)") && warnings[0].contains("tracks, vias and pours stay out")
+        );
+        let zone = pcb
+            .children()
+            .iter()
+            .find(|item| item.head() == Some("zone"))
+            .map(|zone| encode(zone).to_string())
+            .unwrap();
+        assert!(zone.contains("(footprints allowed)") && zone.contains("(tracks not_allowed)"));
+        // Not fixed: the movable part is the placer's to move.
+        let movable = HeldParts {
+            fixed: &[],
+            fixed_patterns: &[],
+            free: &["H1".to_string()],
+        };
+        assert!(apply_keepouts(&mut pcb, &over, movable).unwrap().is_empty());
     }
 }

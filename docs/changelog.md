@@ -11,6 +11,190 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (fence report: router side)
+
+The router-side findings of a report from an agent that laid out a real
+board with main at 36f24ba: the breadboard fence v5 (76.2 x 34 mm, 91
+footprints, 41 WS2812B-2020 LEDs with 0.7 mm pads in a 2.54 mm row; four
+layers, and two at 34 mm with 0.127 mm rules). Branch fence-report-router;
+snapshots x1400 (vias out of SMD pads, keepouts, the silkscreen outline,
+the refinement budget, decoupling, plane pours), x1401 (with the layout's
+ladder budget), x1402 (with the hop rule), x1403 (the measurement: x1402
+with the score's drill-box check), x1404 (the commit, rebased on the
+probe-overhead package: the score's check against the pad's shape, the
+shared static maps keyed by `no_via_pads` too). The measurements below
+are against x1385 (main before the free-dimension and probe-overhead
+packages, which left layouts and fingerprints as x1385); the expansion
+tier also against x1394 with x1404. The placer side
+(finding 2, silkscreen text as a placement obstacle) is another branch's.
+
+**Vias in SMD pads** (finding 1; docs/router.md, "Vias in pads"). A
+surface pad of a net let that net's vias in wherever the whole via fit in
+its copper, so congested boards put ground vias in ground pads (the
+fence: 3 in the report's run, 14 at the pinned rate on four layers, 28
+at 0.2 mm rules on two): an open hole in a reflowed pad takes its
+solder, and KiCad's DRC does not flag it. The lowering now lists every
+SMD pad (smd and connect pads with copper, their padstack shapes) but an
+exposed pad in `Board::no_via_pads`; every via keeps its ring out of
+their copper, another net's its clearance beyond, the pad's own net's
+may touch the pad from outside (`StaticMaps::via_owner`; before, a via
+of the pad's net outside it kept the full clearance): a pad of a pour
+net gets its via beside the pad. An exposed pad (the largest SMD pad,
+at least twice any other's area, its centre strictly inside the box of
+the centres of three other pads or more) keeps its thermal vias; a tab
+beside a pin row (SOT-223, D-PAK) is not one. Through-hole pads hold no
+via either way, as before. `via_in_pad: true` (router config, default
+false) restores the rule of before for filled and capped vias. Unit
+tests: the maps around a listed and an unlisted pad, a pour-net pad's
+via beside its pad, a through-hole pad, the lowering's list (QFN, 0805,
+header, SOT-223) with and without `via_in_pad`.
+
+**Hops.** With vias out of the pads Castor's Net-(C33-Pad1) went up and
+down again through two vias 0.25 mm apart (x1400: KiCad hole_to_hole,
+which holds for one net too). The search no longer takes a via within
+the drill plus `hole_to_hole` of the previous via of the path it
+searches (`hops_from_a_via`: a walk back of a few steps per via
+expansion; a net's routed branches kept theirs apart already). Unit
+test: a path over a back-side wall (vias 0.4 mm apart without the rule).
+
+**The score's check** (docs/quality.md). score-kicad-board's "vias in
+pads" stays the check, now measured as the router keeps it: the drill's
+disc against the pad's copper in its own frame (rotated, corners and
+circles rounded), paste-only apertures and a part's exposed pad left
+out. The drill's box against the pad's rotated box counted vias beside a
+pad's corner (Sisu 11 after the change, 0 by the pad shapes), at a
+QFN turned 45 degrees (0xCB's U3) and beside round pads (framework's
+M1).
+
+**Keepouts over fixed parts** (finding 3; docs/constraints.md). A
+`keepout` box that meets the courtyard of a part the placer keeps where
+it is (`fixed`, `fixed_patterns`, locked, without a net; unless `free`)
+is written as a rule area with footprints allowed, so KiCad does not
+report the part the input put there; the placer keeps movable parts out
+of every `constraint keepout` rule area by its name whatever it allows
+(board_placer/lower.rs, one condition), and with `"copper": true`
+tracks, vias and pours stay out for KiCad too. The input check
+(`keepout_warnings`, layout-kicad-board and place-kicad-board) warns of
+such a box before the run, in the log and first in the verdict's
+next_actions (`KiCadRunFacts::input_warnings`). The fence with boxes
+like the report's first ones (y 3.5..6 over JP1, J2, J5; y 8.5..9.25
+over TP1-TP4), place-kicad-board x1400: two warnings, those two rule
+areas with footprints allowed, the third box not.
+
+**repair-kicad-silkscreen and the outline** (finding 4). The worker took
+only Edge.Cuts segments; the fence's outline is one gr_rect. It takes a
+gr_rect, a polygon or segments tiling the sides (zero-length segments
+and arcs left out); any other outline (curves, notches, cutouts) is its
+bounding box, with a note in `proposal.notes` (`proposal.outline`:
+`rectangle` or `bounding box`). The fence's four-layer result: x1385
+worker exit 1 ("Rectangular board required"), 15 findings left; x1400
+worker exit 0, 32 labels moved, 10 left (silk_edge_clearance of J1 and
+J4 at the edge, 3 labels without a spot: C27, RN2, RN7). Unit test of
+the outline function (with a stand-in for pcbnew).
+
+**The refinement budget and the layout's ladder** (docs/router.md, "The
+attempt ladder"). `refine_budget_seconds` defaults to 240 s, a fifth of
+the ladder's budget where that is more (route mode: 1200 s by default,
+so 240 s; the tiers' 30 s budgets unchanged), and in a layout's ladder
+0.4 of the work left where that is more (`default_refine_budget`). A
+layout's ladder budget is the work left unless the router config gives
+one (it was at most 1200 s: at the pinned rate the fence's two-layer
+layout of 3000 s stopped at 1927 s of work, "its budget of 1200 s of
+work was used"). A lattice not tried names the value that tries it in
+the verdict's next_actions (`"refine_budget_seconds": 367 or more in
+the router config tries it`).
+
+**Decoupling** (finding 5; docs/agents.md, docs/quality.md). U2:2, the
+fence's LDO output (XC6206), reported null although C4 sat beside it on
++3V3: the pin was recognised (by its rail's name, +3V3), but C4 is 10 uF
+and only capacitors up to 1 uF counted. A regulator's pins (an IC of at
+most eight pads with supply pins on two rails or more) now count its
+rails' bulk capacitors too, and those count as decoupling capacitors
+against the regulator's pins. The fence's four-layer result: U2:2 null
+to 2.16 mm, U2:3 (VBUS) 7.24 to 3.65 mm, capacitors 10 to 12, within 3
+mm of a supply pin 0.6 to 0.8 of the pins. Unit test.
+
+**A `plane` pour** (the report's smaller points). Judged cheap: an
+`add_pours` entry with `"plane": true` writes, beside the zone (also
+where the board has the zone), a rule area keeping every net's tracks
+off the layer (`plane <net> <layer>`, vias and pours allowed), which the
+router lowers as a track keepout on every rung and KiCad checks;
+`exclusive_planes` holds only on some rungs. docs/agents.md has it in
+the router table. Unit test (the fence's In1.Cu GND zone: the rule area
+once, the lowering's track keepout).
+
+**The fence** (`layout-kicad-board`, `PCB_WORK_RATE=3.15e6,150e6`,
+build/fence; vias in pads by the report's pcbnew script, `HitTest` of
+the via's centre, and by the ring against SMD pad copper):
+
+| run | x1385 | x1403 |
+|---|---|---|
+| four layers, v5/layout.json (1500 s) | complete, 0 unconnected, 201 vias, 3887 mm, 14 vias in pads (LED4, 9, 10, 16, 17, 19, 20, 25, 26, 27, 29, 30, 36 pad 2, TP4.1), work 226 s | complete, 0 unconnected, 185 vias, 3715 mm, 0 in pads, work 217 s |
+| two layers 34 mm, layout-long.json (3000 s) | 10 unconnected, starved_thermal 1, 281 vias, 2 in pads (LED15.4, LED41.1), work 1769 s, ladder stopped at its 1200 s | 6 unconnected, no error, 301 vias, 0 in pads, work 2430 s, every rung run (the finer lattices did not beat the regular one) |
+| the same at the report's measured rate (1.1797e6) | the report's board exactly: 10 unconnected, 281 vias, 0.075 mm "not tried: projected 367 s exceeds 240 s", work 1523 s | 7 unconnected, starved_thermal 2, 319 vias, 0 in pads; the 0.075 mm lattice tried (16 open, the regular one's 15 kept), the ladder to the layout's end (work 2917 s) |
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 2 x 4,
+budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`;
+build/fp-fence-x1385, -x1400, -x1402). Every board had vias in SMD pads
+before (Castor 6, k30 1, jetson 22, Sisu 34; exposed pads 0, 0, 2, 3),
+so every fingerprint changes from the first negotiation on; after, 0 in
+SMD pads (Sisu's 3 in exposed pads stay). Castor: the probes chose the
+connect rung over tracks, 187 to 241 vias, 4 starved thermals to none:
+passes (x1400 had a hop's hole_to_hole there); k30: 335 to 344 vias, 4
+starved to none: passes; jetson 19 to 20 unconnected, 620 to 597 vias;
+Sisu 6 to 23 unconnected (its tracks probe 17 to 53 nets unfinished:
+the cost of its 34 vias in pads).
+
+**Short tier** (3 x 2 under the memory rule, `--no-lock`; layout mode,
+work-based) x1403 against build/short-charge-x1381.log (6 x 2; layouts
+as x1385): passes 8 to 6 (strict 7 to 5), unconnected 18 to 20, vias
+1068 to 1088, work 2749 to 2961 s; vias in SMD pads 91 to 0 (exposed
+pads 8 to 10). Changed rows: OpenFC 0 to 2 unconnected (32 vias in pads
+before), WLED_Matrix (11 in pads: 147 to 168 vias, its errors moved),
+MIDAS (8: 212 to 236 vias, 7 unconnected both), framework_mobo (2: a
+starved thermal, strict pass lost), eternal-keypad (none in pads: the
+own net's vias beside pads and the hop rule moved its routes; starved
+thermals 2 to 4, above the designer's 3), smaller via counts on 0xCB
+(5 in pads: 66 to 62), USB_Cable_Tester (6: 95 to 92), reCamera (6: 74
+to 65), USB_Keypad (93 to 95); spell_tome, urchin, Blue_Line (15 in
+pads before, now beside them: 26 vias both) complete as before.
+
+**Expansion tier** (8 x 1 under the memory rule, `--no-lock`; route
+mode, 30 s) x1403 against build/expansion-charge-x1381.log (16 x 1):
+46 rows valid (no OOM kill), 2 identical; passes 16 to 18 (strict 16 to
+18), KiCad unconnected 846 to 788, new errors 2 to 2, vias 4006 to
+4141, work 1296 to 1250 s; vias in SMD pads 136 to 0 (exposed pads 15
+to 19). Better 15, worse 9. Better where a pad's own via may now sit
+beside it, with or without vias in pads before: Wonkle 427 to 361,
+OpenRX-Mono 31 to 21, atmega32u4 9 to 0 and wanbeiyu 7 to 0 (pass),
+node_v6 35 to 28, tuxkeychain 12 to 7, facade60 17 to 13, snaphat 3 to
+0, magnetorquer 2 to 0, Julkort 1 to 0, ducktop2 1 to 0 (pass each),
+backplane, ausign, OpenDeck, Zulassungskarte one fewer. Worse: the
+boards with many fine pads that held vias (ZSWatch 0 to 4: 22 vias in
+its module's pads; Nervous-ECG 2 to 4: 3; MSign 75 to 81, iorodeo 159
+to 167: probed, 7 each), one each on anthracite, MusicBrain, Miniboard,
+LC_PAMV4b (a starved thermal), FUEL4EP (a new starved thermal, 10 in
+pads before); AMLing2's dronecarrier 15 to 52 (1 in pads: its probes
+tied, 95 against 97 unfinished, and the plane-stub rung was continued
+instead of tracks). How much harder fine pads route: the 11 boards that
+had 5 vias in SMD pads or more went 279 to 283 unconnected (passes 3 to
+5), the 15 with 1 to 4 468 to 437 (5 to 4), the 20 with none 99 to 68
+(8 to 9): what the boards lose to the rule, the own net's vias beside
+their pads give back; ZSWatch (22, a module's LGA pads) and Sisu (34,
+fingerprints) are the real losses. The same tier with x1404 (rebased)
+against x1394: 46 rows valid, passes 16 to 18 (strict 16 to 18),
+unconnected 786 to 750, new errors 4 to 2 (strict 2 to 2), vias 4071 to
+4161, better 13, worse 10.
+
+**Not done.** Vias in BGA or LGA pads where no dogbone fits (ZSWatch's
+module) need `via_in_pad: true`; the router does not decide that from
+the designer's board. Same-net vias of different branches searched in
+one batch are kept apart by `own_via_near` only against routed branches
+(the hop rule covers one path). The router's own verification
+(`verify`) does not check same-net hole spacing or vias in pads.
+`check.sh`'s placer test `a_placement_does_not_depend_on_the_order_of_the_file`
+fails on main as well (not this branch's).
+
 ## Committed on 2026-10-21 (probe overhead)
 
 Charging all the work (the section below) exposed what the probe ladder

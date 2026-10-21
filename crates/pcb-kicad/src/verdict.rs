@@ -505,6 +505,9 @@ pub struct KiCadRunFacts {
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
+    /// What the input check found before the run (a keepout over a fixed
+    /// part: `keepout_warnings`); next_actions repeat them.
+    pub input_warnings: Vec<String>,
 }
 
 impl KiCadRunFacts {
@@ -536,6 +539,7 @@ impl KiCadRunFacts {
             room: None,
             repairs: None,
             unmodelled_rules: Vec::new(),
+            input_warnings: Vec::new(),
         }
     }
 
@@ -766,7 +770,7 @@ fn next_actions(
     new_findings: &BTreeMap<String, usize>,
     unknown: &[String],
 ) -> Vec<String> {
-    let mut actions = Vec::new();
+    let mut actions = facts.input_warnings.clone();
     if !facts.attempts_failed.is_empty() {
         actions.push(format!(
             "{} attempts of the router's ladder failed (a panic; attempts_failed in board-router.json has each message): the board is the best of the other attempts; report the panic ({})",
@@ -1422,6 +1426,30 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(verdict.next_actions[0].contains("92 %"));
+    }
+
+    #[test]
+    fn input_warnings_lead_the_next_actions_whatever_the_status() {
+        let mut facts = routed(DrcTally::default());
+        facts.command = "layout-kicad-board".into();
+        facts.input_warnings =
+            vec!["keepout 1 (x 48..68, y 3.5..6) meets the courtyards of ... (J2)".into()];
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_COMPLETE);
+        assert_eq!(verdict.next_actions, facts.input_warnings);
+        facts.native = Some(DrcTally {
+            unconnected: 2,
+            ..Default::default()
+        });
+        facts.skipped = vec!["the finer lattice (0.075 mm) was not tried: projected 367 s of routing exceeds refine_budget_seconds (240 s); \"refine_budget_seconds\": 367 or more in the router config tries it".into()];
+        let verdict = judge(&facts);
+        assert!(verdict.next_actions[0].starts_with("keepout 1"));
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("\"refine_budget_seconds\": 367"))
+        );
     }
 
     #[test]

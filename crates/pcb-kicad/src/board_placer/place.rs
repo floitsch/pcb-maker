@@ -83,11 +83,14 @@ pub fn place_kicad_board(
         outline_size =
             Some(apply_outline(&mut pcb, outline, part_area).map_err(crate::verdict::input_error)?);
     }
+    let mut keepout_warnings = Vec::new();
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
-        apply_keepouts(&mut pcb, &constraints.keepout).map_err(crate::verdict::input_error)?;
+        keepout_warnings = apply_keepouts(&mut pcb, &constraints.keepout, HeldParts::of(config))
+            .map_err(crate::verdict::input_error)?;
         apply_sides(&mut pcb, constraints).map_err(crate::verdict::input_error)?;
     }
-    let lowered = lower_placement(&pcb, config).map_err(crate::verdict::input_error)?;
+    let mut lowered = lower_placement(&pcb, config).map_err(crate::verdict::input_error)?;
+    lowered.constraint_warnings.extend(keepout_warnings);
     if let Some(designer) = std::env::var_os("PCB_PLACER_DESIGNER") {
         diagnose_designer(&lowered, Path::new(&designer))?;
     }

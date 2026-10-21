@@ -681,6 +681,7 @@ mod tests {
             isolated_pad_obstacles: Vec::new(),
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
+            no_via_pads: Vec::new(),
         }
     }
 

@@ -707,7 +707,7 @@ fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&Cla
     feed.0[1].write_u64(0x5eed_5eed_5eed_5eed);
     let _ = write!(
         feed,
-        "{} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+        "{} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
         board.layer_count,
         board.outline,
         (
@@ -721,6 +721,9 @@ fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&Cla
         (grid.pitch, grid.origin, grid.nx, grid.ny),
         searched,
         rules,
+        // The pads no via may enter shape the via maps
+        // (`Board::no_via_pads`).
+        board.no_via_pads,
     );
     for obstacle in &board.obstacles {
         let _ = write!(feed, "{obstacle:?}");

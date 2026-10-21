@@ -161,9 +161,51 @@ struct Pad {
     center: [f64; 2],
     half: [f64; 2],
     smd: bool,
+    /// Whether the pad has copper (a paste-only aperture has none).
+    copper: bool,
+    /// The copper in the pad's own frame: its size, the radius of its
+    /// corners (a circle's half its size), and its absolute angle.
+    size: [f64; 2],
+    corner: f64,
+    angle: f64,
     power_pin: bool,
     /// Pin function without KiCad's appended pin number (`AIN0`, `SW`).
     function: String,
+}
+
+/// A part's exposed pad (a QFN's thermal pad), as the router's lowering
+/// finds it: the largest SMD pad with copper, at least twice any other's
+/// area, its centre strictly inside the box of the centres of at least
+/// three other pads with copper.
+fn exposed_pad(part: &Part) -> Option<usize> {
+    let pads: Vec<(usize, &Pad)> = part
+        .pads
+        .iter()
+        .enumerate()
+        .filter(|(_, pad)| pad.copper)
+        .collect();
+    if pads.len() < 4 {
+        return None;
+    }
+    let area = |pad: &Pad| 4.0 * pad.half[0] * pad.half[1];
+    let (largest, pad) = pads
+        .iter()
+        .filter(|(_, pad)| pad.smd)
+        .max_by(|a, b| area(a.1).total_cmp(&area(b.1)))
+        .copied()?;
+    let others = || pads.iter().filter(move |(index, _)| *index != largest);
+    if others().any(|(_, other)| other.smd && 2.0 * area(other) > area(pad)) {
+        return None;
+    }
+    (0..2)
+        .all(|axis| {
+            let (low, high) = others()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), (_, o)| {
+                    (l.min(o.center[axis]), h.max(o.center[axis]))
+                });
+            low < pad.center[axis] && pad.center[axis] < high
+        })
+        .then_some(largest)
 }
 
 struct Part {
@@ -322,6 +364,29 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
                     (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0,
                 ],
                 smd: kind == "smd",
+                size,
+                corner: {
+                    let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("");
+                    let short = size[0].min(size[1]);
+                    match shape {
+                        "circle" | "oval" => short / 2.0,
+                        "roundrect" => {
+                            form_f64(pad, "roundrect_rratio", 1)
+                                .unwrap_or(0.25)
+                                .clamp(0.0, 0.5)
+                                * short
+                        }
+                        _ => 0.0,
+                    }
+                },
+                angle: pad_at[2],
+                copper: pad
+                    .child("layers")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(Expr::atom)
+                    .any(|layer| layer.trim_matches('"').ends_with(".Cu")),
                 power_pin: matches!(form_atom(pad, "pintype", 1), Some("power_in")),
                 function: {
                     let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
@@ -484,6 +549,38 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
     }
     let ic = |part: &Part| matches!(part.prefix(), "U" | "IC") && part.pads.len() >= 3;
+    // A regulator: an IC of at most eight pads with supply pins on two
+    // rails or more (an LDO's input and output). Its input and output
+    // capacitors are bulk ones (1 to 22 uF), and they decouple it: they
+    // count for its pins whatever their value (the fence's U2, an
+    // XC6206: VOUT on +3V3 with only C4, 10 uF, 3.1 mm away, was null).
+    let regulator = |part: &Part| {
+        ic(part)
+            && part.pads.len() <= 8
+            && part
+                .pads
+                .iter()
+                .filter_map(|pad| pad.net.as_ref())
+                .filter(|net| rails.contains(*net))
+                .collect::<BTreeSet<_>>()
+                .len()
+                >= 2
+    };
+    // Per rail, its regulators' pins on it.
+    let mut regulator_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
+    for part in parts.iter().filter(|part| regulator(part)) {
+        for pad in &part.pads {
+            if let Some(net) = &pad.net
+                && rails.contains(net)
+            {
+                regulator_pads
+                    .entry(net.clone())
+                    .or_default()
+                    .push(pad.center);
+            }
+        }
+    }
+    let mut bulk_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
     let mut capacitor_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
     let mut supply_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
     for part in parts.iter().filter(|part| ic(part)) {
@@ -514,10 +611,17 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             (_, true) => 1,
             _ => continue,
         };
+        let net = part.pads[supply].net.clone().unwrap();
         if small {
             capacitors += 1;
             capacitor_pads
-                .entry(part.pads[supply].net.clone().unwrap())
+                .entry(net)
+                .or_default()
+                .push(part.pads[supply].center);
+        } else if regulator_pads.contains_key(&net) {
+            capacitors += 1;
+            bulk_pads
+                .entry(net)
                 .or_default()
                 .push(part.pads[supply].center);
         }
@@ -531,18 +635,27 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             if !rails.contains(net) || !(pad.power_pin || rail(net)) {
                 continue;
             }
-            let nearest = capacitor_pads.get(net).and_then(|pads| {
-                pads.iter()
-                    .map(|center| distance(*center, pad.center))
-                    .reduce(f64::min)
-            });
+            let bulk = regulator(part).then(|| bulk_pads.get(net)).flatten();
+            let nearest = capacitor_pads
+                .get(net)
+                .into_iter()
+                .chain(bulk)
+                .flatten()
+                .map(|center| distance(*center, pad.center))
+                .reduce(f64::min);
             pin_distances.push((format!("{}:{}", part.reference, pad.name), nearest));
         }
     }
+    // A bulk capacitor against its rail's regulator pins.
     let mut capacitor_distances: Vec<f64> = capacitor_pads
         .iter()
-        .flat_map(|(net, pads)| {
-            let pins = supply_pads.get(net);
+        .map(|(net, pads)| (pads, supply_pads.get(net)))
+        .chain(
+            bulk_pads
+                .iter()
+                .map(|(net, pads)| (pads, regulator_pads.get(net))),
+        )
+        .flat_map(|(pads, pins)| {
             pads.iter().filter_map(move |pad| {
                 pins?
                     .iter()
@@ -784,15 +897,35 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         not_facing_out,
     };
 
-    // Manufacturing.
+    // Manufacturing: a via whose drill reaches into a small SMD pad's copper
+    // (the drill's disc against the pad's shape in its own frame, corners
+    // rounded as the pad's: a via beside a pad's corner, where the router
+    // puts a pad's own via, is not in it). An exposed pad's
+    // thermal vias are the designer's (the router's rule: docs/router.md,
+    // "Vias in pads").
+    let exposed: Vec<Option<usize>> = parts.iter().map(exposed_pad).collect();
     let mut vias_in_pads = 0;
     for (at, drill) in &vias {
-        let inside = parts.iter().flat_map(|part| &part.pads).any(|pad| {
-            pad.smd
-                && pad.half[0].max(pad.half[1]) < 1.0
-                && (at[0] - pad.center[0]).abs() < pad.half[0] + drill / 2.0
-                && (at[1] - pad.center[1]).abs() < pad.half[1] + drill / 2.0
-        });
+        let inside = parts
+            .iter()
+            .zip(&exposed)
+            .flat_map(|(part, exposed)| {
+                part.pads
+                    .iter()
+                    .enumerate()
+                    .filter(move |(index, _)| Some(*index) != *exposed)
+                    .map(|(_, pad)| pad)
+            })
+            .any(|pad| {
+                let local =
+                    rotate_vector([at[0] - pad.center[0], at[1] - pad.center[1]], pad.angle);
+                let outside = [0, 1]
+                    .map(|axis| (local[axis].abs() - (pad.size[axis] / 2.0 - pad.corner)).max(0.0));
+                pad.smd
+                    && pad.copper
+                    && pad.half[0].max(pad.half[1]) < 1.0
+                    && outside[0].hypot(outside[1]) - pad.corner < drill / 2.0
+            });
         vias_in_pads += inside as usize;
     }
     let mut tombstone_risk = Vec::new();
@@ -1124,5 +1257,90 @@ mod tests {
         for net in ["/SDA", "Net-(U1-Pad3)", "LED1", "V_SENSE"] {
             assert!(!rail_name(net), "{net}");
         }
+    }
+
+    #[test]
+    fn a_regulators_bulk_capacitors_decouple_its_pins() {
+        // U2, an LDO: VOUT (+3V3) with only C4 (10 uF) 3.1 mm away, VIN
+        // (VBUS) with C3 (10 uF) 2 mm and C5 (100 nF) 7 mm away; U1, an
+        // MCU on +3V3, 20 mm from C4: a bulk capacitor does not decouple
+        // it, so its pin has none.
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "SOT-23" (layer "F.Cu") (at 10 10) (property "Reference" "U2") (property "Value" "XC6206P332MR")
+              (pad "1" smd rect (at -1 1) (size 0.6 0.7) (layers "F.Cu") (net 1 "GND"))
+              (pad "2" smd rect (at 1 1) (size 0.6 0.7) (layers "F.Cu") (net 2 "+3V3"))
+              (pad "3" smd rect (at 0 -1) (size 0.6 0.7) (layers "F.Cu") (net 3 "VBUS")))
+            (footprint "C_0805" (layer "F.Cu") (at 14.1 11) (property "Reference" "C4") (property "Value" "10u")
+              (pad "1" smd rect (at 0 0) (size 1 1.2) (layers "F.Cu") (net 2 "+3V3"))
+              (pad "2" smd rect (at 2 0) (size 1 1.2) (layers "F.Cu") (net 1 "GND")))
+            (footprint "C_0805" (layer "F.Cu") (at 10 7) (property "Reference" "C3") (property "Value" "10u")
+              (pad "1" smd rect (at 0 0) (size 1 1.2) (layers "F.Cu") (net 3 "VBUS"))
+              (pad "2" smd rect (at 2 0) (size 1 1.2) (layers "F.Cu") (net 1 "GND")))
+            (footprint "C_0402" (layer "F.Cu") (at 10 2) (property "Reference" "C5") (property "Value" "100n")
+              (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net 3 "VBUS"))
+              (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "GND")))
+            (footprint "QFP" (layer "F.Cu") (at 34.1 11) (property "Reference" "U1") (property "Value" "MCU")
+              (pad "1" smd rect (at 0 0) (size 0.3 1) (layers "F.Cu") (net 2 "+3V3"))
+              (pad "2" smd rect (at 0.5 0) (size 0.3 1) (layers "F.Cu") (net 1 "GND"))
+              (pad "3" smd rect (at 1 0) (size 0.3 1) (layers "F.Cu") (net 4 "SDA"))
+              (pad "4" smd rect (at 1.5 0) (size 0.3 1) (layers "F.Cu") (net 5 "SCL"))))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-decoupling-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let report = score_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let decoupling = report.unwrap().decoupling;
+        let pin = |name: &str| {
+            decoupling
+                .worst
+                .iter()
+                .find(|(pin, _)| pin == name)
+                .unwrap_or_else(|| panic!("{name} in {:?}", decoupling.worst))
+                .1
+        };
+        assert_eq!(pin("U2:2"), Some(3.1));
+        assert_eq!(pin("U2:3"), Some(2.0));
+        assert_eq!(pin("U1:1"), None);
+        // C3, C4 (bulk, at the regulator) and C5.
+        assert_eq!(decoupling.capacitors, 3);
+    }
+
+    #[test]
+    fn a_via_counts_in_a_small_smd_pad_not_beside_it_nor_in_an_exposed_pad() {
+        // R1's pad 1 holds a via; one sits off pad 2's corner (its drill
+        // clear of the copper, inside the old box test's margin); U1's
+        // exposed pad holds a thermal via; a paste-only aperture of U1 has
+        // a via over it; Q1's pad turned 45 degrees and its round pad have
+        // vias inside their boxes, outside their copper.
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "R_0402" (layer "F.Cu") (at 10 10) (property "Reference" "R1") (property "Value" "10k")
+              (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask") (net 1 "A"))
+              (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask") (net 2 "B")))
+            (footprint "QFN" (layer "F.Cu") (at 20 10) (property "Reference" "U1") (property "Value" "X")
+              (pad "1" smd rect (at -1.5 0) (size 0.6 0.3) (layers "F.Cu") (net 1 "A"))
+              (pad "2" smd rect (at 1.5 0) (size 0.6 0.3) (layers "F.Cu") (net 2 "B"))
+              (pad "3" smd rect (at 0 -1.5) (size 0.3 0.6) (layers "F.Cu") (net 1 "A"))
+              (pad "4" smd rect (at 0 1.5) (size 0.3 0.6) (layers "F.Cu") (net 2 "B"))
+              (pad "5" smd rect (at 0 0) (size 1.7 1.7) (layers "F.Cu") (net 3 "GND"))
+              (pad "" smd rect (at 3 3) (size 0.8 0.8) (layers "F.Paste")))
+            (via (at 9.5 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+            (via (at 10.92 10.42) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+            (via (at 20 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 3))
+            (via (at 23 13) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 3))
+            (footprint "SOT" (layer "F.Cu") (at 30 10 45) (property "Reference" "Q1") (property "Value" "X")
+              (pad "1" smd rect (at 0 0 45) (size 1 0.3) (layers "F.Cu") (net 1 "A"))
+              (pad "2" smd circle (at 2.1213 2.1213 45) (size 1 1) (layers "F.Cu") (net 2 "B")))
+            (via (at 30 10.5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+            (via (at 33.48 10.48) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2)))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-vias-in-pads-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let report = score_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        assert_eq!(report.unwrap().manufacturing.vias_in_pads, 1);
     }
 }

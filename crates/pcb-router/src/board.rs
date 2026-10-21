@@ -175,6 +175,15 @@ pub struct Board {
     /// other side of the board, U1.24's through-hole pad on F.Cu beside its
     /// B.Cu pad).
     pub merged_pads: Vec<MergedPad>,
+    /// Pads no via may overlap, as indices into `obstacles` (sorted): a
+    /// via in a reflowed SMD pad takes the pad's solder down its hole
+    /// (pcb-kicad lists every SMD pad but an exposed one unless the board
+    /// fills and caps its vias, `via_in_pad`). Every via keeps its ring out
+    /// of their copper: another net's vias their clearance beyond it as
+    /// from any copper, the pad's own net's may touch it (a via beside the
+    /// pad). Other surface pads of a net keep the rule of before: that
+    /// net's vias may lie wholly inside them (`StaticMaps::via_owner`).
+    pub no_via_pads: Vec<usize>,
 }
 
 /// A pad merged into its net's terminal `host` (`Board::merged_pads`).

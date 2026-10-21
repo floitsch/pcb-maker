@@ -15,6 +15,14 @@ pub struct KiCadPourRequest {
     /// Clearance between the pour and other nets (default 0.3 mm).
     #[serde(default)]
     pub clearance_mm: Option<f64>,
+    /// A plane (default false): no track of any net on these layers, only
+    /// vias through them, so the pour stays whole on every rung of the
+    /// ladder (exclusive_planes holds only on some). A rule area keeping
+    /// tracks off each layer (`plane <net> <layer>`) is written beside the
+    /// zone, also where the board has the zone already, so KiCad checks
+    /// it too.
+    #[serde(default)]
+    pub plane: bool,
 }
 
 /// The pours to add to `pcb`: the requested ones, or else the automatic
@@ -66,6 +74,7 @@ pub(crate) fn planned_pours(
             net: ground,
             layers: vec![inner[0].clone()],
             clearance_mm: None,
+            plane: false,
         });
     }
     if let Some(rail) =
@@ -75,6 +84,7 @@ pub(crate) fn planned_pours(
             net: rail,
             layers: vec![inner[inner.len() - 1].clone()],
             clearance_mm: None,
+            plane: false,
         });
     }
     Ok(requests)
@@ -132,6 +142,16 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
         }
     }
     let mut zones = Vec::new();
+    let names: BTreeSet<String> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("zone"))
+        .filter_map(|zone| form_atom(zone, "name", 1).map(str::to_string))
+        .collect();
+    let points: Vec<String> = outline
+        .iter()
+        .map(|point| format!("(xy {} {})", point[0], point[1]))
+        .collect();
     for request in requests {
         let net = [request.net.clone(), format!("/{}", request.net)]
             .into_iter()
@@ -145,21 +165,34 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
                     request.net
                 ));
             }
+            // A stable identifier from the request.
+            let mut hash = 0xcbf2_9ce4_8422_2325u64;
+            for byte in net.bytes().chain(layer.bytes()) {
+                hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
+            }
+            let name = format!("plane {} {layer}", normalize_net(&net));
+            if request.plane && !names.contains(&name) {
+                let hash = hash.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
+                zones.push(parse(&format!(
+                    "(zone (layer {layer:?}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (name {name:?}) \
+                     (hatch edge 0.5) (connect_pads (clearance 0)) (min_thickness 0.25) \
+                     (keepout (tracks not_allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints allowed)) \
+                     (fill (thermal_gap 0.5) (thermal_bridge_width 0.5)) \
+                     (polygon (pts {})))",
+                    hash >> 32,
+                    (hash >> 16) & 0xffff,
+                    hash & 0xfff,
+                    (hash >> 12) & 0xfff,
+                    hash & 0xffff_ffff_ffff,
+                    points.join(" ")
+                ))?);
+            }
             if existing.contains(&(normalize_net(&net).to_string(), layer.clone())) {
                 eprintln!(
                     "pour for {} on {layer}: the board has one already",
                     request.net
                 );
                 continue;
-            }
-            let points: Vec<String> = outline
-                .iter()
-                .map(|point| format!("(xy {} {})", point[0], point[1]))
-                .collect();
-            // A stable identifier from the request.
-            let mut hash = 0xcbf2_9ce4_8422_2325u64;
-            for byte in net.bytes().chain(layer.bytes()) {
-                hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
             }
             zones.push(parse(&format!(
                 "(zone (net {net:?}) (layer {layer:?}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (hatch edge 0.5) \

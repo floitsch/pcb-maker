@@ -24,10 +24,10 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 82 | 70 | 12 | 82 | 18 |
+| [Router settings](#router-settings) | 83 | 71 | 12 | 83 | 21 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
-| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 1 |
+| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 4 | 4 | 0 | 4 | 3 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
@@ -69,7 +69,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `automatic_planes` | `Option<bool>` | unset | - | On a board with four or more copper layers and no copper pours, ground becomes a plane on the first inner layer and the supply rail with the most pads one on the second (default true; ignored when `add_pours` is given). |
 | `mask_only_pad_openings` | `Option<bool>` | unset | - | A pad with a mask opening and no copper (a mask-only test point) opens the mask like a mask graphic: copper of a second net may not go under it (default true). hackrf-one's two solder mask bridges. |
 | `via_reduction_present` | `Option<f64>` | unset | - | Price of sharing when a via reduction round starts. |
-| `exclusive_planes` | `Option<bool>` | unset | - | Keep other nets' tracks off inner-layer planes entirely. |
+| `exclusive_planes` | `Option<bool>` | unset | router.md | Keep other nets' tracks off inner-layer planes entirely. |
 | `exclusive_layers` | `Option<usize>` | unset | - | With exclusive planes: how many of a pour net's inner plane layers stay exclusive, the ones nearest the outer layers first (the stackups designers use: one solid ground layer under the top on four layers, In1 and In4 on six; ESC mini's GND covers In1-In4 and keeping all four left the signals two layers). The ladder sets it from the layer count when not given; `None` outside the ladder keeps every covered inner layer. |
 | `pour_islands` | `Option<bool>` | unset | - | Route pour-net pads the signals cut off from their pour during the negotiation (default on; see `pcb_router::Config::pour_islands`). |
 | `kicad_spokes` | `Option<bool>` | unset | router.md | Thermal spokes as KiCad draws and counts them (default on; see `pcb_router::Config::kicad_spokes`). |
@@ -100,8 +100,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `plane_skeleton` | `Option<bool>` | unset | - | Route pour nets first as a fixed tree on their plane layer. |
 | `skeleton_bias` | `Option<f64>` | unset | - | Router `skeleton_bias`: the cost factor of a skeleton step off the plane layer (default 6). |
 | `refine_pitches_mm` | `Option<Vec<f64>>` | unset | - | Finer lattice pitches tried, in order, when the routing with the regular pitch leaves connections open. `None` means 0.075 then 0.05. |
-| `refine_budget_seconds` | `Option<f64>` | unset | router.md | A finer lattice is only tried when the routing time projected from the previous attempt stays below this (default 240 s). Other ways of connecting the pours are tried whatever the time while connections are open. |
-| `ladder_budget_seconds` | `Option<f64>` | unset | router.md | No further attempt of any kind starts after the ladder has run this long (default 1200 s): ColdFire from its schematic spent 50 min in three pour rungs with their seed retries. |
+| `refine_budget_seconds` | `Option<f64>` | unset | router.md | A finer lattice is only tried when the routing time projected from the previous attempt stays below this. Default: 240 s, a fifth of `ladder_budget_seconds` where that is more, and in a layout 0.4 of the work left before its end where that is more (a layout of 3000 s tries the finer lattice an attempt of up to about 900 s needs). Other ways of connecting the pours are tried whatever the time while connections are open. |
+| `ladder_budget_seconds` | `Option<f64>` | unset | router.md | No further attempt of any kind starts after the ladder has run this long (default 1200 s; in a layout the work left before its end, at most this where it is given): ColdFire from its schematic spent 50 min in three pour rungs with their seed retries. |
 | `narrow_reserve_share` | `Option<f64>` | unset | router.md | With a work deadline (the layout's ladder) and a project whose final narrow-signal or minimum-clearance step applies, this share of the ladder's first attempt's work is kept back for that step from the start (`narrow_step_reserve`; 0: none, the step gets what the rungs leave). |
 | `memory_mb` | `Option<f64>` | unset | router.md | A limit on this process's memory in megabytes (resident), beside `PCB_MAKER_MEMORY_MB` and the limits the process can read itself (RLIMIT_AS, the cgroup's memory.max): the ladder runs as many routers side by side as fit the tightest (`MemoryLimits`). For a harness that kills a run above a resident size it does not set as a limit (the intake's 3 GiB). |
 | `work_rate` | `Option<f64>` | unset | router.md | The search expansions a second of work stands for, pinned instead of measured at the start (`work_rate` in a verdict: for reproducing a run on another machine with the rate it recorded; docs/router.md, "Determinism and the wall clock"). `PCB_WORK_RATE` wins over it. |
@@ -118,13 +118,14 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `solder_mask_to_copper_mm` | `Option<f64>` | unset | - | The project's solder-mask-to-copper clearance (`rules. solder_mask_to_copper_clearance`, KiCad's default 0): KiCad's DRC finds a solder mask aperture bridging copper of another net within it plus the aperture's mask expansion (USB_Cable_Tester: a track 0.094 mm from a battery holder's F.Mask polygon over a GND fill, at 0.05 + 0.05 mm). |
 | `solder_mask_bridge_severity` | `Option<String>` | unset | - | The project's severity of solder_mask_bridge findings (`error`, `warning`, `ignore`; KiCad's default is an error). Below an error the designer accepted bridges, and the router keeps its looser mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected). |
 | `solid_starved_thermals` | `Option<bool>` | unset | - | Pads KiCad finds short of thermal spokes (where only one fits, as on fine-pitch pins) get a solid zone connection in the result, and the board is verified again. Off by default: thermal reliefs are there for soldering, so this is the designer's (or the agent's) call. |
+| `via_in_pad` | `Option<bool>` | unset | router.md | Allow vias inside SMD pads (default false): a board whose vias are filled and capped (via-in-pad plating) may put them there. Off, every via keeps its annular ring out of every SMD pad but an exposed pad (a QFN's thermal pad, which holds thermal vias as designers place them): another net's vias keep their clearance beyond the pad's copper, the pad's own net's may touch it from outside. Open vias in a reflowed pad take its solder down the hole (score-kicad-board's "vias in pads" counts them). Through-hole pads hold no via either way. |
 | `skip_native_verification` | `bool` | `false` | - | Skip the final native KiCad verification (for timing the router). |
 | `engine` | `Option<String>` | unset | - | The routing engine: `lattice` (default, negotiated congestion on a lattice) or `topological` (TopoR-style: triangulation, crossings, layer assignment, any-angle tracks with arcs; pour nets as tracks). |
 | `topological_rounds` | `Option<usize>` | unset | - | Rip-up rounds of the topological engine (default 30). |
 | `topological` | `KiCadTopologicalConfig` | its own table | - | Weights of the topological engine (defaults in `pcb_topo::Config`). |
 | `tighten` | `bool` | `false` | - | Pull the lattice router's tracks tight afterwards (any-angle tracks with arcs, as the topological engine draws them), wherever the result stays legal. |
 | `pours` | `KiCadPourMode` | `"auto"` | - | How nets with copper pours are connected. |
-| `add_pours` | `Vec<KiCadPourRequest>` | `[]` | - | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
+| `add_pours` | `Vec<KiCadPourRequest>` | `[]` | router.md | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
 | `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | - | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
 | `pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps`. |
@@ -164,9 +165,10 @@ One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/bo
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `add_pours[].net` | `String` | required | - | The net, as in the board (`GND` or `/GND`). |
+| `add_pours[].net` | `String` | required | router.md | The net, as in the board (`GND` or `/GND`). |
 | `add_pours[].layers` | `Vec<String>` | required | router.md | Copper layers, such as `B.Cu`. |
 | `add_pours[].clearance_mm` | `Option<f64>` | optional | - | Clearance between the pour and other nets (default 0.3 mm). |
+| `add_pours[].plane` | `bool` | optional | router.md | A plane (default false): no track of any net on these layers, only vias through them, so the pour stays whole on every rung of the ladder (exclusive_planes holds only on some). A rule area keeping tracks off each layer (`plane <net> <layer>`) is written beside the zone, also where the board has the zone already, so KiCad checks it too. |
 
 ## Router settings: net_classes entries
 

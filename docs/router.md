@@ -292,6 +292,45 @@ clearance 0.25: a via 0.769 from the centre kept the copper rule and was
 tracks end on the drill; its vias keep the pad copper's rule
 (`StaticMaps::via_owner`).
 
+### Vias in pads (2026-10-21)
+
+A via inside an SMD pad is a defect on a reflowed board: the open hole
+takes the pad's solder (a 0.3 mm drill in a WS2812B-2020's 0.7 mm pad
+leaves the LED unsoldered), and KiCad's DRC does not flag it. Until
+2026-10-21 a surface pad of a net let that net's vias in wherever the
+whole via fit inside its copper (`StaticMaps::via_owner`), so congested
+boards put their ground vias in ground pads (the fence's LED row: 3 to
+14 on four layers, 28 at 34 mm on two). Now the lowering lists every SMD
+pad (`smd` and `connect` pads, their padstack shapes too) in
+`Board::no_via_pads`, and every via keeps its annular ring out of their
+copper: another net's vias their clearance beyond it as from any copper,
+the pad's own net's may touch it from outside (no clearance between a
+via and its own pad: a pad of a pour net gets its via beside the pad,
+the stub of length zero). Through-hole pads hold no via either way (their
+copper keeps every via at its clearance; a hole that reaches past a thin
+ring lets its own net's vias within only the hole clearance, as before).
+
+One SMD pad per footprint is exempt: an exposed pad (a QFN's, a DFN's,
+an SOIC's thermal pad), the largest SMD pad, at least twice any other
+SMD pad's area, its centre strictly inside the box of the centres of at
+least three other pads. The pins enclose it, a via is the designer's way
+out (KiCad's own footprints carry thermal vias there) and a large pad
+keeps its solder. A tab beside a row of pins (SOT-223, D-PAK, SOT-89)
+is not exposed: a track reaches it from outside.
+
+`via_in_pad: true` in the router config restores the rule of before for
+boards whose vias are filled and capped. score-kicad-board's "vias in
+pads" (SMD pads under 2 mm but an exposed pad, the drill over the pad's
+copper box) stays the check.
+
+A path no longer hops: a via within the hole-to-hole spacing (the drill
+plus `hole_to_hole`) of the previous via of the path being searched is
+not taken (`hops_from_a_via`; the net's routed branches kept theirs
+apart already by `own_via_near`). With vias out of the pads Castor's
+Net-(C33-Pad1) went up and down again through two vias 0.25 mm apart to
+pass a back-side track, which KiCad reports as hole_to_hole whatever
+the nets.
+
 ### Board edges and copper of no net (2026-10-21)
 
 KiCad 10.0.7's copper_edge_clearance measures copper against more than
@@ -699,7 +738,16 @@ islands holding pads are stitched to the main piece with vias, and pads that
 cannot be stitched are routed to it. Around pads that connect to a pour, other
 nets pay extra so the thermal spokes survive. If the router or KiCad still
 sees open items, the pour nets are routed as tracks instead and the better
-board is kept.
+board is kept. The stub's via stays out of the pad (SMD pads hold no via,
+"Vias in pads").
+
+A pour that must stay whole on every rung (a ground plane on an inner
+layer) is an `add_pours` entry with `"plane": true`: beside the zone the
+router writes a rule area that keeps every net's tracks off that layer
+(`plane <net> <layer>`, vias allowed), which the lowering keeps as a track
+keepout on every rung and KiCad checks. `exclusive_planes` keeps other
+nets off only on the rungs that use it (the plane-stub and tracks rungs
+let them in).
 
 ### Thermal spokes as KiCad counts them
 
@@ -1067,8 +1115,19 @@ items, no internal violation, no starved thermal in KiCad's DRC) and keeps
 the best otherwise: pours connected; pours connected with the plane
 skeleton; pour nets as tracks; then the same on finer lattices (0.075 and
 0.05 mm) as long as the time projected from the previous attempt stays under
-`refine_budget_seconds` (240 s). StickHub is the board that needs the finer
-rung: 8 open on the regular lattice, clean at 0.075 mm.
+`refine_budget_seconds`. StickHub is the board that needs the finer
+rung: 8 open on the regular lattice, clean at 0.075 mm. The default
+budget is 240 s, a fifth of `ladder_budget_seconds` where that is more
+(route mode: 1200 s by default, so 240 s), and in a layout's ladder 0.4
+of the work left before the layout's end where that is more (the share
+the narrow-signal step's reserve may take; since 2026-10-21: the fence's
+two layers at `total_seconds` 3000 started the ladder with 2241 s left
+and stopped at 759 s of work, the 0.075 mm lattice projected at 367 s
+against 240; its ladder's budget was also at most 1200 s, now the
+layout's work left unless the router config gives `ladder_budget_seconds`).
+A lattice not tried is in the verdict's next_actions
+(`skipped`) with its projected seconds and the value of
+`refine_budget_seconds` that tries it.
 
 After the rungs, the finer pitches and the best rung's seed rounds, a
 board still open gets one more attempt: the best attempt with signal nets

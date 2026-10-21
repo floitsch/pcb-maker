@@ -1395,6 +1395,7 @@ mod pour_request_tests {
             net: "GND".into(),
             layers: layers.iter().map(|layer| layer.to_string()).collect(),
             clearance_mm: None,
+            plane: false,
         };
         add_pour_zones(&mut pcb, &[request(&["F.Cu", "B.Cu"])]).unwrap();
         let zones: Vec<_> = pcb
@@ -1412,6 +1413,119 @@ mod pour_request_tests {
         };
         assert!(add_pour_zones(&mut pcb, &[unknown]).is_err());
         assert!(add_pour_zones(&mut pcb, &[request(&["In1.Cu"])]).is_err());
+    }
+
+    #[test]
+    fn a_plane_request_keeps_tracks_off_its_layer_by_a_rule_area() {
+        // The fence's four layers: GND's zone on In1.Cu exists; a plane
+        // request adds the rule area alone, once.
+        let mut pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/A")))
+          (footprint "b" (at 15 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/A")))
+          (zone (net "/GND") (layer "In1.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10) (xy 0 10)))))"#,
+        )
+        .unwrap();
+        let plane = KiCadPourRequest {
+            net: "GND".into(),
+            layers: vec!["In1.Cu".into()],
+            clearance_mm: None,
+            plane: true,
+        };
+        add_pour_zones(&mut pcb, std::slice::from_ref(&plane)).unwrap();
+        add_pour_zones(&mut pcb, std::slice::from_ref(&plane)).unwrap();
+        let zones: Vec<&Expr> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("zone"))
+            .collect();
+        assert_eq!(zones.len(), 2);
+        let text = encode(zones[1]).to_string();
+        assert!(
+            text.contains("(name \"plane GND In1.Cu\")")
+                && text.contains("(tracks not_allowed)")
+                && text.contains("(vias allowed)")
+                && text.contains("(copperpour allowed)"),
+            "{text}"
+        );
+        // The router keeps every track off In1.Cu, vias pass.
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let keepout = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "plane GND In1.Cu")
+            .unwrap();
+        assert!(keepout.blocks_tracks && !keepout.blocks_vias && keepout.layers == 0b10);
+    }
+
+    #[test]
+    fn smd_pads_but_an_exposed_pad_hold_no_via_unless_the_board_allows_vias_in_pads() {
+        // A QFN-like part: four pins around a 2 mm exposed pad; a 0805
+        // capacitor; a through-hole header pin; a SOT-223-like part whose
+        // tab lies beside its pins (not exposed).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))
+              (footprint "qfn" (at 5 5) (property "Reference" "U1")
+                (pad "1" smd rect (at -1.5 0) (size 0.6 0.3) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 1.5 0) (size 0.6 0.3) (layers "F.Cu") (net "B"))
+                (pad "3" smd rect (at 0 -1.5) (size 0.3 0.6) (layers "F.Cu") (net "A"))
+                (pad "4" smd rect (at 0 1.5) (size 0.3 0.6) (layers "F.Cu") (net "B"))
+                (pad "5" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net "GND")))
+              (footprint "c" (at 15 5) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 1 1.3) (layers "F.Cu") (net "GND"))
+                (pad "2" smd rect (at 2 0) (size 1 1.3) (layers "F.Cu") (net "A")))
+              (footprint "pin" (at 25 5) (property "Reference" "J1")
+                (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net "GND"))
+                (pad "2" thru_hole circle (at 0 2.54) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net "B")))
+              (footprint "sot223" (at 10 15) (property "Reference" "U2")
+                (pad "1" smd rect (at -2.3 3.15) (size 1 1.5) (layers "F.Cu") (net "GND"))
+                (pad "2" smd rect (at 0 3.15) (size 1 1.5) (layers "F.Cu") (net "A"))
+                (pad "3" smd rect (at 2.3 3.15) (size 1 1.5) (layers "F.Cu") (net "B"))
+                (pad "4" smd rect (at 0 -3.15) (size 3.5 1.5) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let listed = |config: &KiCadBoardRouterConfig| -> Vec<String> {
+            let board = lower(&pcb, config, false).unwrap().board;
+            board
+                .no_via_pads
+                .iter()
+                .map(|index| board.obstacles[*index].label.clone())
+                .collect()
+        };
+        assert_eq!(
+            listed(&config),
+            [
+                "U1.1", "U1.2", "U1.3", "U1.4", "C1.1", "C1.2", "U2.1", "U2.2", "U2.3", "U2.4"
+            ]
+        );
+        let allowed = KiCadBoardRouterConfig {
+            via_in_pad: Some(true),
+            ..config
+        };
+        assert!(listed(&allowed).is_empty());
     }
 }
 
@@ -1966,6 +2080,19 @@ mod memory_limit_tests {
 
 mod work_bound_tests {
     use super::*;
+
+    #[test]
+    fn the_refinement_budget_grows_with_the_ladders_budget_and_a_layouts_work_left() {
+        // Route mode: 240 s up to the default ladder budget of 1200 s, a
+        // fifth of a larger one.
+        assert_eq!(default_refine_budget(30.0, None), 240.0);
+        assert_eq!(default_refine_budget(1200.0, None), 240.0);
+        assert_eq!(default_refine_budget(3000.0, None), 600.0);
+        // A layout's ladder: 0.4 of the work left (the fence's two layers:
+        // 2241 s left, 896 s, past its 0.075 mm lattice's 367 s).
+        assert_eq!(default_refine_budget(1200.0, Some(300.0)), 240.0);
+        assert!((default_refine_budget(1200.0, Some(2241.0)) - 896.4).abs() < 1.0e-9);
+    }
 
     #[test]
     fn the_bound_is_the_budget_and_its_tolerance() {

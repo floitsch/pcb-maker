@@ -436,6 +436,7 @@ impl Router {
                 && statics.via_allowed(cell, net)
                 && !(hard && via_occupied > 0.0)
                 && scratch.own_via_near[cell] != generation
+                && !self.hops_from_a_via(scratch, state, class)
             {
                 let occupied = via_occupied;
                 let history = if self.cleanup {
@@ -557,6 +558,41 @@ impl Router {
         }
         path.reverse();
         Some(path)
+    }
+
+    /// Whether a via at `state`'s cell would lie within the hole-to-hole
+    /// spacing of the previous via of the path being searched: a hop
+    /// (through a via, a step or two, back through another), which KiCad
+    /// reports as hole_to_hole whatever the nets (Castor's
+    /// Net-(C33-Pad1): two vias 0.25 mm apart once vias stayed out of
+    /// SMD pads). The net's routed branches keep their vias apart by
+    /// `own_via_near`; this walks back the few steps that can be that
+    /// near. A via arriving here is the same via (another layer of it).
+    fn hops_from_a_via(&self, scratch: &Scratch, state: usize, class: usize) -> bool {
+        let cells = self.grid.cells();
+        let nx = self.grid.nx;
+        let rules = self.board.classes[class];
+        let reach = rules.via_drill + self.board.hole_to_hole.max(0.0);
+        let cell = state % cells;
+        let center = self.grid.center_of(cell);
+        let mut back = state;
+        for _ in 0..=(reach / self.grid.pitch).ceil() as usize {
+            let parent = scratch.nodes[back].parent;
+            if parent == PARENT_SOURCE {
+                return false;
+            }
+            let here = back % cells;
+            if parent >= 8 {
+                return here != cell
+                    && crate::geometry::distance(self.grid.center_of(here), center)
+                        < reach - 1.0e-9;
+            }
+            let (dx, dy) = DIRECTIONS[parent as usize];
+            let x = (here % nx) as i64 - dx as i64;
+            let y = (here / nx) as i64 - dy as i64;
+            back = (back / cells) * cells + y as usize * nx + x as usize;
+        }
+        false
     }
 
     /// Whether a retained branch is still legal against the fixed copper.

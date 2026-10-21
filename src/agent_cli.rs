@@ -619,15 +619,24 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
     Ok(())
 }
 
+/// Reads a constraints file the placer config names, and returns what the
+/// input check warns of (printed now, before the run): keepouts over parts
+/// the placer keeps where they are (`pcb_kicad::keepout_warnings`).
 fn check_constraints(
     source: &str,
+    board_id: &str,
     placer: &pcb_kicad::KiCadBoardPlacerConfig,
-) -> Result<(), Failure> {
+) -> Result<Vec<String>, Failure> {
     if let Some(pcb_kicad::KiCadConstraintsSource::File(path)) = &placer.constraints {
         pcb_kicad::read_placement_constraints(&Path::new(source).join(path))
             .map_err(Failure::Usage)?;
     }
-    Ok(())
+    let warnings =
+        pcb_kicad::keepout_warnings(Path::new(source), board_id, placer).map_err(Failure::Usage)?;
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(warnings)
 }
 
 /// The placement's facts from its report (`board-placer.json`).
@@ -673,7 +682,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         Some(path) => read_json(path)?,
         None => Default::default(),
     };
-    check_constraints(source, &config.placer)?;
+    let input_warnings = check_constraints(source, board_id, &config.placer)?;
     // A free dimension: the layout at several sizes (src/agent_cli/free_dimension.rs).
     if let Some(free) = &config.free_dimension {
         let layout_json = match positional.get(4) {
@@ -749,6 +758,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
                 return Err(classify(error));
             };
             let mut facts = placement_facts(command, &placed);
+            facts.input_warnings = input_warnings;
             facts.outputs = existing(&outputs);
             facts.wall_seconds = started.elapsed().as_secs_f64();
             let mut verdict = pcb_kicad::judge(&facts);
@@ -764,6 +774,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory)
         .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
+    facts.input_warnings = input_warnings;
     // The placement's room (the parts and the outline the layout kept).
     facts.room = fs::read_to_string(output.join("placed/board-placer.json"))
         .ok()
@@ -807,7 +818,7 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         },
         None => Default::default(),
     };
-    check_constraints(source, &config)?;
+    let input_warnings = check_constraints(source, board_id, &config)?;
     // The layout's placement budget by default (40 % of its 1500 s of
     // work), so that the check places as the layout would and ends: a
     // board without room ran the placer's relaxation levels for over 12
@@ -863,6 +874,7 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         command,
         &serde_json::to_value(&result).map_err(|error| Failure::Internal(error.to_string()))?,
     );
+    facts.input_warnings = input_warnings;
     facts.outputs = existing(&outputs);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
@@ -1088,7 +1100,8 @@ usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-co
                        automatic_planes (default true), exclusive_planes (default: tried both ways),
                        net_classes (default: the project's), ladder_budget_seconds (default 1200 s
                        of work), deadline_seconds (default none: the work alone ends the run),
-                       solid_starved_thermals (default false).
+                       solid_starved_thermals (default false), via_in_pad (default false: no
+                       via in an SMD pad but an exposed pad; true for filled and capped vias).
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
                        the same place), not as the route's; default <project-dir> (the input as
                        given); none counts every error. Checked only when the result has errors
