@@ -1,0 +1,1 @@
+{"seeds": 2, "refine_budget_seconds": 1500, "plane_cut_cost": 10, "net_classes": [{"name": "Power", "nets": ["GND", "VBUS", "VDD", "+3V3"], "track_width_mm": 0.4}]}

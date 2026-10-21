@@ -86,7 +86,10 @@ Every directory is a KiCad 10 project (`<board_id>.kicad_pcb`, `.kicad_sch`,
 
 | Directory | Board | State | What it measures | Pass |
 |---|---|---|---|---|
-| `v4-4layer/{fence,fence-esp32}` | current boards (hardware v4) | routed by pcb-maker (the reference result) | Route (designer placement) and place + route on 4 layers. | complete; no copper DRC error; no track on In1.Cu. Reference: 101/101 with 134 vias, 108/108 with 190 vias. |
+| `v5-4layer/fence` | **current board (hardware v5, 2026-10-21):** 76.2 × 34 mm, CH32X035 only, 41 WS2812B-2020 LEDs (0.7 mm pads at 2.54 mm pitch along the 30-pin header), a mirror-symmetric 2×8 stack header on the back, three `keepout` constraints inline in `layout.json` | placed by hand + constraints, unrouted | Place + route on 4 layers; `router-seeds.json` (4 seeds) is what the project ships. | complete; no copper DRC error; **no via inside an LED pad** (the shipped board has 6; issue 13). Reference: 134/134, 196 vias, 3734 mm. |
+| `v5-2layer/fence` | v5 generated with `--layers=2` at the same 34 mm: GND pour on B.Cu, JLCPCB's 0.127 mm track and clearance in the `.kicad_pro` (two tracks fit between neighbouring LEDs) | placed, unrouted | **Can the v5 board be routed on 2 layers at its 4-layer size, with a ground worth the name?** `layout-long.json` (3000 s) and `router-seeds.json` are the configs of the best run. | complete, with the B.Cu GND pour's largest piece covering most of the board (measure with `pour-pieces.py`; the 4-layer plane is 3 pieces, 78 %). Best so far: 7 open, pour in 43 pieces at 25 %. |
+| `v5-2layer/fence-46mm` | the same 12 mm taller (`--extra=12`), `router-cut10.json` (`plane_cut_cost` 10, 0.4 mm power tracks) | placed, unrouted | Where it does complete, and what the pour looks like then. | complete (it is: 134/134, 547 vias) **and** a pour in few pieces (it is not: 37 pieces, 27 %). |
+| `v4-4layer/{fence,fence-esp32}` | hardware v4 | routed by pcb-maker (the reference result) | Route (designer placement) and place + route on 4 layers. | complete; no copper DRC error; no track on In1.Cu. Reference: 101/101 with 134 vias, 108/108 with 190 vias. |
 | `v4-2layer/{fence,fence-esp32}` | v4 generated with `--layers=2` (GND pour on B.Cu instead of the plane), placement copied from `v4-4layer` | placed, unrouted | Can the same board be routed on 2 layers? | complete, with a GND pour that stays in one piece (or a plane-quality measure). Not reached yet (see results). |
 | `keepout-in-footprint` | v1 ESP32 variant, 2 layers, **without** the board-level copy of the antenna keepout; placement from `v1-4layer` | placed, unrouted | The router honours a keepout zone defined inside a footprint. | no copper in the antenna area; KiCad reports no `items_not_allowed`. |
 | `esp-usb-placement` | v2 ESP32 variant (4 layers, 34 mm) with U3, J4, U2, C3, C4, C5, C6 free and stacked | unplaced | Edge, overhang and relative placement. See [esp-usb-placement/README.md](esp-usb-placement/README.md). | its README's table. |
@@ -100,6 +103,19 @@ The corpus entries are named `fence-*` in
 cargo build --release
 python3 benchmarks/corpus/run.py build/corpus-fence --only fence-v4-4l fence-esp32-v4-4l \
     fence-v4-2l fence-esp32-v4-2l fence-keepout
+```
+
+The v5 boards, by hand (pcb-maker `36f24ba`, 2026-10-21; the project's own
+commands are in `~/programming/breadboard-enhancer/hw/README.md`):
+
+```sh
+b=benchmarks/fence/v5-4layer/fence
+target/release/pcb-maker layout-kicad-board $b fence build/fence-v5-4l $b/router-seeds.json $b/layout.json
+b=benchmarks/fence/v5-2layer/fence
+target/release/pcb-maker layout-kicad-board $b fence build/fence-v5-2l $b/router-seeds.json $b/layout-long.json
+python3 benchmarks/fence/pour-pieces.py build/fence-v5-2l/result/fence.kicad_pcb 34   # pieces of the GND pour
+b=benchmarks/fence/v5-2layer/fence-46mm
+target/release/pcb-maker layout-kicad-board $b fence build/fence-v5-2l-46 $b/router-cut10.json $b/layout-long.json
 ```
 
 The others, by hand (the `layout.json` next to each board is the config):
@@ -160,6 +176,21 @@ On 2 layers the opens are almost always row nets (`ROWn` / `MCU_ROWn`)
 around chip A and the MCU: exactly where pin swapping (issue 3) would help
 most. Whether a human could route the 31 mm board on 2 layers is open.
 
+| 2026-10-21 | **v5, pcb-maker `36f24ba`** (head of that day) | |
+| 2026-10-21 | `v5-4layer/fence`, layout, default router | **complete and clean:** 134/134, 182–191 vias, 3759–3809 mm, 150–280 s; byte-identical on three repeats of one input. 3 to 10 vias inside LED GND pads depending on the input's details. |
+| 2026-10-21 | same, `router-seeds.json` (4 seeds) | **complete:** 134/134, 196 vias, 3734 mm; 8 vias in pads (6 LED pads, 2 test pads). Shipped. |
+| 2026-10-21 | `v5-2layer/fence` (34 mm), 0.2 mm rules, default | **incomplete:** 114/134, 32 unconnected, 322 vias (28 in pads), GND pour cut by 1453 mm. |
+| 2026-10-21 | same, 0.127 mm rules, `total_seconds` 3000 | **incomplete:** 10 unconnected, 281 vias; stopped at 759 s of work ("the finer lattice (0.075 mm) was not tried: projected 367 s of routing exceeds refine_budget_seconds (240 s)"). |
+| 2026-10-21 | same, plus `{"seeds": 3, "refine_budget_seconds": 1500}` | **incomplete:** 7 unconnected (`LED_CHAIN16`, `MCU_ROW5/6/11/12`, `ROW11`, `BUS4`, `VBUS` conflicted), 421 vias, 12 in pads, work 364 s; **pour in 43 pieces, 638 of 2591 mm²**. Hot spots: the 2.6 mm LED band on B.Cu, x 17–35 mm. |
+| 2026-10-21 | v5 2 layers, 4 / 6 mm taller, 0.127 mm, 2 seeds | 3 unconnected (pour 28 pieces, 12 %); 1 unconnected (pour 30 pieces, 36 %, 31 vias in pads). |
+| 2026-10-21 | v5 2 layers, 8 / 12 mm taller, `router-cut10.json` | 1 unconnected (19 pieces, 12 %); **complete at 46 mm**: 134/134, 547 vias (19 in pads), 5399 mm, work 613 s, **pour in 37 pieces, 959 of 3505 mm²**. `plane_cut_cost` 10 cut the pour as much as the default did (2088–2118 mm against 1594–1908 mm). |
+
+On v5 the opens moved from the chips' escape rings (v4) to the LED row:
+thirty row nets, the LED chain's thirty diagonals and the LEDs' 5 V and GND
+all cross one 2.6 mm band between the 30-pin header and the resistor
+networks. Whether a human could do it at 34 mm is as open as before; the
+46 mm result says the router can, but only by shredding the ground.
+
 ## Issue log
 
 | # | Date | Severity | What happened | Status / workaround | Benchmark |
@@ -177,6 +208,12 @@ most. Whether a human could route the 31 mm board on 2 layers is open.
 | 11 | 2026-09-25 | low | **Proximity again (issue 2):** the placer put the USB-C CC network (RN9) 25 mm from the connector's CC pins, and a charge pump's output capacitor 18 mm from the pump. | **Fixed** as issue 2: `near` constraints (and the automatic decoupling pull) keep them at their pins. | as issue 2 |
 
 | 12 | 2026-10-07 | medium | **An edge-flush part ignores the project's copper-to-edge clearance.** `esp-usb-placement` with `{"edge": "left", "flush": true, "overhang": {"edge": "top"}}`: U3 is placed with its origin at y = 2.4 mm from the top edge; its top row of pads ends 0.2 mm from the edge, against the project's `min_copper_edge_clearance` of 0.3 mm (15 `copper_edge_clearance`). The designer's 2.9 mm keeps the rule. `docs/constraints.md` says pads of edge parts keep that clearance. | Open. Workaround: `place` with exact coordinates, or `fixed`. | `esp-usb-placement` |
+
+| 13 | 2026-10-21 | high | **Vias inside small SMD pads.** On v5 the router puts GND vias inside the 0.7 mm GND pads of 2 × 2 mm LEDs (3 to 28 of them depending on the run; 6 on the shipped board). `score-kicad-board` only prices them ("left open they wick solder; filled and capped they cost $17-50"); no setting forbids a via under a pad, and `seeds` choose by opens, vias and copper, so a seed with vias in pads wins. For a stencil-and-hot-plate assembly such a via empties the pad. | Open. Wanted: no vias under SMD pads below some size, by default; the count in the seeds' ordering. | `v5-4layer/fence`: count with pcbnew `pad.HitTest(via.GetPosition())` |
+| 14 | 2026-10-21 | medium | **Polishing moves board-level silkscreen text, and the placer does not see it.** Header labels (`3V3  VDD  5V`) and test-pad names moved up to 7.5 mm, one of them under the wrong socket, because the placer had put a button and two resistors under them. | Open. Workaround in `layout.json`: three `keepout` constraints over the label areas, and the project puts the texts back afterwards (`finalize.py --labels`). Wanted: a silkscreen text's box is a placement obstacle; input text is never moved. | `v5-4layer/fence` without the `constraints` key in `layout.json` |
+| 15 | 2026-10-21 | low | **`keepout` constraints become KiCad rule areas that also judge fixed parts.** Any fixed part whose courtyard touches a box is an `items_not_allowed` error after the run (12, then 4, on v5 until the boxes were shrunk to 0.5 mm strips). | Open. Wanted: the box as a placer-only constraint, or an input-time warning that a fixed part lies in it. | `v5-4layer/fence`, widen a keepout in `layout.json` |
+| 16 | 2026-10-21 | low | **`repair-kicad-silkscreen` rejects a `gr_rect` outline** (`AssertionError: Rectangular board required`); the v5 boards' Edge.Cuts is one `gr_rect`. | Open. | `v5-4layer/fence` result |
+| 17 | 2026-10-21 | medium | **No way to keep a 2-layer pour whole, and no verdict on it.** `plane_cut_cost` 10 did not reduce the cutting; `exclusive_planes` applies to inner layers only. A board with GND in 37 pieces at 27 % copper is "complete". `refine_budget_seconds` (240 s) also stops the ladder long before `total_seconds` (759 s used of 3000). | Open. Wanted: a pour-quality line in the verdict (pieces, coverage, largest piece), a way to keep the main piece contiguous under named parts, and the two budgets tied together. | `v5-2layer/fence`, `pour-pieces.py` |
 
 ## Proposed input formats
 
