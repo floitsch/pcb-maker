@@ -1262,6 +1262,168 @@ with the 1.57x larger work budget. The two cuts ran at loads 1 and 66.
 Compare with
 `python3 benchmarks/agent-tasks/compare.py build/github-layout-v16.log build/github-layout-v17.log`.
 
+## Layout sweep v18 (2026-10-22)
+
+`build/github-layout-v18.log`, binary x1315 (main 35456a1: project rules
+at scale, runtime calibration, the ladder's work bound and fault
+isolation; 6f10989 differs only in doc comments), tasks v7 (the committed
+`benchmarks/agent-tasks/tasks/v7`, the same files as v17's
+`build/github-tasks-v7`: tasks.json sha256 c8f95caf5089 and every
+constraint file byte-identical; compare.py marks no board INPUT), with
+`--quality`, at the pinned work rates (every row: `work_rate` 3.15e6,
+`placer_work_rate` 150e6, `work_rate_source` PCB_WORK_RATE; the measured
+router rate had a median of 2.3e6, 0.99e6 to 3.3e6, the placer's 6.5e7,
+work over wall 0.77). The sweep ran in three parts, all on x1315, beside
+other agents' runs (load median 20, peaks of 77):
+
+- `build/github-layout-v18a.log`: 6 jobs x 2 threads, 20 GB of memory
+  kept free, about 4.9 hours, 41 boards; memory admission held it to two
+  or three boards at a time (hackrf waited 3120 s), so it was stopped (its
+  boards in flight lost);
+- `build/github-layout-v18b.log`: the other 68 boards at 10 x 2 with 6 GB
+  kept free (`--splice-from` the first part), 8834 s wall; four rows cut
+  by the wall guard (10 layouts and the designer tier side by side);
+- `build/github-layout-v18c.log`: the four cut boards again at 2 x 2
+  (`--splice-from` the second part), 5211 s wall. 0xCB panel and Quanta75
+  Bare finished uncut with the same rows as when cut; katia and Batch_1
+  were cut again (below). This log is `build/github-layout-v18.log`; the
+  output directories are `build/github-layout-v18`, `-v18b` and `-v18c`.
+
+| | v17 (x1170) | v18 (x1315) |
+|---|---|---|
+| pass, per-type rule | 48 of 109 | 46 of 109 |
+| pass, strict rule | not recorded | **42 of 109** |
+| unconnected (all rows) | 2708 | 2712 |
+| new DRC errors (per-type rule) | 38 | 50 |
+| vias | 30601 | 31044 |
+| length | 779 m | 788 m |
+| work s | 80276 (102 rows) | 86094 (103 rows) |
+| CPU s (unpaired; v18 oversubscribed) | 101279 | 152463 |
+| rows cut by the wall clock | 2 | 2 |
+| rows without a result | 7 | 6 |
+| vias against the designer's (median) | x0.70 | x0.71 |
+| length against the designer's (median) | x1.03 | x1.03 |
+| open over connections (median, mean) | 0.011, 0.287 | 0.009, 0.284 |
+| ground pour cut, ours less the designer's (median) | +0 mm (95 boards, 1 lost the pour) | +0 mm (96 boards, 1 lost the pour) |
+
+(v17's pour cut from `compare.py --score build/bin/pcb-maker-x1315`.)
+Better 5, same 87, worse 7 (3 rows cut in either run left out). Better:
+Glasgow 165 to 160 open, DSP-ADAU1452 68 to 64, split72_left 39 to 36,
+video 201 to 199, BAGEL-MK1.1-Avocado 2 to 1. Worse: split42_right 19 to
+26, OpenRX panel 219 to 226, the A13 module 8 to 12, RP2040_base 44 to
+47, Sisu 13 to 15, split72_right 28 to 30, laptop power 3 to 4.
+mackerel-30-proto and rosco lose their pass to starved thermals (6 and 2
+under the strict rule); MIDAS-MK1 places now (153/159, 6 open; a refusal
+in v17). Under the strict rule four plain passes fail: Qfwfq
+(hole_clearance) and krishveercard (clearance), each a type the
+designer's stripped board has at KiCad's cap of 199, which the strict rule
+cannot place and counts whole, and coco2 and k30-SBC, one starved thermal
+each.
+
+Boards that fail the strict rule on findings of one type alone (nothing
+unconnected): starved_thermal on four (mackerel-30-proto 6, rosco 2,
+coco2 1, k30-SBC 1), and the two capped types above (Qfwfq, krishveercard,
+which the route on the designer's placement fails the same way).
+
+Cut rows, at 2 x 2 as at 10 x 2 and with the same rows both times: katia
+(157/162, 75 open; cut at 3040 s of wall with 1155 of its 1500 s of work
+done, work over wall 0.38) and Batch_1 (115/204, 415 open, a panel of
+business cards; cut at 3296 s with 1280 s of work done, 0.39).
+
+### Placement or routing: the designer tier (x1315)
+
+`build/designer-x1315b.log` (`--tier designer` through the lock, 8 x 2,
+30179 s wall: `build/designer-x1315.log`; its two timeouts again at 2 x 2
+with `--splice-from`): every board routed by the same binary on the
+designer's own placement, 1500 s of work, the layout's pass rules, the
+same pinned rates (106 rows; the three without a result carry none).
+**50 of 109 pass the strict rule** (58 the per-type rule); vias x0.47 of
+the designer's, length x0.99, the ground pours cut 38 mm less than the
+designer's (medians). katia and Batch_1 hit the harness's 3300 s in both
+runs: katia's ladder runs one router at a time for memory (7.3 GB each)
+and had done its probes, four attempts and a seed round (best 279 open
+terminals by the router's count); Batch_1 was in its finer pitch's seed
+round at 1241 open terminals. The 0xCB pcb-panel has no result on either
+side (kicad-cli times out after 900 s; on the designer's placement the
+router itself completes 340/340). The count is not the x738 cold route's 62 clean
+(2026-10-15): that round removed every copper zone and judged against the
+stripped source's own DRC; the designer tier keeps the large pours, as
+the layout does, and applies the layout's two pass rules.
+
+`compare.py --gap build/github-layout-v18.log build/designer-x1315b.log`:
+over the 101 boards with both results, layout open 2222, designer-route
+open 1153, placement gap +1069, routing gap 1153 (48 % and 52 %). But
+723 of those 1153 are on boards that are not targets (docs/handover.md,
+"Not targets": the molecule 5x4_wave panel 499, the OpenRX panel 213,
+SUMEC 11, krishveercard 0; the other molecule panels and the OpenESC 4in1
+panel have no layout result). Over the 97 target boards with both
+results: **layout open 1483, designer-route open 430: placement gap
++1053 (71 %), routing gap 430 (29 %)**; the placement gap is +1064 on the boards where ours is
+worse and -11 where it is better. 22 % of the layout's open items are on
+supply nets, 34 % of the designer route's.
+
+By the strict pass on both placements (100 target boards):
+
+- **Placement** (the designer's placement passes, ours does not), 13:
+  video (ours 199 open), OpenESC-30x30 4in1 (111), 0xCB panel (65,
+  starved_thermal 1), OpenAirScope (5), laptop power (4), ULK_sl_PG1316s
+  (3), ULK (2), USB_Keypad (2), Explorer (2), zpn_devboard (1),
+  slab-pcb-left (1), mackerel-30-proto (0 open, starved_thermal 6), rosco
+  (0 open, starved_thermal 2).
+- **Neither passes**, 44. Both complete, both failing on findings: 4
+  (Qfwfq, coco2, eternal-keypad, k30-SBC). The designer route leaves as
+  many open or more, so routing alone: 14, 162 open ours against 172
+  (RP2040_base 47 / 47, ATAT1800 29 / 30, neotron-pico 24 / 24, jiran
+  20 / 20, Sisu 15 / 18, ghoul 6 / 6, MIDAS-MK1.1 5 / 6, reCamera 4 / 4,
+  laptop keyboard 4 / 4, interchange-pcb-right 4 / 7, capybully 1 / 3,
+  BAGEL-MK1.1-Avocado, d20 and silkscreen_pcb 1 / 1). Ours leaves more,
+  so both: 24 (ours / designer route): Glasgow 160 / 69, MegaDrive
+  150 / 71, SNSP-CPU-01 136 / 23, DSP-ADAU1452 64 / 3, protoesp 58 / 18,
+  4in1-mini 46 / 4, SmartSpin2k 39 / 0 (the designer route fails only on
+  the capped invalid_outline), split72_left 36 / 4, Quanta75 Bare
+  34 / 13, split72_right 30 / 5, split42_right 26 / 5, koeg 25 / 1,
+  jetson 24 / 2, Hub 22 / 16, WLED_Matrix 12 / 1, the A13 module 12 / 7,
+  link 11 / 1, split42_left 11 / 1, woagboard 8 / 1, eurorack-pmod
+  6 / 1, MIDAS-MK1 6 / 5, laptop motherboard 4 / 2, vaio_re 4 / 3,
+  osprey 2 / 1. No designer result: katia (ours 75) and Batch_1 (415).
+- **Ours passes, the designer's placement does not**, 5: OpenFC (the
+  designer route 1 open), framework_mobo_lefthalf, hackrf-one and
+  keyboar_ (one starved thermal each), Quanta75 RP2040Stamp (clearance 2,
+  shorting_items 1, solder_mask_bridge 1).
+- Both pass: 37. No layout result: the 0xCB pcb-panel.
+
+Two router gaps that are modelling, not search: **net ties** are not
+modelled (no code mentions them): every one of neotron-pico's 24 open
+connections on both placements is a pad of one of its twelve net-tie
+footprints (NT901 to NT912, an EEPROM address line to +3V3 or GND), and
+so are all six of ghoul's and 10 to 13 of protoesp's (40 of the designer
+route's 430 on target boards). And **pads of one footprint with the same
+number** (jiran-ble-lite's USB shield pads S1 and the stacked GND pads,
+interchange-pcb-right, capybully: 15 more), which KiCad counts as
+separate items to join.
+
+**What it says.** Placement is the larger lever: on the target boards our
+placement adds 1053 open connections to the 430 our router leaves on the
+designer's placement, 13 boards pass on the designer's placement and not
+on ours against 5 the other way, and 24 of the 44 boards that fail on
+both leave more open on ours. The placement gap is concentrated: video
+199, SNSP-CPU-01 113, the OpenESC 4in1 111, Glasgow 91, MegaDrive 79, the
+0xCB panel 65, DSP-ADAU1452 61, 4in1-mini 42, protoesp 40, SmartSpin2k 39
+and split72_left 32 hold 872 of the 1064 (82 %), dense or bus-heavy
+boards that the designer's placement makes routable for this router. The
+routing gap is spread over 38 target boards, more than half of it on
+five (MegaDrive 71, Glasgow 69, RP2040_base 47, ATAT1800 30, neotron-pico 24), and 55 of
+the 430 are the two modelling gaps above. Earlier placement knobs that
+counted pins (routing room, routing demand) did not move the dense
+boards (docs/handover.md, open problem 4), RUDY predicts a final result
+at a Spearman of 0.30 and the 75 s probe at 0.55 (2026-10-10): what the
+placement lacks is a routability measure that is both fast and good. A
+coarse global route (tiles with per-layer capacity, negotiated, seconds a
+board) is that measure, and is the corridor plan the detailed router
+could follow later. Cheaper first: net ties (neotron-pico's and ghoul's
+designer routes would be complete) and the starved thermals that alone
+fail four boards (open problem 5).
+
 ## Expansion intake: 5 834 boards routed on the designer's placement (2026-10-18)
 
 `benchmarks/expansion/` (README there) harvested 5 834 native KiCad boards

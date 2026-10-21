@@ -11,6 +11,53 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-22 (layout sweep v18, designer tier)
+
+The deciding measurement for where the next work goes: the full layout
+sweep and the designer tier on one binary, x1315 (main 35456a1; 6f10989
+differs only in doc comments), tasks v7, the strict pass rule, the work
+bound and the pinned work rates (3.15e6 and 150e6 on every row of both
+runs). No code changed.
+
+**Layout sweep v18** (`build/github-layout-v18.log`, three parts spliced:
+41 boards at 6 x 2 with 20 GB kept free, stopped because memory admission
+held it to two or three boards; the other 68 at 10 x 2 with 6 GB; the
+four rows cut there again at 2 x 2): **42 of 109 pass the strict rule**,
+46 the per-type rule (v17: 48); unconnected 2712 (2708), new errors 50
+(38), vias 31044 (30601); medians against the designer's board vias
+x0.71 (x0.70), length x1.03 (x1.03), open 0.009 (0.011) of the
+connections, ground pour cut +0 mm (+0). Better 5, same 87, worse 7;
+mackerel-30-proto and rosco lose their pass to starved thermals, MIDAS-MK1
+places again. Cut at 10 jobs and again at 2: katia (1155 of 1500 s of
+work at 3040 s of wall) and Batch_1 (1280 s at 3296 s), with the same
+rows both times; 0xCB panel and Quanta75 Bare, cut at 10 jobs, finished
+at 2 with the same rows.
+
+**Designer tier** (`build/designer-x1315b.log`, through the lock at
+8 x 2, its two timeouts rerun at 2 x 2): 50 strict passes, 58 per type;
+katia and Batch_1 time out at the harness's 3300 s on both runs (katia's
+ladder runs one 7.3 GB router at a time).
+
+**The gap** (`compare.py --gap`, the 97 target boards with both
+results): layout open 1483, designer route 430, so placement 71 % and
+routing 29 %. By the strict pass: 13 boards pass on the designer's
+placement and not on ours (video 199 open, OpenESC 4in1 111, 0xCB panel
+65, and ten within six), 5 the other way (OpenFC, framework_mobo_lefthalf,
+hackrf-one, keyboar_, Quanta75 RP2040Stamp), 44 on neither: 14 where the
+designer route leaves as many open (routing), 24 where ours leaves more
+(both), 4 complete on both but failing on findings, 2 without a designer
+result. Eleven dense boards hold 82 % of the placement gap. Two router
+modelling gaps: net-tie footprints are not modelled (all 24 of
+neotron-pico's open connections and all 6 of ghoul's, on both
+placements), and pads of one footprint with one number (jiran's USB
+shield, 15 items in all). Four boards fail the strict rule on starved
+thermals alone (mackerel-30-proto, rosco, coco2, k30-SBC).
+
+Recommendation in [benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-22):
+routing-aware placement, with a coarse global route as its fast
+routability measure (RUDY and the probe were too weak or too slow), after
+the cheap fixes (net ties, starved thermals). README.md's headline, the
+hand-over and the tasks README carry the new numbers.
 ## Committed on 2026-10-22 (all pour work charged)
 
 Route mode's ladder counted an attempt's search expansions and, since

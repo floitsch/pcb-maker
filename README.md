@@ -21,15 +21,21 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **48 of 109** to a clean KiCad verdict
-  (0 unconnected, no copper error beyond the designer's own board) within
-  30 minutes each, every board placed from stacked parts (sweep v17,
-  2026-10-16); over all 109
-  boards the open connections fell from 3527 to 2708 and the new DRC
-  errors from 82 to 38 against the previous sweep. Most of the
-  rest are complete but for a few connections or a few starved thermal
-  reliefs; a handful are panels or boards whose rules no track can satisfy
-  ([results](docs/benchmarks.md#layout-sweep-v17-2026-10-16)).
+  pcb-maker places and routes **42 of 109** to a clean KiCad verdict
+  under the strict rule (0 unconnected, no copper error beyond what the
+  designer's board has at the same place; 46 under the per-type rule)
+  within 1500 s of work each, every board placed from stacked parts
+  (sweep v18, 2026-10-22). Per board against the designer's own board
+  (medians): 0.71 times the vias, 1.03 times the track length, 0.9 % of
+  the connections left open, the ground pours cut no more than the
+  designer's. Of the 67 that fail, 18 are within five connections and
+  five errors of clean, 24 leave more than 20 connections open, and six
+  have no result (panels, and one whose zone refill KiCad does not
+  finish). Routed by the same binary on the designer's own placement, 50
+  pass the strict rule; on the 97 target boards with both results our
+  placement accounts for 71 % of the open connections and our router for
+  29 %
+  ([results](docs/benchmarks.md#layout-sweep-v18-2026-10-22)).
 - **At scale, on the designer's placement:** 5 834 boards harvested from
   1 146 public KiCad repositories, each routed from stripped copper with a
   30 s budget: 2 309 route clean under KiCad's own DRC within 30 s, 3 896
@@ -51,10 +57,12 @@ Not finished, but already useful.
   - Pours: our fill model is more fragmented than KiCad's, which shows as
     starved thermal reliefs on dense boards and as pads routed by tracks
     that KiCad would have joined through the fill.
-  - Placement: crowded boards (ESC-class four-in-one controllers, a dense
-    SNES motherboard) stay 30-80 connections short where the designer's
-    own placement routes nearly clean; the gap is the placement, not the
-    number of seeds tried or the legaliser.
+  - Placement: dense boards (a video board, ESC-class four-in-one
+    controllers, a SNES motherboard) stay 110-200 connections short where
+    our router routes the designer's own placement clean or nearly so
+    (video 199 open against 0, the OpenESC 4in1 111 against 0,
+    SNSP-CPU-01 136 against 23); the gap is the placement, not the number
+    of seeds tried or the legaliser.
   - Features: no differential pairs or length matching; the placer does
     not choose sides by itself (constraints put parts on the back); pin
     swapping is opt-in.
@@ -214,7 +222,8 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
-| Layout from stacked parts and constraints, 1800 s (v17, 2026-10-16) | 109 | 48 clean, 2708 connections open in all | - |
+| Layout from stacked parts and constraints, 1500 s of work (v18, 2026-10-22) | 109 | 42 clean (strict rule; 46 per type), 2712 connections open in all | - |
+| Routing the designer's placement, 1500 s of work (designer tier x1315, 2026-10-22) | 109 | 50 clean (strict rule; 58 per type), 430 open on the 97 target boards with a result | - |
 | Routing the designer's placement cold, 1500 s (x738, 2026-10-15) | 109 | 62 clean; where both finish (67 boards) 51 clean, 184 open | 67 finished, 36 timed out, 6 failed; where both finish 8 clean, 873 open |
 
 Smaller tiers of the same boards judge a change in minutes

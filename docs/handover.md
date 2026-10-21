@@ -61,6 +61,17 @@ pass**, 2708 unconnected, 38 new DRC errors, 2 rows cut.
 `build/github-layout-v17.log`; table in
 [benchmarks.md](benchmarks.md#layout-sweep-v17-2026-10-16).
 
+**Layout sweep v18** (x1315 = main 35456a1, tasks v7, run in three parts
+spliced on one binary): **42 of 109 pass the strict rule** (46 the
+per-type rule), 2712 unconnected, 2 rows cut (katia, Batch_1, cut at 2
+jobs too); medians against the designer's board: vias x0.71, length
+x1.03, open 0.009 of the connections. The designer tier on the same
+binary (`build/designer-x1315b.log`): 50 strict passes; on the 97 target
+boards with both results, placement 71 % and routing 29 % of the open
+connections (`compare.py --gap`). `build/github-layout-v18.log`; table,
+gap split and the boards in
+[benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-22).
+
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30
 pass**, unconnected 29, new errors 4, vias 2693, length 99810 mm, work

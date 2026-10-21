@@ -165,7 +165,9 @@ measurement). The discipline:
   `compare.py --score <binary>` scores the result boards of older runs.
   Over v16 against v17 (103 boards with the same input): vias x0.70 ->
   x0.72 of the designer's, length x1.03 -> x1.03, open 0.009 -> 0.009 of
-  the connections (mean 0.164 -> 0.113).
+  the connections (mean 0.164 -> 0.113). Over v17 against v18 (all 109
+  boards, the same input): vias x0.70 -> x0.71, length x1.03 -> x1.03,
+  open 0.011 -> 0.009 (mean 0.287 -> 0.284), ground pour cut +0 -> +0 mm.
 - **The strict rule** (`pass_strict`, `new_findings_strict`; run.py's
   `strict_findings`, docs/agents.md "The pass rule"): a KiCad finding of
   ours counts unless the designer's board with its tracks, vias and
@@ -939,9 +941,9 @@ say where the next work pays. A board the layout has no result for (no
 legal placement, a timeout) is listed apart.
 
 ```sh
-benchmarks/agent-tasks/run.py build/designer-x1225 --tier designer \
-  --binary build/bin/pcb-maker-x1225 > build/designer-x1225.log   # about 5 hours at 8 x 2
-benchmarks/agent-tasks/compare.py --gap build/github-layout-v17.log build/designer-x1225.log
+benchmarks/agent-tasks/run.py build/designer-x1315 --tier designer --quality \
+  --binary build/bin/pcb-maker-x1315 > build/designer-x1315.log   # 30179 s at 8 x 2 beside a sweep
+benchmarks/agent-tasks/compare.py --gap build/github-layout-v18.log build/designer-x1315b.log
 ```
 
 Each board: the designer's project copied as the layout tier copies it,
@@ -958,6 +960,13 @@ findings less the designer's). Rows are route rows with `placement:
 the rows are uncut (CUT rows are marked).
 `designer.json` gives the memory gate and the runner each board's peak
 and seconds from its v17 layout row (x1170).
+
+The first full run with a layout sweep of the same binary (x1315,
+2026-10-22; the two boards it timed out on rerun at 2 x 2 into
+`build/designer-x1315b`, timing out again): 50 of 109 pass the strict
+rule (58 the per-type rule); over the 97 target boards with both results
+the layout leaves 1483 open, the designer route 430: placement 71 %,
+routing 29 % ([docs/benchmarks.md](../../docs/benchmarks.md#layout-sweep-v18-2026-10-22)).
 
 ## Route mode (`--route-from`)
 
