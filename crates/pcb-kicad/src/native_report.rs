@@ -485,8 +485,9 @@ mod tests {
             "type": "lib_footprint_mismatch", "severity": "warning",
             "description": "Footprint differs from library", "items": []
         }]);
-        let assess =
-            |drc: &Value| super::super::assess_verification_reports("board", &erc, drc).unwrap();
+        let assess = |drc: &Value| {
+            crate::verification::assess_verification_reports("board", &erc, drc).unwrap()
+        };
         let result = assess(&drc);
         assert!(result.complete);
         assert_eq!(result.library_metadata_warnings, 1);
@@ -568,8 +569,9 @@ mod tests {
         let verdict = directory.0.join("verification.json");
         let erc = report(ReportKind::Erc);
         let mut drc = report(ReportKind::Drc);
-        let assess =
-            |drc: &Value| super::super::write_verification_report(&directory.0, "board", &erc, drc);
+        let assess = |drc: &Value| {
+            crate::verification::write_verification_report(&directory.0, "board", &erc, drc)
+        };
         assert!(assess(&drc).unwrap().complete);
         drc["violations"] = json!([finding()]);
         let result = assess(&drc).unwrap();
