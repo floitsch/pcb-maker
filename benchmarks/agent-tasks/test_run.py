@@ -1,7 +1,12 @@
 # Copyright (C) 2026 Toit contributors.
 """Tests of run.py's defaults: python3 -m unittest benchmarks/agent-tasks/test_run.py"""
 
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -61,6 +66,65 @@ class StrictRule(unittest.TestCase):
     def test_without_a_baseline_every_finding_counts(self):
         split = run.strict_findings([finding("clearance", ("a", (1.0, 1.0)))], None)
         self.assertEqual(split["new"], {"clearance": 1})
+
+
+@unittest.skipUnless(Path("/proc/locks").exists() and shutil.which("flock"), "needs /proc/locks and flock(1)")
+class TierLock(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp())
+        self.lock = self.directory / "tier.lock"
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def hold(self):
+        """A process that holds the lock until killed."""
+        # -o: the lock stays with flock(1), not with its sleep.
+        holder = subprocess.Popen(["flock", "-o", str(self.lock), "sleep", "60"], start_new_session=True)
+        for _ in range(100):
+            if run.lock_holders(self.lock):
+                return holder
+            time.sleep(0.05)
+        holder.kill()
+        self.fail("the holder never took the lock")
+
+    def test_takes_a_free_lock_and_says_who_holds_it(self):
+        messages = []
+        descriptor = run.take_lock(self.lock, log=messages.append)
+        try:
+            self.assertIsNotNone(descriptor)
+            self.assertIn(os.getpid(), run.lock_holders(self.lock))
+            self.assertIn(f"pid {os.getpid()}", self.lock.read_text())
+        finally:
+            os.close(descriptor)
+
+    def test_waits_for_a_holder_and_names_it(self):
+        holder = self.hold()
+        messages = []
+        try:
+            killer = subprocess.Popen(["sh", "-c", f"sleep 0.5; kill -- -{holder.pid}"])
+            descriptor = run.take_lock(self.lock, poll_seconds=0.1, log=messages.append)
+            killer.wait()
+            os.close(descriptor)
+        finally:
+            try:
+                os.killpg(holder.pid, 9)
+            except ProcessLookupError:
+                pass
+            holder.wait()
+        self.assertIn("waiting for pid", messages[0])
+        self.assertIn("sleep 60", messages[0])
+        self.assertIn("taken", messages[-1])
+
+    def test_a_caller_holding_it_lets_the_run_through(self):
+        # The older habit: flock build/quick-tier.lock run.py ...
+        here = Path(__file__).resolve().parent
+        code = (f"import sys; sys.path.insert(0, {str(here)!r}); import run; "
+                f"print(run.take_lock({str(self.lock)!r}, poll_seconds=0.1))")
+        result = subprocess.run(["flock", str(self.lock), sys.executable, "-c", code],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.stdout.strip(), "None", result.stderr)
+        self.assertIn("held by this run's caller", result.stderr)
 
 
 if __name__ == "__main__":

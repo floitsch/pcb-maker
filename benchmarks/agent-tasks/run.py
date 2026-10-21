@@ -43,11 +43,14 @@ designer's own placement: run.py fetches its files at the pinned commit
 when they are not there (verified against the task's SHA-256; never
 without a licence), strips the tracks as the intake did and routes with
 `route-kicad-board` and the task's `budget_seconds` of work (README.md,
-"The expansion tier"). Every row has `mode` (layout, route or schematic); the run ends with
+"The expansion tier"). A tier run, or a run of a whole task list, takes
+build/quick-tier.lock first and waits for it (one tier at a time on the
+machine; `--no-lock` skips it). Every row has `mode` (layout, route or schematic); the run ends with
 the pass line and a line of continuous objectives (README.md, "How to
 measure"), also written to summary.json."""
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -445,6 +448,116 @@ def own_peak_mb(pid):
     except OSError:
         pass
     return 0.0
+
+
+# One tier at a time on the machine (README.md, "How to measure"): run.py
+# takes this lock itself (flock) for a tier run or a whole task list, so the
+# discipline no longer depends on each agent writing `flock ... run.py`.
+LOCK_FILE = ROOT / "build/quick-tier.lock"
+
+
+def lock_holders(path):
+    """The pids that hold a flock on `path` (from /proc/locks; blocked
+    waiters are not listed as holders). Empty when unknown."""
+    try:
+        status = os.stat(path)
+        with open("/proc/locks") as locks:
+            lines = locks.readlines()
+    except OSError:
+        return []
+    device = f"{os.major(status.st_dev):02x}:{os.minor(status.st_dev):02x}:{status.st_ino}"
+    holders = []
+    for line in lines:
+        fields = line.split()
+        if "->" in fields or len(fields) < 6 or fields[1] != "FLOCK":
+            continue
+        if fields[5] == device:
+            holders.append(int(fields[4]))
+    return holders
+
+
+def ancestors(pid=None):
+    """The pids above `pid` (default: this process) up to init."""
+    found, pid = [], pid or os.getpid()
+    while pid > 1:
+        try:
+            with open(f"/proc/{pid}/stat") as stat:
+                # The command may hold spaces and parentheses: the fields
+                # after the last ")" are fixed.
+                pid = int(stat.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            break
+        found.append(pid)
+    return found
+
+
+def describe_process(pid):
+    """`pid` and its command line, for the waiting message."""
+    try:
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+    except OSError:
+        command = "?"
+    return f"pid {pid}: {command[:300]}"
+
+
+def lock_holder_text(path, holders):
+    """Who holds the lock: the holders' command lines, else what the
+    holder wrote into the lock file (run.py writes its pid and command)."""
+    if holders:
+        return "; ".join(describe_process(pid) for pid in holders)
+    try:
+        written = Path(path).read_text().strip()
+    except OSError:
+        written = ""
+    return written[:300] or "unknown (no holder in /proc/locks)"
+
+
+def take_lock(path=LOCK_FILE, poll_seconds=30, log=None):
+    """Takes the machine's tier lock (an exclusive flock on `path`), waiting
+    as long as it takes and saying who holds it (again whenever the holder
+    changes). Returns the open file descriptor (kept open for the run's
+    life; never inherited by the boards' processes), or None when a process
+    above this one holds it already (the older `flock
+    build/quick-tier.lock run.py ...`). The wait is a blocking flock, as
+    flock(1)'s, so that a run waits its turn beside those: a waiter that
+    polled would lose every release to them."""
+    log = log or (lambda text: print(text, file=sys.stderr, flush=True))
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    started = time.monotonic()
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        holders = lock_holders(path)
+        if set(holders) & set(ancestors()):
+            os.close(descriptor)
+            log(f"lock {path}: held by this run's caller (pid {', '.join(map(str, holders))})")
+            return None
+        said = lock_holder_text(path, holders)
+        log(f"lock {path}: waiting for {said}")
+        done = threading.Event()
+
+        def watch():
+            nonlocal said
+            while not done.wait(poll_seconds):
+                text = lock_holder_text(path, lock_holders(path))
+                if text != said:
+                    log(f"lock {path}: waiting for {text} (waited {time.monotonic() - started:.0f} s)")
+                    said = text
+
+        watcher = threading.Thread(target=watch, daemon=True)
+        watcher.start()
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+        finally:
+            done.set()
+            watcher.join()
+    waited = time.monotonic() - started
+    os.ftruncate(descriptor, 0)
+    os.write(descriptor, f"pid {os.getpid()}: {' '.join(sys.argv)[:1000]}\n".encode())
+    log(f"lock {path}: taken" + (f" after {waited:.0f} s" if waited >= 1 else ""))
+    return descriptor
 
 
 def run_measured(command, timeout=None, env=None, on_start=None):
@@ -1341,6 +1454,9 @@ def main():
                         help="an earlier log (or output directory): the rows of the boards not run "
                              "(outside --only) are copied from it, marked spliced, into this run's log "
                              "and results.json")
+    parser.add_argument("--no-lock", action="store_true",
+                        help="do not take build/quick-tier.lock (by default a tier run or a run of a whole "
+                             "task list takes it and waits for it: one tier at a time on the machine)")
     arguments = parser.parse_args()
     arguments.timeout_given = arguments.timeout is not None
     if arguments.timeout is None:
@@ -1365,6 +1481,10 @@ def main():
         parser.error(f"--route-from: {arguments.route_from} is not a directory")
     if arguments.splice_from is not None and not arguments.splice_from.exists():
         parser.error(f"--splice-from: {arguments.splice_from} not found")
+    # One tier at a time: a tier run, or a whole task list, waits for the
+    # machine's lock (a few boards given with --only and no tier do not).
+    if not arguments.no_lock and (tier is not None or not arguments.only):
+        arguments.lock = take_lock()
     # Physical cores, not logical CPUs: the work budgets are calibrated on
     # one search thread a core, and v16's five jobs of four threads on the
     # 16 cores of a 5950X (beside other agents) ran the search 1.3-1.6 times

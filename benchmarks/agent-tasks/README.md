@@ -173,11 +173,17 @@ measurement). The discipline:
   v6 rerun before it is a base. Not checked:
   the prepared board itself (run.py's unplace rules can move a part
   without changing the constraints, as WLED_Matrix's LDO1 in x782).
-- **One tier at a time on the machine**: take the lock,
-  `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...`; start
-  only with the load under 40 (`uptime`) and more than 20 GB available
-  (`free -g`). Results above a load of about 45 are unsound (the layout's
-  wall-clock guard fires and the rows are CUT).
+- **One tier at a time on the machine**: since 2026-10-21 run.py takes
+  `build/quick-tier.lock` itself (an exclusive flock) for every tier run
+  and every run of a whole task list (not for a few boards given with
+  `--only` and no tier), waits for it as long as it takes and prints who
+  holds it (the holder's pid and command line, from /proc/locks); the
+  older `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...`
+  still works (a caller that holds the lock lets the run through).
+  `--no-lock` skips it (a run that must not wait, beside a tier you know
+  of). Start only with the load under 40 (`uptime`) and more than 20 GB
+  available (`free -g`). Results above a load of about 45 are unsound (the
+  layout's wall-clock guard fires and the rows are CUT).
 - **Parallelism: tiers default to 2 search threads a board and physical
   cores / 2 boards at once** (8 x 2 on the 5950X; `TIER_THREADS` in
   run.py, since 2026-10-16; `--jobs` or `--threads` given override it,

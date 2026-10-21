@@ -95,22 +95,23 @@ since gained SNSP-CPU-01 (178 to 5) and MegaDrive (137 to 70). Logs
 **PCBench / PCBWorld D3** (2026-09-29): 110 of the 114 D3 agent tasks
 laid out clean ([the tasks README](../benchmarks/agent-tasks/README.md#2026-09-29-the-114-d3-test-boards)).
 
-How to run them (one tier at a time on the machine, under the lock, load
+How to run them (one tier at a time on the machine, under the lock, which
+run.py takes itself since 2026-10-21 and waits for, naming its holder; load
 under 40 and 20 GB free; the tiers default to 2 search threads a board and
 physical cores / 2 boards, 8 x 2 on the 5950X; quick and short tiers on
 tasks v6, the schematic tier and v17 on tasks v7):
 
 ```sh
 B=build/bin/pcb-maker-x1180
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short-x1180 --tier short --binary $B > build/short-x1180.log
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/quick30-x1180 --tier quick --binary $B > build/quick30-x1180.log
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/sch-x1180 --tier schematic --binary $B > build/sch-x1180.log
+benchmarks/agent-tasks/run.py build/short-x1180 --tier short --binary $B > build/short-x1180.log
+benchmarks/agent-tasks/run.py build/quick30-x1180 --tier quick --binary $B > build/quick30-x1180.log
+benchmarks/agent-tasks/run.py build/sch-x1180 --tier schematic --binary $B > build/sch-x1180.log
 benchmarks/agent-tasks/compare.py build/short-x1170.log build/short-x1180.log
 ```
 
 The full sweep: `benchmarks/agent-tasks/run.py build/github-layout-v17
 --tasks build/github-tasks-v7/tasks.json --binary $B --jobs 8 --threads 2`
-under the same lock. Router questions go to route mode on fixed
+under the same lock (run.py takes it for a whole task list too). Router questions go to route mode on fixed
 placements (`--route-from <earlier output dir>`), CPU claims to pinned
 simultaneous pairs; the discipline is in the tasks README, "How to
 measure".
@@ -390,7 +391,7 @@ experiment hooks in the code, undocumented on purpose: `PCB_TOPO_*`,
   both lists and says TASK LISTS DIFFER; rows on other prepared constraints
   are marked INPUT.
 - Benchmarks use a copied binary (`build/bin`); one tier at a time under
-  `flock build/quick-tier.lock`, load under 40, 20 GB free; above a load
+  build/quick-tier.lock (run.py takes it; `--no-lock` to skip), load under 40, 20 GB free; above a load
   of about 45 the wall guard cuts rows (CUT is no evidence). Pin CPU
   experiments with `taskset` on symmetric halves (logical CPUs n and n+16
   share a core).
