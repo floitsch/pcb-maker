@@ -11,6 +11,119 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (runtime calibration)
+
+The review's finding: work budgets were seconds of one machine.
+`EXPANSIONS_PER_SECOND` (3.15e6) and the placer's `WORK_PER_SECOND`
+(150e6) were constants, the layout's wall guard the const 1.1, so any
+machine slower than a 5950X core by more than a tenth (the macOS
+snapshot's, CI runners, laptops, this one above load 45) had every
+non-trivial layout cut (exit 3). Snapshots x1300 (b306347 plus this
+change: the judges) and x1301 (rebased on the research removal). Logs and scripts in `build/calib2` (main tree).
+
+**The rates are measured at the start** (`work_rate.rs`; docs/router.md,
+"The machine's rates"). `route-kicad-board`, `layout-kicad-board` and
+`place-kicad-board` first run a fixed search on a canned lattice (40 x 30
+mm, two layers at 0.1 mm, 24 crossing nets, keepouts: 240 k nodes, about
+50 MB of maps, about 600 k expansions a round) on one thread, five
+rounds, and a fixed placement (40 parts, 20 global iterations, 15 M
+units) as three copies at once on the process's threads (the placement
+race's first batch), three rounds: 1 to 2 s in all, once per process,
+before the run's clock. The fastest round's rate over the same workload's
+on the reference (6.9 M expansions and 155 M units a second, measured
+here at load 12 with `calibrate-work-rate`) scales the reference's
+rates, now `REFERENCE_EXPANSIONS_PER_SECOND` and
+`REFERENCE_WORK_PER_SECOND`; `expansions_per_second()` and
+`work_per_second()` (set once, an atomic each) replace the constants at
+every use. The pour analyses' nanoseconds and KiCad's check model scale
+with the search's rate (`reference_time_scale`, exactly 1 at the
+reference's rate). The placer's rate takes three copies at once because
+the race's clock counts its seeds as the reference's eight threads run
+them: on one CPU 0xcb-static's three seeds took 44 s of wall for 16 s of
+counted work. The work counters are unchanged: a run is byte-identical
+for given rates. Pinning: `PCB_WORK_RATE=<expansions/s>[,<placer
+units/s>]` (a search rate alone scales the placer's alike; a bad value is
+exit 2), else the router settings `work_rate`, `placer_work_rate`. The
+first line of a run is `work rate: ...`; the verdict has `work_rate`,
+`placer_work_rate`, `work_rate_source` (`measured`, `PCB_WORK_RATE`,
+`config`, `reference`), `work_rate_measured`,
+`placer_work_rate_measured` and `work_wall_ratio` (work over wall; with
+several search threads the summed expansions can exceed the wall clock);
+`PCB_WORK_RATE` joins the echoed environment; `layout: done` prints the
+ratio and the rates. `pcb-maker calibrate-work-rate [rounds]` prints the
+measurement alone.
+
+**The wall guard** is the layout config's `wall_guard` (default 2, was the
+const 1.1; below 1 is an input error): with measured rates it is a load
+margin, not a budget. run.py's timeout without `--timeout`: the budget
+times the guard plus 300 s, at least 1800 s (the short tier 800 to 1800 s,
+the full 1800 to 3300 s). run.py pins the reference's rates for every
+board (`--work-rate`, default `3.15e6,150e6`; `measured` lets each binary
+measure), copies the verdict's rate fields into the rows, and
+summary.json has `work_rate` and the medians of the measured rates and
+of work over wall. The fingerprint and walkthrough tests pin the rates.
+
+**Spread of the measurement.** The canned lattice is beyond the caches, so
+the rate follows other jobs' memory traffic and bursts on the core or its
+sibling: unpinned at load 12 to 13, 0.976, 0.988 and 0.998 of the
+reference's search rate and 1.01 to 1.06 of the placer's; pinned to one
+core at load 16 to 18, 3.3 to 5.7 M canned expansions a second on eight
+cores (0.48 to 0.83), and on one core one process after another 5.4, 5.0,
+5.8 and 2.96 M; during the short tier's 6 x 4 (load 7 to 14 plus the
+tier) the binaries measured 0.78 to 0.96 of the reference (median 2.77 M,
+placer 129 M). The fastest of the rounds counts, not the median, for
+that reason; a run that must be repeated pins its rates.
+
+**Judge 1, the review's experiment** (0xcb-static, total_seconds 40,
+move 16, polish 2, `taskset -c 0`, the quick tier's prepared board).
+x1292: exit 3, cut (deadline, placement, layout), 20 s of work at 50 s
+of wall: the placement took 44 s of wall for 16 s of work, the race, the
+moves and the neck repair were skipped, KiCad 32 unconnected. x1300, two
+runs at load 12 to 13: not cut, exit 1 (KiCad 0 unconnected, the
+designer's solder mask bridges), measured 2.88 M (0.91 of the
+reference; placer 0.35 on one CPU) work 32 s at 32 s of wall (1.00), and
+measured 1.60 M (0.51: a burst during the measurement) work 47 s at 31 s
+(1.52; the check charge scales too, 7 s instead of 3.6). Two runs of the
+development binary at load 20: work 48 s at 40 and 34 s of wall, not cut.
+
+**Judge 2, the rate pinned at the reference** (short tier, `--jobs 6
+--threads 4` under the lock, x1300 against x1244, the coordinator's
+before side `build/short-x1244q.log`): every row identical apart from
+timing and the new fields (same 12, unconnected 19, passes 7, strict 7,
+vias 1125, 21142 mm, work 2517 s), every result board byte-identical
+(md5). Against `build/short-x1170.log`: same 12, unconnected 19, passes
+7; vias 1134 to 1125 and 21228 to 21142 mm from the repairs since. Wall
+356 s, no row cut.
+
+**Judge 3, three short-tier boards at the measured rate** (`--work-rate
+measured --jobs 3 --threads 4` under the lock, x1300, load 8 to 9): the
+binaries measured 3.12, 3.06 and 2.94 M expansions a second (0.989,
+0.970, 0.934 of the reference) and 151, 147, 138 M placer units (1.006,
+0.981, 0.923). urchin, spell_tome and USB_Cable_Tester routed as with the
+pinned rate (68/68, 18/18, 54/54; the same vias and length, all pass and
+pass strict), work 40.9 / 31.0 / 132.8 s against 40.5 / 30.1 / 124.0 s
+pinned, wall 31 / 41 / 87 s. At load 20 the measurement is far lower:
+unpinned 2.84 to 2.86 M canned (0.41 of the reference; 4.55 M, 0.66, a
+moment later), pinned to CPU 0 0.47 to 0.52, other cores 0.48 to 0.83.
+The canned search's best rounds below load 10 (the median binary,
+`build/calib2/ref/idle.out`): 7.1 to 7.2 M pinned (1.03 to 1.04 of the
+reference constant), unpinned 5.6 to 7.2 M.
+
+Unit tests: the rate's parsing and its precedence (variable, config,
+measurement, reference), a search rate alone scaling the placer's, the
+canned workloads' work fixed, the log line; the guard's arithmetic and
+its config default; CLI tests of a measured, a pinned and a configured
+rate and a bad one (exit 2); run.py's pinning, timeout and row fields.
+`bash scripts/check.sh` passes.
+
+Outside this package's files (coordination): the rename of the constant
+at its uses in pcb-router (driver.rs, fixed.rs, negotiate.rs, profile.rs,
+vias.rs, tests.rs: `expansions_per_second()`, and the pour work's scale in
+driver.rs's `pour_work_seconds`), two lines in pcb-kicad's lib.rs (the
+module and its exports), two router settings in board_router/config.rs,
+route.rs's uses, and run.py (the pinning, the timeout, `verdict_extras`
+and the summary).
+
 ## Committed on 2026-10-21 (quality: pcb-kicad research removed, lib.rs split)
 
 The last package of the quality pass: pcb-kicad's research code removed
