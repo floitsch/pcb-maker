@@ -24,16 +24,23 @@ pub struct KiCadBoardRouterConfig {
     /// Geometry for connections without an explicit entry.
     #[serde(default)]
     pub default_rules: Option<KiCadConnectionRoutingRules>,
+    /// Copper-to-edge clearance from the board outline.
     #[serde(default)]
     pub edge_clearance_mm: f64,
+    /// Clearance between copper and a hole.
     #[serde(default = "default_hole_clearance")]
     pub hole_clearance_mm: f64,
+    /// Clearance between two holes.
     #[serde(default = "default_hole_clearance")]
     pub hole_to_hole_clearance_mm: f64,
+    /// Router `via_cost`: a via's cost in millimetres of track (default 8).
     #[serde(default)]
     pub via_cost_mm: Option<f64>,
+    /// Router `against_direction`: the cost factor of a step across a
+    /// layer's preferred axis (default 1.6).
     #[serde(default)]
     pub against_direction_cost: Option<f64>,
+    /// Router `max_iterations`: negotiation iterations at most (default 80).
     #[serde(default)]
     pub maximum_iterations: Option<usize>,
     /// Directory receiving the routing after every negotiation iteration
@@ -41,6 +48,8 @@ pub struct KiCadBoardRouterConfig {
     /// for animations and diagnostics.
     #[serde(default)]
     pub frame_directory: Option<PathBuf>,
+    /// Router `pitches`: the candidate lattice pitches, the one aligning
+    /// best with the pads wins (default 0.127, 0.125, 0.1).
     #[serde(default)]
     pub grid_pitches_mm: Option<Vec<f64>>,
     /// Above 1, negotiation searches trade optimality for speed; the
@@ -108,6 +117,7 @@ pub struct KiCadBoardRouterConfig {
     /// Cost factor of a track (or via) cutting a plane (default 3).
     #[serde(default)]
     pub plane_cut_cost: Option<f64>,
+    /// Router `present_cap`: the highest price of sharing (default 1e4).
     #[serde(default)]
     pub present_cap: Option<f64>,
     /// Narrowest track the board allows (neck-downs out of small pads).
@@ -126,12 +136,20 @@ pub struct KiCadBoardRouterConfig {
     /// `warning`, `ignore`), for the rules summary.
     #[serde(default)]
     pub connection_width_severity: Option<String>,
+    /// Router `cleanup_via_cost`: the via cost while cleaning up
+    /// (default 25).
     #[serde(default)]
     pub cleanup_via_cost_mm: Option<f64>,
+    /// Router `cleanup_passes`: passes of per-net shortening once the board
+    /// is conflict free (default 4).
     #[serde(default)]
     pub cleanup_passes: Option<usize>,
+    /// Router `bend_cost`: the cost per 45 degrees of direction change, in
+    /// millimetres (default 0.1).
     #[serde(default)]
     pub bend_cost_mm: Option<f64>,
+    /// Router `via_reduction_rounds`: via reduction rounds after the board
+    /// is complete (default 3).
     #[serde(default)]
     pub via_reduction_rounds: Option<usize>,
     /// Router `strict_via_budget` (default on): the via reduction keeps
@@ -198,6 +216,8 @@ pub struct KiCadBoardRouterConfig {
     /// Route pour nets first as a fixed tree on their plane layer.
     #[serde(default)]
     pub plane_skeleton: Option<bool>,
+    /// Router `skeleton_bias`: the cost factor of a skeleton step off the
+    /// plane layer (default 6).
     #[serde(default)]
     pub skeleton_bias: Option<f64>,
     /// Finer lattice pitches tried, in order, when the routing with the
@@ -339,6 +359,7 @@ pub struct KiCadBoardRouterConfig {
     /// board and the schematic.
     #[serde(default)]
     pub pin_swaps: Option<PathBuf>,
+    /// The pin-swap estimate's settings, for `pin_swaps`.
     #[serde(default)]
     pub pin_swap: KiCadPinSwapConfig,
     /// What the project's rules gave the router beyond its classes
@@ -373,11 +394,13 @@ pub struct KiCadTopologicalConfig {
     /// Millimetres a via costs while improving a legal board.
     #[serde(default)]
     pub improve_via: Option<f64>,
+    /// Passes over all wires while improving a legal board.
     #[serde(default)]
     pub improve_passes: Option<usize>,
     /// Spacing of via sites in open areas.
     #[serde(default)]
     pub spacing: Option<f64>,
+    /// Wall-clock budget of the rip-up rounds.
     #[serde(default)]
     pub seconds: Option<f64>,
     /// Route the first time layer by layer rather than TopoR's way.

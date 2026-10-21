@@ -24,8 +24,8 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 80 | 70 | 10 | 66 | 17 |
-| [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 6 | 0 |
+| [Router settings](#router-settings) | 80 | 70 | 10 | 80 | 17 |
+| [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
@@ -51,14 +51,14 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `deadline` (internal) | `Option<std::time::Instant>` | unset (internal) | - | `deadline_seconds` as a time, set when routing starts (or by a caller, such as the layout, with a deadline of its own). |
 | `connection_rules` | `BTreeMap<String, KiCadConnectionRoutingRules>` | `{}` | router.md | Resolved per-connection geometry, keyed by normalized net name. |
 | `default_rules` | `Option<KiCadConnectionRoutingRules>` | unset | - | Geometry for connections without an explicit entry. |
-| `edge_clearance_mm` | `f64` | `0.0` | - | (no doc comment) |
-| `hole_clearance_mm` | `f64` | `0.25` | - | (no doc comment) |
-| `hole_to_hole_clearance_mm` | `f64` | `0.25` | - | (no doc comment) |
-| `via_cost_mm` | `Option<f64>` | unset | - | (no doc comment) |
-| `against_direction_cost` | `Option<f64>` | unset | - | (no doc comment) |
-| `maximum_iterations` | `Option<usize>` | unset | - | (no doc comment) |
+| `edge_clearance_mm` | `f64` | `0.0` | - | Copper-to-edge clearance from the board outline. |
+| `hole_clearance_mm` | `f64` | `0.25` | - | Clearance between copper and a hole. |
+| `hole_to_hole_clearance_mm` | `f64` | `0.25` | - | Clearance between two holes. |
+| `via_cost_mm` | `Option<f64>` | unset | - | Router `via_cost`: a via's cost in millimetres of track (default 8). |
+| `against_direction_cost` | `Option<f64>` | unset | - | Router `against_direction`: the cost factor of a step across a layer's preferred axis (default 1.6). |
+| `maximum_iterations` | `Option<usize>` | unset | - | Router `max_iterations`: negotiation iterations at most (default 80). |
 | `frame_directory` | `Option<PathBuf>` | unset | router.md | Directory receiving the routing after every negotiation iteration as `attempt-NN/frame-NNNN.kicad_pcb` (one attempt per ladder rung), for animations and diagnostics. |
-| `grid_pitches_mm` | `Option<Vec<f64>>` | unset | - | (no doc comment) |
+| `grid_pitches_mm` | `Option<Vec<f64>>` | unset | - | Router `pitches`: the candidate lattice pitches, the one aligning best with the pads wins (default 0.127, 0.125, 0.1). |
 | `heuristic_weight` | `Option<f64>` | unset | - | Above 1, negotiation searches trade optimality for speed; the cleanup pass always searches exactly. |
 | `present_factor` | `Option<f64>` | unset | - | Negotiation's starting price of shared lattice cells. |
 | `present_growth` | `Option<f64>` | unset | - | Growth of that price per iteration. |
@@ -75,14 +75,14 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `manual_spokes` | `Option<bool>` | unset | router.md | Straight tracks from pads short of KiCad's two spokes into their pour (default on; see `pcb_router::Config::manual_spokes`). |
 | `neck_reach_mm` | `Option<f64>` | unset | - | Reach of the neck width around narrow pads (default 1.5 mm; 0 off). |
 | `plane_cut_cost` | `Option<f64>` | unset | - | Cost factor of a track (or via) cutting a plane (default 3). |
-| `present_cap` | `Option<f64>` | unset | - | (no doc comment) |
+| `present_cap` | `Option<f64>` | unset | - | Router `present_cap`: the highest price of sharing (default 1e4). |
 | `neck_width_mm` | `Option<f64>` | unset | - | Narrowest track the board allows (neck-downs out of small pads). |
 | `min_connection_mm` | `Option<f64>` | unset | router.md | The board setup's minimum connection width (`rules.min_connection`) as a floor on every track width the router chooses: class widths, the narrow-signal width, neck-downs, stubs and spokes. Set from the project when KiCad's connection_width check reports at error severity, and at warning severity with `PCB_MIN_CONNECTION_FLOOR=warning` (`project_rules:: connection_width_floor`, `apply_width_floor`); `None`: no floor. |
 | `connection_width_severity` | `Option<String>` | unset | - | The project's severity of connection_width findings (`error`, `warning`, `ignore`), for the rules summary. |
-| `cleanup_via_cost_mm` | `Option<f64>` | unset | - | (no doc comment) |
-| `cleanup_passes` | `Option<usize>` | unset | - | (no doc comment) |
-| `bend_cost_mm` | `Option<f64>` | unset | - | (no doc comment) |
-| `via_reduction_rounds` | `Option<usize>` | unset | - | (no doc comment) |
+| `cleanup_via_cost_mm` | `Option<f64>` | unset | - | Router `cleanup_via_cost`: the via cost while cleaning up (default 25). |
+| `cleanup_passes` | `Option<usize>` | unset | - | Router `cleanup_passes`: passes of per-net shortening once the board is conflict free (default 4). |
+| `bend_cost_mm` | `Option<f64>` | unset | - | Router `bend_cost`: the cost per 45 degrees of direction change, in millimetres (default 0.1). |
+| `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
 | `deadline_work` (internal) | `Option<f64>` | unset (internal) | - | The work (seconds of an idle machine) left before the run's nominal end, as the ladder starts (set by the layout; none in route mode). The ladder's decisions of whether another attempt fits are taken in it, not in the wall clock, so that a busy machine decides the same way; the wall-clock deadline stays as the last guard. |
@@ -96,7 +96,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `first_seed` | `Option<u64>` | unset | - | The first of the `seeds` (0: the deterministic order). |
 | `retry_seeds` | `Option<usize>` | unset | - | An attempt that leaves connections open is routed again this many perturbed ways at once (default 4; 0: never). Many failures depend on the order: Starling fails unseeded and completes for 5 of 8 seeds. |
 | `plane_skeleton` | `Option<bool>` | unset | - | Route pour nets first as a fixed tree on their plane layer. |
-| `skeleton_bias` | `Option<f64>` | unset | - | (no doc comment) |
+| `skeleton_bias` | `Option<f64>` | unset | - | Router `skeleton_bias`: the cost factor of a skeleton step off the plane layer (default 6). |
 | `refine_pitches_mm` | `Option<Vec<f64>>` | unset | - | Finer lattice pitches tried, in order, when the routing with the regular pitch leaves connections open. `None` means 0.075 then 0.05. |
 | `refine_budget_seconds` | `Option<f64>` | unset | router.md | A finer lattice is only tried when the routing time projected from the previous attempt stays below this (default 240 s). Other ways of connecting the pours are tried whatever the time while connections are open. |
 | `ladder_budget_seconds` | `Option<f64>` | unset | router.md | No further attempt of any kind starts after the ladder has run this long (default 1200 s): ColdFire from its schematic spent 50 min in three pour rungs with their seed retries. |
@@ -125,7 +125,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `add_pours` | `Vec<KiCadPourRequest>` | `[]` | - | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
 | `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | - | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
-| `pin_swap` | `KiCadPinSwapConfig` | its own table | - | (no doc comment) |
+| `pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps`. |
 | `project_rules` (internal) | `Option<crate::project_rules::KiCadProjectRulesReport>` | unset (internal) | - | What the project's rules gave the router beyond its classes (`project_rules`; reported in `rules`, not read from a file). |
 
 ## Router settings: topological
@@ -137,9 +137,9 @@ The `topological` object of the router settings (the `engine: "topological"` eng
 | `topological.crossing` | `Option<f64>` | unset | - | Millimetres one crossing costs while routing. |
 | `topological.via` | `Option<f64>` | unset | - | Millimetres a via costs while routing and assigning layers. |
 | `topological.improve_via` | `Option<f64>` | unset | - | Millimetres a via costs while improving a legal board. |
-| `topological.improve_passes` | `Option<usize>` | unset | - | (no doc comment) |
+| `topological.improve_passes` | `Option<usize>` | unset | - | Passes over all wires while improving a legal board. |
 | `topological.spacing` | `Option<f64>` | unset | - | Spacing of via sites in open areas. |
-| `topological.seconds` | `Option<f64>` | unset | - | (no doc comment) |
+| `topological.seconds` | `Option<f64>` | unset | - | Wall-clock budget of the rip-up rounds. |
 | `topological.layered_start` | `Option<bool>` | unset | - | Route the first time layer by layer rather than TopoR's way. |
 | `topological.against` | `Option<f64>` | unset | - | Factor on length across a layer's preferred axis (1: none). |
 
