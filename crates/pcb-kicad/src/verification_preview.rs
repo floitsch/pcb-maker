@@ -61,7 +61,7 @@ pub(super) fn render(board: &Path, directory: &Path) -> Result<(), String> {
         .as_nanos();
     let temporary = directory.join(format!(".preview-{}-{nonce}.svg", std::process::id()));
     let result = (|| {
-        let output = Command::new("kicad-cli")
+        let output = Command::new(crate::native_report::kicad_cli())
             .args([
                 "pcb",
                 "export",

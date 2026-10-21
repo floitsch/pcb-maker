@@ -6,7 +6,9 @@ description: Place, route, check and release KiCad boards with the pcb-maker CLI
 # pcb-maker
 
 pcb-maker places and routes KiCad boards and lets KiCad's own DRC judge
-the result. It needs `kicad-cli` (KiCad 10) on the PATH. Every command
+the result. It needs `kicad-cli` (KiCad 10) on the PATH, or
+`PCB_KICAD_CLI` naming it: route, layout, DRC, release and a schematic's
+import check it first and exit 2 without it. Every command
 prints its usage with `pcb-maker <command> --help`; the full guide is
 docs/agents.md in the pcb-maker repository.
 

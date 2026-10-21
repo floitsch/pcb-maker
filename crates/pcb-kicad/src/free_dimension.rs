@@ -1011,6 +1011,30 @@ pub struct KiCadFreeDimensionRun {
     pub directory: String,
 }
 
+/// The chosen run's verdict when the search found it clean by `accept`:
+/// the exit follows the acceptance rule, so a size clean by `pass` (no
+/// KiCad unconnected item, no new error by the count rule, every part
+/// placed) whose layout says incomplete (a missed soft constraint) becomes
+/// `complete`, exit 0; the layout's own status stays in
+/// `free_dimension.layout_status` and its reason after the new one.
+pub fn accept_verdict(verdict: &mut serde_json::Value, accept: &str, size_mm: f64) {
+    if verdict["status"] == "complete" {
+        return;
+    }
+    let layout_status = verdict["status"].clone();
+    let layout_reason = verdict["reason"].as_str().unwrap_or("").to_string();
+    verdict["status"] = serde_json::json!("complete");
+    verdict["exit_code"] = serde_json::json!(crate::verdict::EXIT_COMPLETE);
+    verdict["reason"] = serde_json::json!(format!(
+        "complete by the free dimension's accept {accept:?} at {} mm; the layout's own verdict: {layout_reason}",
+        format_mm(size_mm)
+    ));
+    if !verdict["free_dimension"].is_object() {
+        verdict["free_dimension"] = serde_json::json!({});
+    }
+    verdict["free_dimension"]["layout_status"] = layout_status;
+}
+
 impl KiCadFreeDimensionRun {
     /// A run's outcome from its `verdict.json` (`None`: the run left no
     /// verdict, as a crash or a kill).
@@ -1986,5 +2010,21 @@ mod tests {
         let lost = KiCadFreeDimensionRun::from_verdict(40.0, "probe", 100.0, None, "pass");
         assert!(!lost.clean);
         assert_eq!(lost.work_seconds, 100.0);
+        // Chosen clean by pass, the search's verdict is complete (exit 0),
+        // the layout's own status kept beside it.
+        let mut chosen = verdict.clone();
+        chosen["reason"] = serde_json::json!("incomplete: constraints missed");
+        chosen["free_dimension"] = serde_json::json!({"chosen": 40.0});
+        accept_verdict(&mut chosen, "pass", 40.0);
+        assert_eq!(chosen["status"], "complete");
+        assert_eq!(chosen["exit_code"], 0);
+        assert_eq!(chosen["free_dimension"]["layout_status"], "incomplete");
+        assert_eq!(chosen["free_dimension"]["chosen"], 40.0);
+        assert!(
+            chosen["reason"]
+                .as_str()
+                .unwrap()
+                .ends_with("the layout's own verdict: incomplete: constraints missed")
+        );
     }
 }

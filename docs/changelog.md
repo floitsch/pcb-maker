@@ -11,6 +11,114 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (agent contract review fixes)
+
+The sure findings H1-H3 and M1-M4 of
+[the agent contract review](reviews/2026-10-21-review-agent-contract.md)
+(main at 20956b3). Branch agent-contract-fixes; snapshots x1470 (the
+measurement) and x1471 (the commit, rebased on the fab-release package).
+
+**H1, a router config file keeps the project's rules.** A file's rules
+are now the project's with the file's keys over them, key by key
+(`project_rules::router_config_over_project`): before, a file without
+classes dropped `solder_mask_to_copper_mm` and
+`solder_mask_bridge_severity` (a project's mask clearance was lost, a
+project rating bridges as warnings got the strict mask rule), and a file
+with `default_rules` or `connection_rules` dropped every project rule
+(edge clearance 0, hole clearances 0.25, no custom rules). The classes
+(`connection_rules` and `default_rules`) count as one key, since the
+project gives every net with pads its entry; the custom rules' per-net
+floors and pair clearances always stay. A file naming
+`edge_clearance_mm` or a hole clearance is now taken at its word (before,
+a file without classes got the project's). `PCB_SKIP_NATIVE` works with
+a file too. Tests: `{"seeds": 4}` lowers to the same board and rules as
+`auto` (the Debug of the lowered board and of every rule field), and a
+file with `default_rules` keeps the project's edge, hole and mask rules
+unless it names them.
+
+**H2, kicad-cli before any work.** `route-kicad-board`,
+`layout-kicad-board`, `drc-kicad-board` and a schematic's
+`import-kicad-netlist` ask `kicad-cli version` first (the cached probe):
+missing, failing or below KiCad 10 is an input error, exit 2, its
+verdict (the output directory holding only it, which a retry may use)
+and its line naming `KICAD_REQUIREMENT` (KiCad 10's kicad-cli on the
+PATH or in `PCB_KICAD_CLI`, new: the program every kicad-cli call runs).
+A route or layout with KiCad's check off, a placement and a netlist's
+import go on with the problem as a warning in the verdict's next actions
+(on stdout). The import's netlist export failing on the schematic, or
+kicad-cli not starting, is the input's error (exit 2, as its help said).
+A kicad-cli timeout names `PCB_KICAD_TIMEOUT` in its message and next
+action. agents.md states the requirement at the top.
+
+**H3, KiCad's libraries off Linux.** The import looks for KiCad's own
+footprints in `KICAD10_FOOTPRINT_DIR`, `KICAD9_FOOTPRINT_DIR`,
+`KICAD8_FOOTPRINT_DIR`, then the first existing of
+/usr/share/kicad/footprints, /usr/local/share/kicad/footprints, the macOS
+bundle's SharedSupport/footprints and %ProgramFiles%'s KiCad, and for
+the user's table under `KICAD_CONFIG_HOME`, `$XDG_CONFIG_HOME/kicad`,
+~/.config/kicad, ~/Library/Preferences/kicad and %APPDATA%\kicad (10.0
+before 9.0). There is no symbol lookup to extend: kicad-cli resolves a
+schematic's symbols itself. Documented in agents.md and the environment
+index.
+
+**M1, the keepout warning with an outline.** The input check now
+applies the constraints' outline first, as the placement does (the
+import always writes `"outline": {}`), so a keepout over a held part is
+warned of before the run in the usual flow too; the placement's
+`constraint_warnings` (board-placer.json) follow the input check's in
+the verdict's next actions (place and layout, without repeats).
+
+**M2, the free dimension.** With `accept: "pass"` a size clean by that
+rule is the search's `complete` verdict (exit 0), the layout's own
+status kept as `free_dimension.layout_status`
+(`free_dimension::accept_verdict`); the not-clean next action names
+`free_dimension.probe_seconds`; with no feasible size `verdict.json`
+(exit 2, a next action naming the ranges and `band_mm`) and
+`free-dimension.json` (every size and its reasons) are written.
+
+**M3, next actions name a step.** "new DRC errors" is followed by one
+action per type, the four largest: KiCad's rule (the description's
+parenthesis), the nets (from the items' `[net]`) or the first items, and
+the setting or step (clearance and shorts: the nets' parts or an
+unmodelled rule; edge: the edge constraint's `max_mm` or `flush`;
+`items_not_allowed`: the rule area; `solder_mask_bridge`: the project's
+mask rules; `courtyards_overlap`: `placer.tight_bodies`;
+`starved_thermal`: `solid_starved_thermals`, also when the router counted
+none). Open connections name the nets KiCad finds unconnected. The
+silkscreen repair's incomplete line names silkscreen-repair.json and the
+command to run again. KiCad's DRC has no via-in-pad finding, so no
+action names `via_in_pad`.
+
+**M4, docs.** `move_seconds` and `total_seconds` are seconds of work;
+`automatic_planes` puts the rail on the last inner layer (router.md's
+line on existing tracks is the fab-release package's); placer.md: `row`
+exists, the layout moves labels and texts; copper at the edge is
+described once, under `edge` in constraints.md.
+
+**Measurements** (x1470, before the rebase on the fab-release package;
+`PCB_WORK_RATE=3.15e6,150e6`). No task of the tiers has a router config
+with `default_rules` or `connection_rules`, so H1's only change on them is
+the mask keys, which route mode's budget file (`ladder_budget_seconds`)
+dropped: on the fingerprint boards and the short tier's they are 0.0 and
+`error` or absent, which lower as before (OpenFC rates bridges as
+warnings, but the short tier is layout mode with `auto`). Short tier (3 x
+2, layout mode) build/short-contract-x1470 against
+build/short-fence-x1403: every row and every result board identical (6/12
+pass, strict 5; unconnected 20, new errors 2, vias 1088, length 20673 mm,
+work 2961 s); only the verdicts' next actions are longer (WLED_Matrix: the
+nets KiCad finds unconnected, GND (2) and three more, and clearance,
+hole_to_hole, hole_clearance and connection_width each with KiCad's rule
+and nets). Fingerprints (route mode from v16, 1 x 4, budget scale 0.25,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`): at a memory limit
+of one router (`PCB_MAKER_MEMORY_MB=2500`, the probes one at a time)
+build/fp-contract-m-x1470 against main's x1404 run beside it
+(build/fp-contract-m-x1404): every fingerprint line and all four result
+boards identical (jetson 324/340, 20 unconnected; Sisu 171/192, 44; k30
+and Castor complete). With free memory (build/fp-contract-x1470-free,
+stopped after two boards) jetson and Sisu are fp-base-x1404's rows; the
+task's reference build/fp-fence-x1402 predates bbdb205, and the probes
+side by side follow free memory (Sisu: 3 of 4 here, 1 of 4 in x1402;
+the ladder review's finding), so it differs for both.
 ## Committed on 2026-10-21 (ladder review fixes)
 
 The fixes of docs/reviews/2026-10-21-review-ladder-work.md. Branch

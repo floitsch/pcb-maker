@@ -328,7 +328,7 @@ fn run_kicad_render(
     side: &str,
     config: &KiCadLayerRenderConfig,
 ) -> Result<(), String> {
-    let result = Command::new("kicad-cli")
+    let result = Command::new(crate::native_report::kicad_cli())
         .args([
             "pcb",
             "render",

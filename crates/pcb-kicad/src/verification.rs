@@ -455,7 +455,7 @@ pub fn kicad_verifier_implementation_sha256() -> String {
 }
 
 fn kicad_cli_version() -> Result<String, String> {
-    let output = Command::new("kicad-cli")
+    let output = Command::new(crate::native_report::kicad_cli())
         .arg("version")
         .output()
         .map_err(|error| format!("failed to identify kicad-cli: {error}"))?;

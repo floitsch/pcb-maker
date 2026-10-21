@@ -529,6 +529,112 @@ pub fn resolve_project_rules(
     Ok(config)
 }
 
+/// A router config file over the project's rules. The project's rules are
+/// the base and the file's keys replace them key by key: a file of
+/// `{"seeds": 4}` routes by exactly the rules of `auto`, and one naming
+/// `default_rules` keeps the project's edge, hole and mask clearances
+/// unless it names them too. The class geometry is one key here:
+/// `connection_rules` and `default_rules` together replace the project's
+/// classes (the project gives every net with pads an entry, so a file's
+/// `default_rules` would otherwise apply to no net). The custom rules'
+/// per-net floors and pair clearances (`net_rules`) and the rules report
+/// always come from the project. `project` is the project's resolution
+/// (`resolve_project_rules`); when it failed, a file naming the class
+/// geometry routes by its own keys and any other file fails with the
+/// project's error.
+pub fn router_config_over_project(
+    file: serde_json::Value,
+    project: Result<KiCadBoardRouterConfig, String>,
+) -> Result<KiCadBoardRouterConfig, String> {
+    let named = named_rule_keys(&file);
+    let mut config = KiCadBoardRouterConfig::from_json(file)?;
+    let names_classes = named.contains("connection_rules") || named.contains("default_rules");
+    let project = match project {
+        Ok(project) => project,
+        Err(error) if !names_classes => return Err(error),
+        Err(_) => {
+            config.apply_width_floor();
+            return Ok(config);
+        }
+    };
+    let take = |key: &str| !named.contains(key);
+    if !names_classes {
+        config.connection_rules = project.connection_rules;
+        config.default_rules = project.default_rules;
+    }
+    if take("edge_clearance_mm") {
+        config.edge_clearance_mm = project.edge_clearance_mm;
+    }
+    if take("hole_clearance_mm") {
+        config.hole_clearance_mm = project.hole_clearance_mm;
+    }
+    if take("hole_to_hole_clearance_mm") {
+        config.hole_to_hole_clearance_mm = project.hole_to_hole_clearance_mm;
+    }
+    if take("neck_width_mm") {
+        config.neck_width_mm = project.neck_width_mm;
+    }
+    if take("narrow_signal_mm") {
+        config.narrow_signal_mm = project.narrow_signal_mm;
+    }
+    if take("relaxed_clearance_mm") {
+        config.relaxed_clearance_mm = project.relaxed_clearance_mm;
+    }
+    if take("solder_mask_to_copper_mm") {
+        config.solder_mask_to_copper_mm = project.solder_mask_to_copper_mm;
+    }
+    if take("solder_mask_bridge_severity") {
+        config.solder_mask_bridge_severity = project.solder_mask_bridge_severity;
+    }
+    if take("min_connection_mm") {
+        config.min_connection_mm = project.min_connection_mm;
+    }
+    if take("connection_width_severity") {
+        config.connection_width_severity = project.connection_width_severity;
+    }
+    config.project_rules = project.project_rules;
+    config.net_rules = project.net_rules;
+    // The width floor holds for a file's own classes too.
+    config.apply_width_floor();
+    Ok(config)
+}
+
+/// The keys a router config file names (`router_config_over_project`):
+/// its top-level keys, or for an adaptive-routing config the rules its
+/// first portfolio entry gives (`KiCadBoardRouterConfig::from_json`).
+fn named_rule_keys(file: &serde_json::Value) -> std::collections::BTreeSet<String> {
+    if let Some(entry) = file
+        .get("sequential")
+        .and_then(|sequential| sequential.get("routing_portfolio"))
+        .and_then(|portfolio| portfolio.get(0))
+    {
+        let mut named: std::collections::BTreeSet<String> = [
+            "connection_rules",
+            "edge_clearance_mm",
+            "hole_to_hole_clearance_mm",
+        ]
+        .into_iter()
+        .filter(|key| entry.get(key).is_some())
+        .map(str::to_owned)
+        .collect();
+        if [
+            "trace_width_mm",
+            "clearance_mm",
+            "via_size_mm",
+            "via_drill_mm",
+        ]
+        .iter()
+        .all(|key| entry.get(key).and_then(serde_json::Value::as_f64).is_some())
+        {
+            named.insert("default_rules".into());
+        }
+        return named;
+    }
+    file.as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Raises a net's rules (`index` into the lowering's nets; `None`: the
 /// rules of nets without pads) to what the custom rules ask.
 fn apply_custom(
@@ -1066,5 +1172,139 @@ mod tests {
         for ((constraint, status), (rules, boards)) in counts {
             println!("| {constraint} | {status} | {rules} | {} |", boards.len());
         }
+    }
+
+    /// A project with mask, edge and hole rules, a minimum connection at
+    /// error severity and a custom rule, and its board with an outline.
+    fn rich_project(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let (directory, project) = project_directory(
+            tag,
+            r#"{"board": {"design_settings": {"rules": {"min_copper_edge_clearance": 0.3, "min_hole_clearance": 0.3, "min_hole_to_hole": 0.4,
+                   "solder_mask_to_copper_clearance": 0.05, "min_connection": 0.15},
+                   "rule_severities": {"solder_mask_bridge": "warning", "connection_width": "error"}}},
+               "net_settings": {"classes": [{"name": "Default", "clearance": 0.2, "track_width": 0.2, "via_diameter": 0.6, "via_drill": 0.3}]}}"#,
+            Some(
+                r#"(version 1)
+(rule "Wide USB" (condition "A.NetName == 'USB_DP'") (constraint track_width (min 0.25mm)))"#,
+            ),
+        );
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(
+            &pcb,
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (setup (pad_to_mask_clearance 0.05))
+              (gr_rect (start -5 -5) (end 15 5) (layer "Edge.Cuts"))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "/POE_RAW"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "V_POE_GOOD"))
+                (pad "3" thru_hole circle (at 4 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu" "*.Mask") (net "SDA"))
+                (pad "4" smd rect (at 6 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "USB_DP")))
+              (footprint "b" (at 0 3)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "/POE_RAW"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "V_POE_GOOD"))
+                (pad "3" thru_hole circle (at 4 0) (size 1.6 1.6) (drill 0.8) (layers "*.Cu" "*.Mask") (net "SDA"))
+                (pad "4" smd rect (at 6 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "USB_DP"))))"#,
+        )
+        .unwrap();
+        (directory, project, pcb)
+    }
+
+    #[test]
+    fn a_file_that_only_tunes_the_router_lowers_the_rules_of_auto() {
+        let (directory, project, pcb) = rich_project("tunes");
+        let auto = resolve_project_rules(&project, &pcb).unwrap();
+        let file = router_config_over_project(
+            serde_json::json!({"seeds": 4}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap();
+        assert_eq!(file.seeds, Some(4));
+        assert_eq!(file.solder_mask_to_copper_mm, Some(0.05));
+        assert_eq!(file.solder_mask_bridge_severity.as_deref(), Some("warning"));
+        assert_eq!(file.min_connection_mm, Some(0.15));
+        assert!(file.net_rules.is_some() && file.project_rules.is_some());
+        let board = parse(&fs::read_to_string(&pcb).unwrap()).unwrap();
+        // The lowered board (its spokes' map in order) and every rule the
+        // configuration carries.
+        let lowered = |config: &KiCadBoardRouterConfig| {
+            let mut lowered = crate::board_router::lower(&board, config, true)
+                .unwrap()
+                .board;
+            let spokes: BTreeMap<_, _> = std::mem::take(&mut lowered.pad_spokes)
+                .into_iter()
+                .collect();
+            format!(
+                "{lowered:?} {spokes:?} {:?} {:?}",
+                (
+                    &config.connection_rules,
+                    &config.default_rules,
+                    config.edge_clearance_mm,
+                    config.hole_clearance_mm,
+                    config.hole_to_hole_clearance_mm,
+                    config.neck_width_mm,
+                    config.narrow_signal_mm,
+                    config.relaxed_clearance_mm,
+                ),
+                (
+                    config.solder_mask_to_copper_mm,
+                    &config.solder_mask_bridge_severity,
+                    config.min_connection_mm,
+                    &config.connection_width_severity,
+                    &config.net_rules,
+                    &config.project_rules,
+                )
+            )
+        };
+        assert_eq!(lowered(&file), lowered(&auto));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_file_with_default_rules_keeps_the_projects_clearances() {
+        let (directory, project, pcb) = rich_project("default-rules");
+        let rules = serde_json::json!({"trace_width_mm": 0.3, "clearance_mm": 0.25, "via_size_mm": 0.8, "via_drill_mm": 0.4});
+        let config = router_config_over_project(
+            serde_json::json!({"default_rules": rules}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap();
+        // The file's classes replace the project's.
+        assert!(config.connection_rules.is_empty());
+        assert_eq!(config.default_rules.as_ref().unwrap().clearance_mm, 0.25);
+        // The project's edge, hole and mask rules stay.
+        assert_eq!(config.edge_clearance_mm, 0.3);
+        assert_eq!(config.hole_clearance_mm, 0.3);
+        assert_eq!(config.hole_to_hole_clearance_mm, 0.4);
+        assert_eq!(config.solder_mask_to_copper_mm, Some(0.05));
+        assert_eq!(
+            config.solder_mask_bridge_severity.as_deref(),
+            Some("warning")
+        );
+        assert!(config.net_rules.is_some());
+        // Unless the file names them.
+        let config = router_config_over_project(
+            serde_json::json!({"default_rules": rules, "edge_clearance_mm": 0.1, "hole_clearance_mm": 0.2,
+                "solder_mask_bridge_severity": "error"}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap();
+        assert_eq!(config.edge_clearance_mm, 0.1);
+        assert_eq!(config.hole_clearance_mm, 0.2);
+        assert_eq!(config.hole_to_hole_clearance_mm, 0.4);
+        assert_eq!(config.solder_mask_bridge_severity.as_deref(), Some("error"));
+        // A project that does not resolve: a file with classes routes by
+        // its own keys, one without fails.
+        assert!(
+            router_config_over_project(
+                serde_json::json!({"default_rules": rules}),
+                Err("no project".into())
+            )
+            .is_ok()
+        );
+        assert!(
+            router_config_over_project(serde_json::json!({"seeds": 2}), Err("no project".into()))
+                .is_err()
+        );
+        fs::remove_dir_all(&directory).unwrap();
     }
 }

@@ -1379,25 +1379,44 @@ pub(crate) fn held_parts_warning(
 }
 
 /// The warnings `held_parts_in_keepouts` gives for a placement's
-/// constraints on the project's board, before it runs (none with an
-/// outline constraint, which moves the corner the boxes are measured
-/// from: the placement warns then).
+/// constraints on the project's board, before it runs. With an outline
+/// constraint (the import writes `"outline": {}`) the boxes are measured
+/// from the outline's corner: the outline is applied first, as the
+/// placement applies it (`place_kicad_board`: the parts the constraints
+/// add, then the outline sized by the parts' bodies), so the warnings are
+/// the placement's own.
 pub fn keepout_warnings(
     source_directory: &Path,
     board_id: &str,
     config: &KiCadBoardPlacerConfig,
 ) -> Result<Vec<String>, String> {
-    let resolved = resolve_constraints(config, source_directory)?;
-    let Some(KiCadConstraintsSource::Inline(constraints)) = &resolved.constraints else {
-        return Ok(Vec::new());
-    };
-    if constraints.keepout.is_empty() || constraints.outline.is_some() {
+    let mut resolved = resolve_constraints(config, source_directory)?;
+    if !matches!(&resolved.constraints, Some(KiCadConstraintsSource::Inline(constraints)) if !constraints.keepout.is_empty())
+    {
         return Ok(Vec::new());
     }
     let path = source_directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-    let pcb = parse(&text)?;
+    let mut pcb = crate::canonical_order::parse_board(&text)?;
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut resolved.constraints {
+        expand_additions(constraints, &pcb)?;
+    }
+    let Some(KiCadConstraintsSource::Inline(constraints)) = &resolved.constraints else {
+        return Ok(Vec::new());
+    };
+    if let Some(outline) = &constraints.outline {
+        let mut part_area = 0.0;
+        for footprint in pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+        {
+            let (_, size, _) = crate::board_placer::local_body(footprint)?;
+            part_area += (size[0] + resolved.spacing_mm) * (size[1] + resolved.spacing_mm);
+        }
+        apply_outline(&mut pcb, outline, part_area)?;
+    }
     let held = held_parts_in_keepouts(&pcb, &constraints.keepout, HeldParts::of(&resolved))?;
     Ok(held
         .iter()
@@ -3652,5 +3671,38 @@ mod tests {
             free: &["H1".to_string()],
         };
         assert!(apply_keepouts(&mut pcb, &over, movable).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_input_check_warns_of_a_held_part_in_a_keepout_with_an_outline_too() {
+        // H1 (no net: held) on the back at (30, 50), the outline's corner
+        // at (10, 20): the box x 15..25, y 25..35 from the corner holds it.
+        // The import writes an outline; the check applies it first, as
+        // the placement does.
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-keepout-warnings-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("b.kicad_pcb"),
+            r#"(kicad_pcb (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
+            (footprint "hole" (layer "B.Cu") (at 30 50) (property "Reference" "H1")
+              (fp_circle (center 0 0) (end 2 0) (layer "B.CrtYd"))
+              (pad "" np_thru_hole circle (at 0 0) (size 3 3) (drill 3) (layers "*.Cu"))))"#,
+        )
+        .unwrap();
+        for outline in ["", r#""outline": {"width": 50, "height": 40},"#] {
+            let constraints: KiCadPlacementConstraints = serde_json::from_str(&format!(
+                r#"{{"version": 1, {outline} "keepout": [{{"x": [15, 25], "y": [25, 35]}}]}}"#
+            ))
+            .unwrap();
+            let config = KiCadBoardPlacerConfig {
+                constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+                ..KiCadBoardPlacerConfig::default()
+            };
+            let warnings = keepout_warnings(&directory, "b", &config).unwrap();
+            assert_eq!(warnings.len(), 1, "{outline}: {warnings:?}");
+            assert!(warnings[0].contains("(H1)"), "{}", warnings[0]);
+        }
+        fs::remove_dir_all(&directory).unwrap();
     }
 }

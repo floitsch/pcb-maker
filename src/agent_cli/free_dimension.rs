@@ -163,13 +163,6 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
             }),
         }
     }
-    if variants.is_empty() {
-        let lines: Vec<String> = infeasible.iter().map(|run| run.summary()).collect();
-        return Err(Failure::Usage(format!(
-            "free_dimension: no size of the ladder is feasible: {}",
-            lines.join("; ")
-        )));
-    }
     fs::create_dir_all(run.output).map_err(|error| {
         Failure::Internal(format!(
             "failed to create {}: {error}",
@@ -192,6 +185,18 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
             path_text(&output.join("free-dimension.json")),
         ),
     ]);
+    if variants.is_empty() {
+        return Err(no_feasible_size(
+            &output,
+            started,
+            outputs,
+            free,
+            &ladder,
+            &plan,
+            &accept,
+            &infeasible,
+        ));
+    }
     calibrate_work_rate(Some(run.router))?;
     set_target(command, output.join("board-layout.json"), outputs);
     // The probes share the parent's rates, so that a size's probe is the
@@ -408,7 +413,7 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
     verdict["free_dimension"] = summary;
     if !clean {
         let action = format!(
-            "no size from {} to {} mm was clean: {} mm came closest ({}); the next actions below are that layout's. Widen the range (max), give the probes more work (probe_seconds, total_seconds) or the board more layers",
+            "no size from {} to {} mm was clean: {} mm came closest ({}); the next actions below are that layout's. Widen the range (free_dimension.max), give the probes more work (free_dimension.probe_seconds, or the layout's total_seconds) or the board more layers",
             format_mm(lowest),
             format_mm(highest),
             format_mm(chosen_run.size_mm),
@@ -419,6 +424,12 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
         } else {
             verdict["next_actions"] = serde_json::json!([action]);
         }
+    }
+    // The exit follows the acceptance rule: with `pass` a clean size whose
+    // layout says incomplete (a missed soft constraint, an error the
+    // strict rule counts) is the search's complete result.
+    if clean {
+        pcb_kicad::free_dimension::accept_verdict(&mut verdict, &accept, chosen_run.size_mm);
     }
     write_value(&verdict_path, &verdict).map_err(Failure::Internal)?;
     for report in [
@@ -465,4 +476,71 @@ pub(super) fn layout(run: FreeDimensionLayout) -> Result<KiCadRunStatus, Failure
         );
     }
     Ok(status)
+}
+
+/// The run's end when no size of the ladder can work: `free-dimension.json`
+/// lists the sizes and their reasons and `verdict.json` says so (an input
+/// error, exit 2); the error returned is the line printed.
+#[allow(clippy::too_many_arguments)]
+fn no_feasible_size(
+    output: &Path,
+    started: Instant,
+    outputs: BTreeMap<String, String>,
+    free: &KiCadFreeDimension,
+    ladder: &[f64],
+    plan: &KiCadFreeDimensionPlan,
+    accept: &str,
+    infeasible: &[KiCadFreeDimensionRun],
+) -> Failure {
+    let lines: Vec<String> = infeasible.iter().map(|run| run.summary()).collect();
+    let message = format!(
+        "free_dimension: no size of the ladder is feasible: {}",
+        lines.join("; ")
+    );
+    let wall_seconds = started.elapsed().as_secs_f64();
+    let reason = "no size of the ladder is feasible";
+    let table = serde_json::json!({
+        "edge": free.edge,
+        "input_size_mm": plan.extent_mm,
+        "band_mm": free.band(),
+        "ladder": ladder,
+        "prefer_below": free.prefer_below,
+        "accept": accept,
+        "chosen_mm": null,
+        "clean": false,
+        "reason": reason,
+        "work_seconds": 0.0,
+        "wall_seconds": wall_seconds,
+        "runs": infeasible,
+    });
+    let written = write_value(&output.join("free-dimension.json"), &table).and_then(|()| {
+        let verdict = pcb_kicad::error_verdict(
+            "layout-kicad-board",
+            KiCadRunStatus::UsageError,
+            &message,
+            wall_seconds,
+            existing(&outputs),
+        );
+        let mut value = serde_json::to_value(&verdict).map_err(|error| error.to_string())?;
+        value["next_actions"] = serde_json::json!([format!(
+            "no size from {} to {} mm can hold the board's fixed parts and rule areas (free-dimension.json lists each size's reasons): widen the range (free_dimension.min, max or sizes), widen band_mm so the parts at the edge move with it, or let the parts the reasons name move",
+            format_mm(ladder[0]),
+            format_mm(ladder[ladder.len() - 1])
+        )]);
+        value["free_dimension"] = serde_json::json!({
+            "chosen": null,
+            "clean": false,
+            "probes": 0,
+            "reason": reason,
+            "edge": free.edge,
+            "report": path_text(&output.join("free-dimension.json")),
+        });
+        write_value(&output.join("verdict.json"), &value)
+    });
+    // The verdict is written: the error's report must not replace it.
+    clear_target();
+    match written {
+        Ok(()) => Failure::Usage(message),
+        Err(error) => Failure::Internal(error),
+    }
 }

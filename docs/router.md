@@ -17,8 +17,17 @@ the result with an exact internal verifier, writes the project once, and runs
 native KiCad verification once as the final gate. It exits non-zero when the
 internal verifier or KiCad finds anything.
 
-A config file that only tunes the router (no `connection_rules`) still takes
-its rules from the project. `{"frame_directory": "<dir>"}` additionally
+A config file takes its rules from the project too: the project's rules
+are the base, and each key the file sets replaces the project's value of
+that key (`edge_clearance_mm`, `hole_clearance_mm`,
+`solder_mask_to_copper_mm`, `solder_mask_bridge_severity`, ...), so
+`{"seeds": 4}` routes by exactly the rules of `auto`. `connection_rules`
+and `default_rules` together are the classes: a file setting either
+replaces the project's classes (the project gives every net its entry);
+the custom rules' per-net floors and pair clearances stay
+(`project_rules::router_config_over_project`; until 2026-10-21 a file
+dropped the project's mask rules, and one with classes every other
+project rule). `{"frame_directory": "<dir>"}` additionally
 writes the board after every negotiation iteration as
 `<dir>/attempt-NN/frame-NNNN.kicad_pcb`; `docs/images/animate.py routing`
 turns those frames into a GIF (the README's routing animation is

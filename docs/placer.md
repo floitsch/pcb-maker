@@ -629,11 +629,15 @@ threads: the same rows and byte-identical boards.
   them yet. Of the numbers a save may spell another way only the
   quarter-turn angles (-180 or 180, -90 or 270) lower alike; a save
   that rounds coordinates is another input.
-- Constraints: see [constraints.md](constraints.md). No alignment
-  constraints yet.
+- Constraints: see [constraints.md](constraints.md). `row` lines parts up
+  (and fills a grid with `columns`); there is no other alignment
+  constraint yet.
 - Congestion drives nudges of individual parts, but does not yet feed the
   global placer's density term (coupling step 3).
-- Silkscreen labels are not placed; the separate repair tool handles most.
+- The placer does not place silkscreen labels; the layout's polish moves
+  reference labels and board texts off pads and other silkscreen
+  ([quality.md](quality.md)), and `repair-kicad-silkscreen` handles most of
+  the rest.
 - Pin swapping runs once after placement when the layout config names a
   `pin_swaps` file ([pin-swap.md](pin-swap.md)); it is not yet part of the
   move loop. No gate swapping.

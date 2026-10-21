@@ -59,11 +59,20 @@ fn set_target(command: &str, report: PathBuf, outputs: BTreeMap<String, String>)
     }
 }
 
+/// Forgets where the run's report goes: a run that wrote its error's
+/// verdict itself.
+fn clear_target() {
+    if let Ok(mut target) = TARGET.lock() {
+        target.take();
+    }
+}
+
 /// Writes the error's verdict as `<out-dir>/verdict.json` when the run got
 /// as far as having an output directory. A usage error writes only into an
 /// output directory the run already created, or, when a constraint needs
 /// more room than the outline has (`room`), into one holding only the
-/// verdict, which a retry may use again (`check_fresh_output`); an
+/// verdict, which a retry may use again (`check_fresh_output`), and so
+/// when kicad-cli is missing or older than KiCad 10 (`check_kicad`); an
 /// internal error creates it. The run's own report (board-router.json,
 /// ...) is left as it is, or absent.
 pub fn report_failure(status: KiCadRunStatus, message: &str) {
@@ -76,8 +85,11 @@ pub fn report_failure(status: KiCadRunStatus, message: &str) {
     let room = (status == KiCadRunStatus::UsageError)
         .then(pcb_kicad::noted_room)
         .flatten();
+    // No kicad-cli (`check_kicad`): the verdict says what to install.
+    let kicad =
+        status == KiCadRunStatus::UsageError && message.contains(pcb_kicad::KICAD_REQUIREMENT);
     if !directory.exists() {
-        if (status == KiCadRunStatus::UsageError && room.is_none())
+        if (status == KiCadRunStatus::UsageError && room.is_none() && !kicad)
             || fs::create_dir_all(directory).is_err()
         {
             return;
@@ -372,6 +384,28 @@ fn missed_constraints(constraints: &[pcb_kicad::KiCadConstraintStatus]) -> Vec<S
         .collect()
 }
 
+/// kicad-cli before any work (`pcb_kicad::check_kicad_cli`, its version
+/// asked once and cached): missing, failing or older than KiCad 10, a run
+/// that needs it stops with an input error naming the requirement (exit 2;
+/// `report_failure` writes the verdict when `set_target` was called). A run
+/// that can go without KiCad (`optional`: KiCad's check off, a placement,
+/// a netlist's import) goes on, with the problem as a warning for its
+/// verdict's next actions.
+fn check_kicad(optional: bool) -> Result<Option<String>, Failure> {
+    match pcb_kicad::check_kicad_cli() {
+        Ok(_) => Ok(None),
+        Err(error) if optional => {
+            let warning = format!(
+                "{error}; this run goes on without KiCad, but KiCad's check of the board and the steps after it need it"
+            );
+            // On stdout: stderr keeps its one line for a failure.
+            println!("warning: {warning}");
+            Ok(Some(warning))
+        }
+        Err(error) => Err(Failure::Usage(error)),
+    }
+}
+
 const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none] [--strip]";
 const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [layout-config.json] [--reference <project-dir>|none]";
 /// place-kicad-board's default work budget: the layout's placement share
@@ -418,8 +452,10 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             path_text(&output.join("verdict.json")),
         ),
     ]);
-    calibrate_work_rate(Some(&config))?;
     let report = output.join("board-router.json");
+    set_target(command, report.clone(), outputs.clone());
+    let kicad_warning = check_kicad(config.skip_native_verification)?;
+    calibrate_work_rate(Some(&config))?;
     set_target(command, report.clone(), outputs.clone());
     // Test hook: a panic once the run has started (tests/cli_exit_codes.rs).
     if std::env::var_os("PCB_MAKER_TEST_PANIC").is_some() {
@@ -472,6 +508,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         facts.lattice_work_seconds = Some(charged.lattice_seconds + charged.lowering_seconds);
     }
     facts.outputs = existing(&outputs);
+    facts.input_warnings.extend(kicad_warning);
     check_reference(
         &mut facts,
         reference.as_deref(),
@@ -687,6 +724,23 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     facts
 }
 
+/// The input check's warnings followed by the placement's
+/// `constraint_warnings` (board-placer.json) it did not already give: both
+/// lead the verdict's next actions.
+fn constraint_warnings(mut warnings: Vec<String>, placed: &serde_json::Value) -> Vec<String> {
+    for warning in placed["constraint_warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+    {
+        if !warnings.iter().any(|known| known == warning) {
+            warnings.push(warning.to_string());
+        }
+    }
+    warnings
+}
+
 fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "layout-kicad-board";
     let (positional, values) = split_flags(arguments, &["--reference"], LAYOUT_USAGE)?;
@@ -702,7 +756,16 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         Some(path) => read_json(path)?,
         None => Default::default(),
     };
-    let input_warnings = check_constraints(source, board_id, &config.placer)?;
+    let mut input_warnings = check_constraints(source, board_id, &config.placer)?;
+    set_target(
+        command,
+        Path::new(output).join("board-layout.json"),
+        BTreeMap::from([(
+            "verdict".to_string(),
+            path_text(&Path::new(output).join("verdict.json")),
+        )]),
+    );
+    input_warnings.extend(check_kicad(router.skip_native_verification)?);
     // A free dimension: the layout at several sizes (src/agent_cli/free_dimension.rs).
     if let Some(free) = &config.free_dimension {
         let layout_json = match positional.get(4) {
@@ -778,7 +841,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
                 return Err(classify(error));
             };
             let mut facts = placement_facts(command, &placed);
-            facts.input_warnings = input_warnings;
+            facts.input_warnings = constraint_warnings(input_warnings, &placed);
             facts.outputs = existing(&outputs);
             facts.wall_seconds = started.elapsed().as_secs_f64();
             let mut verdict = pcb_kicad::judge(&facts);
@@ -794,12 +857,14 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let mut facts = pcb_kicad::route_facts(command, &result.routed, &result_directory)
         .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
-    facts.input_warnings = input_warnings;
-    // The placement's room (the parts and the outline the layout kept).
-    facts.room = fs::read_to_string(output.join("placed/board-placer.json"))
+    // The placement's room (the parts and the outline the layout kept)
+    // and what it warned of.
+    let placed = fs::read_to_string(output.join("placed/board-placer.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|placed| serde_json::from_value(placed["room"].clone()).ok());
+        .unwrap_or_default();
+    facts.room = serde_json::from_value(placed["room"].clone()).ok();
+    facts.input_warnings = constraint_warnings(input_warnings, &placed);
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
     facts.kicad_check_work_seconds = Some(result.kicad_check_work_seconds);
@@ -838,7 +903,9 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         },
         None => Default::default(),
     };
-    let input_warnings = check_constraints(source, board_id, &config)?;
+    let mut input_warnings = check_constraints(source, board_id, &config)?;
+    // A placement needs no KiCad, but what comes after it does.
+    input_warnings.extend(check_kicad(true)?);
     // The layout's placement budget by default (40 % of its 1500 s of
     // work), so that the check places as the layout would and ends: a
     // board without room ran the placer's relaxation levels for over 12
@@ -890,11 +957,10 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         result.illegal,
         result.seconds,
     );
-    let mut facts = placement_facts(
-        command,
-        &serde_json::to_value(&result).map_err(|error| Failure::Internal(error.to_string()))?,
-    );
-    facts.input_warnings = input_warnings;
+    let placed =
+        serde_json::to_value(&result).map_err(|error| Failure::Internal(error.to_string()))?;
+    let mut facts = placement_facts(command, &placed);
+    facts.input_warnings = constraint_warnings(input_warnings, &placed);
     facts.outputs = existing(&outputs);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
@@ -918,6 +984,7 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     positional_count(&positional, 3..=3, DRC_USAGE)?;
     let (source, board_id, report) = (&positional[0], &positional[1], Path::new(&positional[2]));
     check_project(source, board_id)?;
+    check_kicad(false)?;
     if let Some(parent) = report
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1044,6 +1111,7 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         ),
     ]);
     set_target(command, output.join("fab-manifest.json"), outputs.clone());
+    check_kicad(false)?;
     fs::create_dir_all(output).map_err(|error| {
         Failure::Internal(format!("failed to create {}: {error}", output.display()))
     })?;
@@ -1232,17 +1300,22 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
             {
                 check_file(board)?;
             }
-            check_file(&arguments[0])
+            check_file(&arguments[0])?;
+            // A schematic needs kicad-cli for its netlist; a netlist's
+            // import goes without (no pad check).
+            check_kicad(!arguments[0].ends_with(".kicad_sch"))?;
+            Ok(())
         }
         _ => Ok(()),
     }
 }
 
-/// The message `repair-kicad-silkscreen` ends with when findings remain.
+/// How the message `repair-kicad-silkscreen` ends with when findings
+/// remain starts (the report's path and the next step follow).
 pub const SILKSCREEN_INCOMPLETE: &str =
     "silkscreen repair remains incomplete; retained native report and rendering";
 /// The message `import-kicad-netlist` ends with when footprints are missing.
-pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from) and import again into the same directory (constraints.json and layout.json are kept)";
+pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from; for KiCad's own libraries outside the standard install folders, set KICAD10_FOOTPRINT_DIR to its footprints folder) and import again into the same directory (constraints.json and layout.json are kept)";
 
 /// Runs an agent command; `None` when `command` is not one.
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
@@ -1264,7 +1337,9 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
             all.extend(arguments);
             match crate::run(all) {
                 Ok(()) => Ok(KiCadRunStatus::Complete),
-                Err(error) if error == SILKSCREEN_INCOMPLETE || error == IMPORT_INCOMPLETE => {
+                Err(error)
+                    if error.starts_with(SILKSCREEN_INCOMPLETE) || error == IMPORT_INCOMPLETE =>
+                {
                     eprintln!("incomplete: {error}");
                     Ok(KiCadRunStatus::Incomplete)
                 }

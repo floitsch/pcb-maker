@@ -117,7 +117,7 @@ fn export_timeout() -> std::time::Duration {
 /// Runs kicad-cli with `arguments`, its output captured, killed after the
 /// export timeout.
 fn kicad_cli(arguments: &[&std::ffi::OsStr], what: &str) -> Result<(), String> {
-    let mut command = Command::new("kicad-cli");
+    let mut command = Command::new(crate::native_report::kicad_cli());
     command
         .args(arguments)
         .stdout(std::process::Stdio::piped())
@@ -482,7 +482,8 @@ pub fn fab_kicad_board(
             .filter(|layer| defined.is_empty() || defined.contains(layer))
             .collect(),
     };
-    let program = std::ffi::OsStr::new("kicad-cli");
+    let program = crate::native_report::kicad_cli();
+    let program = program.as_os_str();
     let mut manifest = KiCadFabRelease {
         schema_version: 1,
         board_id: board_id.into(),

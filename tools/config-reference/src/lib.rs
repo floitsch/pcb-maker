@@ -64,8 +64,8 @@ impl Kind {
 }
 
 /// Every environment variable the code reads, with its effect. Names not
-/// in a `PCB_*` string literal of the crates (read by a dependency) are in
-/// [`EXTERNAL`].
+/// in a `PCB_*` string literal of the crates (read by a dependency, or
+/// KiCad's own) are in [`EXTERNAL`].
 pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "RAYON_NUM_THREADS",
@@ -85,7 +85,17 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_SKIP_NATIVE",
         Kind::User,
-        "with the `auto` router config, no KiCad checks (`skip_native_verification`; machines without kicad-cli): the verdict is `router_complete_unverified` at best, exit 1.",
+        "with any router config (a file too, since 2026-10-21), no KiCad checks (`skip_native_verification`; machines without kicad-cli): the verdict is `router_complete_unverified` at best, exit 1.",
+    ),
+    (
+        "PCB_KICAD_CLI",
+        Kind::User,
+        "the kicad-cli program to run (default `kicad-cli` on the PATH; on macOS `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`). The agent commands ask its version before any work: missing, failing or older than KiCad 10 is an input error, exit 2 (a warning where the run needs no KiCad).",
+    ),
+    (
+        "KICAD10_FOOTPRINT_DIR",
+        Kind::User,
+        "KiCad's own variable (`KICAD9_FOOTPRINT_DIR`, `KICAD8_FOOTPRINT_DIR` after it): import-kicad-netlist's folder of KiCad's footprint libraries, before the standard install folders (Linux, macOS, Windows).",
     ),
     (
         "PCB_ROUTER_NO_WALL_GUARD",
@@ -364,8 +374,9 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     ),
 ];
 
-/// Variables of [`ENVIRONMENT`] a dependency reads, not the crates.
-pub const EXTERNAL: [&str; 1] = ["RAYON_NUM_THREADS"];
+/// Variables of [`ENVIRONMENT`] that are not `PCB_*` names: a dependency's
+/// (`RAYON_NUM_THREADS`) and KiCad's own (`KICAD10_FOOTPRINT_DIR`).
+pub const EXTERNAL: [&str; 2] = ["RAYON_NUM_THREADS", "KICAD10_FOOTPRINT_DIR"];
 
 /// One field of a config struct, as its source declares it.
 #[derive(Clone, Debug)]
@@ -815,7 +826,7 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
         Table {
             title: "Router settings",
             prefix: "",
-            intro: "The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table).",
+            intro: "The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table).",
             file: router_file,
             name: "KiCadBoardRouterConfig",
             fields: parse(router_file, "KiCadBoardRouterConfig")?,

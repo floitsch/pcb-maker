@@ -24,6 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
+| [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 27 |
 | [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 23 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
@@ -33,6 +34,8 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
+| [Router core](#router-core) | 58 | - | 0 | 58 | - |
+| [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 13 |
 | [Router core](#router-core) | 59 | - | 0 | 59 | - |
 | [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 11 |
 | [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
@@ -44,16 +47,16 @@ The environment variables are indexed in the hand-over
 
 ## Router settings
 
-The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table). Source: `KiCadBoardRouterConfig` in [crates/pcb-kicad/src/board_router/config.rs](../crates/pcb-kicad/src/board_router/config.rs).
+The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` resolves it from the project's `.kicad_pro`; a file's keys replace what `auto` would give only where a file sets them, `connection_rules` and `default_rules` together as the classes; docs/router.md). Unknown keys are rejected. `unset` options take the default the doc comment names, mostly the router core's (the next table). Source: `KiCadBoardRouterConfig` in [crates/pcb-kicad/src/board_router/config.rs](../crates/pcb-kicad/src/board_router/config.rs).
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `deadline_seconds` | `Option<f64>` | unset | router.md | Wall-clock seconds from the start of the command by which it returns the best board it has: no attempt starts after it and a running one stops (an agent waits for the answer). Off by default: the budgets count work, so a busy machine routes the same way. |
 | `deadline` (internal) | `Option<std::time::Instant>` | unset (internal) | - | `deadline_seconds` as a time, set when routing starts (or by a caller, such as the layout, with a deadline of its own). |
 | `connection_rules` | `BTreeMap<String, KiCadConnectionRoutingRules>` | `{}` | router.md | Resolved per-connection geometry, keyed by normalized net name. |
-| `default_rules` | `Option<KiCadConnectionRoutingRules>` | unset | - | Geometry for connections without an explicit entry. |
-| `edge_clearance_mm` | `f64` | `0.0` | - | Copper-to-edge clearance from the board outline. |
-| `hole_clearance_mm` | `f64` | `0.25` | - | Clearance between copper and a hole. |
+| `default_rules` | `Option<KiCadConnectionRoutingRules>` | unset | router.md | Geometry for connections without an explicit entry. |
+| `edge_clearance_mm` | `f64` | `0.0` | router.md | Copper-to-edge clearance from the board outline. |
+| `hole_clearance_mm` | `f64` | `0.25` | router.md | Clearance between copper and a hole. |
 | `hole_to_hole_clearance_mm` | `f64` | `0.25` | - | Clearance between two holes. |
 | `via_cost_mm` | `Option<f64>` | unset | - | Router `via_cost`: a via's cost in millimetres of track (default 8). |
 | `against_direction_cost` | `Option<f64>` | unset | - | Router `against_direction`: the cost factor of a step across a layer's preferred axis (default 1.6). |
@@ -66,7 +69,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `stall_at_cap` | `Option<usize>` | unset | - | Iterations negotiation waits for fewer conflicts once the price is at its cap. |
 | `stall_drop` | `Option<f64>` | unset | - | Router `stall_drop`: at the price cap, the share of conflicted nets that must go before negotiation counts it as progress. |
 | `global_routing` | `Option<bool>` | unset | - | Plan nets on the tile graph first (global routing). |
-| `automatic_planes` | `Option<bool>` | unset | - | On a board with four or more copper layers and no copper pours, ground becomes a plane on the first inner layer and the supply rail with the most pads one on the second (default true; ignored when `add_pours` is given). |
+| `automatic_planes` | `Option<bool>` | unset | - | On a board with four or more copper layers and no copper pours, ground becomes a plane on the first inner layer and the supply rail with the most pads one on the last (default true; ignored when `add_pours` is given). |
 | `mask_only_pad_openings` | `Option<bool>` | unset | - | A pad with a mask opening and no copper (a mask-only test point) opens the mask like a mask graphic: copper of a second net may not go under it (default true). hackrf-one's two solder mask bridges. |
 | `via_reduction_present` | `Option<f64>` | unset | - | Price of sharing when a via reduction round starts. |
 | `exclusive_planes` | `Option<bool>` | unset | router.md | Keep other nets' tracks off inner-layer planes entirely. |
@@ -94,7 +97,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `kicad_check_work` (internal) | `Option<f64>` | unset (internal) | - | The work one KiCad check of an attempt counts, in seconds of an idle machine, modelled from the board alone (`check_work`): the ladder adds it to its work for every check it runs, cached or not, so that its end in work does not depend on the DRC cache. Set by the layout, not read from a file; none in route mode. |
 | `seeds_side_by_side` (internal) | `Option<usize>` | unset (internal) | - | How many seeds of one attempt route at once (memory; the number of seeds, and so the result, does not depend on it). |
 | `cleanup_seconds` (internal) | `Option<f64>` | unset (internal) | - | A cap on the clean-up's work budget (router `cleanup_seconds`; set by the layout for a narrow-signal attempt run alone, whose negotiation needs the work more than its length and vias do). |
-| `seeds` | `Option<usize>` | unset | placer.md | Route every attempt this many ways at once (the deterministic order plus perturbed orders, in parallel) and keep the best: fewest open connections, then vias, then copper. `None`/1: one way. |
+| `seeds` | `Option<usize>` | unset | router.md, placer.md | Route every attempt this many ways at once (the deterministic order plus perturbed orders, in parallel) and keep the best: fewest open connections, then vias, then copper. `None`/1: one way. |
 | `first_seed` | `Option<u64>` | unset | - | The first of the `seeds` (0: the deterministic order). |
 | `retry_seeds` | `Option<usize>` | unset | - | An attempt that leaves connections open is routed again this many perturbed ways at once (default 4; 0: never). Many failures depend on the order: Starling fails unseeded and completes for 5 of 8 seeds. |
 | `plane_skeleton` | `Option<bool>` | unset | - | Route pour nets first as a fixed tree on their plane layer. |
@@ -115,6 +118,9 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
 | `use_narrow_signals` | `Option<bool>` | unset | - | Route signal nets at `narrow_signal_mm` (the ladder tries it when connections stay open at the class widths). |
 | `relaxed_clearance_mm` | `Option<f64>` | unset | - | The board's minimum clearance when the project rates clearance findings below errors (a designer who accepted the net classes' clearances as warnings: the A13 module's DDR fan-out keeps 0.149 against classes of 0.2). The ladder's last step routes at it when connections stay open. |
+| `solder_mask_to_copper_mm` | `Option<f64>` | unset | router.md | The project's solder-mask-to-copper clearance (`rules. solder_mask_to_copper_clearance`, KiCad's default 0): KiCad's DRC finds a solder mask aperture bridging copper of another net within it plus the aperture's mask expansion (USB_Cable_Tester: a track 0.094 mm from a battery holder's F.Mask polygon over a GND fill, at 0.05 + 0.05 mm). |
+| `solder_mask_bridge_severity` | `Option<String>` | unset | router.md | The project's severity of solder_mask_bridge findings (`error`, `warning`, `ignore`; KiCad's default is an error). Below an error the designer accepted bridges, and the router keeps its looser mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected). |
+| `solid_starved_thermals` | `Option<bool>` | unset | - | Pads KiCad finds short of thermal spokes (where only one fits, as on fine-pitch pins) get a solid zone connection in the result, and the board is verified again. Off by default: thermal reliefs are there for soldering, so this is the designer's (or the agent's) call. |
 | `solder_mask_to_copper_mm` | `Option<f64>` | unset | - | The project's solder-mask-to-copper clearance (`rules. solder_mask_to_copper_clearance`, KiCad's default 0): KiCad's DRC finds a solder mask aperture bridging copper of another net within it plus the aperture's mask expansion (USB_Cable_Tester: a track 0.094 mm from a battery holder's F.Mask polygon over a GND fill, at 0.05 + 0.05 mm). |
 | `solder_mask_bridge_severity` | `Option<String>` | unset | - | The project's severity of solder_mask_bridge findings (`error`, `warning`, `ignore`; KiCad's default is an error). Below an error the designer accepted bridges, and the router keeps its looser mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected). |
 | `solid_starved_thermals` | `Option<bool>` | unset | router.md | Pads KiCad finds short of thermal spokes (where only one fits, as on fine-pitch pins, or whose spokes reach only an isolated island of fill) get a solid zone connection in the result, and the board is verified again (one more KiCad check, charged as work). On unless false (since 2026-10-21: four boards of the v18 sweep failed on starved thermals alone, which this passes; docs/changelog.md). False keeps the designer's thermal reliefs where KiCad finds them starved: reliefs are there for soldering. |
@@ -324,7 +330,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `constraints` | `Option<KiCadConstraintsSource>` | unset | - | Placement constraints: a `constraints.json` path (relative to the source directory) or the constraints inline. |
 | `constraint_weight` | `f64` | `50.0` | - | Millimetres of wirelength one millimetre of a missed near or relative constraint costs. |
 | `copper_clearance_mm` | `Option<f64>` | unset | - | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given. |
-| `hole_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-hole clearance: a non-plated hole keeps it from other parts' copper. Read from the project when not given. |
+| `hole_clearance_mm` | `Option<f64>` | unset | router.md | The board's copper-to-hole clearance: a non-plated hole keeps it from other parts' copper. Read from the project when not given. |
 | `copper_edge_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-edge clearance: pads of parts held at an edge keep it. Read from the project when not given. |
 | `tight_bodies` | `Option<bool>` | unset | - | When nothing else fits, bodies may shrink to their fabrication outline and pads (courtyards overlap). Read from the project when not given: allowed unless KiCad's DRC treats a courtyard overlap as an error. |
 | `holes_in_courtyards_error` | `Option<bool>` | unset | - | Whether the project makes a hole inside another part's courtyard an error (`pth_inside_courtyard` or `npth_inside_courtyard`); `None`: read it from the project. Where it does not, a part's holes and pads on the other side keep only the copper clearance from that side's pads (leads through the board still keep off bodies). |
@@ -334,7 +340,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `keep_copies` | `bool` | `true` | placer.md | On a panel of copies joined by tabs (one outline piece), each copy's movable parts stay in its copy's region (see `keep_copies_apart`): the copies are told apart by their nets. On: boards whose nets form one group do not change. |
 | `solid_pin_rows` | `bool` | `true` | - | A footprint without a courtyard whose pads stand in rows of pins (three or more at most 2.6 mm apart, holding three quarters of its pads: a QFP, an SOIC, a header, a card slot) blocks with the whole box of its pads, as a body there would; other courtyard-less footprints (a key switch, a hot-swap socket) block with their pads alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's pad ring, homebrew_486's second ISA slot between the first's rows. |
 | `mask_openings` | `bool` | `true` | placer.md | A footprint's solder-mask openings on its own side (graphics on F.Mask or B.Mask) keep other footprints' pads and bodies off also where the footprint blocks with its courtyard's shape rather than its whole body (the body's box holds them; a courtyard-less part blocks with them already): SNSP-CPU-01's J2 (a 12 x 5 courtyard around four pins, a 22 x 32 mm F.Mask polygon beside it) held T1 and C61, and KiCad reported solder_mask_bridge for each of their pads. They keep the bodies' spacing (at least the copper clearance) or KiCad's mask margin where that is larger (`mask_opening_growth`). On. |
-| `solder_mask_to_copper_mm` | `Option<f64>` | unset | - | The project's `solder_mask_to_copper_clearance`: covered copper keeps it from a mask opening. Read from the project when not given. |
+| `solder_mask_to_copper_mm` | `Option<f64>` | unset | router.md | The project's `solder_mask_to_copper_clearance`: covered copper keeps it from a mask opening. Read from the project when not given. |
 | `shared_halos` | `bool` | `false` | placer.md | Neighbours keep the larger of their routing halos between them, not the sum (`core::Problem::shared_halos`). |
 | `anneal_far_side_gaps` | `bool` | `false` | placer.md | The annealer keeps the legality test's gaps across the board (`core::anneal::AnnealConfig::legal_far_side`). Off by default. |
 | `routing_room` | `bool` | `false` | placer.md | Routing room from congestion (`core::room`): after a placement with the pin-count halos, each part's halo is scaled by the routing demand (RUDY, nets a pour carries left out) around it relative to the board's median, within the same halo area, and the parts anneal again from there. Off by default. |
@@ -355,9 +361,9 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `moves` | `usize` | `40` | - | Footprint moves to try after the first full route. |
 | `patience` | `usize` | `12` | - | Stop after this many consecutive moves without improvement. |
 | `steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 4.0]` | - | Move distances tried, in millimetres, in the four axis directions. |
-| `move_seconds` | `f64` | `600.0` | - | Wall-clock budget for the move phase, in seconds. |
+| `move_seconds` | `f64` | `600.0` | - | Budget of the move phase, in seconds of work (search expansions and placement units at the run's work rates; docs/router.md, "Determinism and the wall clock"). |
 | `polish_seconds` | `f64` | `60.0` | - | Once every connection is routed, moves only polish (fewer vias, less copper): they stop after this many seconds of the move phase. |
-| `total_seconds` | `f64` | `1500.0` | router.md | Wall-clock budget for the whole layout, in seconds: the placement race stops at 40 % of it, the moves at 65 %, and the final ladder gets what is left. Every route stops by it (then only the native check runs). An agent waits for this; the best board so far is what it gets. |
+| `total_seconds` | `f64` | `1500.0` | router.md | Budget of the whole layout, in seconds of work (as `move_seconds`; the wall clock only guards it: `wall_guard`): the placement race stops at 40 % of it, the moves at 65 %, and the final ladder gets what is left. Every route stops by it (then only the native check runs). An agent waits for this; the best board so far is what it gets. |
 | `wall_guard` | `f64` | `2.0` | router.md | How far past `total_seconds` (counted in work) the wall clock may run before the layout's phases are cut short, as a factor of it (default 2: the layout stops at `total_seconds` of work; the wall clock only guards against a machine far busier or slower than the work rates say: `wall_guard_seconds`). A load margin, not a budget. |
 | `placer` | `KiCadBoardPlacerConfig` | its own table | router.md, placer.md | The settings of the layout's placement (as place-kicad-board's placer config; its constraints relative to the source directory). |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted after placement. |

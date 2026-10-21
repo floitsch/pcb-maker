@@ -69,7 +69,7 @@ pub fn export_kicad_fab(
         .map(String::from),
     );
     run(
-        Command::new("kicad-cli")
+        Command::new(crate::native_report::kicad_cli())
             .args([
                 "pcb",
                 "export",
@@ -85,7 +85,7 @@ pub fn export_kicad_fab(
         "kicad-cli gerbers",
     )?;
     run(
-        Command::new("kicad-cli")
+        Command::new(crate::native_report::kicad_cli())
             .args([
                 "pcb",
                 "export",
@@ -116,7 +116,7 @@ pub fn export_kicad_fab(
     // Placements from KiCad, in JLCPCB's columns.
     let positions = output.join("positions.csv");
     run(
-        Command::new("kicad-cli")
+        Command::new(crate::native_report::kicad_cli())
             .args([
                 "pcb",
                 "export",

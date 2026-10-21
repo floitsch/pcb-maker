@@ -32,16 +32,19 @@ pub struct KiCadBoardLayoutConfig {
     pub patience: usize,
     /// Move distances tried, in millimetres, in the four axis directions.
     pub steps_mm: Vec<f64>,
-    /// Wall-clock budget for the move phase, in seconds.
+    /// Budget of the move phase, in seconds of work (search expansions
+    /// and placement units at the run's work rates; docs/router.md,
+    /// "Determinism and the wall clock").
     pub move_seconds: f64,
     /// Once every connection is routed, moves only polish (fewer vias,
     /// less copper): they stop after this many seconds of the move phase.
     pub polish_seconds: f64,
-    /// Wall-clock budget for the whole layout, in seconds: the placement
-    /// race stops at 40 % of it, the moves at 65 %, and the final ladder
-    /// gets what is left. Every route stops by it (then only the native
-    /// check runs). An agent waits for this; the best board so far is what
-    /// it gets.
+    /// Budget of the whole layout, in seconds of work (as `move_seconds`;
+    /// the wall clock only guards it: `wall_guard`): the placement race
+    /// stops at 40 % of it, the moves at 65 %, and the final ladder gets
+    /// what is left. Every route stops by it (then only the native check
+    /// runs). An agent waits for this; the best board so far is what it
+    /// gets.
     pub total_seconds: f64,
     /// How far past `total_seconds` (counted in work) the wall clock may
     /// run before the layout's phases are cut short, as a factor of it

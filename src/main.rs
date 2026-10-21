@@ -212,7 +212,15 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
     ),
     (
         "PCB_SKIP_NATIVE",
-        "with router config auto: skip KiCad's check (the verdict is then\nrouter_complete_unverified at best, exit 1); default unset.",
+        "skip KiCad's check (the verdict is then router_complete_unverified at\nbest, exit 1); default unset.",
+    ),
+    (
+        "PCB_KICAD_CLI",
+        "the kicad-cli program (KiCad 10); default kicad-cli on the PATH.",
+    ),
+    (
+        "KICAD10_FOOTPRINT_DIR",
+        "KiCad's footprint libraries for import-kicad-netlist; default: the\nstandard install folders.",
     ),
     (
         "PCB_ROUTER_NO_WALL_GUARD",
@@ -336,7 +344,15 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             if report["silkscreen_complete"] == true {
                 Ok(())
             } else {
-                Err(agent_cli::SILKSCREEN_INCOMPLETE.into())
+                let report_path =
+                    std::path::absolute(Path::new(&output).join("silkscreen-repair.json"))
+                        .unwrap_or_else(|_| Path::new(&output).join("silkscreen-repair.json"));
+                Err(format!(
+                    "{}: {} silkscreen findings left; see {} (proposal.unresolved_references and unresolved_marks; KiCad's findings in drc.json and the rendering beside it): move those labels or marks by hand in KiCad, or give their parts room, and run repair-kicad-silkscreen {output} {board_id} <new-dir> again",
+                    agent_cli::SILKSCREEN_INCOMPLETE,
+                    report["remaining_annotation_findings"],
+                    report_path.display()
+                ))
             }
         }
         "normalize-kicad-footprint-links" => {
@@ -746,16 +762,27 @@ fn board_router_config(
     source: &str,
     board_id: &str,
 ) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
+    let mut config = board_router_config_of(path, source, board_id)?;
+    // Experiment hook for machines without kicad-cli (with a config file
+    // too).
+    if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
+        config.skip_native_verification = true;
+    }
+    Ok(config)
+}
+
+/// `board_router_config` before the environment's switches.
+fn board_router_config_of(
+    path: Option<&str>,
+    source: &str,
+    board_id: &str,
+) -> Result<pcb_kicad::KiCadBoardRouterConfig, String> {
     match path {
         None | Some("auto") => {
             let mut config = pcb_kicad::resolve_project_rules(
                 &Path::new(source).join(format!("{board_id}.kicad_pro")),
                 &Path::new(source).join(format!("{board_id}.kicad_pcb")),
             )?;
-            // Experiment hook for machines without kicad-cli.
-            if std::env::var_os("PCB_SKIP_NATIVE").is_some() {
-                config.skip_native_verification = true;
-            }
             if let Some(seeds) = std::env::var("PCB_ROUTER_SEEDS")
                 .ok()
                 .and_then(|v| v.parse().ok())
@@ -765,46 +792,20 @@ fn board_router_config(
             Ok(config)
         }
         Some(path) => {
-            let mut config = pcb_kicad::KiCadBoardRouterConfig::from_json(
-                serde_json::from_str(
-                    &std::fs::read_to_string(path)
-                        .map_err(|error| format!("failed to read {path}: {error}"))?,
-                )
-                .map_err(|error| format!("failed to parse {path}: {error}"))?,
-            )?;
-            // A file that only tunes the router takes its rules from the project.
-            if config.connection_rules.is_empty() && config.default_rules.is_none() {
-                let project = board_router_config(None, source, board_id)?;
-                config.connection_rules = project.connection_rules;
-                config.default_rules = project.default_rules;
-                config.edge_clearance_mm = project.edge_clearance_mm;
-                config.hole_clearance_mm = project.hole_clearance_mm;
-                config.hole_to_hole_clearance_mm = project.hole_to_hole_clearance_mm;
-                if config.neck_width_mm.is_none() {
-                    config.neck_width_mm = project.neck_width_mm;
-                }
-                if config.narrow_signal_mm.is_none() {
-                    config.narrow_signal_mm = project.narrow_signal_mm;
-                }
-                if config.relaxed_clearance_mm.is_none() {
-                    config.relaxed_clearance_mm = project.relaxed_clearance_mm;
-                }
-                config.project_rules = project.project_rules;
-                config.net_rules = project.net_rules;
-            }
-            // The board setup's minimum connection width holds for a file's
-            // own rules too.
-            if config.min_connection_mm.is_none() && config.connection_width_severity.is_none() {
-                if let Ok(project) = pcb_kicad::resolve_project_rules(
+            let file = serde_json::from_str(
+                &std::fs::read_to_string(path)
+                    .map_err(|error| format!("failed to read {path}: {error}"))?,
+            )
+            .map_err(|error| format!("failed to parse {path}: {error}"))?;
+            // The project's rules are the base; the file's keys replace
+            // them key by key.
+            pcb_kicad::router_config_over_project(
+                file,
+                pcb_kicad::resolve_project_rules(
                     &Path::new(source).join(format!("{board_id}.kicad_pro")),
                     &Path::new(source).join(format!("{board_id}.kicad_pcb")),
-                ) {
-                    config.min_connection_mm = project.min_connection_mm;
-                    config.connection_width_severity = project.connection_width_severity;
-                }
-            }
-            config.apply_width_floor();
-            Ok(config)
+                ),
+            )
         }
     }
 }

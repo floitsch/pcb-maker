@@ -104,6 +104,13 @@ pub struct DrcItem {
 pub struct DrcFinding {
     pub kind: String,
     pub items: Vec<DrcItem>,
+    /// KiCad's description (the rule and the values: "Clearance violation
+    /// (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm)").
+    pub description: String,
+    /// The nets of its items (`[GND]` in their descriptions), in order.
+    pub nets: Vec<String>,
+    /// Its items' descriptions ("Pad 2 [GND] of C1 on F.Cu").
+    pub item_descriptions: Vec<String>,
 }
 
 /// A KiCad DRC report, counted as the pass rule counts it.
@@ -118,6 +125,8 @@ pub struct DrcTally {
     /// Warning-severity findings that are not cosmetic.
     pub warnings: usize,
     pub unconnected: usize,
+    /// The nets of KiCad's unconnected items, with how many.
+    pub unconnected_nets: BTreeMap<String, usize>,
     pub schematic_parity: usize,
     /// The schematic parity findings by type (`net_conflict`,
     /// `missing_footprint`, ...).
@@ -138,8 +147,20 @@ pub fn tally_drc(report: &Value) -> DrcTally {
             tally.cosmetic += 1;
         } else if finding["severity"].as_str() == Some("error") {
             *tally.errors.entry(kind.to_string()).or_default() += 1;
+            let item_descriptions: Vec<String> = finding["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| item["description"].as_str().map(str::to_string))
+                .collect();
             tally.findings.push(DrcFinding {
                 kind: kind.to_string(),
+                description: finding["description"].as_str().unwrap_or("").to_string(),
+                nets: item_descriptions
+                    .iter()
+                    .filter_map(|description| item_net(description))
+                    .collect(),
+                item_descriptions,
                 items: finding["items"]
                     .as_array()
                     .into_iter()
@@ -158,6 +179,17 @@ pub fn tally_drc(report: &Value) -> DrcTally {
         }
     }
     tally.unconnected = report["unconnected_items"].as_array().map_or(0, Vec::len);
+    for finding in report["unconnected_items"].as_array().into_iter().flatten() {
+        // Both items of an unconnected pair are on the one net.
+        if let Some(net) = finding["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find_map(|item| item["description"].as_str().and_then(item_net))
+        {
+            *tally.unconnected_nets.entry(net).or_default() += 1;
+        }
+    }
     tally.schematic_parity = report["schematic_parity"].as_array().map_or(0, Vec::len);
     for finding in report["schematic_parity"].as_array().into_iter().flatten() {
         *tally
@@ -167,6 +199,16 @@ pub fn tally_drc(report: &Value) -> DrcTally {
     }
     tally.schematic_parity_pins_only = no_connect_parity_only(report).is_some();
     tally
+}
+
+/// The net a DRC item's description names: `Pad 2 [GND] of C1 on F.Cu`
+/// gives `GND`; `None` without one or for `<no net>`.
+fn item_net(description: &str) -> Option<String> {
+    let start = description.find('[')? + 1;
+    let rest = &description[start..];
+    let end = rest.find("] ").or_else(|| rest.rfind(']'))?;
+    let net = &rest[..end];
+    (!net.is_empty() && net != "<no net>").then(|| net.to_string())
 }
 
 pub fn read_drc_tally(path: &Path) -> Option<DrcTally> {
@@ -362,6 +404,8 @@ pub struct StrictSplit {
     /// (`KICAD_FINDING_CAP`): whether they were there before is unknown,
     /// so none is subtracted.
     pub unknown: Vec<String>,
+    /// The run's own findings (`new`), as indices into the result's.
+    pub new_indices: Vec<usize>,
 }
 
 /// Splits a result's findings into the reference's (the same type at the
@@ -378,13 +422,14 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
     };
     let mut split = StrictSplit::default();
     let mut used = vec![false; reference.len()];
-    for finding in ours {
+    for (number, finding) in ours.iter().enumerate() {
         let kind = finding.kind.as_str();
         if capped(kind) {
             if !split.unknown.iter().any(|known| known == kind) {
                 split.unknown.push(kind.to_string());
             }
             *split.new.entry(kind.to_string()).or_default() += 1;
+            split.new_indices.push(number);
             continue;
         }
         let matched = reference
@@ -396,6 +441,7 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
             *split.preexisting.entry(kind.to_string()).or_default() += 1;
         } else {
             *split.new.entry(kind.to_string()).or_default() += 1;
+            split.new_indices.push(number);
         }
     }
     split
@@ -768,6 +814,7 @@ fn next_actions(
     facts: &KiCadRunFacts,
     status: KiCadRunStatus,
     new_findings: &BTreeMap<String, usize>,
+    own: &[&DrcFinding],
     unknown: &[String],
 ) -> Vec<String> {
     let mut actions = facts.input_warnings.clone();
@@ -813,12 +860,23 @@ fn next_actions(
                 facts.dead_pads
             ));
         }
+        if let Some(native) = facts
+            .native
+            .as_ref()
+            .filter(|native| !native.unconnected_nets.is_empty())
+        {
+            where_.push(format!(
+                "KiCad's unconnected items are on {}",
+                top_counts(&native.unconnected_nets, 8)
+            ));
+        }
         actions.push(format!(
             "connections are open: {}; make room there (move parts apart, enlarge the outline, add layers) or narrow the net classes",
-            if where_.is_empty() { "see diagnostics in the report".to_string() } else { where_.join(", ") }
+            if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
         ));
     }
-    if facts.starved_thermals > 0 && new_findings.contains_key("starved_thermal") {
+    let thermal_action = facts.starved_thermals > 0 && new_findings.contains_key("starved_thermal");
+    if thermal_action {
         actions.push(format!(
             "{} pads are short of thermal spokes (diagnostics.starved_thermals has advice for each); \"solid_starved_thermals\" (on unless false in the router config) connects them solid",
             facts.starved_thermals
@@ -829,12 +887,26 @@ fn next_actions(
         .filter(|(kind, _)| kind.as_str() != "starved_thermal")
         .map(|(kind, count)| (kind.clone(), *count))
         .collect();
-    if !other.is_empty() {
+    if !other.is_empty() || (!thermal_action && new_findings.contains_key("starved_thermal")) {
+        let drc = facts.outputs.get("drc").map_or("drc.json", String::as_str);
         actions.push(format!(
-            "new DRC errors ({}): see {}",
-            counts(&other),
-            facts.outputs.get("drc").map_or("drc.json", String::as_str)
+            "new DRC errors ({}): see {drc}",
+            counts(new_findings)
         ));
+        // The largest types, each with what to do.
+        let mut kinds: Vec<(&String, &usize)> = new_findings
+            .iter()
+            .filter(|(kind, _)| !(thermal_action && kind.as_str() == "starved_thermal"))
+            .collect();
+        kinds.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        for (kind, count) in kinds.into_iter().take(FINDING_ACTIONS) {
+            let findings: Vec<&DrcFinding> = own
+                .iter()
+                .copied()
+                .filter(|finding| &finding.kind == kind)
+                .collect();
+            actions.push(finding_action(kind, *count, &findings));
+        }
     }
     if !facts.constraints_missed.is_empty() {
         actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
@@ -878,6 +950,108 @@ fn next_actions(
         actions.extend(facts.skipped.iter().cloned());
     }
     actions
+}
+
+/// The finding types the verdict gives an action of their own, the
+/// largest first.
+const FINDING_ACTIONS: usize = 4;
+
+/// `map`'s largest entries as `name (count)`, at most `limit` and how many
+/// more.
+fn top_counts(map: &BTreeMap<String, usize>, limit: usize) -> String {
+    let mut entries: Vec<(&String, &usize)> = map.iter().collect();
+    entries.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+    let mut text: Vec<String> = entries
+        .iter()
+        .take(limit)
+        .map(|(name, count)| format!("{name} ({count})"))
+        .collect();
+    if entries.len() > limit {
+        text.push(format!("{} more", entries.len() - limit));
+    }
+    text.join(", ")
+}
+
+/// One finding type's next action: what KiCad found (the rule, the nets
+/// or the items of the type's findings) and the setting or step that
+/// addresses it, where there is one.
+fn finding_action(kind: &str, count: usize, findings: &[&DrcFinding]) -> String {
+    // The rule as KiCad states it: the first parenthesis of the first
+    // finding's description ("Clearance violation (netclass 'Default'
+    // clearance 0.2000 mm; actual 0.1500 mm)"; a layer may follow in a
+    // second one).
+    let rule = findings.first().and_then(|finding| {
+        let text = &finding.description;
+        let start = text.find('(')? + 1;
+        let mut depth = 1;
+        let end = text[start..].char_indices().find_map(|(index, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(start + index)
+        })?;
+        let rule = text[start..end].trim();
+        (!rule.is_empty()).then(|| rule.to_string())
+    });
+    let mut nets: BTreeMap<String, usize> = BTreeMap::new();
+    for finding in findings {
+        let mut names = finding.nets.clone();
+        names.dedup();
+        if !names.is_empty() {
+            *nets.entry(names.join(" and ")).or_default() += 1;
+        }
+    }
+    let mut what = Vec::new();
+    if let Some(rule) = rule {
+        what.push(rule);
+    }
+    if !nets.is_empty() {
+        what.push(format!("nets {}", top_counts(&nets, 4)));
+    } else if let Some(finding) = findings.first() {
+        let items: Vec<&str> = finding
+            .item_descriptions
+            .iter()
+            .take(2)
+            .map(String::as_str)
+            .collect();
+        if !items.is_empty() {
+            what.push(format!("first: {}", items.join("; ")));
+        }
+    }
+    let step = match kind {
+        "clearance" | "shorting_items" => {
+            "move those nets' parts apart, or check whether the rule is one the router does not keep (rules.project.unmodelled in the report)"
+        }
+        "hole_clearance" | "hole_to_hole" => {
+            "move the parts apart; the project's min_hole_clearance and min_hole_to_hole (Board Setup) set the rule"
+        }
+        "copper_edge_clearance" => {
+            "for a part at an edge, its edge constraint's max_mm or flush (constraints.md, edge); otherwise the project's min_copper_edge_clearance"
+        }
+        "items_not_allowed" => {
+            "an item lies in a rule area (a keepout): move the keepout or the part, or let the rule area allow it"
+        }
+        "solder_mask_bridge" => {
+            "copper of two nets under one mask opening: the project's solder_mask_to_copper_clearance and the solder_mask_bridge severity (Board Setup) decide, and the router keeps them"
+        }
+        "courtyards_overlap" => {
+            "placer.tight_bodies false keeps bodies to their courtyards; or give the parts room"
+        }
+        "starved_thermal" => {
+            "\"solid_starved_thermals\": true in the router config connects the pads solid"
+        }
+        "connection_width" | "track_width" => {
+            "the project's min_connection and the classes' widths (Board Setup) set the rule"
+        }
+        _ => "see drc.json",
+    };
+    if what.is_empty() {
+        format!("{kind} {count}: {step}")
+    } else {
+        format!("{kind} {count} ({}): {step}", what.join("; "))
+    }
 }
 
 /// The next action for a project with rules the router does not keep.
@@ -959,11 +1133,17 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             errors.clone(),
             StrictSplit {
                 new: errors,
+                new_indices: (0..findings.len()).collect(),
                 ..Default::default()
             },
             None,
         ),
     };
+    let own: Vec<&DrcFinding> = strict
+        .new_indices
+        .iter()
+        .filter_map(|&index| findings.get(index))
+        .collect();
     let (status, reason) = decide(facts, &strict.new);
     KiCadVerdict {
         status,
@@ -977,7 +1157,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         unconnected_terminals: facts.unconnected_terminals,
         kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
-        next_actions: next_actions(facts, status, &strict.new, &strict.unknown),
+        next_actions: next_actions(facts, status, &strict.new, &own, &strict.unknown),
         clean_without_subtraction: facts
             .native
             .as_ref()
@@ -1061,7 +1241,14 @@ pub fn error_verdict(
         error.lines().next().unwrap_or("")
     );
     verdict.error = Some(error.to_string());
-    verdict.next_actions = if status == KiCadRunStatus::UsageError {
+    verdict.next_actions = if error.contains(crate::KICAD_REQUIREMENT) {
+        vec![format!(
+            "{}; then run again (into the same output directory: it holds only this verdict)",
+            crate::KICAD_REQUIREMENT
+        )]
+    } else if error.contains(crate::native_report::KICAD_TIMEOUT_MESSAGE) {
+        vec!["kicad-cli did not finish within its limit: set PCB_KICAD_TIMEOUT to more seconds (default 900) and run again into a new output directory".into()]
+    } else if status == KiCadRunStatus::UsageError {
         vec!["fix the arguments or input files the error names; nothing was routed".into()]
     } else {
         vec!["an internal error: the output directory may hold partial results; report the error with the input".into()]
@@ -1273,6 +1460,7 @@ mod tests {
                     at: Some([*x, *y]),
                 })
                 .collect(),
+            ..DrcFinding::default()
         };
         // A footprint's own hole-to-hole finding moves and turns with it.
         let designer = at(
@@ -1450,6 +1638,102 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("\"refine_budget_seconds\": 367"))
         );
+    }
+
+    #[test]
+    fn new_drc_errors_name_their_rule_nets_and_step() {
+        let item = |description: &str, x: f64| json!({"description": description, "pos": {"x": x, "y": 1.0}, "uuid": format!("u{x}")});
+        let report = json!({
+            "violations": [
+                {"type": "clearance", "severity": "error",
+                 "description": "Clearance violation (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm)",
+                 "items": [item("Track [GND] on F.Cu, length 1.0000 mm", 1.0), item("Pad 1 [/SDA] of U1 on F.Cu", 2.0)]},
+                {"type": "clearance", "severity": "error",
+                 "description": "Clearance violation (netclass 'Default' clearance 0.2000 mm; actual 0.1800 mm)",
+                 "items": [item("Via [GND] on F.Cu - B.Cu", 3.0), item("Pad 2 [/SDA] of U1 on F.Cu", 4.0)]},
+                {"type": "starved_thermal", "severity": "error",
+                 "description": "Thermal relief connection to zone incomplete (layer F.Cu; zone min spoke count 2; actual 1)",
+                 "items": [item("Zone [GND] on F.Cu", 5.0), item("Pad 29 [GND] of U1 on F.Cu", 6.0)]},
+                {"type": "items_not_allowed", "severity": "error",
+                 "description": "Items not allowed (Keepout)",
+                 "items": [item("Rule Area [<no net>] on F.Cu", 7.0), item("Footprint R1", 8.0)]}
+            ],
+            "unconnected_items": [{"type": "unconnected_items", "items": [item("Pad 1 [+3V3] of C1 on F.Cu", 9.0), item("Pad 2 [+3V3] of U1 on F.Cu", 10.0)]}],
+            "schematic_parity": []
+        });
+        let tally = tally_drc(&report);
+        assert_eq!(
+            tally.unconnected_nets,
+            BTreeMap::from([("+3V3".to_string(), 1)])
+        );
+        let mut facts = routed(tally);
+        facts.routed_connections = 53;
+        let verdict = judge(&facts);
+        let actions = verdict.next_actions.join("\n");
+        assert!(
+            actions.contains("KiCad's unconnected items are on +3V3 (1)"),
+            "{actions}"
+        );
+        assert!(
+            actions.contains("clearance 2 (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm; nets GND and /SDA (2)): move those nets' parts apart"),
+            "{actions}"
+        );
+        // The router counted no starved pad: the type's own action says
+        // what connects them.
+        assert!(
+            actions.contains("starved_thermal 1 (layer F.Cu"),
+            "{actions}"
+        );
+        assert!(actions.contains("solid_starved_thermals"), "{actions}");
+        assert!(
+            actions.contains("items_not_allowed 1 (Keepout; first: Rule Area [<no net>] on F.Cu; Footprint R1): an item lies in a rule area"),
+            "{actions}"
+        );
+        // A layer in a second parenthesis, a rule without a name.
+        let finding = DrcFinding {
+            kind: "connection_width".into(),
+            description: "Width (board setup constraints minimum connection width 0.1270 mm; actual 0.1137 mm) (F.Cu)".into(),
+            ..DrcFinding::default()
+        };
+        assert!(
+            finding_action("connection_width", 1, &[&finding]).starts_with(
+                "connection_width 1 (board setup constraints minimum connection width 0.1270 mm; actual 0.1137 mm): "
+            )
+        );
+        let finding = DrcFinding {
+            kind: "clearance".into(),
+            description: "Clearance violation ( clearance 0.1270 mm; actual 0.0000 mm)".into(),
+            ..DrcFinding::default()
+        };
+        assert!(
+            finding_action("clearance", 1, &[&finding])
+                .starts_with("clearance 1 (clearance 0.1270 mm; actual 0.0000 mm): ")
+        );
+    }
+
+    #[test]
+    fn kicad_problems_name_the_requirement_and_the_timeout_variable() {
+        let missing = error_verdict(
+            "route-kicad-board",
+            KiCadRunStatus::UsageError,
+            &format!(
+                "kicad-cli version did not run or failed: {}",
+                crate::KICAD_REQUIREMENT
+            ),
+            0.1,
+            BTreeMap::new(),
+        );
+        assert_eq!(missing.exit_code, EXIT_USAGE);
+        assert!(missing.next_actions[0].contains("PCB_KICAD_CLI"));
+        assert!(missing.next_actions[0].contains("KiCad 10"));
+        let slow = error_verdict(
+            "layout-kicad-board",
+            KiCadRunStatus::InternalError,
+            "kicad-cli timed out after 900 s (PCB_KICAD_TIMEOUT sets the limit in seconds, default 900)",
+            0.1,
+            BTreeMap::new(),
+        );
+        assert!(slow.next_actions[0].contains("PCB_KICAD_TIMEOUT"));
     }
 
     #[test]

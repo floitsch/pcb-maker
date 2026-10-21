@@ -10,6 +10,18 @@ short version of this guide: [skills/pcb-maker/SKILL.md](../skills/pcb-maker/SKI
 (install: README.md, "For agents"). A test keeps it in step with the
 command table and the exit codes.
 
+**It needs KiCad 10.** pcb-maker writes KiCad 10 boards and judges them
+by KiCad's own DRC, so `kicad-cli` of KiCad 10 must be on the `PATH`, or
+`PCB_KICAD_CLI` must name it (on macOS
+`/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`).
+`route-kicad-board`, `layout-kicad-board`, `drc-kicad-board`,
+`fab-kicad-board` and the import of a schematic ask `kicad-cli version` before any work: a missing
+or failing kicad-cli, or one older than KiCad 10, is an input error
+(exit 2) whose `next_actions` says this. A route or layout with KiCad's
+check off (`PCB_SKIP_NATIVE`, `skip_native_verification`), a placement
+and a netlist's import go on without it, with a warning in the verdict
+(the import: on stdout).
+
 ## 0. From a schematic
 
 ```sh
@@ -19,7 +31,16 @@ pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-i
 does what KiCad's "Update PCB from Schematic" does for a new board:
 - every symbol's footprint from the project's and the user's
   `fp-lib-table` (KiCad's own libraries without one), with its fields (an
-  `LCSC` field ends up in the BOM) and its DNP and BOM flags;
+  `LCSC` field ends up in the BOM) and its DNP and BOM flags. The user's
+  table is KiCad 10's (else 9's) under `KICAD_CONFIG_HOME`,
+  `~/.config/kicad` (Linux), `~/Library/Preferences/kicad` (macOS) or
+  `%APPDATA%\kicad` (Windows). KiCad's own libraries are the folder
+  `KICAD10_FOOTPRINT_DIR` (else `KICAD9_FOOTPRINT_DIR`,
+  `KICAD8_FOOTPRINT_DIR`) names, else the first of
+  `/usr/share/kicad/footprints`, `/usr/local/share/kicad/footprints`,
+  `/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints` and
+  `%ProgramFiles%\KiCad\<version>\share\kicad\footprints` that exists;
+  set `KICAD10_FOOTPRINT_DIR` for an install elsewhere;
 - pads on their nets, footprints linked to their symbols, so KiCad's
   schematic parity check passes;
 - the schematic, project file and the project's own libraries copied
@@ -275,7 +296,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   finished design, `--reference <its-project-dir>` makes its own DRC
   errors pre-existing (see 4).
 - **Router options.** Pass a JSON file instead of `auto`, for example
-  `{"seeds": 4}`. The rules still come from the project.
+  `{"seeds": 4}`. The rules still come from the project: they are the
+  base, and a key the file sets replaces the project's value of that key
+  only (`edge_clearance_mm`, `hole_clearance_mm`,
+  `solder_mask_to_copper_mm`, ...). `connection_rules` and
+  `default_rules` together are the classes: a file setting either routes
+  by its own classes, still with the project's other rules.
   - `seeds`: route that many ways in parallel and keep the best: fewest
     opens, then vias, then copper. Worth it on idle cores; best of 4 took
     PIC from 2 vias to 0.
@@ -528,7 +554,7 @@ A finished run also carries it as `verdict` in its report:
 | `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
-| `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |
+| `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
 | `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |
@@ -614,7 +640,7 @@ input errors and 4 on internal errors.
 | `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
 | `routed.diagnostics.conflicted_nets` | Nets still fighting for room when the router gave up. |
 | `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`), worst first: give these areas more room. |
-| `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on. |
+| `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on; the verdict's `next_actions` repeat them. |
 
 ## When it does not work out
 
@@ -647,9 +673,11 @@ input errors and 4 on internal errors.
   `dead_pads` name pads whose class is too wide for them. Otherwise the
   board is too dense for its layer count or size. Enlarge the outline or add layers. `benchmarks/corpus/run.py
   --shrink` shows how much a design can shrink.
-- **Pads or copper too close to the edge.** A `flush` part's courtyard
-  touches the edge; its pads still need the board's copper-to-edge
-  clearance, which DRC reports.
+- **Pads or copper too close to the edge.** How parts at an edge keep the
+  copper-to-edge clearance is described once, under `edge` in
+  [constraints.md](constraints.md); a `copper_edge_clearance` error left in
+  drc.json is copper the placer did not hold (a fixed part, a board
+  graphic) or a project rule changed after the placement.
 
 ## 5. Order it
 

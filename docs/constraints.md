@@ -65,7 +65,7 @@ downwards, so `top` is the smaller y.
 | `add` | Parts the board needs and the schematic does not have: mounting holes plated on a net, a footprint for another switch, a test point. `import-kicad-netlist` puts them on the board (see [Parts the schematic does not have](#parts-the-schematic-does-not-have-add)); the layout keeps those with `x` and `y` there, as `place` does. | hard |
 | `device_front` | The board edge the device's front is at (`left`, `right`, `top`, `bottom`), so that `place` can say `front` (a button the user presses) and `rear` (the power jack). | board |
 | `rotation` | The part may only take these KiCad orientations (degrees). | hard |
-| `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On a `polygon` outline, of the nearest side of the polygon that faces that way (below). On that side the courtyard may touch the edge: copper clearance to the edge is still enforced by the router and DRC. | hard |
+| `edge` | The part's body lies within `max_mm` (default 1; 0 with `flush`) of that edge of the outline's bounding box (`left`, `right`, `top`, `bottom`, or `any`: the edge nearest to where the part settles in a placement without this constraint; `edges_chosen` in `board-placer.json` says which). On a `polygon` outline, of the nearest side of the polygon that faces that way (below). On that side the courtyard may touch the edge, but the part's pads keep the board's copper-to-edge clearance from it: the placer holds them back by `copper_edge_clearance_mm` (the project's `min_copper_edge_clearance` unless the placer config sets it), the router keeps its tracks and vias as far from the edge, and KiCad's DRC reports a pad or track closer as `copper_edge_clearance`. This is the one description of copper at the edge; the other documents point here. | hard |
 | `edge.opening_outwards` | The connector opens towards that edge: its mouth (the side where its courtyard reaches farthest beyond its pads, such as a USB receptacle's shell) faces out. Only orientations that do so are allowed; a footprint without a clear mouth is an error. | hard |
 | `edge.overhang` | The part reaches beyond `overhang.edge` with its footprint's keepout zone (an ESP32 module's antenna). The keepout lies outside the board, flush with the edge; the rest of the body inside. Only orientations that point the keepout at that edge are allowed. The footprint must have a keepout zone. | hard |
 | `region` | The bodies stay inside the box. By default `x`/`y` are relative to the top-left corner of the outline's bounding box; `"origin": "absolute"` uses board coordinates. In place of `x` and `y`, `at` names a part of the outline's box in words: `left-half`, `right-half`, `top-half`, `bottom-half` or `center` (the middle third both ways), whatever size the outline gets (a keyboard half on an outline sized from the parts). | hard |
@@ -251,9 +251,9 @@ keeps the smallest one that comes out clean:
 | `edge` | The edge that moves: `bottom` or `top` (the height changes), `right` or `left` (the width). The opposite edge stays. |
 | `min`, `max`, `step` | The board's extent along that axis to try, in millimetres: `min`, `min + step`, ... and `max`. Or `sizes`: a list. |
 | `prefer_below` | Price thresholds. A size at or below one is preferred over any larger size; the search goes past it only when nothing at or below it is clean. A threshold inside the range is tried itself. |
-| `accept` | What counts as clean: `pass_strict` (default): the layout's verdict is `complete` (exit 0: KiCad finds no unconnected item and no error that counts, every part placed, every constraint kept); `pass`: electrically good (KiCad finds no unconnected item and no error beyond the reference's count, every part placed; a missed soft constraint is allowed, and the verdict then says `incomplete`). Cosmetic findings never count. |
+| `accept` | What counts as clean: `pass_strict` (default): the layout's verdict is `complete` (exit 0: KiCad finds no unconnected item and no error that counts, every part placed, every constraint kept); `pass`: electrically good (KiCad finds no unconnected item and no error beyond the reference's count, every part placed; a missed soft constraint is allowed). The exit follows the rule chosen: a size clean by `pass` makes the search's verdict `complete` (exit 0) though its layout said `incomplete`, which `free_dimension.layout_status` keeps. Cosmetic findings never count. |
 | `band_mm` | What moves with the edge (default 0.5: what lies on it). See below. |
-| `probe_seconds`, `confirm_seconds` | The budgets (below). |
+| `probe_seconds`, `confirm_seconds` | The budgets (below). Keys of `free_dimension` in the layout config: the router config's own `probe_seconds` is another setting (the ladder's rung probes). |
 | `parallel` | Probes side by side (default a quarter of the threads, at most 4, at most one per 3 GB of free memory). |
 
 The outline must be a rectangle: the constraints' `outline` with a
@@ -294,7 +294,9 @@ a keepout, a `keepout` or `region` box, a `place` point) that lay inside
 the outline and would reach beyond it, and a fixed part carried by the
 edge that would land on a fixed part that stays. They are listed in
 `free-dimension.json` as `infeasible` with the reasons; when no size is
-feasible the run is an input error (exit 2).
+feasible the run is an input error (exit 2), and `verdict.json` and
+`free-dimension.json` are written all the same, the table with every
+size and its reasons.
 
 **The search.** Results are not monotone in the size (the fence board at
 34, 40 and 46 mm: 32, 1 and 2 unconnected), so the sizes are not

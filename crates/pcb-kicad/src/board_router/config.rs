@@ -75,7 +75,7 @@ pub struct KiCadBoardRouterConfig {
     pub global_routing: Option<bool>,
     /// On a board with four or more copper layers and no copper pours,
     /// ground becomes a plane on the first inner layer and the supply rail
-    /// with the most pads one on the second (default true; ignored when
+    /// with the most pads one on the last (default true; ignored when
     /// `add_pours` is given).
     #[serde(default)]
     pub automatic_planes: Option<bool>,

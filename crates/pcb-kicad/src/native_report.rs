@@ -243,21 +243,62 @@ impl Drop for ReportDirectory {
 /// KiCad 10's file format, and every benchmark ran on KiCad 10.0.7.
 const KICAD_MAJOR: u32 = 10;
 
-/// The warning for a kicad-cli of `version` (`kicad-cli version`'s output)
-/// older than [`KICAD_MAJOR`]; `None` for a current or unreadable one.
-fn old_kicad_warning(version: &str) -> Option<String> {
-    let major: u32 = version
+/// The major version of a `kicad-cli version` output; `None` when it does
+/// not start with a number.
+fn kicad_major(version: &str) -> Option<u32> {
+    version
         .trim()
         .split(|c: char| !c.is_ascii_digit())
         .next()?
         .parse()
-        .ok()?;
+        .ok()
+}
+
+/// The warning for a kicad-cli of `version` (`kicad-cli version`'s output)
+/// older than [`KICAD_MAJOR`]; `None` for a current or unreadable one.
+fn old_kicad_warning(version: &str) -> Option<String> {
+    let major = kicad_major(version)?;
     (major < KICAD_MAJOR).then(|| {
         format!(
             "warning: kicad-cli {} is older than KiCad {KICAD_MAJOR}: pcb-maker writes KiCad {KICAD_MAJOR} boards and is tested with KiCad 10.0.7 only; its checks may fail or differ",
             version.trim()
         )
     })
+}
+
+/// The kicad-cli program pcb-maker runs: `PCB_KICAD_CLI` (a path, for a
+/// KiCad that is not on the PATH, such as macOS's
+/// `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`), else
+/// `kicad-cli` on the PATH.
+pub(crate) fn kicad_cli() -> std::ffi::OsString {
+    std::env::var_os("PCB_KICAD_CLI")
+        .filter(|program| !program.is_empty())
+        .unwrap_or_else(|| "kicad-cli".into())
+}
+
+/// What pcb-maker needs of KiCad and how to point it at kicad-cli: the
+/// next action of a run that found none (`check_kicad_cli`).
+pub const KICAD_REQUIREMENT: &str = "pcb-maker needs KiCad 10's kicad-cli: install KiCad 10 and put kicad-cli on the PATH, or set PCB_KICAD_CLI to the program (on macOS /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli)";
+
+/// The agent commands' check of kicad-cli before any work: `kicad-cli
+/// version` (asked once per process and cached) must run and give KiCad
+/// 10 or newer. Returns the version, or what is wrong followed by
+/// [`KICAD_REQUIREMENT`] (marked as the input's error: exit 2). A version
+/// that does not start with a number passes.
+pub fn check_kicad_cli() -> Result<String, String> {
+    let program = kicad_cli();
+    let Some(version) = crate::drc_cache::tool_version(&program) else {
+        return Err(crate::verdict::input_error(format!(
+            "{} version did not run or failed: {KICAD_REQUIREMENT}",
+            program.to_string_lossy()
+        )));
+    };
+    if kicad_major(&version).is_some_and(|major| major < KICAD_MAJOR) {
+        return Err(crate::verdict::input_error(format!(
+            "kicad-cli {version} is older than KiCad {KICAD_MAJOR}: {KICAD_REQUIREMENT}"
+        )));
+    }
+    Ok(version)
 }
 
 /// Warns once per process, before the first KiCad check, when `program`
@@ -305,7 +346,8 @@ pub(super) fn run_kicad_report(
 }
 
 fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> Result<(), String> {
-    let program = OsStr::new("kicad-cli");
+    let program = kicad_cli();
+    let program = program.as_os_str();
     warn_if_old_kicad(program);
     // ERC too: its library warnings are not counted (`is_erc_library_warning`).
     let config_home = match arguments.get(..2) {
@@ -441,7 +483,8 @@ fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), Strin
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let program = OsStr::new("kicad-cli");
+    let program = kicad_cli();
+    let program = program.as_os_str();
     warn_if_old_kicad(program);
     let mut command = Command::new(program);
     command
@@ -464,6 +507,10 @@ fn run_kicad_save_board_untimed(board: &Path, report: &Path) -> Result<(), Strin
     }
     Ok(())
 }
+
+/// How a kicad-cli run that outlived `report_timeout` is reported (the
+/// verdict's next action names `PCB_KICAD_TIMEOUT` on it).
+pub(crate) const KICAD_TIMEOUT_MESSAGE: &str = "kicad-cli timed out after";
 
 /// Seconds a kicad-cli report may take (`PCB_KICAD_TIMEOUT`, default 900):
 /// a zone refill on 0xCB's panel never finished, and the hung process
@@ -512,7 +559,7 @@ fn run_bounded(
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "kicad-cli timed out after {:.0} s",
+                "{KICAD_TIMEOUT_MESSAGE} {:.0} s (PCB_KICAD_TIMEOUT sets the limit in seconds, default 900)",
                 timeout.as_secs_f64()
             ));
         }

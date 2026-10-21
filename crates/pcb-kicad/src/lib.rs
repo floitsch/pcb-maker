@@ -36,8 +36,11 @@ mod geometry_queries;
 mod roundrect_pad;
 mod silkscreen;
 mod verification_preview;
+pub use native_report::{
+    KICAD_REQUIREMENT, check_kicad_cli, erc_design_issues, is_erc_library_warning,
+    is_library_metadata_warning,
+};
 use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
-pub use native_report::{erc_design_issues, is_erc_library_warning, is_library_metadata_warning};
 pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
 mod congestion_rank;
@@ -118,7 +121,7 @@ pub use board_router::{
     KiCadExistingTracks, KiCadKeptCopper, KiCadPourMode, bench_kicad_search, dump_kicad_pour_map,
     route_kicad_board, write_kicad_board_without_tracks,
 };
-pub use project_rules::resolve_project_rules;
+pub use project_rules::{resolve_project_rules, router_config_over_project};
 
 // Split out of lib.rs on 2026-10-21.
 mod kicad_sexpr;

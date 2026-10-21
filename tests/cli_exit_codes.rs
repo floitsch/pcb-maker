@@ -337,8 +337,10 @@ fn a_panic_exits_4_with_one_line_and_a_report() {
     let root = scratch("panic");
     let project = project(&root);
     let out = root.join("out");
+    // KiCad's check off: the run starts without kicad-cli too.
     let output = binary()
         .env("PCB_MAKER_TEST_PANIC", "1")
+        .env("PCB_SKIP_NATIVE", "1")
         .env_remove("RUST_BACKTRACE")
         .args([
             "route-kicad-board",
@@ -861,6 +863,8 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
     };
     // An edge that is none, and sizes where the fixed J3 (at x 18 of a
     // 20 mm board) would end outside: input errors, one line, exit 2.
+    // (KiCad's check off: these need no kicad-cli.)
+    let skip = [("PCB_SKIP_NATIVE", "1")];
     for (name, config) in [
         (
             "edge",
@@ -872,20 +876,43 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
                                "free_dimension": {"edge": "right", "sizes": [5, 10]}}),
         ),
     ] {
-        let (output, _) = layout(name, config, &[]);
+        let (output, _) = layout(name, config, &skip);
         assert_eq!(code(&output), 2, "{name}: {}", stderr(&output));
         assert_eq!(stderr(&output).lines().count(), 1, "{}", stderr(&output));
     }
-    let (output, _) = layout(
+    let (output, out) = layout(
         "stranded2",
         serde_json::json!({"placer": {"fixed": ["J3"]},
                            "free_dimension": {"edge": "right", "sizes": [5]}}),
-        &[],
+        &skip,
     );
     assert!(
         stderr(&output).contains("fixed part J3"),
         "{}",
         stderr(&output)
+    );
+    // No size feasible: the verdict and the table still say why.
+    let file: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(file["status"], "usage_error");
+    assert_eq!(file["exit_code"], 2);
+    assert!(
+        file["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .contains("free-dimension.json lists each size's reasons"),
+        "{file}"
+    );
+    let table: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("free-dimension.json")).unwrap())
+            .unwrap();
+    assert_eq!(table["runs"][0]["status"], "infeasible", "{table}");
+    assert!(
+        table["runs"][0]["reasons"][0]
+            .as_str()
+            .unwrap()
+            .contains("J3"),
+        "{table}"
     );
     // Without KiCad's check no size is clean: the closest is kept (the
     // smallest of equals), its layout is the result.
@@ -1288,4 +1315,143 @@ fn the_agent_skill_matches_the_command_table_and_the_exit_codes() {
             .lines()
             .any(|line| line.starts_with("| 5 ") || line.starts_with("| 6 "))
     );
+}
+
+/// A kicad-cli that answers `version` with `version` and fails anything
+/// else.
+#[cfg(unix)]
+fn versioned_kicad(directory: &Path, version: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = directory.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let program = bin.join("kicad-cli");
+    fs::write(
+        &program,
+        format!("#!/bin/sh\nif [ \"$1\" = version ]; then echo {version}; exit 0; fi\nexit 1\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+    program
+}
+
+#[test]
+#[cfg(unix)]
+fn kicad_cli_is_checked_before_any_work() {
+    let root = scratch("kicad-check");
+    let project = project(&root);
+    let missing = root.join("no-kicad-cli");
+    let run = |program: &Path, skip: bool, arguments: &[String]| {
+        let mut command = binary();
+        command
+            .env("PCB_KICAD_CLI", program)
+            .env("PCB_ROUTER_SEED", "0")
+            .args(arguments);
+        if skip {
+            command.env("PCB_SKIP_NATIVE", "1");
+        } else {
+            command.env_remove("PCB_SKIP_NATIVE");
+        }
+        command.output().unwrap()
+    };
+    let out = root.join("out");
+    let route = vec![
+        "route-kicad-board".to_string(),
+        project.display().to_string(),
+        "t".into(),
+        out.display().to_string(),
+        "auto".into(),
+    ];
+    // No kicad-cli: an input error before any work, its verdict naming
+    // the requirement.
+    let output = run(&missing, false, &route);
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert_eq!(stderr(&output).lines().count(), 1, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("PCB_KICAD_CLI"),
+        "{}",
+        stderr(&output)
+    );
+    let file: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("verdict.json")).unwrap()).unwrap();
+    assert_eq!(file["status"], "usage_error");
+    let action = file["next_actions"][0].as_str().unwrap();
+    assert!(
+        action.contains("KiCad 10") && action.contains("PATH"),
+        "{action}"
+    );
+    // With KiCad's check off the route goes on (into the same directory,
+    // which holds only that verdict), with a warning in its verdict.
+    let output = run(&missing, true, &route);
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let verdict = verdict(&out.join("board-router.json"));
+    assert_eq!(verdict["status"], "router_complete_unverified");
+    assert!(
+        verdict["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .contains("goes on without KiCad"),
+        "{verdict}"
+    );
+    // A KiCad older than 10: an input error too.
+    let old = versioned_kicad(&root.join("old"), "9.0.1");
+    let output = run(
+        &old,
+        false,
+        &[
+            "layout-kicad-board".to_string(),
+            project.display().to_string(),
+            "t".into(),
+            root.join("layout").display().to_string(),
+        ],
+    );
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("kicad-cli 9.0.1 is older than KiCad 10"),
+        "{}",
+        stderr(&output)
+    );
+    // The DRC and a schematic's import need it.
+    let output = run(
+        &missing,
+        false,
+        &[
+            "drc-kicad-board".to_string(),
+            project.display().to_string(),
+            "t".into(),
+            root.join("drc.json").display().to_string(),
+        ],
+    );
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    let schematic = root.join("t.kicad_sch");
+    fs::write(&schematic, "(kicad_sch)").unwrap();
+    let output = run(
+        &missing,
+        false,
+        &[
+            "import-kicad-netlist".to_string(),
+            schematic.display().to_string(),
+            root.join("import").display().to_string(),
+            "t".into(),
+        ],
+    );
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    // A schematic KiCad cannot read is the input's fault: exit 2.
+    let failing = versioned_kicad(&root.join("failing"), "10.0.7");
+    let output = run(
+        &failing,
+        false,
+        &[
+            "import-kicad-netlist".to_string(),
+            schematic.display().to_string(),
+            root.join("import2").display().to_string(),
+            "t".into(),
+        ],
+    );
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("sch export netlist failed"),
+        "{}",
+        stderr(&output)
+    );
+    fs::remove_dir_all(root).unwrap();
 }

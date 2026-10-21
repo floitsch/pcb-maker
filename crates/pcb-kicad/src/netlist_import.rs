@@ -206,25 +206,88 @@ fn expand(uri: &str, project: &Path, system: &str) -> String {
     path
 }
 
+/// Where KiCad's own footprint libraries may be, in order: the
+/// `KICAD10_FOOTPRINT_DIR` family (KiCad's own variables, set by its
+/// installers and honoured on every platform: 10, 9, 8), then the
+/// standard places on Linux, macOS and Windows. The first that exists is
+/// taken.
+fn stock_footprint_directories(variable: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = [
+        "KICAD10_FOOTPRINT_DIR",
+        "KICAD9_FOOTPRINT_DIR",
+        "KICAD8_FOOTPRINT_DIR",
+    ]
+    .iter()
+    .filter_map(|name| variable(name).map(PathBuf::from))
+    .collect();
+    directories.extend(
+        [
+            "/usr/share/kicad/footprints",
+            "/usr/local/share/kicad/footprints",
+            "/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints",
+        ]
+        .iter()
+        .map(PathBuf::from),
+    );
+    if let Some(programs) = variable("ProgramFiles") {
+        for version in ["10.0", "9.0"] {
+            directories.push(
+                Path::new(&programs)
+                    .join("KiCad")
+                    .join(version)
+                    .join("share/kicad/footprints"),
+            );
+        }
+    }
+    directories
+}
+
+/// The user's global footprint tables, KiCad 10's before 9's: under
+/// `KICAD_CONFIG_HOME`, else `$XDG_CONFIG_HOME/kicad` or `~/.config/kicad`
+/// (Linux), `~/Library/Preferences/kicad` (macOS), `%APPDATA%\kicad`
+/// (Windows). Missing ones are skipped when read.
+fn user_footprint_tables(variable: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let mut homes: Vec<PathBuf> = Vec::new();
+    if let Some(home) = variable("KICAD_CONFIG_HOME") {
+        homes.push(PathBuf::from(home));
+    }
+    if let Some(base) = variable("XDG_CONFIG_HOME") {
+        homes.push(Path::new(&base).join("kicad"));
+    }
+    if let Some(home) = variable("HOME") {
+        homes.push(Path::new(&home).join(".config/kicad"));
+        homes.push(Path::new(&home).join("Library/Preferences/kicad"));
+    }
+    if let Some(data) = variable("APPDATA") {
+        homes.push(Path::new(&data).join("kicad"));
+    }
+    let mut tables = Vec::new();
+    for version in ["10.0", "9.0"] {
+        for home in &homes {
+            let table = home.join(version).join("fp-lib-table");
+            if !tables.contains(&table) {
+                tables.push(table);
+            }
+        }
+    }
+    tables
+}
+
 /// Footprint libraries by name: from fp-lib-tables (the project's first,
 /// then the user's), then `.pretty` folders in the project, then KiCad's
 /// own libraries. A table entry whose folder does not exist here falls back
 /// to the others.
 fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
-    let system = std::env::var("KICAD10_FOOTPRINT_DIR")
-        .or_else(|_| std::env::var("KICAD9_FOOTPRINT_DIR"))
-        .unwrap_or_else(|_| "/usr/share/kicad/footprints".into());
+    let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let candidates = stock_footprint_directories(&variable);
+    let system = candidates
+        .iter()
+        .find(|directory| directory.is_dir())
+        .or(candidates.first())
+        .map(|directory| directory.display().to_string())
+        .unwrap_or_default();
     let mut tables = vec![project.join("fp-lib-table")];
-    if let Ok(home) = std::env::var("HOME") {
-        for version in ["10.0", "9.0"] {
-            tables.push(
-                Path::new(&home)
-                    .join(".config/kicad")
-                    .join(version)
-                    .join("fp-lib-table"),
-            );
-        }
-    }
+    tables.extend(user_footprint_tables(&variable));
     let mut libraries = BTreeMap::new();
     for table in tables {
         let Ok(text) = fs::read_to_string(&table) else {
@@ -560,17 +623,24 @@ pub fn import_kicad_netlist_from(
         .is_some_and(|extension| extension == "kicad_sch");
     let netlist_path = if is_schematic {
         let path = output.join(format!("{board_id}.net"));
-        let result = Command::new("kicad-cli")
+        let result = Command::new(crate::native_report::kicad_cli())
             .args(["sch", "export", "netlist", "--format", "kicadsexpr", "-o"])
             .arg(&path)
             .arg(input)
             .output()
-            .map_err(|error| format!("kicad-cli: {error}"))?;
+            .map_err(|error| {
+                crate::verdict::input_error(format!(
+                    "kicad-cli did not run ({error}): {}",
+                    crate::KICAD_REQUIREMENT
+                ))
+            })?;
+        // The schematic KiCad cannot read is the input's fault (exit 2).
         if !result.status.success() {
-            return Err(format!(
-                "kicad-cli sch export netlist failed: {}",
+            return Err(crate::verdict::input_error(format!(
+                "kicad-cli sch export netlist failed on {}: {}",
+                input.display(),
                 String::from_utf8_lossy(&result.stderr)
-            ));
+            )));
         }
         // The project travels with the board: schematic sheets (the root
         // renamed after the board), project settings, library tables.
@@ -1843,12 +1913,12 @@ fn own_pad_gaps(
     // Without kicad-cli (a netlist from elsewhere) there is no check.
     // Only clearance findings are read: KiCad's configuration without
     // libraries (`kicad_config`) spares the footprint library load.
-    let mut command = Command::new("kicad-cli");
+    let mut command = Command::new(crate::native_report::kicad_cli());
     command
         .args(["pcb", "drc", "--format", "json", "--severity-error", "-o"])
         .arg(&report)
         .arg(&board);
-    crate::kicad_config::configure_drc(&mut command, std::ffi::OsStr::new("kicad-cli"), &board);
+    crate::kicad_config::configure_drc(&mut command, &crate::native_report::kicad_cli(), &board);
     let Ok(output) = command.output() else {
         let _ = fs::remove_dir_all(&directory);
         return Ok(BTreeMap::new());
@@ -1901,6 +1971,44 @@ fn own_pad_gaps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stock_libraries_are_found_on_macos_and_by_kicads_variables() {
+        let environment = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        // KiCad's own variable first, on any platform; the macOS bundle
+        // among the standard places.
+        let directories = stock_footprint_directories(&environment(&[(
+            "KICAD10_FOOTPRINT_DIR",
+            "/opt/kicad/footprints",
+        )]));
+        assert_eq!(directories[0], Path::new("/opt/kicad/footprints"));
+        assert!(directories.contains(&PathBuf::from(
+            "/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints"
+        )));
+        let directories =
+            stock_footprint_directories(&environment(&[("KICAD9_FOOTPRINT_DIR", "/opt/kicad9")]));
+        assert_eq!(directories[0], Path::new("/opt/kicad9"));
+        // The user's table on macOS, KiCad 10's before 9's.
+        let tables = user_footprint_tables(&environment(&[("HOME", "/Users/a")]));
+        let mac = PathBuf::from("/Users/a/Library/Preferences/kicad/10.0/fp-lib-table");
+        let linux = PathBuf::from("/Users/a/.config/kicad/10.0/fp-lib-table");
+        let older = PathBuf::from("/Users/a/Library/Preferences/kicad/9.0/fp-lib-table");
+        let position = |table: &PathBuf| tables.iter().position(|known| known == table).unwrap();
+        assert!(position(&linux) < position(&older) && position(&mac) < position(&older));
+        let tables =
+            user_footprint_tables(&environment(&[("APPDATA", "C:/Users/a/AppData/Roaming")]));
+        assert_eq!(
+            tables[0],
+            Path::new("C:/Users/a/AppData/Roaming/kicad/10.0/fp-lib-table")
+        );
+    }
 
     #[test]
     fn plug_in_connectors_are_told_by_their_footprint_names() {
