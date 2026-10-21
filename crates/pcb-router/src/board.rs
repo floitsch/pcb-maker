@@ -129,6 +129,12 @@ pub struct Hatch {
     /// A hole the fill's edge cuts to less than this share of a whole one
     /// is filled.
     pub min_hole_area: f64,
+    /// Whether the net's vias get thermal reliefs in this zone: KiCad 10
+    /// treats a via in a hatched zone like a pad (knockoutThermalReliefs:
+    /// a relief of the thermal gap, a ring and spokes) where the zone's
+    /// pad connection is thermal; with `connect_pads yes` or
+    /// `thru_hole_only` a via connects solidly.
+    pub via_reliefs: bool,
 }
 
 #[derive(Clone, Debug)]

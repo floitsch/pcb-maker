@@ -290,6 +290,14 @@ fn lower_board(
     let mut isolated_pads: Vec<String> = Vec::new();
     // The same per pad, by obstacle index.
     let mut solid_pad_obstacles: Vec<usize> = Vec::new();
+    // Per pad (by obstacle index), its footprint's jumper group: KiCad 9's
+    // `(duplicate_pad_numbers_are_jumpers yes)` joins the pads of one
+    // number, `(jumper_pad_groups ("1" "2") ...)` the pads of the numbers
+    // of a group, without copper (kicad-cli 10.0.7: no unconnected item
+    // between them).
+    let mut jumper_groups: std::collections::HashMap<usize, (usize, String)> =
+        std::collections::HashMap::new();
+    let mut footprint_ordinal = 0usize;
     let mut isolated_pad_obstacles: Vec<usize> = Vec::new();
     let mut pad_spokes: std::collections::HashMap<usize, core::PadSpokes> =
         std::collections::HashMap::new();
@@ -524,6 +532,24 @@ fn lower_board(
                         });
                     }
                 }
+                footprint_ordinal += 1;
+                let duplicates_are_jumpers =
+                    form_atom(item, "duplicate_pad_numbers_are_jumpers", 1) == Some("yes");
+                let pad_groups: Vec<Vec<String>> = item
+                    .child("jumper_pad_groups")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .skip(1)
+                    .map(|group| {
+                        group
+                            .children()
+                            .iter()
+                            .filter_map(Expr::atom)
+                            .map(|number| number.trim_matches('"').to_string())
+                            .collect()
+                    })
+                    .collect();
                 for pad in item
                     .children()
                     .iter()
@@ -644,6 +670,19 @@ fn lower_board(
                         }
                     }
                     let pad_obstacle = obstacles.len();
+                    let number = pad_name.trim_matches('"');
+                    if let Some(group) = pad_groups
+                        .iter()
+                        .position(|group| group.iter().any(|member| member == number))
+                    {
+                        jumper_groups
+                            .insert(pad_obstacle, (footprint_ordinal, format!("group {group}")));
+                    } else if duplicates_are_jumpers && !number.is_empty() {
+                        jumper_groups.insert(
+                            pad_obstacle,
+                            (footprint_ordinal, format!("number {number}")),
+                        );
+                    }
                     match zone_connect {
                         Some("0") => isolated_pad_obstacles.push(pad_obstacle),
                         Some("2") => solid_pad_obstacles.push(pad_obstacle),
@@ -969,40 +1008,84 @@ fn lower_board(
     // shell's top and bottom pads) are two items to KiCad's connectivity,
     // which wants them joined by copper: two terminals (Knox Key's P1.A1:
     // a track on B.Cu reached the bottom pad, KiCad found the top one
-    // unconnected).
+    // unconnected). The overlap is transitive: an exposed pad on F.Cu and
+    // its copy on B.Cu are one item through the thermal vias between them
+    // (MSign's U1.21, Sisu's U2.11), a reversible diode's SMD pads on both
+    // sides one through its through-hole pad (urchin's and
+    // eternal-keypad's D_SMD_TH), so the pads of one number are grouped by
+    // overlap and the largest of each group is its terminal.
     let mut merged_pads: Vec<core::MergedPad> = Vec::new();
     for (net_id, net) in nets.iter_mut().enumerate() {
         let area = |terminal: &core::Terminal| {
             let bounds = obstacles[terminal.pad].shape.aabb();
             (bounds.maximum[0] - bounds.minimum[0]) * (bounds.maximum[1] - bounds.minimum[1])
         };
-        let mut order: Vec<usize> = (0..net.terminals.len()).collect();
+        let count = net.terminals.len();
+        let mut order: Vec<usize> = (0..count).collect();
         order.sort_by(|a, b| {
             area(&net.terminals[*b])
                 .total_cmp(&area(&net.terminals[*a]))
                 .then(a.cmp(b))
         });
-        let mut keep = vec![true; net.terminals.len()];
-        let mut host = vec![usize::MAX; net.terminals.len()];
-        for (position, &large) in order.iter().enumerate() {
-            if !keep[large] {
-                continue;
+        // Union by overlap; the root of a group is its first pad in `order`
+        // (the largest), so it is the terminal.
+        let mut rank = vec![0; count];
+        for (position, &index) in order.iter().enumerate() {
+            rank[index] = position;
+        }
+        let mut parent: Vec<usize> = (0..count).collect();
+        fn root(parent: &mut [usize], mut index: usize) -> usize {
+            while parent[index] != index {
+                parent[index] = parent[parent[index]];
+                index = parent[index];
             }
-            for &small in &order[position + 1..] {
-                if keep[small]
-                    && net.terminals[small].label == net.terminals[large].label
-                    && obstacles[net.terminals[large].pad].layers
-                        & obstacles[net.terminals[small].pad].layers
-                        != 0
-                    && obstacles[net.terminals[large].pad]
-                        .shape
-                        .contains(net.terminals[small].anchor)
-                {
-                    keep[small] = false;
-                    host[small] = large;
+            index
+        }
+        // The group's root stays its first pad in `order`.
+        let join = |parent: &mut [usize], a: usize, b: usize| {
+            let (ra, rb) = (root(parent, a), root(parent, b));
+            if rank[ra] < rank[rb] {
+                parent[rb] = ra;
+            } else {
+                parent[ra] = rb;
+            }
+        };
+        let overlap = |a: &core::Terminal, b: &core::Terminal| {
+            let (pa, pb) = (&obstacles[a.pad], &obstacles[b.pad]);
+            pa.layers & pb.layers != 0
+                && (pa.shape.contains(b.anchor) || pb.shape.contains(a.anchor))
+        };
+        let mut by_label: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        for (index, terminal) in net.terminals.iter().enumerate() {
+            by_label.entry(&terminal.label).or_default().push(index);
+        }
+        for group in by_label.values().filter(|group| group.len() > 1) {
+            for (position, &a) in group.iter().enumerate() {
+                for &b in &group[position + 1..] {
+                    if !overlap(&net.terminals[a], &net.terminals[b]) {
+                        continue;
+                    }
+                    join(&mut parent, a, b);
                 }
             }
         }
+        // Pads of a jumper group are one item to KiCad's connectivity.
+        let mut by_jumper: BTreeMap<(usize, &str), Vec<usize>> = BTreeMap::new();
+        for (index, terminal) in net.terminals.iter().enumerate() {
+            if let Some((footprint, group)) = jumper_groups.get(&terminal.pad) {
+                by_jumper
+                    .entry((*footprint, group.as_str()))
+                    .or_default()
+                    .push(index);
+            }
+        }
+        for group in by_jumper.values() {
+            for &other in &group[1..] {
+                join(&mut parent, group[0], other);
+            }
+        }
+        let host: Vec<usize> = (0..count).map(|index| root(&mut parent, index)).collect();
+        let keep: Vec<bool> = (0..count).map(|index| host[index] == index).collect();
         let mut renumbered = vec![usize::MAX; net.terminals.len()];
         let mut next = 0;
         for (index, kept) in keep.iter().enumerate() {

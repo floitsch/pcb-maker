@@ -597,6 +597,14 @@ pub(crate) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                         .max(0.0) as u32,
                     smoothing_value: form_f64(fill, "hatch_smoothing_value", 1).unwrap_or(0.0),
                     min_hole_area: form_f64(fill, "hatch_min_hole_area", 1).unwrap_or(0.3),
+                    // `(connect_pads (clearance ...))` is thermal; `yes`,
+                    // `thru_hole_only` (a via is no through-hole pad) and
+                    // `no` are not.
+                    via_reliefs: zone
+                        .child("connect_pads")
+                        .and_then(|form| form.children().get(1))
+                        .and_then(Expr::atom)
+                        .is_none(),
                 }),
             polygon: rule_area_polygon_points(zone)?,
         });

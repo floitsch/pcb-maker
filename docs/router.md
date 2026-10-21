@@ -181,10 +181,20 @@ holds:
 
 - **Terminals are KiCad's items.** Pads of one number are one terminal
   only where they overlap on a copper layer they share (an exposed pad's
-  thermal vias, a pad with holes in it). Pads of one number at one place
-  on different layers without a hole (an edge connector's or a USB-C
-  shell's top and bottom pads) are two items to KiCad, which wants them
-  joined by a via: two terminals. A net named by a number ("14", "0") is
+  thermal vias, a pad with holes in it), and the overlap is transitive
+  (2026-10-22): an exposed pad on F.Cu and its copy on B.Cu are one item
+  through the thermal vias that overlap both (MSign's U1.21, Sisu's
+  U2.11), a reversible diode's SMD pads on both sides one through its
+  through-hole pad (urchin's and eternal-keypad's D_SMD_TH), so pads of
+  one number are grouped by overlap and the largest of a group is the
+  terminal. Pads of one number at one place on different layers with
+  nothing between them (an edge connector's or a USB-C shell's top and
+  bottom pads, an edge-mount SMA's) are two items to KiCad, which wants
+  them joined by a via: two terminals. KiCad 9's footprint jumpers join
+  pads without copper: `(duplicate_pad_numbers_are_jumpers yes)` the pads
+  of one number, `(jumper_pad_groups ("1" "2") ...)` the pads of a
+  group's numbers (kicad-cli 10.0.7: no unconnected item between them);
+  such pads are one terminal too (ducktop2's bms, its WAGO terminals). A net named by a number ("14", "0") is
   a net like any other: a net form of one unquoted number ("(net 6)",
   KiCad 9 and before) is a net code, resolved through the board's net
   table (`net_codes`, `item_net`) for tracks, vias and graphics; the
@@ -223,10 +233,24 @@ holds:
   connected. A pour net's connections stay the pour model's (fill only
   adds connections in KiCad, so the check cannot judge a pour net).
 
-What still disagrees on the 65 boards with a licence (two): a
-dimension drawn on a copper layer, which KiCad's fill keeps clear of and
-the lowering does not lower (robotique's BioGenius), and a KiCad QA board
-where a spoke joins two pads KiCad keeps apart (issue6284).
+- **A via of the net in a hatched zone has a thermal relief**
+  (2026-10-22). KiCad 10 treats such a via like a thermal pad where the
+  zone's pads connect by thermals (knockoutThermalReliefs: a relief of
+  the thermal gap, a ring, four spokes; with `connect_pads yes` or
+  `thru_hole_only` it connects solidly, `Hatch::via_reliefs`). The fill
+  probe keeps brush centres out of the reliefs of the net's vias, routed
+  or on the board (`FillProbe::relieved_vias`), and the rings count as
+  fill; the pour map clears the relief's nodes but for the via's four
+  spokes along the axes (`cut_via_reliefs`). issue6284's U102.6: its
+  spoke ended in the relief of a via of its own net, the model joined the
+  pad to the via's piece through it and called the board complete;
+  IotThermalCamera's Tgnd: a diagonal neck of the lattice past a via
+  joined two pieces the relief keeps apart.
+
+What still disagrees on the 65 boards with a licence (one): a dimension
+drawn on a copper layer, which KiCad's fill keeps clear of and the
+lowering does not lower (robotique's BioGenius; the lowering gaps 2
+package's).
 
 ### The probe ladder (2026-10-03)
 
@@ -615,8 +639,12 @@ zone_filler.cpp and drc_test_provider_zone_connections.cpp of KiCad 10:
 
 - a spoke runs from the pad's centre to its box grown by the gap, half the
   zone's minimum width and 0.005 mm, and is kept where that end lies in
-  the fill (a brush centre within half the minimum width) or in another
-  pad's spoke whose end lies in this one (pads side by side);
+  the fill (a brush centre within half the minimum width, and the end
+  itself keeping every clearance: KiCad tests the point, so an end a few
+  microns inside another pad's clearance drops the spoke where a brush
+  centre beside it would still fit within the probe's tolerance;
+  anthracite's R503.2, 2026-10-22) or in another pad's spoke whose end
+  lies in this one (pads side by side);
 - it is as wide as the zone's spoke width but no wider than the pad, and
   none is drawn when that is narrower than the minimum width; other nets'
   clearances then cut it, and it counts where a brush still fits from

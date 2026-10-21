@@ -11,6 +11,204 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (pour model after connectivity)
+
+The connectivity agreement (below) made the router's "complete" what
+KiCad finds connected on 63 of the 65 boards, but cost rows: MSign (15
+to 60 unconnected), stellarcorp's magnetorquer (a pass to 84/86),
+LC_PAMV4b (a starved thermal), urchin (42 to 65 vias) and
+eternal-keypad in the short tier, and left issue6284 (a spoke joining
+U102.4 and U102.6 that KiCad keeps apart), the older starved thermals
+of ZSWatch and anthracite and KiCad 9's footprint jumpers. Branch
+pour-regressions; snapshots x1360 (the transitive terminals), x1361
+(with the spoke end test and jumpers), x1362 (with the vias' reliefs),
+x1363 and x1365 (the commit, x1362 without its switches; every row of
+the 65, the expansion and the short tier and the fingerprints repeat
+x1362's); x1364 an experiment not kept (below). Attribution with a
+binary whose changes could be switched off one at a time (x1361, x1362:
+`PCB_X_OLD_END`, `PCB_X_NO_VIA_RELIEFS`, `PCB_X_NO_JUMPERS`, not
+committed) and the per-net terminal counts of board-router.json.
+
+**What was wrong, and the fixes.**
+
+- *Pads of one number joined through a third were two terminals.* The
+  connectivity commit merged pads of one number only into the largest
+  that overlaps them on a shared layer. An exposed pad on F.Cu and its
+  copy on B.Cu share no layer, but both overlap the thermal vias between
+  them: one item to KiCad (kicad-cli on a board with a track from the
+  F.Cu pad: no unconnected item; without the vias the B.Cu pad is
+  unconnected). The lowering made the B.Cu pad a terminal of its own and
+  routed it: MSign's U1.21, LC_PAMV4b's U3.25, Sisu's U2.11, ZSWatch's
+  IC401.33, IotThermalCamera's TU2.9; urchin's and eternal-keypad's
+  reversible diodes (D_SMD_TH: SMD pads on both sides and a through-hole
+  pad that both overlap), mounting holes with copper on
+  both sides (magnetorquer's MH1 to MH4, VTC-WISDOM's H2). Pads of one
+  number are now grouped by overlap (union-find over the pairs that
+  share a layer and hold each other's anchor), the largest of a group
+  its terminal; stacked pads with nothing between them (Knox Key's
+  P1.A1, VTC-WISDOM's edge-mount SMA J3) stay two terminals, which
+  KiCad wants joined by a via. The urchin and MSign costs were these
+  terminals, not a choice of side: no pad pair without a hole needs the
+  router to pick one.
+- *Footprint jumpers.* KiCad 9's `(duplicate_pad_numbers_are_jumpers
+  yes)` joins the pads of one number of a footprint,
+  `(jumper_pad_groups ("1" "2") ...)` the pads of a group's numbers,
+  without copper (kicad-cli 10.0.7: a track from one pad 1 leaves the
+  other pad 1 and pad 2 unconnected without either, pad 2 only with the
+  first, nothing with the groups). Such pads of one net are one terminal
+  now (37 boards of the intake, mostly KiCad QA copies; ducktop2's bms:
+  its WAGO terminals, PACK_NEG_RAW and three more nets one terminal
+  fewer; Sisu's I-PEX J2).
+- *A spoke whose end lies in another item's clearance.* KiCad keeps a
+  spoke where its end point lies in the fill (zone_filler.cpp tests
+  `spoke.CPoint(3)` against the fill less the clearance holes, opened by
+  half the minimum width); the model asked for a brush centre within
+  half the minimum width of the end that keeps the clearances less
+  `EPSILON` (3 microns). anthracite's R503.2 and R703.2: diagonal spokes
+  (`thermal_bridge_angle 45`) whose ends lie 0.3981 mm from R503.1's
+  rounded corner under a 0.4 mm clearance; a brush centre beside the end
+  fit by 0.3 microns of the tolerance, KiCad drops the spoke and finds
+  the pad starved. The end itself must now keep every clearance
+  (`spoke_end_lands`, `END_TOLERANCE` 0; pcbnew 10.0.7 on a test board:
+  an end 0.202 mm from another net's pad under a 0.2 mm clearance keeps
+  its spoke, 0.198 mm loses it).
+- *Vias of the net in a hatched zone.* KiCad 10 gives every via of the
+  zone's net a thermal relief in a hatched zone whose pads connect by
+  thermals (knockoutThermalReliefs: the via's radius and the thermal gap
+  knocked out, a ring a spoke wide, four spokes; with `connect_pads yes`
+  or `thru_hole_only` the via is solid). The model filled up to the via.
+  issue6284's U102.6: its +x spoke ends 0.67 mm from a GND via (relief
+  0.8 mm); KiCad drops the spoke, the pad's other piece holds nothing
+  else, and KiCad finds two zone pieces unconnected where the model
+  joined the pad to the via's piece and called the board complete (the
+  "spoke join" of the connectivity commit). `Hatch::via_reliefs` (the
+  lowering: a zone's `connect_pads` with no keyword), the fill probe
+  keeps brush centres out of the reliefs of the net's vias, routed or
+  already on the board (`FillProbe::relieved_vias`, `Item::ViaRelief`),
+  their rings count as fill (`in_ring`), and the pour map clears the
+  relief's nodes but for the via's four spokes along the axes
+  (`cut_via_reliefs`): IotThermalCamera's Tgnd, routed again after the
+  transitive terminals, joined two pieces through a diagonal neck of
+  the lattice past a via's relief and was complete by our count with
+  KiCad 1 unconnected. pcbnew on a test board: a pad's spoke end in a
+  GND via's relief loses the spoke, with `connect_pads yes` it keeps it.
+
+Not kept (x1364): the starved-thermal model by each pad's own zone
+connection (`solid_pad_obstacles`, `isolated_pad_obstacles`) rather than
+its label's. It gave eternal-keypad's ProMicro1.4 and .23 and 74th's
+J3.S1 model rows (by label their SMD pads set to no connection made the
+through-hole pads isolated), but those rows are still missed (the model
+counts two spokes where KiCad counts one), and ray4477's U1.33 thermal
+vias inside a solid exposed pad went from predicted to missed (by label
+the B.Cu exposed pad was thermal, which happened to give the vias
+KiCad's one spoke). Census below: predicted 165 to 163, false alarms 29
+to 31, no model row 4 to 0.
+
+Unit tests, one per cause, with the kicad-cli or pcbnew checks in their
+comments: pcb-kicad's
+`pads_of_one_number_joined_through_a_third_are_one_terminal`,
+`pads_of_a_jumper_group_are_one_terminal`; pcb-router's
+`a_spoke_end_inside_a_clearance_is_dropped`,
+`a_via_of_the_net_has_a_thermal_relief_in_a_hatched_zone` (the spoke
+and the pour map's nodes).
+
+**Starved-thermal census** (`experiments/pour-fidelity/census.py`, the
+model on the final copper against KiCad's refilled DRC; the 32 boards of
+the 44-board census still on disk and the 42 of the intake's
+route-t8, 218 starved pad rows): predicted 162 to 165, missed 52 to 49,
+false alarms 29 both, no model row 4 both (x1360's model, which has the
+transitive terminals only, against x1363). The three: ptSolar's PV2.2 on
+three layers (spoke ends inside a clearance). The hatched boards' rows
+(0xCB, Qfwfq) change pieces, not verdicts.
+
+**Route mode on the 65** (connectivity-tasks.json, 30 s, 8 x 1,
+`--no-lock`; `census.py --run`), x1345 against x1365: 57 rows
+identical; verdict agrees with KiCad 63 to 64; complete by our count
+with KiCad unconnected 2 to 1 (robotique's BioGenius, the dimension on
+copper of the lowering gaps 2 package); KiCad's unconnected items 12 to
+11; passes 56 to 57 (strict 53 to 54); vias 1811 to 1900. The changed
+rows:
+
+| board | x1345 | x1365 | cause |
+| --- | --- | --- | --- |
+| baxter-barlow issue6284 | 127/127, KiCad 2 (complete by our count) | 126/127, KiCad 2 (U102.6 open: agrees) | via reliefs |
+| IotThermalCamera | 88/88, KiCad 0, hole_to_hole 1 | 88/88, pass | transitive terminals (TU2.9, two nets one fewer) and via reliefs (with the terminals alone 88/88 and KiCad 1 unconnected: TU8.9 and TU8.14 apart) |
+| BleJoystick | 27/27, 37 vias, pass | 27/27, 40 vias, pass | via reliefs |
+| Cuprum77 BananaBoard Passive | 3/3, 48.9 mm, pass | 3/3, 42.0 mm, pass | transitive terminals |
+| OpenAir rf-amplifier | 32/32, 250.5 mm, pass | 32/32, 251.8 mm, pass | transitive terminals |
+| smkent dip-adapters | 17/17, 3 vias, pass | 17/17, 5 vias, pass | transitive terminals |
+| 7-seg-clock | 66/66, 2208.5 mm, pass | 66/66, 2158.8 mm, pass | transitive terminals |
+| mikesmitty controller | 73/78, KiCad 8 | 74/78, KiCad 7 | transitive terminals |
+
+(with the end test and the vias' reliefs switched off, x1362, every row
+but issue6284, IotThermalCamera and BleJoystick is x1365's).
+
+**Expansion tier** (46 boards, 8 x 1, `--no-lock`), x1345 against
+x1365 (x1361 and x1362 the same rows; x1361 cut brickpico by the wall
+clock, the same row, x1365 cut none): 36 rows identical; passes 15 to
+16 (strict 15 to 16), unconnected 764 to 723, new errors 7 to 4 (strict
+3 to 2), vias 4029 to 4090.
+
+| board | x1345 | x1365 | cause |
+| --- | --- | --- | --- |
+| mincrmatt12 MSign | 165/188, KiCad 60, 200 vias | 176/188, KiCad 17, 289 vias | transitive (U1.21; x1332 177/188, 15) |
+| WMXZ LC_PAMV4b | 51/52, starved_thermal 1 | 51/52, pass, 26 vias (x1332's) | transitive (U3.25) |
+| VTC-WISDOM node | 56/77, KiCad 33, 98 vias | 56/77, KiCad 35, 69 vias (x1332's) | transitive (H2 mounting holes, GND 113 to 108 terminals; J3's SMA pads stay two) |
+| ZSWatch | 107/107, pass, 134 vias | 107/107, pass, 142 vias | transitive (IC401.33) |
+| TokayEdge | 84/84, pass, 87 vias | 84/84, pass, 82 vias (x1332's) | transitive |
+| ducktop2 bms | 99/99, pass, 234 vias | 99/99, pass, 240 vias, 3141.6 mm | jumpers (the WAGO terminals) and transitive (U2218's thermal vias; alone 239 vias, x1332's row) |
+| brown-studios pdlc | 21/33, KiCad 12, 34 vias | 21/33, KiCad 12, 29 vias | transitive |
+| Wonkle | 135/271, 496 vias | 135/271, 497 vias | transitive |
+| stellarcorp magnetorquer | 84/86, KiCad 2, 139 vias | 84/86, KiCad 2, 137 vias | transitive (MH1 to MH4, GND 93 to 89, x1332's terminals) |
+| trope-oshw anthracite | starved_thermal 4 | starved_thermal 2 | the spoke end test (R503.2, R703.2 now predicted and repaired) |
+
+The magnetorquer stays at 84/86 (a pass at x1332): its terminals are
+x1332's again, but the ladder keeps the plane-stubs rung, whose probe
+leaves 41 nets unfinished against the tracks probe's 42 (x1332: 44
+against 42); the other pour changes of the connectivity commit made the
+connect probes better, and the connect rung leaves I2C3.SDA and
+Net-(U8-LX1) open, which KiCad confirms (2 unconnected): honest, a
+ladder choice by probe counts, not a model error.
+
+**Short tier** (tasks v7, 4 x 2, `--no-lock`), x1345 against x1365
+(x1362 at 6 x 2 the same rows): 8 rows identical; passes 7 to 8
+(strict 6 to 7).
+
+| board | x1345 | x1365 | cause |
+| --- | --- | --- | --- |
+| 0xCB-1337 | 47/47, 50 vias, strict starved_thermal 1 | 47/47, 66 vias, strict pass | via reliefs (hatched GND; off, x1345's row) |
+| USB_Keypad | 37/39, 113 vias | 37/39, 93 vias | via reliefs (hatched; off, x1345's row) |
+| eternal-keypad | 69/69, 66 vias, shorting_items 1 | 65/65, 45 vias, pass (strict: starved_thermal 2) | transitive (its D_SMD_TH diodes: 4 connections fewer) |
+| urchin | 68/68, 65 vias | 68/68, 42 vias (x1332's row) | transitive (its D_SMD_TH diodes) |
+
+eternal-keypad's two strict starved thermals are ProMicro1.4 and .23 on
+B.Cu (through-hole pads of ProMicro_facedown, whose SMD pads of the same
+numbers are set to no connection): the model, by label, takes them for
+isolated and has no row (the per-pad experiment above gave rows that
+still count two spokes against KiCad's one).
+
+**Fingerprints** (route mode from the v16 layouts, quarter budget, 2 x
+4, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+build/fp-pour3-x1365 against build/fp-conn-x1345; build/fp-pour3-x1363
+the same): Castor, k30-SBC and
+jetson identical (every fingerprint and the board); Sisu changes from
+the start: U2.11 is one terminal again and J2's jumper pads one each
+(GND 265 to 263 terminals, Net-(J2-RF) 5 to 4): 182/192 to 188/192,
+KiCad 13 to 6 unconnected, solder_mask_bridge 14 both (with the end
+test off the same row and fingerprints).
+
+**Gates**: `bash scripts/check.sh` and the clippy gate pass.
+
+**Left**: anthracite's J106.20 (F.Cu: a spoke the zone's outline cuts
+from the pad that still crosses its ring; the lattice joins the piece it
+lands in to nothing, KiCad's outline holds more than a dozen items) and J107.1 (In2.Cu:
+a sliver of fill around a via the model calls outside the zone),
+RS485M's JP1.3 and R3.2 (one spoke the model counts as two, one it does
+not see), ZSWatch's older one is gone with the transitive terminals;
+eternal-keypad's ProMicro pads (per-label zone connections, above);
+robotique's BioGenius (a dimension on copper, the lowering gaps 2
+package's).
+
 ## Committed on 2026-10-22 (KiCad connectivity agreement)
 
 In the expansion intake (be4b012, 5 834 boards) 192 boards were complete

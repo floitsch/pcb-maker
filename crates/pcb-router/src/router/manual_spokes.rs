@@ -668,6 +668,61 @@ impl Router {
         result
     }
 
+    /// Clears the nodes of `free` inside the thermal reliefs KiCad cuts
+    /// around the net's vias in a hatched zone (`FillProbe::relieved_vias`:
+    /// the via's radius, the gap and half the minimum width), but for its
+    /// four spokes along the axes (the brush's centres within half a spoke
+    /// less half the minimum width of them), which join the via to the
+    /// fill. IotThermalCamera's Tgnd: a via of the net beside TU8 held the
+    /// lattice's diagonal neck between two pieces that KiCad's relief
+    /// keeps apart.
+    pub(super) fn cut_via_reliefs(&self, net: NetId, free: &mut [Vec<bool>]) {
+        let vias = fill::FillProbe::relieved_vias(self, net);
+        for (layer, vias) in vias.iter().enumerate() {
+            if free[layer].is_empty() || vias.is_empty() {
+                continue;
+            }
+            let planes = || {
+                self.board
+                    .planes
+                    .iter()
+                    .filter(|plane| plane.net == net && plane.layer == layer)
+            };
+            let gap = planes()
+                .map(|plane| plane.thermal_gap)
+                .fold(0.0f64, f64::max);
+            let bridge = planes()
+                .map(|plane| (plane.thermal_reach - plane.thermal_gap).max(0.0))
+                .fold(0.0f64, f64::max);
+            let half =
+                self.board.classes[self.nets[net as usize].plane_class[layer]].trace_width / 2.0;
+            for (at, radius) in vias {
+                let reach = radius + gap + half;
+                let corridor = ((bridge.min(2.0 * radius)) / 2.0 - half).max(0.0) + 1.0e-6;
+                let bounds = crate::geometry::Aabb {
+                    minimum: *at,
+                    maximum: *at,
+                }
+                .inflated(reach);
+                let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) else {
+                    continue;
+                };
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let centre = self.grid.center(x, y);
+                        let (dx, dy) = ((centre[0] - at[0]).abs(), (centre[1] - at[1]).abs());
+                        if crate::geometry::distance(centre, *at) < reach
+                            && dx > corridor
+                            && dy > corridor
+                        {
+                            free[layer][self.grid.index(x, y)] = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn cut_thermal_rings(&self, rings: &[Vec<(usize, f64)>], free: &mut [Vec<bool>]) {
         for (layer, pads) in rings.iter().enumerate() {
             if free[layer].is_empty() {

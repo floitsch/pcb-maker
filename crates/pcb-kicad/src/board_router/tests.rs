@@ -1128,6 +1128,102 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn pads_of_one_number_joined_through_a_third_are_one_terminal() {
+        // MSign's U1.21 and Sisu's U2.11: an exposed pad on F.Cu, its copy
+        // on B.Cu and thermal vias between them. The two exposed pads share
+        // no layer, but each overlaps the vias: one item to KiCad (kicad-cli
+        // 10.0.7 on this board with a track from F.Cu's pad to TP1: no
+        // unconnected item; without the vias "Pad 5 [GND] of U1 on B.Cu"
+        // is unconnected from the track).
+        let board_text = |vias: bool| {
+            format!(
+                r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "ep" (at 5 5) (property "Reference" "U1")
+            (pad "5" smd rect (at 0 0) (size 1.7 1.7) (layers "F.Cu" "F.Mask") (net 1 "GND"))
+            (pad "5" smd rect (at 0 0) (size 1.7 1.7) (layers "B.Cu") (net 1 "GND"))
+            {})
+          (footprint "tp" (at 15 5) (property "Reference" "TP1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "GND"))))"#,
+                if vias {
+                    r#"(pad "5" thru_hole circle (at -0.6 -0.6) (size 0.5 0.5) (drill 0.3) (layers "*.Cu") (net 1 "GND"))
+            (pad "5" thru_hole circle (at 0.6 0.6) (size 0.5 0.5) (drill 0.3) (layers "*.Cu") (net 1 "GND"))"#
+                } else {
+                    ""
+                }
+            )
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let labels = |vias: bool| {
+            let board = lower(&parse(&board_text(vias)).unwrap(), &config, false)
+                .unwrap()
+                .board;
+            let net = board.nets.iter().find(|net| net.name == "GND").unwrap();
+            let labels: Vec<String> = net
+                .terminals
+                .iter()
+                .map(|terminal| terminal.label.clone())
+                .collect();
+            (labels, board.merged_pads.len())
+        };
+        assert_eq!(labels(true), (vec!["U1.5".into(), "TP1.1".into()], 3));
+        assert_eq!(
+            labels(false),
+            (vec!["U1.5".into(), "U1.5".into(), "TP1.1".into()], 0)
+        );
+    }
+
+    #[test]
+    fn pads_of_a_jumper_group_are_one_terminal() {
+        // KiCad 9's footprint jumpers: kicad-cli 10.0.7 on this board, a
+        // track from SW1's right pad 1 to TP1, finds pad 2 and the left pad
+        // 1 unconnected without jumpers; with
+        // duplicate_pad_numbers_are_jumpers only pad 2; with
+        // jumper_pad_groups ("1" "2") nothing.
+        let board_text = |settings: &str| {
+            format!(
+                r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 30 10) (layer "Edge.Cuts"))
+          (footprint "sw" (at 10 5) (property "Reference" "SW1") {settings}
+            (pad "1" smd rect (at -2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "GND"))
+            (pad "1" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "GND"))
+            (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "GND")))
+          (footprint "tp" (at 25 5) (property "Reference" "TP1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net 1 "GND"))))"#
+            )
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let terminals = |settings: &str| {
+            let board = lower(&parse(&board_text(settings)).unwrap(), &config, false)
+                .unwrap()
+                .board;
+            let net = board.nets.iter().find(|net| net.name == "GND").unwrap();
+            net.terminals.len()
+        };
+        assert_eq!(terminals(""), 4);
+        assert_eq!(terminals("(duplicate_pad_numbers_are_jumpers yes)"), 3);
+        assert_eq!(terminals(r#"(jumper_pad_groups ("1" "2"))"#), 2);
+    }
+
+    #[test]
     fn an_unfilled_circle_in_a_custom_pad_is_a_ring() {
         let pcb = parse(
             r#"(kicad_pcb

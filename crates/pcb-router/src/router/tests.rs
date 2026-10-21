@@ -2110,6 +2110,7 @@ fn thermal_vias_inside_an_exposed_pad_have_their_own_rings_in_a_hatched_zone() {
         smoothing_level: 0,
         smoothing_value: 0.0,
         min_hole_area: 0.3,
+        via_reliefs: true,
     });
     let mut board = board(
         1,
@@ -2207,6 +2208,7 @@ fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
         smoothing_level: 0,
         smoothing_value: 0.0,
         min_hole_area: 0.3,
+        via_reliefs: true,
     });
     let mut board = board(
         1,
@@ -2323,6 +2325,7 @@ fn the_tracks_rung_reads_a_hatched_zone_as_hatched() {
         smoothing_level: 0,
         smoothing_value: 0.0,
         min_hole_area: 0.3,
+        via_reliefs: true,
     });
     planes[0].connect = false;
     let mut board = board(
@@ -2474,6 +2477,7 @@ fn a_starved_thermal_via_inside_an_exposed_pad_gets_a_track_into_its_ring() {
         smoothing_level: 0,
         smoothing_value: 0.0,
         min_hole_area: 0.3,
+        via_reliefs: true,
     });
     let mut board = board(
         1,
@@ -2797,6 +2801,7 @@ fn a_hatched_zones_holes_lie_on_its_grid() {
         smoothing_level: 0,
         smoothing_value: 0.0,
         min_hole_area: 0.3,
+        via_reliefs: true,
     });
     let board = board(
         1,
@@ -3613,4 +3618,155 @@ fn a_custom_pad_spoke_is_no_wider_than_its_anchor() {
     };
     assert!(!joined(0.05));
     assert!(joined(0.5));
+}
+
+#[test]
+fn a_via_of_the_net_has_a_thermal_relief_in_a_hatched_zone() {
+    // issue6284's U102.6: in a hatched zone whose pads connect by
+    // thermals KiCad 10 gives the net's vias a relief of the thermal gap
+    // too (knockoutThermalReliefs), and a pad's spoke whose end lies in
+    // it is dropped. Checked with pcbnew 10.0.7 on a board like this one
+    // (a 1 mm pad, gap 0.5, spoke 0.5, a 0.6 mm via of the net 1.95 mm
+    // right and 0.55 mm below the pad's centre): the fill crosses the
+    // pad's ring on the +x side without the via, not with it, and again
+    // with `connect_pads yes` (a solid via has no relief).
+    let via = |label: &str| Obstacle {
+        layers: 1,
+        ..copper(
+            Shape::Circle {
+                center: [6.95, 5.55],
+                radius: 0.3,
+            },
+            0,
+            label,
+        )
+    };
+    let spokes = |reliefs: bool| {
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+            copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.2"),
+            via("existing via"),
+        ];
+        let mut planes = vec![plane(0, 0, Some((0.5, 0.5)))];
+        planes[0].hatch = Some(crate::board::Hatch {
+            thickness: 1.0,
+            gap: 1.5,
+            orientation: 0.0,
+            smoothing_level: 0,
+            smoothing_value: 0.0,
+            min_hole_area: 0.3,
+            via_reliefs: reliefs,
+        });
+        let board = board(
+            1,
+            obstacles,
+            vec![Net {
+                name: "GND".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [2.0, 2.0], "P.2"),
+                ],
+            }],
+            planes,
+            Vec::new(),
+        );
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let (report, _, _) = spoke_report(&router, 0);
+        // The lattice keeps the relief out of the pour's pieces but for
+        // the via's spokes along the axes.
+        let (pours, _, _) = router.analyze_pours(0);
+        let label = |at: [f64; 2]| pours.label[0][router.grid.nearest_node(at).unwrap()];
+        assert_eq!(label([7.4, 6.0]) == 0, reliefs);
+        assert_ne!(label([6.95, 6.3]), 0);
+        report
+            .iter()
+            .find(|record| record.pad == 0)
+            .unwrap()
+            .outcomes
+    };
+    // The +x spoke: into the fill without the via's relief, none with it.
+    assert!(
+        matches!(spokes(false)[0], SpokeOutcome::Good(_)),
+        "{:?}",
+        spokes(false)
+    );
+    assert!(
+        matches!(spokes(true)[0], SpokeOutcome::NoFill),
+        "{:?}",
+        spokes(true)
+    );
+}
+
+#[test]
+fn a_spoke_end_inside_a_clearance_is_dropped() {
+    // anthracite's R503.2: KiCad keeps a spoke only where its end itself
+    // lies in the fill. P.1's +x spoke ends at (5.93, 5.0) (the gap 0.3,
+    // half the minimum width and 0.005 past the pad); Q.1's edge 0.202
+    // mm from it keeps the spoke, 0.198 mm drops it under a 0.2 mm
+    // clearance (pcbnew 10.0.7 on this board: the fill crosses the pad's
+    // ring at (5.65, 5.0) with the first, not with the second). A brush
+    // centre half the minimum width beside the end fits either way within
+    // the probe's tolerance, which the model took for a spoke.
+    let outcome = |edge: f64| {
+        let obstacles = vec![
+            copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+            copper(rect([2.0, 2.0], [0.5, 0.5]), 0, "P.2"),
+            copper(rect([6.1, edge - 0.25], [0.4, 0.25]), 1, "Q.1"),
+            copper(rect([8.5, 8.5], [0.4, 0.25]), 1, "Q.2"),
+        ];
+        let board = board(
+            1,
+            obstacles,
+            vec![
+                Net {
+                    name: "GND".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(0, [5.0, 5.0], "P.1"),
+                        terminal(1, [2.0, 2.0], "P.2"),
+                    ],
+                },
+                Net {
+                    name: "Q".into(),
+                    class: 0,
+                    terminals: vec![
+                        terminal(2, [6.1, edge - 0.25], "Q.1"),
+                        terminal(3, [8.5, 8.5], "Q.2"),
+                    ],
+                },
+            ],
+            vec![plane(0, 0, Some((0.3, 0.5)))],
+            Vec::new(),
+        );
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let (report, _, _) = spoke_report(&router, 0);
+        report
+            .iter()
+            .find(|record| record.pad == 0)
+            .unwrap()
+            .outcomes[0]
+    };
+    assert!(
+        matches!(outcome(4.798), SpokeOutcome::Good(_)),
+        "{:?}",
+        outcome(4.798)
+    );
+    assert!(
+        matches!(outcome(4.802), SpokeOutcome::NoFill),
+        "{:?}",
+        outcome(4.802)
+    );
 }

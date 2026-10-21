@@ -39,6 +39,10 @@ pub(super) const KICAD_MAX_ERROR: f64 = 0.005;
 /// and a track's clearance, and KiCad keeps it).
 const EPSILON: f64 = 0.003;
 
+/// How far inside another item's clearance (or a relief) a spoke's end
+/// may lie and still be in KiCad's fill: none (`spoke_end_lands`).
+const END_TOLERANCE: f64 = 0.0;
+
 /// `EPSILON` for the DRC's test of a track's end in the fill: a point,
 /// where KiCad's fill keeps the clearance to a micron on straight edges
 /// (its pruning) and up to 5 microns more on arcs (polygons outside the
@@ -90,6 +94,9 @@ enum Item {
     },
     /// A pad of the net with a thermal relief: a centre keeps `reach`.
     Ring { pad: usize, reach: f64 },
+    /// A via of the net with a thermal relief (a hatched zone's,
+    /// `Hatch::via_reliefs`): a centre keeps `reach` from its centre.
+    ViaRelief { at: Point, reach: f64 },
 }
 
 struct Index {
@@ -104,6 +111,9 @@ pub(super) struct FillProbe<'a> {
     /// Per layer, the pads whose thermal relief the fill keeps away from,
     /// with that reach (the gap and half the minimum width).
     rings: &'a [Vec<(usize, f64)>],
+    /// Per layer, the net's vias with a thermal relief there (a hatched
+    /// zone's, `Hatch::via_reliefs`): centre and radius.
+    via_rings: Vec<Vec<(Point, f64)>>,
     index: OnceCell<Index>,
     /// Per hatch hole (layer and its place in the pattern), whether KiCad
     /// keeps it (`hole_kept`).
@@ -152,10 +162,12 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
 
 impl<'a> FillProbe<'a> {
     pub(super) fn new(router: &'a Router, net: NetId, rings: &'a [Vec<(usize, f64)>]) -> Self {
+        let via_rings = Self::relieved_vias(router, net);
         Self {
             router,
             net,
             rings,
+            via_rings,
             index: OnceCell::new(),
             holes: std::cell::RefCell::new(FastMap::default()),
             tolerance: std::cell::Cell::new(EPSILON),
@@ -164,6 +176,58 @@ impl<'a> FillProbe<'a> {
             queries: std::cell::Cell::new(0),
             vertices: std::cell::Cell::new(0),
         }
+    }
+
+    /// Per layer, the vias of `net` that KiCad gives a thermal relief: on
+    /// a layer where the net's zone is hatched and its pads connect by
+    /// thermals (`Hatch::via_reliefs`), every via of the net, routed or
+    /// already on the board (issue6284's U102.6: its spoke ends in the
+    /// relief of a via of its own net, which KiCad's fill leaves out; the
+    /// model joined the pad to the via's piece through it).
+    pub(super) fn relieved_vias(router: &Router, net: NetId) -> Vec<Vec<(Point, f64)>> {
+        let board = &router.board;
+        let layers = board.layer_count;
+        let mut result = vec![Vec::new(); layers];
+        let relieved: Vec<usize> = (0..layers)
+            .filter(|layer| {
+                board.planes.iter().any(|plane| {
+                    plane.net == net
+                        && plane.layer == *layer
+                        && plane.connect
+                        && !plane.solid
+                        && plane.hatch.is_some_and(|hatch| hatch.via_reliefs)
+                })
+            })
+            .collect();
+        if relieved.is_empty() {
+            return result;
+        }
+        let state = &router.nets[net as usize];
+        let radius = board.classes[board.nets[net as usize].class].via_diameter / 2.0;
+        let mut vias: Vec<(Point, f64)> = Vec::new();
+        for branch in &state.branches {
+            for pair in branch.nodes.windows(2) {
+                if pair[0].cell == pair[1].cell && pair[0].layer != pair[1].layer {
+                    let at = router.grid.center_of(pair[0].cell as usize);
+                    if !vias.iter().any(|(other, _)| *other == at) {
+                        vias.push((at, radius));
+                    }
+                }
+            }
+        }
+        for obstacle in &board.obstacles {
+            if obstacle.net == Some(net)
+                && obstacle.label == "existing via"
+                && let crate::geometry::Shape::Circle { center, radius } = obstacle.shape
+                && !vias.iter().any(|(other, _)| *other == center)
+            {
+                vias.push((center, radius));
+            }
+        }
+        for layer in relieved {
+            result[layer] = vias.clone();
+        }
+        result
     }
 
     /// Adds the probe's work so far to its router's pour work.
@@ -244,8 +308,21 @@ impl<'a> FillProbe<'a> {
     }
 
     /// `test_area_at` for a spoke's end, searching along the spoke too.
+    /// KiCad tests the end itself against its fill: the end must keep the
+    /// clearances (to the micron the filler's polygons hold), not only lie
+    /// within half the minimum width of a brush centre that keeps them less
+    /// `EPSILON` (anthracite's R503.2: a diagonal spoke's end 0.398 mm
+    /// from R503.1's rounded corner under a 0.4 mm clearance, a brush
+    /// centre 0.497 mm away fitting by the tolerance; KiCad drops the
+    /// spoke).
     pub(super) fn spoke_end_lands(&self, layer: usize, end: Point, direction: Point) -> bool {
-        self.fill_along(layer, end, direction) || self.in_ring(layer, end)
+        if self.in_ring(layer, end) {
+            return true;
+        }
+        if self.slack(layer, end, &[]) + self.half(layer) < -END_TOLERANCE {
+            return false;
+        }
+        self.fill_along(layer, end, direction)
     }
 
     /// Whether KiCad's final fill covers `point` (a hatched zone's holes
@@ -305,6 +382,37 @@ impl<'a> FillProbe<'a> {
                     {
                         return true;
                     }
+                }
+            }
+        }
+        // The rings of the net's vias with reliefs (`relieved_vias`), a
+        // spoke wide but no wider than the via.
+        let gap = self
+            .filled_planes(layer)
+            .map(|plane| plane.thermal_gap)
+            .fold(0.0f64, f64::max);
+        for (at, radius) in &self.via_rings[layer] {
+            let width = bridge.min(2.0 * radius);
+            if width + 1.0e-9 < 2.0 * half {
+                continue;
+            }
+            let out = distance(point, *at) - radius;
+            if out < gap - 1.0e-9 || out > gap + width + 1.0e-9 {
+                continue;
+            }
+            // Brush centres on the ray from the via through the point.
+            for offset in [0.0, half * 0.5, -half * 0.5, half - 1.0e-3, 1.0e-3 - half] {
+                let from_via = out + offset;
+                if from_via < gap + half - 1.0e-9 || from_via > gap + width - half + 1.0e-9 {
+                    continue;
+                }
+                let scale = (radius + from_via) / (radius + out).max(1.0e-9);
+                let centre = [
+                    at[0] + (point[0] - at[0]) * scale,
+                    at[1] + (point[1] - at[1]) * scale,
+                ];
+                if self.blocker(layer, centre, None).is_none() {
+                    return true;
                 }
             }
         }
@@ -659,6 +767,23 @@ impl<'a> FillProbe<'a> {
                         &mut buckets,
                     );
                 }
+                let gap = self
+                    .filled_planes(layer)
+                    .map(|plane| plane.thermal_gap)
+                    .fold(0.0f64, f64::max);
+                for (at, radius) in &self.via_rings[layer] {
+                    let via_reach = radius + gap + half;
+                    reach = reach.max(via_reach);
+                    insert(
+                        layer,
+                        (*at, *at),
+                        Item::ViaRelief {
+                            at: *at,
+                            reach: via_reach,
+                        },
+                        &mut buckets,
+                    );
+                }
             }
             self.ops
                 .set(self.ops.get() + buckets.values().map(Vec::len).sum::<usize>() as u64);
@@ -776,6 +901,9 @@ impl<'a> FillProbe<'a> {
                                 && self.distance_to(&board.obstacles[*pad].shape, point)
                                     < *reach - EPSILON
                         }
+                        Item::ViaRelief { at, reach } => {
+                            except.is_some() && distance(point, *at) < *reach - EPSILON
+                        }
                     };
                     if blocked {
                         return Some(match item {
@@ -788,6 +916,7 @@ impl<'a> FillProbe<'a> {
                             Item::Ring { pad, .. } => {
                                 format!("relief of {}", board.obstacles[*pad].label)
                             }
+                            Item::ViaRelief { at, .. } => format!("relief of the via at {at:?}"),
                         });
                     }
                 }
@@ -867,6 +996,7 @@ impl<'a> FillProbe<'a> {
                                 self.distance_to(&board.obstacles[*pad].shape, point) - reach
                             }
                         }
+                        Item::ViaRelief { at, reach } => distance(point, *at) - reach,
                     };
                     least = least.min(room);
                 }
