@@ -53,7 +53,7 @@ mod update;
 mod vias;
 mod wall;
 
-pub use build::BuildCounts;
+pub use build::{BuildCounts, StaticMapsHold, hold_static_maps};
 pub use config::Config;
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
@@ -210,6 +210,15 @@ pub const BUILD_MAP_NANOS: f64 = 22.0;
 pub const BUILD_TEST_NANOS: f64 = 11.0;
 pub const BUILD_EDGE_NANOS: f64 = 2.75;
 pub const BUILD_STEP_NANOS: f64 = 22.0;
+/// A build whose static maps another router built (`BuildCounts::
+/// shared_map_nodes`): per node of its maps, its own maps alone (the
+/// occupancy, the tile counts, the search records; and the static maps'
+/// key). Fitted 2026-10-21 on the shared builds of eleven probed boards
+/// of the expansion tier (route mode at 4 s, one thread, the fastest of
+/// each board's repeats scaled by the machine's measured share): 11.7 ns
+/// a node over their sum, 7.0 to 20.6 per board (docs/router.md, "The
+/// probes' overhead").
+pub const BUILD_SHARED_MAP_NANOS: f64 = 12.0;
 /// A branch end that lands on one of the net's copper pours.
 const PLANE_TERMINAL: u16 = u16::MAX - 1;
 /// A branch end that ends in the open, needing no host: the outer end of
@@ -955,6 +964,12 @@ pub struct Router {
     /// Shared by the copies of a router (they change only with the board,
     /// in `update`, which replaces them).
     statics: Arc<Vec<StaticMaps>>,
+    /// Whether another router built `statics` (`shared_statics`): its
+    /// build is not this router's work.
+    statics_shared: bool,
+    /// The static maps' key when they are shared (`statics_key`): the
+    /// pour masks held for them are this router's too.
+    statics_key: Option<u128>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
     /// is the via map. A value counts the nets forbidding that class there.
     /// After the class maps follow the diagonal maps (see `diagonal_map`):
@@ -1060,6 +1075,10 @@ pub struct Router {
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
     frame_hook: Option<FrameHook>,
+    /// Per obstacle with a polygon of many corners, its parts as the fill
+    /// probe measures them (`probe_shape`): built on a probe's first
+    /// question, shared by the router's copies, new with a new board.
+    probe_shapes: Arc<std::sync::OnceLock<FastMap<usize, Vec<fill::ProbePart>>>>,
 }
 
 pub fn route(board: &Board, config: &Config) -> RoutingResult {

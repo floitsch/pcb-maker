@@ -39,6 +39,12 @@ pub(super) const KICAD_MAX_ERROR: f64 = 0.005;
 /// and a track's clearance, and KiCad keeps it).
 const EPSILON: f64 = 0.003;
 
+/// `slack` asks an obstacle's distance only where its room may be
+/// negative: up to this much beyond the room's zero (a room of zero or
+/// more decides nothing apart from its sign, `spoke_end_lands`,
+/// `fill_along`).
+const SLACK_CAP_MARGIN: f64 = 1.0e-3;
+
 /// How far inside another item's clearance (or a relief) a spoke's end
 /// may lie and still be in KiCad's fill: none (`spoke_end_lands`).
 const END_TOLERANCE: f64 = 0.0;
@@ -144,6 +150,62 @@ fn polygon_vertices(shape: &crate::geometry::Shape) -> u64 {
     }
 }
 
+/// A part of an obstacle's shape as the probe measures it: a polygon of
+/// many corners by its edges near the point (`PolygonIndex`), any other
+/// part as it is (`Router::probe_shape`).
+#[derive(Debug)]
+pub(super) enum ProbePart {
+    Indexed(crate::geometry::PolygonIndex),
+    Plain(crate::geometry::Shape),
+}
+
+impl ProbePart {
+    /// The parts of `shape` (a union's leaves), or None when no part has
+    /// more than `INDEXED_POLYGON_VERTICES` corners.
+    pub(super) fn of(shape: &crate::geometry::Shape) -> Option<Vec<ProbePart>> {
+        fn leaves(shape: &crate::geometry::Shape, parts: &mut Vec<ProbePart>) {
+            match shape {
+                crate::geometry::Shape::Union { parts: inner } => {
+                    for part in inner {
+                        leaves(part, parts);
+                    }
+                }
+                crate::geometry::Shape::Polygon { points }
+                    if points.len() > crate::geometry::INDEXED_POLYGON_VERTICES =>
+                {
+                    parts.push(ProbePart::Indexed(crate::geometry::PolygonIndex::new(
+                        points,
+                    )))
+                }
+                other => parts.push(ProbePart::Plain(other.clone())),
+            }
+        }
+        let mut parts = Vec::new();
+        leaves(shape, &mut parts);
+        parts
+            .iter()
+            .any(|part| matches!(part, ProbePart::Indexed(_)))
+            .then_some(parts)
+    }
+
+    fn distance_below(&self, point: Point, threshold: f64) -> (bool, u64) {
+        match self {
+            ProbePart::Indexed(index) => index.distance_below(point, threshold),
+            ProbePart::Plain(shape) => (
+                shape.distance_to_point(point) < threshold,
+                polygon_vertices(shape),
+            ),
+        }
+    }
+
+    fn distance_within(&self, point: Point, cap: f64) -> (f64, u64) {
+        match self {
+            ProbePart::Indexed(index) => index.distance_within(point, cap),
+            ProbePart::Plain(shape) => (shape.distance_to_point(point), polygon_vertices(shape)),
+        }
+    }
+}
+
 fn bucket_range(minimum: Point, maximum: Point) -> (i64, i64, i64, i64) {
     (
         (minimum[0] / BUCKET).floor() as i64,
@@ -158,6 +220,42 @@ fn segment_box(a: Point, b: Point) -> (Point, Point) {
         [a[0].min(b[0]), a[1].min(b[1])],
         [a[0].max(b[0]), a[1].max(b[1])],
     )
+}
+
+impl Router {
+    /// Obstacle `obstacle`'s parts as the fill probes measure them, when
+    /// a polygon of it has more than `INDEXED_POLYGON_VERTICES` corners
+    /// (`ProbePart`); None for any other. The router's every such
+    /// obstacle is indexed on the first question.
+    pub(super) fn probe_shape(&self, obstacle: usize) -> Option<&[ProbePart]> {
+        self.probe_shapes
+            .get_or_init(|| {
+                let shapes: FastMap<usize, Vec<ProbePart>> = self
+                    .board
+                    .obstacles
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, obstacle)| {
+                        ProbePart::of(&obstacle.shape).map(|parts| (index, parts))
+                    })
+                    .collect();
+                // The indexes' build: an item per edge put in a cell.
+                let entries: u64 = shapes
+                    .values()
+                    .flatten()
+                    .map(|part| match part {
+                        ProbePart::Indexed(index) => index.entries(),
+                        ProbePart::Plain(_) => 0,
+                    })
+                    .sum();
+                self.scratch
+                    .probe_ops
+                    .fetch_add(entries, std::sync::atomic::Ordering::Relaxed);
+                shapes
+            })
+            .get(&obstacle)
+            .map(Vec::as_slice)
+    }
 }
 
 impl<'a> FillProbe<'a> {
@@ -257,11 +355,55 @@ impl<'a> FillProbe<'a> {
         result
     }
 
-    /// `shape`'s distance to `point`, counting its vertices.
-    fn distance_to(&self, shape: &crate::geometry::Shape, point: Point) -> f64 {
-        self.vertices
-            .set(self.vertices.get() + polygon_vertices(shape));
-        shape.distance_to_point(point)
+    /// Whether obstacle `obstacle`'s distance to `point` is below
+    /// `threshold`, counting the vertices its tests went through: a
+    /// polygon of many corners by its edges near the point
+    /// (`Router::probe_shape`), the answer of `distance_to_point` all
+    /// the same.
+    fn obstacle_below(&self, obstacle: usize, point: Point, threshold: f64) -> bool {
+        let (below, tests) = match self.router.probe_shape(obstacle) {
+            Some(parts) => {
+                let mut tests = 0;
+                let below = parts.iter().any(|part| {
+                    let (below, part_tests) = part.distance_below(point, threshold);
+                    tests += part_tests;
+                    below
+                });
+                (below, tests)
+            }
+            None => {
+                let shape = &self.router.board.obstacles[obstacle].shape;
+                (
+                    shape.distance_to_point(point) < threshold,
+                    polygon_vertices(shape),
+                )
+            }
+        };
+        self.vertices.set(self.vertices.get() + tests);
+        below
+    }
+
+    /// Obstacle `obstacle`'s distance to `point` (`distance_to_point`)
+    /// where it is below `cap`, else some distance of at least `cap`,
+    /// counting the vertices its tests went through (`obstacle_below`).
+    /// Every caller asks about distances below its cap only (a room that
+    /// is not negative, a ring's width): beyond it the answer is theirs
+    /// whatever the distance.
+    fn obstacle_distance(&self, obstacle: usize, point: Point, cap: f64) -> f64 {
+        let (distance, tests) = match self.router.probe_shape(obstacle) {
+            Some(parts) => parts
+                .iter()
+                .fold((f64::INFINITY, 0), |(least, tests), part| {
+                    let (distance, part_tests) = part.distance_within(point, cap);
+                    (least.min(distance), tests + part_tests)
+                }),
+            None => {
+                let shape = &self.router.board.obstacles[obstacle].shape;
+                (shape.distance_to_point(point), polygon_vertices(shape))
+            }
+        };
+        self.vertices.set(self.vertices.get() + tests);
+        distance
     }
 
     /// Half the pour's minimum width on `layer`: the brush's radius.
@@ -364,7 +506,9 @@ impl<'a> FillProbe<'a> {
             if width + 1.0e-9 < 2.0 * half {
                 continue;
             }
-            let distance = self.distance_to(shape, point);
+            // Beyond the ring's outer edge the pad is not asked about.
+            let cap = gap + width + 1.0;
+            let distance = self.obstacle_distance(*pad, point, cap);
             if distance < gap - 1.0e-9 || distance > gap + width + 1.0e-9 {
                 continue;
             }
@@ -375,7 +519,7 @@ impl<'a> FillProbe<'a> {
                         point[0] + radius * angle.cos(),
                         point[1] + radius * angle.sin(),
                     ];
-                    let from_pad = self.distance_to(shape, centre);
+                    let from_pad = self.obstacle_distance(*pad, centre, cap);
                     if from_pad >= gap + half - 1.0e-9
                         && from_pad <= gap + width - half + 1.0e-9
                         && self.blocker(layer, centre, None).is_none()
@@ -872,7 +1016,7 @@ impl<'a> FillProbe<'a> {
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
-                            self.distance_to(&obstacle.shape, point) < clearance + half - tolerance
+                            self.obstacle_below(*position, point, clearance + half - tolerance)
                         }
                         Item::Segment {
                             a,
@@ -898,8 +1042,7 @@ impl<'a> FillProbe<'a> {
                         }
                         Item::Ring { pad, reach } => {
                             except.is_some_and(|except| !except.contains(pad))
-                                && self.distance_to(&board.obstacles[*pad].shape, point)
-                                    < *reach - EPSILON
+                                && self.obstacle_below(*pad, point, *reach - EPSILON)
                         }
                         Item::ViaRelief { at, reach } => {
                             except.is_some() && distance(point, *at) < *reach - EPSILON
@@ -966,7 +1109,12 @@ impl<'a> FillProbe<'a> {
                                 ObstacleKind::Keepout => obstacle.clearance,
                                 ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
                             };
-                            self.distance_to(&obstacle.shape, point) - clearance - half
+                            self.obstacle_distance(
+                                *position,
+                                point,
+                                clearance + half + SLACK_CAP_MARGIN,
+                            ) - clearance
+                                - half
                         }
                         Item::Segment {
                             a,
@@ -993,7 +1141,8 @@ impl<'a> FillProbe<'a> {
                             if except.contains(pad) {
                                 f64::INFINITY
                             } else {
-                                self.distance_to(&board.obstacles[*pad].shape, point) - reach
+                                self.obstacle_distance(*pad, point, reach + SLACK_CAP_MARGIN)
+                                    - reach
                             }
                         }
                         Item::ViaRelief { at, reach } => distance(point, *at) - reach,

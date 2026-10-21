@@ -314,6 +314,7 @@ impl LadderRunner for KiCadRunner<'_> {
     type Board = core::Board;
     type Probe = core::router::Router;
     type Routed = core::RoutingResult;
+    type Hold = core::router::StaticMapsHold;
 
     fn lower(
         &self,
@@ -343,6 +344,14 @@ impl LadderRunner for KiCadRunner<'_> {
         let mut config = core_config(attempt);
         config.verbose = config.verbose && !quiet;
         core::router::Router::new(board, &config)
+    }
+
+    fn hold(
+        &self,
+        board: &core::Board,
+        attempt: &KiCadBoardRouterConfig,
+    ) -> (core::router::StaticMapsHold, f64) {
+        core::router::hold_static_maps(board, &core_config(attempt))
     }
 
     fn maps_mb(&self, router: &core::router::Router) -> Option<f64> {
@@ -399,6 +408,9 @@ impl LadderRunner for KiCadRunner<'_> {
         mut router: core::router::Router,
         limits: ResumeLimits,
     ) -> (core::RoutingResult, RouterWork) {
+        // The continuation's limits are search work (the ladder's shares
+        // by the routers' proportion of search), whatever the probe's.
+        router.config_mut().limits_count_all = false;
         router.config_mut().run_work = Some(limits.run_work);
         if let Some(deadline) = limits.deadline_work {
             router.config_mut().deadline_work = Some(deadline);
@@ -469,6 +481,10 @@ pub(super) fn route_seeds(
 ) -> (core::RoutingResult, f64) {
     // In waves of `side_by_side` (memory), in seed order.
     let seeds: Vec<u64> = (first..first + count.max(1) as u64).collect();
+    // The seeds' static maps, held before they start side by side: built
+    // once, their work spread over the seeds (the ladder counts the kept
+    // seed's work once a seed).
+    let (_held, statics) = core::router::hold_static_maps(board, config);
     let mut results: Vec<(Option<u64>, core::RoutingResult)> = Vec::new();
     let mut maps_mb = 0.0f64;
     for wave in seeds.chunks(side_by_side.max(1)) {
@@ -529,11 +545,12 @@ pub(super) fn route_seeds(
             score.0, score.1, score.2
         );
     }
-    let best = scored
+    let mut best = scored
         .into_iter()
         .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .expect("at least one seed")
         .2;
+    best.build_work += statics / seeds.len() as f64;
     (best, maps_mb)
 }
 
@@ -544,6 +561,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         deadline: config.deadline,
         deadline_work: config.router_deadline_work,
         net_rules: config.net_rules.clone(),
+        limits_count_all: config.limits_count_all,
         ..core::Config::default()
     };
     if let Some(via_cost) = config.via_cost_mm {

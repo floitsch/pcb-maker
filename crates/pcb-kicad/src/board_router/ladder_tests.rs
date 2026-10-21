@@ -48,6 +48,8 @@ struct FakeProbe {
     mode: usize,
     expansions: u64,
     pour: f64,
+    /// Its limit counts its pour work (`limits_count_all`).
+    counts_all: bool,
 }
 
 /// The scripted runner: a board of `layers` and `connections`, the probes'
@@ -70,6 +72,8 @@ struct Fake {
     /// router's build and every lowering's work.
     pour: f64,
     probe_pour: f64,
+    /// Per rung, a probe's pour work instead of `probe_pour` (empty: none).
+    probe_pours: Vec<f64>,
     build: f64,
     lowering: f64,
 }
@@ -88,6 +92,7 @@ impl Fake {
             first_iteration: 0.0,
             pour: 0.0,
             probe_pour: 0.0,
+            probe_pours: Vec::new(),
             build: 0.0,
             lowering: 0.0,
         }
@@ -181,6 +186,7 @@ impl LadderRunner for Fake {
     type Board = usize;
     type Probe = FakeProbe;
     type Routed = Outcome;
+    type Hold = ();
 
     fn lower(&self, _: &KiCadBoardRouterConfig, _: bool) -> Result<usize, String> {
         Ok(0)
@@ -190,12 +196,17 @@ impl LadderRunner for Fake {
         (self.layers, self.connections)
     }
 
-    fn build(&self, _: &usize, _: &KiCadBoardRouterConfig, _: bool) -> FakeProbe {
+    fn build(&self, _: &usize, attempt: &KiCadBoardRouterConfig, _: bool) -> FakeProbe {
         FakeProbe {
             mode: usize::MAX,
             expansions: 0,
             pour: 0.0,
+            counts_all: attempt.limits_count_all,
         }
+    }
+
+    fn hold(&self, _: &usize, _: &KiCadBoardRouterConfig) -> ((), f64) {
+        ((), 0.0)
     }
 
     fn maps_mb(&self, _: &FakeProbe) -> Option<f64> {
@@ -208,8 +219,15 @@ impl LadderRunner for Fake {
             panic!("index out of bounds in the probe of rung {mode}");
         }
         probe.mode = mode;
-        probe.expansions = (work * core::router::expansions_per_second()).round() as u64;
-        probe.pour = self.probe_pour;
+        // A limit of all its work: its pour work comes out of it.
+        let pour = self
+            .probe_pours
+            .get(mode)
+            .copied()
+            .unwrap_or(self.probe_pour);
+        let search = if probe.counts_all { work - pour } else { work };
+        probe.expansions = (search * core::router::expansions_per_second()).round() as u64;
+        probe.pour = pour;
         self.probes[mode]
     }
 
@@ -730,11 +748,17 @@ fn route_mode_probes_charge_their_pour_work_and_lattices() {
     else {
         panic!("the leader continues: {calls:?}");
     };
-    // Four lowerings, four probes of 12.5 s of search, 2.5 s of pour work
-    // and a lattice of 0.5 s each: 1 + 50 + 10 + 2 = 63 s; of the
-    // routers' 62 s, 50 were search.
+    // Four lowerings, four probes of 12.5 s of search (their limits are
+    // search work: the ranking compares equal search), 2.5 s of pour work
+    // and a lattice of 0.5 s each: 1 + 50 + 10 + 2 = 63 s.
+    assert!(calls[..4].iter().all(|call| matches!(
+        call,
+        Call::Probe { work, .. } if (work - 12.5).abs() < 1e-6
+    )));
+    // The continuation builds no lattice: of its own probe's search and
+    // pour work, 12.5 of 15 s were search.
     let left = 105.0 - 63.0;
-    let share = 50.0 / 62.0;
+    let share = 12.5 / 15.0;
     assert!(
         (deadline_work.unwrap() - (12.5 + left * share)).abs() < 1e-6,
         "{deadline_work:?}"
@@ -755,6 +779,41 @@ fn route_mode_probes_charge_their_pour_work_and_lattices() {
     assert_eq!(kept(&ladder, &out), (0, "continued".into()));
 }
 
+/// Route mode: the probed rung's continuation takes its share in search
+/// work by its own probe's proportion of search and pour work: a leader
+/// routing its pours as tracks did none, whatever the connected rungs'
+/// probes beside it did (Vortac: a third of their work).
+#[test]
+fn route_mode_continuation_goes_by_its_own_probe() {
+    let config = with_narrow_step(route_mode(100.0));
+    let out = output("continuation-own");
+    let mut fake = Fake::new(|_| Some(Outcome { open: 5, work: 5.0 }));
+    fake.layers = 4;
+    fake.connections = 200;
+    // The tracks rung (the last) leads.
+    fake.probes = vec![30, 20, 40, 10];
+    fake.probe_pours = vec![6.0, 6.0, 6.0, 0.0];
+    fake.build = 0.5;
+    fake.continued = Outcome {
+        open: 0,
+        work: 20.0,
+    };
+    let mut ladder = ladder(&config, &out, 4);
+    ladder.run(&fake).unwrap();
+    let calls = fake.calls();
+    let Call::Resume { deadline_work, .. } = calls[4].clone() else {
+        panic!("the leader continues: {calls:?}");
+    };
+    // Four probes of 12.5 s of search, 18 s of pour work, four lattices:
+    // 50 + 18 + 2 = 70 s; the leader did no pour work: its share is
+    // search work as it is.
+    let left = 105.0 - 70.0;
+    assert!(
+        (deadline_work.unwrap() - (12.5 + left)).abs() < 1e-6,
+        "{deadline_work:?}"
+    );
+}
+
 /// Route mode: no step starts with less left under the bound than the
 /// first attempt's first negotiation iteration took, which a fresh router
 /// does whatever its work deadline.
@@ -768,7 +827,7 @@ fn route_mode_steps_need_room_for_a_first_iteration() {
         } else {
             Outcome {
                 open: 5,
-                work: 27.0,
+                work: 24.0,
             }
         })
     });
@@ -793,7 +852,7 @@ fn route_mode_steps_need_room_for_a_first_iteration() {
         } else {
             Outcome {
                 open: 5,
-                work: 27.0,
+                work: 24.0,
             }
         })
     });
@@ -808,6 +867,43 @@ fn route_mode_steps_need_room_for_a_first_iteration() {
     );
     fitting.run(&fake).unwrap();
     assert!(fake.routes().iter().any(|routed| routed.narrow));
+}
+
+/// Route mode: a step needs a fifth of the ladder's first attempt's work
+/// left under the bound (`step_cost_fits`), whatever its first iteration
+/// takes: with a second left of 28 s, one iteration of a fresh router
+/// leaves hundreds of nets in conflict (iorodeo, ducktop2, tuxkeychain).
+#[test]
+fn route_mode_steps_need_a_fifth_of_the_first_attempt() {
+    let config = with_narrow_step(route_mode(30.0));
+    let run = |first: f64, name: &str| {
+        let out = output(name);
+        let mut fake = Fake::new(move |routed| {
+            Some(if routed.narrow {
+                Outcome { open: 1, work: 3.0 }
+            } else {
+                Outcome {
+                    open: 5,
+                    work: first,
+                }
+            })
+        });
+        fake.first_iteration = 0.5;
+        let mut ladder = ladder(&config, &out, 2);
+        ladder.run(&fake).unwrap();
+        let narrow = fake.routes().iter().any(|routed| routed.narrow);
+        (narrow, ladder.skipped.clone())
+    };
+    // 31.5 - 28 = 3.5 s left, under a fifth of 28 s.
+    let (narrow, skipped) = run(28.0, "step-cost-short");
+    assert!(!narrow, "{skipped:?}");
+    assert!(
+        skipped.iter().any(|why| why.contains("a fifth")),
+        "{skipped:?}"
+    );
+    // 31.5 - 24 = 7.5 s left, over a fifth of 24 s.
+    let (narrow, skipped) = run(24.0, "step-cost-fits");
+    assert!(narrow, "{skipped:?}");
 }
 
 /// A panic in a rung that runs beside others loses that rung only: the

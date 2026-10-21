@@ -186,6 +186,24 @@ pub(crate) fn route_step_has_time(left: f64, kept: f64, budget: f64) -> bool {
         }
 }
 
+/// Route mode: the least share of the ladder's first attempt's work that
+/// a step needs left under the bound (`step_cost_fits`).
+pub(crate) const STEP_LEAST_SHARE: f64 = 0.2;
+
+/// Route mode: whether a step can cost what a step that varies the
+/// ladder's first attempt (of `first_work`) realistically costs: a fifth
+/// of that attempt's work (0 when unknown). The first negotiation
+/// iteration alone (`first_iteration_fits`) let steps start with a
+/// second left on boards whose first attempt took 14 to 16 s
+/// (iorodeo, ducktop2, tuxkeychain): one iteration of a fresh router
+/// leaves hundreds of nets in conflict (615, 373 and 141 open against
+/// the kept 335, 1 and 12). In the expansion tier's logs every step left
+/// with less than a tenth of the first attempt's work lost, and facade60
+/// won with a third.
+pub(crate) fn step_cost_fits(left: f64, first_work: f64) -> bool {
+    left >= STEP_LEAST_SHARE * first_work
+}
+
 /// Route mode: whether a step's fresh router fits `left` under the bound
 /// with its first negotiation iteration, which it does whatever its work
 /// deadline: projected by the ladder's first attempt's (`first_iteration`,

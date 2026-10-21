@@ -81,7 +81,7 @@ impl Router {
                 // the budget depend on the machine's load), else of its
                 // wall clock.
                 if let Some(limit) = self.config.deadline_work {
-                    allowance = allowance.min((limit - self.work_seconds()).max(0.0) / 3.0);
+                    allowance = allowance.min((limit - self.deadline_used()).max(0.0) / 3.0);
                 } else if let Some(deadline) = self.config.deadline {
                     allowance = allowance.min(
                         deadline

@@ -244,7 +244,29 @@ impl Router {
     pub(super) fn past_work_deadline(&self) -> bool {
         self.config
             .deadline_work
-            .is_some_and(|limit| self.work_seconds() >= limit)
+            .is_some_and(|limit| self.deadline_used() >= limit)
+    }
+
+    /// The work the deadline counts: the search, or with
+    /// `limits_count_all` all of this router's work (its search, its pour
+    /// analyses and fill probes, its build).
+    pub(super) fn deadline_used(&self) -> f64 {
+        if self.config.limits_count_all {
+            self.work_seconds() + self.pour_work_seconds() + self.build_work
+        } else {
+            self.work_seconds()
+        }
+    }
+
+    /// The work a negotiation's limit counts (`negotiation_expansions`):
+    /// the search, or with `limits_count_all` the search and the pour
+    /// analyses and fill probes.
+    pub(super) fn negotiation_used(&self) -> f64 {
+        if self.config.limits_count_all {
+            self.work_seconds() + self.pour_work_seconds()
+        } else {
+            self.work_seconds()
+        }
     }
 
     /// Whether the caller's wall-clock deadline has passed (noted as a cut:

@@ -1173,7 +1173,9 @@ ladder's first attempt took to the end of its first negotiation
 iteration (`first_iteration_fits`), which a fresh router does whatever
 its deadline: megaduck's narrow-signal step started with 3.9 s left and
 did 17.6 s in its one iteration (45 s of work for a bound of 32 s); the
-step is then skipped, with why. `PCB_LADDER_UNCHARGED_SPOKES` and
+step is then skipped, with why; nor with less than a fifth of the
+first attempt's work (since the same day, `step_cost_fits`: "The probes'
+overhead" below). `PCB_LADDER_UNCHARGED_SPOKES` and
 `PCB_LADDER_NO_FIRST_ITERATION_GATE` restore the count and the start rule
 before (for attributing rows). The layout's ladder counts neither.
 Since the same day route mode's ladder counts all of an attempt's work
@@ -1453,13 +1455,15 @@ quarter, 1 before any search; the lowerings apart): the continuation's
 deadline and negotiation, the rungs' deadlines and negotiation and
 their `run_work`, the seeds' deadlines, the steps' deadline and
 negotiation (`router_work`). The ladder's first attempt, or its rung
-probes, have no proportion to go by: they go beyond the bound by their
+probes, have no proportion to go by: they went beyond the bound by their
 own pour work and lattices (the five rows of the expansion tier above
 36 s of work: musicbrain 42.6 s, a first attempt of 34 s of search and
-8.4 s of pour work), and VortacDesign's probes alone are 54 s of work
+8.4 s of pour work), and VortacDesign's probes alone were 54 s of work
 on a budget of 30 (34.6 s of it the three connect probes' pour
-refresh), so its continuation gets nothing and the board goes from 125
-to 202 open. The verdict has `pour_work_seconds` and
+refresh), so its continuation got nothing and the board went from 125
+to 202 open (since "The probes' overhead" below: the first attempt
+stops on all its work, the probes' pour refresh and lattices cost a
+fraction, Vortac 125 open again). The verdict has `pour_work_seconds` and
 `lattice_work_seconds` (with the lowerings) beside `work_seconds`.
 
 `PCB_LADDER_UNCHARGED_POUR` restores the count before (search and manual
@@ -1468,6 +1472,86 @@ gives the routers their shares as search work; `PCB_ROUTER_BUILD_TRACE`
 prints every build's and lowering's counts, modelled work and wall
 clock (for recalibrating). A layout's ladder and its work tallies are
 unchanged: they count search expansions and KiCad's checks.
+
+**The probes' overhead** (2026-10-21). Charging all the work showed what
+the probe ladder spent beside its search; most of it is gone now, not
+hidden, each part still charged:
+
+- *The fill probes' polygon tests.* The negotiation's pour refresh (from
+  the third iteration on, per pour net, `refresh_pour`) runs a full pour
+  analysis, twice when pads are off the plane (with and without their
+  stubs), and every analysis checks every pad's spokes with the fill
+  probe (`kicad_spokes`). On Vortac's panel 90 % of an analysis of GND
+  was the probe measuring its points against the board cutouts and a
+  copper logo, polygons of 71 to 1589 corners, every corner for every
+  query near them (29.5M corners an analysis, 307 ms of modelled work).
+  The probe now measures polygons of more than 48 corners
+  (`INDEXED_POLYGON_VERTICES`) by their edges near the point
+  (`geometry::PolygonIndex`: edges in cells of 0.25 mm or more and in
+  rows for the crossing test, built once a router, `Router::probe_shape`):
+  the same answers (`distance_below` is the distance's comparison;
+  `distance_within` the distance where it is below a cap, which `slack`
+  and `in_ring` ask only there), 2.5M corners and cells an analysis, 65
+  ms. The counts are the work: `PROBE_VERTEX_NANOS` per edge and cell a
+  query goes through, `PROBE_ITEM_NANOS` per edge put in a cell. The
+  fingerprints of Vortac's attempt are those of before.
+- *The static maps.* Every router built every class's static maps (the
+  outline, the obstacles' nodes, the tight steps: about half a build),
+  and the four rung probes, the rungs of a pitch, the seeds and the steps
+  of one board built the same maps again and again. They are a function
+  of the board's outline, obstacles, classes and the nets' classes, the
+  lattice, which classes are searched and the rules beyond the classes,
+  so routers of the same inputs share them now (`shared_statics`, a
+  process-wide cache by a 128-bit key of those inputs' exact debug
+  forms, the last built kept and the others while a router holds them;
+  `Config::share_static_maps`). A router that shares them counts its own
+  maps only: `BuildCounts::shared_map_nodes` at
+  `BUILD_SHARED_MAP_NANOS` (12 ns a node; fitted on the shared builds of
+  eleven probed boards at 4 s, the fastest of each board's repeats scaled
+  by the measured share, 11.7 over their sum, 7.0 to 20.6 a board) and
+  its nets' preparation. Before routers start side by side (the probes,
+  a wave of rungs, the seeds) the ladder holds their maps in rung order
+  (`hold_static_maps`, `LadderRunner::hold`), so that which router starts
+  first does not decide who counts the build: the probes' build is
+  counted once with the probes, a wave's with the rung that is first of
+  its maps, the seeds' spread over them. The connected pours' masks
+  (`compute_pour_masks`) are held with them by the board's pours
+  (`POUR_MASKS`): the three connected probes lower one board. The routing
+  is the same (`PCB_ROUTER_NO_SHARED_STATICS` builds them all anew).
+- *The continuation's share.* The leader's continuation builds no
+  lattice: its share of the bound becomes search work by its own probe's
+  proportion of search and pour work (`built_router_work`), not by all
+  the routers' with their lattices (`PCB_LADDER_CONTINUATION_LATTICE`).
+  A leader routing its pours as tracks did no pour work where the
+  connected probes beside it did a third of theirs (Vortac).
+- *The first attempt's limits.* With no proportion of search to go by,
+  the ladder's first attempt had all that is left of the bound as search
+  and its pour analyses and lattice on top (musicbrain: 33.3 s of search,
+  8.4 of pour work, 42.6 s for a bound of 31.5). It stops on all its
+  work now (`Config::limits_count_all`: its work deadline counts its
+  search, pour work and build, its negotiation's limit its search and
+  pour work; `PCB_LADDER_SEARCH_LIMITS` restores the search limits). The
+  rung probes keep their search limits: with their pour work and
+  lattices out of their shares (`PCB_LADDER_PROBES_COUNT_ALL`) they
+  stopped an iteration earlier and two leaders of the expansion tier
+  changed (ducktop2's from tracks to plane stubs, 1 to 7 open); equal
+  search is what the ranking compares.
+- *A step's realistic cost.* A step starts only with a fifth of the
+  ladder's first attempt's work left under the bound
+  (`step_cost_fits`, `STEP_LEAST_SHARE`; `PCB_LADDER_NO_STEP_COST_GATE`
+  for the rule before): its first iteration fitting what was left let
+  steps start with a second (iorodeo, ducktop2, tuxkeychain) and leave
+  hundreds of nets in conflict; on the expansion tier's logs every step
+  started with less than a tenth of that work lost, and facade60 won
+  with a third.
+
+What is left: the probes' search overshoot (a probe stops after the
+iteration that crosses its share: MSign's four probes searched 5.1 to
+5.2 s on shares of 3.75), each router's own maps (MSign 0.19 s a probe),
+the connected probes' pour refresh at the analyses' remaining cost (the
+nodes inside the pour and the spoke queries: Vortac 1.9 to 4.5 s a
+probe), the key of the static maps (the obstacles' debug form, in the
+fitted constant).
 
 **The search's calibration** (2026-10-16). `EXPANSIONS_PER_SECOND` is
 the reference's rate: search expansions per second of a router's phases

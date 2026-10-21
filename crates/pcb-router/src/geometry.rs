@@ -266,6 +266,236 @@ pub fn point_in_polygon(point: Point, points: &[Point]) -> bool {
     inside
 }
 
+/// A polygon of many vertices with its edges bucketed on a square grid
+/// over its box, for local queries: `distance_below`, `distance` and
+/// `contains` answer exactly what `Shape::distance_to_point` and
+/// `point_in_polygon` answer (the same edges' tests, of fewer edges),
+/// so a query near one corner of a large polygon (a panel's board
+/// cutouts, a copper logo of 1589 corners) measures the edges near it,
+/// not all of them. Each query returns how many cells and edges it
+/// looked at (`tests`), the work it did.
+#[derive(Clone, Debug)]
+pub struct PolygonIndex {
+    points: Vec<Point>,
+    origin: Point,
+    cell: f64,
+    nx: usize,
+    ny: usize,
+    /// Per cell (row-major), the edges whose box touches it:
+    /// `cell_edges[cell_start[c]..cell_start[c + 1]]`.
+    cell_start: Vec<u32>,
+    cell_edges: Vec<u32>,
+    /// Per row (`row_height` high, from the box's bottom), the edges whose
+    /// vertical extent touches it: the crossings of a horizontal ray.
+    /// Finer than the cells: a long slot's sides lie in a row each.
+    row_start: Vec<u32>,
+    row_edges: Vec<u32>,
+    row_height: f64,
+    row_count: usize,
+    /// The highest corner's height.
+    top: f64,
+}
+
+/// Polygons of more corners than this are indexed (`PolygonIndex`).
+pub const INDEXED_POLYGON_VERTICES: usize = 48;
+
+/// Buckets of `count` lists from `(bucket, item)` pairs, as start offsets
+/// and items.
+fn buckets(count: usize, pairs: &[(usize, u32)]) -> (Vec<u32>, Vec<u32>) {
+    let mut start = vec![0u32; count + 1];
+    for (bucket, _) in pairs {
+        start[bucket + 1] += 1;
+    }
+    for index in 0..count {
+        start[index + 1] += start[index];
+    }
+    let mut next = start.clone();
+    let mut items = vec![0u32; pairs.len()];
+    for (bucket, item) in pairs {
+        items[next[*bucket] as usize] = *item;
+        next[*bucket] += 1;
+    }
+    (start, items)
+}
+
+impl PolygonIndex {
+    /// The index of `points` (a polygon of at least one edge).
+    pub fn new(points: &[Point]) -> Self {
+        let mut minimum = [f64::INFINITY; 2];
+        let mut maximum = [f64::NEG_INFINITY; 2];
+        for point in points {
+            for axis in 0..2 {
+                minimum[axis] = minimum[axis].min(point[axis]);
+                maximum[axis] = maximum[axis].max(point[axis]);
+            }
+        }
+        let size = [
+            (maximum[0] - minimum[0]).max(1.0e-6),
+            (maximum[1] - minimum[1]).max(1.0e-6),
+        ];
+        // Cells of 0.25 mm (a clearance's size), at most 16384 of them.
+        let cell = (size[0] * size[1] / 16384.0).sqrt().max(0.25);
+        let nx = (size[0] / cell).floor() as usize + 1;
+        let ny = (size[1] / cell).floor() as usize + 1;
+        let rows = (4 * points.len()).clamp(1, 4096);
+        let row_height = size[1] / rows as f64;
+        let mut index = Self {
+            points: points.to_vec(),
+            origin: minimum,
+            cell,
+            nx,
+            ny,
+            cell_start: Vec::new(),
+            cell_edges: Vec::new(),
+            row_start: Vec::new(),
+            row_edges: Vec::new(),
+            row_height,
+            row_count: rows,
+            top: maximum[1],
+        };
+        let mut in_cells: Vec<(usize, u32)> = Vec::new();
+        let mut in_rows: Vec<(usize, u32)> = Vec::new();
+        for (edge, (a, b)) in polygon_edges(points).enumerate() {
+            let (x0, y0) = index.clamped(a[0].min(b[0]), a[1].min(b[1]));
+            let (x1, y1) = index.clamped(a[0].max(b[0]), a[1].max(b[1]));
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    in_cells.push((y * nx + x, edge as u32));
+                }
+            }
+            for row in index.row(a[1].min(b[1]))..=index.row(a[1].max(b[1])) {
+                in_rows.push((row, edge as u32));
+            }
+        }
+        (index.cell_start, index.cell_edges) = buckets(nx * ny, &in_cells);
+        (index.row_start, index.row_edges) = buckets(rows, &in_rows);
+        index
+    }
+
+    /// The edges put in cells and rows (the build's work).
+    pub fn entries(&self) -> u64 {
+        (self.cell_edges.len() + self.row_edges.len()) as u64
+    }
+
+    /// The cell of a point, clamped to the grid.
+    fn clamped(&self, x: f64, y: f64) -> (usize, usize) {
+        let column = ((x - self.origin[0]) / self.cell).floor();
+        let row = ((y - self.origin[1]) / self.cell).floor();
+        (
+            column.clamp(0.0, (self.nx - 1) as f64) as usize,
+            row.clamp(0.0, (self.ny - 1) as f64) as usize,
+        )
+    }
+
+    /// The row of a height, clamped to the rows.
+    fn row(&self, y: f64) -> usize {
+        ((y - self.origin[1]) / self.row_height)
+            .floor()
+            .clamp(0.0, (self.row_count - 1) as f64) as usize
+    }
+
+    fn edge(&self, edge: u32) -> (Point, Point) {
+        let edge = edge as usize;
+        (
+            self.points[edge],
+            self.points[(edge + 1) % self.points.len()],
+        )
+    }
+
+    /// `point_in_polygon(point, points)`, from the edges of the point's
+    /// row; and the tests it did.
+    pub fn contains(&self, point: Point) -> (bool, u64) {
+        // Below or above every edge: no crossing.
+        if !(point[1] >= self.origin[1] && point[1] <= self.top) {
+            return (false, 1);
+        }
+        let row = self.row(point[1]);
+        let edges = &self.row_edges[self.row_start[row] as usize..self.row_start[row + 1] as usize];
+        let mut inside = false;
+        for edge in edges {
+            let (a, b) = self.edge(*edge);
+            if (a[1] > point[1]) != (b[1] > point[1]) {
+                let x = a[0] + (point[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+                if point[0] < x {
+                    inside = !inside;
+                }
+            }
+        }
+        (inside, 1 + edges.len() as u64)
+    }
+
+    /// The edges whose box meets the square of half side `reach` around
+    /// `point` (each once), and the cells looked at.
+    fn near(&self, point: Point, reach: f64, edges: &mut Vec<u32>) -> u64 {
+        edges.clear();
+        let reach = reach + 1.0e-6;
+        if point[0] + reach < self.origin[0]
+            || point[1] + reach < self.origin[1]
+            || point[0] - reach > self.origin[0] + self.nx as f64 * self.cell
+            || point[1] - reach > self.origin[1] + self.ny as f64 * self.cell
+        {
+            return 1;
+        }
+        let (x0, y0) = self.clamped(point[0] - reach, point[1] - reach);
+        let (x1, y1) = self.clamped(point[0] + reach, point[1] + reach);
+        for y in y0..=y1 {
+            let row = y * self.nx;
+            edges.extend_from_slice(
+                &self.cell_edges
+                    [self.cell_start[row + x0] as usize..self.cell_start[row + x1 + 1] as usize],
+            );
+        }
+        edges.sort_unstable();
+        edges.dedup();
+        ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64
+    }
+
+    /// Whether `Shape::Polygon`'s `distance_to_point(point)` is below
+    /// `threshold`, and the tests it did.
+    pub fn distance_below(&self, point: Point, threshold: f64) -> (bool, u64) {
+        let (inside, mut tests) = self.contains(point);
+        if inside {
+            return (0.0 < threshold, tests);
+        }
+        if threshold.is_nan() || threshold <= 0.0 {
+            return (false, tests);
+        }
+        let mut edges = Vec::new();
+        tests += self.near(point, threshold, &mut edges);
+        tests += edges.len() as u64;
+        let below = edges.iter().any(|edge| {
+            let (a, b) = self.edge(*edge);
+            point_segment_distance(point, a, b) < threshold
+        });
+        (below, tests)
+    }
+
+    /// `Shape::Polygon`'s `distance_to_point(point)` where it is below
+    /// `cap`, else some distance of at least `cap`; and the tests it did:
+    /// the nearest of the edges near the point (an edge outside the
+    /// square of half side `cap` lies at least `cap` away).
+    pub fn distance_within(&self, point: Point, cap: f64) -> (f64, u64) {
+        let (inside, mut tests) = self.contains(point);
+        if inside {
+            return (0.0, tests);
+        }
+        if cap.is_nan() || cap <= 0.0 {
+            return (cap.max(0.0), tests);
+        }
+        let mut edges = Vec::new();
+        tests += self.near(point, cap, &mut edges);
+        tests += edges.len() as u64;
+        let least = edges
+            .iter()
+            .map(|edge| {
+                let (a, b) = self.edge(*edge);
+                point_segment_distance(point, a, b)
+            })
+            .fold(f64::INFINITY, f64::min);
+        (if least < cap { least } else { cap }, tests)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,6 +519,62 @@ mod tests {
         // Rectangles at 180 and -180 are the same polygon.
         let corners = |angle: f64| format!("{:?}", Shape::rectangle([1.0, 2.0], [3.0, 0.5], angle));
         assert_eq!(corners(180.0), corners(-180.0));
+    }
+
+    /// A star-shaped polygon of `corners` corners with a wavy rim, and
+    /// a long slot of rounded ends (a panel's board cutout), against the
+    /// plain tests: `PolygonIndex` answers what they answer.
+    #[test]
+    fn an_indexed_polygon_answers_as_the_plain_tests() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut noise = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let star: Vec<Point> = (0..300)
+            .map(|index| {
+                let angle = std::f64::consts::TAU * index as f64 / 300.0;
+                let radius = 10.0 + 3.0 * (angle * 7.0).sin() + 0.5 * noise();
+                [5.0 + radius * angle.cos(), -2.0 + radius * angle.sin()]
+            })
+            .collect();
+        let mut slot: Vec<Point> = Vec::new();
+        for index in 0..=40 {
+            let angle = std::f64::consts::PI * (0.5 + index as f64 / 40.0);
+            slot.push([angle.cos(), angle.sin()]);
+        }
+        for index in 0..=40 {
+            let angle = std::f64::consts::PI * (1.5 + index as f64 / 40.0);
+            slot.push([60.0 + angle.cos(), angle.sin()]);
+        }
+        for points in [star, slot] {
+            let index = PolygonIndex::new(&points);
+            let shape = Shape::Polygon {
+                points: points.clone(),
+            };
+            let mut tests = 0;
+            for _ in 0..20000 {
+                let point = [-20.0 + 100.0 * noise(), -20.0 + 40.0 * noise()];
+                let (inside, _) = index.contains(point);
+                assert_eq!(inside, point_in_polygon(point, &points), "{point:?}");
+                let exact = shape.distance_to_point(point);
+                for threshold in [0.0, 0.05, 0.3, 1.0, 4.0] {
+                    let (below, used) = index.distance_below(point, threshold);
+                    tests += used;
+                    assert_eq!(below, exact < threshold, "{point:?} {threshold}");
+                    let (within, _) = index.distance_within(point, threshold);
+                    if exact < threshold {
+                        assert_eq!(within.to_bits(), exact.to_bits(), "{point:?} {threshold}");
+                    } else {
+                        assert!(within >= threshold, "{point:?} {threshold}");
+                    }
+                }
+            }
+            // Far fewer than the plain tests' corners a question.
+            assert!(tests < 20000 * 5 * points.len() as u64 / 4, "{tests}");
+        }
     }
 
     #[test]

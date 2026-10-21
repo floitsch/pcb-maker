@@ -183,6 +183,31 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
     ),
     (
+        "PCB_LADDER_NO_STEP_COST_GATE",
+        Kind::Switch,
+        "route mode's steps start with less left under the bound than a fifth of the ladder's first attempt's work (the rule before 2026-10-21, probe overhead; for attributing rows).",
+    ),
+    (
+        "PCB_LADDER_SEARCH_LIMITS",
+        Kind::Switch,
+        "route mode's first attempt stops on its search alone, its pour analyses and lattice on top (the rule before 2026-10-21, probe overhead; for attributing rows).",
+    ),
+    (
+        "PCB_LADDER_PROBES_COUNT_ALL",
+        Kind::Switch,
+        "route mode's rung probes stop on all their work (search, pour analyses, lattice and their part of the static maps) instead of on their search (an experiment: leaders changed; docs/changelog.md, probe overhead).",
+    ),
+    (
+        "PCB_LADDER_CONTINUATION_LATTICE",
+        Kind::Switch,
+        "route mode's probed rung's continuation takes its share in search work by the routers' proportion of search with their lattices counted, as the fresh routers do (the rule before 2026-10-21, probe overhead; for attributing rows).",
+    ),
+    (
+        "PCB_ROUTER_NO_SHARED_STATICS",
+        Kind::Switch,
+        "every router builds its own static maps and pour masks instead of sharing those of routers of the same board, lattice and classes (for attributing rows; the routing is the same).",
+    ),
+    (
         "PCB_PROBES_SIDE_BY_SIDE",
         Kind::Switch,
         "`N`: at most N probes of the probe ladder at once (1: one after the other).",

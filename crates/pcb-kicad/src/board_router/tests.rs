@@ -2026,6 +2026,10 @@ mod work_bound_tests {
         assert!(!first_iteration_fits(3.9, 17.5));
         assert!(first_iteration_fits(3.9, 3.0));
         assert!(first_iteration_fits(3.9, 0.0));
+        // A step's realistic cost: a fifth of the first attempt's work.
+        assert!(!step_cost_fits(1.0, 16.3));
+        assert!(step_cost_fits(7.9, 23.6));
+        assert!(step_cost_fits(1.0, 0.0));
     }
 
     #[test]

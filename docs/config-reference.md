@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 81 | 70 | 11 | 81 | 18 |
+| [Router settings](#router-settings) | 82 | 70 | 12 | 82 | 18 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 1 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 56 | - | 0 | 56 | - |
+| [Router core](#router-core) | 58 | - | 0 | 58 | - |
 | [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 11 |
 | [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -88,6 +88,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
 | `deadline_work` (internal) | `Option<f64>` | unset (internal) | - | The work (seconds of an idle machine) left before the run's nominal end, as the ladder starts (set by the layout; none in route mode). The ladder's decisions of whether another attempt fits are taken in it, not in the wall clock, so that a busy machine decides the same way; the wall-clock deadline stays as the last guard. |
 | `router_deadline_work` (internal) | `Option<f64>` | unset (internal) | - | The work at which a router of this attempt stops as at the deadline (router `deadline_work`, its own work counted from zero; set by the ladder from `deadline_work`, not read from a file). |
+| `limits_count_all` (internal) | `bool` | `false` (internal) | - | The router's work deadline and negotiation limit count all its work (router `limits_count_all`: its search, pour analyses and build); set by route mode's ladder for its first attempt and the rung probes, not read from a file. |
 | `kicad_check_top` (internal) | `Option<usize>` | unset (internal) | - | KiCad checks only the attempts among this many best by the router's count (`CheckGate`; set by the layout for its final ladder, not read from a file). |
 | `kicad_kept` (internal) | `Option<(RouterMeasure, (usize, usize))>` | unset (internal) | - | The caller's kept board: the router's measures (open count, vias, copper) and its checked (open count, starved thermals); the ladder's attempts are ranked against it for KiCad's checks (`CheckGate`; set by the layout, not read from a file). |
 | `kicad_check_work` (internal) | `Option<f64>` | unset (internal) | - | The work one KiCad check of an attempt counts, in seconds of an idle machine, modelled from the board alone (`check_work`): the ladder adds it to its work for every check it runs, cached or not, so that its end in work does not depend on the DRC cache. Set by the layout, not read from a file; none in route mode. |
@@ -288,6 +289,8 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `deadline` | `Option<std::time::Instant>` | unset | `deadline` | A wall-clock time by which routing returns what it has, however much work its budgets still allow: every budget counts as spent from then on (an agent waits for the result). |
 | `deadline_work` | `Option<f64>` | unset | `router_deadline_work` | The work (this router's own, in seconds of an idle machine) at which routing returns what it has, as at `deadline`: the caller's deadline counted in work, so that where a run stops does not depend on how busy the machine is (the layout sets it from its own budget; `deadline` stays as the guard against load). |
 | `net_rules` | `Option<std::sync::Arc<crate::rules::NetRules>>` | unset | `net_rules` | Rules beyond the net classes (`crate::rules`): per-net width floors, clearances between sets of nets, per item type and per layer, and the same-net hole-to-hole spacing. `None` (or empty rules): the classes alone, as before. |
+| `share_static_maps` | `bool` | `true` | - | Share the static maps (the outline, every obstacle's nodes, the tight steps of every class) with the other routers built from the same board, lattice and classes (`hold_static_maps`): a router then builds only its own maps and counts only their work. False builds them anew (tests that count a build's work). |
+| `limits_count_all` | `bool` | `false` | `limits_count_all` | The work deadline (`deadline_work`) and the negotiation's work limit (`negotiation_expansions`, in seconds at the reference's rate) count this router's pour analyses and fill probes beside its search, the deadline its build too: all of its work as route mode's ladder charges it. False: its search alone. The ladder sets it where it has no proportion of search to go by (its first attempt, the rung probes). |
 
 ## Placer settings
 

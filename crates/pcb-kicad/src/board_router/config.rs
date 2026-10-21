@@ -172,6 +172,12 @@ pub struct KiCadBoardRouterConfig {
     /// set by the ladder from `deadline_work`, not read from a file).
     #[serde(skip)]
     pub router_deadline_work: Option<f64>,
+    /// The router's work deadline and negotiation limit count all its
+    /// work (router `limits_count_all`: its search, pour analyses and
+    /// build); set by route mode's ladder for its first attempt and the
+    /// rung probes, not read from a file.
+    #[serde(skip)]
+    pub limits_count_all: bool,
     /// KiCad checks only the attempts among this many best by the
     /// router's count (`CheckGate`; set by the layout for its final
     /// ladder, not read from a file).

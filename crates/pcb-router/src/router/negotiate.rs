@@ -26,6 +26,7 @@ impl Router {
         let nested = self.in_via_reduction;
         let expansions_before = self.scratch.expansions;
         let work_before = self.work_seconds();
+        let used_before = self.negotiation_used();
         let phase_mark = self.phase_mark();
         let mut present = present;
         let mut best_conflicted = usize::MAX;
@@ -280,7 +281,12 @@ impl Router {
             // then routes the same way however busy the machine is; the
             // seconds stay as the last guard.
             let worked_out = self.config.negotiation_expansions > 0
-                && self.scratch.expansions - expansions_before > self.config.negotiation_expansions;
+                && if self.config.limits_count_all {
+                    self.negotiation_used() - used_before
+                        > self.config.negotiation_expansions as f64 / expansions_per_second()
+                } else {
+                    self.scratch.expansions - expansions_before > self.config.negotiation_expansions
+                };
             if stalled > patience || worked_out || self.past_work_deadline() {
                 break;
             }

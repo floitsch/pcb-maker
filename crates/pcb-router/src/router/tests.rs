@@ -3779,11 +3779,13 @@ fn a_build_is_priced_by_its_counts() {
     // nanoseconds, scaled to the process's rate as the pour model is.
     let counts = BuildCounts {
         map_nodes: 1_000_000,
+        shared_map_nodes: 500_000,
         tests: 2_000_000,
         edges: 3_000_000,
         step_edges: 400_000,
     };
     let nanos = 1.0e6 * BUILD_MAP_NANOS
+        + 5.0e5 * BUILD_SHARED_MAP_NANOS
         + 2.0e6 * BUILD_TEST_NANOS
         + 3.0e6 * BUILD_EDGE_NANOS
         + 4.0e5 * BUILD_STEP_NANOS;
@@ -3801,6 +3803,7 @@ fn a_build_counts_its_maps_tests_and_pour_masks() {
     let board = one_spoke_board();
     let config = Config {
         pitches: vec![0.1],
+        share_static_maps: false,
         ..Config::default()
     };
     let router = Router::new(&board, &config);
@@ -3827,4 +3830,59 @@ fn a_build_counts_its_maps_tests_and_pour_masks() {
     assert_eq!(result.build_work, routed.build_work());
     assert_eq!(result.pour_work, routed.pour_work());
     assert!(result.pour_work >= result.manual_spokes_work - 1.0e-12);
+}
+
+#[test]
+fn routers_of_one_board_and_lattice_share_their_static_maps() {
+    // A router whose static maps another router of the same board,
+    // lattice and classes built shares them and counts only its own maps
+    // (`shared_map_nodes` at `BUILD_SHARED_MAP_NANOS`, the nets' tests);
+    // `hold_static_maps` counts the rest once. The board and the pitch are
+    // this test's own (the maps are shared across the process).
+    let board = one_spoke_board();
+    let config = Config {
+        pitches: vec![0.0913],
+        ..Config::default()
+    };
+    let alone = Router::new(
+        &board,
+        &Config {
+            share_static_maps: false,
+            ..config.clone()
+        },
+    );
+    let (held, statics) = hold_static_maps(&board, &config);
+    assert!(statics > 0.0);
+    let shared = Router::new(&board, &config);
+    assert!(shared.statics_shared && !alone.statics_shared);
+    assert!(Arc::ptr_eq(
+        &shared.statics,
+        &Router::new(&board, &config).statics
+    ));
+    let counts = shared.build_counts();
+    assert_eq!(counts.map_nodes, 0);
+    assert_eq!(counts.shared_map_nodes, alone.build_counts().map_nodes);
+    assert_eq!(counts.step_edges, 0);
+    // The held build and a shared router's own work are one build's.
+    assert!((statics + shared.build_work() - alone.build_work()).abs() < 1.0e-9);
+    // A second hold finds them: no work.
+    assert_eq!(hold_static_maps(&board, &config).1, 0.0);
+    // The maps are the same as built alone; so is the routing.
+    assert_eq!(shared.statics.len(), alone.statics.len());
+    for (a, b) in shared.statics.iter().zip(alone.statics.iter()) {
+        assert_eq!(a.trace, b.trace);
+        assert_eq!(a.via_blocked, b.via_blocked);
+    }
+    drop(held);
+    let mut one = Router::new(&board, &config);
+    let mut two = Router::new(
+        &board,
+        &Config {
+            share_static_maps: false,
+            ..config.clone()
+        },
+    );
+    one.run_in_place();
+    two.run_in_place();
+    assert_eq!(one.fingerprint(), two.fingerprint());
 }

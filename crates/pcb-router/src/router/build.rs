@@ -118,17 +118,15 @@ impl Router {
             panic!("{message} (Router::try_new returns it as an error)");
         }
         let searched = searched_classes(board, &neck_of);
-        let statics: Vec<_> = (0..board.classes.len())
-            .map(|class| {
-                StaticMaps::build_with_rules(
-                    board,
-                    &grid,
-                    class,
-                    searched[class],
-                    class_rules.as_deref(),
-                )
-            })
-            .collect();
+        let (statics, statics_shared, statics_key) = if config.share_static_maps {
+            shared_statics(board, &grid, &searched, class_rules.as_deref())
+        } else {
+            (
+                build_statics(board, &grid, &searched, class_rules.as_deref()),
+                false,
+                None,
+            )
+        };
         let statics_built = built.elapsed().as_secs_f64();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
         let step = grid.pitch * std::f64::consts::SQRT_2;
@@ -269,7 +267,9 @@ impl Router {
         let mut router = Self {
             board: board.clone(),
             config: config.clone(),
-            statics: Arc::new(statics),
+            statics,
+            statics_shared,
+            statics_key,
             occupancy: vec![vec![0; cells]; maps],
             stamp_mark: vec![0; cells.div_ceil(64) * maps],
             history: vec![vec![0.0; cells]; layers + 1],
@@ -318,6 +318,7 @@ impl Router {
             stamp_seconds: 0.0,
             iterations: 0,
             last_conflicted: Vec::new(),
+            probe_shapes: Arc::default(),
             grid,
         };
         if let Some(seed) = config.seed.or_else(experiment_seed) {
@@ -351,8 +352,8 @@ impl Router {
             let statics_tests: u64 = router.statics.iter().map(|maps| maps.tests).sum();
             let statics_edges: u64 = router.statics.iter().map(|maps| maps.vertex_tests).sum();
             eprintln!(
-                "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {}",
-                counts.map_nodes,
+                "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {} shared {}",
+                counts.map_nodes + counts.shared_map_nodes,
                 counts.tests,
                 counts.edges,
                 counts.step_edges,
@@ -368,6 +369,7 @@ impl Router {
                 board.obstacles.len(),
                 board.nets.len(),
                 board.planes.len(),
+                router.statics_shared,
             );
         }
         if config.verbose {
@@ -389,16 +391,21 @@ impl Router {
                 .map(|state| state.prepare_counts[index])
                 .sum()
         };
+        // Static maps another router built count nothing here (`shared_statics`).
+        let statics = |count: fn(&StaticMaps) -> u64| -> u64 {
+            if self.statics_shared {
+                0
+            } else {
+                self.statics.iter().map(count).sum()
+            }
+        };
+        let map_nodes = self.grid.cells() as u64 * layers * self.statics.len() as u64;
         BuildCounts {
-            map_nodes: self.grid.cells() as u64 * layers * self.statics.len() as u64,
-            tests: self.statics.iter().map(|maps| maps.tests).sum::<u64>() + prepared(0),
-            edges: self
-                .statics
-                .iter()
-                .map(|maps| maps.vertex_tests)
-                .sum::<u64>()
-                + prepared(1),
-            step_edges: self.statics.iter().map(|maps| maps.tight_tests).sum(),
+            map_nodes: if self.statics_shared { 0 } else { map_nodes },
+            shared_map_nodes: if self.statics_shared { map_nodes } else { 0 },
+            tests: statics(|maps| maps.tests) + prepared(0),
+            edges: statics(|maps| maps.vertex_tests) + prepared(1),
+            step_edges: statics(|maps| maps.tight_tests),
         }
     }
 
@@ -634,6 +641,10 @@ pub struct BuildCounts {
     /// Lattice nodes of every class's maps (cells times layers times
     /// classes).
     pub map_nodes: u64,
+    /// The same of a router whose static maps another built
+    /// (`shared_statics`): its own maps only (the occupancy, the search
+    /// records, the tile counts).
+    pub shared_map_nodes: u64,
     /// Nodes tested: against the outline and every obstacle in the
     /// static maps, inside the nets' pads and pour boxes.
     pub tests: u64,
@@ -650,6 +661,7 @@ impl BuildCounts {
     /// The build's work in nanoseconds of the reference machine.
     pub fn work_nanos(&self) -> f64 {
         self.map_nodes as f64 * BUILD_MAP_NANOS
+            + self.shared_map_nodes as f64 * BUILD_SHARED_MAP_NANOS
             + self.tests as f64 * BUILD_TEST_NANOS
             + self.edges as f64 * BUILD_EDGE_NANOS
             + self.step_edges as f64 * BUILD_STEP_NANOS
@@ -661,4 +673,189 @@ impl BuildCounts {
     pub fn work_seconds(&self) -> f64 {
         self.work_nanos() / 1.0e9 * reference_time_scale()
     }
+}
+
+/// The static maps of the routers built last, by what they are built from
+/// (`statics_key`): the most recent kept, the others while a router holds
+/// them. The rung probes, the probed rung's continuation, the rungs of a
+/// pitch, the seeds and the steps lower one board with one lattice and
+/// one set of classes again and again, and the static maps (the outline,
+/// every obstacle's nodes, the tight steps: about half of a build) are a
+/// function of those alone.
+type StaticsCache = Vec<(u128, std::sync::Weak<Vec<StaticMaps>>)>;
+
+static STATICS_CACHE: std::sync::Mutex<(StaticsCache, Option<Arc<Vec<StaticMaps>>>)> =
+    std::sync::Mutex::new((Vec::new(), None));
+
+/// What the static maps are built from, hashed (128 bits): the outline,
+/// the clearances, the classes and the nets' classes, the obstacles, the
+/// lattice, which classes are searched and the rules beyond the classes,
+/// each as its exact debug form (floats print as they parse back).
+fn statics_key(board: &Board, grid: &Grid, searched: &[bool], rules: Option<&ClassRules>) -> u128 {
+    use std::fmt::Write as _;
+    use std::hash::Hasher as _;
+    struct Feed([std::collections::hash_map::DefaultHasher; 2]);
+    impl std::fmt::Write for Feed {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            for hasher in &mut self.0 {
+                hasher.write(text.as_bytes());
+            }
+            Ok(())
+        }
+    }
+    let mut feed = Feed([Default::default(), Default::default()]);
+    feed.0[1].write_u64(0x5eed_5eed_5eed_5eed);
+    let _ = write!(
+        feed,
+        "{} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+        board.layer_count,
+        board.outline,
+        (
+            board.edge_clearance,
+            board.hole_clearance,
+            board.hole_to_hole,
+            board.neck_width
+        ),
+        board.classes,
+        board.nets.iter().map(|net| net.class).collect::<Vec<_>>(),
+        (grid.pitch, grid.origin, grid.nx, grid.ny),
+        searched,
+        rules,
+    );
+    for obstacle in &board.obstacles {
+        let _ = write!(feed, "{obstacle:?}");
+    }
+    ((feed.0[0].finish() as u128) << 64) | feed.0[1].finish() as u128
+}
+
+/// The static maps of every class: another router's of the same inputs
+/// (`STATICS_CACHE`, and true), or built (false). Not shared under
+/// `PCB_ROUTER_NO_SHARED_STATICS` (for attributing).
+fn shared_statics(
+    board: &Board,
+    grid: &Grid,
+    searched: &[bool],
+    rules: Option<&ClassRules>,
+) -> (Arc<Vec<StaticMaps>>, bool, Option<u128>) {
+    let build = || build_statics(board, grid, searched, rules);
+    if std::env::var_os("PCB_ROUTER_NO_SHARED_STATICS").is_some() {
+        return (build(), false, None);
+    }
+    let key = statics_key(board, grid, searched, rules);
+    let found = {
+        let mut cache = STATICS_CACHE
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache.0.retain(|(_, maps)| maps.strong_count() > 0);
+        cache
+            .0
+            .iter()
+            .find(|(other, _)| *other == key)
+            .and_then(|(_, maps)| maps.upgrade())
+    };
+    if let Some(maps) = found {
+        return (maps, true, Some(key));
+    }
+    // Built outside the lock: routers side by side of other inputs build
+    // theirs at the same time (two of the same inputs may both build).
+    let maps = build();
+    let mut cache = STATICS_CACHE
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some(existing) = cache
+        .0
+        .iter()
+        .find(|(other, _)| *other == key)
+        .and_then(|(_, maps)| maps.upgrade())
+    {
+        return (existing, true, Some(key));
+    }
+    cache.0.push((key, Arc::downgrade(&maps)));
+    cache.1 = Some(maps.clone());
+    (maps, false, Some(key))
+}
+
+/// Every class's static maps, built.
+fn build_statics(
+    board: &Board,
+    grid: &Grid,
+    searched: &[bool],
+    rules: Option<&ClassRules>,
+) -> Arc<Vec<StaticMaps>> {
+    Arc::new(
+        (0..board.classes.len())
+            .map(|class| StaticMaps::build_with_rules(board, grid, class, searched[class], rules))
+            .collect(),
+    )
+}
+
+/// Static maps held for the routers about to be built (`hold_static_maps`).
+pub struct StaticMapsHold {
+    _maps: Arc<Vec<StaticMaps>>,
+}
+
+/// The static maps a router of `board` and `config` would build: found
+/// (another router's of the same inputs) or built now, and held while the
+/// returned value lives, with the work of building them (0 when found):
+/// what a router sharing them does not count (`BUILD_MAP_NANOS` less
+/// `BUILD_SHARED_MAP_NANOS` per node, and their tests). The ladder holds
+/// them before it starts routers side by side, so that one builds them in
+/// a known order and each router counts the same work whichever starts
+/// first.
+pub fn hold_static_maps(board: &Board, config: &Config) -> (StaticMapsHold, f64) {
+    let (board, neck_of, class_rules) = Router::with_neck_classes(board, config);
+    let grid = Grid::choose(&board, &config.pitches);
+    let searched = searched_classes(&board, &neck_of);
+    let (maps, shared, key) = shared_statics(&board, &grid, &searched, class_rules.as_deref());
+    // The connected pours' masks of every net, for the routers of these
+    // maps and pours (`Router::prepared_pour_masks`).
+    let mut mask_counts = [0u64; 2];
+    if let Some(key) = key {
+        let key = super::prepare::pour_masks_key(key, &board);
+        let mut cache = super::prepare::POUR_MASKS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if !cache.iter().any(|(other, _)| *other == key) {
+            if cache.len() >= super::prepare::POUR_MASK_KEYS {
+                cache.remove(0);
+            }
+            let mut entry = (key, Vec::new());
+            let nets: Vec<NetId> = board
+                .planes
+                .iter()
+                .filter(|plane| plane.connect)
+                .map(|plane| plane.net)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            for net in nets {
+                let (plane, plane_class, counts) =
+                    super::prepare::compute_pour_masks(&board, &maps, &grid, net, true);
+                mask_counts[0] += counts[0];
+                mask_counts[1] += counts[1];
+                entry.1.push((net, Arc::new((plane, plane_class))));
+            }
+            cache.push(entry);
+        }
+    }
+    let masks = (mask_counts[0] as f64 * BUILD_TEST_NANOS
+        + mask_counts[1] as f64 * BUILD_EDGE_NANOS)
+        / 1.0e9
+        * reference_time_scale();
+    let work = masks
+        + if shared {
+            0.0
+        } else {
+            let nodes = (grid.cells() * board.layer_count * maps.len()) as f64;
+            let tests: u64 = maps.iter().map(|maps| maps.tests).sum();
+            let edges: u64 = maps.iter().map(|maps| maps.vertex_tests).sum();
+            let steps: u64 = maps.iter().map(|maps| maps.tight_tests).sum();
+            (nodes * (BUILD_MAP_NANOS - BUILD_SHARED_MAP_NANOS)
+                + tests as f64 * BUILD_TEST_NANOS
+                + edges as f64 * BUILD_EDGE_NANOS
+                + steps as f64 * BUILD_STEP_NANOS)
+                / 1.0e9
+                * reference_time_scale()
+        };
+    (StaticMapsHold { _maps: maps }, work)
 }

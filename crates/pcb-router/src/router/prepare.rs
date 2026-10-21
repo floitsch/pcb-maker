@@ -84,7 +84,7 @@ impl Router {
                 }
             }
         }
-        let (plane, plane_class, mask_counts) = self.pour_masks_counted(net, true);
+        let (plane, plane_class, mask_counts) = self.prepared_pour_masks(net);
         counts[0] += mask_counts[0];
         counts[1] += mask_counts[1];
         let on_plane: Vec<bool> = terminal_nodes
@@ -194,113 +194,28 @@ impl Router {
         net: NetId,
         connected_only: bool,
     ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
-        let mut counts = [0u64; 2];
-        let description = &self.board.nets[net as usize];
-        let mut plane: Vec<Vec<bool>> = Vec::new();
-        let mut plane_class = vec![description.class; self.board.layer_count];
-        for pour in self
-            .board
-            .planes
-            .iter()
-            .filter(|pour| pour.net == net && (pour.connect || !connected_only))
-        {
-            if plane.is_empty() {
-                plane = vec![Vec::new(); self.board.layer_count];
-            }
-            plane_class[pour.layer] = pour.class;
-            let statics = &self.statics[pour.class];
-            if plane[pour.layer].is_empty() {
-                plane[pour.layer] = vec![false; self.grid.cells()];
-            }
-            let Some((x0, y0, x1, y1)) = self.grid.node_range(
-                crate::geometry::Shape::Polygon {
-                    points: pour.polygon.clone(),
-                }
-                .aabb(),
-            ) else {
-                continue;
-            };
-            // KiCad's fill keeps its brush, half the minimum width, inside
-            // the zone's outline: a node closer to the outline holds no
-            // brush centre, and a strip of them along the edge joined
-            // pieces KiCad's fill keeps apart (mothenjoyer69's GND_B: a
-            // column of nodes 0.1 mm inside the outline, a 0.22 mm brush).
-            // Per zone, so that zones of the net that overlap fill across
-            // each other's outlines.
-            let half = self.board.classes[pour.class].trace_width / 2.0;
-            let mut inside: Vec<(usize, bool)> = Vec::new();
-            let corners =
-                pour.polygon.len() + pour.excluded.iter().map(|other| other.len()).sum::<usize>();
-            counts[0] += ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
-            for y in y0..=y1 {
-                for x in x0..=x1 {
-                    let cell = self.grid.index(x, y);
-                    let center = self.grid.center(x, y);
-                    let allowed = statics.fill_allowed(pour.layer, cell, net);
-                    if allowed {
-                        counts[1] += corners as u64;
-                    }
-                    if allowed
-                        && crate::geometry::point_in_polygon(center, &pour.polygon)
-                        && !pour
-                            .excluded
-                            .iter()
-                            .any(|other| crate::geometry::point_in_polygon(center, other))
-                    {
-                        inside.push((cell, true));
-                    }
-                }
-            }
-            // So with the regions other zones take (`excluded`), kept at
-            // their clearance as the fill probe keeps them
-            // (`Board::excluded_clearance`).
-            if half > 0.0 {
-                let mut near_edge: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                let outlines = std::iter::once((&pour.polygon, half)).chain(
-                    pour.excluded
-                        .iter()
-                        .map(|other| (other, half + self.board.excluded_clearance(pour, other))),
-                );
-                for (polygon, reach) in outlines {
-                    for (a, b) in crate::geometry::polygon_edges(polygon) {
-                        let bounds = crate::geometry::Aabb {
-                            minimum: [a[0].min(b[0]), a[1].min(b[1])],
-                            maximum: [a[0].max(b[0]), a[1].max(b[1])],
-                        }
-                        .inflated(reach);
-                        let Some((ex0, ey0, ex1, ey1)) = self.grid.node_range(bounds) else {
-                            continue;
-                        };
-                        let nodes = ((ex1 - ex0 + 1) * (ey1 - ey0 + 1)) as u64;
-                        counts[0] += nodes;
-                        counts[1] += nodes;
-                        for y in ey0..=ey1 {
-                            for x in ex0..=ex1 {
-                                if crate::geometry::point_segment_distance(
-                                    self.grid.center(x, y),
-                                    a,
-                                    b,
-                                ) < reach - 1.0e-6
-                                {
-                                    near_edge.insert(self.grid.index(x, y));
-                                }
-                            }
-                        }
-                    }
-                }
-                counts[0] += inside.len() as u64;
-                for (cell, keep) in &mut inside {
-                    *keep = !near_edge.contains(cell);
-                }
-            }
-            for (cell, keep) in inside {
-                if keep {
-                    plane[pour.layer][cell] = true;
-                }
+        compute_pour_masks(&self.board, &self.statics, &self.grid, net, connected_only)
+    }
+
+    /// `pour_masks_counted(net, true)` as the router's preparation takes
+    /// it: the masks `hold_static_maps` computed for routers of the same
+    /// static maps and pours (`POUR_MASKS`: the rung probes of the
+    /// connected pours lower one board), counting nothing, or computed.
+    pub(super) fn prepared_pour_masks(&self, net: NetId) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
+        if let Some(key) = self.statics_key {
+            let key = pour_masks_key(key, &self.board);
+            let cache = POUR_MASKS
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some((_, masks)) = cache
+                .iter()
+                .find(|(other, _)| *other == key)
+                .and_then(|(_, nets)| nets.iter().find(|(other, _)| *other == net))
+            {
+                return (masks.0.clone(), masks.1.clone(), [0, 0]);
             }
         }
-        (plane, plane_class, counts)
+        self.pour_masks_counted(net, true)
     }
 
     /// The rule class `net` routes with at `cell`: its neck class inside
@@ -324,4 +239,159 @@ impl Router {
     pub(super) fn width_at(&self, net: NetId, cell: u32) -> f64 {
         self.board.classes[self.node_class(net, cell)].trace_width
     }
+}
+
+/// `Router::pour_masks_counted`, from the board, the static maps and the
+/// lattice alone (`hold_static_maps` computes them before routers exist).
+pub(super) fn compute_pour_masks(
+    board: &Board,
+    statics: &[StaticMaps],
+    grid: &Grid,
+    net: NetId,
+    connected_only: bool,
+) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
+    let mut counts = [0u64; 2];
+    let description = &board.nets[net as usize];
+    let mut plane: Vec<Vec<bool>> = Vec::new();
+    let mut plane_class = vec![description.class; board.layer_count];
+    for pour in board
+        .planes
+        .iter()
+        .filter(|pour| pour.net == net && (pour.connect || !connected_only))
+    {
+        if plane.is_empty() {
+            plane = vec![Vec::new(); board.layer_count];
+        }
+        plane_class[pour.layer] = pour.class;
+        let statics = &statics[pour.class];
+        if plane[pour.layer].is_empty() {
+            plane[pour.layer] = vec![false; grid.cells()];
+        }
+        let Some((x0, y0, x1, y1)) = grid.node_range(
+            crate::geometry::Shape::Polygon {
+                points: pour.polygon.clone(),
+            }
+            .aabb(),
+        ) else {
+            continue;
+        };
+        // KiCad's fill keeps its brush, half the minimum width, inside
+        // the zone's outline: a node closer to the outline holds no
+        // brush centre, and a strip of them along the edge joined
+        // pieces KiCad's fill keeps apart (mothenjoyer69's GND_B: a
+        // column of nodes 0.1 mm inside the outline, a 0.22 mm brush).
+        // Per zone, so that zones of the net that overlap fill across
+        // each other's outlines.
+        let half = board.classes[pour.class].trace_width / 2.0;
+        let mut inside: Vec<(usize, bool)> = Vec::new();
+        let corners =
+            pour.polygon.len() + pour.excluded.iter().map(|other| other.len()).sum::<usize>();
+        counts[0] += ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let cell = grid.index(x, y);
+                let center = grid.center(x, y);
+                let allowed = statics.fill_allowed(pour.layer, cell, net);
+                if allowed {
+                    counts[1] += corners as u64;
+                }
+                if allowed
+                    && crate::geometry::point_in_polygon(center, &pour.polygon)
+                    && !pour
+                        .excluded
+                        .iter()
+                        .any(|other| crate::geometry::point_in_polygon(center, other))
+                {
+                    inside.push((cell, true));
+                }
+            }
+        }
+        // So with the regions other zones take (`excluded`), kept at
+        // their clearance as the fill probe keeps them
+        // (`Board::excluded_clearance`).
+        if half > 0.0 {
+            let mut near_edge: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let outlines = std::iter::once((&pour.polygon, half)).chain(
+                pour.excluded
+                    .iter()
+                    .map(|other| (other, half + board.excluded_clearance(pour, other))),
+            );
+            for (polygon, reach) in outlines {
+                for (a, b) in crate::geometry::polygon_edges(polygon) {
+                    let bounds = crate::geometry::Aabb {
+                        minimum: [a[0].min(b[0]), a[1].min(b[1])],
+                        maximum: [a[0].max(b[0]), a[1].max(b[1])],
+                    }
+                    .inflated(reach);
+                    let Some((ex0, ey0, ex1, ey1)) = grid.node_range(bounds) else {
+                        continue;
+                    };
+                    let nodes = ((ex1 - ex0 + 1) * (ey1 - ey0 + 1)) as u64;
+                    counts[0] += nodes;
+                    counts[1] += nodes;
+                    for y in ey0..=ey1 {
+                        for x in ex0..=ex1 {
+                            if crate::geometry::point_segment_distance(grid.center(x, y), a, b)
+                                < reach - 1.0e-6
+                            {
+                                near_edge.insert(grid.index(x, y));
+                            }
+                        }
+                    }
+                }
+            }
+            counts[0] += inside.len() as u64;
+            for (cell, keep) in &mut inside {
+                *keep = !near_edge.contains(cell);
+            }
+        }
+        for (cell, keep) in inside {
+            if keep {
+                plane[pour.layer][cell] = true;
+            }
+        }
+    }
+    (plane, plane_class, counts)
+}
+
+/// The pour masks `hold_static_maps` computed, by the static maps' and the
+/// pours' key (`pour_masks_key`), the last `POUR_MASK_KEYS` keys.
+pub(super) type PourMasks = Vec<(u128, Vec<(NetId, Arc<(Vec<Vec<bool>>, Vec<usize>)>)>)>;
+
+pub(super) static POUR_MASKS: std::sync::Mutex<PourMasks> = std::sync::Mutex::new(Vec::new());
+
+/// How many boards' pour masks `POUR_MASKS` keeps (a probed board's four
+/// rungs lower two or three).
+pub(super) const POUR_MASK_KEYS: usize = 4;
+
+/// What the pour masks are computed from beyond the static maps (their
+/// key, `statics`): every pour's net, layer, class, connection, outline
+/// and the regions it leaves out (a mask keeps clear of other nets' pours
+/// of the same outline, `Board::excluded_clearance`).
+pub(super) fn pour_masks_key(statics: u128, board: &Board) -> u128 {
+    use std::hash::Hasher as _;
+    let mut hashers = [
+        std::collections::hash_map::DefaultHasher::new(),
+        std::collections::hash_map::DefaultHasher::new(),
+    ];
+    hashers[1].write_u64(0x9e37_79b9_7f4a_7c15);
+    let text = format!(
+        "{statics} {:?}",
+        board
+            .planes
+            .iter()
+            .map(|plane| (
+                plane.net,
+                plane.layer,
+                plane.class,
+                plane.connect,
+                &plane.polygon,
+                &plane.excluded
+            ))
+            .collect::<Vec<_>>()
+    );
+    for hasher in &mut hashers {
+        hasher.write(text.as_bytes());
+    }
+    ((hashers[0].finish() as u128) << 64) | hashers[1].finish() as u128
 }

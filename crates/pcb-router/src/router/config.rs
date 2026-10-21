@@ -239,6 +239,20 @@ pub struct Config {
     /// layer, and the same-net hole-to-hole spacing. `None` (or empty
     /// rules): the classes alone, as before.
     pub net_rules: Option<std::sync::Arc<crate::rules::NetRules>>,
+    /// Share the static maps (the outline, every obstacle's nodes, the
+    /// tight steps of every class) with the other routers built from the
+    /// same board, lattice and classes (`hold_static_maps`): a router
+    /// then builds only its own maps and counts only their work. False
+    /// builds them anew (tests that count a build's work).
+    pub share_static_maps: bool,
+    /// The work deadline (`deadline_work`) and the negotiation's work
+    /// limit (`negotiation_expansions`, in seconds at the reference's
+    /// rate) count this router's pour analyses and fill probes beside its
+    /// search, the deadline its build too: all of its work as route
+    /// mode's ladder charges it. False: its search alone. The ladder sets
+    /// it where it has no proportion of search to go by (its first
+    /// attempt, the rung probes).
+    pub limits_count_all: bool,
 }
 
 impl Default for Config {
@@ -306,6 +320,8 @@ impl Default for Config {
             deadline: None,
             deadline_work: None,
             net_rules: None,
+            share_static_maps: true,
+            limits_count_all: false,
         }
     }
 }

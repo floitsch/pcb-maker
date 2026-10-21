@@ -11,6 +11,142 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (probe overhead)
+
+Charging all the work (the section below) exposed what the probe ladder
+spent beside its search: on VortacDesign's panel the four rung probes
+alone were 54 s of work on a 30 s budget (34.6 s of it the connected
+probes' pour refresh), on MSign the probes' four lattices (2.7 s) moved
+its continuation past a cliff, and the expansion tier went from 724
+KiCad unconnected (x1371) to 846 (x1381). This removes most of that
+work rather than uncharging it: everything stays charged
+(`PCB_LADDER_UNCHARGED_POUR` remains the comparison switch only).
+Branch probe-overhead; snapshots x1390 (polygon index, shared static
+maps, step gate), x1391 (and the pour masks shared, the continuation's
+fraction without lattices, the first attempt and the probes stopping on
+all their work), x1392 (the probes back on search limits), x1393 (x1392
+with a layout fix; its route mode is x1392's), x1394 (the commit: the
+continuation's fraction by its own probe, the shared build at 12 ns a
+node). Details: docs/router.md, "The probes' overhead".
+
+**What changed** (each kind still charged at its counts):
+
+| what | before | after | where |
+|---|---|---|---|
+| the fill probe's polygon tests | every corner of every polygon near a query (Vortac: board cutouts and a logo of 71 to 1589 corners, 29.5M corners an analysis of GND, 307 ms modelled) | polygons over 48 corners by their edges near the point (`geometry::PolygonIndex`, cells of at least 0.25 mm, rows for the crossing test; exact: `distance_below`, `distance_within`), 2.5M an analysis, 65 ms | every pour analysis: the negotiation's refresh, the probes' ranking, resolve, clean-up, via reduction, manual spokes |
+| static maps (outline, obstacles' nodes, tight steps of every class) | built by every router | shared by routers of the same board, lattice, classes and rules (`shared_statics`, process-wide, by a 128-bit key); held by the ladder before routers start side by side (`hold_static_maps`) so that the count does not depend on who starts first | probes, rung waves, seeds; a shared build counts its own maps at `BUILD_SHARED_MAP_NANOS` (12 ns a node) |
+| the connected pours' masks | computed by every router | computed with the held static maps, by the board's pours (`POUR_MASKS`) | the three connected probes |
+| the continuation's share | turned into search work by all the routers' proportion of search, their four lattices included | by its own probe's proportion of search and pour work (it builds no lattice; a tracks leader did no pour work) | `built_router_work` |
+| the first attempt's limits | its share of the bound in search, its pour work and lattice on top (musicbrain 42.6 s of work for a bound of 31.5) | its work deadline counts search, pour work and build, its negotiation search and pour work (`limits_count_all`) | not the probes: see below |
+| a step's start | its first iteration fits what is left | and a fifth of the first attempt's work is left (`step_cost_fits`) | iorodeo, ducktop2, tuxkeychain no longer start a step with a second left |
+
+Not kept: the rung probes stopping on all their work
+(`PCB_LADDER_PROBES_COUNT_ALL`, x1391). With their pour work and
+lattices out of their shares they stopped an iteration earlier and two
+leaders changed: ducktop2 from tracks (1 open) to plane stubs (7 open),
+brickpico from exclusive planes to tracks (35 to 30 vias); the ranking
+compares equal search, and the probes' search limits stay.
+
+**The named boards alone** (one thread, the reference's rates pinned,
+x1385 then x1394, load 20 to 37; wall clock and the machine's share
+follow the load):
+
+| board | x1385: wall / work (search, pour, lattices), share | x1394 | probes' pour and lattice work (x1394, each) | continuation's deadline (fraction) | board |
+|---|---|---|---|---|---|
+| VortacDesign | 47.1 / 68.0 (16.6, 47.5, 4.0), 0.74 | 38.5 / 31.7 (19.2, 11.3, 1.2), 0.43 | connect 1.92, 1.92, 4.54 (stubs) and 0 (tracks); lattices 0.31 | 3.36 s (0.286) to 9.40 s (1.000) | 202 to 125 open (x1371's), 66 to 65 vias |
+| FoCTow | 60.2 / 68.0 (16.6, 47.5, 4.0), 0.45 | 40.0 / 31.7 (19.2, 11.3, 1.2), 0.41 | as Vortac | as Vortac | as Vortac |
+| MSign | 27.1 / 31.1 (26.9, 1.5, 2.7), 0.69 | 38.7 / 32.5 (29.6, 1.6, 1.3), 0.43 | 0.27, 0.27, 0.29, 0; lattices 0.34 | 11.64 s (0.854) to 14.05 s (1.000) | router count 351 to 234 open (x1371: 24) |
+| iorodeo | 26.6 / 31.8 (30.1, 0.5, 1.3), 0.42 | 25.4 / 31.8 (30.8, 0.4, 0.4), 0.44 | 0.10, 0.10, 0.23, 0; lattices 0.11 | 15.98 s (0.922) to 17.58 s (1.000) | 335 to 273 open (x1371: 261); no step with 1 s |
+| ChengminLi | 70.5 / 33.9 (14.2, 7.9, 11.7), 0.62 | 100.3 / 30.5 (20.0, 4.5, 6.1), 0.44 | not probed | | 4 open, 11 vias both (the 4 seeds of its second rung now fit) |
+| brickpico | 58.3 / 28.2 (18.3, 9.4, 0.5), 0.37 | 65.8 / 30.7 (20.2, 9.9, 0.5), 0.36 | 1.58 and 0.23 (its first probe finishes) | 17.92 s (0.569) to 19.78 s (0.639) | complete, 35 vias both |
+
+Vortac's per-analysis cost (x1385 against x1394, the pour trace): GND
+inside 508874 nodes, 12.5 ms of node work both; the probe 295 to 56 ms
+(29.5M to 2.9M corners and cells, 27k queries both). Its fingerprints in
+a probe-less run at 4 s are identical before resolve and after every
+phase (the answers are the same; only the count moved). Where MSign and
+iorodeo still lose to x1371: the probes' search overshoots its share by
+up to an iteration (MSign's probes searched 5.1 to 5.2 s on shares of
+3.75 s, iorodeo's 3.8 to 5.0), which x1371 had too, and what is left of
+their pour and lattice work (MSign 1.6 + 1.3 s) keeps the continuation
+an iteration short (iorodeo's negotiation limit of 6.85 s stops 0.1 s
+before the fifth iteration x1371 reached).
+
+**Expansion tier** (16 x 1, `--no-lock`; every row checked for an OOM
+kill: none). x1394 against x1381: 15 rows changed, unconnected 846 to
+786, passes 16 to 16, new errors 2 to 4 (strict 1 to 2), work 1296 to
+1263 s, the longest row 42.6 to 34.5 s; charged over the tier: lattices
+41.1 to 21.3 s, pour 103.6 to 99.3 s, search 1150 to 1142 s. Against
+x1371: unconnected 724 to 786, passes 16 to 16, new errors 2 to 4. The
+goal (at or below 724, new errors at or below 2) is not reached. Work
+over wall median 1.00 (10 % to 90 % 0.61-1.60) in x1381, 0.74
+(0.46-0.97) in x1394; at the loads of the day the measure moves more
+with the load than with the change (x1392 0.66, x1393's attribution run
+1.18, the same binary).
+
+The changed rows against x1381, by mechanism:
+- The probes' lattices shared and the continuation's fraction by its own
+  probe (a larger continuation): MSign 75 to 38, iorodeo 159 to 132,
+  dronecarrier 15 to 14, ducktop2 1 to 0 (passes again), anthracite
+  159 to 150 vias (back to x1371's 2 starved thermals), backplane,
+  ausign, magnetorquer, ICE40 (vias and length).
+- The rungs' shares larger (smaller lattices charged): Miniboard 3 to
+  2 (x1371's), flexypin 39 to 51 vias (x1371's board: the 0.075 mm
+  connect rung's share completes it again), ZSWatch.
+- The step gate: iorodeo, ducktop2, tuxkeychain no longer start a step
+  with a second left (tuxkeychain's board is the same).
+- The first attempt's limits counting all its work (attribution run
+  x1393 with `PCB_LADDER_SEARCH_LIMITS`, 781 unconnected, five rows
+  apart): musicbrain 42.6 to 32.3 s of work (0 open both, 233 to 241
+  vias), OpenDeck 12 to 11, Wonkle 427 to 435 (its one attempt searched
+  34.0 s, now 31.3), epdInky and Miniboard (the same counts).
+- New errors: RS485M's 2 starved thermals (as in x1381) and
+  anthracite's 2 (as in x1371).
+
+Where the tier stands against x1371 (62 unconnected more): MSign +21,
+iorodeo +23, Wonkle +8 (the first attempt's limit), facade60 +6 (its
+first attempt's pour and lattice charged leave its step 7.9 s, was 9.0),
+dronecarrier +4, tuxkeychain +1, Zulassungskarte +1, RS485M -1, OpenDeck
+-1.
+
+**Short tier** (3 x 2, `--no-lock`, `--min-free-gb 14`) x1394 against
+build/short-charge-x1381: all 12 rows identical and the 12 result
+boards byte for byte (a layout's ladder counts search; the polygon index
+answers as before; the shared maps are the same maps). CPU 5204 to
+3988 s, at other loads.
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode from v16,
+1 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) x1394 against x1385 (build/fp-probe-x1385,
+run for this): every board's continuation got a larger share (its own
+probe's fraction, 0.889-0.977 to 1.000; Castor's deadline 230.3 to
+258.9 s). Castor and k30: every fingerprint and the board identical
+(neither reaches its limits; work 159.6 to 158.4 and 297.0 to 296.1 s,
+the lattices). Sisu: the continuation's fingerprints identical, its
+board identical (13 open, 393 vias); its narrow-signal step changed with
+its share (46.8 to 51.7 s: 23 to 26 open by the router's count, not
+kept either time). jetson: identical before resolve, the clean-up on
+changed with the share (negotiation 58.6 to 60.0 s, deadline 182.3 to
+187.6 s): 10803.0 to 10791.4 mm (x1371's length), 620 vias and 19
+unconnected both.
+
+Unit tests: an_indexed_polygon_answers_as_the_plain_tests (geometry: the
+index against the plain tests on a star of 300 corners and a long slot,
+20 000 points, five thresholds), routers_of_one_board_and_lattice_share_their_static_maps
+(the shared build's counts, the held work, the same maps and fingerprint),
+a_build_is_priced_by_its_counts (the shared nodes), route_mode_steps_need_a_fifth_of_the_first_attempt,
+route_mode_continuation_goes_by_its_own_probe, route_mode_probes_charge_their_pour_work_and_lattices
+(the continuation's fraction), the step's cost in the work bound tests.
+`bash scripts/check.sh` and the clippy gate pass. Docs: router.md ("The
+probes' overhead", the work bound in route mode), config reference
+(`share_static_maps`, `limits_count_all`, `PCB_ROUTER_NO_SHARED_STATICS`,
+`PCB_LADDER_SEARCH_LIMITS`, `PCB_LADDER_PROBES_COUNT_ALL`,
+`PCB_LADDER_CONTINUATION_LATTICE`, `PCB_LADDER_NO_STEP_COST_GATE`).
+
+Logs: build/expansion-probe-x1390, -x1391, -x1392,
+-x1393-searchlimits, -x1394; build/short-probe-x1394;
+build/fp-probe-x1385, -x1394.
+
 ## Committed on 2026-10-21 (free dimension)
 
 An agent that may choose one side of the board ("the height can be

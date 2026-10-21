@@ -45,8 +45,11 @@ impl Router {
             map.fill(0);
         }
         self.board = board.clone();
+        self.probe_shapes = Arc::default();
         self.class_rules = class_rules;
         self.searched = searched_classes(&self.board, &self.neck_of);
+        self.statics_shared = false;
+        self.statics_key = None;
         self.statics = Arc::new(
             (0..self.board.classes.len())
                 .map(|class| {
