@@ -64,7 +64,9 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from compare import by_name, constraints_digest, objectives, objectives_line, rows_of, task_digest  # noqa: E402
+from compare import (by_name, constraints_digest, normalised, normalised_line, objectives,  # noqa: E402
+                     objectives_line, result_directory, rows_of, task_digest)
+import quality  # noqa: E402
 import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
@@ -694,9 +696,26 @@ def run_task(task, arguments):
     # board, and twelve jobs start with it at once.
     token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb))
     try:
-        return run_admitted(task, arguments, token)
+        row = run_admitted(task, arguments, token)
     finally:
         arguments.gate.done(token)
+    if arguments.quality:
+        add_quality(row, task, arguments)
+    return row
+
+
+def add_quality(row, task, arguments):
+    """--quality: quality.py's designer-vs-ours measures (score-kicad-board
+    on the designer's board and on the result, about 0.1 s each) into the
+    row's `quality` ({"designer": ..., "ours": ...}); quality.py and
+    compare.py's normalised line read them."""
+    if row.get("native") is None:
+        return
+    result = result_directory(row, arguments.output)
+    designer = quality.score(arguments.binary, task_directory(task), task["board_id"])
+    ours = quality.score(arguments.binary, result, task["board_id"])
+    row["quality"] = {"designer": quality.measures(designer) if designer else None,
+                      "ours": quality.measures(ours) if ours else None}
 
 
 # The layout's budgets (KiCadBoardLayoutConfig's defaults), scaled by
@@ -1465,6 +1484,9 @@ def main():
                         help="an earlier log (or output directory): the rows of the boards not run "
                              "(outside --only) are copied from it, marked spliced, into this run's log "
                              "and results.json")
+    parser.add_argument("--quality", action="store_true",
+                        help="score the designer's board and the result with score-kicad-board (quality.py's "
+                             "measures, about 0.1 s a board) into each row's quality")
     parser.add_argument("--no-lock", action="store_true",
                         help="do not take build/quick-tier.lock (by default a tier run or a run of a whole "
                              "task list takes it and waits for it: one tier at a time on the machine)")
@@ -1662,6 +1684,9 @@ def main():
         print("stopped at: " + ", ".join(f"{stage} {count}" for stage, count in sorted(stages.items()))
               + f"; missing footprints {summary['missing_footprints']}, parity issues {summary['parity']}")
     print(objectives_line(summary) + f"; tasks {arguments.tasks_label} (sha256 {arguments.tasks_sha256[:12]})")
+    # The same against the designer's boards, per board (compare.py).
+    summary["normalised"] = normalised(ordered)
+    print(normalised_line(summary["normalised"]))
     (arguments.output / "summary.json").write_text(json.dumps(summary, indent=1))
 
 

@@ -15,7 +15,12 @@ deadline under load, the harness's timeout) depends on the machine's load,
 not only on the binary: it is marked CUT and left out of better / same /
 worse. A row copied from an earlier log (run.py --splice-from) is marked
 SPL and counted in the totals. Below the totals, each run's continuous
-objectives over the boards in both (README.md, "How to measure").
+objectives over the boards in both (README.md, "How to measure"): the raw
+sums, then the per-board measures against the designer's board as
+medians over the boards (normalised: vias and length over the designer's,
+from designer-numbers.json or the rows' own scores; KiCad's unconnected items over
+the board's connections; the ground pours' cut where rows carry scores,
+run.py --quality).
 
 The strict rule (run.py's `pass_strict`: only the designer's findings at
 the same place are subtracted) has its own column beside each cell
@@ -37,9 +42,11 @@ boards with the same input (x768 on tasks v5 against x776 on v6 read as
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def rows_of(path):
@@ -292,6 +299,135 @@ def objectives(rows):
     }
 
 
+DESIGNER_NUMBERS = Path(__file__).resolve().parent / "designer-numbers.json"
+_DESIGNER = {}
+
+
+def designer_numbers(path=DESIGNER_NUMBERS):
+    """designer-numbers.json's boards (quality.py --designer-numbers): the
+    designer's vias, track length and ground pour cut per task."""
+    key = str(path)
+    if key not in _DESIGNER:
+        try:
+            _DESIGNER[key] = json.loads(Path(path).read_text())["boards"]
+        except (OSError, ValueError, KeyError):
+            _DESIGNER[key] = {}
+    return _DESIGNER[key]
+
+
+def connections(row):
+    """The board's connections (the denominator of the row's `routed`)."""
+    try:
+        return int(str(row.get("routed", "")).split("/")[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def designer_of(row, numbers):
+    """The designer's numbers for a row: its own scores (run.py --quality),
+    else designer-numbers.json's when they are of the same board."""
+    quality = row.get("quality") or {}
+    if quality.get("designer"):
+        return quality["designer"]
+    entry = numbers.get(row["name"])
+    if entry is None:
+        return None
+    if row.get("board_sha256") and entry.get("board_sha256") and row["board_sha256"] != entry["board_sha256"]:
+        return None
+    return entry
+
+
+def median(values):
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def normalised(rows, numbers=None):
+    """Per-board measures against the designer's board, as medians over the
+    boards (README.md, "How to measure"): our vias over the designer's,
+    our track length over the designer's, KiCad's unconnected items over
+    the board's connections, and, for rows with scores (run.py --quality),
+    the ground pours' cut by other tracks, ours less the designer's (mm),
+    and the boards whose designer has a ground pour that ours lost. Rows
+    without a result are left out; a ratio needs the designer's number
+    above zero."""
+    numbers = designer_numbers() if numbers is None else numbers
+    vias, length, open_share, ground, lost = [], [], [], [], 0
+    results = [row for row in rows if unconnected(row) is not None]
+    for row in results:
+        total = connections(row)
+        if total:
+            open_share.append(unconnected(row) / total)
+        designer = designer_of(row, numbers)
+        if not designer:
+            continue
+        if designer.get("vias") and row.get("vias") is not None:
+            vias.append(row["vias"] / designer["vias"])
+        if designer.get("track_length_mm") and row.get("length_mm") is not None:
+            length.append(row["length_mm"] / designer["track_length_mm"])
+        ours = (row.get("quality") or {}).get("ours")
+        if ours is not None and designer.get("ground_cut_mm") is not None:
+            if ours.get("ground_cut_mm") is None:
+                lost += 1
+            else:
+                ground.append(ours["ground_cut_mm"] - designer["ground_cut_mm"])
+
+    def rounded(value, digits):
+        return None if value is None else round(value, digits)
+
+    return {"boards": len(results),
+            "vias_ratio": rounded(median(vias), 3), "vias_boards": len(vias),
+            "length_ratio": rounded(median(length), 3), "length_boards": len(length),
+            "open_share": rounded(median(open_share), 4),
+            "open_share_mean": rounded(sum(open_share) / len(open_share), 4) if open_share else None,
+            "open_boards": len(open_share),
+            "ground_cut_delta_mm": rounded(median(ground), 1), "ground_boards": len(ground),
+            "ground_pour_lost": lost}
+
+
+def result_directory(row, directory):
+    """Where a row's result board lies in its run's output directory."""
+    name = directory / row["name"]
+    return name / "route" if row.get("mode") == "route" else name / "layout" / "result"
+
+
+def add_scores(rows, directory, binary):
+    """Scores the result boards of rows without scores (score-kicad-board,
+    about 0.1 s a board) into their `quality.ours` (quality.py's measures);
+    the designer's side comes from designer-numbers.json."""
+    import quality
+    for row in rows:
+        if unconnected(row) is None or (row.get("quality") or {}).get("ours"):
+            continue
+        result = result_directory(row, directory)
+        boards = sorted(result.glob("*.kicad_pcb")) if result.is_dir() else []
+        if not boards:
+            continue
+        report = quality.score(binary, result, boards[0].stem)
+        if report:
+            row["quality"] = {**(row.get("quality") or {}), "ours": quality.measures(report)}
+
+
+def normalised_line(n, label="normalised"):
+    def ratio(value):
+        return "-" if value is None else f"x{value:.2f}"
+
+    text = (f"{label}: medians over the boards against the designer's: vias {ratio(n['vias_ratio'])} "
+            f"({n['vias_boards']} boards), length {ratio(n['length_ratio'])} ({n['length_boards']}), open ")
+    text += "-" if n["open_share"] is None else (f"{n['open_share']:.3f} of the connections (mean "
+                                                 f"{n['open_share_mean']:.3f}, {n['open_boards']} boards)")
+    if n["ground_boards"] or n["ground_pour_lost"]:
+        delta = n["ground_cut_delta_mm"]
+        text += (", ground pour cut " + ("-" if delta is None else f"{delta:+.0f} mm") +
+                 f" against the designer's ({n['ground_boards']} boards; {n['ground_pour_lost']} lost the pour)")
+    else:
+        text += ", ground pour cut - (no scores: run.py --quality or compare.py --score)"
+    return text
+
+
 def objectives_line(o, label="objectives"):
     text = f"{label}: unconnected {o['unconnected']}, new errors {o['new_errors']}"
     if o.get("strict_rows"):
@@ -344,8 +480,14 @@ def main():
     parser.add_argument("after")
     parser.add_argument("--splice", nargs="*", default=[])
     parser.add_argument("--markdown", action="store_true")
+    parser.add_argument("--score", type=Path, metavar="BINARY",
+                        help="score the result boards with this binary's score-kicad-board (the ground pours' cut "
+                             "for the normalised line; rows from run.py --quality carry it already)")
     arguments = parser.parse_args()
     before_rows, after_rows = rows_of(arguments.before), rows_of(arguments.after)
+    if arguments.score:
+        add_scores(before_rows, output_directory(arguments.before), arguments.score)
+        add_scores(after_rows, output_directory(arguments.after), arguments.score)
     before = by_name(before_rows)
     after = by_name(after_rows)
     after_directory = {name: output_directory(arguments.after) for name in after}
@@ -437,11 +579,15 @@ def main():
             print(f"{label}: {count} of the {len(common)} rows spliced from an earlier run (SPL)")
     print(objectives_line(objectives([before[n] for n in common]), "before"))
     print(objectives_line(objectives([after[n] for n in common]), "after "))
+    print(normalised_line(normalised([before[n] for n in common]), "before"))
+    print(normalised_line(normalised([after[n] for n in common]), "after "))
     if other_input:
         same_input = [n for n in common if n not in other_input]
         print(f"over the {len(same_input)} boards with the same input:")
         print(objectives_line(objectives([before[n] for n in same_input]), "before"))
         print(objectives_line(objectives([after[n] for n in same_input]), "after "))
+        print(normalised_line(normalised([before[n] for n in same_input]), "before"))
+        print(normalised_line(normalised([after[n] for n in same_input]), "after "))
     if only_after:
         print(f"{len(only_after)} boards only after: {sum(1 for n in only_after if passes(after[n]))} pass")
     if only_before:

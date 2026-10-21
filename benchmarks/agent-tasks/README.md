@@ -140,6 +140,26 @@ measurement). The discipline:
   count of open terminals after the first route, not KiCad's).
   Totals compare only over the same rows with a result (compare.py sums
   the boards in both runs).
+- **Normalised against the designer** (since 2026-10-21): raw sums are
+  dominated by the few large boards (one jetson outweighs twenty
+  keyboards), so the run's last line, summary.json's `normalised` and
+  compare.py's lines below the sums give per-board measures as medians
+  over the boards: our vias over the designer's, our track length over
+  the designer's, KiCad's unconnected items over the board's connections
+  (median and mean: most boards are at 0), and the ground pours' cut by
+  other tracks (quality.py's "ground pour cut by other tracks", the
+  length of other nets' tracks across the pours), ours less the
+  designer's, with the boards whose designer pour ours lost. The
+  designer's numbers are in `designer-numbers.json` (`quality.py
+  --designer-numbers`, score-kicad-board on every board of tasks/v7, with
+  each board's SHA-256; a row of another board gets none). The pour cut
+  needs our result scored: `run.py --quality` writes quality.py's
+  measures of both boards into each row's `quality` (score-kicad-board,
+  about 0.1 s a board; `quality.py <run> --all` then reads them), and
+  `compare.py --score <binary>` scores the result boards of older runs.
+  Over v16 against v17 (103 boards with the same input): vias x0.70 ->
+  x0.72 of the designer's, length x1.03 -> x1.03, open 0.009 -> 0.009 of
+  the connections (mean 0.164 -> 0.113).
 - **Router questions in route mode** (`--route-from <earlier output
   directory>`): the same placements routed again, no placement race, no
   legaliser wall time.

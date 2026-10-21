@@ -1,0 +1,660 @@
+{
+ "boards": {
+  "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "board_sha256": "88157743836df5edf5f7f8021dfcc58fdac208a583b8218a13734a373cddb3bb",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 1229.94,
+   "vias": 54
+  },
+  "0xCB-dev__0xCB-1337__panel": {
+   "board_sha256": "1057ee9a5a7ee04f9e38d9b43a4ebc52e55ea23d34426a9ae95176f54362feef",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 4919.76,
+   "vias": 216
+  },
+  "0xCB-dev__0xCB-1337__pcb": {
+   "board_sha256": "9dfe605294d1143ea330612e7085aba80c20219e1825241ab08d6fcbb8d84773",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 1608.05,
+   "vias": 169
+  },
+  "0xCB-dev__0xCB-1337__pcb-panel": {
+   "board_sha256": "ce9fa5e792b4ac238538b27a1a12adcb59468d2545e404300e89daee41f2a782",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 6432.21,
+   "vias": 676
+  },
+  "0xCB-dev__0xCB-Static__0xcb-static": {
+   "board_sha256": "a1930043986f41cc19e1b5cbbfe33da8dd46a3a7290ddd9f65c5cf3554be0dc4",
+   "ground_cut_mm": 6854.64,
+   "track_length_mm": 6854.64,
+   "vias": 34
+  },
+  "ASH-ART__Qfwfq__qfwfq": {
+   "board_sha256": "01d3336b04d5fb6a6ccbac205779d7fa93f150db2f732cb7d97b1bb6a7bd7e92",
+   "ground_cut_mm": 3413.97,
+   "track_length_mm": 3413.97,
+   "vias": 62
+  },
+  "CDFER__Business-Cards__Batch_1": {
+   "board_sha256": "5901d7c2a6a1f901375591aed98f2049b0b9c1256dd6d65b65658e6434ddb592",
+   "ground_cut_mm": 11267.94,
+   "track_length_mm": 6824.76,
+   "vias": 374
+  },
+  "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "board_sha256": "a4e3883e6fe64adfbc8618edc40a218ffe9864ba995ddbe1de38f0fa46ecc0e7",
+   "ground_cut_mm": 4032.96,
+   "track_length_mm": 2016.49,
+   "vias": 110
+  },
+  "CDFER__Business-Cards__USB_Keypad": {
+   "board_sha256": "fbf88869bae5853eeafb7b8406357ede01c1480a40f9e37c435e963171cb7ee7",
+   "ground_cut_mm": 854.13,
+   "track_length_mm": 1570.6,
+   "vias": 78
+  },
+  "CDFER__Business-Cards__WLED_Matrix": {
+   "board_sha256": "3b43ac496d51d8578e795f7d57c9f88f478bf9be6dee75e4bc13ed0e8c15b398",
+   "ground_cut_mm": 1419.37,
+   "track_length_mm": 1715.57,
+   "vias": 111
+  },
+  "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "board_sha256": "92119041572103ce83d0642570cda489cf5d6c3f6d028419a665f64f20cebb2e",
+   "ground_cut_mm": 1391.17,
+   "track_length_mm": 1391.16,
+   "vias": 203
+  },
+  "CRImier__MyKiCad__protoesp": {
+   "board_sha256": "4ed02abe07962953616538dda2fcf94e871f36db76e87022ffa6444f53af92a9",
+   "ground_cut_mm": 4160.04,
+   "track_length_mm": 4160.05,
+   "vias": 261
+  },
+  "CRImier__MyKiCad__vaio_re": {
+   "board_sha256": "2ea8ede888eb4eb302d8f30634f69b06c452ab82267c7b23c43c9e422cc35d93",
+   "ground_cut_mm": 7267.93,
+   "track_length_mm": 7267.94,
+   "vias": 523
+  },
+  "CRImier__MyKiCad__zpn_devboard": {
+   "board_sha256": "8f41bdd83c4b5446b35e30036a3dc7d831fa966dab0b02d4099225d7cdc3001e",
+   "ground_cut_mm": 6084.77,
+   "track_length_mm": 6084.78,
+   "vias": 298
+  },
+  "GlasgowEmbedded__glasgow__glasgow__revC3": {
+   "board_sha256": "74ef350bc764a48f750a17e71df6bba7364e0d7fbb48d5555e94afa0b0d97c4d",
+   "ground_cut_mm": 4177.35,
+   "track_length_mm": 4437.02,
+   "vias": 416
+  },
+  "Goga64__ULK__ULK": {
+   "board_sha256": "861817932d33911c28b9160aa34ee9ada9730efb329e375d4ae8d96a3552001a",
+   "ground_cut_mm": 6686.08,
+   "track_length_mm": 3343.04,
+   "vias": 63
+  },
+  "Goga64__ULK__ULK_sl_PG1316s": {
+   "board_sha256": "a5523b0ee7526bf339c2149cc178044c11ae586d15a4e8ec7941ea13f8161aae",
+   "ground_cut_mm": 7179.74,
+   "track_length_mm": 3589.87,
+   "vias": 60
+  },
+  "Huaqiu-Electronics__ecad-viewer__video": {
+   "board_sha256": "f620675158ddd5c61e5ce9e15f4c92b230ae1df1cbcec6c502b8ce266e4007ea",
+   "ground_cut_mm": 638.98,
+   "track_length_mm": 35416.83,
+   "vias": 808
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1": {
+   "board_sha256": "b39c18d12de74a5ac04b8f9a5e922a4b01d1ad31d3291251e1c83cd5bc2be9f9",
+   "ground_cut_mm": 7635.18,
+   "track_length_mm": 1491.98,
+   "vias": 525
+  },
+  "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado": {
+   "board_sha256": "2434fdded6d78350cdc57be0d15d816bf582b6187cac75cd8d31998806a7a1e6",
+   "ground_cut_mm": 14333.41,
+   "track_length_mm": 2078.6,
+   "vias": 820
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA": {
+   "board_sha256": "2fec683cff827b88dad85e78ab30e73540bb7ee19c263e53165ae245e4ede95f",
+   "ground_cut_mm": 2747.25,
+   "track_length_mm": 2793.3,
+   "vias": 273
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA": {
+   "board_sha256": "509b318ef22808d2fbecd81600783ca04ab81edf4935472985550a94205dcb30",
+   "ground_cut_mm": 2836.05,
+   "track_length_mm": 2882.09,
+   "vias": 275
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2": {
+   "board_sha256": "cd03d7d8ad4c765df5d3c1b8d8a6970749eef2118babc56d929f3b854cb1b279",
+   "ground_cut_mm": 5930.17,
+   "track_length_mm": 2584.18,
+   "vias": 401
+  },
+  "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA": {
+   "board_sha256": "a5623b999fa4b5d02e938f9a3489ad6ed88eff2d3321b535fafb28063670a89a",
+   "ground_cut_mm": 5984.01,
+   "track_length_mm": 2604.14,
+   "vias": 432
+  },
+  "Jana-Marie__ligra__ligra_back": {
+   "board_sha256": "26f94d86b6757d6cbffad5aaf17b925707362d7c86321d92e360975f73b430b2",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 1062.86,
+   "vias": 251
+  },
+  "Ladniy__jiran-ble-lite__jiran-ble-lite": {
+   "board_sha256": "2408628a657a0b51bf6091a0b993cc495291fac8fc37cb136d44449250757284",
+   "ground_cut_mm": null,
+   "track_length_mm": 5195.94,
+   "vias": 61
+  },
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub": {
+   "board_sha256": "23e289ad485e00a1142fec4643a915ed915dfffa098d036bfe6a8298018a86cb",
+   "ground_cut_mm": 3575.76,
+   "track_length_mm": 3575.75,
+   "vias": 331
+  },
+  "Neotron-Compute__Neotron-Pico__neotron-pico": {
+   "board_sha256": "e2a9069e63951d229c2c7dc60ee2ee2510a5dca66ece2e97bc8879d2698073fb",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 9293.41,
+   "vias": 355
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex": {
+   "board_sha256": "9cc61bfb4016c1e5688a7bf788ea6c3c35a283593ad5bdb6b30df71f8aa137f2",
+   "ground_cut_mm": null,
+   "track_length_mm": 4069.99,
+   "vias": 120
+  },
+  "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex": {
+   "board_sha256": "430beba8ef00d5b2e4a1511bb6daf83275cb17cb980ad0b7813ae6b13e57fb44",
+   "ground_cut_mm": null,
+   "track_length_mm": 5177.12,
+   "vias": 120
+  },
+  "OpenDrone-hw__OpenESC-20x20__4in1-mini": {
+   "board_sha256": "8d91220c684f77ee7680ff17b0cce884003cc789585d8eb4d73c8e0ff46a5552",
+   "ground_cut_mm": 947.19,
+   "track_length_mm": 966.51,
+   "vias": 1129
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1": {
+   "board_sha256": "02d502a1a5d3e41f21f755cdc80d69172581f84bc9525aa42c553bc491f28304",
+   "ground_cut_mm": 1106.93,
+   "track_length_mm": 1170.89,
+   "vias": 1702
+  },
+  "OpenDrone-hw__OpenESC-30x30__4in1-panel": {
+   "board_sha256": "e820efad7b33b72dea4d8de3a8824f2fc271f111b512dd8c86e83f719d37dbb3",
+   "ground_cut_mm": 2088.86,
+   "track_length_mm": 2257.19,
+   "vias": 2604
+  },
+  "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "board_sha256": "4bdfd53e990ffbc440237bab92c2287de614bf30f52c8f1eae64589a3160f789",
+   "ground_cut_mm": 1067.68,
+   "track_length_mm": 1231.0,
+   "vias": 596
+  },
+  "OpenDrone-hw__OpenRX__OpenRX-panel-rev2": {
+   "board_sha256": "8eb29d7b1a4adb934b5dfda6b883ed96426579a61e224c0921b642f51feb57c4",
+   "ground_cut_mm": 1034.83,
+   "track_length_mm": 1075.55,
+   "vias": 538
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "board_sha256": "7c4be75e948e732a7b41ad1943da2ded2ffb75dcf1e6903a517130ecbde083d7",
+   "ground_cut_mm": 754.01,
+   "track_length_mm": 754.01,
+   "vias": 334
+  },
+  "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard": {
+   "board_sha256": "6ed1053485726ab3791536a656a841d2f009ff22c65dbfa1ad20aee3277957b4",
+   "ground_cut_mm": 2796.52,
+   "track_length_mm": 2796.51,
+   "vias": 269
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base": {
+   "board_sha256": "1519c06cbc3cc8db5c31665fa763b5affd60bde538a868fcc6fa95166dd3f563",
+   "ground_cut_mm": 4346.56,
+   "track_length_mm": 7618.16,
+   "vias": 553
+  },
+  "antmicro__jetson-nano-baseboard__jetson-nano-baseboard": {
+   "board_sha256": "8fc7b361091f1ab5b2026f65fc0c0ea42e16caa705cd52e63c3c48e6ba887252",
+   "ground_cut_mm": 6792.4,
+   "track_length_mm": 10111.19,
+   "vias": 794
+  },
+  "anyshake__explorer__Explorer": {
+   "board_sha256": "aecc4b6f223f8fa1b4a2ed250143d44d2fd4fa50baac64b6525328ded9453721",
+   "ground_cut_mm": 12702.54,
+   "track_length_mm": 4234.18,
+   "vias": 1057
+  },
+  "apfaudio__eurorack-pmod__eurorack-pmod-pcb": {
+   "board_sha256": "05ea68bc27b8fc58aec40ef08cee1337cd35908cc34796aa1871faf79a5012bc",
+   "ground_cut_mm": 3622.58,
+   "track_length_mm": 3658.47,
+   "vias": 331
+  },
+  "baldengineer__bit-preserve__coco2": {
+   "board_sha256": "9065a89c2f94572e44ad443a4579fc2bcee7b492bf49efa8bfc99c71046477e3",
+   "ground_cut_mm": 21350.76,
+   "track_length_mm": 21350.76,
+   "vias": 215
+  },
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV": {
+   "board_sha256": "69a65acd7fe3a0838ee291ad626e20f496a25f742d9061809efb5c55bc123e8d",
+   "ground_cut_mm": 1202.2,
+   "track_length_mm": 1275.79,
+   "vias": 541
+  },
+  "bitshiftcrazy__d20_pcb__d20_pcb": {
+   "board_sha256": "2e36467a796ef13f137f7f699c3073d0245b7c12a55cd0a57f0186c42afe1f82",
+   "ground_cut_mm": 576.07,
+   "track_length_mm": 1032.76,
+   "vias": 46
+  },
+  "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "board_sha256": "4b08f78a26d14792879fe2e14fbc51dd9b00c53749de2494d7413c914eea9e58",
+   "ground_cut_mm": 623.67,
+   "track_length_mm": 650.43,
+   "vias": 6
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9": {
+   "board_sha256": "5da2bf0d3ac47c3e606c9b7ba8e729dc4a98e2b76b463214df05267a887d508c",
+   "ground_cut_mm": 4880.31,
+   "track_length_mm": 5240.44,
+   "vias": 1076
+  },
+  "byrantech__laptop__keyboard": {
+   "board_sha256": "1837734586202401cbc324715327bcf25ad65150fa43a7c02dbc3d448cda8b95",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 8190.36,
+   "vias": 571
+  },
+  "byrantech__laptop__motherboard": {
+   "board_sha256": "919f4bbdc66cdc5c71765a0e30ae10528f0a210ba89c4288af43dffa4ecdbf64",
+   "ground_cut_mm": 7805.71,
+   "track_length_mm": 9341.0,
+   "vias": 734
+  },
+  "byrantech__laptop__power": {
+   "board_sha256": "41a2ca4b38f9e0ebe72c1656d1cf8a021e18080c511be75bd2aeac04ffa409fb",
+   "ground_cut_mm": 3954.88,
+   "track_length_mm": 1977.44,
+   "vias": 167
+  },
+  "crmaykish__mackerel-68k__mackerel-08-v1": {
+   "board_sha256": "c7aea8a8ba82d3fd6cab224ab019af850ee2df1c0d5ab84fb1f96ceac5934b85",
+   "ground_cut_mm": 12.65,
+   "track_length_mm": 13598.79,
+   "vias": 208
+  },
+  "crmaykish__mackerel-68k__mackerel-10-v1": {
+   "board_sha256": "5d229a2d09b11648951762674945a3c923841aa38975583846c072dc9851a8bc",
+   "ground_cut_mm": 9327.42,
+   "track_length_mm": 23399.08,
+   "vias": 200
+  },
+  "crmaykish__mackerel-68k__mackerel-30-proto": {
+   "board_sha256": "9e73b82a38fffd949d4e016197f3de3e64f0477d9cc55d49f4b60eef22d3226b",
+   "ground_cut_mm": 7.18,
+   "track_length_mm": 21733.83,
+   "vias": 294
+  },
+  "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
+   "board_sha256": "6c67f5cacf1ae0cb4995aa9eb7852e9f4fc94169d14c1e02cdaeffdcc5f4465a",
+   "ground_cut_mm": 34605.72,
+   "track_length_mm": 13007.42,
+   "vias": 1116
+  },
+  "duckyb__eternal-keypad__eternal-keypad": {
+   "board_sha256": "0ce37443ea09124c13807a6e81f13157ec5c8ee18e1b459a6df3c40c04876a8f",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 3332.28,
+   "vias": 55
+  },
+  "duckyb__urchin__main": {
+   "board_sha256": "f3a70a00a0be4e6c62149c47badb4c7820cd2cbad37609ac23dcc309da95c1df",
+   "ground_cut_mm": null,
+   "track_length_mm": 2597.32,
+   "vias": 53
+  },
+  "earth75__atat-1800__ATAT1800": {
+   "board_sha256": "2c0fa64b23aee6c63a32b409a38ef5915a78a9a142d0054a3c5d50223379d455",
+   "ground_cut_mm": 15352.82,
+   "track_length_mm": 16218.5,
+   "vias": 680
+  },
+  "ebastler__osprey__osprey_rev_a": {
+   "board_sha256": "6ac084728a22308e477dffb0940b68a305bbdd127b96c5bace2ba3747e3e5dd0",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 4059.39,
+   "vias": 665
+  },
+  "emertcakir__OpenAirScope__OpenAirScope": {
+   "board_sha256": "a84ff06d6c8ad77bfa3c8a148ac85010f6aa74a069b959a106053e7c2dd584e7",
+   "ground_cut_mm": 4836.94,
+   "track_length_mm": 4836.94,
+   "vias": 473
+  },
+  "greatscottgadgets__hackrf__hackrf-one": {
+   "board_sha256": "558d73553c7c2b2ae77dad541c87e671f3b2e982306f25e6fabed8d1e879e438",
+   "ground_cut_mm": 76.95,
+   "track_length_mm": 9046.95,
+   "vias": 498
+  },
+  "hackclub__OnBoard__E-Fidget-Lite": {
+   "board_sha256": "2d1c49cf8ef43d20a36565a16353101c33d4619a9e29a5e55a0ff80cda7f361f",
+   "ground_cut_mm": null,
+   "track_length_mm": 473.04,
+   "vias": 20
+  },
+  "hackclub__OnBoard__MotionCubeViewAllForces": {
+   "board_sha256": "49c0e69f4a8f561010c5e5d522fbd2a885899ba873899fc2d7c786446f3748b6",
+   "ground_cut_mm": 192.28,
+   "track_length_mm": 591.47,
+   "vias": 29
+  },
+  "hackclub__OnBoard__PixelWave": {
+   "board_sha256": "d7c2e5278b7acfeba5c1f17b69851699b6048c4f44c0899709b5be357828b166",
+   "ground_cut_mm": 7989.23,
+   "track_length_mm": 7989.23,
+   "vias": 705
+  },
+  "hackclub__OnBoard__keyboar_": {
+   "board_sha256": "4b7689512e2ffa2c07f0bc43d8281cf79027813b885f36a38dc7f33dc179a00b",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 7789.59,
+   "vias": 45
+  },
+  "hackclub__OnBoard__koeg-board-pcb": {
+   "board_sha256": "81c5d8385df70359447a898f81e5a6f1879082a3d11a8ac14f044bd779ac2705",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 4998.99,
+   "vias": 417
+  },
+  "hackclub__OnBoard__krishveercard": {
+   "board_sha256": "da39cb3d7b30dfa028619fc6abed058cfac527ca4015885f421b65bd39c05639",
+   "ground_cut_mm": null,
+   "track_length_mm": 1453.68,
+   "vias": 87
+  },
+  "hackclub__OnBoard__woagboard": {
+   "board_sha256": "0a2015a89d71355230fc3be445a5ed793187de072ca6a0e0ba9eb032720d12d9",
+   "ground_cut_mm": 3235.87,
+   "track_length_mm": 3235.87,
+   "vias": 119
+  },
+  "headblockhead__slab-pcb__interchange-pcb-right": {
+   "board_sha256": "2483905bed0fa02695f6fc96eade482597cbf9e63665322bcb1b18ea4841031e",
+   "ground_cut_mm": 2883.95,
+   "track_length_mm": 6732.3,
+   "vias": 203
+  },
+  "headblockhead__slab-pcb__slab-pcb-left": {
+   "board_sha256": "b95a628a65a4227a484337ece3d217939db11440666b032736a22218e8b65661",
+   "ground_cut_mm": 2530.57,
+   "track_length_mm": 5945.58,
+   "vias": 239
+  },
+  "iandchasse__silkscreen-pcb__silkscreen_pcb": {
+   "board_sha256": "cbf58854569ec7ae77f4a1b59f4ecba803517c301f53f5e4e4e9538d1d79eaa9",
+   "ground_cut_mm": 3680.92,
+   "track_length_mm": 3680.93,
+   "vias": 192
+  },
+  "ikajdan__katia__katia": {
+   "board_sha256": "26422389e2cdf4401e87f25c540ef128aeafbb0cfc5f08c6d1adc8771b2b3b10",
+   "ground_cut_mm": 6960.23,
+   "track_length_mm": 6992.04,
+   "vias": 1301
+  },
+  "little-red-rover__little-red-rover__little_red_rover": {
+   "board_sha256": "3d147c9010c223dbd8718c91a5bea0189d2e872933126a7159a830c7567a5043",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 4010.96,
+   "vias": 170
+  },
+  "maniekx86__M8SBC-486__homebrew_486": {
+   "board_sha256": "302e4bd6ce02d252c96f1f4a24d9e07da486488afc202f3fa7347bd743974d75",
+   "ground_cut_mm": 28776.0,
+   "track_length_mm": 29709.97,
+   "vias": 1150
+  },
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized": {
+   "board_sha256": "5220c327bd191193174dbe67ba2b4f642cc90e2d778685d89a9bfc0605a587d1",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 9480.62,
+   "vias": 95
+  },
+  "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized": {
+   "board_sha256": "9d3bad2a5c70337814792aa411ba34a013b2983cd90016cf30f54cc98aa47df3",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 9491.24,
+   "vias": 148
+  },
+  "ohdsp__DSP-ADAU1452__DSP-ADAU1452": {
+   "board_sha256": "06f8a54b4361fbab3fadad4a52fd5886765ec1711c505462f9cbd07c0f650973",
+   "ground_cut_mm": 4113.52,
+   "track_length_mm": 4113.52,
+   "vias": 355
+  },
+  "oro-os__link__link": {
+   "board_sha256": "28d95f7fe5d1f436ce66a65bea4c24a7dabd2669bcf398f7a4cbda5eb39ffc1c",
+   "ground_cut_mm": 8794.86,
+   "track_length_mm": 9150.2,
+   "vias": 806
+  },
+  "rosco-m68k__rosco_m68k__rosco_m68k__kicad": {
+   "board_sha256": "6cb4bfcf31fac1016d8b92bc62f493abafad36072c356cdad9f7ce7f98d376f9",
+   "ground_cut_mm": 36.96,
+   "track_length_mm": 17273.34,
+   "vias": 402
+  },
+  "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard": {
+   "board_sha256": "83c99160c5005b425481f0ef8fab3345cc8b250a57d46d2b6e9d2adc575185a8",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 4664.84,
+   "vias": 52
+  },
+  "sporkus__capybully_keyboard__capybully": {
+   "board_sha256": "2083185aa6931dce6618ab91fcc263eb6b5433924cdb3d2802cb3313184385cd",
+   "ground_cut_mm": 2739.59,
+   "track_length_mm": 4298.96,
+   "vias": 61
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
+   "board_sha256": "55a212d4c6541847023001ab12bdac0a34d27eb89dd03c95840104e915500dac",
+   "ground_cut_mm": 4693.6,
+   "track_length_mm": 4693.6,
+   "vias": 193
+  },
+  "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre": {
+   "board_sha256": "984473f03db99eda31c3b5f12a3bb2e3d07199ed8e2577d0f6cd78b123639b82",
+   "ground_cut_mm": 4520.72,
+   "track_length_mm": 4520.72,
+   "vias": 199
+  },
+  "stonedDiscord__MegaDrive__MegaDrive": {
+   "board_sha256": "0e7e7fec6e6cd11dfda638c111fdd83267b57a3992c4aa65d12586246d8e4b9e",
+   "ground_cut_mm": 44687.56,
+   "track_length_mm": 44687.57,
+   "vias": 785
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-01": {
+   "board_sha256": "ff30579c9704c9134cc62430060a56a8bba7487f8e131ad24656384bb07f5e47",
+   "ground_cut_mm": 24003.91,
+   "track_length_mm": 25918.55,
+   "vias": 1197
+  },
+  "stonedDiscord__nonSNES__SNSP-CPU-1CHIP": {
+   "board_sha256": "4501da4a081e0eb949374d55ee348c3450fe076a20de3d34052af4ca29369780",
+   "ground_cut_mm": 11306.61,
+   "track_length_mm": 12503.29,
+   "vias": 686
+  },
+  "tengigabytes__MokyaLora__MokyaLora": {
+   "board_sha256": "45c7c90f21c8a905c93893c83a3cb2f0d36bd5c28bc78569e91242531804bcaa",
+   "ground_cut_mm": 4662.66,
+   "track_length_mm": 4662.68,
+   "vias": 836
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_left": {
+   "board_sha256": "03fe5d641caf25f82eae39b16bcd1e49ceffaaa834c7e12d75809b6175fa757c",
+   "ground_cut_mm": 9290.05,
+   "track_length_mm": 9290.05,
+   "vias": 753
+  },
+  "thpoll83__PolyKybd__poly_corne_split42_right": {
+   "board_sha256": "90aaa517c2e124a1b33a1df99127461c9b9440b955f704bbd0a4128edd101a8d",
+   "ground_cut_mm": 18120.28,
+   "track_length_mm": 18120.27,
+   "vias": 1372
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x4": {
+   "board_sha256": "649df1c6c328e9ec2dbbc958e6a444ecf46589bc7d383fc2b18a58d7f8bf97b9",
+   "ground_cut_mm": 9263.45,
+   "track_length_mm": 9263.45,
+   "vias": 812
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_4x5": {
+   "board_sha256": "5c4e8e7db60e10aa79a6e9e99c846ce19151fc09f1aa1d9a9fc87a00a04536ee",
+   "ground_cut_mm": 11566.02,
+   "track_length_mm": 11566.02,
+   "vias": 1016
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted": {
+   "board_sha256": "2102cb367144ec51ffe1abc30ed8933469185e764aa86407075e9348f8dca949",
+   "ground_cut_mm": 5905.08,
+   "track_length_mm": 5905.08,
+   "vias": 500
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave": {
+   "board_sha256": "eb5fcd21aaf866640c8ce8465fc236d2bf4c52fbae43711174d113386f8dc8b0",
+   "ground_cut_mm": 11899.86,
+   "track_length_mm": 11899.86,
+   "vias": 1054
+  },
+  "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left": {
+   "board_sha256": "900ae2eab9975c7694ffdec644091fa53a4d23caeca40d93efe18cad15afccf0",
+   "ground_cut_mm": 17328.03,
+   "track_length_mm": 17328.03,
+   "vias": 1504
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_left": {
+   "board_sha256": "8ddaa7a00b5167b267fcdc2812cc6e72d39071dc3b472b90180866425ccacacf",
+   "ground_cut_mm": 18542.9,
+   "track_length_mm": 18542.9,
+   "vias": 1354
+  },
+  "thpoll83__PolyKybd__poly_kybd_split72_right": {
+   "board_sha256": "1dbec7f104d9240487778fbdc5faf97a8e25d7d255a7d78d5e2c1be62d963f26",
+   "ground_cut_mm": 18117.25,
+   "track_length_mm": 18117.25,
+   "vias": 1368
+  },
+  "tomunderwood99__CharlieBoard__Blue_Line": {
+   "board_sha256": "a3d7ca47aaeabbd3212b00e6ad5ad2b24fad92e13fbbc0042afc8131bd73d79d",
+   "ground_cut_mm": 7.74,
+   "track_length_mm": 543.97,
+   "vias": 28
+  },
+  "transistorfet__computie__k30-SBC": {
+   "board_sha256": "93e6cfeed7d23c2f8e45d81946fbfd61b23296c617a412fb480ad92acda60468",
+   "ground_cut_mm": 22605.19,
+   "track_length_mm": 23338.03,
+   "vias": 497
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001": {
+   "board_sha256": "9fffcd8f8b0422160327c5f6b1abef3f07306a7a666a6f4b8d16a601854c8c81",
+   "ground_cut_mm": 5100.18,
+   "track_length_mm": 5100.17,
+   "vias": 128
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd": {
+   "board_sha256": "34de4ade3ac3da42a10d527fe1575ce982bae4f7adc85c8fe82972b78c01c721",
+   "ground_cut_mm": 5120.8,
+   "track_length_mm": 5120.8,
+   "vias": 87
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd": {
+   "board_sha256": "8a0b15c7b3e3af8662b284ac3158b08bdfc995224d180ec62f2ffd691e7f401d",
+   "ground_cut_mm": 5327.34,
+   "track_length_mm": 5327.34,
+   "vias": 90
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd": {
+   "board_sha256": "481b4533bee5d6f1a37b552c3428b903ad37327108cd21a60dcd4d913f03e087",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 5468.37,
+   "vias": 94
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
+   "board_sha256": "15a5861c8472b38b0f77d8fc583da35f0126b4b31b56d48cbab3af28a846fa8c",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 5522.74,
+   "vias": 87
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd": {
+   "board_sha256": "cf922a5464588565ae301d0cb4fef7695b9bea2b61244e5c6f2adbbea35cdc2a",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 5614.35,
+   "vias": 86
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_core": {
+   "board_sha256": "fde6adabb18398b6eb8d83016789be2e22822baf183c84b5d37665abf3e06f5d",
+   "ground_cut_mm": 5842.74,
+   "track_length_mm": 5842.74,
+   "vias": 150
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao": {
+   "board_sha256": "c6c98954d6d4c5b91ae000a28e0e3173b6934cc77ce3a96f84797cadbb14afdc",
+   "ground_cut_mm": 5367.15,
+   "track_length_mm": 5367.16,
+   "vias": 142
+  },
+  "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s": {
+   "board_sha256": "55ff76f50f476f88b87294524d771c8d61f8a48bf1a5349cfb43dd524eca40b0",
+   "ground_cut_mm": 5162.57,
+   "track_length_mm": 5162.58,
+   "vias": 126
+  },
+  "tzarc__keyboards__ghoul": {
+   "board_sha256": "114ddf3ea691d06f050f51254680a05e2fdd970f496f0a29b86f7711ff3e8e08",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 7193.82,
+   "vias": 497
+  },
+  "vd-rd__sbc_allwinner_a13__module": {
+   "board_sha256": "563b646fbd1f021c43a337798882e54ed024c39823280f8b93ddc59c9aa7cb33",
+   "ground_cut_mm": 5257.31,
+   "track_length_mm": 5633.16,
+   "vias": 501
+  },
+  "wntrblm__Castor_and_Pollux__mainboard": {
+   "board_sha256": "49e0eb1777957893d979ef459ae66b82a840c2bd8bf51231e20c14193c4ddb24",
+   "ground_cut_mm": 4030.14,
+   "track_length_mm": 4030.14,
+   "vias": 358
+  },
+  "zli117__CyberKeeb2040__MainBoard": {
+   "board_sha256": "e648c4d4cc4607c77f4ab87d21406985ece10f2d35926cee03283bc73ec20b65",
+   "ground_cut_mm": 0.0,
+   "track_length_mm": 14312.74,
+   "vias": 709
+  }
+ },
+ "comment": "The designer's boards scored with score-kicad-board (quality.py --designer-numbers): vias, track length and the ground pours' cut by other tracks (null: no pour), with the board's SHA-256. compare.py normalises each row by these.",
+ "tasks": "benchmarks/agent-tasks/tasks/v7/tasks.json"
+}
